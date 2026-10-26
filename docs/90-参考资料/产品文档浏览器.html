@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>产品文档 产品文档浏览器</title>
+  <title>DGOS 产品文档浏览器</title>
   <style>
     :root {
       --bg: #f7f5ef;
@@ -1486,9 +1486,9 @@
   <div class="app">
     <header class="topbar">
       <div class="brand">
-        <div class="brand-mark">产品文档</div>
+        <div class="brand-mark">D</div>
         <div>
-          <h1>产品文档浏览器</h1>
+          <h1>PRD Viewer</h1>
           <small id="loadStatus">加载中</small>
         </div>
       </div>
@@ -1554,363 +1554,88 @@
 
   <script src="产品文档浏览器-文档数据.js"></script>
   <script>
-    const DOCS = [
-      {
-            "id": "doc-0",
-            "version": "01",
-            "phase": "项目概览",
-            "accent": "#087d75",
-            "soft": "#dcefeb",
-            "title": "项目概览导航",
-            "file": "01-项目概览/README.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-1",
-            "version": "02",
-            "phase": "产品与版本",
-            "accent": "#4056a1",
-            "soft": "#e6e9f6",
-            "title": "产品与版本导航",
-            "file": "02-产品与版本/README.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-2",
-            "version": "03",
-            "phase": "产品与版本",
-            "accent": "#4056a1",
-            "soft": "#e6e9f6",
-            "title": "DGOS 产品需求文档 PRD",
-            "file": "02-产品与版本/产品蓝图.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-3",
-            "version": "04",
-            "phase": "产品与版本",
-            "accent": "#4056a1",
-            "soft": "#e6e9f6",
-            "title": "DGOS 功能演进矩阵",
-            "file": "02-产品与版本/功能演进矩阵.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-4",
-            "version": "05",
-            "phase": "产品与版本",
-            "accent": "#4056a1",
-            "soft": "#e6e9f6",
-            "title": "V1.0 产品需求",
-            "file": "02-产品与版本/当前版本/V1-产品需求.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-5",
-            "version": "06",
-            "phase": "产品与版本",
-            "accent": "#4056a1",
-            "soft": "#e6e9f6",
-            "title": "V1.0 实现状态",
-            "file": "02-产品与版本/当前版本/V1-实现状态.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-6",
-            "version": "07",
-            "phase": "产品与版本",
-            "accent": "#4056a1",
-            "soft": "#e6e9f6",
-            "title": "V1 基础框架：版本总览",
-            "file": "02-产品与版本/当前版本/V1-版本总览.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-7",
-            "version": "08",
-            "phase": "产品与版本",
-            "accent": "#4056a1",
-            "soft": "#e6e9f6",
-            "title": "DGOS 版本路线图",
-            "file": "02-产品与版本/版本路线图.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-8",
-            "version": "09",
-            "phase": "功能规格",
-            "accent": "#2f7d4f",
-            "soft": "#e1f0e8",
-            "title": "功能规格导航",
-            "file": "03-功能规格/README.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-9",
-            "version": "10",
-            "phase": "功能规格",
-            "accent": "#2f7d4f",
-            "soft": "#e1f0e8",
-            "title": "V1 需求追踪矩阵",
-            "file": "03-功能规格/V1/00-V1需求追踪矩阵.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-10",
-            "version": "11",
-            "phase": "功能规格",
-            "accent": "#2f7d4f",
-            "soft": "#e1f0e8",
-            "title": "V1-FR-001：Provider 适配框架",
-            "file": "03-功能规格/V1/01-底层能力/01-Provider适配框架.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-11",
-            "version": "12",
-            "phase": "功能规格",
-            "accent": "#2f7d4f",
-            "soft": "#e1f0e8",
-            "title": "V1-FR-002：Skills 管理系统",
-            "file": "03-功能规格/V1/01-底层能力/02-Skills管理系统.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-12",
-            "version": "13",
-            "phase": "功能规格",
-            "accent": "#2f7d4f",
-            "soft": "#e1f0e8",
-            "title": "V1-FR-003：MCP 管理系统",
-            "file": "03-功能规格/V1/01-底层能力/03-MCP管理系统.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-13",
-            "version": "14",
-            "phase": "功能规格",
-            "accent": "#2f7d4f",
-            "soft": "#e1f0e8",
-            "title": "V1-FR-004：模块系统与热更新",
-            "file": "03-功能规格/V1/01-底层能力/04-模块系统与热更新.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-14",
-            "version": "15",
-            "phase": "功能规格",
-            "accent": "#2f7d4f",
-            "soft": "#e1f0e8",
-            "title": "V1-FR-005：统一设计系统",
-            "file": "03-功能规格/V1/01-底层能力/05-统一设计系统.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-15",
-            "version": "16",
-            "phase": "功能规格",
-            "accent": "#2f7d4f",
-            "soft": "#e1f0e8",
-            "title": "V1-FR-006：AI 工作台",
-            "file": "03-功能规格/V1/02-应用模块/01-AI工作台.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-16",
-            "version": "17",
-            "phase": "功能规格",
-            "accent": "#2f7d4f",
-            "soft": "#e1f0e8",
-            "title": "V1-FR-007：系统设置",
-            "file": "03-功能规格/V1/02-应用模块/02-系统设置.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-17",
-            "version": "18",
-            "phase": "功能规格",
-            "accent": "#2f7d4f",
-            "soft": "#e1f0e8",
-            "title": "V1-FR-008：本地用户管理",
-            "file": "03-功能规格/V1/03-系统功能/01-本地用户管理.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-18",
-            "version": "19",
-            "phase": "功能规格",
-            "accent": "#2f7d4f",
-            "soft": "#e1f0e8",
-            "title": "V1-FR-009：模块权限管理",
-            "file": "03-功能规格/V1/03-系统功能/02-模块权限管理.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-19",
-            "version": "20",
-            "phase": "功能规格",
-            "accent": "#2f7d4f",
-            "soft": "#e1f0e8",
-            "title": "V1-FR-010：局域网协同",
-            "file": "03-功能规格/V1/03-系统功能/03-局域网协同.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-20",
-            "version": "21",
-            "phase": "功能规格",
-            "accent": "#2f7d4f",
-            "soft": "#e1f0e8",
-            "title": "V1 功能规格索引",
-            "file": "03-功能规格/V1/README.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-21",
-            "version": "22",
-            "phase": "技术架构",
-            "accent": "#a96810",
-            "soft": "#f6ead6",
-            "title": "技术架构导航",
-            "file": "04-技术架构/README.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-22",
-            "version": "23",
-            "phase": "技术架构",
-            "accent": "#a96810",
-            "soft": "#f6ead6",
-            "title": "V1 接口契约",
-            "file": "04-技术架构/当前版本/V1-接口契约.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-23",
-            "version": "24",
-            "phase": "技术架构",
-            "accent": "#a96810",
-            "soft": "#f6ead6",
-            "title": "V1 数据模型",
-            "file": "04-技术架构/当前版本/V1-数据模型.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-24",
-            "version": "25",
-            "phase": "技术架构",
-            "accent": "#a96810",
-            "soft": "#f6ead6",
-            "title": "V1 错误码",
-            "file": "04-技术架构/当前版本/V1-错误码.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-25",
-            "version": "26",
-            "phase": "技术架构",
-            "accent": "#a96810",
-            "soft": "#f6ead6",
-            "title": "DGOS 总体架构",
-            "file": "04-技术架构/总体架构.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-26",
-            "version": "27",
-            "phase": "决策记录",
-            "accent": "#087d75",
-            "soft": "#dcefeb",
-            "title": "决策记录导航",
-            "file": "06-决策记录/README.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-27",
-            "version": "28",
-            "phase": "决策记录",
-            "accent": "#087d75",
-            "soft": "#dcefeb",
-            "title": "V1 冻结决策",
-            "file": "06-决策记录/V1-冻结决策.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-28",
-            "version": "29",
-            "phase": "参考资料",
-            "accent": "#69707a",
-            "soft": "#f1eee7",
-            "title": "2024-01-XX DGOS 初始讨论完整记录",
-            "file": "90-参考资料/2024-01-XX-初始讨论完整记录.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-29",
-            "version": "30",
-            "phase": "参考资料",
-            "accent": "#69707a",
-            "soft": "#f1eee7",
-            "title": "参考资料索引",
-            "file": "90-参考资料/README.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-30",
-            "version": "31",
-            "phase": "参考资料",
-            "accent": "#69707a",
-            "soft": "#f1eee7",
-            "title": "对话总结与待办事项",
-            "file": "90-参考资料/对话总结与待办事项.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-31",
-            "version": "32",
-            "phase": "历史归档",
-            "accent": "#69707a",
-            "soft": "#f1eee7",
-            "title": "历史归档索引",
-            "file": "99-历史归档/README.md",
-            "goal": ""
-      },
-      {
-            "id": "doc-32",
-            "version": "33",
-            "phase": "README.md",
-            "accent": "#69707a",
-            "soft": "#f1eee7",
-            "title": "DGOS 文档中心",
-            "file": "README.md",
-            "goal": ""
-      }
-];
-
-    const DECISIONS = [
-      { accent: "#2f7d4f", text: "V1 按 P1～P3 分阶段交付 Responses、Anthropic 和 Gemini 非流式入口；逐事件流式进入 V2。" },
-      { accent: "#69707a", text: "V3 原多协议范围已迁入 V1，只保留历史需求来源，当前版本目标待重新规划。" },
-      { accent: "#087d75", text: "V1 包含轻量支付：充值订单、单一支付渠道、回调入账、管理员退款和余额流水。" },
-      { accent: "#aa2d4d", text: "错误码采用双码体系：平台数字 code 为标准，字符串 error_key 用于语义和协议兼容。" },
-      { accent: "#aa2d4d", text: "计费两步走：上游返回的用量提供 token 用量，本地模型供给价格规则计算扣费金额。" },
-      { accent: "#a96810", text: "V4 不包含订阅套餐、完整发票流程、多币种、优惠券和分销。" },
-      { accent: "#4056a1", text: "V7 优先做开发者增长与兼容生态，社区和资源匹配后置；V8 固定为企业化。" }
+            const DOCS = [
+      { id: "doc-001", version: "00", phase: "其他", accent: "#087d75", soft: "#dcefeb", title: "DG-OS 文档补齐工作总结", file: "../.spec-docs-pro-总结.md", goal: "**执行时间**：2026-10-26" },
+      { id: "doc-002", version: "00", phase: "其他", accent: "#087d75", soft: "#dcefeb", title: "DG-OS 文档补齐计划", file: "../.spec-docs-pro-补齐计划.md", goal: "根据 spec-docs-pro 标准，系统性补齐所有文档缺失内容。" },
+      { id: "doc-003", version: "00", phase: "其他", accent: "#087d75", soft: "#dcefeb", title: "DG-OS V1 文档质量评估报告", file: "../.spec-docs-pro-评估报告.md", goal: "根据 spec-docs-pro 标准，对 DG-OS V1 所有文档进行质量评估。" },
+      { id: "doc-004", version: "00", phase: "其他", accent: "#087d75", soft: "#dcefeb", title: "失效链接原因分析报告", file: "../.失效链接原因分析.md", goal: "**分析时间**：2026-10-26" },
+      { id: "doc-005", version: "00", phase: "其他", accent: "#087d75", soft: "#dcefeb", title: "DG-OS 文档引用修复报告", file: "../.文档引用修复报告.md", goal: "**修复时间**：2026-10-26" },
+      { id: "doc-006", version: "00", phase: "其他", accent: "#087d75", soft: "#dcefeb", title: "DG-OS 文档引用完整性检查报告", file: "../.文档引用检查报告.md", goal: "**检查日期**：2026-10-26" },
+      { id: "doc-007", version: "00", phase: "概览", accent: "#087d75", soft: "#dcefeb", title: "Git 提交信息规范", file: "../01-项目概览/Git提交信息规范.md", goal: "本文档定义 DGOS 项目的 Git 提交信息规范，遵循 [Conventional Commits](https://www.conventionalcommits.org/) 标准。" },
+      { id: "doc-008", version: "00", phase: "概览", accent: "#087d75", soft: "#dcefeb", title: "项目概览导航", file: "../01-项目概览/README.md", goal: "- [项目首页与快速启动](../../README.md)" },
+      { id: "doc-009", version: "00", phase: "概览", accent: "#087d75", soft: "#dcefeb", title: "工程与本地环境", file: "../01-项目概览/工程与本地环境.md", goal: "本文档说明 DGOS 项目的环境要求、本地开发环境搭建、项目结构和常用开发命令。" },
+      { id: "doc-010", version: "00", phase: "产品", accent: "#4056a1", soft: "#e6e9f6", title: "产品与版本导航", file: "../02-产品与版本/README.md", goal: "详见文档内容" },
+      { id: "doc-011", version: "00", phase: "产品", accent: "#4056a1", soft: "#e6e9f6", title: "DGOS 产品需求文档 PRD", file: "../02-产品与版本/产品蓝图.md", goal: "详见文档内容" },
+      { id: "evolution", version: "EV", phase: "产品", accent: "#4056a1", soft: "#e6e9f6", title: "DGOS 功能演进矩阵", file: "../02-产品与版本/功能演进矩阵.md", goal: "详见文档内容" },
+      { id: "v1-product", version: "V1", phase: "产品", accent: "#4056a1", soft: "#e6e9f6", title: "V1.0 产品需求", file: "../02-产品与版本/当前版本/V1-产品需求.md", goal: "V1.0 建立本地优先的 AI 应用开发框架最小闭环：提供 Provider 适配、Skills/MCP 管理和模块系统基础能力，验证框架可扩展性。无限画布等核心价值功能分多版本完成，不阻塞 V1.0 交付。" },
+      { id: "v1-status", version: "V1", phase: "产品", accent: "#4056a1", soft: "#e6e9f6", title: "V1.0 实现状态", file: "../02-产品与版本/当前版本/V1-实现状态.md", goal: "本文档追踪 V1.0 所有功能的实现进度、测试状态和验收证据。" },
+      { id: "v1-overview", version: "V1", phase: "产品", accent: "#4056a1", soft: "#e6e9f6", title: "V1 基础框架：版本总览", file: "../02-产品与版本/当前版本/V1-版本总览.md", goal: "本文档冻结 DGOS 第一版本的交付范围。若 V1 子文档之间出现表述不一致，以本文档的范围口径为准；接口、数据表、架构和验收细节分别见同目录下的专项文档。" },
+      { id: "roadmap", version: "00", phase: "产品", accent: "#4056a1", soft: "#e6e9f6", title: "DGOS 版本路线图", file: "../02-产品与版本/版本路线图.md", goal: "本文档是 DGOS 产品版本规划的权威索引，定义版本编号、范围边界、依赖关系和进入条件。" },
+      { id: "doc-017", version: "00", phase: "产品", accent: "#4056a1", soft: "#e6e9f6", title: "版本进入开发门禁", file: "../02-产品与版本/版本进入开发门禁.md", goal: "本文档定义版本进入开发阶段的，确保开发前规格已充分收敛，避免边开发边改需求导致的返工。" },
+      { id: "doc-018", version: "00", phase: "规格", accent: "#2f7d4f", soft: "#e1f0e8", title: "功能规格导航", file: "../03-功能规格/README.md", goal: "- [功能开发流程](功能开发流程.md)：从范围确认到实现、验证和回写的完整流程。" },
+      { id: "doc-019", version: "V1", phase: "规格", accent: "#2f7d4f", soft: "#e1f0e8", title: "V1 需求编号管理", file: "../03-功能规格/V1/00-V1需求编号.md", goal: "本文档管理 DGOS V1 版本的所有需求编号，确保编号的稳定性和可追溯性。" },
+      { id: "doc-020", version: "V1", phase: "规格", accent: "#2f7d4f", soft: "#e1f0e8", title: "V1 需求追踪矩阵", file: "../03-功能规格/V1/00-V1需求追踪矩阵.md", goal: "本文档建立从产品需求到实现验证的完整追踪链路，确保每个需求都有明确的验收标准、技术实现和测试覆盖。" },
+      { id: "doc-021", version: "V1", phase: "规格", accent: "#2f7d4f", soft: "#e1f0e8", title: "V1 功能规格补充说明", file: "../03-功能规格/V1/00-功能规格补充说明.md", goal: "本文档统一补充所有 V1 功能规格中需要强化的内容，避免重复编辑每个文档。" },
+      { id: "doc-022", version: "V1", phase: "规格", accent: "#2f7d4f", soft: "#e1f0e8", title: "V1-FR-001：Provider 适配框架", file: "../03-功能规格/V1/01-底层能力/01-Provider适配框架.md", goal: "详见文档内容" },
+      { id: "doc-023", version: "V1", phase: "规格", accent: "#2f7d4f", soft: "#e1f0e8", title: "V1-FR-002：Skills 管理系统", file: "../03-功能规格/V1/01-底层能力/02-Skills管理系统.md", goal: "详见文档内容" },
+      { id: "doc-024", version: "V1", phase: "规格", accent: "#2f7d4f", soft: "#e1f0e8", title: "V1-FR-003：MCP 管理系统", file: "../03-功能规格/V1/01-底层能力/03-MCP管理系统.md", goal: "详见文档内容" },
+      { id: "doc-025", version: "V1", phase: "规格", accent: "#2f7d4f", soft: "#e1f0e8", title: "V1-FR-004：模块系统与热更新", file: "../03-功能规格/V1/01-底层能力/04-模块系统与热更新.md", goal: "详见文档内容" },
+      { id: "doc-026", version: "V1", phase: "规格", accent: "#2f7d4f", soft: "#e1f0e8", title: "V1-FR-005：统一设计系统", file: "../03-功能规格/V1/01-底层能力/05-统一设计系统.md", goal: "详见文档内容" },
+      { id: "doc-027", version: "V1", phase: "规格", accent: "#2f7d4f", soft: "#e1f0e8", title: "V1-FR-006：AI 工作台", file: "../03-功能规格/V1/02-应用模块/01-AI工作台.md", goal: "详见文档内容" },
+      { id: "doc-028", version: "V1", phase: "规格", accent: "#2f7d4f", soft: "#e1f0e8", title: "V1-FR-007：系统设置", file: "../03-功能规格/V1/02-应用模块/02-系统设置.md", goal: "详见文档内容" },
+      { id: "doc-029", version: "V1", phase: "规格", accent: "#2f7d4f", soft: "#e1f0e8", title: "V1-FR-008：本地用户管理", file: "../03-功能规格/V1/03-系统功能/01-本地用户管理.md", goal: "详见文档内容" },
+      { id: "doc-030", version: "V1", phase: "规格", accent: "#2f7d4f", soft: "#e1f0e8", title: "V1-FR-009：模块权限管理", file: "../03-功能规格/V1/03-系统功能/02-模块权限管理.md", goal: "详见文档内容" },
+      { id: "doc-031", version: "V1", phase: "规格", accent: "#2f7d4f", soft: "#e1f0e8", title: "V1-FR-010：局域网协同", file: "../03-功能规格/V1/03-系统功能/03-局域网协同.md", goal: "详见文档内容" },
+      { id: "doc-032", version: "V1", phase: "规格", accent: "#2f7d4f", soft: "#e1f0e8", title: "V1 功能规格索引", file: "../03-功能规格/V1/README.md", goal: "V1 登记 15 个可独立规划和验收的功能。首发交付按底层能力、应用模块和系统功能管理；核心系统另有技术设计；实现状态统一查看[V1 实现状态](../../02-产品与版本/当前版本/V1-实现状态.md)。" },
+      { id: "doc-033", version: "00", phase: "规格", accent: "#2f7d4f", soft: "#e1f0e8", title: "功能开发流程", file: "../03-功能规格/功能开发流程.md", goal: "本文档定义 DGOS 项目从需求到交付的完整功能开发流程，遵循 spec-docs-pro 规格驱动开发方法。" },
+      { id: "doc-034", version: "00", phase: "规格", accent: "#2f7d4f", soft: "#e1f0e8", title: "功能文档规范", file: "../03-功能规格/功能文档规范.md", goal: "本文档定义 DGOS 项目功能规格文档的标准格式和编写规范，确保所有功能文档的一致性和完整性。" },
+      { id: "doc-035", version: "00", phase: "架构", accent: "#a96810", soft: "#f6ead6", title: "技术架构导航", file: "../04-技术架构/README.md", goal: "详见文档内容" },
+      { id: "doc-036", version: "V1", phase: "架构", accent: "#a96810", soft: "#f6ead6", title: "V1 总体架构", file: "../04-技术架构/当前版本/V1-总体架构.md", goal: "本文档描述 DGOS V1.0 的总体架构设计，包括系统分层、模块组织、数据流和技术选型。" },
+      { id: "doc-037", version: "V1", phase: "架构", accent: "#a96810", soft: "#f6ead6", title: "V1 接口契约", file: "../04-技术架构/当前版本/V1-接口契约.md", goal: "本文档定义 DGOS V1 的所有接口，包括 Tauri Commands（桌面端）和 HTTP API（局域网）。" },
+      { id: "doc-038", version: "V1", phase: "架构", accent: "#a96810", soft: "#f6ead6", title: "V1 数据模型", file: "../04-技术架构/当前版本/V1-数据模型.md", goal: "本文档定义 DGOS V1 的完整数据模型，包括所有数据表、字段、约束、关系和迁移策略。" },
+      { id: "doc-039", version: "V1", phase: "架构", accent: "#a96810", soft: "#f6ead6", title: "V1 错误码", file: "../04-技术架构/当前版本/V1-错误码.md", goal: "本文档汇总 DGOS V1 的所有错误码，确保全局唯一、语义清晰、易于维护。" },
+      { id: "doc-040", version: "00", phase: "架构", accent: "#a96810", soft: "#f6ead6", title: "DGOS 总体架构", file: "../04-技术架构/总体架构.md", goal: "详见文档内容" },
+      { id: "doc-041", version: "00", phase: "架构", accent: "#a96810", soft: "#f6ead6", title: "技术栈选型", file: "../04-技术架构/技术栈选型.md", goal: "本文档说明 DGOS 项目的技术栈选择及其决策依据，遵循 [V1 冻结决策](../06-决策记录/V1-冻结决策.md) 中的相关决策。" },
+      { id: "doc-042", version: "00", phase: "架构", accent: "#a96810", soft: "#f6ead6", title: "服务与领域边界", file: "../04-技术架构/服务与领域边界.md", goal: "本文档定义 DGOS 的服务架构和领域边界，明确各模块的职责和交互关系。" },
+      { id: "doc-043", version: "00", phase: "决策", accent: "#7c3aed", soft: "#ede9fe", title: "决策记录导航", file: "../06-决策记录/README.md", goal: "- [V1 冻结决策](V1-冻结决策.md)：当前版本的跨功能产品和工程决策。" },
+      { id: "doc-044", version: "V1", phase: "决策", accent: "#7c3aed", soft: "#ede9fe", title: "V1 冻结决策", file: "../06-决策记录/V1-冻结决策.md", goal: "本表记录影响范围、协议和架构的一致性决策；新证据到达后追加新编号，不改写历史结论。" },
+      { id: "doc-045", version: "00", phase: "归档", accent: "#69707a", soft: "#f1eee7", title: "历史归档索引", file: "../99-历史归档/README.md", goal: "本目录存放已迁移或不再作为当前依据的历史材料。" },
+      { id: "doc-046", version: "00", phase: "其他", accent: "#087d75", soft: "#dcefeb", title: "DGOS 文档中心", file: "../README.md", goal: "这里是 DGOS 项目的统一文档入口。日常查找从本页开始，不需要记忆文件名或版本目录。" },
     ];
 
-    const FEATURE_TRACKS = {
-      identity: { title: "身份、API Key 与权限演进", overview: "身份、API Key 与权限", accent: "#087d75" },
-      protocol: { title: "模型协议与开发者调用演进", overview: "模型协议与调用", accent: "#4056a1" },
-      supply: { title: "供给、模型资产与路由演进", overview: "供给、模型资产与路由", accent: "#4056a1" },
-      billing: { title: "用量、计费、支付与账务演进", overview: "用量、计费与支付", accent: "#aa2d4d" },
-      operations: { title: "运营、可观测性与排障演进", overview: "运营与可观测性", accent: "#a96810" },
-      developer: { title: "开发者体验与增长演进", overview: "开发者体验与增长", accent: "#2f7d4f" }
+        const DECISIONS = [
+      { accent: "#087d75", text: "使用 Rust + Tauri 而非 Node.js + Electron" },
+      { accent: "#4056a1", text: "使用 SQLite 而非 PostgreSQL" },
+      { accent: "#4056a1", text: "不使用 QuickJS/Node.js 作为 Skills/MCP 运行时" },
+      { accent: "#4056a1", text: "使用 Module Federation 实现模块热更新" },
+      { accent: "#4056a1", text: "Skills 和 MCP 使用现有标准协议" },
+      { accent: "#4056a1", text: "权限模型采用粗粒度模块级权限" },
+      { accent: "#4056a1", text: "局域网 HTTP 服务始终开启" },
+      { accent: "#4056a1", text: "所有模块强制使用统一设计系统" },
+      { accent: "#2f7d4f", text: "无限画布分多版本实现，不阻塞 V1" },
+      { accent: "#4056a1", text: "应用市场采用中心化模式，人工审核" },
+      { accent: "#aa2d4d", text: "官方 Provider 采用积分制，按类型计费" },
+      { accent: "#4056a1", text: "Provider 支持同类型多配置和排序机制" },
+      { accent: "#4056a1", text: "局域网协同需要简单认证和实时状态显示" },
+      { accent: "#4056a1", text: "模型分类标签内置维护，不自动提取" },
+      { accent: "#4056a1", text: "模块更新自动推送，图标显示版本提示" },
+    ];
+
+        const FEATURE_TRACKS = {
+      provider: { title: "Provider 能力演进", overview: "Provider 能力", accent: "#087d75" },
+      skills: { title: "Skills 能力演进", overview: "Skills 能力", accent: "#2f7d4f" },
+      mcp: { title: "MCP 能力演进", overview: "MCP 能力", accent: "#4056a1" },
+      module: { title: "模块系统演进", overview: "模块系统", accent: "#a96810" },
+      design: { title: "设计系统演进", overview: "设计系统", accent: "#aa2d4d" },
+      canvas: { title: "无限画布演进", overview: "无限画布", accent: "#7c3aed" },
+      identity: { title: "身份管理演进", overview: "身份管理", accent: "#087d75" },
+      ecosystem: { title: "应用生态演进", overview: "应用生态", accent: "#2f7d4f" },
     };
 
-    const FEATURE_TIMELINE_VERSIONS = [
+        const FEATURE_TIMELINE_VERSIONS = [
       { id: "v1", label: "V1", kind: "current" },
       { id: "gate", label: "V1 门禁", kind: "gate" },
       { id: "v2", label: "V2", kind: "planned" },
-      { id: "v3", label: "V3", kind: "history" },
       { id: "v4", label: "V4", kind: "planned" },
       { id: "v5", label: "V5", kind: "planned" },
       { id: "v6", label: "V6", kind: "planned" },
@@ -1921,8 +1646,8 @@
 
     const state = {
       docs: [],
-      features: Array.isArray(window.产品文档_FEATURE_BROWSER_DATA) ? window.产品文档_FEATURE_BROWSER_DATA : [],
-      activeDocId: localStorage.getItem("prd.activeDoc") || "index",
+      features: Array.isArray(window.DGOS_FEATURE_BROWSER_DATA) ? window.DGOS_FEATURE_BROWSER_DATA : [],
+      activeDocId: localStorage.getItem("prd.activeDoc") || "roadmap",
       activeFeatureId: localStorage.getItem("prd.activeFeature") || "V1-FR-001",
       view: localStorage.getItem("prd.view") || "overview",
       query: ""
@@ -1951,7 +1676,7 @@
 
       try {
         state.docs = await Promise.all(DOCS.map(loadDoc));
-        if (state.features.length !== 36) throw new Error(`具体功能数据应为 36 个，当前 ${state.features.length} 个`);
+        if (state.features.length === 0) throw new Error(`未加载功能数据`);
         els.loadStatus.textContent = `${state.docs.length} 份 PRD · ${state.features.length} 功能${location.protocol === "file:" ? " · 本地" : ""}`;
         renderDocList();
         setView(state.view);
@@ -1970,7 +1695,7 @@
     }
 
     async function loadDoc(doc) {
-      let content = window.产品文档_DOC_BROWSER_DATA?.[doc.id];
+      let content = window.DGOS_DOC_BROWSER_DATA?.[doc.id];
       if (location.protocol !== "file:") {
         try {
           const response = await fetch(encodeURI(doc.file), { cache: "no-store" });
@@ -2163,7 +1888,7 @@
             <span class="tag">Visual</span>
             <span>结构图谱</span>
           </div>
-          <h2>产品文档 PRD 图谱</h2>
+          <h2>DGOS PRD 图谱</h2>
           <div class="doc-meta">
             <span class="tag">产品全景</span>
             <span class="tag">调用闭环</span>
@@ -2564,7 +2289,7 @@
 
     function renderProductArchitectureSvg() {
       return `
-        <svg viewBox="0 0 960 520" role="img" aria-label="产品文档 产品全景图">
+        <svg viewBox="0 0 960 520" role="img" aria-label="DGOS 产品全景图">
           <defs>
             <marker id="arrow-main" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
               <path d="M0,0 L9,3 L0,6 Z" fill="#69707a"></path>
@@ -2578,7 +2303,7 @@
           </defs>
           <rect x="0" y="0" width="960" height="520" rx="8" fill="#fbfaf7"></rect>
 
-          <text x="36" y="38" font-size="18" font-weight="760" fill="#1d1f22">产品文档 产品全景</text>
+          <text x="36" y="38" font-size="18" font-weight="760" fill="#1d1f22">DGOS 产品全景</text>
           <text x="36" y="62" font-size="12" fill="#69707a">上半部分是 API 调用数据面，下半部分是控制台、配置、账务、供应商、开发者增长和企业能力。</text>
 
           <rect x="28" y="84" width="904" height="178" rx="8" fill="#ffffff" stroke="#dedbd2"></rect>
@@ -2682,7 +2407,7 @@
 
     function renderCoreFlowSvg() {
       return `
-        <svg viewBox="0 0 960 280" role="img" aria-label="产品文档 调用闭环图">
+        <svg viewBox="0 0 960 280" role="img" aria-label="DGOS 调用闭环图">
           <defs>
             <marker id="arrow-flow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
               <path d="M0,0 L9,3 L0,6 Z" fill="#69707a"></path>
@@ -2740,7 +2465,7 @@
 
     function renderVersionRoadmapSvg() {
       return `
-        <svg viewBox="0 0 960 540" role="img" aria-label="产品文档 版本路线图">
+        <svg viewBox="0 0 960 540" role="img" aria-label="DGOS 版本路线图">
           <defs>
             <marker id="arrow-road" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
               <path d="M0,0 L9,3 L0,6 Z" fill="#69707a"></path>
@@ -2845,7 +2570,7 @@
 
     function renderDataDomainSvg() {
       return `
-        <svg viewBox="0 0 960 380" role="img" aria-label="产品文档 数据域关系图">
+        <svg viewBox="0 0 960 380" role="img" aria-label="DGOS 数据域关系图">
           <defs>
             <marker id="arrow-data" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
               <path d="M0,0 L9,3 L0,6 Z" fill="#69707a"></path>
@@ -2903,7 +2628,7 @@
 
     function renderRiskHeatmapSvg() {
       return `
-        <svg viewBox="0 0 960 340" role="img" aria-label="产品文档 风险热区图">
+        <svg viewBox="0 0 960 340" role="img" aria-label="DGOS 风险热区图">
           <rect width="960" height="340" rx="8" fill="#fbfaf7"></rect>
           <text x="36" y="38" font-size="18" font-weight="760" fill="#1d1f22">风险热区</text>
           <text x="36" y="62" font-size="12" fill="#69707a">颜色越深，越需要在前置版本里收敛规则和测试口径。</text>

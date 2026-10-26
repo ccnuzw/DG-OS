@@ -1,0 +1,642 @@
+openapi: 3.1.0
+info:
+  title: DGOS V1 API
+  description: |
+    DGOS V1.0 局域网协同 HTTP API 规范
+    
+    **认证方式**：Bearer Token (JWT)
+    
+    **基础 URL**：`http://{host}:3000/api/v1`
+    
+    **权限说明**：
+    - 远程设备只读模式，不能修改配置
+    - 所有接口需要认证
+    
+    **错误处理**：
+    - 401: 未认证或 Token 过期
+    - 403: 权限不足
+    - 404: 资源不存在
+    - 500: 服务器错误
+  version: 1.0.0
+  contact:
+    name: DGOS Team
+    url: https://github.com/your-org/DG-OS
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:3000/api/v1
+    description: 本地开发环境
+  - url: http://192.168.1.100:3000/api/v1
+    description: 局域网主机
+
+tags:
+  - name: auth
+    description: 认证相关接口
+  - name: providers
+    description: Provider 管理和调用
+  - name: skills
+    description: Skills 管理和调用
+  - name: mcp
+    description: MCP 服务器和工具
+  - name: modules
+    description: 模块管理
+  - name: conversations
+    description: 对话历史
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: 用户登录
+      description: 使用用户名和密码登录，返回 JWT Token
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+              properties:
+                username:
+                  type: string
+                  example: admin
+                password:
+                  type: string
+                  format: password
+                  example: password123
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: JWT Token
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                  user:
+                    $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: 获取当前用户信息
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: 用户信息
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /providers:
+    get:
+      tags: [providers]
+      summary: 获取 Provider 列表
+      operationId: listProviders
+      responses:
+        '200':
+          description: Provider 列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Provider'
+
+  /providers/{providerId}/models:
+    get:
+      tags: [providers]
+      summary: 获取 Provider 的模型列表
+      operationId: listModels
+      parameters:
+        - $ref: '#/components/parameters/ProviderId'
+      responses:
+        '200':
+          description: 模型列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Model'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /providers/{providerId}/call:
+    post:
+      tags: [providers]
+      summary: 调用 Provider（非流式）
+      operationId: callProvider
+      parameters:
+        - $ref: '#/components/parameters/ProviderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          description: AI 响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /providers/{providerId}/stream:
+    post:
+      tags: [providers]
+      summary: 调用 Provider（流式）
+      operationId: streamProvider
+      parameters:
+        - $ref: '#/components/parameters/ProviderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          description: SSE 流式响应
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                format: binary
+
+  /skills:
+    get:
+      tags: [skills]
+      summary: 获取已安装的 Skills 列表
+      operationId: listInstalledSkills
+      responses:
+        '200':
+          description: Skills 列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Skill'
+
+  /skills/{skillId}/call:
+    post:
+      tags: [skills]
+      summary: 调用 Skill
+      operationId: callSkill
+      parameters:
+        - $ref: '#/components/parameters/SkillId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                params:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Skill 执行结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: object
+                    additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /mcp/servers:
+    get:
+      tags: [mcp]
+      summary: 获取 MCP 服务器列表
+      operationId: listMCPServers
+      responses:
+        '200':
+          description: MCP 服务器列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MCPServer'
+
+  /mcp/tools:
+    get:
+      tags: [mcp]
+      summary: 获取所有 MCP 工具列表
+      operationId: listMCPTools
+      parameters:
+        - name: server_id
+          in: query
+          description: 过滤特定服务器的工具
+          schema:
+            type: string
+      responses:
+        '200':
+          description: MCP 工具列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MCPTool'
+
+  /mcp/call:
+    post:
+      tags: [mcp]
+      summary: 调用 MCP 工具
+      operationId: callMCPTool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - server_id
+                - tool_name
+              properties:
+                server_id:
+                  type: string
+                tool_name:
+                  type: string
+                params:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: 工具执行结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: object
+                    additionalProperties: true
+
+  /modules:
+    get:
+      tags: [modules]
+      summary: 获取已安装的模块列表
+      operationId: listModules
+      responses:
+        '200':
+          description: 模块列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Module'
+
+  /conversations:
+    get:
+      tags: [conversations]
+      summary: 获取对话历史列表
+      operationId: listConversations
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: 对话列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Conversation'
+
+  /conversations/{conversationId}/messages:
+    get:
+      tags: [conversations]
+      summary: 获取对话消息列表
+      operationId: listMessages
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 消息列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    ProviderId:
+      name: providerId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Provider ID
+
+    SkillId:
+      name: skillId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Skill ID
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    Provider:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        provider_type:
+          type: string
+          enum: [openai_compatible]
+        base_url:
+          type: string
+          format: uri
+        enabled:
+          type: boolean
+        sort_order:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    Model:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        provider_id:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+            enum: [text_generation, image_generation, video_generation]
+        context_length:
+          type: integer
+          nullable: true
+        is_available:
+          type: boolean
+
+    ChatRequest:
+      type: object
+      required:
+        - model_id
+        - messages
+      properties:
+        model_id:
+          type: string
+        messages:
+          type: array
+          items:
+            type: object
+            required:
+              - role
+              - content
+            properties:
+              role:
+                type: string
+                enum: [system, user, assistant]
+              content:
+                type: string
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+          default: 1
+        max_tokens:
+          type: integer
+          nullable: true
+
+    ChatResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+        model:
+          type: string
+        usage:
+          type: object
+          properties:
+            prompt_tokens:
+              type: integer
+            completion_tokens:
+              type: integer
+            total_tokens:
+              type: integer
+
+    Skill:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+        enabled:
+          type: boolean
+        call_type:
+          type: string
+          enum: [http, cli]
+        created_at:
+          type: string
+          format: date-time
+
+    MCPServer:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        transport:
+          type: string
+          enum: [stdio, http]
+        enabled:
+          type: boolean
+        status:
+          type: string
+          enum: [connected, disconnected, error]
+
+    MCPTool:
+      type: object
+      properties:
+        id:
+          type: string
+        server_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        input_schema:
+          type: object
+
+    Module:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+        enabled:
+          type: boolean
+        permissions:
+          type: array
+          items:
+            type: string
+
+    Conversation:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+        conversation_id:
+          type: string
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+  responses:
+    Unauthorized:
+      description: 未认证或 Token 无效
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: unauthorized
+            message: Invalid or expired token
+
+    Forbidden:
+      description: 权限不足
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: forbidden
+            message: Insufficient permissions
+
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: not_found
+            message: Resource not found
+
+    InternalError:
+      description: 服务器内部错误
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: internal_error
+            message: An internal error occurred
