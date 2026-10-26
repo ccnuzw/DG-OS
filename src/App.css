@@ -1,0 +1,60 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  text-align: center;
+  height: 100vh;
+}
+
+h1 {
+  font-size: 2.5rem;
+  margin-bottom: 1rem;
+}
+
+p {
+  margin: 0.5rem 0;
+  color: #888;
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+  margin: 2rem 0;
+}
+
+input {
+  padding: 0.5rem 1rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 1rem;
+}
+
+button {
+  padding: 0.5rem 1.5rem;
+  background-color: #0969da;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+button:hover {
+  background-color: #0860ca;
+}
+
+@media (prefers-color-scheme: light) {
+  input {
+    background-color: white;
+    color: #213547;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  input {
+    background-color: #1a1a1a;
+    color: rgba(255, 255, 255, 0.87);
+  }
+}
