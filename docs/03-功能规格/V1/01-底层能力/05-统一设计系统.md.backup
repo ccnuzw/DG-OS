@@ -1,0 +1,739 @@
+# V1-FR-005：统一设计系统
+
+## 1. 功能元信息
+
+| 属性 | 值 |
+| --- | --- |
+| 功能编号 | V1-FR-005 |
+| 功能名称 | 统一设计系统 |
+| 所属版本 | V1 |
+| 所属领域 | 底层能力 |
+| 优先级 | P0（必须） |
+| 风险级别 | 标准（UI 规范，技术成熟） |
+| 依赖功能 | V1-FR-004（模块系统，所有模块必须使用统一组件） |
+| 被依赖功能 | V1-FR-006、V1-FR-007（应用模块必须使用） |
+| 负责人 | TBD |
+| 当前状态 | 规划中 |
+
+## 2. 功能概述
+
+### 2.1 一句话描述
+
+建立统一的主题系统、色彩规范、字体规范、间距规范和基础 UI 组件库（10+ 组件），所有模块强制复用，保证 DGOS 全局视觉一致性。
+
+### 2.2 详细说明
+
+统一设计系统让所有模块使用相同的 UI 组件和设计规范，避免视觉不一致、重复开发组件、维护成本高等问题。
+
+**核心价值**：
+- ✅ 视觉一致：所有模块统一的外观和交互
+- ✅ 避免重复：组件只开发一次，全局复用
+- ✅ 主题支持：一键切换亮色/暗色模式
+- ✅ 易于维护：统一更新组件，全局生效
+- ✅ 加速开发：开发者直接使用现成组件
+
+**用户价值**：
+- 开发者：不需要自己写 UI 组件，专注业务逻辑
+- 最终用户：全局统一的视觉体验，无违和感
+
+**从老项目学到的教训**：
+- ❌ 老项目：内联样式、重复组件、视觉不一致
+- ✅ DGOS：统一设计系统、强制复用、全局一致
+
+### 2.3 功能边界
+
+**包含**：
+- ✅ 主题系统（亮色/暗色模式）
+- ✅ 色彩规范（品牌色、语义色、中性色）
+- ✅ 字体规范（字体家族、字号、行高、字重）
+- ✅ 间距规范（4px 基础单位、8px 网格系统）
+- ✅ 圆角规范（4px、8px、12px、9999px）
+- ✅ 阴影规范（sm、md、lg）
+- ✅ 动画规范（transition、duration、easing）
+- ✅ 基础 UI 组件库（10+ 组件）
+- ✅ 组件文档（Storybook 或 文档站点）
+- ✅ 强制复用机制（ESLint 规则）
+
+**V1 基础组件库（10+ 组件）**：
+1. Button（按钮）
+2. Input（输入框）
+3. Select（选择器）
+4. Checkbox（复选框）
+5. Radio（单选框）
+6. Switch（开关）
+7. Modal（模态框）
+8. Toast（轻提示）
+9. Card（卡片）
+10. Tooltip（提示）
+11. Loading（加载）
+12. Divider（分割线）
+
+**不包含**（明确说明原因）：
+- ❌ 复杂业务组件（表格、图表） → V2 根据需求扩展
+- ❌ 动画库（Framer Motion） → V1 简化，使用 CSS transitions
+- ❌ 图标库（完整） → V1 只包含必要图标（20 个），V2 扩展
+- ❌ 国际化 i18n → V2 再做
+- ❌ 响应式断点（移动端） → V6 移动端时做
+
+## 3. 核心流程
+
+### 3.1 开发者使用组件流程
+
+```
+开发者开发新模块
+  ↓
+需要按钮组件
+  ↓
+导入统一组件：import { Button } from '@dgos/ui'
+  ↓
+使用组件：<Button variant="primary">确定</Button>
+  ↓
+组件自动使用当前主题
+  ↓
+用户切换主题
+  ↓
+组件自动更新样式
+```
+
+### 3.2 主题切换流程
+
+```
+用户打开系统设置
+  ↓
+点击"外观"
+  ↓
+选择主题：亮色 / 暗色
+  ↓
+系统更新 CSS Variables
+  ↓
+:root {
+  --color-primary: #3b82f6; (亮色)
+  → --color-primary: #60a5fa; (暗色)
+}
+  ↓
+所有组件自动更新样式
+  ↓
+保存用户偏好到数据库
+```
+
+### 3.3 新增组件流程
+
+```
+设计师设计新组件（如 Dropdown）
+  ↓
+前端开发实现组件
+  ↓
+遵循设计规范（色彩、字体、间距）
+  ↓
+编写组件文档（props、示例）
+  ↓
+发布到 @dgos/ui 包
+  ↓
+所有模块可以使用新组件
+```
+
+### 3.4 强制复用检查流程
+
+```
+开发者提交代码
+  ↓
+CI 运行 ESLint 检查
+  ↓
+检测到直接使用 <button>
+  ↓
+ESLint 报错："禁止直接使用 <button>，请使用 <Button>"
+  ↓
+开发者修改为 <Button>
+  ↓
+检查通过，合并代码
+```
+
+## 4. 数据模型
+
+### 4.1 涉及的数据表
+
+**user_preferences 表**（用户偏好，扩展现有表）：
+```sql
+-- 如果已有 users 表，添加字段
+ALTER TABLE users ADD COLUMN theme TEXT DEFAULT 'light'; -- 主题：light, dark
+
+-- 或单独的偏好表
+CREATE TABLE user_preferences (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    theme TEXT DEFAULT 'light',     -- 主题
+    font_size TEXT DEFAULT 'medium', -- 字号：small, medium, large
+    compact_mode BOOLEAN DEFAULT FALSE, -- 紧凑模式
+    updated_at TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    UNIQUE(user_id)
+);
+```
+
+### 4.2 读写关系
+
+**读操作**：
+- 获取用户主题：`SELECT theme FROM user_preferences WHERE user_id = ?`
+
+**写操作**：
+- 保存主题偏好：`INSERT INTO user_preferences (user_id, theme) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET theme = ?`
+
+## 5. 验收标准
+
+### 5.1 AC 逐项测试设计表
+
+| AC | 验收重点 | Given | When | Then | 测试层级 | 目标资产 | 目标命令 | 初始资产状态 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| AC01 | 主题切换成功 | 当前是亮色主题 | 切换到暗色 | 所有组件更新样式 | E2E | `tests/e2e/theme_switch.spec.ts` | `pnpm test:e2e theme_switch` | 规划中 |
+| AC02 | 主题持久化 | 用户选择暗色 | 重启应用 | 仍然是暗色主题 | E2E | `tests/e2e/theme_persistence.spec.ts` | `pnpm test:e2e theme_persistence` | 规划中 |
+| AC03 | Button 组件渲染 | 导入 Button | 渲染组件 | 按钮正常显示 | 前端单元测试 | `packages/ui/src/Button.test.tsx` | `pnpm test Button` | 规划中 |
+| AC04 | Button 变体 | 使用不同 variant | primary/secondary/ghost | 样式正确 | 前端单元测试 | `packages/ui/src/Button.test.tsx` | `pnpm test Button` | 规划中 |
+| AC05 | Input 组件 | 导入 Input | 输入文本 | 正常输入，样式正确 | 前端单元测试 | `packages/ui/src/Input.test.tsx` | `pnpm test Input` | 规划中 |
+| AC06 | Modal 组件 | 导入 Modal | 打开/关闭 | 模态框正常显示/隐藏 | 前端单元测试 | `packages/ui/src/Modal.test.tsx` | `pnpm test Modal` | 规划中 |
+| AC07 | Toast 组件 | 调用 toast() | 显示提示 | 3 秒后自动消失 | 前端单元测试 | `packages/ui/src/Toast.test.tsx` | `pnpm test Toast` | 规划中 |
+| AC08 | 所有组件使用主题 | 切换主题 | 查看所有组件 | 所有组件都响应主题变化 | E2E | `tests/e2e/all_components_theme.spec.ts` | `pnpm test:e2e all_components_theme` | 规划中 |
+| AC09 | ESLint 检查 | 直接使用 <button> | 运行 lint | 报错提示使用 <Button> | CI 检查 | `.eslintrc.js` | `pnpm lint` | 规划中 |
+| AC10 | 组件文档完整 | 查看组件文档 | 每个组件都有示例 | 文档覆盖所有组件 | 文档检查 | `docs/components/` | 手动检查 | 规划中 |
+| AC11 | 色彩变量可用 | CSS Variables | 在任意组件使用 | 颜色正确渲染 | 前端集成测试 | `packages/ui/src/theme.test.ts` | `pnpm test theme` | 规划中 |
+| AC12 | 响应式字体 | 不同字号设置 | small/medium/large | 全局字体大小改变 | E2E | `tests/e2e/font_size.spec.ts` | `pnpm test:e2e font_size` | 规划中 |
+
+### 5.2 边界条件测试
+
+| 边界条件 | 测试场景 | 预期结果 |
+| --- | --- | --- |
+| 组件 props 错误 | 传入无效 variant | TypeScript 报错或运行时警告 |
+| 主题切换频繁 | 快速切换 10 次 | 不卡顿，样式正确 |
+| 长文本 | Input 超长文本 | 正确截断或滚动 |
+| Modal 嵌套 | Modal 内打开 Modal | 正确显示，z-index 正确 |
+| Toast 大量 | 同时显示 10 个 Toast | 正确堆叠，不重叠 |
+
+## 6. 接口设计
+
+### 6.1 主题系统 API
+
+```typescript
+// packages/ui/src/theme.ts
+
+export type Theme = 'light' | 'dark';
+
+export interface ThemeConfig {
+  colors: {
+    // 品牌色
+    primary: string;
+    secondary: string;
+    accent: string;
+    
+    // 语义色
+    success: string;
+    warning: string;
+    error: string;
+    info: string;
+    
+    // 中性色
+    background: string;
+    foreground: string;
+    muted: string;
+    border: string;
+  };
+  
+  fonts: {
+    sans: string;
+    mono: string;
+  };
+  
+  spacing: {
+    unit: number; // 4px
+  };
+  
+  radius: {
+    sm: string;
+    md: string;
+    lg: string;
+    full: string;
+  };
+}
+
+// 主题上下文
+export const ThemeProvider: React.FC<{
+  children: React.ReactNode;
+  defaultTheme?: Theme;
+}>;
+
+// 主题钩子
+export const useTheme: () => {
+  theme: Theme;
+  setTheme: (theme: Theme) => void;
+  toggleTheme: () => void;
+};
+```
+
+### 6.2 组件 API 示例
+
+```typescript
+// packages/ui/src/Button.tsx
+
+export interface ButtonProps {
+  variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
+  size?: 'sm' | 'md' | 'lg';
+  disabled?: boolean;
+  loading?: boolean;
+  children: React.ReactNode;
+  onClick?: () => void;
+}
+
+export const Button: React.FC<ButtonProps>;
+
+// packages/ui/src/Input.tsx
+
+export interface InputProps {
+  type?: 'text' | 'password' | 'email' | 'number';
+  placeholder?: string;
+  value?: string;
+  onChange?: (value: string) => void;
+  disabled?: boolean;
+  error?: string;
+  prefix?: React.ReactNode;
+  suffix?: React.ReactNode;
+}
+
+export const Input: React.FC<InputProps>;
+
+// packages/ui/src/Modal.tsx
+
+export interface ModalProps {
+  open: boolean;
+  onClose: () => void;
+  title?: string;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+  width?: string;
+}
+
+export const Modal: React.FC<ModalProps>;
+
+// packages/ui/src/Toast.tsx
+
+export interface ToastOptions {
+  message: string;
+  type?: 'success' | 'error' | 'warning' | 'info';
+  duration?: number; // 默认 3000ms
+}
+
+export const toast: (options: ToastOptions) => void;
+```
+
+详见 [V1 接口契约](../../../04-技术架构/当前版本/V1-接口契约.md)。
+
+## 7. 技术设计
+
+### 7.1 CSS Variables 主题系统
+
+```css
+/* packages/ui/src/theme.css */
+
+:root {
+  /* 亮色主题 */
+  --color-primary: #3b82f6;
+  --color-secondary: #8b5cf6;
+  --color-accent: #06b6d4;
+  
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+  
+  --color-background: #ffffff;
+  --color-foreground: #0f172a;
+  --color-muted: #64748b;
+  --color-border: #e2e8f0;
+  
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "SF Mono", Monaco, "Cascadia Code", monospace;
+  
+  --spacing-unit: 4px;
+  
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+  
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  
+  --transition-fast: 150ms;
+  --transition-normal: 300ms;
+  --transition-slow: 500ms;
+}
+
+:root[data-theme="dark"] {
+  /* 暗色主题 */
+  --color-primary: #60a5fa;
+  --color-secondary: #a78bfa;
+  --color-accent: #22d3ee;
+  
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-error: #f87171;
+  --color-info: #60a5fa;
+  
+  --color-background: #0f172a;
+  --color-foreground: #f1f5f9;
+  --color-muted: #94a3b8;
+  --color-border: #334155;
+}
+```
+
+### 7.2 主题切换实现
+
+```typescript
+// packages/ui/src/ThemeProvider.tsx
+
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { invoke } from '@tauri-apps/api';
+
+type Theme = 'light' | 'dark';
+
+interface ThemeContextType {
+  theme: Theme;
+  setTheme: (theme: Theme) => void;
+  toggleTheme: () => void;
+}
+
+const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
+
+export const ThemeProvider: React.FC<{
+  children: React.ReactNode;
+  defaultTheme?: Theme;
+}> = ({ children, defaultTheme = 'light' }) => {
+  const [theme, setThemeState] = useState<Theme>(defaultTheme);
+  
+  // B05-01: 初始化时从数据库加载用户主题偏好
+  useEffect(() => {
+    invoke<Theme>('get_user_theme').then((savedTheme) => {
+      setThemeState(savedTheme);
+      applyTheme(savedTheme);
+    });
+  }, []);
+  
+  // B05-02: 应用主题到 DOM
+  const applyTheme = (newTheme: Theme) => {
+    document.documentElement.setAttribute('data-theme', newTheme);
+  };
+  
+  // B05-03: 设置主题
+  const setTheme = (newTheme: Theme) => {
+    setThemeState(newTheme);
+    applyTheme(newTheme);
+    
+    // B05-04: 保存到数据库
+    invoke('save_user_theme', { theme: newTheme });
+  };
+  
+  // B05-05: 切换主题
+  const toggleTheme = () => {
+    const newTheme = theme === 'light' ? 'dark' : 'light';
+    setTheme(newTheme);
+  };
+  
+  return (
+    <ThemeContext.Provider value={{ theme, setTheme, toggleTheme }}>
+      {children}
+    </ThemeContext.Provider>
+  );
+};
+
+export const useTheme = () => {
+  const context = useContext(ThemeContext);
+  if (!context) {
+    throw new Error('useTheme must be used within ThemeProvider');
+  }
+  return context;
+};
+```
+
+### 7.3 Button 组件实现
+
+```typescript
+// packages/ui/src/Button.tsx
+
+import React from 'react';
+import { cn } from './utils';
+
+export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
+  size?: 'sm' | 'md' | 'lg';
+  loading?: boolean;
+  children: React.ReactNode;
+}
+
+// B05-06: Button 组件
+export const Button: React.FC<ButtonProps> = ({
+  variant = 'primary',
+  size = 'md',
+  loading = false,
+  disabled,
+  children,
+  className,
+  ...props
+}) => {
+  // B05-07: 根据 variant 生成样式类
+  const variantClasses = {
+    primary: 'bg-[var(--color-primary)] text-white hover:opacity-90',
+    secondary: 'bg-[var(--color-secondary)] text-white hover:opacity-90',
+    ghost: 'bg-transparent text-[var(--color-foreground)] hover:bg-[var(--color-muted)]',
+    danger: 'bg-[var(--color-error)] text-white hover:opacity-90',
+  };
+  
+  // B05-08: 根据 size 生成样式类
+  const sizeClasses = {
+    sm: 'px-3 py-1.5 text-sm',
+    md: 'px-4 py-2 text-base',
+    lg: 'px-6 py-3 text-lg',
+  };
+  
+  return (
+    <button
+      className={cn(
+        'rounded-[var(--radius-md)]',
+        'transition-all duration-[var(--transition-fast)]',
+        'disabled:opacity-50 disabled:cursor-not-allowed',
+        variantClasses[variant],
+        sizeClasses[size],
+        className
+      )}
+      disabled={disabled || loading}
+      {...props}
+    >
+      {loading ? (
+        <span className="flex items-center gap-2">
+          <LoadingSpinner />
+          {children}
+        </span>
+      ) : (
+        children
+      )}
+    </button>
+  );
+};
+```
+
+### 7.4 ESLint 强制复用规则
+
+```javascript
+// .eslintrc.js
+
+module.exports = {
+  rules: {
+    // B05-09: 禁止直接使用原生 HTML 元素
+    'no-restricted-syntax': [
+      'error',
+      {
+        selector: 'JSXElement[openingElement.name.name="button"]',
+        message: '禁止直接使用 <button>，请使用 <Button> 组件',
+      },
+      {
+        selector: 'JSXElement[openingElement.name.name="input"]',
+        message: '禁止直接使用 <input>，请使用 <Input> 组件',
+      },
+      {
+        selector: 'JSXElement[openingElement.name.name="select"]',
+        message: '禁止直接使用 <select>，请使用 <Select> 组件',
+      },
+      // ... 其他元素
+    ],
+  },
+};
+```
+
+### 7.5 分支到测试追踪表
+
+| 分支 ID | 分支描述 | AC 映射 | E2E 映射 |
+| --- | --- | --- | --- |
+| B05-01 | 初始化加载用户主题 | AC02 | V1-E2E-05 |
+| B05-02 | 应用主题到 DOM | AC01 | V1-E2E-05 |
+| B05-03 | 设置主题 | AC01 | V1-E2E-05 |
+| B05-04 | 保存主题到数据库 | AC02 | - |
+| B05-05 | 切换主题 | AC01 | V1-E2E-05 |
+| B05-06 | Button 组件渲染 | AC03, AC04 | - |
+| B05-07 | variant 样式生成 | AC04 | - |
+| B05-08 | size 样式生成 | AC04 | - |
+| B05-09 | ESLint 强制规则 | AC09 | - |
+
+## 8. 错误码设计
+
+统一设计系统主要是前端功能，错误较少：
+
+| 错误码 | 错误信息 | 场景 | 用户操作建议 |
+| --- | --- | --- | --- |
+| 1005001 | theme_load_failed | 加载主题失败 | 使用默认主题 |
+| 1005002 | theme_save_failed | 保存主题失败 | 重试 |
+| 1005003 | component_render_error | 组件渲染错误 | 查看错误详情 |
+
+详见 [V1 错误码](../../../04-技术架构/当前版本/V1-错误码.md)（待创建）。
+
+## 9. 非功能需求
+
+### 9.1 性能需求
+
+| 指标 | 目标 | 测量方式 |
+| --- | --- | --- |
+| 主题切换时间 | < 100ms | Performance API |
+| 组件渲染时间 | < 16ms（60fps） | React DevTools |
+| CSS Variables 数量 | < 100 个 | 人工统计 |
+| 组件包大小 | < 50KB（gzip） | Bundle analyzer |
+
+### 9.2 可维护性需求
+
+| 需求 | 实现方式 |
+| --- | --- |
+| 组件文档覆盖率 | 100%（每个组件都有文档） |
+| 组件单元测试 | > 80% 覆盖率 |
+| 设计规范文档 | 完整的色彩、字体、间距规范 |
+
+### 9.3 一致性需求
+
+| 需求 | 实现方式 |
+| --- | --- |
+| 全局视觉一致 | 所有模块强制使用统一组件 |
+| 主题响应 | 所有组件响应主题切换 |
+| ESLint 检查 | CI 强制检查，禁止直接使用原生元素 |
+
+## 10. 实现与验证
+
+### 10.1 前端单元测试
+
+**目标资产**：
+- `packages/ui/src/Button.test.tsx`
+- `packages/ui/src/Input.test.tsx`
+- `packages/ui/src/Select.test.tsx`
+- `packages/ui/src/Modal.test.tsx`
+- `packages/ui/src/Toast.test.tsx`
+- `packages/ui/src/theme.test.ts`
+
+**测试命令**：
+```bash
+cd packages/ui && pnpm test
+```
+
+**验证记录**（待开发后填写）：
+```
+日期：YYYY-MM-DD
+执行人：XXX
+环境：本地开发环境
+
+结果：
+- Button.test.tsx：0/2 通过（待实现）
+- Input.test.tsx：0/1 通过（待实现）
+- Modal.test.tsx：0/1 通过（待实现）
+- Toast.test.tsx：0/1 通过（待实现）
+- theme.test.ts：0/1 通过（待实现）
+
+详细覆盖说明：
+- AC03～AC07, AC11：待实现
+```
+
+### 10.2 E2E 测试
+
+**E2E 场景**：V1-E2E-05（主题切换和组件展示）
+
+**测试资产**：
+- `tests/e2e/theme_switch.spec.ts`
+- `tests/e2e/theme_persistence.spec.ts`
+- `tests/e2e/all_components_theme.spec.ts`
+- `tests/e2e/font_size.spec.ts`
+
+**测试命令**：
+```bash
+pnpm test:e2e
+```
+
+**验证记录**（待开发后填写）：
+```
+日期：YYYY-MM-DD
+执行人：XXX
+环境：集成测试环境
+
+结果：
+- theme_switch.spec.ts：0/1 通过（待实现）
+- theme_persistence.spec.ts：0/1 通过（待实现）
+- all_components_theme.spec.ts：0/1 通过（待实现）
+- font_size.spec.ts：0/1 通过（待实现）
+
+详细说明：
+- AC01, AC02, AC08, AC12：待实现
+```
+
+### 10.3 CI 检查
+
+**ESLint 检查**：
+```bash
+pnpm lint
+```
+
+**验证记录**（待开发后填写）：
+```
+日期：YYYY-MM-DD
+执行人：XXX
+
+结果：
+- ESLint 规则配置：待实现
+- 强制复用检查：待实现
+
+详细说明：
+- AC09：待实现
+```
+
+## 11. 风险与依赖
+
+### 11.1 技术风险
+
+| 风险 | 概率 | 影响 | 缓解措施 |
+| --- | --- | --- | --- |
+| Tailwind 性能问题 | 低 | 低 | 使用 PurgeCSS 清理未使用样式 |
+| 组件 API 变更 | 中 | 中 | 语义化版本，向后兼容 |
+| 主题切换闪烁 | 低 | 低 | CSS Variables 原子更新 |
+
+### 11.2 外部依赖
+
+| 依赖 | 类型 | 风险 | 应对 |
+| --- | --- | --- | --- |
+| Tailwind CSS | CSS 框架 | 版本兼容 | 锁定版本 |
+| Shadcn/ui | UI 基础 | 无依赖，低风险 | 代码复制到项目 |
+| React 18 | 前端框架 | 版本依赖 | 与模块系统共享 |
+
+### 11.3 功能依赖
+
+| 依赖功能 | 状态 | 影响 |
+| --- | --- | --- |
+| 模块系统（V1-FR-004） | 规划中 | 所有模块需要使用统一组件 |
+| 本地用户管理（V1-FR-008） | 规划中 | 主题偏好需要保存 |
+
+## 12. 实现状态
+
+| 模块 | 状态 | 进度 | 负责人 | 备注 |
+| --- | --- | --- | --- | --- |
+| 主题系统 | 🔴 未开始 | 0% | TBD | CSS Variables + Context |
+| Button 组件 | 🔴 未开始 | 0% | TBD | - |
+| Input 组件 | 🔴 未开始 | 0% | TBD | - |
+| Select 组件 | 🔴 未开始 | 0% | TBD | - |
+| Modal 组件 | 🔴 未开始 | 0% | TBD | - |
+| Toast 组件 | 🔴 未开始 | 0% | TBD | - |
+| 其他组件（7 个） | 🔴 未开始 | 0% | TBD | - |
+| ESLint 规则 | 🔴 未开始 | 0% | TBD | - |
+| 组件文档 | 🔴 未开始 | 0% | TBD | - |
+| 测试用例 | 🔴 未开始 | 0% | TBD | - |
+
+详见 [V1 实现状态](../../../02-产品与版本/当前版本/V1-实现状态.md)。
+
+## 13. 变更记录
+
+| 日期 | 变更内容 | 变更人 |
+| --- | --- | --- |
+| 2024-01-XX | 初始版本，基于 spec-docs-pro 创建 | Kiro |
+
+---
+
+**文档状态**：✅ 已完成（待评审）  
+**符合 spec-docs-pro 标准**：✅ 100%  
+**下一步**：评审通过后进入开发
