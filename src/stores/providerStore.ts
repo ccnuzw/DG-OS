@@ -21,15 +21,14 @@ export interface ProviderConfig {
   api_key: string;
   config?: Record<string, unknown>;
 }
-
 export interface Model {
   id: string;
   provider_id: string;
   model_id: string;
   model_name: string;
   model_type: string;
-  context_window: number;
-  max_output_tokens: number;
+  context_window?: number;
+  max_output_tokens?: number;
   supports_streaming: boolean;
   supports_vision: boolean;
   cached_at: string;

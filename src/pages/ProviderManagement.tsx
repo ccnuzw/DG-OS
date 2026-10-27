@@ -185,7 +185,7 @@ export default function ProviderManagement() {
                           )}
                         </div>
                         <p className="model-context">
-                          Context: {model.context_window.toLocaleString()} tokens
+                          Context: {model.context_window?.toLocaleString() || 'N/A'} tokens
                         </p>
                       </div>
                     ))}
