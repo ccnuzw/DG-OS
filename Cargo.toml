@@ -1,0 +1,39 @@
+[workspace]
+members = [
+    "src-tauri",
+    "crates/dgos-providers",
+    "crates/dgos-db",
+    "crates/dgos-types",
+]
+resolver = "2"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest-eventsource = "0.6"
+
+# Database
+sea-orm = { version = "0.12", features = ["sqlx-sqlite", "runtime-tokio-native-tls", "macros"] }
+sea-orm-migration = { version = "0.12", features = ["runtime-tokio-native-tls", "sqlx-sqlite"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Utilities
+uuid = { version = "1.10", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Tauri
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"

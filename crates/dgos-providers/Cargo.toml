@@ -1,0 +1,26 @@
+[package]
+name = "dgos-providers"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dgos-types = { path = "../dgos-types" }
+dgos-db = { path = "../dgos-db" }
+
+async-trait = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+reqwest-eventsource = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+futures = "0.3"
+pin-project = "1.1"
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockito = "1.4"
