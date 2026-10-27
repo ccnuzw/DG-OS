@@ -1,0 +1,19 @@
+[package]
+name = "dgos-workbench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dgos-db = { path = "../dgos-db" }
+dgos-types = { path = "../dgos-types" }
+dgos-skills = { path = "../dgos-skills" }
+dgos-providers = { path = "../dgos-providers" }
+tokio = { workspace = true }
+serde = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+mockito = "1.0"
+tempfile = "3.8"
+serde_json = { workspace = true }

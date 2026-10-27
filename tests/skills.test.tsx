@@ -70,7 +70,7 @@ describe('Skills registry failure recovery', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     await screen.findByText('Call Type:');
     expect(screen.getByText('cli')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '×' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close skill details' }));
     fireEvent.click(screen.getByRole('button', { name: 'Installed (1)' }));
     expect(screen.getByText('CLI')).toBeTruthy();
     fireEvent.click(screen.getByRole('checkbox'));

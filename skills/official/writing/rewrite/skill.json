@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "id": "dgos.official.writing.rewrite",
+  "slug": "rewrite",
+  "name": "文本改写",
+  "description": "在保留原意的前提下改善结构、语气和可读性",
+  "version": "1.0.0",
+  "identity": "dgos_official",
+  "category": "writing",
+  "tags": [
+    "rewrite",
+    "writing"
+  ],
+  "entry": "SKILL.md",
+  "locales": [
+    "zh-CN"
+  ],
+  "compatible_apps": [
+    "ai-workbench"
+  ],
+  "required_tools": [],
+  "author": {
+    "name": "DGOS Team",
+    "type": "organization"
+  },
+  "license": {
+    "spdx": "Apache-2.0",
+    "redistributable": true
+  },
+  "source": {
+    "kind": "dgos_official",
+    "path": "official/writing/rewrite",
+    "revision": "content-release-1.0.0"
+  },
+  "verification": {
+    "status": "not_evaluated",
+    "scope": []
+  }
+}

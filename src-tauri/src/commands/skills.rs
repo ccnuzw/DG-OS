@@ -1,4 +1,7 @@
-use dgos_skills::{DependencyStatus, RegistrySnapshot, Skill, SkillDetail, SkillInfo, SkillUpdate, SkillUsageLog, SkillsManager};
+use dgos_skills::{
+    DependencyStatus, RegistrySnapshot, Skill, SkillDetail, SkillInfo, SkillUpdate, SkillUsageLog,
+    SkillsManager,
+};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use tauri::State;
@@ -14,10 +17,7 @@ pub async fn fetch_skills_registry(
     state: State<'_, SkillsState>,
 ) -> Result<RegistrySnapshot, String> {
     let manager = state.manager.read().await;
-    manager
-        .fetch_registry()
-        .await
-        .map_err(|e| e.to_string())
+    manager.fetch_registry().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -130,19 +130,31 @@ pub async fn call_skill(
         .ok_or_else(|| "Skill not found".to_string())?;
 
     match skill.call_type {
-        dgos_skills::CallType::Http => {
-            manager
-                .call_http_skill(&skill_id, &user_id, params)
-                .await
-                .map_err(|e| e.to_string())
-        }
-        dgos_skills::CallType::Cli => {
-            manager
-                .call_cli_skill(&skill_id, &user_id, params)
-                .await
-                .map_err(|e| e.to_string())
+        dgos_skills::CallType::Http => manager
+            .call_http_skill(&skill_id, &user_id, params)
+            .await
+            .map_err(|e| e.to_string()),
+        dgos_skills::CallType::Cli => manager
+            .call_cli_skill(&skill_id, &user_id, params)
+            .await
+            .map_err(|e| e.to_string()),
+        dgos_skills::CallType::Content => {
+            Err("SKILL.md content is prepared as task context, not executed".to_string())
         }
     }
+}
+
+#[tauri::command]
+pub async fn prepare_content_skill(
+    skill_id: String,
+    user_id: String,
+    state: State<'_, SkillsState>,
+) -> Result<dgos_skills::PreparedContent, String> {
+    let manager = state.manager.read().await;
+    manager
+        .prepare_content_skill(&skill_id, &user_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // Skills Updates
@@ -183,8 +195,17 @@ pub async fn check_dependencies(
         .await
         .map_err(|e| e.to_string())?;
 
-    dgos_skills::DependencyChecker::check_dependencies(&detail.manifest.dependencies)
-        .map_err(|e| e.to_string())
+    if detail.format != "skill_md" {
+        return Err("Legacy format dependencies are unavailable until migration".to_string());
+    }
+    let missing = detail
+        .content
+        .map(|content| content.required_tools)
+        .unwrap_or_default();
+    Ok(DependencyStatus {
+        satisfied: missing.is_empty(),
+        missing,
+    })
 }
 
 // Usage Logs

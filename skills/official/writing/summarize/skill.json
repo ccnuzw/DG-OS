@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "id": "dgos.official.writing.summarize",
+  "slug": "summarize",
+  "name": "内容总结",
+  "description": "将长文本整理为有依据的结构化摘要",
+  "version": "1.0.0",
+  "identity": "dgos_official",
+  "category": "writing",
+  "tags": [
+    "summary",
+    "document"
+  ],
+  "entry": "SKILL.md",
+  "locales": [
+    "zh-CN"
+  ],
+  "compatible_apps": [
+    "ai-workbench"
+  ],
+  "required_tools": [],
+  "author": {
+    "name": "DGOS Team",
+    "type": "organization"
+  },
+  "license": {
+    "spdx": "Apache-2.0",
+    "redistributable": true
+  },
+  "source": {
+    "kind": "dgos_official",
+    "path": "official/writing/summarize",
+    "revision": "content-release-1.0.0"
+  },
+  "verification": {
+    "status": "not_evaluated",
+    "scope": []
+  }
+}

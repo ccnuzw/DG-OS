@@ -23,6 +23,7 @@ dgos-types = { path = "../crates/dgos-types" }
 dgos-db = { path = "../crates/dgos-db" }
 dgos-providers = { path = "../crates/dgos-providers" }
 dgos-skills = { path = "../crates/dgos-skills" }
+dgos-workbench = { path = "../crates/dgos-workbench" }
 
 # Tauri
 tauri = { workspace = true }

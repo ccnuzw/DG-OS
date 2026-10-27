@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "id": "dgos.official.data-research.source-synthesis",
+  "slug": "source-synthesis",
+  "name": "资料综合",
+  "description": "基于给定来源归纳观点、证据与信息缺口",
+  "version": "1.0.0",
+  "identity": "dgos_official",
+  "category": "data-research",
+  "tags": [
+    "research",
+    "evidence"
+  ],
+  "entry": "SKILL.md",
+  "locales": [
+    "zh-CN"
+  ],
+  "compatible_apps": [
+    "ai-workbench"
+  ],
+  "required_tools": [],
+  "author": {
+    "name": "DGOS Team",
+    "type": "organization"
+  },
+  "license": {
+    "spdx": "Apache-2.0",
+    "redistributable": true
+  },
+  "source": {
+    "kind": "dgos_official",
+    "path": "official/data-research/source-synthesis",
+    "revision": "content-release-1.0.0"
+  },
+  "verification": {
+    "status": "not_evaluated",
+    "scope": []
+  }
+}

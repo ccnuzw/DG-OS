@@ -9,7 +9,7 @@ export interface Skill {
   version: string;
   author?: string;
   install_path: string;
-  call_type: 'http' | 'cli';
+  call_type: 'http' | 'cli' | 'content';
   enabled: boolean;
   config?: any;
   manifest: SkillManifest;
@@ -26,11 +26,25 @@ export interface SkillInfo {
   author?: string;
   category: string;
   tags: string[];
+  identity: 'dgos_official' | 'dgos_curated' | 'third_party' | 'legacy_registry' | string;
+  source_kind: string;
+  license_spdx?: string;
+  compatible_apps: string[];
 }
 
 export interface SkillDetail extends SkillInfo {
   manifest: SkillManifest;
   download_url: string;
+  format?: 'skill_md' | 'legacy_manifest' | string;
+  entry?: string;
+  content?: {
+    body: string;
+    content_hash: string;
+    source_revision?: string;
+    license_text: string;
+    required_tools: string[];
+    verification: { status: string; scope: string[] };
+  };
 }
 
 export interface SkillManifest {
@@ -41,7 +55,7 @@ export interface SkillManifest {
   author: string;
   category: string;
   tags: string[];
-  call_type: 'http' | 'cli';
+  call_type: 'http' | 'cli' | 'content';
   dependencies: DependencyConfig;
   config_schema?: any;
   http?: HttpConfig;
@@ -86,6 +100,13 @@ export interface SkillUsageLog {
   error_message?: string;
   latency_ms: number;
   created_at: number;
+}
+
+export interface PreparedContent {
+  skill_id: string;
+  version: string;
+  content_hash: string;
+  body: string;
 }
 
 interface RegistrySnapshot {
@@ -139,6 +160,7 @@ interface SkillsState {
   updateSkillConfig: (skillId: string, userId: string, config: any) => Promise<void>;
   
   callSkill: (skillId: string, userId: string, params: any) => Promise<any>;
+  prepareContentSkill: (skillId: string, userId: string) => Promise<PreparedContent>;
   
   checkUpdates: (userId: string) => Promise<void>;
   updateSkill: (skillId: string, userId: string) => Promise<void>;
@@ -290,6 +312,9 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
       throw error;
     }
   },
+
+  prepareContentSkill: (skillId: string, userId: string) =>
+    invoke<PreparedContent>('prepare_content_skill', { skillId, userId }),
 
   checkUpdates: async (userId: string) => {
     set({ updatesError: null });

@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "catalog_version": "1.0.0",
+  "skills": [
+    {
+      "id": "dgos.official.writing.summarize",
+      "version": "1.0.0",
+      "path": "official/writing/summarize",
+      "sha256": "07f59eab00ca8503d6fa3904887433e166ea00dd760dcae2f1cce6d3630e83e3"
+    },
+    {
+      "id": "dgos.official.writing.rewrite",
+      "version": "1.0.0",
+      "path": "official/writing/rewrite",
+      "sha256": "361079ea13096a85370a62e33135c2c048d2991ee01740957376a0d9931422fd"
+    },
+    {
+      "id": "dgos.official.documents-office.report-outline",
+      "version": "1.0.0",
+      "path": "official/documents-office/report-outline",
+      "sha256": "719c4cb42fc1398a749d08cc93b9b5f239d16b51cc0db92962613ee53e67b696"
+    },
+    {
+      "id": "dgos.official.documents-office.meeting-actions",
+      "version": "1.0.0",
+      "path": "official/documents-office/meeting-actions",
+      "sha256": "a97f909b30c352004edbab59b2292108c25ed4bf9dd8c845d4866a4b0fa651e6"
+    },
+    {
+      "id": "dgos.official.data-research.source-synthesis",
+      "version": "1.0.0",
+      "path": "official/data-research/source-synthesis",
+      "sha256": "16b0d94b17776c406508861b709792777bb3cfdbcea3e1d953b06f0214e3c413"
+    },
+    {
+      "id": "dgos.official.development-automation.code-review",
+      "version": "1.0.0",
+      "path": "official/development-automation/code-review",
+      "sha256": "801283a6146f9091465e2c0a61c7d54ee61e9e96d01bfa3043f3aeaa64e21019"
+    }
+  ]
+}

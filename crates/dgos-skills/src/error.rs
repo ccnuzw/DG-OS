@@ -53,6 +53,12 @@ pub enum SkillError {
     #[error("Not a CLI skill")]
     NotCliSkill,
 
+    #[error("Content skill is prepared as context, not executed")]
+    ContentSkillNotExecutable,
+
+    #[error("Legacy HTTP/CLI packages are read-only; installation, execution and removal require migration")]
+    LegacyFormatUnsupported,
+
     #[error("Internal error: {0}")]
     Internal(String),
 }

@@ -1,9 +1,52 @@
 .skills-management {
+  --skills-ink: #17202a;
+  --skills-muted: #526477;
+  --skills-subtle: #64748b;
+  --skills-border: #cbd5e1;
+  --skills-surface: #ffffff;
+  --skills-surface-muted: #f4f7fa;
+  --skills-surface-hover: #eff6ff;
+  --skills-primary: #1d4ed8;
+  --skills-primary-hover: #1e40af;
+  --skills-focus: #0369a1;
+  --skills-success: #047857;
+  color-scheme: light;
+  color: var(--skills-ink);
+  background: #f8fafc;
   padding: 24px;
   max-width: 1400px;
   margin: 0 auto;
   height: 100%;
   overflow-y: auto;
+}
+
+/* Keep the Skills Center readable even when App.css supplies global button styles. */
+.skills-management button {
+  appearance: none;
+  color: var(--skills-ink);
+  background: var(--skills-surface);
+  border: 1px solid var(--skills-border);
+  font: inherit;
+}
+
+.skills-management button:hover:not(:disabled) {
+  color: var(--skills-primary-hover);
+  background: var(--skills-surface-hover);
+  border-color: var(--skills-primary);
+}
+
+.skills-management button:disabled {
+  color: #64748b;
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+.skills-management button:focus-visible,
+.skills-management summary:focus-visible {
+  outline: 3px solid var(--skills-focus);
+  outline-offset: 3px;
 }
 
 .skills-management .skills-notice {
@@ -35,21 +78,27 @@
 .skills-management .skills-error button {
   min-height: 44px;
   padding: 8px 16px;
-  border: 1px solid currentColor;
+  border: 1px solid #b45309;
   border-radius: 6px;
-  background: white;
-  color: inherit;
+  background: var(--skills-surface);
+  color: #92400e;
   cursor: pointer;
 }
 
 .skills-management .skills-notice button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  color: #64748b;
+  background: #e2e8f0;
+  border-color: #cbd5e1;
 }
 
 .skills-management .skills-error {
   color: #991b1b;
   overflow-wrap: anywhere;
+}
+
+.skills-management .skills-error button {
+  border-color: #b91c1c;
+  color: #991b1b;
 }
 
 .skills-header {
@@ -64,7 +113,7 @@
 .skills-header h1 {
   font-size: 28px;
   font-weight: 600;
-  color: #1a1a1a;
+  color: var(--skills-ink);
   margin: 0;
 }
 
@@ -78,19 +127,26 @@
 
 .view-toggle button {
   padding: 8px 16px;
-  border: none;
+  border: 1px solid transparent;
   background: transparent;
   border-radius: 6px;
   cursor: pointer;
   font-size: 14px;
   font-weight: 500;
-  color: #666;
+  color: var(--skills-muted);
   transition: all 0.2s;
 }
 
+.view-toggle button:hover:not(:disabled) {
+  background: #e2e8f0;
+  color: var(--skills-ink);
+  border-color: transparent;
+}
+
 .view-toggle button.active {
-  background: white;
-  color: #1a1a1a;
+  background: var(--skills-surface);
+  color: var(--skills-ink);
+  border-color: #dbe4ea;
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
 
@@ -106,15 +162,17 @@
   min-width: 0;
   padding: 12px 16px;
   border: 1px solid #e0e0e0;
+  background: var(--skills-surface);
+  color: var(--skills-ink);
   border-radius: 8px;
   font-size: 14px;
 }
 
 .search-bar button {
   padding: 12px 24px;
-  background: #2563eb;
-  color: white;
-  border: none;
+  background: var(--skills-primary);
+  color: #ffffff;
+  border: 1px solid var(--skills-primary);
   border-radius: 8px;
   font-weight: 500;
   cursor: pointer;
@@ -122,12 +180,15 @@
 }
 
 .search-bar button:hover:not(:disabled) {
-  background: #1d4ed8;
+  background: var(--skills-primary-hover);
+  color: #ffffff;
+  border-color: var(--skills-primary-hover);
 }
 
 .search-bar button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  color: #64748b;
+  background: #e2e8f0;
+  border-color: #cbd5e1;
 }
 
 .category-filter {
@@ -140,8 +201,9 @@
 
 .category-filter button {
   padding: 8px 16px;
-  border: 1px solid #e0e0e0;
-  background: white;
+  border: 1px solid var(--skills-border);
+  background: var(--skills-surface);
+  color: var(--skills-ink);
   border-radius: 20px;
   font-size: 13px;
   cursor: pointer;
@@ -149,15 +211,16 @@
   transition: all 0.2s;
 }
 
-.category-filter button:hover {
-  border-color: #2563eb;
-  color: #2563eb;
+.category-filter button:hover:not(:disabled) {
+  border-color: var(--skills-primary);
+  color: var(--skills-primary-hover);
+  background: var(--skills-surface-hover);
 }
 
 .category-filter button.active {
-  background: #2563eb;
-  color: white;
-  border-color: #2563eb;
+  background: var(--skills-primary);
+  color: #ffffff;
+  border-color: var(--skills-primary);
 }
 
 .skills-grid {
@@ -167,8 +230,8 @@
 }
 
 .skill-card {
-  background: white;
-  border: 1px solid #e0e0e0;
+  background: var(--skills-surface);
+  border: 1px solid #dbe4ea;
   border-radius: 12px;
   padding: 20px;
   transition: all 0.2s;
@@ -176,7 +239,7 @@
 
 .skill-card:hover {
   box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-  border-color: #2563eb;
+  border-color: var(--skills-primary);
 }
 
 .skill-card .skill-header {
@@ -190,21 +253,21 @@
   font-size: 18px;
   font-weight: 600;
   margin: 0;
-  color: #1a1a1a;
+  color: var(--skills-ink);
 }
 
 .skill-category {
-  background: #f0f0f0;
+  background: #e2e8f0;
   padding: 4px 8px;
   border-radius: 4px;
   font-size: 11px;
   font-weight: 500;
   text-transform: uppercase;
-  color: #666;
+  color: #334155;
 }
 
 .skill-description {
-  color: #666;
+  color: #475569;
   font-size: 14px;
   line-height: 1.5;
   margin: 0 0 12px 0;
@@ -216,10 +279,73 @@
 
 .skill-meta {
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-content: space-between;
   font-size: 12px;
-  color: #999;
+  color: var(--skills-muted);
   margin-bottom: 12px;
+}
+
+.skill-identity {
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+}
+
+.skill-identity-dgos_official { color: #0f766e; }
+.skill-identity-dgos_curated { color: #1d4ed8; }
+.skill-identity-third_party { color: #92400e; }
+.skill-identity-legacy_registry { color: #475569; }
+
+.skill-content-preview pre {
+  max-height: 240px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #dbe4ea;
+  background: #f8fafc;
+  color: #334155;
+  white-space: pre-wrap;
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.content-hash {
+  color: #64748b;
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.skills-subtitle, .skill-provenance {
+  color: #526477;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.skills-local-summary {
+  border-left: 3px solid #0f766e;
+  background: #f0fdfa;
+  color: #134e4a;
+  padding: 16px 20px;
+  margin-bottom: 24px;
+  border-radius: 4px;
+}
+
+.skills-management button:focus-visible,
+.skills-management summary:focus-visible {
+  outline: 3px solid var(--skills-focus);
+  outline-offset: 3px;
+}
+
+.skills-management summary { cursor: pointer; }
+.skills-management .skill-actions button { min-height: 44px; }
+.skills-management .detail-grid { overflow-wrap: anywhere; }
+
+@media (max-width: 640px) {
+  .skills-management .skills-header { align-items: flex-start; flex-direction: column; gap: 16px; }
+  .skills-management .skills-grid { grid-template-columns: minmax(0, 1fr); }
+  .skills-management .detail-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 .skill-tags {
@@ -246,8 +372,9 @@
 .skill-actions button {
   flex: 1;
   padding: 10px;
-  border: 1px solid #e0e0e0;
-  background: white;
+  border: 1px solid var(--skills-border);
+  background: var(--skills-surface);
+  color: var(--skills-ink);
   border-radius: 8px;
   font-size: 14px;
   font-weight: 500;
@@ -256,24 +383,27 @@
 }
 
 .skill-actions button:hover:not(:disabled) {
-  border-color: #2563eb;
-  color: #2563eb;
+  border-color: var(--skills-primary);
+  color: var(--skills-primary-hover);
+  background: var(--skills-surface-hover);
 }
 
 .skill-actions button.install {
-  background: #2563eb;
-  color: white;
-  border-color: #2563eb;
+  background: var(--skills-primary);
+  color: #ffffff;
+  border-color: var(--skills-primary);
 }
 
 .skill-actions button.install:hover:not(:disabled) {
-  background: #1d4ed8;
+  background: var(--skills-primary-hover);
+  color: #ffffff;
+  border-color: var(--skills-primary-hover);
 }
 
 .skill-actions button.installed {
-  background: #10b981;
-  color: white;
-  border-color: #10b981;
+  background: var(--skills-success);
+  color: #ffffff;
+  border-color: var(--skills-success);
   cursor: default;
 }
 
@@ -284,16 +414,16 @@
 }
 
 .empty-state p {
-  color: #666;
+  color: var(--skills-muted);
   font-size: 16px;
   margin-bottom: 20px;
 }
 
 .empty-state button {
   padding: 12px 24px;
-  background: #2563eb;
-  color: white;
-  border: none;
+  background: var(--skills-primary);
+  color: #ffffff;
+  border: 1px solid var(--skills-primary);
   border-radius: 8px;
   font-weight: 500;
   cursor: pointer;
@@ -306,8 +436,8 @@
 }
 
 .installed-skill-card {
-  background: white;
-  border: 1px solid #e0e0e0;
+  background: var(--skills-surface);
+  border: 1px solid #dbe4ea;
   border-radius: 12px;
   padding: 24px;
   display: flex;
@@ -350,8 +480,8 @@
 }
 
 .badge.version {
-  background: #f0f0f0;
-  color: #666;
+  background: #e2e8f0;
+  color: #334155;
 }
 
 .badge.update {
@@ -409,7 +539,7 @@
 .toggle-switch .label {
   font-size: 14px;
   font-weight: 500;
-  color: #666;
+  color: var(--skills-muted);
 }
 
 .button-group {
@@ -419,8 +549,9 @@
 
 .button-group button {
   padding: 8px 16px;
-  border: 1px solid #e0e0e0;
-  background: white;
+  border: 1px solid var(--skills-border);
+  background: var(--skills-surface);
+  color: var(--skills-ink);
   border-radius: 6px;
   font-size: 13px;
   font-weight: 500;
@@ -428,20 +559,22 @@
   transition: all 0.2s;
 }
 
-.button-group button:hover {
-  border-color: #2563eb;
-  color: #2563eb;
+.button-group button:hover:not(:disabled) {
+  border-color: var(--skills-primary);
+  color: var(--skills-primary-hover);
+  background: var(--skills-surface-hover);
 }
 
 .button-group button.update {
-  background: #fbbf24;
-  color: white;
-  border-color: #fbbf24;
+  background: #b45309;
+  color: #ffffff;
+  border-color: #b45309;
 }
 
-.button-group button.update:hover {
-  background: #f59e0b;
-  border-color: #f59e0b;
+.button-group button.update:hover:not(:disabled) {
+  background: #92400e;
+  color: #ffffff;
+  border-color: #92400e;
 }
 
 .button-group button.danger {
@@ -449,9 +582,9 @@
   border-color: #fca5a5;
 }
 
-.button-group button.danger:hover {
+.button-group button.danger:hover:not(:disabled) {
   background: #dc2626;
-  color: white;
+  color: #ffffff;
   border-color: #dc2626;
 }
 
@@ -471,7 +604,7 @@
 }
 
 .modal-content {
-  background: white;
+  background: var(--skills-surface);
   border-radius: 16px;
   max-width: 600px;
   width: 100%;
@@ -487,24 +620,25 @@
   justify-content: space-between;
   align-items: center;
   padding: 24px;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid #dbe4ea;
 }
 
 .modal-header h2 {
   font-size: 20px;
   font-weight: 600;
   margin: 0;
+  color: var(--skills-ink);
 }
 
 .modal-header .close {
   width: 32px;
   height: 32px;
-  border: none;
-  background: #f5f5f5;
+  border: 1px solid #cbd5e1;
+  background: #e2e8f0;
   border-radius: 50%;
   font-size: 24px;
   cursor: pointer;
-  color: #666;
+  color: #334155;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -512,7 +646,9 @@
 }
 
 .modal-header .close:hover {
-  background: #e0e0e0;
+  background: #cbd5e1;
+  color: #17202a;
+  border-color: #94a3b8;
 }
 
 .modal-body {
@@ -522,7 +658,7 @@
 }
 
 .modal-body .description {
-  color: #666;
+  color: #475569;
   line-height: 1.6;
   margin-bottom: 24px;
 }
@@ -535,7 +671,7 @@
   font-size: 14px;
   font-weight: 600;
   text-transform: uppercase;
-  color: #999;
+  color: #64748b;
   margin-bottom: 12px;
 }
 
@@ -550,7 +686,7 @@
 }
 
 .detail-grid strong {
-  color: #666;
+  color: #475569;
   font-weight: 500;
 }
 
@@ -563,7 +699,7 @@
 .detail-section ul {
   margin: 0;
   padding-left: 20px;
-  color: #666;
+  color: #475569;
 }
 
 .detail-section li {
@@ -572,7 +708,7 @@
 
 .modal-footer {
   padding: 20px 24px;
-  border-top: 1px solid #e0e0e0;
+  border-top: 1px solid #dbe4ea;
   display: flex;
   justify-content: flex-end;
   gap: 12px;
@@ -580,8 +716,9 @@
 
 .modal-footer button {
   padding: 10px 20px;
-  border: 1px solid #e0e0e0;
-  background: white;
+  border: 1px solid var(--skills-border);
+  background: var(--skills-surface);
+  color: var(--skills-ink);
   border-radius: 8px;
   font-size: 14px;
   font-weight: 500;
@@ -589,23 +726,29 @@
   transition: all 0.2s;
 }
 
-.modal-footer button:hover {
-  border-color: #2563eb;
-  color: #2563eb;
+.modal-footer button:hover:not(:disabled) {
+  border-color: var(--skills-primary);
+  color: var(--skills-primary-hover);
+  background: var(--skills-surface-hover);
 }
 
 .modal-footer button.primary {
-  background: #2563eb;
-  color: white;
-  border-color: #2563eb;
+  background: var(--skills-primary);
+  color: #ffffff;
+  border-color: var(--skills-primary);
 }
 
-.modal-footer button.primary:hover {
-  background: #1d4ed8;
+.modal-footer button.primary:hover:not(:disabled) {
+  background: var(--skills-primary-hover);
+  color: #ffffff;
+  border-color: var(--skills-primary-hover);
 }
 
 .modal-footer button:disabled {
-  opacity: 0.5;
+  color: #64748b;
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+  opacity: 1;
   cursor: not-allowed;
 }
 
@@ -618,7 +761,7 @@
   display: block;
   font-size: 14px;
   font-weight: 500;
-  color: #1a1a1a;
+  color: var(--skills-ink);
   margin-bottom: 8px;
 }
 
@@ -630,13 +773,15 @@
 .form-group .hint {
   margin-left: 8px;
   font-size: 12px;
-  color: #666;
+  color: var(--skills-muted);
 }
 
 .form-group input {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid #e0e0e0;
+  background: var(--skills-surface);
+  color: var(--skills-ink);
   border-radius: 6px;
   font-size: 14px;
   transition: border-color 0.2s;
@@ -651,5 +796,30 @@
   display: block;
   margin-top: 6px;
   font-size: 12px;
-  color: #999;
+  color: #64748b;
+}
+
+.empty-state button:hover:not(:disabled) {
+  background: var(--skills-primary-hover);
+  color: #ffffff;
+  border-color: var(--skills-primary-hover);
+}
+
+.skills-management input::placeholder {
+  color: #64748b;
+  opacity: 1;
+}
+
+.skills-management input:focus-visible {
+  outline: 3px solid rgba(3, 105, 161, 0.35);
+  outline-offset: 1px;
+  border-color: var(--skills-focus);
+}
+
+.skills-management .skills-error button:disabled,
+.skills-management .skill-actions button.install:disabled,
+.skills-management .empty-state button:disabled {
+  color: #64748b;
+  background: #e2e8f0;
+  border-color: #cbd5e1;
 }

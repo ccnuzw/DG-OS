@@ -3,6 +3,7 @@ import { Routes, Route, Link } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import ProviderManagement from "./pages/ProviderManagement";
 import SkillsManagement from "./pages/SkillsManagement";
+import Workbench from "./pages/Workbench";
 import "./App.css";
 
 function App() {
@@ -18,6 +19,7 @@ function App() {
         <Link to="/">Home</Link>
         <Link to="/providers">Providers</Link>
         <Link to="/skills">Skills</Link>
+        <Link to="/workbench">Workbench</Link>
         <Link to="/settings">Settings</Link>
       </nav>
 
@@ -41,6 +43,7 @@ function App() {
           } />
           <Route path="/providers" element={<ProviderManagement />} />
           <Route path="/skills" element={<SkillsManagement />} />
+          <Route path="/workbench" element={<Workbench />} />
           <Route path="/settings" element={<div>Settings Page</div>} />
         </Routes>
       </div>

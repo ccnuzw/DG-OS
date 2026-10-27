@@ -7,8 +7,8 @@ use dgos_db::sea_orm_migration::MigratorTrait;
 use dgos_providers::ProviderManager;
 use dgos_skills::SkillsManager;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tauri::Manager;
+use tokio::sync::RwLock;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -49,21 +49,41 @@ pub fn run() {
                     .await
                     .expect("Failed to connect to database");
 
+                // Run migrations before registering bundled catalog rows.
+                dgos_db::migrations::Migrator::up(&db, None)
+                    .await
+                    .expect("Failed to run database migrations");
+
                 let skills_manager = SkillsManager::new(db.clone(), skills_dir);
+                #[cfg(debug_assertions)]
+                let bundled_dir =
+                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../skills");
+                #[cfg(not(debug_assertions))]
+                let bundled_dir = app_handle
+                    .path()
+                    .resource_dir()
+                    .expect("Failed to locate application resources")
+                    .join("skills");
+                skills_manager
+                    .register_bundled_catalog(&bundled_dir)
+                    .await
+                    .expect("Failed to validate bundled skills");
                 let skills_state = commands::SkillsState {
                     manager: Arc::new(RwLock::new(skills_manager)),
                 };
 
-                // Run migrations
-                dgos_db::migrations::Migrator::up(&db, None)
-                    .await
-                    .expect("Failed to run migrations");
-
                 tracing::info!("Database migrations completed");
+
+                let workbench = dgos_workbench::WorkbenchManager::new(db.clone());
+                workbench
+                    .recover_interrupted()
+                    .await
+                    .expect("Failed to recover workbench task audit");
 
                 // Store managers in app state
                 app_handle.manage(manager);
                 app_handle.manage(skills_state);
+                app_handle.manage(workbench);
             });
 
             // Open dev tools in debug mode
@@ -72,7 +92,7 @@ pub fn run() {
                 let window = app.get_webview_window("main").unwrap();
                 window.open_devtools();
             }
-            
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -100,10 +120,13 @@ pub fn run() {
             commands::toggle_skill,
             commands::update_skill_config,
             commands::call_skill,
+            commands::prepare_content_skill,
             commands::check_skill_updates,
             commands::update_skill,
             commands::check_dependencies,
             commands::list_skill_usage_logs,
+            commands::run_workbench_task,
+            commands::list_workbench_tasks,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

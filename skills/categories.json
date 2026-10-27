@@ -1,0 +1,26 @@
+[
+  {
+    "id": "writing",
+    "name": "写作与内容"
+  },
+  {
+    "id": "visual",
+    "name": "图像与视觉"
+  },
+  {
+    "id": "video-audio",
+    "name": "视频与音频"
+  },
+  {
+    "id": "documents-office",
+    "name": "文档与办公"
+  },
+  {
+    "id": "data-research",
+    "name": "数据与研究"
+  },
+  {
+    "id": "development-automation",
+    "name": "开发与自动化"
+  }
+]

@@ -1,6 +1,8 @@
 use crate::entity::{SkillDetail, SkillInfo, SkillRegistryCache};
 use crate::error::{Result, SkillError};
-use dgos_db::sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set};
+use dgos_db::sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
+};
 
 pub struct RegistryRepository {
     db: DatabaseConnection,
@@ -88,6 +90,10 @@ impl RegistryRepository {
                 author: m.author,
                 category: m.category,
                 tags: serde_json::from_value(m.tags).unwrap_or_default(),
+                identity: "legacy_registry".to_string(),
+                source_kind: "legacy_registry".to_string(),
+                license_spdx: None,
+                compatible_apps: Vec::new(),
             })
             .collect())
     }
@@ -113,13 +119,20 @@ impl RegistryRepository {
             manifest: serde_json::from_value(model.manifest)
                 .map_err(|e| SkillError::InvalidManifest(e.to_string()))?,
             download_url: model.download_url,
+            identity: "legacy_registry".to_string(),
+            source_kind: "legacy_registry".to_string(),
+            license_spdx: None,
+            compatible_apps: Vec::new(),
+            format: "legacy_manifest".to_string(),
+            entry: Some("manifest.json".to_string()),
+            content: None,
         })
     }
 
     pub async fn search_skills(&self, query: &str) -> Result<Vec<SkillInfo>> {
         use dgos_db::entities::skill_registry_cache;
 
-        let pattern = format!("%{}%", query.to_lowercase());
+        let pattern = query.to_lowercase();
 
         let models = skill_registry_cache::Entity::find()
             .filter(
@@ -142,6 +155,10 @@ impl RegistryRepository {
                 author: m.author,
                 category: m.category,
                 tags: serde_json::from_value(m.tags).unwrap_or_default(),
+                identity: "legacy_registry".to_string(),
+                source_kind: "legacy_registry".to_string(),
+                license_spdx: None,
+                compatible_apps: Vec::new(),
             })
             .collect())
     }

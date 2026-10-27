@@ -40,10 +40,9 @@ impl DependencyChecker {
             .map_err(|_| SkillError::DependencyNotSatisfied("Python not found".to_string()))?;
 
         let version_str = String::from_utf8_lossy(&output.stdout);
-        let version = version_str
-            .trim()
-            .strip_prefix("Python ")
-            .ok_or_else(|| SkillError::DependencyNotSatisfied("Invalid Python version".to_string()))?;
+        let version = version_str.trim().strip_prefix("Python ").ok_or_else(|| {
+            SkillError::DependencyNotSatisfied("Invalid Python version".to_string())
+        })?;
 
         Self::version_satisfies(version, requirement)
     }
@@ -79,14 +78,29 @@ impl DependencyChecker {
         let ver = Version::parse(&version_str)
             .map_err(|_| SkillError::Internal("Failed to parse version".to_string()))?;
 
-        // Parse requirement (simple >= support)
-        if let Some(req_ver_str) = requirement.strip_prefix(">=") {
+        fn normalize_requirement(input: &str) -> String {
+            let (operator, raw) = if let Some(value) = input.strip_prefix(">=") {
+                (">=", value.trim())
+            } else {
+                ("", input.trim())
+            };
+            let mut parts = raw.split('.').collect::<Vec<_>>();
+            while parts.len() < 3 {
+                parts.push("0");
+            }
+            format!("{}{}", operator, parts.join("."))
+        }
+
+        // Parse requirement (simple >= support), accepting Python/Node style
+        // two-part versions such as `>=3.10`.
+        let normalized = normalize_requirement(requirement);
+        if let Some(req_ver_str) = normalized.strip_prefix(">=") {
             let req_ver = Version::parse(req_ver_str.trim())
                 .map_err(|_| SkillError::Internal("Failed to parse requirement".to_string()))?;
             Ok(ver >= req_ver)
         } else {
             // Exact match
-            let req_ver = Version::parse(requirement.trim())
+            let req_ver = Version::parse(normalized.trim())
                 .map_err(|_| SkillError::Internal("Failed to parse requirement".to_string()))?;
             Ok(ver == req_ver)
         }

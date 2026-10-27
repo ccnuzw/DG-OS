@@ -24,6 +24,7 @@ pub struct Skill {
 pub enum CallType {
     Http,
     Cli,
+    Content,
 }
 
 impl CallType {
@@ -31,6 +32,7 @@ impl CallType {
         match self {
             CallType::Http => "http",
             CallType::Cli => "cli",
+            CallType::Content => "content",
         }
     }
 
@@ -38,6 +40,7 @@ impl CallType {
         match s.to_lowercase().as_str() {
             "http" => Some(CallType::Http),
             "cli" => Some(CallType::Cli),
+            "content" => Some(CallType::Content),
             _ => None,
         }
     }

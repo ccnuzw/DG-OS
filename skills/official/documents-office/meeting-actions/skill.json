@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "id": "dgos.official.documents-office.meeting-actions",
+  "slug": "meeting-actions",
+  "name": "会议行动项",
+  "description": "从会议记录中提炼决策、行动项、负责人和截止时间",
+  "version": "1.0.0",
+  "identity": "dgos_official",
+  "category": "documents-office",
+  "tags": [
+    "meeting",
+    "actions"
+  ],
+  "entry": "SKILL.md",
+  "locales": [
+    "zh-CN"
+  ],
+  "compatible_apps": [
+    "ai-workbench"
+  ],
+  "required_tools": [],
+  "author": {
+    "name": "DGOS Team",
+    "type": "organization"
+  },
+  "license": {
+    "spdx": "Apache-2.0",
+    "redistributable": true
+  },
+  "source": {
+    "kind": "dgos_official",
+    "path": "official/documents-office/meeting-actions",
+    "revision": "content-release-1.0.0"
+  },
+  "verification": {
+    "status": "not_evaluated",
+    "scope": []
+  }
+}

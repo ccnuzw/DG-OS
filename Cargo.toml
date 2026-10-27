@@ -4,6 +4,7 @@ members = [
     "crates/dgos-providers",
     "crates/dgos-db",
     "crates/dgos-types", "crates/dgos-skills",
+    "crates/dgos-workbench",
 ]
 resolver = "2"
 

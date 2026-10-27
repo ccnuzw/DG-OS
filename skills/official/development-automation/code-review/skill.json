@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "id": "dgos.official.development-automation.code-review",
+  "slug": "code-review",
+  "name": "代码审阅",
+  "description": "对用户提供的变更进行风险导向的静态审阅",
+  "version": "1.0.0",
+  "identity": "dgos_official",
+  "category": "development-automation",
+  "tags": [
+    "code",
+    "review"
+  ],
+  "entry": "SKILL.md",
+  "locales": [
+    "zh-CN"
+  ],
+  "compatible_apps": [
+    "ai-workbench"
+  ],
+  "required_tools": [],
+  "author": {
+    "name": "DGOS Team",
+    "type": "organization"
+  },
+  "license": {
+    "spdx": "Apache-2.0",
+    "redistributable": true
+  },
+  "source": {
+    "kind": "dgos_official",
+    "path": "official/development-automation/code-review",
+    "revision": "content-release-1.0.0"
+  },
+  "verification": {
+    "status": "not_evaluated",
+    "scope": []
+  }
+}

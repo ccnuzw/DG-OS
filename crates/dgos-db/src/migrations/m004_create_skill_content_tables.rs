@@ -1,0 +1,208 @@
+use sea_orm_migration::prelude::*;
+
+#[derive(DeriveMigrationName)]
+pub struct Migration;
+
+#[async_trait::async_trait]
+impl MigrationTrait for Migration {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .create_table(
+                Table::create()
+                    .table(SkillCatalog::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(SkillCatalog::SkillId)
+                            .string()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new(SkillCatalog::Identity).string().not_null())
+                    .col(ColumnDef::new(SkillCatalog::Name).string().not_null())
+                    .col(
+                        ColumnDef::new(SkillCatalog::LatestVersion)
+                            .string()
+                            .not_null(),
+                    )
+                    .col(ColumnDef::new(SkillCatalog::Description).string())
+                    .col(ColumnDef::new(SkillCatalog::Category).string().not_null())
+                    .col(ColumnDef::new(SkillCatalog::Tags).json().not_null())
+                    .col(
+                        ColumnDef::new(SkillCatalog::CompatibleApps)
+                            .json()
+                            .not_null(),
+                    )
+                    .col(ColumnDef::new(SkillCatalog::Author).string())
+                    .col(ColumnDef::new(SkillCatalog::LicenseSpdx).string())
+                    .col(ColumnDef::new(SkillCatalog::SourceKind).string().not_null())
+                    .col(ColumnDef::new(SkillCatalog::SourceRef).string())
+                    .col(
+                        ColumnDef::new(SkillCatalog::VerificationStatus)
+                            .string()
+                            .not_null(),
+                    )
+                    .col(ColumnDef::new(SkillCatalog::Metadata).json().not_null())
+                    .col(
+                        ColumnDef::new(SkillCatalog::SyncedAt)
+                            .big_integer()
+                            .not_null(),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_table(
+                Table::create()
+                    .table(SkillVersions::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(SkillVersions::Id)
+                            .string()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new(SkillVersions::SkillId).string().not_null())
+                    .col(ColumnDef::new(SkillVersions::Version).string().not_null())
+                    .col(
+                        ColumnDef::new(SkillVersions::ContentHash)
+                            .string()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(SkillVersions::InstallPath)
+                            .string()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(SkillVersions::IsBundled)
+                            .boolean()
+                            .not_null()
+                            .default(false),
+                    )
+                    .col(
+                        ColumnDef::new(SkillVersions::VerificationStatus)
+                            .string()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(SkillVersions::FileManifest)
+                            .json()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(SkillVersions::InstalledAt)
+                            .big_integer()
+                            .not_null(),
+                    )
+                    .col(ColumnDef::new(SkillVersions::Metadata).json().not_null())
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_skill_versions_identity")
+                    .table(SkillVersions::Table)
+                    .col(SkillVersions::SkillId)
+                    .col(SkillVersions::Version)
+                    .unique()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_table(
+                Table::create()
+                    .table(SkillUserStates::Table)
+                    .col(ColumnDef::new(SkillUserStates::UserId).string().not_null())
+                    .col(ColumnDef::new(SkillUserStates::SkillId).string().not_null())
+                    .col(
+                        ColumnDef::new(SkillUserStates::VersionId)
+                            .string()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(SkillUserStates::Enabled)
+                            .boolean()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(SkillUserStates::CreatedAt)
+                            .big_integer()
+                            .not_null(),
+                    )
+                    .primary_key(
+                        Index::create()
+                            .col(SkillUserStates::UserId)
+                            .col(SkillUserStates::SkillId),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .from(SkillUserStates::Table, SkillUserStates::VersionId)
+                            .to(SkillVersions::Table, SkillVersions::Id),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .drop_table(Table::drop().table(SkillUserStates::Table).to_owned())
+            .await?;
+        manager
+            .drop_table(Table::drop().table(SkillVersions::Table).to_owned())
+            .await?;
+        manager
+            .drop_table(Table::drop().table(SkillCatalog::Table).to_owned())
+            .await?;
+        Ok(())
+    }
+}
+
+#[derive(DeriveIden)]
+enum SkillCatalog {
+    Table,
+    SkillId,
+    Identity,
+    Name,
+    LatestVersion,
+    Description,
+    Category,
+    Tags,
+    CompatibleApps,
+    Author,
+    LicenseSpdx,
+    SourceKind,
+    SourceRef,
+    VerificationStatus,
+    Metadata,
+    SyncedAt,
+}
+
+#[derive(DeriveIden)]
+enum SkillVersions {
+    Table,
+    Id,
+    SkillId,
+    Version,
+    ContentHash,
+    InstallPath,
+    IsBundled,
+    VerificationStatus,
+    FileManifest,
+    Metadata,
+    InstalledAt,
+}
+
+#[derive(DeriveIden)]
+enum SkillUserStates {
+    Table,
+    UserId,
+    SkillId,
+    VersionId,
+    Enabled,
+    CreatedAt,
+}
