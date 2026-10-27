@@ -63,6 +63,19 @@ pub async fn create_provider(
     CommandResponse::from(result)
 }
 
+/// Create a new provider with models
+#[tauri::command]
+pub async fn create_provider_with_models(
+    app: tauri::AppHandle,
+    config: ProviderConfig,
+    user_id: String,
+    models: Vec<Model>,
+) -> CommandResponse<Provider> {
+    let manager = app.state::<ProviderManager>();
+    let result = manager.create_provider_with_models(config, user_id, models).await;
+    CommandResponse::from(result)
+}
+
 /// Update a provider
 #[tauri::command]
 pub async fn update_provider(

@@ -40,7 +40,7 @@ impl ProviderManager {
         })
     }
 
-    /// Create a new provider
+    /// Create a new provider (without fetching models)
     pub async fn create_provider(
         &self,
         config: ProviderConfig,
@@ -55,8 +55,29 @@ impl ProviderManager {
         // Save to database
         let provider = self.provider_repo.create(config, user_id).await?;
 
-        // Fetch and cache models
-        self.refresh_models_internal(&provider.id, adapter).await?;
+        Ok(provider)
+    }
+
+    /// Create a new provider and save models
+    pub async fn create_provider_with_models(
+        &self,
+        config: ProviderConfig,
+        user_id: String,
+        models: Vec<Model>,
+    ) -> DgosResult<Provider> {
+        info!("Creating provider with {} models: {}", models.len(), config.name);
+        
+        // Test connection first
+        let adapter = self.create_adapter(&config)?;
+        adapter.test_connection().await?;
+
+        // Save provider to database
+        let provider = self.provider_repo.create(config, user_id).await?;
+
+        // Save models to database if any
+        if !models.is_empty() {
+            self.model_repo.sync_models(&provider.id, models).await?;
+        }
 
         Ok(provider)
     }

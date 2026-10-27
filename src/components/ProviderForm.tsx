@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 interface ProviderFormProps {
   initialData?: ProviderConfig & { id?: string };
-  onSubmit: (config: ProviderConfig) => Promise<boolean>;
+  onSubmit: (config: ProviderConfig, models: Model[]) => Promise<boolean>;
   onCancel: () => void;
   loading?: boolean;
 }
@@ -77,7 +77,8 @@ export default function ProviderForm({
       api_key: isEditMode && !apiKeyModified ? '' : formData.api_key,
     };
     
-    const success = await onSubmit(submitData);
+    // Pass the fetched models along with the config
+    const success = await onSubmit(submitData, previewModels);
     if (success) {
       // Form will be closed by parent
     }

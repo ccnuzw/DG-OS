@@ -65,6 +65,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::list_providers,
             commands::create_provider,
+            commands::create_provider_with_models,
             commands::update_provider,
             commands::delete_provider,
             commands::test_provider_connection,

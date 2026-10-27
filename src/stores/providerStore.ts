@@ -52,7 +52,7 @@ interface ProviderStore {
   
   // Actions
   fetchProviders: (userId: string) => Promise<void>;
-  createProvider: (config: ProviderConfig, userId: string) => Promise<boolean>;
+  createProvider: (config: ProviderConfig, userId: string, models?: Model[]) => Promise<boolean>;
   updateProvider: (id: string, config: ProviderConfig) => Promise<boolean>;
   deleteProvider: (id: string) => Promise<boolean>;
   testConnection: (config: ProviderConfig) => Promise<boolean>;
@@ -91,13 +91,25 @@ export const useProviderStore = create<ProviderStore>((set) => ({
     }
   },
 
-  createProvider: async (config: ProviderConfig, userId: string) => {
+  createProvider: async (config: ProviderConfig, userId: string, models?: Model[]) => {
     set({ loading: true, error: null });
     try {
-      const response = await invoke<CommandResponse<Provider>>('create_provider', {
-        config,
-        userId,
-      });
+      let response;
+      
+      // If models are provided, use create_provider_with_models
+      if (models && models.length > 0) {
+        response = await invoke<CommandResponse<Provider>>('create_provider_with_models', {
+          config,
+          userId,
+          models,
+        });
+      } else {
+        // Otherwise just create provider without models
+        response = await invoke<CommandResponse<Provider>>('create_provider', {
+          config,
+          userId,
+        });
+      }
       
       if (response.success && response.data) {
         set((state) => ({

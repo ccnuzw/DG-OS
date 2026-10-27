@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useProviderStore } from '../stores/providerStore';
 import ProviderList from '../components/ProviderList';
 import ProviderForm from '../components/ProviderForm';
-import type { Provider, ProviderConfig } from '../stores/providerStore';
+import type { Provider, ProviderConfig, Model } from '../stores/providerStore';
 import './ProviderManagement.css';
 
 export default function ProviderManagement() {
@@ -47,13 +47,13 @@ export default function ProviderManagement() {
     setShowForm(true);
   };
 
-  const handleSubmit = async (config: ProviderConfig) => {
+  const handleSubmit = async (config: ProviderConfig, models: Model[]) => {
     let success = false;
     
     if (editingProvider) {
       success = await updateProvider(editingProvider.id, config);
     } else {
-      success = await createProvider(config, currentUserId);
+      success = await createProvider(config, currentUserId, models);
     }
     
     if (success) {
