@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ProviderConfig } from '../stores/providerStore';
+import { ProviderConfig, Model } from '../stores/providerStore';
 import { invoke } from '@tauri-apps/api/core';
 
 interface ProviderFormProps {
@@ -41,9 +41,13 @@ export default function ProviderForm({
   
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   
+  // Connection test state
+  const [testing, setTesting] = useState(false);
+  
   // Model fetching state
   const [fetchingModels, setFetchingModels] = useState(false);
-  const [modelsFetched, setModelsFetched] = useState(false);
+  const [previewModels, setPreviewModels] = useState<Model[]>([]);
+  const [modelsFetchError, setModelsFetchError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isEditMode && initialData) {
@@ -78,6 +82,30 @@ export default function ProviderForm({
     }
   };
 
+  const handleTestConnection = async () => {
+    if (!formData.base_url || !formData.api_key) {
+      return;
+    }
+
+    setTesting(true);
+    setTestResult(null);
+    
+    try {
+      const testResponse = await invoke<CommandResponse<boolean>>('test_provider_connection', {
+        config: formData,
+      });
+      
+      if (testResponse.success && testResponse.data) {
+        setTestResult('success');
+      } else {
+        setTestResult('error');
+      }
+    } catch (err) {
+      setTestResult('error');
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const handleFetchModels = async () => {
     if (!formData.base_url || !formData.api_key) {
@@ -85,26 +113,60 @@ export default function ProviderForm({
     }
 
     setFetchingModels(true);
-    setTestResult(null);
+    setModelsFetchError(null);
+    setPreviewModels([]);
     
     try {
-      // Use the test connection command to validate
+      // First test connection
       const testResponse = await invoke<CommandResponse<boolean>>('test_provider_connection', {
         config: formData,
       });
       
       if (!testResponse.success || !testResponse.data) {
-        setTestResult('error');
+        setModelsFetchError('Connection test failed. Please check your configuration.');
         setFetchingModels(false);
         return;
       }
 
-      // Connection successful
-      setTestResult('success');
-      setModelsFetched(true);
+      // Then fetch models by calling the OpenAI compatible /v1/models endpoint
+      // We'll do this directly through the adapter
+      const response = await fetch(`${formData.base_url}/models`, {
+        headers: {
+          'Authorization': `Bearer ${formData.api_key}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        setModelsFetchError(`Failed to fetch models: ${response.statusText}`);
+        setFetchingModels(false);
+        return;
+      }
+
+      const data = await response.json();
+      
+      // OpenAI API returns { data: [...models], object: "list" }
+      if (data.data && Array.isArray(data.data)) {
+        const models: Model[] = data.data.map((model: any) => ({
+          id: crypto.randomUUID(),
+          provider_id: 'preview',
+          model_id: model.id,
+          model_name: model.id, // Use ID as name initially
+          model_type: model.object || 'model',
+          context_window: model.context_window,
+          max_output_tokens: model.max_output_tokens,
+          supports_streaming: true, // Assume true for OpenAI compatible
+          supports_vision: model.id.includes('vision') || model.id.includes('gpt-4'),
+          cached_at: new Date().toISOString(),
+        }));
+        
+        setPreviewModels(models);
+      } else {
+        setModelsFetchError('Invalid response format from API');
+      }
       
     } catch (err) {
-      setTestResult('error');
+      setModelsFetchError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setFetchingModels(false);
     }
@@ -196,10 +258,31 @@ export default function ProviderForm({
         </div>
       )}
 
-      {modelsFetched && (
+      {previewModels.length > 0 && (
         <div className="models-preview">
-          <h4>Ready to fetch models</h4>
-          <p>Models will be fetched automatically after saving the provider.</p>
+          <h4>Available Models ({previewModels.length})</h4>
+          <div className="models-preview-list">
+            {previewModels.map((model) => (
+              <div key={model.model_id} className="model-preview-item">
+                <div className="model-preview-name">{model.model_name}</div>
+                <div className="model-preview-id">{model.model_id}</div>
+                {model.context_window && (
+                  <div className="model-preview-meta">
+                    Context: {model.context_window.toLocaleString()} tokens
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <small className="models-preview-note">
+            These models will be saved when you create/update the provider
+          </small>
+        </div>
+      )}
+
+      {modelsFetchError && (
+        <div className="test-result error">
+          ✗ {modelsFetchError}
         </div>
       )}
 
@@ -208,25 +291,35 @@ export default function ProviderForm({
           type="button"
           onClick={onCancel}
           className="btn-secondary"
-          disabled={loading || fetchingModels}
+          disabled={loading || testing || fetchingModels}
         >
           Cancel
         </button>
         
         <button
           type="button"
+          onClick={handleTestConnection}
+          className="btn-secondary"
+          disabled={loading || testing || fetchingModels || !formData.api_key}
+          title="Test API connection"
+        >
+          {testing ? 'Testing...' : '🔌 Test Connection'}
+        </button>
+
+        <button
+          type="button"
           onClick={handleFetchModels}
           className="btn-secondary"
-          disabled={loading || fetchingModels || !formData.api_key}
-          title="Test connection and validate API key"
+          disabled={loading || testing || fetchingModels || !formData.api_key}
+          title="Fetch available models from API"
         >
-          {fetchingModels ? 'Testing...' : '🔌 Test & Validate'}
+          {fetchingModels ? 'Fetching...' : '📥 Fetch Models'}
         </button>
         
         <button
           type="submit"
           className="btn-primary"
-          disabled={loading || fetchingModels}
+          disabled={loading || testing || fetchingModels}
         >
           {loading ? 'Saving...' : initialData?.id ? 'Update' : 'Create'}
         </button>

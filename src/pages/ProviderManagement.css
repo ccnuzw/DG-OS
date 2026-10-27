@@ -385,15 +385,52 @@
 }
 
 .models-preview h4 {
-  margin: 0 0 0.5rem 0;
+  margin: 0 0 0.75rem 0;
   font-size: 0.875rem;
   color: #0969da;
+  font-weight: 600;
 }
 
-.models-preview p {
-  margin: 0;
+.models-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 300px;
+  overflow-y: auto;
+  margin-bottom: 0.75rem;
+}
+
+.model-preview-item {
+  padding: 0.75rem;
+  background-color: white;
+  border: 1px solid #d0d7de;
+  border-radius: 0.375rem;
+}
+
+.model-preview-name {
+  font-weight: 500;
+  font-size: 0.875rem;
+  color: #24292f;
+  margin-bottom: 0.25rem;
+}
+
+.model-preview-id {
   font-size: 0.8125rem;
   color: #57606a;
+  font-family: 'Monaco', 'Courier New', monospace;
+  margin-bottom: 0.25rem;
+}
+
+.model-preview-meta {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.models-preview-note {
+  display: block;
+  font-size: 0.75rem;
+  color: #57606a;
+  font-style: italic;
 }
 .model-context {
   font-size: 0.8125rem;
