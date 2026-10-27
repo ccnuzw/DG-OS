@@ -25,6 +25,7 @@ export default function ProviderForm({
   loading = false,
 }: ProviderFormProps) {
   const isEditMode = !!initialData?.id;
+  const providerId = initialData?.id;
   
   const [formData, setFormData] = useState<ProviderConfig>(
     initialData || {
@@ -83,7 +84,9 @@ export default function ProviderForm({
   };
 
   const handleTestConnection = async () => {
-    if (!formData.base_url || !formData.api_key) {
+    // In edit mode, we can test even without API key (backend has it)
+    // In create mode, we need the API key
+    if (!isEditMode && !formData.api_key) {
       return;
     }
 
@@ -108,61 +111,79 @@ export default function ProviderForm({
   };
 
   const handleFetchModels = async () => {
-    if (!formData.base_url || !formData.api_key) {
-      return;
-    }
-
     setFetchingModels(true);
     setModelsFetchError(null);
     setPreviewModels([]);
     
     try {
-      // First test connection
-      const testResponse = await invoke<CommandResponse<boolean>>('test_provider_connection', {
-        config: formData,
-      });
-      
-      if (!testResponse.success || !testResponse.data) {
-        setModelsFetchError('Connection test failed. Please check your configuration.');
-        setFetchingModels(false);
-        return;
-      }
-
-      // Then fetch models by calling the OpenAI compatible /v1/models endpoint
-      // We'll do this directly through the adapter
-      const response = await fetch(`${formData.base_url}/models`, {
-        headers: {
-          'Authorization': `Bearer ${formData.api_key}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        setModelsFetchError(`Failed to fetch models: ${response.statusText}`);
-        setFetchingModels(false);
-        return;
-      }
-
-      const data = await response.json();
-      
-      // OpenAI API returns { data: [...models], object: "list" }
-      if (data.data && Array.isArray(data.data)) {
-        const models: Model[] = data.data.map((model: any) => ({
-          id: crypto.randomUUID(),
-          provider_id: 'preview',
-          model_id: model.id,
-          model_name: model.id, // Use ID as name initially
-          model_type: model.object || 'model',
-          context_window: model.context_window,
-          max_output_tokens: model.max_output_tokens,
-          supports_streaming: true, // Assume true for OpenAI compatible
-          supports_vision: model.id.includes('vision') || model.id.includes('gpt-4'),
-          cached_at: new Date().toISOString(),
-        }));
+      if (isEditMode && providerId) {
+        // Edit mode: use backend refresh_models (has stored API key)
+        const response = await invoke<CommandResponse<Model[]>>('refresh_models', {
+          providerId: providerId,
+        });
         
-        setPreviewModels(models);
+        if (response.success && response.data) {
+          setPreviewModels(response.data);
+        } else {
+          setModelsFetchError(response.error?.message || 'Failed to fetch models');
+        }
       } else {
-        setModelsFetchError('Invalid response format from API');
+        // Create mode: fetch directly using form API key
+        if (!formData.api_key) {
+          setModelsFetchError('Please enter an API key first');
+          setFetchingModels(false);
+          return;
+        }
+
+        // First test connection
+        const testResponse = await invoke<CommandResponse<boolean>>('test_provider_connection', {
+          config: formData,
+        });
+        
+        if (!testResponse.success || !testResponse.data) {
+          setModelsFetchError('Connection test failed. Please check your configuration.');
+          setFetchingModels(false);
+          return;
+        }
+
+        // Then fetch models by calling the OpenAI compatible /v1/models endpoint
+        const response = await fetch(`${formData.base_url}/models`, {
+          headers: {
+            'Authorization': `Bearer ${formData.api_key}`,
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (!response.ok) {
+          setModelsFetchError(`Failed to fetch models: ${response.statusText}`);
+          setFetchingModels(false);
+          return;
+        }
+
+        const data: { data?: unknown[] } = await response.json();
+        
+        // OpenAI API returns { data: [...models], object: "list" }
+        if (data.data && Array.isArray(data.data)) {
+          const models: Model[] = data.data.map((model: unknown) => {
+            const modelObj = model as Record<string, unknown>;
+            return {
+              id: crypto.randomUUID(),
+              provider_id: 'preview',
+              model_id: typeof modelObj.id === 'string' ? modelObj.id : 'unknown',
+              model_name: typeof modelObj.id === 'string' ? modelObj.id : 'unknown',
+              model_type: typeof modelObj.object === 'string' ? modelObj.object : 'model',
+              context_window: typeof modelObj.context_window === 'number' ? modelObj.context_window : undefined,
+              max_output_tokens: typeof modelObj.max_output_tokens === 'number' ? modelObj.max_output_tokens : undefined,
+              supports_streaming: true,
+              supports_vision: typeof modelObj.id === 'string' && (modelObj.id.includes('vision') || modelObj.id.includes('gpt-4')),
+              cached_at: new Date().toISOString(),
+            };
+          });
+          
+          setPreviewModels(models);
+        } else {
+          setModelsFetchError('Invalid response format from API');
+        }
       }
       
     } catch (err) {
@@ -171,6 +192,11 @@ export default function ProviderForm({
       setFetchingModels(false);
     }
   };
+
+  // Can test/fetch if:
+  // - Edit mode: always (backend has API key)
+  // - Create mode: only if API key is filled
+  const canTestOrFetch = isEditMode || !!formData.api_key;
 
   return (
     <form onSubmit={handleSubmit} className="provider-form">
@@ -263,7 +289,7 @@ export default function ProviderForm({
           <h4>Available Models ({previewModels.length})</h4>
           <div className="models-preview-list">
             {previewModels.map((model) => (
-              <div key={model.model_id} className="model-preview-item">
+              <div key={model.id} className="model-preview-item">
                 <div className="model-preview-name">{model.model_name}</div>
                 <div className="model-preview-id">{model.model_id}</div>
                 {model.context_window && (
@@ -275,7 +301,9 @@ export default function ProviderForm({
             ))}
           </div>
           <small className="models-preview-note">
-            These models will be saved when you create/update the provider
+            {isEditMode 
+              ? 'These models are already saved in the database'
+              : 'These models will be saved when you create the provider'}
           </small>
         </div>
       )}
@@ -300,8 +328,8 @@ export default function ProviderForm({
           type="button"
           onClick={handleTestConnection}
           className="btn-secondary"
-          disabled={loading || testing || fetchingModels || !formData.api_key}
-          title="Test API connection"
+          disabled={loading || testing || fetchingModels || !canTestOrFetch}
+          title={isEditMode ? "Test connection using stored API key" : "Test API connection"}
         >
           {testing ? 'Testing...' : '🔌 Test Connection'}
         </button>
@@ -310,8 +338,8 @@ export default function ProviderForm({
           type="button"
           onClick={handleFetchModels}
           className="btn-secondary"
-          disabled={loading || testing || fetchingModels || !formData.api_key}
-          title="Fetch available models from API"
+          disabled={loading || testing || fetchingModels || !canTestOrFetch}
+          title={isEditMode ? "Fetch models using stored API key" : "Fetch available models from API"}
         >
           {fetchingModels ? 'Fetching...' : '📥 Fetch Models'}
         </button>
