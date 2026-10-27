@@ -3,6 +3,10 @@ info:
   title: DGOS V1 API
   description: |
     DGOS V1.0 局域网协同 HTTP API 规范
+
+    D016 修订提示（2026-10-27）：Skills 相关接口仍为旧 HTTP/CLI 基线，
+    不代表 V1-FR-002 DGOS 技能中心目标契约；新接口与迁移将在技术设计中统一修订。
+    本轮仅标明适用范围，不更改现有路径、字段或错误码。
     
     **认证方式**：Bearer Token (JWT)
     

@@ -1,907 +1,289 @@
-# V1-FR-002：Skills 管理系统
+# V1-FR-002：DGOS 技能中心
 
 ## 1. 功能元信息
 
 | 属性 | 值 |
 | --- | --- |
-| 功能编号 | V1-FR-002 |
-| 功能名称 | Skills 管理系统 |
-| 所属版本 | V1 |
-| 所属领域 | 底层能力 |
-| 优先级 | P0（必须） |
-| 风险级别 | 标准（使用现有标准，不涉及复杂并发） |
-| 依赖功能 | V1-FR-001（Provider 框架，Skills 可能调用 AI） |
-| 被依赖功能 | V1-FR-006（AI 工作台）、V2 画布系统 |
-| 负责人 | TBD |
-| 当前状态 | 规划中 |
+| 功能编号 | V1-FR-002（不变） |
+| 功能名称 | DGOS 技能中心（原 Skills 管理系统） |
+| 所属版本 / 领域 | V1 / 底层能力 |
+| 优先级 / 风险 | P0 / 高风险：第三方内容、文件安装、场景权限与版本一致性 |
+| 核心用户 | 本地用户、消费技能的 DGOS 应用、维护官方内容的开发者 |
+| 独立验收目标 | 用户无需连接外站即可浏览官方内置分类库；能安装预置来源的技能，并在 AI 工作台中明确选择、按固定版本使用 |
+| 依赖 | V1-FR-001 模型调用；V1-FR-005 设计系统；V1-FR-008 用户隔离；V1-FR-009 权限边界 |
+| 协作功能 | V1-FR-006 AI 工作台负责实际任务；V1-FR-007 设置负责管理入口；V1-FR-003 MCP 提供可选工具 |
+| 决策依据 | [D016](../../../06-决策记录/V1-冻结决策.md#d016-skills-定位为官方优先的本地技能中心) |
+| 实现状态 | 只在 [V1 实现状态](../../../02-产品与版本/当前版本/V1-实现状态.md) 维护；本文不声明实现完成率 |
 
-## 2. 功能概述
+本文是功能定义，不是数据库 migration、可直接调用的 API 或已交付功能声明。保留原文件路径以避免链接失效。
 
-### 2.1 一句话描述
+## 2. 定位与边界
 
-连接官方 Skills 仓库，提供 Skills 浏览、安装、配置、调用和更新能力，支持 HTTP 和 CLI 两种调用方式，扩展 AI 应用的工具能力。
+### 2.1 一句话定义
 
-### 2.2 详细说明
+提供官方优先、本地可用、按场景消费的统一技能中心：管理 DGOS 官方内置技能和精选内容，通过预置适配器连接第三方生态，让不同应用通过同一本地服务发现、安装和使用技能。
 
-Skills 管理系统让 DGOS 能够使用现有的 AI 工具生态（基于 LangChain Tools 标准）。DGOS 不重新实现 Skills 协议，只负责管理和调用。
+**不是**单个外站的搜索壳，不是任意脚本执行器，也不是应用模块市场。
 
-**核心价值**：
-- ✅ 使用现有生态：直接使用 LangChain Tools 生态的 Skills
-- ✅ 简化管理：统一的安装、配置、更新界面
-- ✅ 扩展能力：让 AI 可以使用工具（搜索、计算、文件操作等）
-- ✅ 可选增强：Skills 是可选的，不是必须的
+### 2.2 核心概念
 
-**用户价值**：
-- 开发者：可以让 AI 调用各种工具，增强能力
-- 最终用户：可以在 AI 工作台或画布中使用 Skills 增强生成效果
-
-**与 Provider 的区别**：
-- Provider：提供 AI 模型（GPT-4、Claude 等）
-- Skills：提供工具能力（搜索、计算、文件操作等）
-- Skills 是可选的增强，Provider 是必须的
-
-### 2.3 功能边界
-
-**包含**：
-- ✅ 连接官方 Skills 仓库（硬编码 URL：`https://skills.dgos.ai/registry.json`）
-- ✅ 浏览 Skills 列表（分类、搜索、筛选）
-- ✅ 查看 Skill 详情（名称、描述、作者、版本、依赖）
-- ✅ 安装 Skills（下载到 `~/.dgos/skills/`）
-- ✅ 卸载 Skills
-- ✅ 启用/禁用 Skills
-- ✅ Skills 配置管理（API Key 等敏感配置）
-- ✅ 调用 Skills（HTTP 和 CLI 两种方式）
-- ✅ Skills 更新检查（提示更新，用户手动确认）
-- ✅ 依赖检查（检查 Python/Node.js 版本）
-- ✅ 使用记录保存
-- ✅ 并发调用支持
-
-**不包含**（明确说明原因）：
-- ❌ 自定义 Skills 仓库 → V2 再支持，V1 简化实现
-- ❌ Skills 开发 SDK → V8 开发者生态时提供
-- ❌ 自动更新 Skills → 需要用户确认，避免意外变更
-- ❌ 内置 Python/Node.js 运行时 → 复杂度高，V2 考虑
-- ❌ Skills 沙箱隔离 → V2 安全增强时考虑
-- ❌ Skills 市场（用户上传） → V3 应用市场时一起做
-
-## 3. 核心流程
-
-### 3.1 浏览和安装 Skills 流程
-
-```
-用户打开系统设置
-  ↓
-点击"Skills 管理"
-  ↓
-点击"浏览 Skills 仓库"
-  ↓
-系统从官方仓库获取 Skills 列表
-  ↓
-显示 Skills 列表（分类：搜索、计算、文件、数据等）
-  ↓
-用户搜索或浏览
-  ↓
-点击某个 Skill 查看详情
-  ↓
-显示：名称、描述、作者、版本、依赖、配置项
-  ↓
-点击"安装"
-  ↓
-检查依赖（Python 3.10+、Node.js 18+ 等）
-  ↓
-（如果依赖不满足）提示用户先安装依赖
-  ↓
-（如果依赖满足）下载 Skill 到 ~/.dgos/skills/
-  ↓
-解压并验证完整性
-  ↓
-（如果需要配置）提示用户配置（API Key 等）
-  ↓
-安装完成，显示在已安装列表
-```
-
-### 3.2 配置 Skills 流程
-
-```
-用户在已安装 Skills 列表
-  ↓
-选择某个 Skill
-  ↓
-点击"配置"
-  ↓
-显示配置项（根据 Skill manifest）
-  ↓
-例如：Google Search Skill 需要 API Key
-  ↓
-用户输入配置值
-  ↓
-系统加密保存到数据库
-  ↓
-配置完成，Skill 可用
-```
-
-### 3.3 调用 Skills 流程（HTTP）
-
-```
-应用层（AI 工作台）发起调用
-  ↓
-选择要使用的 Skill（如 web-search）
-  ↓
-构造调用参数（如 query: "Rust 教程"）
-  ↓
-Skills 管理器查找 Skill 配置
-  ↓
-检查 Skill 是否启用
-  ↓
-检查 Skill 类型：HTTP
-  ↓
-（如果 Skill 未启动）启动 Skill HTTP 服务
-  ↓
-发送 HTTP 请求到 Skill
-  ↓
-Skill 处理并返回结果
-  ↓
-记录使用日志
-  ↓
-返回结果给应用层
-```
-
-### 3.4 调用 Skills 流程（CLI）
-
-```
-应用层发起调用
-  ↓
-选择要使用的 Skill（如 calculator）
-  ↓
-构造调用参数（如 expression: "2+2"）
-  ↓
-Skills 管理器查找 Skill 配置
-  ↓
-检查 Skill 类型：CLI
-  ↓
-执行命令：calculator "2+2"
-  ↓
-从 stdout 读取结果
-  ↓
-解析 JSON 结果
-  ↓
-记录使用日志
-  ↓
-返回结果给应用层
-```
-
-### 3.5 更新 Skills 流程
-
-```
-系统定期检查 Skills 更新（每天一次）
-  ↓
-从官方仓库获取最新版本信息
-  ↓
-对比本地已安装版本
-  ↓
-（如果有新版本）在 Skills 列表显示"有更新"标记
-  ↓
-用户点击"查看更新"
-  ↓
-显示更新日志（changelog）
-  ↓
-用户点击"更新"
-  ↓
-下载新版本到临时目录
-  ↓
-备份旧版本（以便回滚）
-  ↓
-替换为新版本
-  ↓
-重启 Skill（如果是 HTTP 服务）
-  ↓
-更新完成
-```
-
-## 4. 数据模型
-
-### 4.1 涉及的数据表
-
-**skills 表**（已安装的 Skills）：
-```sql
-CREATE TABLE skills (
-    id TEXT PRIMARY KEY,              -- UUID
-    skill_id TEXT NOT NULL,           -- Skill 标识，如 web-search
-    name TEXT NOT NULL,               -- Skill 名称
-    description TEXT,                 -- 描述
-    version TEXT NOT NULL,            -- 当前安装的版本
-    author TEXT,                      -- 作者
-    install_path TEXT NOT NULL,       -- 安装路径
-    call_type TEXT NOT NULL,          -- 调用方式：http, cli
-    enabled BOOLEAN DEFAULT TRUE,     -- 是否启用
-    config JSON,                      -- 用户配置（加密存储）
-    manifest JSON,                    -- Skill manifest（包含依赖、配置项等）
-    installed_at TIMESTAMP,
-    updated_at TIMESTAMP,
-    user_id TEXT,                     -- 所属用户
-    FOREIGN KEY (user_id) REFERENCES users(id),
-    UNIQUE(user_id, skill_id)
-);
-```
-
-**skill_registry_cache 表**（仓库缓存）：
-```sql
-CREATE TABLE skill_registry_cache (
-    id TEXT PRIMARY KEY,
-    skill_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    description TEXT,
-    latest_version TEXT,
-    author TEXT,
-    category TEXT,                    -- 分类：search, compute, file, data
-    tags JSON,                        -- 标签数组
-    download_url TEXT,
-    manifest JSON,
-    synced_at TIMESTAMP,
-    UNIQUE(skill_id)
-);
-```
-
-**skill_usage_logs 表**（使用记录）：
-```sql
-CREATE TABLE skill_usage_logs (
-    id TEXT PRIMARY KEY,
-    skill_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    input_params JSON,                -- 输入参数
-    output_result JSON,               -- 输出结果（可能很大，考虑截断）
-    success BOOLEAN,
-    error_message TEXT,
-    latency_ms INTEGER,               -- 响应时间
-    created_at TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id)
-);
-```
-
-### 4.2 读写关系
-
-**读操作**：
-- 获取已安装 Skills：`SELECT * FROM skills WHERE user_id = ? AND enabled = TRUE`
-- 获取仓库 Skills：`SELECT * FROM skill_registry_cache WHERE category = ?`
-- 查询使用记录：`SELECT * FROM skill_usage_logs WHERE user_id = ? ORDER BY created_at DESC`
-
-**写操作**：
-- 安装 Skill：`INSERT INTO skills`
-- 更新 Skill：`UPDATE skills SET version = ?, updated_at = ? WHERE id = ?`
-- 卸载 Skill：`DELETE FROM skills WHERE id = ?`
-- 缓存仓库：`INSERT OR REPLACE INTO skill_registry_cache`
-- 记录使用日志：`INSERT INTO skill_usage_logs`
-
-## 5. 验收标准
-
-### 5.1 AC 逐项测试设计表
-
-| AC | 验收重点 | Given | When | Then | 测试层级 | 目标资产 | 目标命令 | 初始资产状态 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| AC01 | 连接官方仓库 | 网络正常 | 打开 Skills 浏览 | 成功获取 Skills 列表 | 后端 API + 外部集成 | `server/crates/skills/tests/registry.rs` | `cargo test -p dgos-skills registry_fetch` | 规划中 |
-| AC02 | 浏览 Skills 列表 | 仓库已缓存 | 查看 Skills 列表 | 显示所有 Skills，支持分类和搜索 | 后端 API + 前端 | `server/crates/skills/tests/registry.rs` | `cargo test -p dgos-skills skills_list` | 规划中 |
-| AC03 | 查看 Skill 详情 | Skill 存在 | 点击某个 Skill | 显示完整信息（名称、描述、版本、依赖） | 后端 API + 前端 | `server/crates/skills/tests/registry.rs` | `cargo test -p dgos-skills skill_detail` | 规划中 |
-| AC04 | 依赖检查 | 安装需要 Python 3.10+ | 点击安装 | 检查 Python 版本，不满足时提示 | 后端逻辑 | `server/crates/skills/tests/dependency.rs` | `cargo test -p dgos-skills dependency_check` | 规划中 |
-| AC05 | 安装 HTTP Skill | 依赖满足 | 安装 web-search | 下载、解压、保存到数据库 | 后端 API + 文件系统 | `server/crates/skills/tests/installation.rs` | `cargo test -p dgos-skills install_http_skill` | 规划中 |
-| AC06 | 安装 CLI Skill | 依赖满足 | 安装 calculator | 下载、解压、保存到数据库 | 后端 API + 文件系统 | `server/crates/skills/tests/installation.rs` | `cargo test -p dgos-skills install_cli_skill` | 规划中 |
-| AC07 | Skill 配置 | Skill 需要配置 | 输入 API Key | 加密保存到数据库 | 后端 API + 数据库 | `server/crates/skills/tests/configuration.rs` | `cargo test -p dgos-skills skill_config` | 规划中 |
-| AC08 | 调用 HTTP Skill | Skill 已安装 | 调用 web-search("Rust") | 启动服务、发送请求、返回结果 | 后端 API + 外部进程 | `server/crates/skills/tests/skill_call.rs` | `cargo test -p dgos-skills call_http_skill` | 规划中 |
-| AC09 | 调用 CLI Skill | Skill 已安装 | 调用 calculator("2+2") | 执行命令、解析输出、返回结果 | 后端 API + 进程管理 | `server/crates/skills/tests/skill_call.rs` | `cargo test -p dgos-skills call_cli_skill` | 规划中 |
-| AC10 | 并发调用 | 多个应用同时调用 | 5 个并发调用 web-search | 所有调用都成功，无冲突 | 后端 API + 并发测试 | `server/crates/skills/tests/concurrent.rs` | `cargo test -p dgos-skills concurrent_calls` | 规划中 |
-| AC11 | Skill 启用/禁用 | Skill 已安装 | 禁用 Skill | 该 Skill 不出现在可用列表 | 后端 API | `server/crates/skills/tests/installation.rs` | `cargo test -p dgos-skills skill_toggle` | 规划中 |
-| AC12 | Skill 卸载 | Skill 已安装 | 卸载 Skill | 删除文件、删除数据库记录 | 后端 API + 文件系统 | `server/crates/skills/tests/installation.rs` | `cargo test -p dgos-skills uninstall_skill` | 规划中 |
-| AC13 | 更新检查 | Skill 有新版本 | 检查更新 | 显示"有更新"标记和 changelog | 后端 API | `server/crates/skills/tests/update.rs` | `cargo test -p dgos-skills update_check` | 规划中 |
-| AC14 | Skill 更新 | 用户确认更新 | 点击更新 | 下载新版本、备份旧版本、替换 | 后端 API + 文件系统 | `server/crates/skills/tests/update.rs` | `cargo test -p dgos-skills skill_update` | 规划中 |
-| AC15 | 使用记录保存 | 调用成功 | 查询使用记录 | 包含输入、输出、延迟 | 后端 API + 数据库 | `server/crates/skills/tests/usage_logs.rs` | `cargo test -p dgos-skills usage_logs` | 规划中 |
-
-### 5.2 边界条件测试
-
-| 边界条件 | 测试场景 | 预期结果 |
-| --- | --- | --- |
-| 网络断开 | 浏览仓库时无网络 | 使用缓存数据，提示"离线模式" |
-| 依赖不满足 | Python 版本低于要求 | 提示"需要 Python 3.10+"，不允许安装 |
-| 重复安装 | 安装已安装的 Skill | 提示"已安装"，询问是否重新安装 |
-| Skill 调用超时 | HTTP Skill 5 秒未响应 | 返回超时错误 |
-| Skill 调用失败 | Skill 返回错误 | 记录错误日志，返回错误信息 |
-| 配置缺失 | 调用未配置的 Skill | 提示"请先配置 API Key" |
-| 磁盘空间不足 | 安装 Skill 时空间不足 | 返回错误，清理临时文件 |
-
-## 6. 接口设计
-
-### 6.1 Tauri Commands（桌面端）
-
-```rust
-// Skills 仓库
-#[tauri::command]
-async fn fetch_skills_registry() -> Result<Vec<SkillInfo>>;
-
-#[tauri::command]
-async fn search_skills(query: String, category: Option<String>) -> Result<Vec<SkillInfo>>;
-
-#[tauri::command]
-async fn get_skill_detail(skill_id: String) -> Result<SkillDetail>;
-
-// Skills 安装管理
-#[tauri::command]
-async fn install_skill(skill_id: String) -> Result<Skill>;
-
-#[tauri::command]
-async fn uninstall_skill(skill_id: String) -> Result<()>;
-
-#[tauri::command]
-async fn list_installed_skills(user_id: String) -> Result<Vec<Skill>>;
-
-#[tauri::command]
-async fn toggle_skill(skill_id: String, enabled: bool) -> Result<()>;
-
-// Skills 配置
-#[tauri::command]
-async fn get_skill_config(skill_id: String) -> Result<SkillConfig>;
-
-#[tauri::command]
-async fn update_skill_config(skill_id: String, config: SkillConfig) -> Result<()>;
-
-// Skills 调用
-#[tauri::command]
-async fn call_skill(
-    skill_id: String,
-    params: serde_json::Value
-) -> Result<serde_json::Value>;
-
-// Skills 更新
-#[tauri::command]
-async fn check_skill_updates() -> Result<Vec<SkillUpdate>>;
-
-#[tauri::command]
-async fn update_skill(skill_id: String) -> Result<Skill>;
-
-// 依赖检查
-#[tauri::command]
-async fn check_dependencies(skill_id: String) -> Result<DependencyStatus>;
-
-// 使用记录
-#[tauri::command]
-async fn list_skill_usage_logs(
-    user_id: String,
-    limit: Option<usize>
-) -> Result<Vec<SkillUsageLog>>;
-```
-
-### 6.2 HTTP API（局域网）
-
-```
-GET  /api/v1/skills/registry              # 获取仓库 Skills
-GET  /api/v1/skills/registry/:id          # 获取 Skill 详情
-GET  /api/v1/skills/installed             # 已安装 Skills
-POST /api/v1/skills/install               # 安装 Skill
-DELETE /api/v1/skills/:id                 # 卸载 Skill
-POST /api/v1/skills/:id/call              # 调用 Skill
-PUT  /api/v1/skills/:id/config            # 更新配置
-POST /api/v1/skills/:id/toggle            # 启用/禁用
-GET  /api/v1/skills/updates               # 检查更新
-POST /api/v1/skills/:id/update            # 更新 Skill
-GET  /api/v1/skills/usage-logs            # 使用记录
-```
-
-详见 [V1 接口契约](../../../04-技术架构/当前版本/V1-接口契约.md)。
-
-## 7. 技术设计
-
-### 7.1 Skills Manifest 格式
-
-```json
-{
-  "id": "web-search",
-  "name": "Web Search",
-  "version": "1.0.0",
-  "description": "Search the web using Google",
-  "author": "DGOS Team",
-  "category": "search",
-  "tags": ["search", "google", "web"],
-  "call_type": "http",
-  "dependencies": {
-    "python": ">=3.10",
-    "packages": ["requests", "beautifulsoup4"]
-  },
-  "config_schema": {
-    "api_key": {
-      "type": "string",
-      "required": true,
-      "encrypted": true,
-      "description": "Google Search API Key"
-    }
-  },
-  "http": {
-    "port": 8080,
-    "start_command": "python server.py",
-    "health_check": "/health"
-  },
-  "cli": null
-}
-```
-
-### 7.2 核心流程伪代码
-
-```rust
-// server/crates/skills/src/manager.rs
-
-pub struct SkillsManager {
-    skills_dir: PathBuf,              // ~/.dgos/skills/
-    registry_url: String,             // 官方仓库 URL
-    db: DatabasePool,
-    http_clients: HashMap<String, HttpClient>,  // 已启动的 HTTP Skills
-}
-
-impl SkillsManager {
-    // B02-01: 获取仓库 Skills 列表
-    pub async fn fetch_registry(&self) -> Result<Vec<SkillInfo>> {
-        // 从官方仓库获取
-        let response = reqwest::get(&self.registry_url).await?;
-        let registry: SkillRegistry = response.json().await?;
-        
-        // 缓存到数据库
-        for skill in &registry.skills {
-            self.db.upsert_registry_cache(skill).await?;
-        }
-        
-        Ok(registry.skills)
-    }
-    
-    // B02-02: 安装 Skill
-    pub async fn install_skill(&mut self, skill_id: &str, user_id: &str) -> Result<Skill> {
-        // 从仓库获取 Skill 信息
-        let skill_info = self.db.get_registry_skill(skill_id).await?;
-        
-        // B02-03: 检查依赖
-        self.check_dependencies(&skill_info.manifest)?;
-        
-        // 下载 Skill
-        let download_url = &skill_info.download_url;
-        let response = reqwest::get(download_url).await?;
-        let bytes = response.bytes().await?;
-        
-        // 保存到临时目录
-        let temp_path = format!("/tmp/dgos-skill-{}.tar.gz", skill_id);
-        fs::write(&temp_path, &bytes).await?;
-        
-        // 解压到安装目录
-        let install_path = self.skills_dir.join(skill_id);
-        extract_tarball(&temp_path, &install_path)?;
-        
-        // 验证完整性
-        verify_skill_integrity(&install_path)?;
-        
-        // 保存到数据库
-        let skill = Skill {
-            id: Uuid::new_v4().to_string(),
-            skill_id: skill_id.to_string(),
-            name: skill_info.name,
-            version: skill_info.latest_version,
-            install_path: install_path.to_string_lossy().to_string(),
-            call_type: skill_info.manifest.call_type,
-            enabled: true,
-            config: None,
-            manifest: skill_info.manifest,
-            user_id: user_id.to_string(),
-        };
-        
-        self.db.insert_skill(&skill).await?;
-        
-        // 清理临时文件
-        fs::remove_file(&temp_path).await?;
-        
-        Ok(skill)
-    }
-    
-    // B02-03: 检查依赖
-    fn check_dependencies(&self, manifest: &SkillManifest) -> Result<()> {
-        if let Some(python_req) = &manifest.dependencies.python {
-            let python_version = get_python_version()?;
-            if !version_satisfies(&python_version, python_req) {
-                return Err(Error::DependencyNotSatisfied(
-                    format!("需要 Python {}", python_req)
-                ));
-            }
-        }
-        
-        if let Some(node_req) = &manifest.dependencies.node {
-            let node_version = get_node_version()?;
-            if !version_satisfies(&node_version, node_req) {
-                return Err(Error::DependencyNotSatisfied(
-                    format!("需要 Node.js {}", node_req)
-                ));
-            }
-        }
-        
-        Ok(())
-    }
-    
-    // B02-04: 调用 HTTP Skill
-    pub async fn call_http_skill(
-        &mut self,
-        skill_id: &str,
-        params: serde_json::Value
-    ) -> Result<serde_json::Value> {
-        // 获取 Skill 配置
-        let skill = self.db.get_skill_by_skill_id(skill_id).await?;
-        
-        // B02-05: 检查是否启用
-        if !skill.enabled {
-            return Err(Error::SkillDisabled);
-        }
-        
-        // B02-06: 检查配置是否完整
-        if skill.manifest.config_schema.is_some() && skill.config.is_none() {
-            return Err(Error::SkillNotConfigured);
-        }
-        
-        // B02-07: 启动 HTTP 服务（如果未启动）
-        if !self.http_clients.contains_key(skill_id) {
-            self.start_http_skill(&skill).await?;
-        }
-        
-        // 获取 HTTP 客户端
-        let client = self.http_clients.get(skill_id)
-            .ok_or(Error::SkillNotStarted)?;
-        
-        // B02-08: 发送 HTTP 请求
-        let start_time = Instant::now();
-        let response = client
-            .post("/execute")
-            .json(&params)
-            .timeout(Duration::from_secs(30))
-            .send()
-            .await?;
-        
-        let latency_ms = start_time.elapsed().as_millis() as i32;
-        
-        // B02-09: 解析结果
-        let result: serde_json::Value = response.json().await?;
-        
-        // 记录使用日志
-        self.log_usage(skill_id, &params, &result, true, latency_ms).await?;
-        
-        Ok(result)
-    }
-    
-    // B02-10: 启动 HTTP Skill
-    async fn start_http_skill(&mut self, skill: &Skill) -> Result<()> {
-        let http_config = skill.manifest.http.as_ref()
-            .ok_or(Error::NotHttpSkill)?;
-        
-        let cwd = PathBuf::from(&skill.install_path);
-        let command = &http_config.start_command;
-        
-        // 启动进程
-        let mut child = Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .current_dir(&cwd)
-            .env("PORT", http_config.port.to_string())
-            .env("CONFIG", serde_json::to_string(&skill.config)?)
-            .spawn()?;
-        
-        // 等待服务启动（检查 health check）
-        let base_url = format!("http://localhost:{}", http_config.port);
-        let health_url = format!("{}{}", base_url, http_config.health_check);
-        
-        for _ in 0..10 {
-            tokio::time::sleep(Duration::from_millis(500)).await;
-            if let Ok(response) = reqwest::get(&health_url).await {
-                if response.status().is_success() {
-                    // 保存客户端
-                    let client = HttpClient::new(&base_url);
-                    self.http_clients.insert(skill.skill_id.clone(), client);
-                    return Ok(());
-                }
-            }
-        }
-        
-        // 超时，杀掉进程
-        child.kill().await?;
-        Err(Error::SkillStartTimeout)
-    }
-    
-    // B02-11: 调用 CLI Skill
-    pub async fn call_cli_skill(
-        &self,
-        skill_id: &str,
-        params: serde_json::Value
-    ) -> Result<serde_json::Value> {
-        // 获取 Skill 配置
-        let skill = self.db.get_skill_by_skill_id(skill_id).await?;
-        
-        // 检查是否启用
-        if !skill.enabled {
-            return Err(Error::SkillDisabled);
-        }
-        
-        let cli_config = skill.manifest.cli.as_ref()
-            .ok_or(Error::NotCliSkill)?;
-        
-        let cwd = PathBuf::from(&skill.install_path);
-        let command = &cli_config.command;
-        
-        // B02-12: 执行命令
-        let start_time = Instant::now();
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .current_dir(&cwd)
-            .env("INPUT", serde_json::to_string(&params)?)
-            .env("CONFIG", serde_json::to_string(&skill.config)?)
-            .output()
-            .await?;
-        
-        let latency_ms = start_time.elapsed().as_millis() as i32;
-        
-        // B02-13: 解析输出
-        if !output.status.success() {
-            let error_msg = String::from_utf8_lossy(&output.stderr).to_string();
-            self.log_usage(skill_id, &params, &json!({"error": error_msg}), false, latency_ms).await?;
-            return Err(Error::SkillExecutionFailed(error_msg));
-        }
-        
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let result: serde_json::Value = serde_json::from_str(&stdout)?;
-        
-        // 记录使用日志
-        self.log_usage(skill_id, &params, &result, true, latency_ms).await?;
-        
-        Ok(result)
-    }
-    
-    // B02-14: 更新 Skill
-    pub async fn update_skill(&mut self, skill_id: &str) -> Result<Skill> {
-        // 获取当前 Skill
-        let old_skill = self.db.get_skill_by_skill_id(skill_id).await?;
-        
-        // 获取最新版本信息
-        let skill_info = self.db.get_registry_skill(skill_id).await?;
-        
-        // 检查版本
-        if old_skill.version == skill_info.latest_version {
-            return Ok(old_skill);
-        }
-        
-        // B02-15: 备份旧版本
-        let backup_path = format!("{}.backup", old_skill.install_path);
-        fs::rename(&old_skill.install_path, &backup_path).await?;
-        
-        // 下载新版本
-        let download_url = &skill_info.download_url;
-        let response = reqwest::get(download_url).await?;
-        let bytes = response.bytes().await?;
-        
-        // 保存到临时目录
-        let temp_path = format!("/tmp/dgos-skill-{}-{}.tar.gz", skill_id, skill_info.latest_version);
-        fs::write(&temp_path, &bytes).await?;
-        
-        // 解压
-        let install_path = PathBuf::from(&old_skill.install_path);
-        extract_tarball(&temp_path, &install_path)?;
-        
-        // 更新数据库
-        self.db.update_skill_version(skill_id, &skill_info.latest_version).await?;
-        
-        // 清理
-        fs::remove_file(&temp_path).await?;
-        
-        // 如果是 HTTP Skill，重启服务
-        if old_skill.call_type == "http" {
-            self.http_clients.remove(skill_id);
-            // 下次调用时自动启动
-        }
-        
-        Ok(self.db.get_skill_by_skill_id(skill_id).await?)
-    }
-}
-```
-
-### 7.3 分支到测试追踪表
-
-| 分支 ID | 分支描述 | AC 映射 | E2E 映射 |
-| --- | --- | --- | --- |
-| B02-01 | 获取仓库列表 | AC01, AC02 | - |
-| B02-02 | 安装 Skill | AC05, AC06 | V1-E2E-02 |
-| B02-03 | 检查依赖 | AC04 | - |
-| B02-04 | 调用 HTTP Skill | AC08 | V1-E2E-02 |
-| B02-05 | 检查是否启用 | AC11 | - |
-| B02-06 | 检查配置完整性 | AC07 | - |
-| B02-07 | 启动 HTTP 服务 | AC08 | - |
-| B02-08 | 发送 HTTP 请求 | AC08 | - |
-| B02-09 | 解析结果 | AC08 | - |
-| B02-10 | 启动 HTTP Skill | AC08 | - |
-| B02-11 | 调用 CLI Skill | AC09 | V1-E2E-02 |
-| B02-12 | 执行 CLI 命令 | AC09 | - |
-| B02-13 | 解析 CLI 输出 | AC09 | - |
-| B02-14 | 更新 Skill | AC14 | - |
-| B02-15 | 备份旧版本 | AC14 | - |
-
-## 8. 错误码设计
-
-| 错误码 | 错误信息 | 场景 | 用户操作建议 |
-| --- | --- | --- | --- |
-| 1002001 | skill_not_found | Skill 不存在 | 检查 Skill ID |
-| 1002002 | skill_already_installed | Skill 已安装 | 询问是否重新安装 |
-| 1002003 | dependency_not_satisfied | 依赖不满足 | 安装依赖（Python/Node.js） |
-| 1002004 | skill_disabled | Skill 已禁用 | 启用 Skill |
-| 1002005 | skill_not_configured | Skill 未配置 | 配置 API Key 等 |
-| 1002006 | skill_not_started | HTTP Skill 未启动 | 检查日志或重启 |
-| 1002007 | skill_execution_failed | Skill 执行失败 | 查看错误信息 |
-| 1002008 | skill_timeout | Skill 调用超时 | 检查 Skill 状态或网络 |
-| 1002009 | skill_start_timeout | HTTP Skill 启动超时 | 检查依赖或端口占用 |
-| 1002010 | registry_unreachable | 仓库不可达 | 检查网络或使用缓存 |
-
-详见 [V1 错误码](../../../04-技术架构/当前版本/V1-错误码.md)（待创建）。
-
-## 9. 非功能需求
-
-### 9.1 性能需求
-
-| 指标 | 目标 | 测量方式 |
-| --- | --- | --- |
-| 仓库列表获取 | < 3 秒 | 集成测试 |
-| Skill 安装 | < 30 秒（取决于大小） | 集成测试 |
-| HTTP Skill 启动 | < 5 秒 | 集成测试 |
-| HTTP Skill 调用 | < 5 秒（取决于 Skill） | 集成测试 |
-| CLI Skill 调用 | < 3 秒（取决于 Skill） | 集成测试 |
-| 并发调用支持 | > 50 QPS | 压力测试 |
-
-### 9.2 安全需求
-
-| 需求 | 实现方式 |
+| 概念 | 定义与边界 |
 | --- | --- |
-| 配置加密存储 | 使用 AES-256 加密 API Key |
-| Skills 完整性验证 | 下载后验证 checksum |
-| 进程隔离 | Skills 独立进程运行 |
-| 敏感信息脱敏 | 日志中 API Key 只显示前 4 位 |
+| Skill | 以 `SKILL.md` 为入口的指令、知识和辅助资源集合；可以附带脚本，但安装和读取不等于执行 |
+| 工具 | 执行文件、网络、HTTP/CLI 等动作的能力；由宿主受控接口或 MCP 提供，不伪装成 Skill |
+| 工作流 | 保证步骤、依赖及输出约束的编排；不能依靠自由文本技能保证确定性 |
+| 来源 | 发现或获取内容的渠道；一个上游技能可经多个渠道发现 |
+| 目录项 | 可展示的元数据，不代表文件已经安装或经过审核 |
+| 本地技能版本 | 锁定上游修订与内容哈希的本地文件快照 |
+| 场景绑定 | 应用或会话选择哪些技能；不等于赋予这些技能执行权限 |
 
-### 9.3 可用性需求
+### 2.3 内容身份与分发
 
-| 需求 | 实现方式 |
+| 身份 | 维护责任 | 分发规则 |
+| --- | --- | --- |
+| DGOS 官方 | DGOS 自研、维护、测试 | 核心内容随软件发布；扩展内容后续可按需下载 |
+| DGOS 官方精选 | DGOS 验证兼容性；原作者维护上游 | 保留原作者、来源、许可与验证范围；仅在许可允许时再分发 |
+| 第三方生态 | 外部作者；DGOS 负责适配与风险提示 | 用户主动安装，不能因来自知名网站就标为官方或安全 |
+
+内容身份、兼容性验证结果、实际权限分别表达。下载成功不自动获得“已审核”标记；官方精选不保证绝对安全。用户修改官方/第三方内容时生成带派生关系的独立副本，不继续展示原内容身份背书。
+
+### 2.4 V1 交付范围
+
+V1 分两个交付批次，均属于同一功能；先完成 A，再完成 B，不能只做搜索页面就声称闭环完成。
+
+| 批次 | 必须交付 | 验收边界 |
+| --- | --- | --- |
+| A：官方本地库 | 随应用提供官方核心包；统一分类、搜索和详情；用户启用/禁用；AI 工作台选择并使用；版本与使用记录 | 全新安装、无缓存、无网络也能浏览官方内容；至少 2 类、每类至少 1 个可验收技能；至少 1 个在工作台完成真实任务 |
+| B：第三方扩展 | 来源适配接口；至少 1 个真实预置来源的搜索、内容获取、安装、更新与来源追踪；缓存及失败隔离 | 对真实来源完成安装使用闭环；mock 或外站链接跳转不能替代真实集成验收 |
+
+首批官方内容建议约 10–20 个，但不是已冻结数量或已存在清单。实际名单、许可、资源大小与逐项测试由后续内容发布清单确认。skills.sh 是已验证可访问的首个候选，不把未验证的网站列为“已支持”。
+
+### 2.5 V1 不做
+
+- 用户上传的开放市场、付费交易、第三方应用模块审核平台。
+- 任意用户自定义源、所有知名站点全量同步或整站镜像。
+- 第三方附带脚本的通用执行/沙箱系统、自动安装 Python/Node.js 等运行时。
+- 自治 Agent 自动串联多个技能；V1 以用户明确选择和应用显式绑定为主。
+- 新建图像、视频、文档应用或完整画布；这些作为适用场景元数据与后续应用集成方向。
+- 本轮实现任何上述能力；本轮只变更功能定义与追踪。
+
+## 3. 信息架构与用户体验
+
+### 3.1 DGOS 统一分类
+
+| 分类 | 内容示例（待制作，不表示已内置） |
 | --- | --- |
-| 离线使用 | 缓存仓库数据，离线可用 |
-| 失败恢复 | Skill 执行失败自动清理 |
-| 版本回滚 | 更新失败可回滚到旧版本 |
+| 写作与内容 | 总结、改写、文案、翻译 |
+| 图像与视觉 | 提示词组织、视觉策划、图像分析 |
+| 视频与音频 | 分镜、视频脚本、字幕整理 |
+| 文档与办公 | 报告、方案、演示文稿、表格处理 |
+| 数据与研究 | 资料整理、研究报告、数据分析 |
+| 开发与自动化 | 编码、测试、工具协作 |
 
-## 10. 实现与验证
+分类由 DGOS 维护；标签、来源、适用应用、内容身份是独立筛选维度。一个技能可以对应多个场景。第三方分类映射到本地分类，未匹配项明确标为待分类，不根据热度推断分类或安全性。
 
-### 10.1 后端测试
+### 3.2 两种入口
 
-**目标资产**：
-- `server/crates/skills/src/manager.rs`
-- `server/crates/skills/src/registry.rs`
-- `server/crates/skills/src/caller.rs`
-- `server/crates/skills/tests/registry.rs`
-- `server/crates/skills/tests/installation.rs`
-- `server/crates/skills/tests/skill_call.rs`
-- `server/crates/skills/tests/dependency.rs`
-- `server/crates/skills/tests/update.rs`
+- **技能中心**：官方推荐、按分类浏览、已安装、第三方发现；展示名称、简介、身份、作者、版本、依赖、来源和可用状态。
+- **应用内选择器**：只列出当前用户已安装、已启用、与该场景兼容的技能；缺依赖时显示原因与修复入口，不假装可执行。
 
-**测试命令**：
-```bash
-cd server && cargo test -p dgos-skills
-```
+已安装、已启用、适用当前场景、已被本次任务选中，是不同状态。界面必须能说明“为什么不可用”。第三方源不可达仅影响该来源，不把整个中心切换成离线空页面。
 
-**验证记录**（待开发后填写）：
-```
-日期：YYYY-MM-DD
-执行人：XXX
-环境：本地开发环境
+### 3.3 离线承诺
 
-结果：
-- registry.rs：0/3 通过（待实现）
-- installation.rs：0/4 通过（待实现）
-- skill_call.rs：0/3 通过（待实现）
-- dependency.rs：0/1 通过（待实现）
-- update.rs：0/2 通过（待实现）
+无网络可浏览、读取和管理本地内容；可否完成任务取决于模型及工具是否也在本地可用。不得把“内置了 Skill”宣传为“云模型、网络搜索也能离线执行”。无缓存时显示来源不可用，而非虚构目录；有缓存时显示缓存时间与来源状态。
 
-详细覆盖说明：
-- AC01～AC15：待实现
-```
+## 4. 业务规则与主流程
 
-### 10.2 前端集成测试
+### 4.1 官方内容初始化
 
-**目标资产**：
-- `frontend/apps/desktop/src/hooks/useSkills.ts`
-- `frontend/apps/desktop/src/views/SkillsSettings.tsx`
-- `frontend/apps/desktop/src/__tests__/skills_settings.test.tsx`
+应用读取打包的官方目录和版本清单，验证内容后使其可浏览。首次导入按内容版本幂等处理；升级不重置用户禁用状态，不覆盖用户副本。基础官方包为只读资源，用户可禁用但不在设置中删除应用资源；可卸载的是用户下载的扩展版本/第三方包，回退到内置版本时必须明确提示。
 
-**测试命令**：
-```bash
-cd frontend && pnpm test -- skills_settings
-```
+### 4.2 第三方来源适配
 
-**验证记录**（待开发后填写）：
-```
-日期：YYYY-MM-DD
-执行人：XXX
-环境：本地开发环境
+应用只调用 DGOS 本地技能服务，不直接请求外站。每个适配器声明支持的能力：搜索、列表/分页、详情、内容定位、修订检测；不支持的能力明确返回“不支持”，不伪造结果。
 
-结果：
-- skills_settings.test.tsx：0/3 通过（待实现）
+发现渠道与内容源分开记录，例如 skills.sh 搜索条目可能最终从 GitHub 获取。按规范化上游仓库与子路径建立稳定身份，同名不同作者不合并，同一上游经多个渠道发现不重复安装。无法确认同一身份时保留区分，不按名称猜测去重。
 
-详细覆盖说明：
-- 界面交互测试：待实现
-```
+来源请求有超时、限流和取消；合并同一来源的重复刷新。401/403 显示认证/访问限制，不循环重试；429 遵从服务端重试提示；不可用来源不得阻塞本地列表。缓存只用于发现和读取，不代表远程内容仍可下载。
 
-### 10.3 E2E 测试
+### 4.3 安装与内容完整性
 
-**E2E 场景**：V1-E2E-02（完整的 Skill 安装和调用流程）
+用户查看来源、许可、依赖和兼容性后确认安装。下载固定修订到暂存目录，验证 `SKILL.md`、路径边界、文件数量/体积限制和内容哈希，再发布为本地版本。拒绝路径穿越、越界符号链接和解压炸弹；大小等具体阈值在技术设计中确定，未明确前不得开放第三方安装。
 
-**测试资产**：
-- `tests/e2e/skills_workflow.spec.ts`
+未知或不允许再分发的许可不得进入官方内置/镜像包；直接获取第三方内容也需展示许可状态并遵守上游条款。没有版本号时保留提交号/内容哈希，不编造语义版本。来源声称的哈希不能单独证明作者可信；官方发布需使用受信任分发链路与内容校验。
 
-**测试命令**：
-```bash
-pnpm test:e2e -- skills_workflow
-```
+安装失败清理暂存资源，不留下“已安装”记录；同一用户、技能、修订的并发安装应幂等。文件发布与数据库状态通过可恢复的提交过程保持一致，重启能识别并恢复中断操作，不能仅用数据库事务宣称文件系统原子性。
 
-**验证记录**（待开发后填写）：
-```
-日期：YYYY-MM-DD
-执行人：XXX
-环境：集成测试环境
+### 4.4 场景选择与任务使用
 
-结果：
-- skills_workflow.spec.ts：0/1 通过（待实现）
+1. 用户在应用/会话中选择技能，或接受应用明确展示的默认绑定。
+2. 宿主校验用户范围、启用状态、场景兼容性、所需模型/工具能力及权限。
+3. 任务锁定技能版本和内容哈希，只加载选中技能的正文及必要资源，控制上下文预算。
+4. 由 AI 工作台的模型调用链消费指令；引用脚本不自动执行，工具动作仍由宿主受控入口授权。
+5. 保存所用技能、版本、场景和结果摘要，用户可追溯本次实际用了什么。
 
-详细说明：
-- 完整流程测试：待实现
-```
+V1 不把所有启用技能全文注入每次请求。上下文超预算或多个技能约束冲突时，提示用户缩减或选择，不静默删除必要指令。显式选择的技能无法加载时，默认停止任务准备；用户确认后才可不带技能继续，不能悄悄降级。
 
-## 11. 风险与依赖
+### 4.5 权限与数据隔离
 
-### 11.1 技术风险
+Skill 是不可信内容，不能覆盖宿主高优先级指令或声明自己已获授权。模块权限是上限，不是第三方内容的继承权限。文件访问按用户选择的文件/工作区，网络和工具动作按宿主能力边界处理；V1 不允许任意 shell 或自动执行下载脚本。
 
-| 风险 | 概率 | 影响 | 缓解措施 |
-| --- | --- | --- | --- |
-| Skills 生态不成熟 | 中 | 中 | 自己开发几个官方 Skills |
-| HTTP Skills 启动失败 | 中 | 中 | 完善错误提示，提供调试日志 |
-| CLI Skills 进程管理 | 中 | 中 | 使用成熟的进程管理库 |
-| 依赖版本不兼容 | 低 | 中 | 明确版本要求，提供安装指南 |
+密钥由 Provider/凭据服务管理，不保存在技能正文、普通元数据或日志。资源读取限于对应包和用户授权上下文，拒绝通过相对路径读取其他用户文件。日志默认记录引用、版本、结果和错误摘要，不保存完整敏感输入输出；保留/清理策略遵从宿主使用记录规则。
 
-### 11.2 外部依赖
+目录与不可变文件可共享，但启用、绑定、用户副本及使用记录按用户隔离。远程用户仅按 V1-FR-010 的只读使用边界消费已授权技能，不能安装、升级、修改全局来源或扩大权限。
 
-| 依赖 | 类型 | 风险 | 应对 |
-| --- | --- | --- | --- |
-| 官方 Skills 仓库 | 外部服务 | 可用性依赖 | 缓存数据，离线可用 |
-| Python/Node.js | 运行时 | 用户环境依赖 | 提供安装指南 |
-| Skills 自身 | 第三方代码 | 质量依赖 | 人工审核，评分系统 |
+### 4.6 更新、禁用、卸载与副本
 
-### 11.3 功能依赖
+更新先展示来源、修订差异、依赖和权限变化，用户确认后安装新版本；新增权限需重新确认。旧任务继续持有旧版本，新任务使用已确认版本。更新失败保留旧版本，不能先删除旧文件。
 
-| 依赖功能 | 状态 | 影响 |
+禁用立即阻止新任务选择，现有任务的后续高风险工具动作仍须检查有效授权，禁用不等于自动撤销已发生的动作。卸载有活动引用的版本时提示占用，等待任务结束后清理；不能在执行中删除文件。关联场景绑定变为不可用，不悄悄改绑其他技能。用户副本和历史记录不随上游卸载一并删除。
+
+## 5. 数据职责与接口边界
+
+### 5.1 逻辑对象（非已定表结构）
+
+| 对象 | 必要信息 | 约束 |
 | --- | --- | --- |
-| 本地用户管理（V1-FR-008） | 规划中 | 需要先实现用户系统 |
-| SQLite 数据库 | 待初始化 | 需要先创建表结构 |
-| Provider 框架（V1-FR-001） | 规划中 | Skills 可能调用 Provider |
+| 来源 | 来源标识、能力、认证要求、同步时间/状态 | 按来源失败隔离；凭据仅保存安全引用 |
+| 技能目录 | 稳定身份、名称、简介、分类/标签、身份、作者/许可、来源映射 | 去重依赖上游身份；身份和兼容结果独立 |
+| 技能版本 | 上游修订、内容哈希、本地路径、发布/兼容信息、依赖 | 不可变；版本标签与哈希不同；无伪造版本 |
+| 用户安装/启用 | 用户、技能、当前版本、启用状态、安装结果 | 共享包不共享用户状态 |
+| 场景绑定 | 用户、应用/会话、技能选择、版本策略 | 绑定不是授权；任务必须解析到确定版本 |
+| 任务引用/使用记录 | 任务、用户、应用、技能版本/哈希、结果/错误摘要 | 支撑引用释放、审计和卸载保护；不写密钥 |
+| 用户副本 | 新身份、派生来源/修订、本地修改 | 不覆盖上游；不继承官方身份背书 |
 
-## 12. 实现状态
+### 5.2 能力接口（非可执行签名）
 
-| 模块 | 状态 | 进度 | 负责人 | 备注 |
-| --- | --- | --- | --- | --- |
-| Skills Manager | 🔴 未开始 | 0% | TBD | - |
-| 仓库连接 | 🔴 未开始 | 0% | TBD | - |
-| Skills 安装 | 🔴 未开始 | 0% | TBD | - |
-| HTTP Caller | 🔴 未开始 | 0% | TBD | - |
-| CLI Caller | 🔴 未开始 | 0% | TBD | - |
-| 依赖检查 | 🔴 未开始 | 0% | TBD | - |
-| 更新机制 | 🔴 未开始 | 0% | TBD | - |
-| 前端 UI | 🔴 未开始 | 0% | TBD | - |
-| 测试用例 | 🔴 未开始 | 0% | TBD | - |
+本地服务需要提供：列出本地/官方目录、查询来源、分页搜索第三方、读取详情和安全资源、安装/卸载、启用/禁用、检查/确认更新、解析场景可用技能、为任务准备固定版本上下文、释放任务引用、查询使用记录。
 
-详见 [V1 实现状态](../../../02-产品与版本/当前版本/V1-实现状态.md)。
+列表必须区分本地内容与来源刷新状态；任务准备结果包括所用版本、内容引用、依赖缺口和拒绝原因，而不是假定 Skill 本身返回 HTTP/CLI 结果。
 
-## 13. 变更记录
+Tauri/HTTP 具体字段、分页、错误码、权限声明及 migration 在下一轮技术设计中统一写回契约文件。本轮不新造可调用接口，不更改旧错误码含义。旧 `call_skill` 与 `fetch_skills_registry` 不能被当成新定义的完成证据。
 
-| 日期 | 变更内容 | 变更人 |
+### 5.3 稳定失败行为
+
+| 情形 | 用户可观察结果 |
+| --- | --- |
+| 来源失联/无缓存 | 官方本地库不受影响；失败来源显示不可用，可手动重试 |
+| 需要认证/限流 | 明确原因与恢复方式；不自动绕过认证、不形成重试风暴 |
+| 内容非法/哈希不符 | 拒绝发布本地版本，清理暂存内容，旧版本可用 |
+| 依赖/权限缺失 | 显示缺失项；不执行动作，不宣称任务成功 |
+| 版本正在使用 | 保持旧任务稳定；卸载提示占用 |
+| 用户副本存在 | 更新上游不覆盖副本 |
+
+## 6. 验收标准与追踪
+
+### 6.1 历史编号保留
+
+旧 AC01–AC15、B02-01–B02-15 及其错误码保留在[旧规格归档](../../../99-历史归档/V1-FR-002/2026-10-27-旧Skills管理系统.md)。它们属于被替代的 HTTP/CLI 仓库定义，不重用、不重新解释，也不作为新技能中心发布门禁。
+
+原追踪矩阵曾写分支数 16，但旧主文档仅列出 B02-01–B02-15；为避免误占历史编号，B02-16 保留给历史追踪，不在新设计中使用，新设计从 B02-17 开始。旧 E2E 编号不重新分配，新用例先以文件与测试名追踪，后续登记时再分配编号。
+
+### 6.2 AC 逐项测试设计表
+
+以下是**目标测试资产**，本轮不创建测试或宣称通过。每个 `cargo test --test ...` 目标须有实际测试且断言覆盖对应 AC；缺文件、零用例或仅 mock 不能算通过。前端/集成文件扩展名与当前 Vitest 配置匹配。
+
+| AC | 批次 | Given / When / Then | 测试层级 | 目标资产 | 目标命令 |
+| --- | --- | --- | --- | --- | --- |
+| AC16 | A | 全新安装且断网 / 打开中心 / 至少 2 类各 1 个官方技能可浏览，无外站前置请求 | 包资源+集成 | `crates/dgos-skills/tests/bundled_catalog.rs` | `cargo test -p dgos-skills --test bundled_catalog` |
+| AC17 | A | 混合内容身份 / 分类、标签、来源及场景筛选 / 结果准确且不把第三方标成官方 | 前端 | `tests/skills-center.test.tsx` | `npm test -- tests/skills-center.test.tsx -t AC17` |
+| AC18 | A | 官方或第三方条目 / 查看详情 / 展示作者、许可、来源、实际修订、依赖与验证范围 | 前端 | `tests/skills-center.test.tsx` | `npm test -- tests/skills-center.test.tsx -t AC18` |
+| AC19 | A | 同包重复初始化或应用升级 / 导入官方内容 / 不重复创建、不重置禁用、不覆盖副本 | 后端+文件系统 | `crates/dgos-skills/tests/bundled_catalog.rs` | `cargo test -p dgos-skills --test bundled_catalog` |
+| AC20 | A | 已安装技能 / 切换启用及应用/会话选择 / 新任务只取得当前用户选中的兼容技能 | 后端+前端 | `tests/skills-bindings.test.tsx` | `npm test -- tests/skills-bindings.test.tsx -t AC20` |
+| AC21 | A | 已配置模型与官方技能 / 在 AI 工作台发起任务 / 加载指定正文并完成任务，记录确切版本，不注入无关技能 | 真实集成 | `tests/skills-workbench.test.tsx` | `npm test -- tests/skills-workbench.test.tsx -t AC21` |
+| AC22 | A | 缺依赖、选中技能损坏、冲突或超预算 / 准备任务 / 明确拒绝与原因；不静默降级，用户确认才继续无技能任务 | 后端+集成 | `crates/dgos-skills/tests/context_prepare.rs` | `cargo test -p dgos-skills --test context_prepare` |
+| AC23 | A | 技能包含恶意指令或脚本 / 安装、加载并尝试工具调用 / 不自动执行，不扩权，不泄漏凭据或越界文件 | 安全+集成 | `crates/dgos-skills/tests/skill_security.rs` | `cargo test -p dgos-skills --test skill_security` |
+| AC24 | A | 两个本地用户与远程只读用户 / 访问绑定、记录和管理入口 / 用户隔离有效，远程管理被拒绝 | 权限+集成 | `crates/dgos-skills/tests/skill_permissions.rs` | `cargo test -p dgos-skills --test skill_permissions` |
+| AC25 | B | 同上游由两个渠道发现及同名不同作者 / 合并目录 / 前者单一身份保留渠道，后者不合并 | 后端 | `crates/dgos-skills/tests/source_identity.rs` | `cargo test -p dgos-skills --test source_identity` |
+| AC26 | B | 一个真实可用来源 / 搜索、查看、安装并在工作台使用 / 得到真实内容与来源修订，可完成任务 | 外部真实集成 | `tests/skills-source-live.test.tsx` | `DGOS_SKILLS_LIVE=1 npm test -- tests/skills-source-live.test.tsx -t AC26` |
+| AC27 | B | 来源支持部分能力 / 请求不支持列表或更新 / 返回明确能力限制，不编造列表、版本或更新 | 适配器契约 | `crates/dgos-skills/tests/source_capabilities.rs` | `cargo test -p dgos-skills --test source_capabilities` |
+| AC28 | B | 断网、401、429及已有/无缓存 / 并发刷新、失败后重试 / 来源隔离、缓存提示正确、无重复风暴或未处理拒绝，恢复后消除错误 | 后端+前端 | `tests/skills-source-failure.test.tsx` | `npm test -- tests/skills-source-failure.test.tsx -t AC28` |
+| AC29 | B | 合法第三方包或无版本号上游 / 安装固定修订 / 保存内容哈希与真实修订，不执行脚本、不编造版本 | 后端+文件系统 | `crates/dgos-skills/tests/package_install.rs` | `cargo test -p dgos-skills --test package_install` |
+| AC30 | B | 越界路径、符号链接、超限包、错误哈希或磁盘不足 / 安装 / 拒绝且无半安装记录，旧版本不受损 | 安全+故障注入 | `crates/dgos-skills/tests/package_install.rs` | `cargo test -p dgos-skills --test package_install` |
+| AC31 | B | 并发安装及文件/数据库提交间崩溃 / 重试或重启 / 幂等恢复，不重复安装，无错误就绪状态 | 并发+恢复 | `crates/dgos-skills/tests/package_recovery.rs` | `cargo test -p dgos-skills --test package_recovery` |
+| AC32 | B | 上游更新且旧任务运行 / 用户确认更新或更新失败 / 旧任务版本不变，新任务用已确认版本；失败可继续旧版，新增权限重新确认 | 后端+集成 | `crates/dgos-skills/tests/package_update.rs` | `cargo test -p dgos-skills --test package_update` |
+| AC33 | B | 内置包、在用版本及下载包 / 禁用或卸载 / 禁止新任务使用被禁用项，不删除在用/应用资源，失效绑定不改绑 | 后端+文件系统 | `crates/dgos-skills/tests/package_remove.rs` | `cargo test -p dgos-skills --test package_remove` |
+| AC34 | B | 已修改的用户副本及受限制许可 / 上游更新或官方打包 / 副本独立不覆盖，保留署名，不违法再分发、不继承官方背书 | 后端+发布检查 | `crates/dgos-skills/tests/provenance.rs` | `cargo test -p dgos-skills --test provenance` |
+| AC35 | A | 成功与失败任务、含敏感输入 / 查看使用记录 / 可追溯用户、场景与版本，仅记录安全摘要，无凭据和默认完整输入输出 | 后端+日志检查 | `crates/dgos-skills/tests/skill_usage.rs` | `cargo test -p dgos-skills --test skill_usage` |
+
+AC21/AC26 的 mock 用例可用于日常回归，但发布证据必须另有真实模型/来源运行记录；没有凭据时标为未执行，不能用 skip 或返回静态答案代替。新增目标测试整体证据见第 9 节。
+
+## 7. 分支设计与测试映射
+
+以下是行为分支设计，不是已实现代码。物理存储、事务恢复及 API 细节仍需技术设计。
+
+```text
+打开中心：
+  // B02-17：本地官方包校验、幂等登记，展示本地目录
+  // B02-18：读取来源能力并独立刷新；故障回退缓存或明确空状态
+安装内容：
+  // B02-19：规范化上游身份、内容身份、分类与许可
+  // B02-20：固定修订暂存、路径/资源/哈希校验，恢复式提交
+使用内容：
+  // B02-21：校验用户与场景绑定、启用、依赖和宿主权限
+  // B02-22：锁定版本并按需装配上下文；冲突/超限/读取失败明确拒绝
+  // B02-23：工作台消费上下文；工具入口再次执行权限检查
+维护内容：
+  // B02-24：确认更新、权限变化检查，新旧版本隔离和失败回退
+  // B02-25：用户副本、禁用、引用保护与安全卸载
+  // B02-26：任务引用释放与脱敏使用记录
+```
+
+| 分支 | AC 映射 | 场景验证 |
 | --- | --- | --- |
-| 2024-01-XX | 初始版本，基于 spec-docs-pro 创建 | Kiro |
+| B02-17 | AC16、AC19 | 全新离线启动 |
+| B02-18 | AC26、AC27、AC28 | 真实来源与故障注入 |
+| B02-19 | AC17、AC18、AC25、AC34 | 分类、身份、许可 |
+| B02-20 | AC23、AC29、AC30、AC31 | 内容安装与恢复 |
+| B02-21 | AC20、AC22、AC24 | 用户与场景边界 |
+| B02-22 | AC21、AC22、AC32 | 工作台版本化上下文 |
+| B02-23 | AC21、AC23、AC24、AC26 | 真实任务与越权拒绝 |
+| B02-24 | AC32 | 在用更新与回退 |
+| B02-25 | AC19、AC33、AC34 | 副本与卸载保护 |
+| B02-26 | AC33、AC35 | 引用释放与记录 |
 
----
+## 8. 非功能要求与发布门禁
 
-**文档状态**：✅ 已完成（待评审）  
-**符合 spec-docs-pro 标准**：✅ 100%  
-**下一步**：评审通过后进入开发
+- 本地首屏不等待外部请求；网络故障不产生未处理 Promise 拒绝；重试由用户操作或有上限的后台策略触发。
+- 内容分批加载，来源请求有超时和分页；文件大小、最大条目数、上下文预算必须在技术设计阶段明确并测试，不以无限制读取交付。
+- 下载与执行分离，外部内容不可提升权限；文件/数据库失败恢复、哈希校验、用户隔离属于发布阻断项。
+- 统一使用 V1-FR-005 设计系统；桌面和窄窗口可访问，加载、空状态、错误与权限缺口有明确文本。
+- 批次 A 必须有官方内容发布清单和真实工作台使用证据；批次 B 必须有真实第三方安装闭环及许可记录，不能只展示搜索结果。
+
+## 9. 实现差距与验证证据
+
+### 9.1 当前材料与新定义的差距
+
+| 材料 | 能证明什么 | 不能证明什么 |
+| --- | --- | --- |
+| `crates/dgos-skills/src/manager.rs`、现有 migration | 旧 HTTP/CLI 管理与缓存回退实现可作为迁移输入 | 官方 Agent Skills 库、SKILL.md 安装、场景绑定或权限控制已完成 |
+| `tests/skills.test.tsx`、`crates/dgos-skills/src/registry_tests.rs` | 旧仓库路径的异常处理、缓存及请求去重有测试资产 | AC16–AC35 已验收 |
+| 2026-10-27 外部探测（本次会话记录） | skills.sh 首页及 CLI 公开搜索 HTTP 200；v1 列表/搜索匿名请求 HTTP 401；旧域名公共 DNS 返回 NXDOMAIN | 服务长期可用、许可允许镜像、真实安装/使用兼容 |
+
+### 9.2 本次验证记录
+
+2026-10-27：本轮仅修订功能定义。新增 AC16–AC35 共 20 项，均为待实现的目标验收；无新增功能测试通过声明。历史修复测试不升格为技能中心验收证据。
+
+文档静态检查记录在 [V1 文档变更记录](../../../06-决策记录/V1-文档变更记录.md)。运行测试时必须记录实际命令（含必要环境变量）、通过数/执行数、真实或 mock 环境、未执行原因与覆盖 AC；目标文件不存在时不能记成“0 项失败”。
+
+## 10. 跨文档衔接与下一轮设计输入
+
+| 材料 | 本轮处理 | 后续必须处理 |
+| --- | --- | --- |
+| D003/D005/D006 与 D016 | 追加 D016，保留旧决策并明确替代范围 | 技术设计不得恢复旧 Skills 必须 HTTP/CLI 的假设 |
+| 版本总览、产品需求、功能索引、追踪矩阵 | 同步新范围并链接主文档 | 内容清单与真实集成验收 |
+| OpenAPI / 接口契约 / 数据模型 | 标明 Skills 部分是旧版基线，不是 D016 目标契约；不改字段或表 | 提交新能力接口、错误矩阵、物理表与非破坏迁移方案，更新权威契约后再实现 |
+| AI 工作台、系统设置、权限文档 | 以 D016 和本规格为 Skills 修订输入，添加关联提示 | 对齐场景绑定、任务版本、工具授权与失败确认；保留各功能旧 AC 的含义 |
+| 旧实现与用户数据 | 本轮不改代码、不删除记录 | 识别旧工具包，独立兼容或迁移；不把旧 manifest 自动伪装为 SKILL.md |
+| 内容发布 | 规定身份、许可及版本要求 | 选定官方清单、打包路径、校验机制、大小预算、测试任务 |
+| 来源适配 | 首个候选 skills.sh，采用实际可用能力 | 持续验证公开接口、认证策略、GitHub 内容定位、限流与服务条款；不硬编码短期令牌 |
+
+本轮不重新规划后续版本编号；多来源扩展、画布与其他应用按已有版本主文档推进。AI 工作台的显式技能消费不等于提前交付自治 Agent。
+
+## 11. 变更记录
+
+| 日期 | 变更 | 依据 |
+| --- | --- | --- |
+| 2026-10-27 | 功能名称改为 DGOS 技能中心；官方内置优先、SKILL.md 主模型、来源适配、场景绑定、版本与权限边界；新增 AC16–AC35、B02-17–B02-26 | 用户确认方案、D016 |
+| 2026-10-27 | 归档旧 HTTP/CLI 规格，保留旧 AC/分支/错误码身份；本轮未改实现 | 第 6.1 节历史追溯 |
