@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Routes, Route, Link } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import ProviderManagement from "./pages/ProviderManagement";
+import SkillsManagement from "./pages/SkillsManagement";
 import "./App.css";
 
 function App() {
@@ -16,6 +17,7 @@ function App() {
       <nav className="app-nav">
         <Link to="/">Home</Link>
         <Link to="/providers">Providers</Link>
+        <Link to="/skills">Skills</Link>
         <Link to="/settings">Settings</Link>
       </nav>
 
@@ -38,6 +40,7 @@ function App() {
             </div>
           } />
           <Route path="/providers" element={<ProviderManagement />} />
+          <Route path="/skills" element={<SkillsManagement />} />
           <Route path="/settings" element={<div>Settings Page</div>} />
         </Routes>
       </div>
