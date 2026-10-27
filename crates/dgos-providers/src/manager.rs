@@ -11,6 +11,7 @@ use crate::traits::ProviderAdapter;
 
 /// Provider manager - main entry point for provider operations
 pub struct ProviderManager {
+    #[allow(dead_code)]
     db: DatabaseConnection,
     provider_repo: ProviderRepository,
     model_repo: ModelRepository,
