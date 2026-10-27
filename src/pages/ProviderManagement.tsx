@@ -8,12 +8,14 @@ import './ProviderManagement.css';
 export default function ProviderManagement() {
   const {
     providers,
+    models,
     loading,
     error,
     fetchProviders,
     createProvider,
     updateProvider,
     deleteProvider,
+    fetchModels,
     clearError,
   } = useProviderStore();
 
@@ -30,6 +32,13 @@ export default function ProviderManagement() {
       console.error('Provider error:', error);
     }
   }, [error]);
+
+  // 当选中 Provider 时，获取模型列表
+  useEffect(() => {
+    if (selectedProvider) {
+      fetchModels(selectedProvider.id);
+    }
+  }, [selectedProvider]);
 
   const handleSelectProvider = (provider: Provider) => {
     if (hasUnsavedChanges) {
@@ -113,7 +122,7 @@ export default function ProviderManagement() {
         />
 
         <div className="provider-main">
-          {selectedProvider === null && providers.length === 0 ? (
+          {providers.length === 0 && selectedProvider === null ? (
             <div className="provider-empty-state">
               <h2>No Providers Yet</h2>
               <p>Create your first provider to get started with AI model integration</p>
@@ -124,6 +133,7 @@ export default function ProviderManagement() {
           ) : (
             <ProviderForm
               provider={selectedProvider}
+              initialModels={models}
               onSave={handleSave}
               onDelete={selectedProvider ? handleDelete : undefined}
               onChange={() => setHasUnsavedChanges(true)}

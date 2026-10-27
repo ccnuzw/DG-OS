@@ -4,6 +4,7 @@ import type { ProviderConfig, Model, Provider } from '../stores/providerStore';
 
 interface ProviderFormProps {
   provider: Provider | null;  // null = 新建模式
+  initialModels?: Model[];  // 编辑模式时的初始模型列表
   onSave: (config: ProviderConfig, models: Model[]) => Promise<boolean>;
   onDelete?: () => Promise<boolean>;
   onChange: () => void;
@@ -18,6 +19,7 @@ interface CommandResponse<T> {
 
 export default function ProviderForm({
   provider,
+  initialModels = [],
   onSave,
   onDelete,
   onChange,
@@ -69,6 +71,8 @@ export default function ProviderForm({
         enabled: provider.enabled,
         config: provider.config,
       });
+      // 编辑模式：加载初始模型列表
+      setModels(initialModels);
     } else {
       setFormData({
         name: '',
@@ -78,11 +82,12 @@ export default function ProviderForm({
         enabled: true,
         config: undefined,
       });
+      // 新建模式：清空模型列表
+      setModels([]);
     }
-    setModels([]);
     setTestResult(null);
     setModelsError(null);
-  }, [provider]);
+  }, [provider, initialModels]);
 
   // 表单变化处理
   const handleChange = (field: keyof ProviderConfig, value: any) => {
