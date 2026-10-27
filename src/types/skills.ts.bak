@@ -1,0 +1,45 @@
+use dgos_skills::{Skill, SkillDetail, SkillInfo, SkillUpdate, SkillUsageLog, DependencyStatus};
+use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+
+// Re-export types for frontend
+pub use dgos_skills::CallType;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillManifest {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub author: String,
+    pub category: String,
+    pub tags: Vec<String>,
+    pub call_type: String,
+    pub dependencies: DependencyConfig,
+    pub config_schema: Option<JsonValue>,
+    pub http: Option<HttpConfig>,
+    pub cli: Option<CliConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyConfig {
+    pub python: Option<String>,
+    pub node: Option<String>,
+    pub packages: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpConfig {
+    pub port: u16,
+    pub start_command: String,
+    pub health_check: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliConfig {
+    pub command: String,
+}

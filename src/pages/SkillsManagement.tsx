@@ -10,8 +10,15 @@ const SkillsManagement: React.FC = () => {
     installedSkills,
     availableUpdates,
     loading,
+    installedLoading,
     installing,
-    fetchRegistry,
+    registryOffline,
+    registryUrl,
+    registryCachedCount,
+    registryError,
+    installedError,
+    updatesError,
+    initialize,
     searchSkills,
     getSkillDetail,
     installSkill,
@@ -19,7 +26,6 @@ const SkillsManagement: React.FC = () => {
     listInstalledSkills,
     toggleSkill,
     updateSkillConfig,
-    checkUpdates,
     updateSkill,
     checkDependencies,
   } = useSkillsStore();
@@ -31,27 +37,41 @@ const SkillsManagement: React.FC = () => {
   const [configSkill, setConfigSkill] = useState<Skill | null>(null);
   const [configValues, setConfigValues] = useState<Record<string, unknown>>({});
   const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Mock user ID - in production this would come from auth
   const userId = 'default-user';
 
   useEffect(() => {
-    fetchRegistry();
-    listInstalledSkills(userId);
-    checkUpdates(userId);
-  }, []);
+    void initialize(userId);
+  }, [initialize, userId]);
 
   const handleSearch = async () => {
-    if (searchQuery.trim()) {
-      await searchSkills(searchQuery);
-    } else {
-      await fetchRegistry();
+    setActionError(null);
+    setSelectedCategory('all');
+    try {
+      // Search the local cache, including when the registry is offline.
+      await searchSkills(searchQuery.trim());
+    } catch (error) {
+      setActionError(`Search failed: ${error}`);
     }
   };
 
   const handleViewDetail = async (skillId: string) => {
-    await getSkillDetail(skillId);
-    setDetailModalOpen(true);
+    setActionError(null);
+    try {
+      await getSkillDetail(skillId);
+      setDetailModalOpen(true);
+    } catch (error) {
+      setActionError(`Unable to load skill details: ${error}`);
+    }
+  };
+
+  const handleRetry = async () => {
+    setActionError(null);
+    setSearchQuery('');
+    setSelectedCategory('all');
+    await initialize(userId);
   };
 
   const handleInstall = async (skillId: string) => {
@@ -100,7 +120,7 @@ const SkillsManagement: React.FC = () => {
     if (!configSkill) return;
 
     try {
-      await updateSkillConfig(configSkill.skillId, userId, configValues);
+      await updateSkillConfig(configSkill.skill_id, userId, configValues);
       alert('Configuration saved successfully!');
       setConfigModalOpen(false);
       await listInstalledSkills(userId);
@@ -126,11 +146,11 @@ const SkillsManagement: React.FC = () => {
     : registrySkills.filter(s => s.category === selectedCategory);
 
   const isInstalled = (skillId: string) => {
-    return installedSkills.some(s => s.skillId === skillId);
+    return installedSkills.some(s => s.skill_id === skillId);
   };
 
   const hasUpdate = (skillId: string) => {
-    return availableUpdates.some(u => u.skillId === skillId);
+    return availableUpdates.some(u => u.skill_id === skillId);
   };
 
   return (
@@ -153,6 +173,39 @@ const SkillsManagement: React.FC = () => {
         </div>
       </div>
 
+      {(registryOffline || registryError) && (
+        <div className="skills-notice" role="status">
+          <div>
+            <strong>{registryOffline && registryCachedCount > 0 ? 'Offline mode' : 'Skills registry unavailable'}</strong>
+            <p>
+              The registry service could not be reached. Its address or service may be unavailable;
+              this does not necessarily mean your device is offline.
+            </p>
+            <p>{registryCachedCount > 0
+              ? 'Showing cached skills. Installed skills remain available.'
+              : 'No registry has been cached yet. Online browsing requires an available registry service. You can still manage installed skills.'}</p>
+            {registryError && (
+              <details>
+                <summary>Technical details</summary>
+                {registryUrl && <p>Registry: {registryUrl}</p>}
+                <p>{registryError}</p>
+              </details>
+            )}
+          </div>
+          <button onClick={handleRetry} disabled={loading}>
+            {loading ? 'Retrying...' : 'Retry connection'}
+          </button>
+        </div>
+      )}
+      {actionError && <p className="skills-error" role="alert">{actionError}</p>}
+      {installedError && (
+        <div className="skills-error" role="alert">
+          <p>Unable to load installed skills: {installedError}</p>
+          <button onClick={() => { void initialize(userId); }} disabled={installedLoading}>Retry loading skills</button>
+        </div>
+      )}
+      {updatesError && <p className="skills-error" role="alert">Unable to check skill updates: {updatesError}</p>}
+
       {view === 'browse' && (
         <div className="browse-view">
           <div className="search-bar">
@@ -161,7 +214,8 @@ const SkillsManagement: React.FC = () => {
               placeholder="Search skills..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              aria-label="Search skills"
+              onKeyDown={(e) => { if (e.key === 'Enter' && !loading) void handleSearch(); }}
             />
             <button onClick={handleSearch} disabled={loading}>
               {loading ? 'Searching...' : 'Search'}
@@ -180,16 +234,26 @@ const SkillsManagement: React.FC = () => {
             ))}
           </div>
 
-          <div className="skills-grid">
+          {loading && <p role="status">Loading skills...</p>}
+          {!loading && filteredSkills.length === 0 && (
+            <div className="empty-state">
+              <p>{registryOffline || registryError
+                ? registryCachedCount > 0
+                  ? 'No cached skills match your filters.'
+                  : 'No skills are available to browse until the registry service is reachable.'
+                : 'No skills found.'}</p>
+            </div>
+          )}
+          <div className="skills-grid" aria-busy={loading}>
             {filteredSkills.map(skill => (
-              <div key={skill.skillId} className="skill-card">
+              <div key={skill.skill_id} className="skill-card">
                 <div className="skill-header">
                   <h3>{skill.name}</h3>
                   <span className="skill-category">{skill.category}</span>
                 </div>
                 <p className="skill-description">{skill.description}</p>
                 <div className="skill-meta">
-                  <span className="skill-version">v{skill.latestVersion}</span>
+                  <span className="skill-version">v{skill.latest_version}</span>
                   <span className="skill-author">{skill.author}</span>
                 </div>
                 <div className="skill-tags">
@@ -198,15 +262,15 @@ const SkillsManagement: React.FC = () => {
                   ))}
                 </div>
                 <div className="skill-actions">
-                  <button onClick={() => handleViewDetail(skill.skillId)}>
+                  <button onClick={() => handleViewDetail(skill.skill_id)}>
                     Details
                   </button>
-                  {isInstalled(skill.skillId) ? (
+                  {isInstalled(skill.skill_id) ? (
                     <button className="installed" disabled>Installed</button>
                   ) : (
                     <button 
                       className="install"
-                      onClick={() => handleInstall(skill.skillId)}
+                      onClick={() => handleInstall(skill.skill_id)}
                       disabled={installing}
                     >
                       {installing ? 'Installing...' : 'Install'}
@@ -221,7 +285,8 @@ const SkillsManagement: React.FC = () => {
 
       {view === 'installed' && (
         <div className="installed-view">
-          {installedSkills.length === 0 ? (
+          {installedLoading && <p role="status">Loading installed skills...</p>}
+          {installedSkills.length === 0 && !installedLoading && !installedError ? (
             <div className="empty-state">
               <p>No skills installed yet.</p>
               <button onClick={() => setView('browse')}>Browse Skills</button>
@@ -234,18 +299,18 @@ const SkillsManagement: React.FC = () => {
                     <div className="skill-header">
                       <h3>{skill.name}</h3>
                       <div className="skill-badges">
-                        <span className={`badge ${skill.callType}`}>
-                          {skill.callType.toUpperCase()}
+                        <span className={`badge ${skill.call_type}`}>
+                          {skill.call_type.toUpperCase()}
                         </span>
                         <span className="badge version">v{skill.version}</span>
-                        {hasUpdate(skill.skillId) && (
+                        {hasUpdate(skill.skill_id) && (
                           <span className="badge update">Update Available</span>
                         )}
                       </div>
                     </div>
                     <p>{skill.description}</p>
                     <div className="skill-meta">
-                      <span>Installed: {new Date(skill.installedAt * 1000).toLocaleDateString()}</span>
+                      <span>Installed: {new Date(skill.installed_at * 1000).toLocaleDateString()}</span>
                       <span>Category: {skill.manifest.category}</span>
                     </div>
                   </div>
@@ -255,29 +320,29 @@ const SkillsManagement: React.FC = () => {
                       <input
                         type="checkbox"
                         checked={skill.enabled}
-                        onChange={(e) => handleToggle(skill.skillId, e.target.checked)}
+                        onChange={(e) => handleToggle(skill.skill_id, e.target.checked)}
                       />
                       <span className="slider"></span>
                       <span className="label">{skill.enabled ? 'Enabled' : 'Disabled'}</span>
                     </label>
 
                     <div className="button-group">
-                      {skill.manifest.configSchema && (
+                      {skill.manifest.config_schema && (
                         <button onClick={() => handleOpenConfig(skill)}>
                           Configure
                         </button>
                       )}
-                      {hasUpdate(skill.skillId) && (
+                      {hasUpdate(skill.skill_id) && (
                         <button 
                           className="update"
-                          onClick={() => handleUpdate(skill.skillId)}
+                          onClick={() => handleUpdate(skill.skill_id)}
                         >
                           Update
                         </button>
                       )}
                       <button 
                         className="danger"
-                        onClick={() => handleUninstall(skill.skillId)}
+                        onClick={() => handleUninstall(skill.skill_id)}
                       >
                         Uninstall
                       </button>
@@ -304,10 +369,10 @@ const SkillsManagement: React.FC = () => {
               <div className="detail-section">
                 <h3>Information</h3>
                 <div className="detail-grid">
-                  <div><strong>Version:</strong> {selectedSkill.latestVersion}</div>
+                  <div><strong>Version:</strong> {selectedSkill.latest_version}</div>
                   <div><strong>Author:</strong> {selectedSkill.author}</div>
                   <div><strong>Category:</strong> {selectedSkill.category}</div>
-                  <div><strong>Call Type:</strong> {selectedSkill.manifest.callType}</div>
+                  <div><strong>Call Type:</strong> {selectedSkill.manifest.call_type}</div>
                 </div>
               </div>
 
@@ -338,13 +403,13 @@ const SkillsManagement: React.FC = () => {
               )}
             </div>
             <div className="modal-footer">
-              {isInstalled(selectedSkill.skillId) ? (
+              {isInstalled(selectedSkill.skill_id) ? (
                 <button disabled>Already Installed</button>
               ) : (
                 <button 
                   className="primary"
                   onClick={() => {
-                    handleInstall(selectedSkill.skillId);
+                    handleInstall(selectedSkill.skill_id);
                     setDetailModalOpen(false);
                   }}
                 >
@@ -366,8 +431,8 @@ const SkillsManagement: React.FC = () => {
             </div>
             <div className="modal-body">
               <form onSubmit={(e) => { e.preventDefault(); handleSaveConfig(); }}>
-                {configSkill.manifest.configSchema && 
-                  Object.entries(configSkill.manifest.configSchema).map(([key, schema]: [string, any]) => (
+                {configSkill.manifest.config_schema &&
+                  Object.entries(configSkill.manifest.config_schema).map(([key, schema]: [string, any]) => (
                     <div key={key} className="form-group">
                       <label htmlFor={key}>
                         {key}

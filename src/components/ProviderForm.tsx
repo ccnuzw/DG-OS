@@ -162,56 +162,24 @@ export default function ProviderForm({
           setModelsError(response.error?.message || 'Failed to fetch models');
         }
       } else {
-        // 新建模式：前端 fetch（不保存，只预览）
+        // 新建模式：通过后端请求模型，避免 WebView fetch 的跨域/网络错误。
         if (!formData.api_key) {
           setModelsError('Please enter an API Key first');
           setFetchingModels(false);
           return;
         }
 
-        // 先测试连接
-        const testResponse = await invoke<CommandResponse<boolean>>('test_provider_connection', {
+        const response = await invoke<CommandResponse<Model[]>>('list_models_for_config', {
           config: formData,
         });
 
-        if (!testResponse.success || !testResponse.data) {
-          setModelsError('Connection test failed. Please check your configuration.');
-          setFetchingModels(false);
-          return;
-        }
-
-        // 调用 /v1/models API
-        const response = await fetch(`${formData.base_url}/models`, {
-          headers: {
-            Authorization: `Bearer ${formData.api_key}`,
-            'Content-Type': 'application/json',
-          },
-        });
-
-        if (!response.ok) {
-          setModelsError(`Failed to fetch models: ${response.statusText}`);
-          setFetchingModels(false);
-          return;
-        }
-
-        const data: { data?: any[] } = await response.json();
-
-        if (data.data && Array.isArray(data.data)) {
-          const fetchedModels: Model[] = data.data.map((m: any) => ({
-            id: crypto.randomUUID(),
+        if (response.success && response.data) {
+          setModels(response.data.map((model) => ({
+            ...model,
             provider_id: 'preview',
-            model_id: m.id || 'unknown',
-            model_name: m.id || 'unknown',
-            model_type: m.object || 'chat',
-            context_window: m.context_window,
-            max_output_tokens: m.max_output_tokens,
-            supports_streaming: true,
-            supports_vision: m.id?.includes('vision') || false,
-            cached_at: new Date().toISOString(),
-          }));
-          setModels(fetchedModels);
+          })));
         } else {
-          setModelsError('Invalid response format from API');
+          setModelsError(response.error?.message || 'Failed to fetch models');
         }
       }
     } catch (err) {

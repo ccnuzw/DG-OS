@@ -88,6 +88,18 @@ pub async fn update_provider(
     CommandResponse::from(result)
 }
 
+/// Toggle a provider without requiring the API key or other editable fields
+#[tauri::command]
+pub async fn toggle_provider(
+    app: tauri::AppHandle,
+    id: String,
+    enabled: bool,
+) -> CommandResponse<Provider> {
+    let manager = app.state::<ProviderManager>();
+    let result = manager.toggle_provider(&id, enabled).await;
+    CommandResponse::from(result)
+}
+
 /// Delete a provider
 #[tauri::command]
 pub async fn delete_provider(
@@ -107,6 +119,17 @@ pub async fn test_provider_connection(
 ) -> CommandResponse<bool> {
     let manager = app.state::<ProviderManager>();
     let result = manager.test_connection(&config).await;
+    CommandResponse::from(result)
+}
+
+/// List models for an unsaved provider configuration
+#[tauri::command]
+pub async fn list_models_for_config(
+    app: tauri::AppHandle,
+    config: ProviderConfig,
+) -> CommandResponse<Vec<Model>> {
+    let manager = app.state::<ProviderManager>();
+    let result = manager.list_models_for_config(&config).await;
     CommandResponse::from(result)
 }
 

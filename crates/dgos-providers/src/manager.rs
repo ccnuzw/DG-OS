@@ -76,6 +76,16 @@ impl ProviderManager {
 
         // Save models to database if any
         if !models.is_empty() {
+            // Preview models created before the provider has an ID carry a
+            // temporary provider_id. Replace it with the persisted provider
+            // ID before writing them to the database.
+            let models = models
+                .into_iter()
+                .map(|mut model| {
+                    model.provider_id = provider.id.clone();
+                    model
+                })
+                .collect();
             self.model_repo.sync_models(&provider.id, models).await?;
         }
 
@@ -130,6 +140,19 @@ impl ProviderManager {
     pub async fn test_connection(&self, config: &ProviderConfig) -> DgosResult<bool> {
         let adapter = self.create_adapter(config)?;
         adapter.test_connection().await
+    }
+
+    /// List models for an unsaved provider configuration.
+    ///
+    /// This is intentionally kept separate from `refresh_models`: the latter
+    /// reads a persisted provider and updates its model cache, while this
+    /// method is used by the create form to preview models before saving.
+    pub async fn list_models_for_config(
+        &self,
+        config: &ProviderConfig,
+    ) -> DgosResult<Vec<Model>> {
+        let adapter = self.create_adapter(config)?;
+        adapter.list_models().await
     }
 
     /// List models for a provider

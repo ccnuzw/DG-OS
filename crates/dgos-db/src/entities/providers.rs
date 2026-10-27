@@ -4,19 +4,19 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "providers")]
 pub struct Model {
-    #[sea_orm(primary_key, column_type = "String(Some(36))")]
+    #[sea_orm(primary_key, column_type = "String(StringLen::N(36))")]
     pub id: String,
     
-    #[sea_orm(column_type = "String(Some(255))")]
+    #[sea_orm(column_type = "String(StringLen::N(255))")]
     pub name: String,
     
-    #[sea_orm(column_type = "String(Some(50))")]
+    #[sea_orm(column_type = "String(StringLen::N(50))")]
     pub provider_type: String,
     
-    #[sea_orm(column_type = "String(Some(512))")]
+    #[sea_orm(column_type = "String(StringLen::N(512))")]
     pub base_url: String,
     
-    #[sea_orm(column_type = "String(Some(512))")]
+    #[sea_orm(column_type = "String(StringLen::N(512))")]
     pub api_key: String,
     
     pub enabled: bool,
@@ -30,7 +30,7 @@ pub struct Model {
     
     pub updated_at: DateTimeUtc,
     
-    #[sea_orm(column_type = "String(Some(36))")]
+    #[sea_orm(column_type = "String(StringLen::N(36))")]
     pub user_id: String,
 }
 

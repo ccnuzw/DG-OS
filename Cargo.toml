@@ -3,7 +3,7 @@ members = [
     "src-tauri",
     "crates/dgos-providers",
     "crates/dgos-db",
-    "crates/dgos-types",
+    "crates/dgos-types", "crates/dgos-skills",
 ]
 resolver = "2"
 
@@ -21,8 +21,8 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 reqwest-eventsource = "0.6"
 
 # Database
-sea-orm = { version = "0.12", features = ["sqlx-sqlite", "runtime-tokio-native-tls", "macros"] }
-sea-orm-migration = { version = "0.12", features = ["runtime-tokio-native-tls", "sqlx-sqlite"] }
+sea-orm = { version = "1.1", features = ["sqlx-sqlite", "runtime-tokio-native-tls", "macros"] }
+sea-orm-migration = { version = "1.1", features = ["runtime-tokio-native-tls", "sqlx-sqlite"] }
 
 # Error handling
 anyhow = "1.0"

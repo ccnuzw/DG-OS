@@ -5,6 +5,9 @@ mod commands;
 
 use dgos_db::sea_orm_migration::MigratorTrait;
 use dgos_providers::ProviderManager;
+use dgos_skills::SkillsManager;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -38,19 +41,29 @@ pub fn run() {
                     .await
                     .expect("Failed to initialize provider manager");
 
-                // Run migrations
+                // Initialize skills manager
+                let skills_dir = app_dir.join("skills");
+                std::fs::create_dir_all(&skills_dir).expect("Failed to create skills directory");
+
                 let db = dgos_db::establish_connection(&database_url)
                     .await
                     .expect("Failed to connect to database");
-                
+
+                let skills_manager = SkillsManager::new(db.clone(), skills_dir);
+                let skills_state = commands::SkillsState {
+                    manager: Arc::new(RwLock::new(skills_manager)),
+                };
+
+                // Run migrations
                 dgos_db::migrations::Migrator::up(&db, None)
                     .await
                     .expect("Failed to run migrations");
 
                 tracing::info!("Database migrations completed");
 
-                // Store manager in app state
+                // Store managers in app state
                 app_handle.manage(manager);
+                app_handle.manage(skills_state);
             });
 
             // Open dev tools in debug mode
@@ -67,14 +80,30 @@ pub fn run() {
             commands::create_provider,
             commands::create_provider_with_models,
             commands::update_provider,
+            commands::toggle_provider,
             commands::delete_provider,
             commands::test_provider_connection,
+            commands::list_models_for_config,
             commands::test_provider_by_id,
             commands::list_models,
             commands::refresh_models,
             commands::call_provider,
             commands::update_provider_order,
             commands::list_usage_logs,
+            // Skills commands
+            commands::fetch_skills_registry,
+            commands::search_skills,
+            commands::get_skill_detail,
+            commands::install_skill,
+            commands::uninstall_skill,
+            commands::list_installed_skills,
+            commands::toggle_skill,
+            commands::update_skill_config,
+            commands::call_skill,
+            commands::check_skill_updates,
+            commands::update_skill,
+            commands::check_dependencies,
+            commands::list_skill_usage_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

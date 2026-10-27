@@ -4,16 +4,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "provider_usage_logs")]
 pub struct Model {
-    #[sea_orm(primary_key, column_type = "String(Some(36))")]
+    #[sea_orm(primary_key, column_type = "String(StringLen::N(36))")]
     pub id: String,
     
-    #[sea_orm(column_type = "String(Some(36))")]
+    #[sea_orm(column_type = "String(StringLen::N(36))")]
     pub provider_id: String,
     
-    #[sea_orm(column_type = "String(Some(255))")]
+    #[sea_orm(column_type = "String(StringLen::N(255))")]
     pub model_id: String,
     
-    #[sea_orm(column_type = "String(Some(36))")]
+    #[sea_orm(column_type = "String(StringLen::N(36))")]
     pub user_id: String,
     
     pub request_tokens: i32,
@@ -26,7 +26,7 @@ pub struct Model {
     
     pub success: bool,
     
-    #[sea_orm(column_type = "String(Some(50))", nullable)]
+    #[sea_orm(column_type = "String(StringLen::N(50))", nullable)]
     pub error_code: Option<String>,
     
     pub created_at: DateTimeUtc,

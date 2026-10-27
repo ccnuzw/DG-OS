@@ -14,13 +14,16 @@ export default function ProviderManagement() {
     fetchProviders,
     createProvider,
     updateProvider,
+    toggleProvider,
     deleteProvider,
     fetchModels,
     clearError,
   } = useProviderStore();
 
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
+  const [isCreatingProvider, setIsCreatingProvider] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [togglingProviderId, setTogglingProviderId] = useState<string | null>(null);
   const currentUserId = 'default-user';
 
   useEffect(() => {
@@ -44,11 +47,13 @@ export default function ProviderManagement() {
     if (hasUnsavedChanges) {
       if (confirm('You have unsaved changes. Discard them?')) {
         setSelectedProvider(provider);
+        setIsCreatingProvider(false);
         setHasUnsavedChanges(false);
         clearError();
       }
     } else {
       setSelectedProvider(provider);
+      setIsCreatingProvider(false);
       clearError();
     }
   };
@@ -57,11 +62,13 @@ export default function ProviderManagement() {
     if (hasUnsavedChanges) {
       if (confirm('You have unsaved changes. Discard them?')) {
         setSelectedProvider(null);
+        setIsCreatingProvider(true);
         setHasUnsavedChanges(false);
         clearError();
       }
     } else {
       setSelectedProvider(null);
+      setIsCreatingProvider(true);
       clearError();
     }
   };
@@ -81,11 +88,10 @@ export default function ProviderManagement() {
       setHasUnsavedChanges(false);
       // 刷新列表
       await fetchProviders(currentUserId);
-      
-      // 如果是新建，保持在新建模式等待用户选择
-      // 或者自动选中第一个（如果之前是空的）
-      if (!selectedProvider && providers.length === 0) {
-        // 列表会自动更新，用户可以点击查看
+
+      // 创建完成后退出新建模式，避免保存后继续显示空白表单。
+      if (!selectedProvider) {
+        setIsCreatingProvider(false);
       }
     }
     
@@ -99,6 +105,7 @@ export default function ProviderManagement() {
       const success = await deleteProvider(selectedProvider.id);
       if (success) {
         setSelectedProvider(null);
+        setIsCreatingProvider(false);
         setHasUnsavedChanges(false);
       }
       return success;
@@ -106,11 +113,48 @@ export default function ProviderManagement() {
     return false;
   };
 
+  const handleToggleEnabled = async (provider: Provider, enabled: boolean) => {
+    if (togglingProviderId) return false;
+
+    setTogglingProviderId(provider.id);
+    try {
+      const success = await toggleProvider(provider.id, enabled);
+      if (success && selectedProvider?.id === provider.id) {
+        setSelectedProvider((current) => current ? { ...current, enabled } : current);
+      }
+      return success;
+    } finally {
+      setTogglingProviderId(null);
+    }
+  };
+
+  const handleDeleteProvider = async (provider: Provider) => {
+    const success = await deleteProvider(provider.id);
+    if (success && selectedProvider?.id === provider.id) {
+      setSelectedProvider(null);
+      setIsCreatingProvider(false);
+      setHasUnsavedChanges(false);
+    }
+  };
+
   return (
     <div className="provider-management">
       <header className="page-header">
-        <h1>Provider Management</h1>
+        <div>
+          <p className="page-kicker">Connections</p>
+          <h1>Provider Management</h1>
+          <p className="page-description">Manage the AI services available to your workspace.</p>
+        </div>
       </header>
+
+      {error && (
+        <div className="alert alert-error" role="alert">
+          <span>{error}</span>
+          <button className="btn-close" onClick={clearError} aria-label="Dismiss error">
+            ×
+          </button>
+        </div>
+      )}
 
       <div className="provider-content">
         <ProviderList
@@ -118,16 +162,28 @@ export default function ProviderManagement() {
           selectedProvider={selectedProvider}
           onSelect={handleSelectProvider}
           onNewProvider={handleNewProvider}
+          onToggleEnabled={handleToggleEnabled}
+          togglingProviderId={togglingProviderId}
+          onDelete={handleDeleteProvider}
           hasUnsavedChanges={hasUnsavedChanges}
         />
 
         <div className="provider-main">
-          {providers.length === 0 && selectedProvider === null ? (
+          {providers.length === 0 && !isCreatingProvider ? (
             <div className="provider-empty-state">
               <h2>No Providers Yet</h2>
               <p>Create your first provider to get started with AI model integration</p>
               <button onClick={handleNewProvider} className="btn-primary">
                 + Create Provider
+              </button>
+            </div>
+          ) : selectedProvider === null && !isCreatingProvider ? (
+            <div className="provider-selection-state">
+              <span className="selection-state-mark" aria-hidden="true">←</span>
+              <h2>Select a provider</h2>
+              <p>Choose a provider from the list to view or edit its configuration.</p>
+              <button onClick={handleNewProvider} className="btn-primary">
+                + New Provider
               </button>
             </div>
           ) : (

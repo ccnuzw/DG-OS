@@ -22,6 +22,7 @@ tauri-build = { version = "2", features = [] }
 dgos-types = { path = "../crates/dgos-types" }
 dgos-db = { path = "../crates/dgos-db" }
 dgos-providers = { path = "../crates/dgos-providers" }
+dgos-skills = { path = "../crates/dgos-skills" }
 
 # Tauri
 tauri = { workspace = true }

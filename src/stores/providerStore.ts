@@ -56,6 +56,7 @@ interface ProviderStore {
   fetchProviders: (userId: string) => Promise<void>;
   createProvider: (config: ProviderConfig, userId: string, models?: Model[]) => Promise<boolean>;
   updateProvider: (id: string, config: ProviderConfig) => Promise<boolean>;
+  toggleProvider: (id: string, enabled: boolean) => Promise<boolean>;
   deleteProvider: (id: string) => Promise<boolean>;
   testConnection: (config: ProviderConfig) => Promise<boolean>;
   fetchModels: (providerId: string) => Promise<void>;
@@ -162,6 +163,40 @@ export const useProviderStore = create<ProviderStore>((set) => ({
       set({ 
         error: err instanceof Error ? err.message : 'Unknown error',
         loading: false 
+      });
+      return false;
+    }
+  },
+
+  toggleProvider: async (id: string, enabled: boolean) => {
+    set({ loading: true, error: null });
+    try {
+      const response = await invoke<CommandResponse<Provider>>('toggle_provider', {
+        id,
+        enabled,
+      });
+
+      if (response.success && response.data) {
+        set((state) => ({
+          providers: state.providers.map((provider) =>
+            provider.id === id ? response.data! : provider
+          ),
+          selectedProvider:
+            state.selectedProvider?.id === id ? response.data! : state.selectedProvider,
+          loading: false,
+        }));
+        return true;
+      }
+
+      set({
+        error: response.error?.message || 'Failed to update provider status',
+        loading: false,
+      });
+      return false;
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : 'Unknown error',
+        loading: false,
       });
       return false;
     }
