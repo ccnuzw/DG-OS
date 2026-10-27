@@ -16,7 +16,6 @@ export default function ProviderManagement() {
     createProvider,
     updateProvider,
     deleteProvider,
-    testConnection,
     fetchModels,
     setSelectedProvider,
     clearError,
@@ -74,9 +73,6 @@ export default function ProviderManagement() {
     await deleteProvider(provider.id);
   };
 
-  const handleTest = async (config: ProviderConfig) => {
-    return await testConnection(config);
-  };
 
   return (
     <div className="provider-management">
@@ -121,6 +117,7 @@ export default function ProviderManagement() {
                 initialData={
                   editingProvider
                     ? {
+                        id: editingProvider.id,
                         name: editingProvider.name,
                         provider_type: editingProvider.provider_type,
                         base_url: editingProvider.base_url,
@@ -130,7 +127,6 @@ export default function ProviderManagement() {
                 }
                 onSubmit={handleSubmit}
                 onCancel={handleCancel}
-                onTest={handleTest}
                 loading={loading}
               />
             </div>

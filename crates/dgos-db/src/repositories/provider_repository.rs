@@ -97,7 +97,12 @@ impl ProviderRepository {
         provider.name = Set(config.name);
         provider.provider_type = Set(config.provider_type);
         provider.base_url = Set(config.base_url);
-        provider.api_key = Set(config.api_key);
+        
+        // Only update API key if a new one is provided (not empty)
+        if !config.api_key.is_empty() {
+            provider.api_key = Set(config.api_key);
+        }
+        
         provider.enabled = Set(config.enabled);
         provider.config = Set(config.config);
         provider.updated_at = Set(chrono::Utc::now());

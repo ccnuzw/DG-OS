@@ -1,21 +1,31 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ProviderConfig } from '../stores/providerStore';
+import { invoke } from '@tauri-apps/api/core';
 
 interface ProviderFormProps {
-  initialData?: ProviderConfig;
+  initialData?: ProviderConfig & { id?: string };
   onSubmit: (config: ProviderConfig) => Promise<boolean>;
   onCancel: () => void;
-  onTest?: (config: ProviderConfig) => Promise<boolean>;
   loading?: boolean;
+}
+
+interface CommandResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: {
+    code: number;
+    message: string;
+  };
 }
 
 export default function ProviderForm({
   initialData,
   onSubmit,
   onCancel,
-  onTest,
   loading = false,
 }: ProviderFormProps) {
+  const isEditMode = !!initialData?.id;
+  
   const [formData, setFormData] = useState<ProviderConfig>(
     initialData || {
       name: '',
@@ -24,26 +34,80 @@ export default function ProviderForm({
       api_key: '',
     }
   );
-  const [testing, setTesting] = useState(false);
+  
+  // Track if API key has been modified
+  const [apiKeyModified, setApiKeyModified] = useState(false);
+  const [apiKeyPlaceholder, setApiKeyPlaceholder] = useState('');
+  
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
+  
+  // Model fetching state
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [modelsFetched, setModelsFetched] = useState(false);
+
+  useEffect(() => {
+    if (isEditMode && initialData) {
+      // In edit mode, show masked API key placeholder
+      setApiKeyPlaceholder('sk-****...****');
+      // Don't set the actual api_key in formData - keep it empty
+      setFormData({
+        ...initialData,
+        api_key: '', // Empty for security
+      });
+    }
+  }, []);
+
+  const handleApiKeyChange = (value: string) => {
+    setApiKeyModified(true);
+    setFormData({ ...formData, api_key: value });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const success = await onSubmit(formData);
+    
+    // If in edit mode and API key wasn't modified, send empty string
+    // Backend should keep the original API key
+    const submitData = {
+      ...formData,
+      api_key: isEditMode && !apiKeyModified ? '' : formData.api_key,
+    };
+    
+    const success = await onSubmit(submitData);
     if (success) {
       // Form will be closed by parent
     }
   };
 
-  const handleTest = async () => {
-    if (!onTest) return;
-    
-    setTesting(true);
+
+  const handleFetchModels = async () => {
+    if (!formData.base_url || !formData.api_key) {
+      return;
+    }
+
+    setFetchingModels(true);
     setTestResult(null);
     
-    const success = await onTest(formData);
-    setTestResult(success ? 'success' : 'error');
-    setTesting(false);
+    try {
+      // Use the test connection command to validate
+      const testResponse = await invoke<CommandResponse<boolean>>('test_provider_connection', {
+        config: formData,
+      });
+      
+      if (!testResponse.success || !testResponse.data) {
+        setTestResult('error');
+        setFetchingModels(false);
+        return;
+      }
+
+      // Connection successful
+      setTestResult('success');
+      setModelsFetched(true);
+      
+    } catch (err) {
+      setTestResult('error');
+    } finally {
+      setFetchingModels(false);
+    }
   };
 
   return (
@@ -105,12 +169,21 @@ export default function ProviderForm({
           id="api_key"
           type="password"
           value={formData.api_key}
-          onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}
-          placeholder="sk-..."
-          required
+          onChange={(e) => handleApiKeyChange(e.target.value)}
+          placeholder={isEditMode ? apiKeyPlaceholder : 'sk-...'}
+          required={!isEditMode}
           disabled={loading}
+          onFocus={(e) => {
+            if (isEditMode && !apiKeyModified) {
+              e.target.placeholder = 'Enter new API key or leave empty to keep current';
+            }
+          }}
         />
-        <small>Your API key will be encrypted before storage</small>
+        <small>
+          {isEditMode && !apiKeyModified
+            ? 'Leave empty to keep current API key, or enter a new one'
+            : 'Your API key will be encrypted before storage'}
+        </small>
       </div>
 
       {testResult && (
@@ -123,33 +196,39 @@ export default function ProviderForm({
         </div>
       )}
 
+      {modelsFetched && (
+        <div className="models-preview">
+          <h4>Ready to fetch models</h4>
+          <p>Models will be fetched automatically after saving the provider.</p>
+        </div>
+      )}
+
       <div className="form-actions">
         <button
           type="button"
           onClick={onCancel}
           className="btn-secondary"
-          disabled={loading || testing}
+          disabled={loading || fetchingModels}
         >
           Cancel
         </button>
         
-        {onTest && (
-          <button
-            type="button"
-            onClick={handleTest}
-            className="btn-secondary"
-            disabled={loading || testing || !formData.api_key}
-          >
-            {testing ? 'Testing...' : 'Test Connection'}
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={handleFetchModels}
+          className="btn-secondary"
+          disabled={loading || fetchingModels || !formData.api_key}
+          title="Test connection and validate API key"
+        >
+          {fetchingModels ? 'Testing...' : '🔌 Test & Validate'}
+        </button>
         
         <button
           type="submit"
           className="btn-primary"
-          disabled={loading || testing}
+          disabled={loading || fetchingModels}
         >
-          {loading ? 'Saving...' : initialData ? 'Update' : 'Create'}
+          {loading ? 'Saving...' : initialData?.id ? 'Update' : 'Create'}
         </button>
       </div>
     </form>

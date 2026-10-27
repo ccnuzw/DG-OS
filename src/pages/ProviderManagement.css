@@ -375,6 +375,26 @@
   margin-bottom: 0.5rem;
 }
 
+
+.models-preview {
+  padding: 1rem;
+  background-color: #f0f8ff;
+  border: 1px solid #0969da;
+  border-radius: 0.375rem;
+  margin-top: 1rem;
+}
+
+.models-preview h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.875rem;
+  color: #0969da;
+}
+
+.models-preview p {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: #57606a;
+}
 .model-context {
   font-size: 0.8125rem;
   color: var(--muted, #6b7280);
