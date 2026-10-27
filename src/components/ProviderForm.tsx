@@ -1,365 +1,432 @@
 import { useState, useEffect } from 'react';
-import { ProviderConfig, Model } from '../stores/providerStore';
 import { invoke } from '@tauri-apps/api/core';
+import type { ProviderConfig, Model, Provider } from '../stores/providerStore';
 
 interface ProviderFormProps {
-  initialData?: ProviderConfig & { id?: string };
-  onSubmit: (config: ProviderConfig, models: Model[]) => Promise<boolean>;
-  onCancel: () => void;
+  provider: Provider | null;  // null = 新建模式
+  onSave: (config: ProviderConfig, models: Model[]) => Promise<boolean>;
+  onDelete?: () => Promise<boolean>;
+  onChange: () => void;
   loading?: boolean;
 }
 
 interface CommandResponse<T> {
   success: boolean;
   data?: T;
-  error?: {
-    code: number;
-    message: string;
-  };
+  error?: { code: number; message: string };
 }
 
 export default function ProviderForm({
-  initialData,
-  onSubmit,
-  onCancel,
+  provider,
+  onSave,
+  onDelete,
+  onChange,
   loading = false,
 }: ProviderFormProps) {
-  const isEditMode = !!initialData?.id;
-  const providerId = initialData?.id;
-  
-  const [formData, setFormData] = useState<ProviderConfig>(
-    initialData || {
-      name: '',
-      provider_type: 'openai_compatible',
-      base_url: 'https://api.openai.com/v1',
-      api_key: '',
-    }
-  );
-  
-  // Track if API key has been modified
-  const [apiKeyModified, setApiKeyModified] = useState(false);
-  const [apiKeyPlaceholder, setApiKeyPlaceholder] = useState('');
-  
-  const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
-  
-  // Connection test state
-  const [testing, setTesting] = useState(false);
-  
-  // Model fetching state
-  const [fetchingModels, setFetchingModels] = useState(false);
-  const [previewModels, setPreviewModels] = useState<Model[]>([]);
-  const [modelsFetchError, setModelsFetchError] = useState<string | null>(null);
+  const isEditMode = !!provider;
+  const isNewMode = !provider;
 
+  // 表单状态
+  const [formData, setFormData] = useState<ProviderConfig>(
+    provider
+      ? {
+          name: provider.name,
+          provider_type: provider.provider_type,
+          base_url: provider.base_url,
+          api_key: '', // 编辑模式下留空
+          enabled: provider.enabled,
+          config: provider.config,
+        }
+      : {
+          name: '',
+          provider_type: 'openai_compatible',
+          base_url: 'https://api.openai.com/v1',
+          api_key: '',
+          enabled: true,
+          config: undefined,
+        }
+  );
+
+  // 操作状态
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
+  const [testMessage, setTestMessage] = useState<string>('');
+  
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [models, setModels] = useState<Model[]>([]);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+
+  const [saving, setSaving] = useState(false);
+
+  // 当 provider 变化时重置表单
   useEffect(() => {
-    if (isEditMode && initialData) {
-      // In edit mode, show masked API key placeholder
-      setApiKeyPlaceholder('sk-****...****');
-      // Don't set the actual api_key in formData - keep it empty
+    if (provider) {
       setFormData({
-        ...initialData,
-        api_key: '', // Empty for security
+        name: provider.name,
+        provider_type: provider.provider_type,
+        base_url: provider.base_url,
+        api_key: '',
+        enabled: provider.enabled,
+        config: provider.config,
+      });
+    } else {
+      setFormData({
+        name: '',
+        provider_type: 'openai_compatible',
+        base_url: 'https://api.openai.com/v1',
+        api_key: '',
+        enabled: true,
+        config: undefined,
       });
     }
-  }, []);
+    setModels([]);
+    setTestResult(null);
+    setModelsError(null);
+  }, [provider]);
 
-  const handleApiKeyChange = (value: string) => {
-    setApiKeyModified(true);
-    setFormData({ ...formData, api_key: value });
+  // 表单变化处理
+  const handleChange = (field: keyof ProviderConfig, value: any) => {
+    setFormData({ ...formData, [field]: value });
+    onChange();
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    // If in edit mode and API key wasn't modified, send empty string
-    // Backend should keep the original API key
-    const submitData = {
-      ...formData,
-      api_key: isEditMode && !apiKeyModified ? '' : formData.api_key,
-    };
-    
-    // Pass the fetched models along with the config
-    const success = await onSubmit(submitData, previewModels);
-    if (success) {
-      // Form will be closed by parent
-    }
-  };
-
+  // 测试连接
   const handleTestConnection = async () => {
     setTesting(true);
     setTestResult(null);
-    
+    setTestMessage('');
+
     try {
-      let testResponse;
-      
-      if (isEditMode && providerId) {
-        // Edit mode: use stored API key
-        testResponse = await invoke<CommandResponse<boolean>>('test_provider_by_id', {
-          providerId: providerId,
-        });
-      } else {
-        // Create mode: use form API key
+      let response: CommandResponse<boolean>;
+
+      if (isEditMode && provider) {
+        // 编辑模式：如果没有输入新的 API Key，使用数据库中的
         if (!formData.api_key) {
+          response = await invoke<CommandResponse<boolean>>('test_provider_by_id', {
+            providerId: provider.id,
+          });
+        } else {
+          // 输入了新的 API Key，使用新的配置测试
+          response = await invoke<CommandResponse<boolean>>('test_provider_connection', {
+            config: formData,
+          });
+        }
+      } else {
+        // 新建模式：必须有 API Key
+        if (!formData.api_key) {
+          setTestResult('error');
+          setTestMessage('Please enter an API Key');
+          setTesting(false);
           return;
         }
-        testResponse = await invoke<CommandResponse<boolean>>('test_provider_connection', {
+        response = await invoke<CommandResponse<boolean>>('test_provider_connection', {
           config: formData,
         });
       }
-      
-      if (testResponse.success && testResponse.data) {
+
+      if (response.success && response.data) {
         setTestResult('success');
+        setTestMessage('Connection successful');
       } else {
         setTestResult('error');
+        setTestMessage(response.error?.message || 'Connection failed');
       }
     } catch (err) {
       setTestResult('error');
+      setTestMessage(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setTesting(false);
     }
   };
 
+  // 拉取/刷新模型
   const handleFetchModels = async () => {
     setFetchingModels(true);
-    setModelsFetchError(null);
-    setPreviewModels([]);
-    
+    setModelsError(null);
+
     try {
-      if (isEditMode && providerId) {
-        // Edit mode: use backend refresh_models (has stored API key)
+      if (isEditMode && provider) {
+        // 编辑模式：调用 refresh_models（会保存到数据库）
         const response = await invoke<CommandResponse<Model[]>>('refresh_models', {
-          providerId: providerId,
+          providerId: provider.id,
         });
-        
+
         if (response.success && response.data) {
-          setPreviewModels(response.data);
+          setModels(response.data);
         } else {
-          setModelsFetchError(response.error?.message || 'Failed to fetch models');
+          setModelsError(response.error?.message || 'Failed to fetch models');
         }
       } else {
-        // Create mode: fetch directly using form API key
+        // 新建模式：前端 fetch（不保存，只预览）
         if (!formData.api_key) {
-          setModelsFetchError('Please enter an API key first');
+          setModelsError('Please enter an API Key first');
           setFetchingModels(false);
           return;
         }
 
-        // First test connection
+        // 先测试连接
         const testResponse = await invoke<CommandResponse<boolean>>('test_provider_connection', {
           config: formData,
         });
-        
+
         if (!testResponse.success || !testResponse.data) {
-          setModelsFetchError('Connection test failed. Please check your configuration.');
+          setModelsError('Connection test failed. Please check your configuration.');
           setFetchingModels(false);
           return;
         }
 
-        // Then fetch models by calling the OpenAI compatible /v1/models endpoint
+        // 调用 /v1/models API
         const response = await fetch(`${formData.base_url}/models`, {
           headers: {
-            'Authorization': `Bearer ${formData.api_key}`,
+            Authorization: `Bearer ${formData.api_key}`,
             'Content-Type': 'application/json',
           },
         });
 
         if (!response.ok) {
-          setModelsFetchError(`Failed to fetch models: ${response.statusText}`);
+          setModelsError(`Failed to fetch models: ${response.statusText}`);
           setFetchingModels(false);
           return;
         }
 
-        const data: { data?: unknown[] } = await response.json();
-        
-        // OpenAI API returns { data: [...models], object: "list" }
+        const data: { data?: any[] } = await response.json();
+
         if (data.data && Array.isArray(data.data)) {
-          const models: Model[] = data.data.map((model: unknown) => {
-            const modelObj = model as Record<string, unknown>;
-            return {
-              id: crypto.randomUUID(),
-              provider_id: 'preview',
-              model_id: typeof modelObj.id === 'string' ? modelObj.id : 'unknown',
-              model_name: typeof modelObj.id === 'string' ? modelObj.id : 'unknown',
-              model_type: typeof modelObj.object === 'string' ? modelObj.object : 'model',
-              context_window: typeof modelObj.context_window === 'number' ? modelObj.context_window : undefined,
-              max_output_tokens: typeof modelObj.max_output_tokens === 'number' ? modelObj.max_output_tokens : undefined,
-              supports_streaming: true,
-              supports_vision: typeof modelObj.id === 'string' && (modelObj.id.includes('vision') || modelObj.id.includes('gpt-4')),
-              cached_at: new Date().toISOString(),
-            };
-          });
-          
-          setPreviewModels(models);
+          const fetchedModels: Model[] = data.data.map((m: any) => ({
+            id: crypto.randomUUID(),
+            provider_id: 'preview',
+            model_id: m.id || 'unknown',
+            model_name: m.id || 'unknown',
+            model_type: m.object || 'chat',
+            context_window: m.context_window,
+            max_output_tokens: m.max_output_tokens,
+            supports_streaming: true,
+            supports_vision: m.id?.includes('vision') || false,
+            cached_at: new Date().toISOString(),
+          }));
+          setModels(fetchedModels);
         } else {
-          setModelsFetchError('Invalid response format from API');
+          setModelsError('Invalid response format from API');
         }
       }
-      
     } catch (err) {
-      setModelsFetchError(err instanceof Error ? err.message : 'Unknown error');
+      setModelsError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setFetchingModels(false);
     }
   };
 
-  // Can test/fetch if:
-  // - Edit mode: always (backend has API key)
-  // - Create mode: only if API key is filled
-  const canTestOrFetch = isEditMode || !!formData.api_key;
+  // 保存
+  const handleSave = async () => {
+    setSaving(true);
+    const success = await onSave(formData, models);
+    setSaving(false);
+    
+    if (success && isNewMode) {
+      // 新建成功后重置表单
+      setFormData({
+        name: '',
+        provider_type: 'openai_compatible',
+        base_url: 'https://api.openai.com/v1',
+        api_key: '',
+        enabled: true,
+        config: undefined,
+      });
+      setModels([]);
+      setTestResult(null);
+    }
+  };
+
+  // 删除
+  const handleDelete = async () => {
+    if (onDelete) {
+      await onDelete();
+    }
+  };
 
   return (
-    <form onSubmit={handleSubmit} className="provider-form">
-      <div className="form-group">
-        <label htmlFor="name">
-          Provider Name <span className="required">*</span>
-        </label>
-        <input
-          id="name"
-          type="text"
-          value={formData.name}
-          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-          placeholder="My OpenAI Provider"
-          required
-          disabled={loading}
-        />
-      </div>
+    <div className="provider-form">
+      {/* 标题 */}
+      <header className="form-header">
+        <h2>{isNewMode ? 'New Provider' : provider.name}</h2>
+        {isEditMode && (
+          <span className="provider-id">ID: {provider.id.slice(0, 8)}...</span>
+        )}
+      </header>
 
-      <div className="form-group">
-        <label htmlFor="provider_type">
-          Provider Type <span className="required">*</span>
-        </label>
-        <select
-          id="provider_type"
-          value={formData.provider_type}
-          onChange={(e) =>
-            setFormData({ ...formData, provider_type: e.target.value })
-          }
-          required
-          disabled={loading}
-        >
-          <option value="openai_compatible">OpenAI Compatible</option>
-        </select>
-        <small>V1 only supports OpenAI compatible APIs</small>
-      </div>
+      {/* 配置区 */}
+      <section className="config-section">
+        <h3>Configuration</h3>
 
-      <div className="form-group">
-        <label htmlFor="base_url">
-          Base URL <span className="required">*</span>
-        </label>
-        <input
-          id="base_url"
-          type="url"
-          value={formData.base_url}
-          onChange={(e) => setFormData({ ...formData, base_url: e.target.value })}
-          placeholder="https://api.openai.com/v1"
-          required
-          disabled={loading}
-        />
-        <small>The base URL for the API endpoint</small>
-      </div>
+        <div className="form-group">
+          <label htmlFor="name">
+            Name <span className="required">*</span>
+          </label>
+          <input
+            id="name"
+            type="text"
+            value={formData.name}
+            onChange={(e) => handleChange('name', e.target.value)}
+            placeholder="My Provider"
+            disabled={loading || saving}
+          />
+        </div>
 
-      <div className="form-group">
-        <label htmlFor="api_key">
-          API Key <span className="required">*</span>
-        </label>
-        <input
-          id="api_key"
-          type="password"
-          value={formData.api_key}
-          onChange={(e) => handleApiKeyChange(e.target.value)}
-          placeholder={isEditMode ? apiKeyPlaceholder : 'sk-...'}
-          required={!isEditMode}
-          disabled={loading}
-          onFocus={(e) => {
-            if (isEditMode && !apiKeyModified) {
-              e.target.placeholder = 'Enter new API key or leave empty to keep current';
-            }
-          }}
-        />
-        <small>
-          {isEditMode && !apiKeyModified
-            ? 'Leave empty to keep current API key, or enter a new one'
-            : 'Your API key will be encrypted before storage'}
-        </small>
-      </div>
+        <div className="form-group">
+          <label htmlFor="provider_type">Provider Type</label>
+          <select
+            id="provider_type"
+            value={formData.provider_type}
+            onChange={(e) => handleChange('provider_type', e.target.value)}
+            disabled={loading || saving}
+          >
+            <option value="openai_compatible">OpenAI Compatible</option>
+          </select>
+          <small>Currently only supports OpenAI compatible APIs</small>
+        </div>
 
-      {testResult && (
-        <div className={`test-result ${testResult}`}>
-          {testResult === 'success' ? (
-            <>✓ Connection test successful!</>
+        <div className="form-group">
+          <label htmlFor="base_url">
+            Base URL <span className="required">*</span>
+          </label>
+          <input
+            id="base_url"
+            type="url"
+            value={formData.base_url}
+            onChange={(e) => handleChange('base_url', e.target.value)}
+            placeholder="https://api.openai.com/v1"
+            disabled={loading || saving}
+          />
+          <small>The base URL for the API endpoint</small>
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="api_key">
+            API Key <span className="required">*</span>
+          </label>
+          <input
+            id="api_key"
+            type="password"
+            value={formData.api_key}
+            onChange={(e) => handleChange('api_key', e.target.value)}
+            placeholder={isEditMode ? 'Leave empty to keep current' : 'sk-...'}
+            disabled={loading || saving}
+          />
+          {isEditMode ? (
+            <small>Leave empty to keep current API key, or enter a new one</small>
           ) : (
-            <>✗ Connection test failed. Please check your configuration.</>
+            <small>Your API key will be encrypted before storage</small>
           )}
         </div>
-      )}
 
-      {previewModels.length > 0 && (
-        <div className="models-preview">
-          <h4>Available Models ({previewModels.length})</h4>
-          <div className="models-preview-list">
-            {previewModels.map((model) => (
-              <div key={model.id} className="model-preview-item">
-                <div className="model-preview-name">{model.model_name}</div>
-                <div className="model-preview-id">{model.model_id}</div>
+        <div className="form-group">
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={formData.enabled}
+              onChange={(e) => handleChange('enabled', e.target.checked)}
+              disabled={loading || saving}
+            />
+            <span>Enabled</span>
+          </label>
+          <small>Disabled providers cannot be used for API calls</small>
+        </div>
+      </section>
+
+      {/* 操作区 */}
+      <section className="actions-section">
+        <h3>Actions</h3>
+
+        <div className="action-buttons">
+          <button
+            onClick={handleTestConnection}
+            disabled={testing || saving || (!isEditMode && !formData.api_key)}
+            className="btn-secondary"
+          >
+            {testing ? 'Testing...' : '🔌 Test Connection'}
+          </button>
+
+          <button
+            onClick={handleFetchModels}
+            disabled={fetchingModels || saving || (!isEditMode && !formData.api_key)}
+            className="btn-secondary"
+          >
+            {fetchingModels ? 'Fetching...' : '📥 Refresh Models'}
+          </button>
+        </div>
+
+        {/* 测试结果 */}
+        {testResult && (
+          <div className={`test-result ${testResult}`}>
+            {testResult === 'success' ? '✓' : '✗'} {testMessage}
+          </div>
+        )}
+
+        {/* 模型错误 */}
+        {modelsError && (
+          <div className="test-result error">✗ {modelsError}</div>
+        )}
+      </section>
+
+      {/* 模型列表 */}
+      {models.length > 0 && (
+        <section className="models-section">
+          <h3>Models ({models.length})</h3>
+          <div className="models-list">
+            {models.map((model) => (
+              <div key={model.id} className="model-card">
+                <h4>{model.model_name}</h4>
+                <div className="model-id">{model.model_id}</div>
+                <div className="model-meta">
+                  <span className="badge">{model.model_type}</span>
+                  {model.supports_streaming && (
+                    <span className="badge badge-info">Streaming</span>
+                  )}
+                  {model.supports_vision && (
+                    <span className="badge badge-info">Vision</span>
+                  )}
+                </div>
                 {model.context_window && (
-                  <div className="model-preview-meta">
+                  <div className="model-context">
                     Context: {model.context_window.toLocaleString()} tokens
                   </div>
                 )}
               </div>
             ))}
           </div>
-          <small className="models-preview-note">
-            {isEditMode 
-              ? 'These models are already saved in the database'
-              : 'These models will be saved when you create the provider'}
-          </small>
-        </div>
+          {isNewMode && (
+            <small className="models-note">
+              These models will be saved when you create the provider
+            </small>
+          )}
+          {isEditMode && (
+            <small className="models-note">
+              Models were updated in the database
+            </small>
+          )}
+        </section>
       )}
 
-      {modelsFetchError && (
-        <div className="test-result error">
-          ✗ {modelsFetchError}
-        </div>
-      )}
-
-      <div className="form-actions">
+      {/* 底部操作 */}
+      <footer className="form-footer">
+        {isEditMode && onDelete && (
+          <button
+            onClick={handleDelete}
+            disabled={saving}
+            className="btn-danger"
+          >
+            🗑️ Delete
+          </button>
+        )}
+        <div className="spacer" />
         <button
-          type="button"
-          onClick={onCancel}
-          className="btn-secondary"
-          disabled={loading || testing || fetchingModels}
-        >
-          Cancel
-        </button>
-        
-        <button
-          type="button"
-          onClick={handleTestConnection}
-          className="btn-secondary"
-          disabled={loading || testing || fetchingModels || !canTestOrFetch}
-          title={isEditMode ? "Test connection using stored API key" : "Test API connection"}
-        >
-          {testing ? 'Testing...' : '🔌 Test Connection'}
-        </button>
-
-        <button
-          type="button"
-          onClick={handleFetchModels}
-          className="btn-secondary"
-          disabled={loading || testing || fetchingModels || !canTestOrFetch}
-          title={isEditMode ? "Fetch models using stored API key" : "Fetch available models from API"}
-        >
-          {fetchingModels ? 'Fetching...' : '📥 Fetch Models'}
-        </button>
-        
-        <button
-          type="submit"
+          onClick={handleSave}
+          disabled={saving || loading || !formData.name || !formData.base_url || (!isEditMode && !formData.api_key)}
           className="btn-primary"
-          disabled={loading || testing || fetchingModels}
         >
-          {loading ? 'Saving...' : initialData?.id ? 'Update' : 'Create'}
+          {saving ? 'Saving...' : isNewMode ? '💾 Create' : '💾 Save Changes'}
         </button>
-      </div>
-    </form>
+      </footer>
+    </div>
   );
 }

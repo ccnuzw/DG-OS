@@ -12,6 +12,7 @@ export interface Provider {
   created_at: string;
   updated_at: string;
   user_id: string;
+  config?: Record<string, unknown>;
 }
 
 export interface ProviderConfig {
@@ -19,6 +20,7 @@ export interface ProviderConfig {
   provider_type: string;
   base_url: string;
   api_key: string;
+  enabled: boolean;
   config?: Record<string, unknown>;
 }
 export interface Model {
