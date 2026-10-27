@@ -5,44 +5,44 @@ pub enum DgosError {
     // Provider errors (1001xxx)
     #[error("Provider not found: {0}")]
     ProviderNotFound(String),
-    
+
     #[error("Invalid API key")]
     InvalidApiKey,
-    
+
     #[error("Provider unavailable: {0}")]
     ProviderUnavailable(String),
-    
+
     #[error("Model not found: {0}")]
     ModelNotFound(String),
-    
+
     #[error("Rate limit exceeded")]
     RateLimitExceeded,
-    
+
     #[error("Request timeout")]
     Timeout,
-    
+
     #[error("Stream interrupted")]
     StreamInterrupted,
-    
+
     #[error("Max retries exceeded")]
     MaxRetriesExceeded,
-    
+
     // Network errors
     #[error("Network error: {0}")]
     NetworkError(String),
-    
+
     // HTTP errors
     #[error("HTTP error: {0}")]
     HttpError(u16),
-    
+
     // Database errors
     #[error("Database error: {0}")]
     DatabaseError(String),
-    
+
     // JSON parsing errors
     #[error("JSON parse error: {0}")]
     JsonError(String),
-    
+
     // Generic error
     #[error("Internal error: {0}")]
     InternalError(String),
@@ -97,7 +97,10 @@ mod tests {
 
     #[test]
     fn test_error_codes() {
-        assert_eq!(DgosError::ProviderNotFound("test".to_string()).error_code(), 1001001);
+        assert_eq!(
+            DgosError::ProviderNotFound("test".to_string()).error_code(),
+            1001001
+        );
         assert_eq!(DgosError::InvalidApiKey.error_code(), 1001002);
         assert_eq!(DgosError::RateLimitExceeded.error_code(), 1001005);
         assert_eq!(DgosError::Timeout.error_code(), 1001006);

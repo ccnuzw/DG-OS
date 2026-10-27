@@ -15,11 +15,7 @@ impl ProviderRepository {
     }
 
     /// Create a new provider
-    pub async fn create(
-        &self,
-        config: ProviderConfig,
-        user_id: String,
-    ) -> DgosResult<Provider> {
+    pub async fn create(&self, config: ProviderConfig, user_id: String) -> DgosResult<Provider> {
         let now = chrono::Utc::now();
         let id = Uuid::new_v4().to_string();
 
@@ -52,7 +48,8 @@ impl ProviderRepository {
             .await
             .map_err(|e| DgosError::DatabaseError(e.to_string()))?;
 
-        self.get(&id).await?
+        self.get(&id)
+            .await?
             .ok_or_else(|| DgosError::ProviderNotFound(id))
     }
 
@@ -82,11 +79,7 @@ impl ProviderRepository {
     }
 
     /// Update a provider
-    pub async fn update(
-        &self,
-        id: &str,
-        config: ProviderConfig,
-    ) -> DgosResult<Provider> {
+    pub async fn update(&self, id: &str, config: ProviderConfig) -> DgosResult<Provider> {
         let provider = providers::Entity::find_by_id(id)
             .one(&self.db)
             .await
@@ -97,12 +90,12 @@ impl ProviderRepository {
         provider.name = Set(config.name);
         provider.provider_type = Set(config.provider_type);
         provider.base_url = Set(config.base_url);
-        
+
         // Only update API key if a new one is provided (not empty)
         if !config.api_key.is_empty() {
             provider.api_key = Set(config.api_key);
         }
-        
+
         provider.enabled = Set(config.enabled);
         provider.config = Set(config.config);
         provider.updated_at = Set(chrono::Utc::now());

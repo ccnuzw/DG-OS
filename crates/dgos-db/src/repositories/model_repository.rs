@@ -38,7 +38,7 @@ impl ModelRepository {
             if model.supports_vision {
                 capabilities.push(Capability::Vision);
             }
-            
+
             let model_entity = models::ActiveModel {
                 id: Set(model.id.clone()),
                 provider_id: Set(model.provider_id.clone()),
@@ -71,8 +71,8 @@ impl ModelRepository {
 
         let mut result = Vec::new();
         for m in models_data {
-            let capabilities: Vec<Capability> = serde_json::from_value(m.capabilities)
-                .unwrap_or_default();
+            let capabilities: Vec<Capability> =
+                serde_json::from_value(m.capabilities).unwrap_or_default();
 
             result.push(Model {
                 id: m.id.clone(),
@@ -92,11 +92,7 @@ impl ModelRepository {
     }
 
     /// Get a specific model
-    pub async fn get(
-        &self,
-        provider_id: &str,
-        model_id: &str,
-    ) -> DgosResult<Option<Model>> {
+    pub async fn get(&self, provider_id: &str, model_id: &str) -> DgosResult<Option<Model>> {
         let model = models::Entity::find()
             .filter(models::Column::ProviderId.eq(provider_id))
             .filter(models::Column::ModelId.eq(model_id))
@@ -106,8 +102,8 @@ impl ModelRepository {
             .map_err(|e| DgosError::DatabaseError(e.to_string()))?;
 
         if let Some(m) = model {
-            let capabilities: Vec<Capability> = serde_json::from_value(m.capabilities)
-                .unwrap_or_default();
+            let capabilities: Vec<Capability> =
+                serde_json::from_value(m.capabilities).unwrap_or_default();
 
             Ok(Some(Model {
                 id: m.id.clone(),

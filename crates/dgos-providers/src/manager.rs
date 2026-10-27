@@ -1,6 +1,9 @@
-use dgos_db::{establish_connection, ModelRepository, ProviderRepository, UsageLogRepository};
 use dgos_db::sea_orm::DatabaseConnection;
-use dgos_types::{ChatRequest, ChatResponse, DgosError, DgosResult, Model, Provider, ProviderConfig, RetryConfig, UsageLog};
+use dgos_db::{establish_connection, ModelRepository, ProviderRepository, UsageLogRepository};
+use dgos_types::{
+    ChatRequest, ChatResponse, DgosError, DgosResult, Model, Provider, ProviderConfig, RetryConfig,
+    UsageLog,
+};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
@@ -47,7 +50,7 @@ impl ProviderManager {
         user_id: String,
     ) -> DgosResult<Provider> {
         info!("Creating provider: {}", config.name);
-        
+
         // Test connection first
         let adapter = self.create_adapter(&config)?;
         adapter.test_connection().await?;
@@ -65,8 +68,12 @@ impl ProviderManager {
         user_id: String,
         models: Vec<Model>,
     ) -> DgosResult<Provider> {
-        info!("Creating provider with {} models: {}", models.len(), config.name);
-        
+        info!(
+            "Creating provider with {} models: {}",
+            models.len(),
+            config.name
+        );
+
         // Test connection first
         let adapter = self.create_adapter(&config)?;
         adapter.test_connection().await?;
@@ -103,13 +110,9 @@ impl ProviderManager {
     }
 
     /// Update a provider
-    pub async fn update_provider(
-        &self,
-        id: &str,
-        config: ProviderConfig,
-    ) -> DgosResult<Provider> {
+    pub async fn update_provider(&self, id: &str, config: ProviderConfig) -> DgosResult<Provider> {
         info!("Updating provider: {}", id);
-        
+
         // Clear cached adapter
         self.adapter_cache.write().await.remove(id);
 
@@ -119,7 +122,7 @@ impl ProviderManager {
     /// Delete a provider
     pub async fn delete_provider(&self, id: &str) -> DgosResult<()> {
         info!("Deleting provider: {}", id);
-        
+
         // Clear cached adapter
         self.adapter_cache.write().await.remove(id);
 
@@ -147,10 +150,7 @@ impl ProviderManager {
     /// This is intentionally kept separate from `refresh_models`: the latter
     /// reads a persisted provider and updates its model cache, while this
     /// method is used by the create form to preview models before saving.
-    pub async fn list_models_for_config(
-        &self,
-        config: &ProviderConfig,
-    ) -> DgosResult<Vec<Model>> {
+    pub async fn list_models_for_config(&self, config: &ProviderConfig) -> DgosResult<Vec<Model>> {
         let adapter = self.create_adapter(config)?;
         adapter.list_models().await
     }
@@ -163,8 +163,11 @@ impl ProviderManager {
     /// Refresh models from provider API
     pub async fn refresh_models(&self, provider_id: &str) -> DgosResult<Vec<Model>> {
         info!("Refreshing models for provider: {}", provider_id);
-        
-        let provider = self.provider_repo.get(provider_id).await?
+
+        let provider = self
+            .provider_repo
+            .get(provider_id)
+            .await?
             .ok_or_else(|| DgosError::ProviderNotFound(provider_id.to_string()))?;
 
         let adapter = self.get_or_create_adapter(&provider).await?;
@@ -177,12 +180,12 @@ impl ProviderManager {
         adapter: Arc<dyn ProviderAdapter>,
     ) -> DgosResult<Vec<Model>> {
         let mut models = adapter.list_models().await?;
-        
+
         // Set provider_id for all models
         for model in &mut models {
             model.provider_id = provider_id.to_string();
         }
-        
+
         self.model_repo.sync_models(provider_id, models).await
     }
 
@@ -195,8 +198,11 @@ impl ProviderManager {
         user_id: &str,
     ) -> DgosResult<ChatResponse> {
         let start = Instant::now();
-        
-        let provider = self.provider_repo.get(provider_id).await?
+
+        let provider = self
+            .provider_repo
+            .get(provider_id)
+            .await?
             .ok_or_else(|| DgosError::ProviderNotFound(provider_id.to_string()))?;
 
         if !provider.enabled {
@@ -253,7 +259,10 @@ impl ProviderManager {
         request: ChatRequest,
         _user_id: &str,
     ) -> DgosResult<crate::traits::BoxStream<crate::ChatChunk>> {
-        let provider = self.provider_repo.get(provider_id).await?
+        let provider = self
+            .provider_repo
+            .get(provider_id)
+            .await?
             .ok_or_else(|| DgosError::ProviderNotFound(provider_id.to_string()))?;
 
         if !provider.enabled {
@@ -281,7 +290,7 @@ impl ProviderManager {
         provider: &Provider,
     ) -> DgosResult<Arc<dyn ProviderAdapter>> {
         let cache = self.adapter_cache.read().await;
-        
+
         if let Some(adapter) = cache.get(&provider.id) {
             return Ok(Arc::clone(adapter));
         }
@@ -299,7 +308,7 @@ impl ProviderManager {
         };
 
         let adapter = self.create_adapter(&config)?;
-        
+
         // Cache it
         self.adapter_cache
             .write()
@@ -311,7 +320,9 @@ impl ProviderManager {
 
     /// Create an adapter from config
     fn create_adapter(&self, config: &ProviderConfig) -> DgosResult<Arc<dyn ProviderAdapter>> {
-        let retry_config = config.config.as_ref()
+        let retry_config = config
+            .config
+            .as_ref()
             .and_then(|c| serde_json::from_value::<RetryConfig>(c.clone()).ok());
 
         match config.provider_type.as_str() {

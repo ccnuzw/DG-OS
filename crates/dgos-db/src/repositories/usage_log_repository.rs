@@ -64,11 +64,7 @@ impl UsageLogRepository {
     }
 
     /// List usage logs for a user
-    pub async fn list(
-        &self,
-        user_id: &str,
-        limit: Option<usize>,
-    ) -> DgosResult<Vec<UsageLog>> {
+    pub async fn list(&self, user_id: &str, limit: Option<usize>) -> DgosResult<Vec<UsageLog>> {
         let mut query = usage_logs::Entity::find()
             .filter(usage_logs::Column::UserId.eq(user_id))
             .order_by_desc(usage_logs::Column::CreatedAt);
@@ -101,10 +97,7 @@ impl UsageLogRepository {
     }
 
     /// Get usage statistics for a provider
-    pub async fn get_provider_stats(
-        &self,
-        provider_id: &str,
-    ) -> DgosResult<ProviderStats> {
+    pub async fn get_provider_stats(&self, provider_id: &str) -> DgosResult<ProviderStats> {
         let logs = usage_logs::Entity::find()
             .filter(usage_logs::Column::ProviderId.eq(provider_id))
             .all(&self.db)

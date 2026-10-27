@@ -6,30 +6,30 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, column_type = "String(StringLen::N(36))")]
     pub id: String,
-    
+
     #[sea_orm(column_type = "String(StringLen::N(255))")]
     pub name: String,
-    
+
     #[sea_orm(column_type = "String(StringLen::N(50))")]
     pub provider_type: String,
-    
+
     #[sea_orm(column_type = "String(StringLen::N(512))")]
     pub base_url: String,
-    
+
     #[sea_orm(column_type = "String(StringLen::N(512))")]
     pub api_key: String,
-    
+
     pub enabled: bool,
-    
+
     pub sort_order: i32,
-    
+
     #[sea_orm(column_type = "Json", nullable)]
     pub config: Option<serde_json::Value>,
-    
+
     pub created_at: DateTimeUtc,
-    
+
     pub updated_at: DateTimeUtc,
-    
+
     #[sea_orm(column_type = "String(StringLen::N(36))")]
     pub user_id: String,
 }

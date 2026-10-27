@@ -27,11 +27,7 @@ impl MigrationTrait for Migration {
                             .string_len(255)
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(UsageLogs::UserId)
-                            .string_len(36)
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(UsageLogs::UserId).string_len(36).not_null())
                     .col(
                         ColumnDef::new(UsageLogs::RequestTokens)
                             .integer()
@@ -56,11 +52,7 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(0),
                     )
-                    .col(
-                        ColumnDef::new(UsageLogs::Success)
-                            .boolean()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(UsageLogs::Success).boolean().not_null())
                     .col(ColumnDef::new(UsageLogs::ErrorCode).string_len(50))
                     .col(
                         ColumnDef::new(UsageLogs::CreatedAt)

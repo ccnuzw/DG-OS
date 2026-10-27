@@ -12,12 +12,7 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Skills::Table)
                     .if_not_exists()
-                    .col(
-                        ColumnDef::new(Skills::Id)
-                            .string()
-                            .not_null()
-                            .primary_key(),
-                    )
+                    .col(ColumnDef::new(Skills::Id).string().not_null().primary_key())
                     .col(ColumnDef::new(Skills::SkillId).string().not_null())
                     .col(ColumnDef::new(Skills::Name).string().not_null())
                     .col(ColumnDef::new(Skills::Description).string())
@@ -73,13 +68,33 @@ impl MigrationTrait for Migration {
                     )
                     .col(ColumnDef::new(SkillRegistryCache::Name).string().not_null())
                     .col(ColumnDef::new(SkillRegistryCache::Description).string())
-                    .col(ColumnDef::new(SkillRegistryCache::LatestVersion).string().not_null())
+                    .col(
+                        ColumnDef::new(SkillRegistryCache::LatestVersion)
+                            .string()
+                            .not_null(),
+                    )
                     .col(ColumnDef::new(SkillRegistryCache::Author).string())
-                    .col(ColumnDef::new(SkillRegistryCache::Category).string().not_null())
+                    .col(
+                        ColumnDef::new(SkillRegistryCache::Category)
+                            .string()
+                            .not_null(),
+                    )
                     .col(ColumnDef::new(SkillRegistryCache::Tags).json().not_null())
-                    .col(ColumnDef::new(SkillRegistryCache::DownloadUrl).string().not_null())
-                    .col(ColumnDef::new(SkillRegistryCache::Manifest).json().not_null())
-                    .col(ColumnDef::new(SkillRegistryCache::SyncedAt).big_integer().not_null())
+                    .col(
+                        ColumnDef::new(SkillRegistryCache::DownloadUrl)
+                            .string()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(SkillRegistryCache::Manifest)
+                            .json()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(SkillRegistryCache::SyncedAt)
+                            .big_integer()
+                            .not_null(),
+                    )
                     .to_owned(),
             )
             .await?;
@@ -109,12 +124,24 @@ impl MigrationTrait for Migration {
                     )
                     .col(ColumnDef::new(SkillUsageLogs::SkillId).string().not_null())
                     .col(ColumnDef::new(SkillUsageLogs::UserId).string().not_null())
-                    .col(ColumnDef::new(SkillUsageLogs::InputParams).json().not_null())
+                    .col(
+                        ColumnDef::new(SkillUsageLogs::InputParams)
+                            .json()
+                            .not_null(),
+                    )
                     .col(ColumnDef::new(SkillUsageLogs::OutputResult).json())
                     .col(ColumnDef::new(SkillUsageLogs::Success).boolean().not_null())
                     .col(ColumnDef::new(SkillUsageLogs::ErrorMessage).string())
-                    .col(ColumnDef::new(SkillUsageLogs::LatencyMs).integer().not_null())
-                    .col(ColumnDef::new(SkillUsageLogs::CreatedAt).big_integer().not_null())
+                    .col(
+                        ColumnDef::new(SkillUsageLogs::LatencyMs)
+                            .integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(SkillUsageLogs::CreatedAt)
+                            .big_integer()
+                            .not_null(),
+                    )
                     .to_owned(),
             )
             .await?;

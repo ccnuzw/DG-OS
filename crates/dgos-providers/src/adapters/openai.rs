@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::Utc;
 use dgos_types::{
     Capability, ChatChunk, ChatMessage, ChatRequest, ChatResponse, DgosError, DgosResult, Model,
     RetryConfig, TokenUsage,
@@ -9,10 +10,9 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::{debug, warn};
 use uuid::Uuid;
-use chrono::Utc;
 
-use crate::traits::{BoxStream, ProviderAdapter};
 use crate::retry::RetryPolicy;
+use crate::traits::{BoxStream, ProviderAdapter};
 
 /// OpenAI compatible adapter
 pub struct OpenAIAdapter {
@@ -23,11 +23,7 @@ pub struct OpenAIAdapter {
 }
 
 impl OpenAIAdapter {
-    pub fn new(
-        base_url: String,
-        api_key: String,
-        retry_config: Option<RetryConfig>,
-    ) -> Self {
+    pub fn new(base_url: String, api_key: String, retry_config: Option<RetryConfig>) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(60))
             .build()
@@ -46,17 +42,18 @@ impl OpenAIAdapter {
     /// Classify model capabilities based on model ID
     fn classify_model(&self, model_id: &str) -> Vec<Capability> {
         let id_lower = model_id.to_lowercase();
-        
+
         if id_lower.contains("dall-e") || id_lower.contains("dalle") {
             vec![Capability::ImageGeneration]
         } else if id_lower.contains("whisper") {
             vec![Capability::AudioGeneration]
         } else if id_lower.contains("tts") {
             vec![Capability::AudioGeneration]
-        } else if id_lower.contains("gpt") 
-            || id_lower.contains("claude") 
-            || id_lower.contains("chat") 
-            || id_lower.contains("text") {
+        } else if id_lower.contains("gpt")
+            || id_lower.contains("claude")
+            || id_lower.contains("chat")
+            || id_lower.contains("text")
+        {
             vec![Capability::TextGeneration]
         } else {
             // Default to text generation
@@ -73,9 +70,9 @@ impl ProviderAdapter for OpenAIAdapter {
 
     async fn list_models(&self) -> DgosResult<Vec<Model>> {
         let url = format!("{}/models", self.base_url);
-        
+
         debug!("Fetching models from: {}", url);
-        
+
         let response = self
             .client
             .get(&url)
@@ -112,11 +109,7 @@ impl ProviderAdapter for OpenAIAdapter {
         Ok(models)
     }
 
-    async fn call(
-        &self,
-        model_id: &str,
-        request: ChatRequest,
-    ) -> DgosResult<ChatResponse> {
+    async fn call(&self, model_id: &str, request: ChatRequest) -> DgosResult<ChatResponse> {
         let url = format!("{}/chat/completions", self.base_url);
 
         let openai_request = OpenAIChatRequest {
@@ -128,39 +121,42 @@ impl ProviderAdapter for OpenAIAdapter {
         };
 
         // Execute with retry policy
-        let response = self.retry_policy.execute(|| async {
-            let resp = self
-                .client
-                .post(&url)
-                .bearer_auth(&self.api_key)
-                .json(&openai_request)
-                .send()
-                .await?;
+        let response = self
+            .retry_policy
+            .execute(|| async {
+                let resp = self
+                    .client
+                    .post(&url)
+                    .bearer_auth(&self.api_key)
+                    .json(&openai_request)
+                    .send()
+                    .await?;
 
-            if !resp.status().is_success() {
-                let status = resp.status().as_u16();
-                return Err(match status {
-                    401 => DgosError::InvalidApiKey,
-                    429 => DgosError::RateLimitExceeded,
-                    _ => DgosError::HttpError(status),
-                });
-            }
+                if !resp.status().is_success() {
+                    let status = resp.status().as_u16();
+                    return Err(match status {
+                        401 => DgosError::InvalidApiKey,
+                        429 => DgosError::RateLimitExceeded,
+                        _ => DgosError::HttpError(status),
+                    });
+                }
 
-            let chat_response: OpenAIChatResponse = resp.json().await?;
-            
-            Ok(ChatResponse {
-                content: chat_response
-                    .choices
-                    .first()
-                    .and_then(|c| c.message.content.clone())
-                    .unwrap_or_default(),
-                usage: TokenUsage {
-                    prompt_tokens: chat_response.usage.prompt_tokens,
-                    completion_tokens: chat_response.usage.completion_tokens,
-                    total_tokens: chat_response.usage.total_tokens,
-                },
+                let chat_response: OpenAIChatResponse = resp.json().await?;
+
+                Ok(ChatResponse {
+                    content: chat_response
+                        .choices
+                        .first()
+                        .and_then(|c| c.message.content.clone())
+                        .unwrap_or_default(),
+                    usage: TokenUsage {
+                        prompt_tokens: chat_response.usage.prompt_tokens,
+                        completion_tokens: chat_response.usage.completion_tokens,
+                        total_tokens: chat_response.usage.total_tokens,
+                    },
+                })
             })
-        }).await?;
+            .await?;
 
         Ok(response)
     }
@@ -201,7 +197,7 @@ impl ProviderAdapter for OpenAIAdapter {
             match chunk_result {
                 Ok(bytes) => {
                     let text = String::from_utf8_lossy(&bytes);
-                    
+
                     // Parse SSE format: "data: {...}\n\n"
                     for line in text.lines() {
                         if let Some(data) = line.strip_prefix("data: ") {
@@ -211,19 +207,20 @@ impl ProviderAdapter for OpenAIAdapter {
                                     finish_reason: Some("stop".to_string()),
                                 });
                             }
-                            
-                            if let Ok(chunk_data) = serde_json::from_str::<OpenAIStreamChunk>(data) {
+
+                            if let Ok(chunk_data) = serde_json::from_str::<OpenAIStreamChunk>(data)
+                            {
                                 let delta = chunk_data
                                     .choices
                                     .first()
                                     .and_then(|c| c.delta.content.clone())
                                     .unwrap_or_default();
-                                
+
                                 let finish_reason = chunk_data
                                     .choices
                                     .first()
                                     .and_then(|c| c.finish_reason.clone());
-                                
+
                                 return Ok(ChatChunk {
                                     delta,
                                     finish_reason,
@@ -231,7 +228,7 @@ impl ProviderAdapter for OpenAIAdapter {
                             }
                         }
                     }
-                    
+
                     // Empty chunk if parsing failed
                     Ok(ChatChunk {
                         delta: String::new(),
@@ -250,7 +247,7 @@ impl ProviderAdapter for OpenAIAdapter {
 
     async fn test_connection(&self) -> DgosResult<bool> {
         let url = format!("{}/models", self.base_url);
-        
+
         let response = self
             .client
             .get(&url)

@@ -72,7 +72,9 @@ pub async fn create_provider_with_models(
     models: Vec<Model>,
 ) -> CommandResponse<Provider> {
     let manager = app.state::<ProviderManager>();
-    let result = manager.create_provider_with_models(config, user_id, models).await;
+    let result = manager
+        .create_provider_with_models(config, user_id, models)
+        .await;
     CommandResponse::from(result)
 }
 
@@ -102,10 +104,7 @@ pub async fn toggle_provider(
 
 /// Delete a provider
 #[tauri::command]
-pub async fn delete_provider(
-    app: tauri::AppHandle,
-    id: String,
-) -> CommandResponse<()> {
+pub async fn delete_provider(app: tauri::AppHandle, id: String) -> CommandResponse<()> {
     let manager = app.state::<ProviderManager>();
     let result = manager.delete_provider(&id).await;
     CommandResponse::from(result)
@@ -140,21 +139,23 @@ pub async fn test_provider_by_id(
     provider_id: String,
 ) -> CommandResponse<bool> {
     let manager = app.state::<ProviderManager>();
-    
+
     // Get provider from database
     let provider = match manager.get_provider(&provider_id).await {
         Ok(Some(p)) => p,
-        Ok(None) => return CommandResponse {
-            success: false,
-            data: None,
-            error: Some(CommandError {
-                code: 404,
-                message: "Provider not found".to_string(),
-            }),
-        },
+        Ok(None) => {
+            return CommandResponse {
+                success: false,
+                data: None,
+                error: Some(CommandError {
+                    code: 404,
+                    message: "Provider not found".to_string(),
+                }),
+            }
+        }
         Err(e) => return CommandResponse::from(Err(e)),
     };
-    
+
     // Build config from stored provider
     let config = ProviderConfig {
         name: provider.name,
@@ -164,7 +165,7 @@ pub async fn test_provider_by_id(
         enabled: provider.enabled,
         config: provider.config,
     };
-    
+
     let result = manager.test_connection(&config).await;
     CommandResponse::from(result)
 }

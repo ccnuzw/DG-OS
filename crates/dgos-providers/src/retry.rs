@@ -29,10 +29,7 @@ impl RetryPolicy {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     // Don't retry on these errors
-                    if matches!(
-                        e,
-                        DgosError::InvalidApiKey | DgosError::ProviderNotFound(_)
-                    ) {
+                    if matches!(e, DgosError::InvalidApiKey | DgosError::ProviderNotFound(_)) {
                         return Err(e);
                     }
 

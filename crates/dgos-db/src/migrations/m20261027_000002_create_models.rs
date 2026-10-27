@@ -17,21 +17,9 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Models::ProviderId)
-                            .string_len(36)
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Models::ModelId)
-                            .string_len(255)
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Models::ModelName)
-                            .string_len(255)
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Models::ProviderId).string_len(36).not_null())
+                    .col(ColumnDef::new(Models::ModelId).string_len(255).not_null())
+                    .col(ColumnDef::new(Models::ModelName).string_len(255).not_null())
                     .col(ColumnDef::new(Models::Capabilities).json().not_null())
                     .col(ColumnDef::new(Models::ContextLength).integer())
                     .col(

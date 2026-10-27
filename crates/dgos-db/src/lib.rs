@@ -14,6 +14,6 @@ pub async fn establish_connection(database_url: &str) -> Result<DatabaseConnecti
 pub use sea_orm_migration;
 
 // Re-export commonly used types
-pub use sea_orm;
 pub use entities::prelude::*;
 pub use repositories::*;
+pub use sea_orm;

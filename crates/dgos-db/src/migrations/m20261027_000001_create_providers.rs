@@ -28,11 +28,7 @@ impl MigrationTrait for Migration {
                             .string_len(512)
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(Providers::ApiKey)
-                            .string_len(512)
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Providers::ApiKey).string_len(512).not_null())
                     .col(
                         ColumnDef::new(Providers::Enabled)
                             .boolean()
@@ -56,11 +52,7 @@ impl MigrationTrait for Migration {
                             .timestamp_with_time_zone()
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(Providers::UserId)
-                            .string_len(36)
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Providers::UserId).string_len(36).not_null())
                     .to_owned(),
             )
             .await?;

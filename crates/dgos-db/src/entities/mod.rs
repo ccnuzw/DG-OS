@@ -19,6 +19,6 @@ pub mod prelude {
     pub use super::skill_versions::Entity as SkillVersions;
     pub use super::skills::Entity as Skills;
     pub use super::usage_logs::Entity as UsageLogs;
-    pub use super::workbench_tasks::Entity as WorkbenchTasks;
     pub use super::workbench_task_skills::Entity as WorkbenchTaskSkills;
+    pub use super::workbench_tasks::Entity as WorkbenchTasks;
 }

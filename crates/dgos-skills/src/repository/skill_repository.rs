@@ -1,6 +1,9 @@
 use crate::entity::{Skill, SkillUsageLog};
 use crate::error::{Result, SkillError};
-use dgos_db::sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set};
+use dgos_db::sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect, Set,
+};
 
 pub struct SkillRepository {
     db: DatabaseConnection,
@@ -68,7 +71,10 @@ impl SkillRepository {
             .await
             .map_err(|e| SkillError::DatabaseError(e.to_string()))?;
 
-        models.into_iter().map(|m| Self::model_to_skill(m)).collect()
+        models
+            .into_iter()
+            .map(|m| Self::model_to_skill(m))
+            .collect()
     }
 
     pub async fn update_skill_config(

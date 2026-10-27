@@ -6,29 +6,29 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, column_type = "String(StringLen::N(36))")]
     pub id: String,
-    
+
     #[sea_orm(column_type = "String(StringLen::N(36))")]
     pub provider_id: String,
-    
+
     #[sea_orm(column_type = "String(StringLen::N(255))")]
     pub model_id: String,
-    
+
     #[sea_orm(column_type = "String(StringLen::N(36))")]
     pub user_id: String,
-    
+
     pub request_tokens: i32,
-    
+
     pub response_tokens: i32,
-    
+
     pub total_tokens: i32,
-    
+
     pub latency_ms: i32,
-    
+
     pub success: bool,
-    
+
     #[sea_orm(column_type = "String(StringLen::N(50))", nullable)]
     pub error_code: Option<String>,
-    
+
     pub created_at: DateTimeUtc,
 }
 
