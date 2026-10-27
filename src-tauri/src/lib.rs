@@ -69,6 +69,7 @@ pub fn run() {
             commands::update_provider,
             commands::delete_provider,
             commands::test_provider_connection,
+            commands::test_provider_by_id,
             commands::list_models,
             commands::refresh_models,
             commands::call_provider,

@@ -110,6 +110,42 @@ pub async fn test_provider_connection(
     CommandResponse::from(result)
 }
 
+/// Test provider connection by ID (for edit mode)
+#[tauri::command]
+pub async fn test_provider_by_id(
+    app: tauri::AppHandle,
+    provider_id: String,
+) -> CommandResponse<bool> {
+    let manager = app.state::<ProviderManager>();
+    
+    // Get provider from database
+    let provider = match manager.get_provider(&provider_id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => return CommandResponse {
+            success: false,
+            data: None,
+            error: Some(CommandError {
+                code: 404,
+                message: "Provider not found".to_string(),
+            }),
+        },
+        Err(e) => return CommandResponse::from(Err(e)),
+    };
+    
+    // Build config from stored provider
+    let config = ProviderConfig {
+        name: provider.name,
+        provider_type: provider.provider_type,
+        base_url: provider.base_url,
+        api_key: provider.api_key,
+        enabled: provider.enabled,
+        config: provider.config,
+    };
+    
+    let result = manager.test_connection(&config).await;
+    CommandResponse::from(result)
+}
+
 /// List models for a provider
 #[tauri::command]
 pub async fn list_models(

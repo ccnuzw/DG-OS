@@ -85,19 +85,26 @@ export default function ProviderForm({
   };
 
   const handleTestConnection = async () => {
-    // In edit mode, we can test even without API key (backend has it)
-    // In create mode, we need the API key
-    if (!isEditMode && !formData.api_key) {
-      return;
-    }
-
     setTesting(true);
     setTestResult(null);
     
     try {
-      const testResponse = await invoke<CommandResponse<boolean>>('test_provider_connection', {
-        config: formData,
-      });
+      let testResponse;
+      
+      if (isEditMode && providerId) {
+        // Edit mode: use stored API key
+        testResponse = await invoke<CommandResponse<boolean>>('test_provider_by_id', {
+          providerId: providerId,
+        });
+      } else {
+        // Create mode: use form API key
+        if (!formData.api_key) {
+          return;
+        }
+        testResponse = await invoke<CommandResponse<boolean>>('test_provider_connection', {
+          config: formData,
+        });
+      }
       
       if (testResponse.success && testResponse.data) {
         setTestResult('success');
