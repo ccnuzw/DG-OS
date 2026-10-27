@@ -8,15 +8,23 @@ pub enum Capability {
     ImageGeneration,
     VideoGeneration,
     AudioGeneration,
+    Streaming,
+    Vision,
 }
 
 /// Model information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Model {
-    pub id: String,
-    pub name: String,
-    pub capabilities: Vec<Capability>,
-    pub context_length: Option<usize>,
+    pub id: String,                          // UUID for database
+    pub provider_id: String,                 // Provider UUID
+    pub model_id: String,                    // API identifier (e.g., "gpt-4")
+    pub model_name: String,                  // Display name (e.g., "GPT-4")
+    pub model_type: String,                  // Type (e.g., "chat", "completion")
+    pub context_window: Option<i32>,         // Max context tokens
+    pub max_output_tokens: Option<i32>,      // Max output tokens
+    pub supports_streaming: bool,            // Supports streaming
+    pub supports_vision: bool,               // Supports vision/images
+    pub cached_at: String,                   // Last fetch timestamp
 }
 
 /// Chat message

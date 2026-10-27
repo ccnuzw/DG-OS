@@ -153,7 +153,13 @@ impl ProviderManager {
         provider_id: &str,
         adapter: Arc<dyn ProviderAdapter>,
     ) -> DgosResult<Vec<Model>> {
-        let models = adapter.list_models().await?;
+        let mut models = adapter.list_models().await?;
+        
+        // Set provider_id for all models
+        for model in &mut models {
+            model.provider_id = provider_id.to_string();
+        }
+        
         self.model_repo.sync_models(provider_id, models).await
     }
 

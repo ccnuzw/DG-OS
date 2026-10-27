@@ -8,6 +8,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::{debug, warn};
+use uuid::Uuid;
+use chrono::Utc;
 
 use crate::traits::{BoxStream, ProviderAdapter};
 use crate::retry::RetryPolicy;
@@ -90,11 +92,20 @@ impl ProviderAdapter for OpenAIAdapter {
         let models = models_response
             .data
             .into_iter()
-            .map(|m| Model {
-                id: m.id.clone(),
-                name: m.id.clone(),
-                capabilities: self.classify_model(&m.id),
-                context_length: None,
+            .map(|m| {
+                let capabilities = self.classify_model(&m.id);
+                Model {
+                    id: Uuid::new_v4().to_string(),
+                    provider_id: String::new(), // Will be set by caller
+                    model_id: m.id.clone(),
+                    model_name: m.id.clone(),
+                    model_type: "chat".to_string(),
+                    context_window: None,
+                    max_output_tokens: None,
+                    supports_streaming: capabilities.contains(&Capability::Streaming),
+                    supports_vision: capabilities.contains(&Capability::Vision),
+                    cached_at: Utc::now().to_rfc3339(),
+                }
             })
             .collect();
 

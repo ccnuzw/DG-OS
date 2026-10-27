@@ -1,6 +1,5 @@
 use dgos_types::{Capability, DgosError, DgosResult, Model};
 use sea_orm::*;
-use uuid::Uuid;
 
 use crate::entities::models;
 
@@ -31,14 +30,23 @@ impl ModelRepository {
 
         // Insert new models
         for model in &new_models {
+            // Build capabilities from boolean flags
+            let mut capabilities = Vec::new();
+            if model.supports_streaming {
+                capabilities.push(Capability::Streaming);
+            }
+            if model.supports_vision {
+                capabilities.push(Capability::Vision);
+            }
+            
             let model_entity = models::ActiveModel {
-                id: Set(Uuid::new_v4().to_string()),
-                provider_id: Set(provider_id.to_string()),
-                model_id: Set(model.id.clone()),
-                model_name: Set(model.name.clone()),
-                capabilities: Set(serde_json::to_value(&model.capabilities)
+                id: Set(model.id.clone()),
+                provider_id: Set(model.provider_id.clone()),
+                model_id: Set(model.model_id.clone()),
+                model_name: Set(model.model_name.clone()),
+                capabilities: Set(serde_json::to_value(&capabilities)
                     .map_err(|e| DgosError::JsonError(e.to_string()))?),
-                context_length: Set(model.context_length.map(|c| c as i32)),
+                context_length: Set(model.context_window),
                 is_available: Set(true),
                 synced_at: Set(now),
             };
@@ -64,13 +72,19 @@ impl ModelRepository {
         let mut result = Vec::new();
         for m in models_data {
             let capabilities: Vec<Capability> = serde_json::from_value(m.capabilities)
-                .map_err(|e| DgosError::JsonError(e.to_string()))?;
+                .unwrap_or_default();
 
             result.push(Model {
-                id: m.model_id,
-                name: m.model_name,
-                capabilities,
-                context_length: m.context_length.map(|c| c as usize),
+                id: m.id.clone(),
+                provider_id: m.provider_id.clone(),
+                model_id: m.model_id.clone(),
+                model_name: m.model_name.clone(),
+                model_type: "chat".to_string(), // Default type
+                context_window: m.context_length,
+                max_output_tokens: None,
+                supports_streaming: capabilities.contains(&Capability::Streaming),
+                supports_vision: capabilities.contains(&Capability::Vision),
+                cached_at: m.synced_at.to_rfc3339(),
             });
         }
 
@@ -93,13 +107,19 @@ impl ModelRepository {
 
         if let Some(m) = model {
             let capabilities: Vec<Capability> = serde_json::from_value(m.capabilities)
-                .map_err(|e| DgosError::JsonError(e.to_string()))?;
+                .unwrap_or_default();
 
             Ok(Some(Model {
-                id: m.model_id,
-                name: m.model_name,
-                capabilities,
-                context_length: m.context_length.map(|c| c as usize),
+                id: m.id.clone(),
+                provider_id: m.provider_id.clone(),
+                model_id: m.model_id.clone(),
+                model_name: m.model_name.clone(),
+                model_type: "chat".to_string(),
+                context_window: m.context_length,
+                max_output_tokens: None,
+                supports_streaming: capabilities.contains(&Capability::Streaming),
+                supports_vision: capabilities.contains(&Capability::Vision),
+                cached_at: m.synced_at.to_rfc3339(),
             }))
         } else {
             Ok(None)
