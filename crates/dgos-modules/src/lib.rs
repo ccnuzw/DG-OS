@@ -46,6 +46,12 @@ pub enum ModulePackageError {
     Integrity,
     #[error("module package database error: {0}")]
     Database(String),
+    /// No row is registered for this module id: it was never published.
+    #[error("module is not published")]
+    NotPublished,
+    /// The module is registered but disabled (D035).
+    #[error("module is disabled")]
+    Disabled,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -211,8 +217,10 @@ impl ModulePublisher {
             .one(&self.db)
             .await
             .map_err(db_error)?
-            .filter(|module| module.is_enabled)
-            .ok_or_else(|| ModulePackageError::Manifest("module is not enabled".into()))?;
+            .ok_or(ModulePackageError::NotPublished)?;
+        if !module.is_enabled {
+            return Err(ModulePackageError::Disabled);
+        }
         let pointer =
             fs::read_to_string(self.root.join("current").join(module_id).join("version")).ok();
         if pointer.as_deref().map(str::trim) != Some(module.current_version.as_str()) {
@@ -1129,6 +1137,8 @@ fn error_class(error: &ModulePackageError) -> String {
         ModulePackageError::Manifest(_) => "manifest".into(),
         ModulePackageError::Integrity => "integrity".into(),
         ModulePackageError::Database(_) => "database".into(),
+        ModulePackageError::NotPublished => "not_published".into(),
+        ModulePackageError::Disabled => "disabled".into(),
     }
 }
 

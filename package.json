@@ -9,6 +9,7 @@
     "skills:check": "node scripts/skills-catalog.mjs",
     "skills:catalog": "node scripts/skills-catalog.mjs --write",
     "contracts:check": "node scripts/check-host-contracts.mjs",
+    "smoke:tauri": "npm run build && cargo test -p dgos --features webview-smoke --test webview_smoke -- --nocapture",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

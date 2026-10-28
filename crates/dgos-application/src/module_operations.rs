@@ -395,6 +395,10 @@ fn map_supervisor_error(kind: ModuleOperationKind, error: &ModuleSupervisorError
     let stopping = kind == ModuleOperationKind::Stop;
     match error {
         ModuleSupervisorError::Package(ModulePackageError::Database(_)) => ErrorKind::Internal,
+        ModuleSupervisorError::Package(ModulePackageError::NotPublished) => {
+            ErrorKind::ModuleNotFound
+        }
+        ModuleSupervisorError::Package(ModulePackageError::Disabled) => ErrorKind::Disabled,
         ModuleSupervisorError::Package(_) => ErrorKind::PackageInvalid,
         ModuleSupervisorError::Load(_) if stopping => ErrorKind::StopFailed,
         ModuleSupervisorError::Load(_) => ErrorKind::LoadFailed,
@@ -951,12 +955,45 @@ mod tests {
         assert!(fixture.manager.recover().await.unwrap().is_empty());
         let view = fixture.run_start(MODULE).await;
         assert_eq!(view.state, ModuleOperationState::Failed);
-        assert_eq!(view.failure.unwrap().kind, ErrorKind::PackageInvalid);
+        // Recovery disabled the tampered release, so the module now reports
+        // `disabled` (D035) rather than a package error.
+        assert_eq!(view.failure.unwrap().kind, ErrorKind::Disabled);
         assert_eq!(fixture.loader.entered(), 0);
         assert_eq!(
             fixture.manager.runtime_status(MODULE).unwrap().state,
             ModuleRuntimeStatusState::NotLoaded
         );
+    }
+
+    #[tokio::test]
+    async fn start_classifies_unpublished_disabled_and_invalid_packages_separately() {
+        let fixture = Fixture::new(&[MODULE, OTHER]).await;
+
+        // Never published: no registered row.
+        let unpublished = fixture.run_start("never-published").await;
+        assert_eq!(unpublished.failure.unwrap().kind, ErrorKind::ModuleNotFound);
+
+        // Registered but disabled by the host.
+        fixture
+            .db
+            .execute_unprepared("UPDATE modules SET is_enabled = 0 WHERE id = 'module-2'")
+            .await
+            .unwrap();
+        let disabled = fixture.run_start(OTHER).await;
+        assert_eq!(disabled.failure.unwrap().kind, ErrorKind::Disabled);
+
+        // Published and enabled, but the package on disk is invalid.
+        fs::write(
+            fixture
+                .store
+                .path()
+                .join("versions/module-1/1.0.0/entry.js"),
+            "export default 'tampered';",
+        )
+        .unwrap();
+        let invalid = fixture.run_start(MODULE).await;
+        assert_eq!(invalid.failure.unwrap().kind, ErrorKind::PackageInvalid);
+        assert_eq!(fixture.loader.entered(), 0);
     }
 
     #[tokio::test]
@@ -1007,6 +1044,71 @@ mod tests {
         );
     }
 
+    /// D035 restart semantics. A "restart" here is a second manager and
+    /// publisher over the same store and database in the same process; it is
+    /// not a real process restart.
+    #[tokio::test]
+    async fn operation_history_and_runtimes_do_not_survive_a_restart_but_update_audit_does() {
+        use dgos_db::sea_orm::EntityTrait;
+        let fixture = Fixture::new(&[MODULE]).await;
+        fixture.run_start(MODULE).await;
+        fixture.stage_update(MODULE, "2.0.0");
+        let accepted = fixture.manager.update(&fixture.session, MODULE).unwrap();
+        let before = fixture.finish(&accepted.operation_id).await;
+        assert_eq!(before.state, ModuleOperationState::Succeeded);
+
+        let publisher = Arc::new(ModulePublisher::new(
+            fixture.store.path(),
+            fixture.db.clone(),
+        ));
+        let restarted = ModuleOperationManager::new(
+            publisher,
+            fixture.loader.clone(),
+            LocalModuleSources::new(fixture.sources.path()),
+        );
+        assert!(!restarted.is_available());
+        assert_eq!(
+            restarted.start(&fixture.session, MODULE).unwrap_err(),
+            ErrorKind::HostUnavailable
+        );
+        assert_eq!(
+            restarted.operation(&accepted.operation_id).unwrap_err(),
+            ErrorKind::OperationNotFound
+        );
+        assert_eq!(
+            restarted.runtime_status(MODULE).unwrap().state,
+            ModuleRuntimeStatusState::NotLoaded
+        );
+
+        restarted.recover().await.unwrap();
+        // Recovery starts nothing and restores no operation.
+        assert_eq!(
+            restarted.runtime_status(MODULE).unwrap().state,
+            ModuleRuntimeStatusState::NotLoaded
+        );
+        assert_eq!(
+            restarted.operation(&accepted.operation_id).unwrap_err(),
+            ErrorKind::OperationNotFound
+        );
+
+        // The durable record is the update audit, keyed by the same id.
+        let events = dgos_db::entities::module_update_events::Entity::find()
+            .all(&fixture.db)
+            .await
+            .unwrap();
+        assert!(events.iter().any(
+            |event| event.operation_id == accepted.operation_id && event.to_version == "2.0.0"
+        ));
+        // The published release survives, so the caller can start again.
+        let accepted = restarted.start(&fixture.session, MODULE).unwrap();
+        let view = restarted.wait(&accepted.operation_id).await.unwrap();
+        assert_eq!(view.state, ModuleOperationState::Succeeded);
+        assert_eq!(
+            restarted.runtime_status(MODULE).unwrap().version.as_deref(),
+            Some("2.0.0")
+        );
+    }
+
     #[test]
     fn supervisor_errors_map_to_stable_kinds_without_raw_detail() {
         use ModuleOperationKind::{Start, Stop, Update};
@@ -1031,6 +1133,16 @@ mod tests {
                 Start,
                 ModuleSupervisorError::Package(ModulePackageError::Database("select 1".into())),
                 ErrorKind::Internal,
+            ),
+            (
+                Start,
+                ModuleSupervisorError::Package(ModulePackageError::NotPublished),
+                ErrorKind::ModuleNotFound,
+            ),
+            (
+                Update,
+                ModuleSupervisorError::Package(ModulePackageError::Disabled),
+                ErrorKind::Disabled,
             ),
             (
                 Start,

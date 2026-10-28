@@ -5,6 +5,8 @@ mod capabilities;
 mod commands;
 mod host;
 mod provider_credentials;
+#[cfg(feature = "webview-smoke")]
+pub mod smoke;
 
 use dgos_db::sea_orm_migration::MigratorTrait;
 use dgos_mcp::McpManager;

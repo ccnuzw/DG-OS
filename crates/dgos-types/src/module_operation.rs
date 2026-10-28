@@ -103,7 +103,7 @@ impl ModuleOperationErrorKind {
             Self::LoadFailed => "Module failed to load",
             Self::VersionConflict => "Module release does not match the running version",
             Self::StopFailed => "Module runtime could not be released; retry stop",
-            Self::Disabled => "Module was disabled after a failed update",
+            Self::Disabled => "Module is disabled",
             Self::UpdateFailed => "Module update failed and the previous release was restored",
             Self::PackageInvalid => "Module package is invalid or unavailable",
             Self::NotRunning => "Module is not running",

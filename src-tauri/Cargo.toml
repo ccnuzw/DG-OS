@@ -57,3 +57,19 @@ keyring = { version = "3.6", features = ["windows-native"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3.6", features = ["sync-secret-service", "crypto-rust"] }
 
+
+[features]
+# Real-WebView smoke harness for the module lifecycle commands (D035). Off by
+# default; it embeds ../dist and drives a hidden WKWebView/WebView2 window.
+# Run: npm run smoke:tauri
+webview-smoke = ["tauri/custom-protocol", "dep:sha2"]
+
+[dependencies.sha2]
+workspace = true
+optional = true
+
+[[test]]
+name = "webview_smoke"
+path = "tests/webview_smoke.rs"
+harness = false
+required-features = ["webview-smoke"]
