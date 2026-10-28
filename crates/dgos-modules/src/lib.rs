@@ -12,6 +12,10 @@ use sha2::{Digest, Sha256};
 use std::{
     fs, io,
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -83,6 +87,50 @@ pub struct ModulePublisher {
     permissions: std::sync::Arc<ModulePermissionRepository>,
     publish_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     owner_id: String,
+}
+
+struct ReleaseLease {
+    db: DatabaseConnection,
+    owner_id: String,
+    lost: Arc<AtomicBool>,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+    heartbeat: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl ReleaseLease {
+    fn ensure_valid(&self) -> Result<(), ModulePackageError> {
+        if self.lost.load(Ordering::Acquire) {
+            Err(ModulePackageError::Database(
+                "module release lease lost".into(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Drop for ReleaseLease {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(handle) = self.heartbeat.take() {
+            handle.abort();
+        }
+        let db = self.db.clone();
+        let owner = self.owner_id.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let _ = db
+                    .execute_unprepared(&format!(
+                        "DELETE FROM module_release_locks WHERE lock_key = '{}' AND owner_id = '{}'",
+                        ModulePublisher::RELEASE_LOCK_KEY,
+                        owner
+                    ))
+                    .await;
+            });
+        }
+    }
 }
 
 impl ModulePublisher {
@@ -260,17 +308,16 @@ impl ModulePublisher {
     /// version remains on disk so startup recovery can roll back safely.
     pub async fn commit(&self, package: StagedPackage) -> Result<(), ModulePackageError> {
         let _publish_guard = self.publish_lock.lock().await;
-        self.acquire_release_lock().await?;
-        let result = self.commit_locked(package).await;
-        if let Err(error) = self.release_release_lock().await {
-            if result.is_ok() {
-                return Err(error);
-            }
-        }
-        result
+        let lease = self.acquire_release_lock().await?;
+        self.commit_locked(package, &lease).await
     }
 
-    async fn commit_locked(&self, package: StagedPackage) -> Result<(), ModulePackageError> {
+    async fn commit_locked(
+        &self,
+        package: StagedPackage,
+        lease: &ReleaseLease,
+    ) -> Result<(), ModulePackageError> {
+        lease.ensure_valid()?;
         let (validated_manifest, validated_integrity) =
             self.validate_staged_package(&package.staging_path)?;
         if validated_manifest.id != package.module_id
@@ -303,6 +350,7 @@ impl ModulePublisher {
         let pointer_dir = self.root.join("current").join(&package.module_id);
         let previous = fs::read_to_string(pointer_dir.join("version")).ok();
         let publish_result = async {
+            lease.ensure_valid()?;
             self.write_pointer(&package.module_id, &package.version)?;
             let tx = self.db.begin().await.map_err(db_error)?;
             let row = modules::Entity::find_by_id(&package.module_id)
@@ -366,6 +414,7 @@ impl ModulePublisher {
             .insert(&tx)
             .await
             .map_err(db_error)?;
+            lease.ensure_valid()?;
             tx.commit().await.map_err(db_error)
         }
         .await;
@@ -492,14 +541,16 @@ impl ModulePublisher {
     /// to execute code. Invalid pointers are fail-closed by disabling the row.
     pub async fn recover_registered(&self) -> Result<Vec<String>, ModulePackageError> {
         let _publish_guard = self.publish_lock.lock().await;
-        self.acquire_release_lock().await?;
+        let lease = self.acquire_release_lock().await?;
         let result = async {
+            lease.ensure_valid()?;
             let rows = modules::Entity::find()
                 .all(&self.db)
                 .await
                 .map_err(db_error)?;
             let mut ready = Vec::new();
             for row in rows {
+                lease.ensure_valid()?;
                 let valid = self
                     .current_package_matches(&row.id, &row.current_version, &row.integrity)
                     .unwrap_or(false);
@@ -518,18 +569,13 @@ impl ModulePublisher {
             Ok::<_, ModulePackageError>(ready)
         }
         .await;
-        if let Err(error) = self.release_release_lock().await {
-            if result.is_ok() {
-                return Err(error);
-            }
-        }
         result
     }
 
     const RELEASE_LOCK_KEY: &'static str = "modules";
     const RELEASE_LOCK_TTL_SECONDS: i64 = 60;
 
-    async fn acquire_release_lock(&self) -> Result<(), ModulePackageError> {
+    async fn acquire_release_lock(&self) -> Result<ReleaseLease, ModulePackageError> {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
             let now = chrono::Utc::now().timestamp();
@@ -550,7 +596,39 @@ impl ModulePublisher {
             match insert {
                 Ok(_) => {
                     tx.commit().await.map_err(db_error)?;
-                    return Ok(());
+                    let lost = Arc::new(AtomicBool::new(false));
+                    let (stop, mut stop_rx) = tokio::sync::oneshot::channel();
+                    let db = self.db.clone();
+                    let owner = self.owner_id.clone();
+                    let lost_for_task = lost.clone();
+                    let heartbeat = tokio::spawn(async move {
+                        let mut interval =
+                            tokio::time::interval(std::time::Duration::from_secs(15));
+                        loop {
+                            tokio::select! {
+                                _ = interval.tick() => {
+                                    let now = chrono::Utc::now().timestamp();
+                                    let expires = now + ModulePublisher::RELEASE_LOCK_TTL_SECONDS;
+                                    let result = db.execute_unprepared(&format!(
+                                        "UPDATE module_release_locks SET expires_at = {expires} WHERE lock_key = '{}' AND owner_id = '{}' AND expires_at > {now}",
+                                        ModulePublisher::RELEASE_LOCK_KEY, owner
+                                    )).await;
+                                    if !matches!(result, Ok(result) if result.rows_affected() == 1) {
+                                        lost_for_task.store(true, Ordering::Release);
+                                        break;
+                                    }
+                                }
+                                _ = &mut stop_rx => break,
+                            }
+                        }
+                    });
+                    return Ok(ReleaseLease {
+                        db: self.db.clone(),
+                        owner_id: self.owner_id.clone(),
+                        lost,
+                        stop: Some(stop),
+                        heartbeat: Some(heartbeat),
+                    });
                 }
                 Err(_) => {
                     let _ = tx.rollback().await;
@@ -563,18 +641,6 @@ impl ModulePublisher {
             }
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         }
-    }
-
-    async fn release_release_lock(&self) -> Result<(), ModulePackageError> {
-        self.db
-            .execute_unprepared(&format!(
-                "DELETE FROM module_release_locks WHERE lock_key = '{}' AND owner_id = '{}'",
-                Self::RELEASE_LOCK_KEY,
-                self.owner_id
-            ))
-            .await
-            .map(|_| ())
-            .map_err(db_error)
     }
 
     fn write_pointer(&self, module_id: &str, version: &str) -> Result<(), ModulePackageError> {
@@ -1058,6 +1124,63 @@ mod tests {
         assert_eq!(
             publisher_a.recover("module-1").unwrap().as_deref(),
             Some(module.current_version.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn expired_release_lease_is_reclaimed_but_wrong_owner_cannot_delete_it() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        Migrator::up(&db, None).await.unwrap();
+        let store = tempdir().unwrap();
+        let first = ModulePublisher::new(store.path(), db.clone());
+        let second = ModulePublisher::new(store.path(), db.clone());
+
+        let lease = first.acquire_release_lock().await.unwrap();
+        db.execute_unprepared(
+            "DELETE FROM module_release_locks WHERE lock_key = 'modules' AND owner_id = 'not-the-owner'",
+        )
+        .await
+        .unwrap();
+        db.execute_unprepared(
+            "UPDATE module_release_locks SET expires_at = 0 WHERE lock_key = 'modules'",
+        )
+        .await
+        .unwrap();
+        drop(lease);
+        let _reclaimed = second.acquire_release_lock().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn identical_release_is_idempotent_and_keeps_one_version_row() {
+        let source = tempdir().unwrap();
+        write_versioned_package(source.path(), "1.0.0");
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        Migrator::up(&db, None).await.unwrap();
+        let store = tempdir().unwrap();
+        let publisher = ModulePublisher::new(store.path(), db.clone());
+        publisher
+            .commit(
+                publisher
+                    .stage_with_operation_id(source.path(), "op-1")
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        publisher
+            .commit(
+                publisher
+                    .stage_with_operation_id(source.path(), "op-1")
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(module_versions::Entity::find().count(&db).await.unwrap(), 1);
+        assert_eq!(
+            module_update_events::Entity::find()
+                .count(&db)
+                .await
+                .unwrap(),
+            1
         );
     }
 
