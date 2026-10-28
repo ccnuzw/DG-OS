@@ -6,11 +6,9 @@
 //! leave resource ownership and provider invariants to their domain managers.
 
 use dgos_db::{ModulePermission, ModulePermissionRepository};
-use dgos_modules::ModulePublisher;
+use dgos_modules::{ModulePublisher, ModuleRuntimeHandle, ModuleRuntimeState};
 use dgos_providers::ProviderManager;
-use dgos_types::{
-    ChatRequest, ChatResponse, DgosError, DgosResult, HostExecutionContext, HostSession,
-};
+use dgos_types::{ChatRequest, ChatResponse, DgosError, DgosResult, HostExecutionContext};
 use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
@@ -96,6 +94,17 @@ impl HostCapabilityService {
         })
     }
 
+    pub async fn authorize_handle(
+        &self,
+        handle: &ModuleRuntimeHandle,
+        permission: ModulePermission,
+    ) -> DgosResult<CapabilityGrant> {
+        if handle.state() != ModuleRuntimeState::Ready {
+            return Err(DgosError::PermissionDenied);
+        }
+        self.authorize(handle.context(), permission).await
+    }
+
     /// The host dispatch boundary: authorization is checked immediately before
     /// the supplied domain operation, never by a renderer-visible preflight.
     pub async fn dispatch<T, F, Fut>(
@@ -109,6 +118,20 @@ impl HostCapabilityService {
         Fut: Future<Output = DgosResult<T>>,
     {
         let grant = self.authorize(context, permission).await?;
+        operation(grant).await
+    }
+
+    pub async fn dispatch_handle<T, F, Fut>(
+        &self,
+        handle: &ModuleRuntimeHandle,
+        permission: ModulePermission,
+        operation: F,
+    ) -> DgosResult<T>
+    where
+        F: FnOnce(CapabilityGrant) -> Fut,
+        Fut: Future<Output = DgosResult<T>>,
+    {
+        let grant = self.authorize_handle(handle, permission).await?;
         operation(grant).await
     }
 
@@ -162,6 +185,34 @@ impl HostCapabilityService {
 #[derive(Clone)]
 pub struct ProviderCallService {
     capabilities: HostCapabilityService,
+}
+
+/// Runtime-only capability adapter. A module runtime must present a ready,
+/// publisher-issued handle rather than manufacturing an execution context.
+#[derive(Clone)]
+pub struct ModuleCapabilityDispatchService {
+    capabilities: HostCapabilityService,
+}
+
+impl ModuleCapabilityDispatchService {
+    pub fn new(capabilities: HostCapabilityService) -> Self {
+        Self { capabilities }
+    }
+
+    pub async fn dispatch<T, F, Fut>(
+        &self,
+        handle: &ModuleRuntimeHandle,
+        permission: ModulePermission,
+        operation: F,
+    ) -> DgosResult<T>
+    where
+        F: FnOnce(CapabilityGrant) -> Fut,
+        Fut: Future<Output = DgosResult<T>>,
+    {
+        self.capabilities
+            .dispatch_handle(handle, permission, operation)
+            .await
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -275,7 +326,7 @@ mod tests {
         let repository = Arc::new(ModulePermissionRepository::new(db));
         let service = HostCapabilityService::new(repository.clone());
         let context = HostExecutionContext::for_module_session(
-            &HostSession::local_default(),
+            &dgos_types::HostSession::local_default(),
             "module-1",
             "1.0.0",
             &"a".repeat(64),

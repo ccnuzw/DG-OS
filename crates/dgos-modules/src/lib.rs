@@ -21,6 +21,110 @@ use std::{
 use thiserror::Error;
 use uuid::Uuid;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ModuleRuntimeState {
+    Starting,
+    Ready,
+    Draining,
+    Stopped,
+    Failed,
+}
+
+#[derive(Debug, Error)]
+pub enum ModuleRuntimeError {
+    #[error("invalid module runtime state transition")]
+    InvalidTransition,
+}
+
+/// Opaque, publisher-issued identity for a loaded module. Callers cannot
+/// construct this handle from renderer input or arbitrary module metadata.
+#[derive(Clone)]
+pub struct ModuleRuntimeHandle {
+    context: HostExecutionContext,
+    package_root: PathBuf,
+    entry_path: PathBuf,
+    state: Arc<std::sync::Mutex<ModuleRuntimeState>>,
+}
+
+impl ModuleRuntimeHandle {
+    pub fn context(&self) -> &HostExecutionContext {
+        &self.context
+    }
+
+    pub fn module_identity(&self) -> Option<(&str, &str, &str)> {
+        self.context.module_identity()
+    }
+
+    pub fn package_root(&self) -> &Path {
+        &self.package_root
+    }
+
+    pub fn entry_path(&self) -> &Path {
+        &self.entry_path
+    }
+
+    pub fn state(&self) -> ModuleRuntimeState {
+        *self
+            .state
+            .lock()
+            .expect("module runtime state lock poisoned")
+    }
+
+    pub fn mark_ready(&self) -> Result<(), ModuleRuntimeError> {
+        self.transition(ModuleRuntimeState::Starting, ModuleRuntimeState::Ready)
+    }
+
+    pub fn begin_draining(&self) -> Result<(), ModuleRuntimeError> {
+        self.transition(ModuleRuntimeState::Ready, ModuleRuntimeState::Draining)
+    }
+
+    pub fn stop(&self) -> Result<(), ModuleRuntimeError> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("module runtime state lock poisoned");
+        if matches!(
+            *state,
+            ModuleRuntimeState::Starting
+                | ModuleRuntimeState::Draining
+                | ModuleRuntimeState::Failed
+        ) {
+            *state = ModuleRuntimeState::Stopped;
+            Ok(())
+        } else {
+            Err(ModuleRuntimeError::InvalidTransition)
+        }
+    }
+
+    pub fn fail(&self) -> Result<(), ModuleRuntimeError> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("module runtime state lock poisoned");
+        if *state == ModuleRuntimeState::Stopped {
+            return Err(ModuleRuntimeError::InvalidTransition);
+        }
+        *state = ModuleRuntimeState::Failed;
+        Ok(())
+    }
+
+    fn transition(
+        &self,
+        expected: ModuleRuntimeState,
+        next: ModuleRuntimeState,
+    ) -> Result<(), ModuleRuntimeError> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("module runtime state lock poisoned");
+        if *state != expected {
+            return Err(ModuleRuntimeError::InvalidTransition);
+        }
+        *state = next;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ModulePackageError {
     #[error("module package I/O error: {0}")]
@@ -179,6 +283,41 @@ impl ModulePublisher {
             &module.current_version,
             &module.integrity,
         ))
+    }
+
+    /// Issue a runtime handle only after the DB pointer and on-disk artifact
+    /// have been checked against one another. The handle starts in `Starting`
+    /// and must be marked ready only after a loader smoke succeeds.
+    pub async fn runtime_handle(
+        &self,
+        session: &HostSession,
+        module_id: &str,
+    ) -> Result<ModuleRuntimeHandle, ModulePackageError> {
+        let context = self.execution_context(session, module_id).await?;
+        let (_, version, integrity) = context.module_identity().ok_or_else(|| {
+            ModulePackageError::Manifest("module context missing identity".into())
+        })?;
+        let package_root = self.root.join("versions").join(module_id).join(version);
+        let manifest: ModuleManifest =
+            serde_json::from_slice(&fs::read(package_root.join("manifest.json"))?)
+                .map_err(|error| ModulePackageError::Manifest(error.to_string()))?;
+        if !manifest.artifact.sha256.eq_ignore_ascii_case(integrity)
+            || !valid_relative_entry(&manifest.entry)
+        {
+            return Err(ModulePackageError::Integrity);
+        }
+        let entry_path = package_root.join(&manifest.entry);
+        if !entry_path.is_file() {
+            return Err(ModulePackageError::Manifest(
+                "module entry is missing".into(),
+            ));
+        }
+        Ok(ModuleRuntimeHandle {
+            context,
+            package_root,
+            entry_path,
+            state: Arc::new(std::sync::Mutex::new(ModuleRuntimeState::Starting)),
+        })
     }
 
     /// Re-check the package-backed identity immediately before a capability
@@ -1332,6 +1471,32 @@ mod tests {
             .execution_context(&dgos_types::HostSession::local_default(), "module-1")
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn runtime_handle_is_publisher_issued_and_requires_loader_ready_transition() {
+        let source = tempdir().unwrap();
+        write_versioned_package(source.path(), "1.0.0");
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        Migrator::up(&db, None).await.unwrap();
+        let store = tempdir().unwrap();
+        let publisher = ModulePublisher::new(store.path(), db);
+        publisher
+            .commit(publisher.stage(source.path()).unwrap())
+            .await
+            .unwrap();
+
+        let handle = publisher
+            .runtime_handle(&dgos_types::HostSession::local_default(), "module-1")
+            .await
+            .unwrap();
+        assert_eq!(handle.state(), ModuleRuntimeState::Starting);
+        assert!(handle.begin_draining().is_err());
+        handle.mark_ready().unwrap();
+        handle.begin_draining().unwrap();
+        handle.stop().unwrap();
+        assert_eq!(handle.state(), ModuleRuntimeState::Stopped);
+        assert!(handle.fail().is_err());
     }
 
     #[test]
