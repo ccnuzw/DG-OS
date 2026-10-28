@@ -21,109 +21,18 @@ use std::{
 use thiserror::Error;
 use uuid::Uuid;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ModuleRuntimeState {
-    Starting,
-    Ready,
-    Draining,
-    Stopped,
-    Failed,
-}
+mod loader;
+mod runtime;
+mod supervisor;
 
-#[derive(Debug, Error)]
-pub enum ModuleRuntimeError {
-    #[error("invalid module runtime state transition")]
-    InvalidTransition,
-}
-
-/// Opaque, publisher-issued identity for a loaded module. Callers cannot
-/// construct this handle from renderer input or arbitrary module metadata.
-#[derive(Clone)]
-pub struct ModuleRuntimeHandle {
-    context: HostExecutionContext,
-    package_root: PathBuf,
-    entry_path: PathBuf,
-    state: Arc<std::sync::Mutex<ModuleRuntimeState>>,
-}
-
-impl ModuleRuntimeHandle {
-    pub fn context(&self) -> &HostExecutionContext {
-        &self.context
-    }
-
-    pub fn module_identity(&self) -> Option<(&str, &str, &str)> {
-        self.context.module_identity()
-    }
-
-    pub fn package_root(&self) -> &Path {
-        &self.package_root
-    }
-
-    pub fn entry_path(&self) -> &Path {
-        &self.entry_path
-    }
-
-    pub fn state(&self) -> ModuleRuntimeState {
-        *self
-            .state
-            .lock()
-            .expect("module runtime state lock poisoned")
-    }
-
-    pub fn mark_ready(&self) -> Result<(), ModuleRuntimeError> {
-        self.transition(ModuleRuntimeState::Starting, ModuleRuntimeState::Ready)
-    }
-
-    pub fn begin_draining(&self) -> Result<(), ModuleRuntimeError> {
-        self.transition(ModuleRuntimeState::Ready, ModuleRuntimeState::Draining)
-    }
-
-    pub fn stop(&self) -> Result<(), ModuleRuntimeError> {
-        let mut state = self
-            .state
-            .lock()
-            .expect("module runtime state lock poisoned");
-        if matches!(
-            *state,
-            ModuleRuntimeState::Starting
-                | ModuleRuntimeState::Draining
-                | ModuleRuntimeState::Failed
-        ) {
-            *state = ModuleRuntimeState::Stopped;
-            Ok(())
-        } else {
-            Err(ModuleRuntimeError::InvalidTransition)
-        }
-    }
-
-    pub fn fail(&self) -> Result<(), ModuleRuntimeError> {
-        let mut state = self
-            .state
-            .lock()
-            .expect("module runtime state lock poisoned");
-        if *state == ModuleRuntimeState::Stopped {
-            return Err(ModuleRuntimeError::InvalidTransition);
-        }
-        *state = ModuleRuntimeState::Failed;
-        Ok(())
-    }
-
-    fn transition(
-        &self,
-        expected: ModuleRuntimeState,
-        next: ModuleRuntimeState,
-    ) -> Result<(), ModuleRuntimeError> {
-        let mut state = self
-            .state
-            .lock()
-            .expect("module runtime state lock poisoned");
-        if *state != expected {
-            return Err(ModuleRuntimeError::InvalidTransition);
-        }
-        *state = next;
-        Ok(())
-    }
-}
+pub use loader::{LocalArtifactLoader, ModuleLoadError, ModuleLoader, VerifiedModuleArtifact};
+pub use runtime::{
+    ModuleRequest, ModuleRequestOutcome, ModuleRequestStats, ModuleRuntimeError,
+    ModuleRuntimeHandle, ModuleRuntimeState,
+};
+pub use supervisor::{
+    ModuleRuntimeSupervisor, ModuleSupervisorError, ModuleUpdateOutcome, ModuleUpdateReport,
+};
 
 #[derive(Debug, Error)]
 pub enum ModulePackageError {
@@ -285,39 +194,258 @@ impl ModulePublisher {
         ))
     }
 
-    /// Issue a runtime handle only after the DB pointer and on-disk artifact
-    /// have been checked against one another. The handle starts in `Starting`
-    /// and must be marked ready only after a loader smoke succeeds.
-    pub async fn runtime_handle(
+    /// Issue a runtime handle only for an enabled release whose DB row, file
+    /// pointer, committed version row and on-disk artifact agree. The handle
+    /// starts in `Starting`; only the supervisor marks it ready after a load.
+    pub(crate) async fn runtime_handle(
         &self,
         session: &HostSession,
         module_id: &str,
     ) -> Result<ModuleRuntimeHandle, ModulePackageError> {
-        let context = self.execution_context(session, module_id).await?;
-        let (_, version, integrity) = context.module_identity().ok_or_else(|| {
-            ModulePackageError::Manifest("module context missing identity".into())
-        })?;
-        let package_root = self.root.join("versions").join(module_id).join(version);
+        if !valid_module_id(module_id) {
+            return Err(ModulePackageError::Manifest("invalid module id".into()));
+        }
+        let module = modules::Entity::find_by_id(module_id)
+            .one(&self.db)
+            .await
+            .map_err(db_error)?
+            .filter(|module| module.is_enabled)
+            .ok_or_else(|| ModulePackageError::Manifest("module is not enabled".into()))?;
+        let pointer =
+            fs::read_to_string(self.root.join("current").join(module_id).join("version")).ok();
+        if pointer.as_deref().map(str::trim) != Some(module.current_version.as_str()) {
+            return Err(ModulePackageError::Manifest(
+                "module pointer does not match the published release".into(),
+            ));
+        }
+        // Only versions that went through `commit` are loadable; a directory
+        // and DB row written by any other path is not a verified release.
+        let committed = module_versions::Entity::find()
+            .filter(module_versions::Column::ModuleId.eq(module_id))
+            .filter(module_versions::Column::Version.eq(&module.current_version))
+            .one(&self.db)
+            .await
+            .map_err(db_error)?
+            .is_some_and(|row| row.integrity.eq_ignore_ascii_case(&module.integrity));
+        if !committed {
+            return Err(ModulePackageError::Manifest(
+                "module release was not committed by the publisher".into(),
+            ));
+        }
+        let artifact = self.verify_artifact(
+            &self
+                .root
+                .join("versions")
+                .join(module_id)
+                .join(&module.current_version),
+            module_id,
+            &module.current_version,
+            &module.integrity,
+        )?;
+        let context = HostExecutionContext::for_module_session(
+            session,
+            module_id,
+            &module.current_version,
+            &module.integrity,
+        );
+        Ok(ModuleRuntimeHandle::issue(context, artifact))
+    }
+
+    /// The single artifact check used before any loader sees a package:
+    /// identity, manifest/release agreement, local entry rules, no symlinks,
+    /// SHA-256 digest, and a canonical entry that stays inside the package.
+    fn verify_artifact(
+        &self,
+        package_root: &Path,
+        module_id: &str,
+        version: &str,
+        integrity: &str,
+    ) -> Result<VerifiedModuleArtifact, ModulePackageError> {
+        if !valid_module_id(module_id) || !valid_version_path(version) {
+            return Err(ModulePackageError::Manifest(
+                "invalid module identity".into(),
+            ));
+        }
+        if !fs::symlink_metadata(package_root)?.is_dir() {
+            return Err(ModulePackageError::Manifest(
+                "package root is not a directory".into(),
+            ));
+        }
         let manifest: ModuleManifest =
             serde_json::from_slice(&fs::read(package_root.join("manifest.json"))?)
                 .map_err(|error| ModulePackageError::Manifest(error.to_string()))?;
-        if !manifest.artifact.sha256.eq_ignore_ascii_case(integrity)
+        if manifest.id != module_id
+            || manifest.version != version
+            || manifest.artifact.version != version
             || !valid_relative_entry(&manifest.entry)
+        {
+            return Err(ModulePackageError::Manifest(
+                "manifest does not match the release".into(),
+            ));
+        }
+        if !manifest.artifact.sha256.eq_ignore_ascii_case(integrity)
+            || !package_digest(package_root)?.eq_ignore_ascii_case(integrity)
         {
             return Err(ModulePackageError::Integrity);
         }
-        let entry_path = package_root.join(&manifest.entry);
-        if !entry_path.is_file() {
+        let root = package_root.canonicalize()?;
+        let entry = root.join(&manifest.entry).canonicalize()?;
+        if !entry.starts_with(&root) || !fs::symlink_metadata(&entry)?.is_file() {
             return Err(ModulePackageError::Manifest(
-                "module entry is missing".into(),
+                "module entry is not a local package file".into(),
             ));
         }
-        Ok(ModuleRuntimeHandle {
-            context,
-            package_root,
-            entry_path,
-            state: Arc::new(std::sync::Mutex::new(ModuleRuntimeState::Starting)),
-        })
+        Ok(VerifiedModuleArtifact::new(
+            module_id.to_owned(),
+            version.to_owned(),
+            integrity.to_owned(),
+            root,
+            entry,
+        ))
+    }
+
+    /// Re-verify a staged package so a load smoke can run before the
+    /// current-version pointer moves.
+    pub(crate) fn verify_staged(
+        &self,
+        package: &StagedPackage,
+    ) -> Result<VerifiedModuleArtifact, ModulePackageError> {
+        self.verify_artifact(
+            &package.staging_path,
+            &package.module_id,
+            &package.version,
+            &package.integrity,
+        )
+    }
+
+    /// Remove a staged copy that will not be committed. Already-committed or
+    /// already-removed staging paths are ignored.
+    pub(crate) fn discard_staged(&self, package: &StagedPackage) {
+        let _ = fs::remove_dir_all(&package.staging_path);
+    }
+
+    /// Authoritative state of an enabled release, captured before a hot
+    /// update so a failed activation can be rolled back exactly.
+    pub(crate) async fn release_snapshot(
+        &self,
+        module_id: &str,
+    ) -> Result<Option<ReleaseSnapshot>, ModulePackageError> {
+        Ok(modules::Entity::find_by_id(module_id)
+            .one(&self.db)
+            .await
+            .map_err(db_error)?
+            .filter(|row| row.is_enabled)
+            .map(|row| ReleaseSnapshot {
+                module_id: row.id,
+                version: row.current_version,
+                integrity: row.integrity,
+                manifest: row.manifest,
+                entry_url: row.entry_url,
+            }))
+    }
+
+    /// Roll a failed activation back to `snapshot`. The DB update is a CAS on
+    /// the failed release, so a concurrent publish is never overwritten.
+    pub(crate) async fn reactivate(
+        &self,
+        operation_id: &str,
+        snapshot: &ReleaseSnapshot,
+        failed_version: &str,
+        failed_integrity: &str,
+    ) -> Result<(), ModulePackageError> {
+        let _publish_guard = self.publish_lock.lock().await;
+        let lease = self.acquire_release_lock().await?;
+        lease.ensure_valid()?;
+        self.verify_artifact(
+            &self
+                .root
+                .join("versions")
+                .join(&snapshot.module_id)
+                .join(&snapshot.version),
+            &snapshot.module_id,
+            &snapshot.version,
+            &snapshot.integrity,
+        )?;
+        // If the DB step below fails, the caller disables the module, which
+        // removes this pointer again; startup recovery follows the DB row.
+        self.write_pointer(&snapshot.module_id, &snapshot.version)?;
+        let tx = self.db.begin().await.map_err(db_error)?;
+        let row = modules::Entity::find_by_id(&snapshot.module_id)
+            .one(&tx)
+            .await
+            .map_err(db_error)?
+            .filter(|row| {
+                row.current_version == failed_version && row.integrity == failed_integrity
+            })
+            .ok_or_else(|| {
+                ModulePackageError::Database("module release changed during rollback".into())
+            })?;
+        let mut model: modules::ActiveModel = row.into();
+        model.current_version = Set(snapshot.version.clone());
+        model.integrity = Set(snapshot.integrity.clone());
+        model.manifest = Set(snapshot.manifest.clone());
+        model.entry_url = Set(snapshot.entry_url.clone());
+        model.updated_at = Set(chrono::Utc::now().timestamp());
+        model.update(&tx).await.map_err(db_error)?;
+        insert_update_event(
+            &tx,
+            operation_id,
+            &snapshot.module_id,
+            Some(failed_version),
+            &snapshot.version,
+            "rolled_back",
+            "success",
+            None,
+        )
+        .await?;
+        lease.ensure_valid()?;
+        tx.commit().await.map_err(db_error)
+    }
+
+    /// Fail-closed end state after a failed rollback: the module row is
+    /// disabled first (capability checks read it), then the pointer removed.
+    pub(crate) async fn disable_module(
+        &self,
+        operation_id: &str,
+        module_id: &str,
+        from_version: Option<&str>,
+        to_version: &str,
+        error_class: &str,
+    ) -> Result<(), ModulePackageError> {
+        let _publish_guard = self.publish_lock.lock().await;
+        let lease = self.acquire_release_lock().await?;
+        lease.ensure_valid()?;
+        let tx = self.db.begin().await.map_err(db_error)?;
+        if let Some(row) = modules::Entity::find_by_id(module_id)
+            .one(&tx)
+            .await
+            .map_err(db_error)?
+        {
+            let mut model: modules::ActiveModel = row.into();
+            model.is_enabled = Set(false);
+            model.updated_at = Set(chrono::Utc::now().timestamp());
+            model.update(&tx).await.map_err(db_error)?;
+        }
+        insert_update_event(
+            &tx,
+            operation_id,
+            module_id,
+            from_version,
+            to_version,
+            "disabled",
+            "failure",
+            Some(error_class.to_owned()),
+        )
+        .await?;
+        lease.ensure_valid()?;
+        tx.commit().await.map_err(db_error)?;
+        let pointer_dir = self.root.join("current").join(module_id);
+        match fs::remove_file(pointer_dir.join("version")) {
+            Ok(()) => fs::File::open(&pointer_dir)?.sync_all()?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        Ok(())
     }
 
     /// Re-check the package-backed identity immediately before a capability
@@ -424,8 +552,6 @@ impl ModulePublisher {
                 .sha256
                 .bytes()
                 .all(|byte| byte.is_ascii_hexdigit())
-            || manifest.entry.starts_with("http://")
-            || manifest.entry.starts_with("https://")
             || !valid_relative_entry(&manifest.entry)
             || !staging.join(&manifest.entry).is_file()
         {
@@ -896,22 +1022,65 @@ impl ModulePublisher {
         outcome: &str,
         error_class: Option<String>,
     ) -> Result<(), ModulePackageError> {
-        module_update_events::ActiveModel {
-            id: Set(Uuid::new_v4().to_string()),
-            operation_id: Set(operation_id.to_owned()),
-            module_id: Set(module_id.to_owned()),
-            from_version: Set(from_version.map(str::to_owned)),
-            to_version: Set(to_version.to_owned()),
-            stage: Set(stage.to_owned()),
-            outcome: Set(outcome.to_owned()),
-            error_class: Set(error_class),
-            created_at: Set(chrono::Utc::now().timestamp()),
-        }
-        .insert(&self.db)
+        insert_update_event(
+            &self.db,
+            operation_id,
+            module_id,
+            from_version,
+            to_version,
+            stage,
+            outcome,
+            error_class,
+        )
         .await
-        .map(|_| ())
-        .map_err(db_error)
     }
+}
+
+/// Authoritative release fields captured before a hot update (D033).
+#[derive(Clone, Debug)]
+pub(crate) struct ReleaseSnapshot {
+    module_id: String,
+    version: String,
+    integrity: String,
+    manifest: serde_json::Value,
+    entry_url: Option<String>,
+}
+
+impl ReleaseSnapshot {
+    pub(crate) fn version(&self) -> &str {
+        &self.version
+    }
+
+    pub(crate) fn integrity(&self) -> &str {
+        &self.integrity
+    }
+}
+
+async fn insert_update_event(
+    db: &impl ConnectionTrait,
+    operation_id: &str,
+    module_id: &str,
+    from_version: Option<&str>,
+    to_version: &str,
+    stage: &str,
+    outcome: &str,
+    error_class: Option<String>,
+) -> Result<(), ModulePackageError> {
+    module_update_events::ActiveModel {
+        id: Set(Uuid::new_v4().to_string()),
+        operation_id: Set(operation_id.to_owned()),
+        module_id: Set(module_id.to_owned()),
+        from_version: Set(from_version.map(str::to_owned)),
+        to_version: Set(to_version.to_owned()),
+        stage: Set(stage.to_owned()),
+        outcome: Set(outcome.to_owned()),
+        error_class: Set(error_class),
+        created_at: Set(chrono::Utc::now().timestamp()),
+    }
+    .insert(db)
+    .await
+    .map(|_| ())
+    .map_err(db_error)
 }
 
 fn valid_module_id(value: &str) -> bool {
@@ -931,12 +1100,18 @@ fn valid_version_path(value: &str) -> bool {
         && !value.chars().any(char::is_whitespace)
 }
 
+/// Entries are package-relative paths over a conservative ASCII alphabet, so
+/// URL schemes (`https:`, `data:`, `file:`), query/fragment, percent-encoded
+/// traversal, backslashes and drive letters can never reach a loader.
 fn valid_relative_entry(value: &str) -> bool {
     let path = Path::new(value);
     !value.is_empty()
+        && value.len() <= 255
         && !path.is_absolute()
         && !value.contains("..")
-        && !value.chars().any(char::is_whitespace)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/'))
         && path
             .components()
             .all(|component| matches!(component, std::path::Component::Normal(_)))
@@ -1504,5 +1679,29 @@ mod tests {
         assert!(!valid_module_id("../outside"));
         assert!(!valid_module_id("nested/module"));
         assert!(valid_module_id("@dgos-workbench"));
+    }
+
+    #[test]
+    fn entries_are_local_package_relative_paths_only() {
+        for entry in ["entry.js", "dist/remote-entry.js", "assets/app_v2-min.mjs"] {
+            assert!(valid_relative_entry(entry), "{entry}");
+        }
+        for entry in [
+            "https://example.invalid/entry.js",
+            "data:text/javascript,1",
+            "file:///etc/passwd",
+            "C:/entry.js",
+            "/abs/entry.js",
+            "../entry.js",
+            "./entry.js",
+            "dist\\entry.js",
+            "%2e%2e/entry.js",
+            "entry.js?x=1",
+            "entry.js#x",
+            "entry js",
+            "",
+        ] {
+            assert!(!valid_relative_entry(entry), "{entry}");
+        }
     }
 }

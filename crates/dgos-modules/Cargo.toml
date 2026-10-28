@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+async-trait = { workspace = true }
 dgos-db = { path = "../dgos-db" }
 dgos-types = { path = "../dgos-types" }
 serde = { workspace = true }

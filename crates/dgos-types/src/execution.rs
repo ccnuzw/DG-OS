@@ -80,6 +80,16 @@ impl HostExecutionContext {
         }
     }
 
+    /// Same host-bound user and source, new request id. Used for each request
+    /// admitted by a runtime so audits can tell individual calls apart.
+    pub fn with_new_request_id(&self) -> Self {
+        Self {
+            user_id: self.user_id.clone(),
+            source: self.source.clone(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+        }
+    }
+
     pub fn user_id(&self) -> &str {
         &self.user_id
     }

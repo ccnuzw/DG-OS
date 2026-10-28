@@ -6,7 +6,7 @@
 //! leave resource ownership and provider invariants to their domain managers.
 
 use dgos_db::{ModulePermission, ModulePermissionRepository};
-use dgos_modules::{ModulePublisher, ModuleRuntimeHandle, ModuleRuntimeState};
+use dgos_modules::{ModulePublisher, ModuleRequestOutcome, ModuleRuntimeHandle};
 use dgos_providers::ProviderManager;
 use dgos_types::{ChatRequest, ChatResponse, DgosError, DgosResult, HostExecutionContext};
 use std::future::Future;
@@ -94,17 +94,6 @@ impl HostCapabilityService {
         })
     }
 
-    pub async fn authorize_handle(
-        &self,
-        handle: &ModuleRuntimeHandle,
-        permission: ModulePermission,
-    ) -> DgosResult<CapabilityGrant> {
-        if handle.state() != ModuleRuntimeState::Ready {
-            return Err(DgosError::PermissionDenied);
-        }
-        self.authorize(handle.context(), permission).await
-    }
-
     /// The host dispatch boundary: authorization is checked immediately before
     /// the supplied domain operation, never by a renderer-visible preflight.
     pub async fn dispatch<T, F, Fut>(
@@ -118,20 +107,6 @@ impl HostCapabilityService {
         Fut: Future<Output = DgosResult<T>>,
     {
         let grant = self.authorize(context, permission).await?;
-        operation(grant).await
-    }
-
-    pub async fn dispatch_handle<T, F, Fut>(
-        &self,
-        handle: &ModuleRuntimeHandle,
-        permission: ModulePermission,
-        operation: F,
-    ) -> DgosResult<T>
-    where
-        F: FnOnce(CapabilityGrant) -> Fut,
-        Fut: Future<Output = DgosResult<T>>,
-    {
-        let grant = self.authorize_handle(handle, permission).await?;
         operation(grant).await
     }
 
@@ -187,8 +162,11 @@ pub struct ProviderCallService {
     capabilities: HostCapabilityService,
 }
 
-/// Runtime-only capability adapter. A module runtime must present a ready,
-/// publisher-issued handle rather than manufacturing an execution context.
+/// Runtime-only capability adapter (D033). A module runtime must present a
+/// ready, publisher-issued handle rather than manufacturing an execution
+/// context. Admission, authorization and the operation share one in-flight
+/// request, so a draining runtime waits for authorization too and every
+/// admitted request settles exactly once. Nothing is retried or replayed.
 #[derive(Clone)]
 pub struct ModuleCapabilityDispatchService {
     capabilities: HostCapabilityService,
@@ -209,9 +187,29 @@ impl ModuleCapabilityDispatchService {
         F: FnOnce(CapabilityGrant) -> Fut,
         Fut: Future<Output = DgosResult<T>>,
     {
-        self.capabilities
-            .dispatch_handle(handle, permission, operation)
+        let request = handle
+            .begin_request()
+            .map_err(|_| DgosError::PermissionDenied)?;
+        let grant = match self
+            .capabilities
+            .authorize(request.context(), permission)
             .await
+        {
+            Ok(grant) => grant,
+            Err(error) => {
+                request.finish(ModuleRequestOutcome::Denied);
+                return Err(error);
+            }
+        };
+        // If this future is dropped from here on, the request settles as
+        // `Interrupted`: the external result is unknown and not replayed.
+        let result = operation(grant).await;
+        request.finish(if result.is_ok() {
+            ModuleRequestOutcome::Succeeded
+        } else {
+            ModuleRequestOutcome::Failed
+        });
+        result
     }
 }
 
@@ -398,5 +396,335 @@ mod tests {
             publisher.recover("module-1").unwrap().as_deref(),
             Some("1.0.0")
         );
+    }
+
+    mod runtime_dispatch {
+        use super::*;
+        use dgos_modules::{
+            LocalArtifactLoader, ModuleRuntimeState, ModuleRuntimeSupervisor, ModuleUpdateOutcome,
+        };
+        use dgos_types::HostSession;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Duration;
+        use tempfile::TempDir;
+
+        const MODULE: &str = "module-1";
+
+        fn package(version: &str) -> TempDir {
+            use sha2::{Digest, Sha256};
+            let dir = tempdir().unwrap();
+            let body = format!("export default '{version}';");
+            fs::write(dir.path().join("entry.js"), &body).unwrap();
+            let mut hasher = Sha256::new();
+            hasher.update(b"entry.js");
+            hasher.update([0]);
+            hasher.update(body.as_bytes());
+            fs::write(
+                dir.path().join("manifest.json"),
+                serde_json::json!({
+                    "id": MODULE, "name": "Example", "version": version, "entry": "entry.js",
+                    "artifact": {"version": version, "sha256": format!("{:x}", hasher.finalize())},
+                    "permissions": ["providers.call"]
+                })
+                .to_string(),
+            )
+            .unwrap();
+            dir
+        }
+
+        struct Fixture {
+            _store: TempDir,
+            permissions: Arc<ModulePermissionRepository>,
+            dispatch: ModuleCapabilityDispatchService,
+            supervisor: Arc<ModuleRuntimeSupervisor>,
+        }
+
+        impl Fixture {
+            async fn new() -> Self {
+                let db = Database::connect("sqlite::memory:").await.unwrap();
+                Migrator::up(&db, None).await.unwrap();
+                let store = tempdir().unwrap();
+                let publisher = Arc::new(ModulePublisher::new(store.path(), db.clone()));
+                ModuleReleaseService::new(publisher.clone())
+                    .publish(package("1.0.0").path())
+                    .await
+                    .unwrap();
+                let permissions = Arc::new(ModulePermissionRepository::new(db));
+                permissions
+                    .grant("default-user", MODULE, ModulePermission::ProvidersCall)
+                    .await
+                    .unwrap();
+                let dispatch = ModuleCapabilityDispatchService::new(
+                    HostCapabilityService::with_publisher(permissions.clone(), publisher.clone()),
+                );
+                let supervisor = Arc::new(ModuleRuntimeSupervisor::new(
+                    publisher,
+                    Arc::new(LocalArtifactLoader),
+                ));
+                Self {
+                    _store: store,
+                    permissions,
+                    dispatch,
+                    supervisor,
+                }
+            }
+
+            async fn start(&self) -> ModuleRuntimeHandle {
+                self.supervisor
+                    .start(&HostSession::local_default(), MODULE)
+                    .await
+                    .unwrap()
+            }
+        }
+
+        async fn wait_until(mut condition: impl FnMut() -> bool) {
+            for _ in 0..5000 {
+                if condition() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            panic!("condition not reached");
+        }
+
+        #[tokio::test]
+        async fn every_dispatch_settles_once_with_fresh_request_ids() {
+            let fixture = Fixture::new().await;
+            let handle = fixture.start().await;
+            let runs = Arc::new(AtomicUsize::new(0));
+            let dispatch = |permission, fail: bool| {
+                let runs = runs.clone();
+                fixture
+                    .dispatch
+                    .dispatch(&handle, permission, move |grant| async move {
+                        runs.fetch_add(1, Ordering::SeqCst);
+                        if fail {
+                            Err(DgosError::InternalError("adapter failed".into()))
+                        } else {
+                            Ok(grant.request_id)
+                        }
+                    })
+            };
+
+            let first = dispatch(ModulePermission::ProvidersCall, false)
+                .await
+                .unwrap();
+            let second = dispatch(ModulePermission::ProvidersCall, false)
+                .await
+                .unwrap();
+            assert_ne!(first, second);
+            assert_ne!(first, handle.context().request_id());
+            assert!(dispatch(ModulePermission::ProvidersCall, true)
+                .await
+                .is_err());
+            // Undeclared capability and revoked grant: the operation never runs.
+            assert!(matches!(
+                dispatch(ModulePermission::McpCall, false).await,
+                Err(DgosError::PermissionDenied)
+            ));
+            fixture
+                .permissions
+                .revoke("default-user", MODULE, ModulePermission::ProvidersCall)
+                .await
+                .unwrap();
+            assert!(matches!(
+                dispatch(ModulePermission::ProvidersCall, false).await,
+                Err(DgosError::PermissionDenied)
+            ));
+            assert_eq!(runs.load(Ordering::SeqCst), 3);
+            let stats = handle.request_stats();
+            assert_eq!(
+                (
+                    stats.admitted,
+                    stats.succeeded,
+                    stats.failed,
+                    stats.denied,
+                    stats.in_flight
+                ),
+                (5, 2, 1, 2, 0)
+            );
+
+            fixture.supervisor.stop(MODULE).await.unwrap();
+            assert!(matches!(
+                dispatch(ModulePermission::ProvidersCall, false).await,
+                Err(DgosError::PermissionDenied)
+            ));
+            assert_eq!(handle.request_stats().rejected, 1);
+            assert_eq!(runs.load(Ordering::SeqCst), 3);
+        }
+
+        #[tokio::test]
+        async fn draining_refuses_new_dispatch_and_in_flight_request_finishes_once() {
+            let fixture = Fixture::new().await;
+            let handle = fixture.start().await;
+            let runs = Arc::new(AtomicUsize::new(0));
+            let (release, released) = tokio::sync::oneshot::channel::<()>();
+            let in_flight = tokio::spawn({
+                let (dispatch, handle, runs) =
+                    (fixture.dispatch.clone(), handle.clone(), runs.clone());
+                async move {
+                    dispatch
+                        .dispatch(
+                            &handle,
+                            ModulePermission::ProvidersCall,
+                            move |_| async move {
+                                runs.fetch_add(1, Ordering::SeqCst);
+                                released.await.unwrap();
+                                Ok("done")
+                            },
+                        )
+                        .await
+                }
+            });
+            wait_until(|| runs.load(Ordering::SeqCst) == 1).await;
+
+            let stopping = tokio::spawn({
+                let supervisor = fixture.supervisor.clone();
+                async move { supervisor.stop(MODULE).await }
+            });
+            wait_until(|| handle.state() == ModuleRuntimeState::Draining).await;
+            let refused_ran = Arc::new(AtomicUsize::new(0));
+            let refused = {
+                let refused_ran = refused_ran.clone();
+                fixture
+                    .dispatch
+                    .dispatch(
+                        &handle,
+                        ModulePermission::ProvidersCall,
+                        move |_| async move {
+                            refused_ran.fetch_add(1, Ordering::SeqCst);
+                            Ok("late")
+                        },
+                    )
+                    .await
+            };
+            assert!(matches!(refused, Err(DgosError::PermissionDenied)));
+            assert_eq!(refused_ran.load(Ordering::SeqCst), 0);
+            assert_eq!(handle.state(), ModuleRuntimeState::Draining);
+
+            release.send(()).unwrap();
+            assert_eq!(in_flight.await.unwrap().unwrap(), "done");
+            stopping.await.unwrap().unwrap();
+            assert_eq!(handle.state(), ModuleRuntimeState::Stopped);
+            assert_eq!(runs.load(Ordering::SeqCst), 1);
+            let stats = handle.request_stats();
+            assert_eq!(
+                (
+                    stats.admitted,
+                    stats.succeeded,
+                    stats.rejected,
+                    stats.in_flight
+                ),
+                (1, 1, 1, 0)
+            );
+        }
+
+        #[tokio::test]
+        async fn hot_update_keeps_in_flight_request_on_previous_runtime_without_replay() {
+            let fixture = Fixture::new().await;
+            let previous = fixture.start().await;
+            let runs = Arc::new(AtomicUsize::new(0));
+            let (release, released) = tokio::sync::oneshot::channel::<()>();
+            let in_flight = tokio::spawn({
+                let (dispatch, handle, runs) =
+                    (fixture.dispatch.clone(), previous.clone(), runs.clone());
+                async move {
+                    dispatch
+                        .dispatch(
+                            &handle,
+                            ModulePermission::ProvidersCall,
+                            move |grant| async move {
+                                runs.fetch_add(1, Ordering::SeqCst);
+                                released.await.unwrap();
+                                Ok(grant.version)
+                            },
+                        )
+                        .await
+                }
+            });
+            wait_until(|| runs.load(Ordering::SeqCst) == 1).await;
+
+            let source = package("2.0.0");
+            let updating = tokio::spawn({
+                let supervisor = fixture.supervisor.clone();
+                let path = source.path().to_owned();
+                async move {
+                    supervisor
+                        .update(&HostSession::local_default(), MODULE, &path)
+                        .await
+                }
+            });
+            wait_until(|| previous.state() == ModuleRuntimeState::Draining).await;
+            let current = fixture.supervisor.runtime(MODULE).unwrap();
+            assert!(!current.is_same_runtime(&previous));
+            let served_by = fixture
+                .dispatch
+                .dispatch(
+                    &current,
+                    ModulePermission::ProvidersCall,
+                    |grant| async move { Ok(grant.version) },
+                )
+                .await
+                .unwrap();
+            assert_eq!(served_by, "2.0.0");
+            assert!(matches!(
+                fixture
+                    .dispatch
+                    .dispatch(&previous, ModulePermission::ProvidersCall, |_| async {
+                        Ok(String::new())
+                    })
+                    .await,
+                Err(DgosError::PermissionDenied)
+            ));
+
+            release.send(()).unwrap();
+            assert_eq!(in_flight.await.unwrap().unwrap(), "1.0.0");
+            let report = updating.await.unwrap().unwrap();
+            assert_eq!(
+                report.outcome,
+                ModuleUpdateOutcome::Switched {
+                    previous_stopped: true
+                }
+            );
+            assert_eq!(previous.state(), ModuleRuntimeState::Stopped);
+            // The in-flight operation ran exactly once, on the old runtime.
+            assert_eq!(runs.load(Ordering::SeqCst), 1);
+            assert_eq!(previous.request_stats().succeeded, 1);
+            assert_eq!(current.request_stats().admitted, 1);
+        }
+
+        #[tokio::test]
+        async fn dropped_dispatch_settles_as_interrupted_and_is_not_replayed() {
+            let fixture = Fixture::new().await;
+            let handle = fixture.start().await;
+            let runs = Arc::new(AtomicUsize::new(0));
+            let (started, operation_started) = tokio::sync::oneshot::channel::<()>();
+            let mut pending = Box::pin({
+                let runs = runs.clone();
+                fixture.dispatch.dispatch(
+                    &handle,
+                    ModulePermission::ProvidersCall,
+                    move |_| async move {
+                        runs.fetch_add(1, Ordering::SeqCst);
+                        let _ = started.send(());
+                        std::future::pending::<DgosResult<()>>().await
+                    },
+                )
+            });
+            tokio::select! {
+                _ = &mut pending => panic!("operation never completes"),
+                started = operation_started => started.unwrap(),
+            }
+            drop(pending);
+
+            let stats = handle.request_stats();
+            assert_eq!(
+                (stats.admitted, stats.interrupted, stats.in_flight),
+                (1, 1, 0)
+            );
+            fixture.supervisor.stop(MODULE).await.unwrap();
+            assert_eq!(handle.state(), ModuleRuntimeState::Stopped);
+            assert_eq!(runs.load(Ordering::SeqCst), 1);
+        }
     }
 }
