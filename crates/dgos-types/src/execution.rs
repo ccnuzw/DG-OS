@@ -1,5 +1,25 @@
 use serde::Serialize;
 
+/// The current desktop host session. Renderer payloads never construct this
+/// value; the local session is derived by the Tauri host until multi-user
+/// authentication is introduced.
+#[derive(Clone, Debug)]
+pub struct HostSession {
+    user_id: String,
+}
+
+impl HostSession {
+    pub fn local_default() -> Self {
+        Self {
+            user_id: "default-user".into(),
+        }
+    }
+
+    pub fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
 /// Only trusted Rust host code constructs execution provenance; never an IPC DTO.
 #[derive(Clone, Debug, Serialize)]
 pub struct HostExecutionContext {
@@ -43,9 +63,14 @@ impl HostExecutionContext {
         }
     }
 
-    pub fn for_module(user_id: &str, module_id: &str, version: &str, integrity: &str) -> Self {
+    pub fn for_module_session(
+        session: &HostSession,
+        module_id: &str,
+        version: &str,
+        integrity: &str,
+    ) -> Self {
         Self {
-            user_id: user_id.into(),
+            user_id: session.user_id().into(),
             source: ExecutionSource::Module {
                 module_id: module_id.into(),
                 version: version.into(),

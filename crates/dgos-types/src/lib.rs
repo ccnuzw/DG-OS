@@ -6,5 +6,7 @@ pub mod execution;
 pub mod provider;
 
 pub use error::{DgosError, DgosResult};
-pub use execution::{BuiltinCaller, ExecutionProvenance, ExecutionSource, HostExecutionContext};
+pub use execution::{
+    BuiltinCaller, ExecutionProvenance, ExecutionSource, HostExecutionContext, HostSession,
+};
 pub use provider::*;

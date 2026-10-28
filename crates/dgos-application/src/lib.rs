@@ -8,7 +8,9 @@
 use dgos_db::{ModulePermission, ModulePermissionRepository};
 use dgos_modules::ModulePublisher;
 use dgos_providers::ProviderManager;
-use dgos_types::{ChatRequest, ChatResponse, DgosError, DgosResult, HostExecutionContext};
+use dgos_types::{
+    ChatRequest, ChatResponse, DgosError, DgosResult, HostExecutionContext, HostSession,
+};
 use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
@@ -273,7 +275,12 @@ mod tests {
         let repository = Arc::new(ModulePermissionRepository::new(db));
         let service = HostCapabilityService::new(repository.clone());
         let context =
-            HostExecutionContext::for_module("default-user", "module-1", "1.0.0", &"a".repeat(64));
+            HostExecutionContext::for_module_session(
+                &HostSession::local_default(),
+                "module-1",
+                "1.0.0",
+                &"a".repeat(64),
+            );
         assert!(service
             .authorize(&context, ModulePermission::ProvidersCall)
             .await

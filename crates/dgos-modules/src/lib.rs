@@ -6,7 +6,7 @@ use dgos_db::{
     },
     ModulePermission, ModulePermissionRepository,
 };
-use dgos_types::HostExecutionContext;
+use dgos_types::{HostExecutionContext, HostSession};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -152,7 +152,7 @@ impl ModulePublisher {
     /// module row. Renderer input never participates in this lookup.
     pub async fn execution_context(
         &self,
-        user_id: &str,
+        session: &HostSession,
         module_id: &str,
     ) -> Result<HostExecutionContext, ModulePackageError> {
         let module = modules::Entity::find_by_id(module_id)
@@ -172,8 +172,8 @@ impl ModulePublisher {
                 "module is not recoverable".into(),
             ));
         }
-        Ok(HostExecutionContext::for_module(
-            user_id,
+        Ok(HostExecutionContext::for_module_session(
+            session,
             module_id,
             &module.current_version,
             &module.integrity,
@@ -1007,7 +1007,7 @@ mod tests {
             Some("1.0.0")
         );
         let context = publisher
-            .execution_context("default-user", "module-1")
+            .execution_context(&dgos_types::HostSession::local_default(), "module-1")
             .await
             .unwrap();
         assert_eq!(context.module_identity().unwrap().0, "module-1");
@@ -1264,7 +1264,7 @@ mod tests {
             .await
             .unwrap();
         assert!(publisher
-            .execution_context("default-user", "module-1")
+            .execution_context(&dgos_types::HostSession::local_default(), "module-1")
             .await
             .is_err());
     }
