@@ -1,9 +1,14 @@
+use crate::module_operation::ModuleOperationErrorKind;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum DgosError {
     #[error("Host permission denied")]
     PermissionDenied,
+
+    // Module lifecycle errors (1004xxx); the message is a fixed string.
+    #[error("{}", .0.message())]
+    ModuleOperation(ModuleOperationErrorKind),
 
     // Provider errors (1001xxx)
     #[error("Provider not found: {0}")]
@@ -64,6 +69,7 @@ impl DgosError {
     pub fn error_code(&self) -> u32 {
         match self {
             DgosError::PermissionDenied => 1004004,
+            DgosError::ModuleOperation(kind) => kind.code(),
             DgosError::ProviderNotFound(_) => 1001001,
             DgosError::InvalidApiKey => 1001002,
             DgosError::CredentialUnavailable => 1001015,
@@ -121,5 +127,17 @@ mod tests {
         assert_eq!(DgosError::RateLimitExceeded.error_code(), 1001005);
         assert_eq!(DgosError::Timeout.error_code(), 1001006);
         assert_eq!(DgosError::MaxRetriesExceeded.error_code(), 1001008);
+    }
+
+    #[test]
+    fn module_operation_errors_expose_their_code_and_a_fixed_message() {
+        let error = DgosError::ModuleOperation(ModuleOperationErrorKind::StopFailed);
+        assert_eq!(error.error_code(), 1004007);
+        assert_eq!(
+            error.to_string(),
+            ModuleOperationErrorKind::StopFailed.message()
+        );
+        // PermissionDenied keeps its historical wire code.
+        assert_eq!(DgosError::PermissionDenied.error_code(), 1004004);
     }
 }

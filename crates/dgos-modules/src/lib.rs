@@ -23,6 +23,7 @@ use uuid::Uuid;
 
 mod loader;
 mod runtime;
+mod sources;
 mod supervisor;
 
 pub use loader::{LocalArtifactLoader, ModuleLoadError, ModuleLoader, VerifiedModuleArtifact};
@@ -30,6 +31,7 @@ pub use runtime::{
     ModuleRequest, ModuleRequestOutcome, ModuleRequestStats, ModuleRuntimeError,
     ModuleRuntimeHandle, ModuleRuntimeState,
 };
+pub use sources::{LocalModuleSources, ModuleSourceError};
 pub use supervisor::{
     ModuleRuntimeSupervisor, ModuleSupervisorError, ModuleUpdateOutcome, ModuleUpdateReport,
 };
@@ -1083,8 +1085,12 @@ async fn insert_update_event(
     .map_err(db_error)
 }
 
-fn valid_module_id(value: &str) -> bool {
+/// The single module-id rule shared by the publisher, source resolver and
+/// host operation manager: a short ASCII name that is never `.` or `..`.
+pub fn valid_module_id(value: &str) -> bool {
     !value.is_empty()
+        && value != "."
+        && value != ".."
         && value.len() <= 128
         && value
             .bytes()
@@ -1677,6 +1683,8 @@ mod tests {
     #[test]
     fn module_ids_cannot_escape_the_package_store() {
         assert!(!valid_module_id("../outside"));
+        assert!(!valid_module_id("."));
+        assert!(!valid_module_id(".."));
         assert!(!valid_module_id("nested/module"));
         assert!(valid_module_id("@dgos-workbench"));
     }

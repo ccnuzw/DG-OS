@@ -1,4 +1,4 @@
-use dgos_types::{BuiltinCaller, DgosError, HostExecutionContext};
+use dgos_types::{BuiltinCaller, DgosError, HostExecutionContext, HostSession};
 use tauri::WebviewWindow;
 
 // Preserve the identity used by existing desktop data until FR-008 supplies sessions.
@@ -16,6 +16,8 @@ pub enum Capability {
     McpManage,
     McpCall,
     TasksRun,
+    ModulesRead,
+    ModulesManage,
 }
 
 pub fn context(
@@ -34,6 +36,19 @@ pub fn context(
         return Err(DgosError::PermissionDenied);
     }
     Ok(HostExecutionContext::for_builtin(LOCAL_USER, caller))
+}
+
+/// Entry gate for module lifecycle commands (D034). The same window and
+/// caller checks as `context`, then the host-derived session. Module
+/// commands never receive a user id, runtime handle or execution context
+/// from the renderer.
+pub fn module_session(
+    window: &WebviewWindow,
+    capability: Capability,
+) -> Result<HostSession, DgosError> {
+    let context = context(window, BuiltinCaller::Settings, capability)?;
+    debug_assert_eq!(context.user_id(), LOCAL_USER);
+    Ok(HostSession::local_default())
 }
 
 // Internal route policy, not a sandbox for code sharing the host's JavaScript realm.
@@ -69,5 +84,16 @@ mod tests {
         assert!(allows(BuiltinCaller::Workbench, Capability::TasksRun));
         assert!(allows(BuiltinCaller::Workbench, Capability::SkillsPrepare));
         assert!(allows(BuiltinCaller::Workbench, Capability::ProvidersCall));
+        assert!(allows(BuiltinCaller::Settings, Capability::ModulesRead));
+        assert!(allows(BuiltinCaller::Settings, Capability::ModulesManage));
+    }
+
+    #[test]
+    fn only_the_settings_route_may_read_or_manage_modules() {
+        for capability in [Capability::ModulesRead, Capability::ModulesManage] {
+            assert!(!allows(BuiltinCaller::Workbench, capability));
+            assert!(!allows(BuiltinCaller::Module, capability));
+        }
+        assert_eq!(HostSession::local_default().user_id(), LOCAL_USER);
     }
 }

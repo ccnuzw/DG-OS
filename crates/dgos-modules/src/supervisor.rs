@@ -55,8 +55,9 @@ pub enum ModuleUpdateOutcome {
     /// was restarted.
     Unchanged,
     /// The new runtime is active. `previous_stopped` is false when the
-    /// previous runtime did not drain in time (or its loader failed to stop)
-    /// and was left `failed` until its admitted requests settle.
+    /// previous runtime did not drain in time (or its loader failed to stop):
+    /// it stays `failed` and is kept as a pending release that the next
+    /// `stop`/`start` of the module retries once its requests have settled.
     Switched { previous_stopped: bool },
 }
 
@@ -77,6 +78,10 @@ pub struct ModuleRuntimeSupervisor {
     // Serializes start/stop/update. Request admission never takes this lock.
     lifecycle: tokio::sync::Mutex<()>,
     runtimes: Mutex<HashMap<String, ModuleRuntimeHandle>>,
+    // Runtimes that left `runtimes` (hot-update switch, failed candidate) but
+    // whose loader release is not confirmed. They stay reachable so a failed
+    // release can be retried instead of leaking loader resources.
+    retired: Mutex<HashMap<String, Vec<ModuleRuntimeHandle>>>,
 }
 
 impl ModuleRuntimeSupervisor {
@@ -89,6 +94,7 @@ impl ModuleRuntimeSupervisor {
             drain_timeout: Self::DEFAULT_DRAIN_TIMEOUT,
             lifecycle: tokio::sync::Mutex::new(()),
             runtimes: Mutex::new(HashMap::new()),
+            retired: Mutex::new(HashMap::new()),
         }
     }
 
@@ -125,6 +131,15 @@ impl ModuleRuntimeSupervisor {
         {
             return Err(ModuleSupervisorError::AlreadyRunning);
         }
+        // A previous instance of this module must release its loader
+        // resources before a new one starts; a failed release keeps it
+        // registered and fails the start closed.
+        self.release_retired(module_id).await?;
+        if let Some(previous) = self.runtime(module_id) {
+            if previous.state() != ModuleRuntimeState::Stopped {
+                self.retire(&previous).await?;
+            }
+        }
         let handle = self.publisher.runtime_handle(session, module_id).await?;
         self.registry().insert(module_id.to_owned(), handle.clone());
         let loaded = async {
@@ -133,25 +148,43 @@ impl ModuleRuntimeSupervisor {
         }
         .await;
         if let Err(error) = loaded {
-            self.abort_start(&handle).await;
+            // A failed release leaves the handle registered as `failed`; the
+            // next `stop`/`start` retries it.
+            let _ = self.abort_start(&handle).await;
             return Err(error);
         }
         Ok(handle)
     }
 
-    /// Drain and stop the module's runtime. New requests are refused at
-    /// once; admitted requests settle before loader resources are released.
+    /// Drain and stop the module's runtime and retry every pending release
+    /// of runtimes it retired earlier. New requests are refused at once;
+    /// admitted requests settle before loader resources are released. All
+    /// releases are attempted; the first failure is returned and the
+    /// unreleased runtimes stay pending for the next call.
     pub async fn stop(&self, module_id: &str) -> Result<(), ModuleSupervisorError> {
         let _lifecycle = self.lifecycle.lock().await;
-        let handle = self
-            .runtime(module_id)
-            .ok_or(ModuleSupervisorError::NotRunning)?;
-        if handle.state() == ModuleRuntimeState::Stopped {
-            return Ok(());
+        let had_pending = self.pending_release_count(module_id) > 0;
+        let retired = self.release_retired(module_id).await;
+        let current = match self.runtime(module_id) {
+            Some(handle) => handle,
+            None if had_pending => return retired,
+            None => return Err(ModuleSupervisorError::NotRunning),
+        };
+        if current.state() == ModuleRuntimeState::Stopped {
+            return retired;
         }
         // Ready → draining. A failed runtime already refuses requests.
-        let _ = handle.begin_draining();
-        self.retire(&handle).await
+        let _ = current.begin_draining();
+        let current = self.retire(&current).await;
+        retired.and(current)
+    }
+
+    /// Number of runtimes of `module_id` that were retired but whose loader
+    /// release is still unconfirmed.
+    pub fn pending_release_count(&self, module_id: &str) -> usize {
+        self.retired_registry()
+            .get(module_id)
+            .map_or(0, |handles| handles.len())
     }
 
     /// Host-detected crash of one runtime instance: refuse new requests
@@ -260,7 +293,10 @@ impl ModuleRuntimeSupervisor {
                 return Err(ModuleSupervisorError::StaleRuntime);
             }
             if let Err(error) = self.activate(&candidate).await {
-                self.abort_start(&candidate).await;
+                if self.abort_start(&candidate).await.is_err() {
+                    // Never registered: keep it pending so its release is retried.
+                    self.park_retired(module_id, candidate);
+                }
                 return Err(error);
             }
             Ok(candidate)
@@ -274,9 +310,14 @@ impl ModuleRuntimeSupervisor {
         // 5. switch, then drain and stop the previous runtime.
         self.registry().insert(module_id.to_owned(), candidate);
         let _ = previous.begin_draining();
-        report.outcome = ModuleUpdateOutcome::Switched {
-            previous_stopped: self.retire(&previous).await.is_ok(),
+        let previous_stopped = match self.retire(&previous).await {
+            Ok(()) => true,
+            Err(_) => {
+                self.park_retired(module_id, previous);
+                false
+            }
         };
+        report.outcome = ModuleUpdateOutcome::Switched { previous_stopped };
         Ok(report)
     }
 
@@ -296,9 +337,9 @@ impl ModuleRuntimeSupervisor {
 
     /// A runtime that failed to start never admitted a request; mark it
     /// failed and release whatever the loader may hold.
-    async fn abort_start(&self, handle: &ModuleRuntimeHandle) {
+    async fn abort_start(&self, handle: &ModuleRuntimeHandle) -> Result<(), ModuleLoadError> {
         let _ = handle.fail();
-        let _ = release_runtime(self.loader.as_ref(), handle).await;
+        release_runtime(self.loader.as_ref(), handle).await
     }
 
     /// Restore the previous release after a failed activation. On success
@@ -392,6 +433,51 @@ impl ModuleRuntimeSupervisor {
         self.runtimes
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn retired_registry(&self) -> MutexGuard<'_, HashMap<String, Vec<ModuleRuntimeHandle>>> {
+        self.retired
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn park_retired(&self, module_id: &str, handle: ModuleRuntimeHandle) {
+        let mut retired = self.retired_registry();
+        let handles = retired.entry(module_id.to_owned()).or_default();
+        if !handles.iter().any(|known| known.is_same_runtime(&handle)) {
+            handles.push(handle);
+        }
+    }
+
+    fn unpark_retired(&self, module_id: &str, handle: &ModuleRuntimeHandle) {
+        let mut retired = self.retired_registry();
+        if let Some(handles) = retired.get_mut(module_id) {
+            handles.retain(|known| !known.is_same_runtime(handle));
+            if handles.is_empty() {
+                retired.remove(module_id);
+            }
+        }
+    }
+
+    /// Retry every pending release of `module_id`. A handle leaves the
+    /// pending list only after it reached `stopped`, so dropping this future
+    /// part-way loses nothing. Returns the first failure after trying all.
+    async fn release_retired(&self, module_id: &str) -> Result<(), ModuleSupervisorError> {
+        let pending = self
+            .retired_registry()
+            .get(module_id)
+            .cloned()
+            .unwrap_or_default();
+        let mut first_error = None;
+        for handle in pending {
+            match self.retire(&handle).await {
+                Ok(()) => self.unpark_retired(module_id, &handle),
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                }
+            }
+        }
+        first_error.map_or(Ok(()), Err)
     }
 }
 
@@ -1243,5 +1329,165 @@ mod tests {
             .is_same_runtime(&previous));
         assert_eq!(fixture.loader.starts.load(Ordering::SeqCst), 1);
         assert!(fixture.staging_is_empty());
+    }
+
+    #[tokio::test]
+    async fn retired_runtime_with_failed_release_stays_pending_and_stop_retries_it() {
+        let fixture = Fixture::new(ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT).await;
+        fixture.publish("1.0.0", &[]).await;
+        let previous = fixture.start().await;
+        let source = package(PackageSpec {
+            version: "2.0.0",
+            ..PackageSpec::default()
+        });
+        fixture.loader.fail_next_stops(1);
+
+        let report = fixture.update(&source).await.unwrap();
+        assert_eq!(
+            report.outcome,
+            ModuleUpdateOutcome::Switched {
+                previous_stopped: false
+            }
+        );
+        let current = fixture.supervisor.runtime(MODULE).unwrap();
+        assert_eq!(current.state(), ModuleRuntimeState::Ready);
+        assert_eq!(previous.state(), ModuleRuntimeState::Failed);
+        assert_eq!(fixture.supervisor.pending_release_count(MODULE), 1);
+        assert!(fixture.loader.stops().is_empty());
+
+        // The retry of the retired runtime fails again: still pending, and
+        // the current runtime is still drained and released.
+        fixture.loader.fail_next_stops(1);
+        assert!(matches!(
+            fixture.supervisor.stop(MODULE).await,
+            Err(ModuleSupervisorError::Load(_))
+        ));
+        assert_eq!(previous.state(), ModuleRuntimeState::Failed);
+        assert_eq!(current.state(), ModuleRuntimeState::Stopped);
+        assert_eq!(fixture.supervisor.pending_release_count(MODULE), 1);
+
+        fixture.supervisor.stop(MODULE).await.unwrap();
+        assert_eq!(previous.state(), ModuleRuntimeState::Stopped);
+        assert_eq!(fixture.supervisor.pending_release_count(MODULE), 0);
+        let mut stops = fixture.loader.stops();
+        stops.sort();
+        let mut expected = vec![
+            previous.runtime_id().to_owned(),
+            current.runtime_id().to_owned(),
+        ];
+        expected.sort();
+        assert_eq!(stops, expected);
+        // Released once each: nothing is pending, so further stops are no-ops.
+        let attempts = fixture.loader.stop_attempts();
+        fixture.supervisor.stop(MODULE).await.unwrap();
+        assert_eq!(fixture.loader.stop_attempts(), attempts);
+    }
+
+    #[tokio::test]
+    async fn retired_runtime_released_only_after_its_requests_settle() {
+        let fixture = Fixture::new(Duration::from_millis(30)).await;
+        fixture.publish("1.0.0", &[]).await;
+        let previous = fixture.start().await;
+        let request = previous.begin_request().unwrap();
+        let source = package(PackageSpec {
+            version: "2.0.0",
+            ..PackageSpec::default()
+        });
+
+        let report = fixture.update(&source).await.unwrap();
+        assert_eq!(
+            report.outcome,
+            ModuleUpdateOutcome::Switched {
+                previous_stopped: false
+            }
+        );
+        assert_eq!(fixture.supervisor.pending_release_count(MODULE), 1);
+        assert!(fixture.loader.stops().is_empty());
+
+        // Still in flight: stop reports the pending release and releases nothing for it.
+        assert!(matches!(
+            fixture.supervisor.stop(MODULE).await,
+            Err(ModuleSupervisorError::DrainTimeout)
+        ));
+        assert_eq!(previous.state(), ModuleRuntimeState::Failed);
+        assert!(!fixture
+            .loader
+            .stops()
+            .contains(&previous.runtime_id().to_owned()));
+
+        request.finish(ModuleRequestOutcome::Succeeded);
+        fixture.supervisor.stop(MODULE).await.unwrap();
+        assert_eq!(previous.state(), ModuleRuntimeState::Stopped);
+        assert_eq!(fixture.supervisor.pending_release_count(MODULE), 0);
+        assert_eq!(previous.request_stats().succeeded, 1);
+        let stops = fixture.loader.stops();
+        assert_eq!(
+            stops
+                .iter()
+                .filter(|id| id.as_str() == previous.runtime_id())
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn candidate_with_failed_release_after_rollback_is_retried_by_stop() {
+        let fixture = Fixture::new(ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT).await;
+        fixture.publish("1.0.0", &[]).await;
+        let previous = fixture.start().await;
+        fixture.loader.fail_start(Some("2.0.0"));
+        fixture.loader.fail_next_stops(1);
+        let source = package(PackageSpec {
+            version: "2.0.0",
+            ..PackageSpec::default()
+        });
+
+        assert!(matches!(
+            fixture.update(&source).await,
+            Err(ModuleSupervisorError::RolledBack(_))
+        ));
+        assert_eq!(previous.state(), ModuleRuntimeState::Ready);
+        assert_eq!(fixture.supervisor.pending_release_count(MODULE), 1);
+        assert!(fixture.loader.stops().is_empty());
+
+        fixture.supervisor.stop(MODULE).await.unwrap();
+        assert_eq!(fixture.supervisor.pending_release_count(MODULE), 0);
+        assert_eq!(previous.state(), ModuleRuntimeState::Stopped);
+        // Previous plus the failed candidate, each exactly once.
+        assert_eq!(fixture.loader.stops().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn start_settles_a_failed_previous_instance_before_replacing_it() {
+        let fixture = Fixture::new(ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT).await;
+        fixture.publish("1.0.0", &[]).await;
+        let previous = fixture.start().await;
+        fixture.loader.fail_next_stops(1);
+        assert!(fixture.supervisor.stop(MODULE).await.is_err());
+        assert_eq!(previous.state(), ModuleRuntimeState::Failed);
+
+        // The release fails again, so start fails closed and keeps the
+        // previous instance registered for another retry.
+        fixture.loader.fail_next_stops(1);
+        assert!(fixture
+            .supervisor
+            .start(&HostSession::local_default(), MODULE)
+            .await
+            .is_err());
+        assert!(fixture
+            .supervisor
+            .runtime(MODULE)
+            .unwrap()
+            .is_same_runtime(&previous));
+        assert_eq!(fixture.loader.starts.load(Ordering::SeqCst), 1);
+
+        let restarted = fixture.start().await;
+        assert_eq!(previous.state(), ModuleRuntimeState::Stopped);
+        assert!(!restarted.is_same_runtime(&previous));
+        assert_eq!(restarted.state(), ModuleRuntimeState::Ready);
+        assert_eq!(
+            fixture.loader.stops(),
+            vec![previous.runtime_id().to_owned()]
+        );
     }
 }

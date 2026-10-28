@@ -1,1 +1,3 @@
-pub use dgos_application::{HostCapabilityService, ModuleReleaseService, ProviderCallService};
+pub use dgos_application::{
+    HostCapabilityService, ModuleOperationManager, ModuleReleaseService, ProviderCallService,
+};

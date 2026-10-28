@@ -105,26 +105,44 @@ pub fn run() {
                     .expect("Failed to recover workbench task audit");
 
                 // Keep module authorization behind a host-owned service. No
-                // renderer command receives a module identity at this stage.
+                // renderer command receives a module identity.
                 let module_permissions = Arc::new(
                     dgos_db::ModulePermissionRepository::new(db.clone()),
                 );
                 let module_store = app_dir.join("modules");
                 std::fs::create_dir_all(&module_store)
                     .expect("Failed to create module package directory");
+                // Host-owned local update sources (D034). Nothing outside
+                // this directory can be an update source; no URL is accepted.
+                let module_sources_dir = app_dir.join("module-sources");
+                std::fs::create_dir_all(&module_sources_dir)
+                    .expect("Failed to create module source directory");
                 // The publisher owns staging, integrity validation, atomic
-                // pointer switches and startup recovery. No module is loaded
-                // here; federation remains behind the future FR-004 runtime.
+                // pointer switches and startup recovery.
                 let module_publisher = Arc::new(
                     dgos_modules::ModulePublisher::new(module_store, db.clone()),
                 );
                 let module_release = capabilities::ModuleReleaseService::new(
                     module_publisher.clone(),
                 );
-                module_release
-                    .recover_registered()
-                    .await
-                    .expect("Failed to recover module package pointers");
+                let module_operations = capabilities::ModuleOperationManager::new(
+                    module_publisher.clone(),
+                    Arc::new(dgos_modules::LocalArtifactLoader),
+                    dgos_modules::LocalModuleSources::new(module_sources_dir),
+                );
+                // Fail-closed (D034): a recovery failure does not abort the
+                // desktop app, but start/update stay refused until a later
+                // recovery succeeds. No module runtime is started here.
+                match module_operations.recover().await {
+                    Ok(ready) => tracing::info!(
+                        "Module recovery completed: {} module(s) ready",
+                        ready.len()
+                    ),
+                    Err(error) => tracing::error!(
+                        "Module recovery failed (code {}); module start/update are disabled",
+                        error.code()
+                    ),
+                }
                 let host_capabilities =
                     capabilities::HostCapabilityService::with_publisher(
                         module_permissions,
@@ -134,6 +152,7 @@ pub fn run() {
                     host_capabilities.clone(),
                 ));
                 app_handle.manage(module_release);
+                app_handle.manage(module_operations);
                 app_handle.manage(host_capabilities);
                 app_handle.manage(module_publisher);
 
@@ -208,6 +227,12 @@ pub fn run() {
             commands::clear_mcp_bearer_token,
             commands::list_mcp_usage_logs,
             commands::list_mcp_connection_logs,
+            // Module lifecycle commands (D034)
+            commands::start_module,
+            commands::stop_module,
+            commands::update_module,
+            commands::get_module_operation,
+            commands::get_module_runtime_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

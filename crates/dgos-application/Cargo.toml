@@ -11,8 +11,10 @@ dgos-types = { path = "../dgos-types" }
 tokio = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
+async-trait = { workspace = true }
 sha2 = { workspace = true }
 tempfile = "3"
 serde_json = { workspace = true }

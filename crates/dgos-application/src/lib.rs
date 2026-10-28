@@ -5,6 +5,10 @@
 //! managers independently. The services bind trusted execution context and
 //! leave resource ownership and provider invariants to their domain managers.
 
+mod module_operations;
+
+pub use module_operations::ModuleOperationManager;
+
 use dgos_db::{ModulePermission, ModulePermissionRepository};
 use dgos_modules::{ModulePublisher, ModuleRequestOutcome, ModuleRuntimeHandle};
 use dgos_providers::ProviderManager;
@@ -258,12 +262,6 @@ impl ModuleReleaseService {
         };
         self.publisher.commit(staged).await?;
         Ok(result)
-    }
-
-    pub async fn recover_registered(
-        &self,
-    ) -> Result<Vec<String>, dgos_modules::ModulePackageError> {
-        self.publisher.recover_registered().await
     }
 }
 
