@@ -7,6 +7,7 @@ use dgos_skills::{
     content_package::{load_bundled_catalog, safe_child, validate_package},
     SkillsManager,
 };
+use dgos_types::{BuiltinCaller, ExecutionProvenance};
 use std::path::{Path, PathBuf};
 
 fn source() -> PathBuf {
@@ -106,6 +107,62 @@ async fn ac19_initialization_preserves_disabled_user_state_and_user_isolation() 
         .call_cli_skill(id, "alice", serde_json::json!({}))
         .await
         .is_err());
+}
+
+#[tokio::test]
+async fn content_preparation_records_host_provenance_without_content_payload() {
+    let (manager, db, _dir) = setup().await;
+    manager.register_bundled_catalog(&source()).await.unwrap();
+    let id = "dgos.official.writing.summarize";
+    manager.install_skill(id, "alice").await.unwrap();
+    let provenance = ExecutionProvenance {
+        caller: BuiltinCaller::Workbench,
+        request_id: "task-provenance-1".into(),
+    };
+    manager
+        .prepare_content_skill_with_provenance(id, "alice", Some(&provenance))
+        .await
+        .unwrap();
+    let logs = dgos_db::entities::skill_usage_logs::Entity::find()
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].caller.as_deref(), Some("workbench"));
+    assert_eq!(logs[0].request_id.as_deref(), Some("task-provenance-1"));
+    assert_eq!(logs[0].task_ref.as_deref(), Some("task-provenance-1"));
+    assert_eq!(
+        logs[0].input_params,
+        serde_json::json!({"operation": "prepare_content_skill"})
+    );
+    assert!(!logs[0].input_params.to_string().contains("执行步骤"));
+    assert!(logs[0]
+        .output_result
+        .as_ref()
+        .unwrap()
+        .get("content_hash")
+        .is_some());
+}
+
+#[tokio::test]
+async fn skill_usage_provenance_migration_preserves_historical_rows() {
+    use dgos_db::sea_orm::{ConnectionTrait, DbBackend, Statement};
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    Migrator::up(&db, Some(4)).await.unwrap();
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "INSERT INTO skill_usage_logs (id, skill_id, user_id, input_params, output_result, success, error_message, latency_ms, created_at) VALUES ('legacy-log', 'legacy', 'alice', '{}', NULL, 1, NULL, 3, 1)",
+    )).await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    let row = dgos_db::entities::skill_usage_logs::Entity::find_by_id("legacy-log")
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.skill_id, "legacy");
+    assert!(row.caller.is_none());
+    assert!(row.request_id.is_none());
+    assert!(row.task_ref.is_none());
 }
 
 #[tokio::test]

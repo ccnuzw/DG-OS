@@ -14,6 +14,7 @@ use dgos_db::{
         QuerySelect, Set, TransactionTrait,
     },
 };
+use dgos_types::ExecutionProvenance;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -142,6 +143,7 @@ pub struct McpUsageLog {
     pub server_id: String,
     pub tool_name: String,
     pub task_ref: Option<String>,
+    pub caller: Option<String>,
     pub outcome: String,
     pub error_class: Option<String>,
     pub duration_ms: Option<i32>,
@@ -1075,7 +1077,18 @@ impl McpManager {
         user_id: &str,
         input: CallMcpToolRequest,
     ) -> Result<CallMcpToolResponse> {
-        self.call_tool_with_schema(user_id, input, None, None).await
+        self.call_tool_with_schema(user_id, input, None, None, None)
+            .await
+    }
+
+    pub async fn call_tool_with_provenance(
+        &self,
+        user_id: &str,
+        input: CallMcpToolRequest,
+        provenance: &ExecutionProvenance,
+    ) -> Result<CallMcpToolResponse> {
+        self.call_tool_with_schema(user_id, input, None, None, Some(provenance))
+            .await
     }
 
     /// Hosts pin a task's tool contract; checking under the dispatch snapshot
@@ -1086,7 +1099,7 @@ impl McpManager {
         input: CallMcpToolRequest,
         schema_hash: &str,
     ) -> Result<CallMcpToolResponse> {
-        self.call_tool_with_schema(user_id, input, Some(schema_hash), None)
+        self.call_tool_with_schema(user_id, input, Some(schema_hash), None, None)
             .await
     }
 
@@ -1097,8 +1110,26 @@ impl McpManager {
         schema_hash: &str,
         cancellation: &CancellationToken,
     ) -> Result<CallMcpToolResponse> {
-        self.call_tool_with_schema(user_id, input, Some(schema_hash), Some(cancellation))
+        self.call_tool_with_schema(user_id, input, Some(schema_hash), Some(cancellation), None)
             .await
+    }
+
+    pub async fn call_tool_at_schema_cancellable_with_provenance(
+        &self,
+        user_id: &str,
+        input: CallMcpToolRequest,
+        schema_hash: &str,
+        cancellation: &CancellationToken,
+        provenance: &ExecutionProvenance,
+    ) -> Result<CallMcpToolResponse> {
+        self.call_tool_with_schema(
+            user_id,
+            input,
+            Some(schema_hash),
+            Some(cancellation),
+            Some(provenance),
+        )
+        .await
     }
 
     async fn call_tool_with_schema(
@@ -1107,6 +1138,7 @@ impl McpManager {
         input: CallMcpToolRequest,
         schema_hash: Option<&str>,
         cancellation: Option<&CancellationToken>,
+        provenance: Option<&ExecutionProvenance>,
     ) -> Result<CallMcpToolResponse> {
         let _runtime = cancellable(&self.stopping, self.runtime.read()).await?;
         let call_id = input
@@ -1119,7 +1151,14 @@ impl McpManager {
         if cancellation.is_some_and(CancellationToken::is_cancelled) {
             active.token.cancel();
         }
-        let call = self.call_tool_inner(user_id, &input, &call_id, &active.token, schema_hash);
+        let call = self.call_tool_inner(
+            user_id,
+            &input,
+            &call_id,
+            &active.token,
+            schema_hash,
+            provenance,
+        );
         tokio::pin!(call);
         let external_cancel = async {
             match cancellation {
@@ -1134,7 +1173,8 @@ impl McpManager {
             _ = external_cancel => { active.token.cancel(); call.await },
         };
         if let Err(error) = &result {
-            self.record_rejected_call(user_id, &input, error).await;
+            self.record_rejected_call(user_id, &input, error, provenance)
+                .await;
         }
         result
     }
@@ -1146,6 +1186,7 @@ impl McpManager {
         call_id: &str,
         cancellation: &CancellationToken,
         schema_hash: Option<&str>,
+        provenance: Option<&ExecutionProvenance>,
     ) -> Result<CallMcpToolResponse> {
         let _slot = cancellable(
             cancellation,
@@ -1218,6 +1259,7 @@ impl McpManager {
             server_id: Set(input.server_id.clone()),
             tool_name: Set(input.tool_name.clone()),
             task_ref: Set(input.task_ref.clone()),
+            caller: Set(provenance.map(|p| format!("{:?}", p.caller).to_lowercase())),
             request_hash: Set(Some(request_hash)),
             outcome: Set("pending".into()),
             error_class: Set(None),
@@ -1316,6 +1358,7 @@ impl McpManager {
         user_id: &str,
         input: &CallMcpToolRequest,
         error: &McpError,
+        provenance: Option<&ExecutionProvenance>,
     ) {
         // Do not let an untrusted caller forge audit rows against another user's Server.
         if !matches!(self.get_model(user_id, &input.server_id).await, Ok(Some(_))) {
@@ -1338,6 +1381,7 @@ impl McpManager {
             server_id: Set(input.server_id.clone()),
             tool_name: Set(input.tool_name.clone()),
             task_ref: Set(input.task_ref.clone()),
+            caller: Set(provenance.map(|p| format!("{:?}", p.caller).to_lowercase())),
             request_hash: Set(Some(hash_text(&input.arguments.to_string()))),
             outcome: Set(match error {
                 McpError::PermissionDenied
@@ -1379,6 +1423,7 @@ impl McpManager {
                 server_id: row.server_id,
                 tool_name: row.tool_name,
                 task_ref: row.task_ref,
+                caller: row.caller,
                 outcome: row.outcome,
                 error_class: row.error_class,
                 duration_ms: row.duration_ms,

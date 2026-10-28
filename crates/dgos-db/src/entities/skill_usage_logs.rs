@@ -10,6 +10,9 @@ pub struct Model {
     pub id: String,
     pub skill_id: String,
     pub user_id: String,
+    pub caller: Option<String>,
+    pub request_id: Option<String>,
+    pub task_ref: Option<String>,
     #[sea_orm(column_type = "Json")]
     pub input_params: serde_json::Value,
     #[sea_orm(column_type = "Json")]

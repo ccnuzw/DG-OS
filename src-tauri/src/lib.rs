@@ -2,6 +2,8 @@
 // Main library entry point
 
 mod commands;
+mod host;
+mod provider_credentials;
 
 use dgos_db::sea_orm_migration::MigratorTrait;
 use dgos_mcp::McpManager;
@@ -37,11 +39,6 @@ pub fn run() {
 
                 tracing::info!("Database URL: {}", database_url);
 
-                // Initialize provider manager
-                let manager = ProviderManager::new(&database_url)
-                    .await
-                    .expect("Failed to initialize provider manager");
-
                 // Initialize skills manager
                 let skills_dir = app_dir.join("skills");
                 std::fs::create_dir_all(&skills_dir).expect("Failed to create skills directory");
@@ -54,6 +51,17 @@ pub fn run() {
                 dgos_db::migrations::Migrator::up(&db, None)
                     .await
                     .expect("Failed to run database migrations");
+
+                let manager = ProviderManager::with_vault(
+                    &database_url,
+                    Arc::new(provider_credentials::OsProviderCredentialVault),
+                )
+                .await
+                .expect("Failed to initialize provider manager");
+                manager
+                    .recover_credentials(host::LOCAL_USER)
+                    .await
+                    .expect("Failed to inspect provider credential migration state");
 
                 let skills_manager = SkillsManager::new(db.clone(), skills_dir);
                 #[cfg(debug_assertions)]
@@ -126,6 +134,7 @@ pub fn run() {
             commands::call_provider,
             commands::update_provider_order,
             commands::list_usage_logs,
+            commands::migrate_provider_credential,
             // Skills commands
             commands::fetch_skills_registry,
             commands::search_skills,
@@ -146,6 +155,7 @@ pub fn run() {
             commands::start_workbench_tool_task,
             commands::advance_workbench_tool_task,
             commands::cancel_workbench_tool_task,
+            commands::cancel_workbench_task,
             // MCP commands
             commands::list_mcp_servers,
             commands::get_mcp_server_config,

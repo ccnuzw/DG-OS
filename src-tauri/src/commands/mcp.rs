@@ -1,9 +1,11 @@
+use crate::host::{self, Capability, LOCAL_USER};
 use async_trait::async_trait;
 use dgos_mcp::{
     CallMcpToolRequest, CallMcpToolResponse, CreateMcpServerRequest, CredentialScope,
     McpConnectionLog, McpCredentialVault, McpError, McpManager, McpServer, McpTool, McpUsageLog,
     SecretToken, UpdateMcpServerRequest,
 };
+use dgos_types::BuiltinCaller;
 use std::sync::Arc;
 use tauri::{State, WebviewWindow};
 
@@ -63,10 +65,11 @@ pub async fn list_mcp_servers(
     window: WebviewWindow,
     state: State<'_, McpState>,
 ) -> Result<Vec<McpServer>, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::McpRead)
+        .map_err(|e| e.to_string())?;
     state
         .manager
-        .list_servers(LOCAL_MCP_USER)
+        .list_servers(context.user_id())
         .await
         .map_err(|e| e.to_string())
 }
@@ -77,10 +80,11 @@ pub async fn get_mcp_server_config(
     server_id: String,
     state: State<'_, McpState>,
 ) -> Result<CreateMcpServerRequest, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::McpManage)
+        .map_err(|e| e.to_string())?;
     state
         .manager
-        .server_config(LOCAL_MCP_USER, &server_id)
+        .server_config(context.user_id(), &server_id)
         .await
         .map_err(|e| e.to_string())
 }
@@ -91,10 +95,11 @@ pub async fn create_mcp_server(
     request: CreateMcpServerRequest,
     state: State<'_, McpState>,
 ) -> Result<McpServer, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::McpManage)
+        .map_err(|e| e.to_string())?;
     state
         .manager
-        .create_server(LOCAL_MCP_USER, request)
+        .create_server(context.user_id(), request)
         .await
         .map_err(|e| e.to_string())
 }
@@ -106,10 +111,11 @@ pub async fn update_mcp_server(
     request: UpdateMcpServerRequest,
     state: State<'_, McpState>,
 ) -> Result<McpServer, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::McpManage)
+        .map_err(|e| e.to_string())?;
     state
         .manager
-        .update_server(LOCAL_MCP_USER, &server_id, request)
+        .update_server(context.user_id(), &server_id, request)
         .await
         .map_err(|e| e.to_string())
 }
@@ -121,10 +127,11 @@ pub async fn toggle_mcp_server(
     enabled: bool,
     state: State<'_, McpState>,
 ) -> Result<McpServer, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::McpManage)
+        .map_err(|e| e.to_string())?;
     state
         .manager
-        .toggle(LOCAL_MCP_USER, &server_id, enabled)
+        .toggle(context.user_id(), &server_id, enabled)
         .await
         .map_err(|e| e.to_string())
 }
@@ -135,10 +142,11 @@ pub async fn delete_mcp_server(
     server_id: String,
     state: State<'_, McpState>,
 ) -> Result<(), String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::McpManage)
+        .map_err(|e| e.to_string())?;
     state
         .manager
-        .delete_server(LOCAL_MCP_USER, &server_id)
+        .delete_server(context.user_id(), &server_id)
         .await
         .map_err(|e| e.to_string())
 }
@@ -149,10 +157,11 @@ pub async fn connect_mcp_server(
     server_id: String,
     state: State<'_, McpState>,
 ) -> Result<McpServer, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::McpManage)
+        .map_err(|e| e.to_string())?;
     state
         .manager
-        .connect(LOCAL_MCP_USER, &server_id)
+        .connect(context.user_id(), &server_id)
         .await
         .map_err(|e| e.to_string())
 }
@@ -163,10 +172,11 @@ pub async fn disconnect_mcp_server(
     server_id: String,
     state: State<'_, McpState>,
 ) -> Result<McpServer, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::McpManage)
+        .map_err(|e| e.to_string())?;
     state
         .manager
-        .disconnect(LOCAL_MCP_USER, &server_id)
+        .disconnect(context.user_id(), &server_id)
         .await
         .map_err(|e| e.to_string())
 }
@@ -177,10 +187,11 @@ pub async fn list_mcp_tools(
     server_id: String,
     state: State<'_, McpState>,
 ) -> Result<Vec<McpTool>, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::McpRead)
+        .map_err(|e| e.to_string())?;
     state
         .manager
-        .list_tools(LOCAL_MCP_USER, &server_id)
+        .list_tools(context.user_id(), &server_id)
         .await
         .map_err(|e| e.to_string())
 }
@@ -191,10 +202,11 @@ pub async fn refresh_mcp_tools(
     server_id: String,
     state: State<'_, McpState>,
 ) -> Result<Vec<McpTool>, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::McpManage)
+        .map_err(|e| e.to_string())?;
     state
         .manager
-        .refresh_tools(LOCAL_MCP_USER, &server_id)
+        .refresh_tools(context.user_id(), &server_id)
         .await
         .map_err(|e| e.to_string())
 }
@@ -205,10 +217,12 @@ pub async fn call_mcp_tool(
     request: CallMcpToolRequest,
     state: State<'_, McpState>,
 ) -> Result<CallMcpToolResponse, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::McpCall)
+        .map_err(|e| e.to_string())?;
+    let provenance = context.provenance();
     state
         .manager
-        .call_tool(LOCAL_MCP_USER, request)
+        .call_tool_with_provenance(context.user_id(), request, &provenance)
         .await
         .map_err(|e| e.to_string())
 }
@@ -220,10 +234,11 @@ pub async fn cancel_mcp_tool(
     call_id: String,
     state: State<'_, McpState>,
 ) -> Result<bool, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::McpCall)
+        .map_err(|e| e.to_string())?;
     state
         .manager
-        .cancel_call(LOCAL_MCP_USER, &server_id, &call_id)
+        .cancel_call(context.user_id(), &server_id, &call_id)
         .await
         .map_err(|error| error.to_string())
 }
@@ -235,10 +250,11 @@ pub async fn list_mcp_usage_logs(
     limit: Option<u64>,
     state: State<'_, McpState>,
 ) -> Result<Vec<McpUsageLog>, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::McpRead)
+        .map_err(|e| e.to_string())?;
     state
         .manager
-        .list_usage_logs(LOCAL_MCP_USER, server_id.as_deref(), limit)
+        .list_usage_logs(context.user_id(), server_id.as_deref(), limit)
         .await
         .map_err(|e| e.to_string())
 }
@@ -250,32 +266,13 @@ pub async fn list_mcp_connection_logs(
     limit: Option<u64>,
     state: State<'_, McpState>,
 ) -> Result<Vec<McpConnectionLog>, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::McpRead)
+        .map_err(|e| e.to_string())?;
     state
         .manager
-        .list_connection_logs(LOCAL_MCP_USER, server_id.as_deref(), limit)
+        .list_connection_logs(context.user_id(), server_id.as_deref(), limit)
         .await
         .map_err(|e| e.to_string())
-}
-
-// V1 currently has one local desktop identity; renderer arguments cannot choose users.
-pub const LOCAL_MCP_USER: &str = "default-user";
-
-pub(crate) fn require_local_main_window(window: &WebviewWindow) -> Result<(), String> {
-    let url = window
-        .url()
-        .map_err(|_| "MCP permission denied".to_owned())?;
-    let packaged = url.scheme() == "tauri"
-        || (url.scheme() == "http" && url.host_str() == Some("tauri.localhost"));
-    let development = cfg!(debug_assertions)
-        && url.scheme() == "http"
-        && matches!(url.host_str(), Some("localhost" | "127.0.0.1"))
-        && url.port() == Some(1420);
-    if window.label() == "main" && (packaged || development) {
-        Ok(())
-    } else {
-        Err("MCP permission denied".into())
-    }
 }
 
 pub struct DesktopMcpPolicy;
@@ -283,7 +280,7 @@ pub struct DesktopMcpPolicy;
 #[async_trait::async_trait]
 impl dgos_mcp::McpCallPolicy for DesktopMcpPolicy {
     async fn allows_call(&self, user_id: &str, _: &str, _: &str) -> bool {
-        user_id == LOCAL_MCP_USER
+        user_id == LOCAL_USER
     }
 }
 
@@ -293,10 +290,11 @@ pub async fn confirm_mcp_tool(
     request: CallMcpToolRequest,
     state: State<'_, McpState>,
 ) -> Result<String, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::McpCall)
+        .map_err(|e| e.to_string())?;
     state
         .manager
-        .confirm_call(LOCAL_MCP_USER, &request)
+        .confirm_call(context.user_id(), &request)
         .await
         .map_err(|e| e.to_string())
 }
@@ -308,11 +306,12 @@ pub async fn set_mcp_bearer_token(
     token: String,
     state: State<'_, McpState>,
 ) -> Result<McpServer, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::McpManage)
+        .map_err(|e| e.to_string())?;
     let token = SecretToken::new(token).map_err(|e| e.to_string())?;
     state
         .manager
-        .set_bearer_token(LOCAL_MCP_USER, &server_id, token)
+        .set_bearer_token(context.user_id(), &server_id, token)
         .await
         .map_err(|e| e.to_string())
 }
@@ -323,10 +322,11 @@ pub async fn clear_mcp_bearer_token(
     server_id: String,
     state: State<'_, McpState>,
 ) -> Result<McpServer, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::McpManage)
+        .map_err(|e| e.to_string())?;
     state
         .manager
-        .clear_bearer_token(LOCAL_MCP_USER, &server_id)
+        .clear_bearer_token(context.user_id(), &server_id)
         .await
         .map_err(|e| e.to_string())
 }

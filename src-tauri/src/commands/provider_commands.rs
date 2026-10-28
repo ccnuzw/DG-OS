@@ -1,7 +1,9 @@
+use crate::host::{self, Capability};
 use dgos_providers::ProviderManager;
+use dgos_types::BuiltinCaller;
 use dgos_types::{ChatRequest, ChatResponse, DgosError, Model, Provider, ProviderConfig, UsageLog};
 use serde::Serialize;
-use tauri::Manager;
+use tauri::{Manager, WebviewWindow};
 
 /// Response wrapper for Tauri commands
 #[derive(Serialize)]
@@ -44,10 +46,14 @@ where
 #[tauri::command]
 pub async fn list_providers(
     app: tauri::AppHandle,
-    user_id: String,
+    window: WebviewWindow,
 ) -> CommandResponse<Vec<Provider>> {
+    let context = match host::context(&window, BuiltinCaller::Settings, Capability::ProvidersRead) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
     let manager = app.state::<ProviderManager>();
-    let result = manager.list_providers(&user_id).await;
+    let result = manager.list_providers(context.user_id()).await;
     CommandResponse::from(result)
 }
 
@@ -55,11 +61,21 @@ pub async fn list_providers(
 #[tauri::command]
 pub async fn create_provider(
     app: tauri::AppHandle,
+    window: WebviewWindow,
     config: ProviderConfig,
-    user_id: String,
 ) -> CommandResponse<Provider> {
+    let context = match host::context(
+        &window,
+        BuiltinCaller::Settings,
+        Capability::ProvidersManage,
+    ) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
     let manager = app.state::<ProviderManager>();
-    let result = manager.create_provider(config, user_id).await;
+    let result = manager
+        .create_provider(config, context.user_id().into())
+        .await;
     CommandResponse::from(result)
 }
 
@@ -67,13 +83,21 @@ pub async fn create_provider(
 #[tauri::command]
 pub async fn create_provider_with_models(
     app: tauri::AppHandle,
+    window: WebviewWindow,
     config: ProviderConfig,
-    user_id: String,
     models: Vec<Model>,
 ) -> CommandResponse<Provider> {
+    let context = match host::context(
+        &window,
+        BuiltinCaller::Settings,
+        Capability::ProvidersManage,
+    ) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
     let manager = app.state::<ProviderManager>();
     let result = manager
-        .create_provider_with_models(config, user_id, models)
+        .create_provider_with_models(config, context.user_id().into(), models)
         .await;
     CommandResponse::from(result)
 }
@@ -82,11 +106,22 @@ pub async fn create_provider_with_models(
 #[tauri::command]
 pub async fn update_provider(
     app: tauri::AppHandle,
+    window: WebviewWindow,
     id: String,
     config: ProviderConfig,
 ) -> CommandResponse<Provider> {
+    let context = match host::context(
+        &window,
+        BuiltinCaller::Settings,
+        Capability::ProvidersManage,
+    ) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
     let manager = app.state::<ProviderManager>();
-    let result = manager.update_provider(&id, config).await;
+    let result = manager
+        .update_provider(&id, config, context.user_id())
+        .await;
     CommandResponse::from(result)
 }
 
@@ -94,19 +129,42 @@ pub async fn update_provider(
 #[tauri::command]
 pub async fn toggle_provider(
     app: tauri::AppHandle,
+    window: WebviewWindow,
     id: String,
     enabled: bool,
 ) -> CommandResponse<Provider> {
+    let context = match host::context(
+        &window,
+        BuiltinCaller::Settings,
+        Capability::ProvidersManage,
+    ) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
     let manager = app.state::<ProviderManager>();
-    let result = manager.toggle_provider(&id, enabled).await;
+    let result = manager
+        .toggle_provider(&id, enabled, context.user_id())
+        .await;
     CommandResponse::from(result)
 }
 
 /// Delete a provider
 #[tauri::command]
-pub async fn delete_provider(app: tauri::AppHandle, id: String) -> CommandResponse<()> {
+pub async fn delete_provider(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    id: String,
+) -> CommandResponse<()> {
+    let context = match host::context(
+        &window,
+        BuiltinCaller::Settings,
+        Capability::ProvidersManage,
+    ) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
     let manager = app.state::<ProviderManager>();
-    let result = manager.delete_provider(&id).await;
+    let result = manager.delete_provider(&id, context.user_id()).await;
     CommandResponse::from(result)
 }
 
@@ -114,8 +172,17 @@ pub async fn delete_provider(app: tauri::AppHandle, id: String) -> CommandRespon
 #[tauri::command]
 pub async fn test_provider_connection(
     app: tauri::AppHandle,
+    window: WebviewWindow,
     config: ProviderConfig,
 ) -> CommandResponse<bool> {
+    let _context = match host::context(
+        &window,
+        BuiltinCaller::Settings,
+        Capability::ProvidersManage,
+    ) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
     let manager = app.state::<ProviderManager>();
     let result = manager.test_connection(&config).await;
     CommandResponse::from(result)
@@ -125,8 +192,17 @@ pub async fn test_provider_connection(
 #[tauri::command]
 pub async fn list_models_for_config(
     app: tauri::AppHandle,
+    window: WebviewWindow,
     config: ProviderConfig,
 ) -> CommandResponse<Vec<Model>> {
+    let _context = match host::context(
+        &window,
+        BuiltinCaller::Settings,
+        Capability::ProvidersManage,
+    ) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
     let manager = app.state::<ProviderManager>();
     let result = manager.list_models_for_config(&config).await;
     CommandResponse::from(result)
@@ -136,48 +212,60 @@ pub async fn list_models_for_config(
 #[tauri::command]
 pub async fn test_provider_by_id(
     app: tauri::AppHandle,
+    window: WebviewWindow,
     provider_id: String,
 ) -> CommandResponse<bool> {
+    let context = match host::context(
+        &window,
+        BuiltinCaller::Settings,
+        Capability::ProvidersManage,
+    ) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
     let manager = app.state::<ProviderManager>();
 
-    // Get provider from database
-    let provider = match manager.get_provider(&provider_id).await {
-        Ok(Some(p)) => p,
-        Ok(None) => {
-            return CommandResponse {
-                success: false,
-                data: None,
-                error: Some(CommandError {
-                    code: 404,
-                    message: "Provider not found".to_string(),
-                }),
-            }
-        }
-        Err(e) => return CommandResponse::from(Err(e)),
-    };
-
-    // Build config from stored provider
-    let config = ProviderConfig {
-        name: provider.name,
-        provider_type: provider.provider_type,
-        base_url: provider.base_url,
-        api_key: provider.api_key,
-        enabled: provider.enabled,
-        config: provider.config,
-    };
-
-    let result = manager.test_connection(&config).await;
+    let result = manager
+        .test_provider_by_id(&provider_id, context.user_id())
+        .await;
     CommandResponse::from(result)
+}
+
+#[tauri::command]
+pub async fn migrate_provider_credential(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    provider_id: String,
+) -> CommandResponse<Provider> {
+    let context = match host::context(
+        &window,
+        BuiltinCaller::Settings,
+        Capability::ProvidersManage,
+    ) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    let manager = app.state::<ProviderManager>();
+    CommandResponse::from(
+        manager
+            .migrate_provider_credential(&provider_id, context.user_id())
+            .await,
+    )
 }
 
 /// List models for a provider
 #[tauri::command]
 pub async fn list_models(
     app: tauri::AppHandle,
+    window: WebviewWindow,
     provider_id: String,
 ) -> CommandResponse<Vec<Model>> {
+    let context = match host::context(&window, BuiltinCaller::Settings, Capability::ProvidersRead) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
     let manager = app.state::<ProviderManager>();
-    let result = manager.list_models(&provider_id).await;
+    let result = manager.list_models(&provider_id, context.user_id()).await;
     CommandResponse::from(result)
 }
 
@@ -185,10 +273,21 @@ pub async fn list_models(
 #[tauri::command]
 pub async fn refresh_models(
     app: tauri::AppHandle,
+    window: WebviewWindow,
     provider_id: String,
 ) -> CommandResponse<Vec<Model>> {
+    let context = match host::context(
+        &window,
+        BuiltinCaller::Settings,
+        Capability::ProvidersManage,
+    ) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
     let manager = app.state::<ProviderManager>();
-    let result = manager.refresh_models(&provider_id).await;
+    let result = manager
+        .refresh_models(&provider_id, context.user_id())
+        .await;
     CommandResponse::from(result)
 }
 
@@ -196,14 +295,26 @@ pub async fn refresh_models(
 #[tauri::command]
 pub async fn call_provider(
     app: tauri::AppHandle,
+    window: WebviewWindow,
     provider_id: String,
     model_id: String,
     request: ChatRequest,
-    user_id: String,
 ) -> CommandResponse<ChatResponse> {
+    let context = match host::context(&window, BuiltinCaller::Settings, Capability::ProvidersCall) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
     let manager = app.state::<ProviderManager>();
+    let provenance = context.provenance();
     let result = manager
-        .call_provider(&provider_id, &model_id, request, &user_id)
+        .call_provider_bound_with_provenance(
+            &provider_id,
+            &model_id,
+            request,
+            context.user_id(),
+            None,
+            Some(&provenance),
+        )
         .await;
     CommandResponse::from(result)
 }
@@ -212,10 +323,21 @@ pub async fn call_provider(
 #[tauri::command]
 pub async fn update_provider_order(
     app: tauri::AppHandle,
+    window: WebviewWindow,
     provider_ids: Vec<String>,
 ) -> CommandResponse<()> {
+    let context = match host::context(
+        &window,
+        BuiltinCaller::Settings,
+        Capability::ProvidersManage,
+    ) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
     let manager = app.state::<ProviderManager>();
-    let result = manager.update_provider_order(provider_ids).await;
+    let result = manager
+        .update_provider_order(provider_ids, context.user_id())
+        .await;
     CommandResponse::from(result)
 }
 
@@ -223,10 +345,14 @@ pub async fn update_provider_order(
 #[tauri::command]
 pub async fn list_usage_logs(
     app: tauri::AppHandle,
-    user_id: String,
+    window: WebviewWindow,
     limit: Option<usize>,
 ) -> CommandResponse<Vec<UsageLog>> {
+    let context = match host::context(&window, BuiltinCaller::Settings, Capability::ProvidersRead) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
     let manager = app.state::<ProviderManager>();
-    let result = manager.list_usage_logs(&user_id, limit).await;
+    let result = manager.list_usage_logs(context.user_id(), limit).await;
     CommandResponse::from(result)
 }

@@ -34,11 +34,10 @@ const SkillsManagement: React.FC = () => {
   const detailRef = useRef<HTMLDivElement>(null);
 
   // Desktop-only placeholder; derive from a trusted session before remote use.
-  const userId = 'default-user';
 
   useEffect(() => {
-    void initialize(userId);
-  }, [initialize, userId]);
+    void initialize();
+  }, [initialize]);
 
   useEffect(() => {
     if (!detailModalOpen) return;
@@ -83,7 +82,7 @@ const SkillsManagement: React.FC = () => {
     setActionError(null);
     setSearchQuery('');
     setSelectedCategory('all');
-    await initialize(userId);
+    await initialize();
   };
 
   const handleInstall = async (skillId: string) => {
@@ -97,7 +96,7 @@ const SkillsManagement: React.FC = () => {
         return;
       }
 
-      await installSkill(skillId, userId);
+      await installSkill(skillId);
       setActionNotice('Skill added to My Skills. Select it explicitly in the AI Workbench to use it for a task.');
     } catch (error) {
       setActionError(`Unable to add skill: ${error}`);
@@ -107,7 +106,7 @@ const SkillsManagement: React.FC = () => {
   const handleToggle = async (skillId: string, enabled: boolean) => {
     setActionError(null);
     try {
-      await toggleSkill(skillId, userId, enabled);
+      await toggleSkill(skillId, enabled);
     } catch (error) {
       setActionError(`Toggle failed: ${error}`);
     }
@@ -179,7 +178,7 @@ const SkillsManagement: React.FC = () => {
       {installedError && (
         <div className="skills-error" role="alert">
           <p>Unable to load installed skills: {installedError}</p>
-          <button onClick={() => { void initialize(userId); }} disabled={installedLoading}>Retry loading skills</button>
+          <button onClick={() => { void initialize(); }} disabled={installedLoading}>Retry loading skills</button>
         </div>
       )}
       {updatesError && <p className="skills-error" role="alert">Unable to check skill updates: {updatesError}</p>}

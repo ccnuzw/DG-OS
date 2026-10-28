@@ -5,12 +5,15 @@ use dgos_db::{
         ActiveModelTrait, ColumnTrait, Database, DatabaseConnection, EntityTrait, QueryFilter, Set,
     },
     sea_orm_migration::MigratorTrait,
-    ModelRepository, ProviderRepository,
+    ModelRepository,
 };
 use dgos_mcp::{
     CreateMcpServerRequest, McpCallPolicy, McpManager, McpTool, StdioConfig, TransportKind,
 };
-use dgos_providers::ProviderManager;
+use dgos_providers::{
+    test_support::{seed_provider, MemoryCredentialVault},
+    ProviderManager,
+};
 use dgos_skills::SkillsManager;
 use dgos_types::{Model, ProviderConfig};
 use dgos_workbench::{
@@ -151,20 +154,22 @@ async fn setup_mode(url: &str, mode: &str) -> Fixture {
     );
     let db = Database::connect(&db_url).await.unwrap();
     Migrator::up(&db, None).await.unwrap();
-    let provider = ProviderRepository::new(db.clone())
-        .create(
-            ProviderConfig {
-                name: "fixture".into(),
-                provider_type: "openai_compatible".into(),
-                base_url: url.into(),
-                api_key: "synthetic-secret".into(),
-                enabled: true,
-                config: None,
-            },
-            "alice".into(),
-        )
-        .await
-        .unwrap();
+    let vault = Arc::new(MemoryCredentialVault::default());
+    let provider = seed_provider(
+        db.clone(),
+        &vault,
+        ProviderConfig {
+            name: "fixture".into(),
+            provider_type: "openai_compatible".into(),
+            base_url: url.into(),
+            api_key: "synthetic-secret".into(),
+            enabled: true,
+            config: None,
+        },
+        "alice",
+    )
+    .await
+    .unwrap();
     ModelRepository::new(db.clone())
         .sync_models(
             &provider.id,
@@ -213,7 +218,7 @@ async fn setup_mode(url: &str, mode: &str) -> Fixture {
     Fixture {
         skills: SkillsManager::new(db.clone(), dir.path().join("skills")),
         workbench: WorkbenchManager::new(db.clone()),
-        providers: ProviderManager::new(&db_url).await.unwrap(),
+        providers: ProviderManager::with_vault(&db_url, vault).await.unwrap(),
         db,
         mcp,
         tool,
@@ -223,6 +228,7 @@ async fn setup_mode(url: &str, mode: &str) -> Fixture {
             prompt: "private task input".into(),
             skill_id: None,
             allow_without_skill: true,
+            client_task_id: None,
         },
         _dir: dir,
     }
@@ -242,6 +248,126 @@ async fn proposal_mock(server: &mut mockito::ServerGuard, body: Value) -> mockit
         .expect(1)
         .create_async()
         .await
+}
+
+#[tokio::test]
+async fn normal_vault_backed_workbench_tool_task_completes() {
+    let mut server = mockito::Server::new_async().await;
+    let first = proposal_mock(
+        &mut server,
+        proposed("dgos_tool_0", json!({"text":"synthetic-vault-flow"})),
+    )
+    .await;
+    let second = server.mock("POST", "/chat/completions")
+        .match_request(|request| {
+            let body: Value = serde_json::from_slice(request.body().unwrap()).unwrap();
+            body["messages"].as_array().is_some_and(|messages| messages.last()
+                .is_some_and(|message| message["role"] == "tool" && message["tool_call_id"] == "call_1"))
+        })
+        .with_status(200).with_header("content-type", "application/json")
+        .with_body(json!({"choices":[{"message":{"role":"assistant","content":"Completed"},"finish_reason":"stop"}],
+            "usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10}}).to_string())
+        .expect(1).create_async().await;
+    let fixture = setup(&server.url()).await;
+    let update = fixture.propose().await;
+    assert_eq!(update.record.task.provider_config_revision, Some(0));
+    let proposal = update.proposal.unwrap();
+    let done = fixture
+        .workbench
+        .advance_tool_task(
+            &fixture.providers,
+            &fixture.mcp,
+            &update.record.task.id,
+            "alice",
+            ToolAction::Approve {
+                proposal_id: proposal.id,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(done.record.task.status, "succeeded");
+    assert_eq!(done.content.as_deref(), Some("Completed"));
+    assert_eq!(done.record.task.provider_config_revision, Some(0));
+    let usage = fixture
+        .mcp
+        .list_usage_logs("alice", None, None)
+        .await
+        .unwrap();
+    assert_eq!(usage.len(), 1);
+    assert_eq!(
+        usage[0].task_ref.as_deref(),
+        Some(done.record.task.id.as_str())
+    );
+    assert_eq!(usage[0].caller.as_deref(), Some("workbench"));
+    first.assert_async().await;
+    second.assert_async().await;
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn provider_configuration_change_ends_bound_task_before_next_dispatch() {
+    let mut server = mockito::Server::new_async().await;
+    let model = proposal_mock(
+        &mut server,
+        proposed("dgos_tool_0", json!({"text":"synthetic-config-lifecycle"})),
+    )
+    .await;
+    let fixture = setup(&server.url()).await;
+    let started = fixture.propose().await;
+    assert_eq!(started.record.task.provider_config_revision, Some(0));
+    let updated = fixture
+        .providers
+        .update_provider(
+            &fixture.input.provider_id,
+            ProviderConfig {
+                name: "Updated metadata".into(),
+                provider_type: "openai_compatible".into(),
+                base_url: server.url(),
+                api_key: String::new(),
+                enabled: true,
+                config: None,
+            },
+            "alice",
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.config_revision, 1);
+    let done = fixture
+        .workbench
+        .advance_tool_task(
+            &fixture.providers,
+            &fixture.mcp,
+            &started.record.task.id,
+            "alice",
+            ToolAction::Approve {
+                proposal_id: started.proposal.unwrap().id,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(done.record.task.status, "failed");
+    assert_eq!(
+        done.record.task.error_code.as_deref(),
+        Some("provider_1001012")
+    );
+    assert_eq!(done.record.task.provider_config_revision, Some(0));
+    assert!(fixture
+        .mcp
+        .list_usage_logs("alice", None, None)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        fixture
+            .providers
+            .list_usage_logs("alice", None)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    model.assert_async().await;
+    fixture.stop().await;
 }
 
 #[tokio::test]

@@ -1,6 +1,9 @@
 use super::*;
 use dgos_mcp::{CallMcpToolRequest, McpManager, McpTool};
-use dgos_types::{ToolCall, ToolChatRequest, ToolDefinition, ToolFunction, ToolMessage};
+use dgos_types::{
+    BuiltinCaller, ExecutionProvenance, ToolCall, ToolChatRequest, ToolDefinition, ToolFunction,
+    ToolMessage,
+};
 use serde_json::{json, Value};
 use std::{
     collections::HashSet,
@@ -53,6 +56,7 @@ pub struct ToolTaskUpdate {
     pub phase: String,
     pub proposal: Option<ToolProposal>,
     pub content: Option<String>,
+    pub audit_warning: bool,
 }
 
 pub(super) struct SelectedTool {
@@ -85,6 +89,7 @@ pub(super) struct ToolSession {
     stop_reason: Mutex<Option<&'static str>>,
     completion: Mutex<()>,
     tokens: AtomicI64,
+    audit_warning: std::sync::atomic::AtomicBool,
 }
 
 impl WorkbenchManager {
@@ -93,7 +98,7 @@ impl WorkbenchManager {
         skills: &SkillsManager,
         providers: &ProviderManager,
         mcp: &McpManager,
-        input: ToolTaskInput,
+        mut input: ToolTaskInput,
         user: &str,
     ) -> Result<ToolTaskUpdate> {
         let _start = self.tool_starts.lock().await;
@@ -112,7 +117,18 @@ impl WorkbenchManager {
         if input.tools.is_empty() || input.tools.len() > MAX_CALLS {
             return Err("Explicitly select between one and eight tools".into());
         }
-        let model = self.validate_provider(providers, &input.task, user).await?;
+        let request_id = input
+            .task
+            .client_task_id
+            .clone()
+            .filter(|id| uuid::Uuid::parse_str(id).is_ok())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        input.task.client_task_id = Some(request_id.clone());
+        let provenance = ExecutionProvenance {
+            caller: BuiltinCaller::Workbench,
+            request_id,
+        };
+        let (provider, model) = self.validate_provider(providers, &input.task, user).await?;
         let servers = mcp
             .list_servers(user)
             .await
@@ -161,7 +177,15 @@ impl WorkbenchManager {
             });
         }
         let prepared = self
-            .prepare_bound(skills, &input.task, user, model.context_window, &tools)
+            .prepare_bound(
+                skills,
+                &input.task,
+                user,
+                model.context_window,
+                &tools,
+                Some(provider.config_revision),
+                Some(&provenance),
+            )
             .await?;
         let id = prepared.record.task.id.clone();
         let update = ToolTaskUpdate {
@@ -169,6 +193,7 @@ impl WorkbenchManager {
             phase: "ready".into(),
             proposal: None,
             content: None,
+            audit_warning: false,
         };
         let context = ToolContext {
             record: prepared.record,
@@ -196,6 +221,7 @@ impl WorkbenchManager {
             stop_reason: Mutex::new(None),
             completion: Mutex::new(()),
             tokens: AtomicI64::new(0),
+            audit_warning: std::sync::atomic::AtomicBool::new(false),
         });
         self.tool_tasks
             .lock()
@@ -297,6 +323,7 @@ impl WorkbenchManager {
                     phase: "awaiting_confirmation".into(),
                     proposal: Some(pending.public.clone()),
                     content: None,
+                    audit_warning: session.audit_warning.load(Ordering::Relaxed),
                 };
                 let mut guard = session.context.lock().await;
                 if session.cancel.is_cancelled() {
@@ -337,6 +364,12 @@ impl WorkbenchManager {
         if session.cancel.is_cancelled() {
             return Err("task_cancelled".into());
         }
+        if let Some(revision) = context.record.task.provider_config_revision {
+            providers
+                .ensure_revision(&context.record.task.provider_id, &session.user, revision)
+                .await
+                .map_err(|error| format!("provider_{}", error.error_code()))?;
+        }
         if let Some(pending) = context.pending.take() {
             if pending.expires <= Instant::now() {
                 return Err("confirmation_expired".into());
@@ -362,11 +395,15 @@ impl WorkbenchManager {
                     .map_err(|e| e.class().to_string())?,
             );
             let result = mcp
-                .call_tool_at_schema_cancellable(
+                .call_tool_at_schema_cancellable_with_provenance(
                     &session.user,
                     request,
                     &selected.tool.schema_hash,
                     &session.cancel,
+                    &ExecutionProvenance {
+                        caller: BuiltinCaller::Workbench,
+                        request_id: context.record.task.id.clone(),
+                    },
                 )
                 .await
                 .map_err(|e| e.class().to_string())?;
@@ -409,13 +446,23 @@ impl WorkbenchManager {
             max_tokens: OUTPUT_TOKENS,
         };
         validate_budget(&request, context.window)?;
+        let provenance = ExecutionProvenance {
+            caller: BuiltinCaller::Workbench,
+            request_id: context.record.task.id.clone(),
+        };
         let response = tokio::select! {
             _ = session.cancel.cancelled() => return Err("task_cancelled".into()),
-            response = tokio::time::timeout(Duration::from_secs(120), providers.call_provider_tools(
-                &context.record.task.provider_id, &context.record.task.model_id, request, &session.user)) => {
+            response = tokio::time::timeout(Duration::from_secs(120), providers.call_provider_tools_bound_with_provenance(
+                &context.record.task.provider_id, &context.record.task.model_id, request, &session.user,
+                context.record.task.provider_config_revision,
+                Some(&provenance))) => {
                 response.map_err(|_| "provider_timeout")?.map_err(|error| format!("provider_{}", error.error_code()))?
             }
         };
+        let audit_warning = response.audit_warning;
+        if audit_warning {
+            session.audit_warning.store(true, Ordering::Relaxed);
+        }
         context.tokens = context
             .tokens
             .saturating_add(response.usage.total_tokens as i64);
@@ -491,6 +538,7 @@ impl WorkbenchManager {
                     phase: "finished".into(),
                     proposal: None,
                     content: None,
+                    audit_warning: false,
                 });
             }
         };
@@ -502,6 +550,9 @@ impl WorkbenchManager {
     /// Revoke all proposals before releasing in-memory task material at exit.
     pub async fn shutdown(&self) -> Result<()> {
         self.stopping.cancel();
+        for (_, (_, cancellation)) in self.text_tasks.lock().await.iter() {
+            cancellation.cancel();
+        }
         let _start = self.tool_starts.lock().await;
         let sessions: Vec<_> = self
             .tool_tasks
@@ -575,6 +626,7 @@ impl WorkbenchManager {
             phase: "finished".into(),
             proposal: None,
             content,
+            audit_warning: session.audit_warning.load(Ordering::Relaxed),
         })
     }
 }
@@ -636,6 +688,7 @@ mod tests {
             user_id: Set("alice".into()),
             app_id: Set("ai-workbench".into()),
             provider_id: Set("provider".into()),
+            provider_config_revision: Set(None),
             model_id: Set("model".into()),
             status: Set("running".into()),
             created_at: Set(1),
@@ -666,6 +719,7 @@ mod tests {
             stop_reason: Mutex::new(None),
             completion: Mutex::new(()),
             tokens: AtomicI64::new(0),
+            audit_warning: std::sync::atomic::AtomicBool::new(false),
         });
         manager
             .tool_tasks

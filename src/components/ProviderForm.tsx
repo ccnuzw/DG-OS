@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { ProviderConfig, Model, Provider } from '../stores/providerStore';
 
@@ -9,7 +9,10 @@ interface ProviderFormProps {
   onDelete?: () => Promise<boolean>;
   onChange: () => void;
   loading?: boolean;
+  onModelsRefreshed?: () => Promise<void>;
 }
+
+const EMPTY_MODELS: Model[] = [];
 
 interface CommandResponse<T> {
   success: boolean;
@@ -19,11 +22,12 @@ interface CommandResponse<T> {
 
 export default function ProviderForm({
   provider,
-  initialModels = [],
+  initialModels = EMPTY_MODELS,
   onSave,
   onDelete,
   onChange,
   loading = false,
+  onModelsRefreshed,
 }: ProviderFormProps) {
   const isEditMode = !!provider;
   const isNewMode = !provider;
@@ -59,6 +63,9 @@ export default function ProviderForm({
   const [modelsError, setModelsError] = useState<string | null>(null);
 
   const [saving, setSaving] = useState(false);
+  const operationGeneration = useRef(0);
+  const endpointChanged = !!provider && (formData.base_url !== provider.base_url || formData.provider_type !== provider.provider_type);
+  const needsNewKey = endpointChanged && !formData.api_key;
 
   // 当 provider 变化时重置表单
   useEffect(() => {
@@ -72,7 +79,6 @@ export default function ProviderForm({
         config: provider.config,
       });
       // 编辑模式：加载初始模型列表
-      setModels(initialModels);
     } else {
       setFormData({
         name: '',
@@ -87,19 +93,40 @@ export default function ProviderForm({
     }
     setTestResult(null);
     setModelsError(null);
-  }, [provider, initialModels]);
+  }, [provider?.id, provider?.config_revision]);
+
+  useEffect(() => {
+    if (provider) setModels(initialModels);
+  }, [initialModels, provider?.id]);
+
+  useEffect(() => {
+    operationGeneration.current += 1;
+    setTesting(false);
+    setFetchingModels(false);
+    return () => { operationGeneration.current += 1; };
+  }, [provider?.id, provider?.config_revision]);
 
   // 表单变化处理
   const handleChange = (field: keyof ProviderConfig, value: any) => {
+    if (field === 'base_url' || field === 'provider_type' || field === 'api_key') {
+      operationGeneration.current += 1;
+      setTesting(false);
+      setFetchingModels(false);
+      setTestResult(null);
+      setModelsError(null);
+      if (isNewMode) setModels([]);
+    }
     setFormData({ ...formData, [field]: value });
     onChange();
   };
 
   // 测试连接
   const handleTestConnection = async () => {
+    if (needsNewKey) return;
     setTesting(true);
     setTestResult(null);
     setTestMessage('');
+    const generation = operationGeneration.current;
 
     try {
       let response: CommandResponse<boolean>;
@@ -129,6 +156,7 @@ export default function ProviderForm({
         });
       }
 
+      if (generation !== operationGeneration.current) return;
       if (response.success && response.data) {
         setTestResult('success');
         setTestMessage('Connection successful');
@@ -137,17 +165,20 @@ export default function ProviderForm({
         setTestMessage(response.error?.message || 'Connection failed');
       }
     } catch (err) {
+      if (generation !== operationGeneration.current) return;
       setTestResult('error');
       setTestMessage(err instanceof Error ? err.message : 'Unknown error');
     } finally {
-      setTesting(false);
+      if (generation === operationGeneration.current) setTesting(false);
     }
   };
 
   // 拉取/刷新模型
   const handleFetchModels = async () => {
+    if (endpointChanged) return;
     setFetchingModels(true);
     setModelsError(null);
+    const generation = operationGeneration.current;
 
     try {
       if (isEditMode && provider) {
@@ -156,8 +187,10 @@ export default function ProviderForm({
           providerId: provider.id,
         });
 
+        if (generation !== operationGeneration.current) return;
         if (response.success && response.data) {
           setModels(response.data);
+          await onModelsRefreshed?.();
         } else {
           setModelsError(response.error?.message || 'Failed to fetch models');
         }
@@ -173,6 +206,7 @@ export default function ProviderForm({
           config: formData,
         });
 
+        if (generation !== operationGeneration.current) return;
         if (response.success && response.data) {
           setModels(response.data.map((model) => ({
             ...model,
@@ -183,17 +217,21 @@ export default function ProviderForm({
         }
       }
     } catch (err) {
+      if (generation !== operationGeneration.current) return;
       setModelsError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
-      setFetchingModels(false);
+      if (generation === operationGeneration.current) setFetchingModels(false);
     }
   };
 
   // 保存
   const handleSave = async () => {
+    if (needsNewKey) return;
     setSaving(true);
     const success = await onSave(formData, models);
     setSaving(false);
+
+    if (success && isEditMode) setFormData(current => ({ ...current, api_key: '' }));
     
     if (success && isNewMode) {
       // 新建成功后重置表单
@@ -286,10 +324,11 @@ export default function ProviderForm({
             disabled={loading || saving}
           />
           {isEditMode ? (
-            <small>Leave empty to keep current API key, or enter a new one</small>
+            <small>Leave empty only when keeping the same endpoint and provider type. Changes require a new API key.</small>
           ) : (
-            <small>Your API key will be encrypted before storage</small>
+            <small>Your API key is stored in your OS credential store, not in the configuration database.</small>
           )}
+          {needsNewKey && <p role="status">Enter a new API key before testing or saving the changed endpoint. Save changes before refreshing cached models.</p>}
         </div>
 
         <div className="form-group">
@@ -313,7 +352,7 @@ export default function ProviderForm({
         <div className="action-buttons">
           <button
             onClick={handleTestConnection}
-            disabled={testing || saving || (!isEditMode && !formData.api_key)}
+            disabled={testing || saving || needsNewKey || (!isEditMode && !formData.api_key)}
             className="btn-secondary"
           >
             {testing ? 'Testing...' : '🔌 Test Connection'}
@@ -321,7 +360,7 @@ export default function ProviderForm({
 
           <button
             onClick={handleFetchModels}
-            disabled={fetchingModels || saving || (!isEditMode && !formData.api_key)}
+            disabled={fetchingModels || saving || endpointChanged || (isEditMode && !!formData.api_key) || (!isEditMode && !formData.api_key)}
             className="btn-secondary"
           >
             {fetchingModels ? 'Fetching...' : '📥 Refresh Models'}
@@ -394,7 +433,7 @@ export default function ProviderForm({
         <div className="spacer" />
         <button
           onClick={handleSave}
-          disabled={saving || loading || !formData.name || !formData.base_url || (!isEditMode && !formData.api_key)}
+          disabled={saving || loading || needsNewKey || !formData.name || !formData.base_url || (!isEditMode && !formData.api_key)}
           className="btn-primary"
         >
           {saving ? 'Saving...' : isNewMode ? '💾 Create' : '💾 Save Changes'}

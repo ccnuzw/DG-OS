@@ -1,5 +1,7 @@
-use super::{require_local_main_window, McpState, SkillsState, LOCAL_MCP_USER};
+use super::{McpState, SkillsState};
+use crate::host::{self, Capability};
 use dgos_providers::ProviderManager;
+use dgos_types::BuiltinCaller;
 use dgos_workbench::{
     TaskInput, TaskOutcome, TaskRecord, ToolAction, ToolTaskInput, ToolTaskUpdate, WorkbenchManager,
 };
@@ -9,30 +11,26 @@ use tauri::{State, WebviewWindow};
 pub async fn run_workbench_task(
     window: WebviewWindow,
     input: TaskInput,
-    user_id: String,
     workbench: State<'_, WorkbenchManager>,
     providers: State<'_, ProviderManager>,
     skills: State<'_, SkillsState>,
 ) -> Result<TaskOutcome, String> {
-    require_local_main_window(&window)?;
-    if user_id != LOCAL_MCP_USER {
-        return Err("Local desktop identity required".into());
-    }
+    let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun)
+        .map_err(|e| e.to_string())?;
     let manager = skills.manager.read().await;
-    workbench.run(&manager, &providers, input, &user_id).await
+    workbench
+        .run(&manager, &providers, input, context.user_id())
+        .await
 }
 
 #[tauri::command]
 pub async fn list_workbench_tasks(
     window: WebviewWindow,
-    user_id: String,
     workbench: State<'_, WorkbenchManager>,
 ) -> Result<Vec<TaskRecord>, String> {
-    require_local_main_window(&window)?;
-    if user_id != LOCAL_MCP_USER {
-        return Err("Local desktop identity required".into());
-    }
-    workbench.list(&user_id).await
+    let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun)
+        .map_err(|e| e.to_string())?;
+    workbench.list(context.user_id()).await
 }
 
 #[tauri::command]
@@ -44,10 +42,11 @@ pub async fn start_workbench_tool_task(
     skills: State<'_, SkillsState>,
     mcp: State<'_, McpState>,
 ) -> Result<ToolTaskUpdate, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun)
+        .map_err(|e| e.to_string())?;
     let skills = skills.manager.read().await;
     workbench
-        .start_tool_task(&skills, &providers, &mcp.manager, input, LOCAL_MCP_USER)
+        .start_tool_task(&skills, &providers, &mcp.manager, input, context.user_id())
         .await
 }
 
@@ -60,9 +59,16 @@ pub async fn advance_workbench_tool_task(
     providers: State<'_, ProviderManager>,
     mcp: State<'_, McpState>,
 ) -> Result<ToolTaskUpdate, String> {
-    require_local_main_window(&window)?;
+    let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun)
+        .map_err(|e| e.to_string())?;
     workbench
-        .advance_tool_task(&providers, &mcp.manager, &task_id, LOCAL_MCP_USER, action)
+        .advance_tool_task(
+            &providers,
+            &mcp.manager,
+            &task_id,
+            context.user_id(),
+            action,
+        )
         .await
 }
 
@@ -72,6 +78,22 @@ pub async fn cancel_workbench_tool_task(
     task_id: String,
     workbench: State<'_, WorkbenchManager>,
 ) -> Result<ToolTaskUpdate, String> {
-    require_local_main_window(&window)?;
-    workbench.cancel_tool_task(&task_id, LOCAL_MCP_USER).await
+    let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun)
+        .map_err(|e| e.to_string())?;
+    workbench
+        .cancel_tool_task(&task_id, context.user_id())
+        .await
+}
+
+#[tauri::command]
+pub async fn cancel_workbench_task(
+    window: WebviewWindow,
+    task_id: String,
+    workbench: State<'_, WorkbenchManager>,
+) -> Result<bool, String> {
+    let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun)
+        .map_err(|e| e.to_string())?;
+    workbench
+        .cancel_text_task(&task_id, context.user_id())
+        .await
 }

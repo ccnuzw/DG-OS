@@ -8,6 +8,7 @@
     "build": "npm run skills:check && tsc && vite build",
     "skills:check": "node scripts/skills-catalog.mjs",
     "skills:catalog": "node scripts/skills-catalog.mjs --write",
+    "contracts:check": "node scripts/check-host-contracts.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

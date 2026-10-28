@@ -7,6 +7,10 @@ pub mod repositories;
 
 #[cfg(test)]
 mod mcp_tests;
+#[cfg(test)]
+mod module_permission_tests;
+#[cfg(test)]
+mod provider_scope_tests;
 mod workbench_tool_tests;
 
 use sea_orm::{Database, DatabaseConnection, DbErr};

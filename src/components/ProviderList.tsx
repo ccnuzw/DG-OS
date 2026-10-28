@@ -108,7 +108,10 @@ export default function ProviderList({
             <div className="provider-item-footer">
               <div className="toggle-copy">
                 <span className="toggle-label">{provider.enabled ? 'Available' : 'Paused'}</span>
-                <span className="toggle-hint">{provider.enabled ? 'Ready for requests' : 'Excluded from requests'}</span>
+                <span className="toggle-hint">{!provider.enabled ? 'Excluded from requests'
+                  : provider.credential_status === 'migration_required' ? 'Credential migration pending'
+                  : provider.credential_status === 'missing' ? 'Add a credential'
+                  : 'Configured for requests'}</span>
               </div>
               <label
                 className={`toggle-switch ${togglingProviderId === provider.id ? 'is-pending' : ''}`}

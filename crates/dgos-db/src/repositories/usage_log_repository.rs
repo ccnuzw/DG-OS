@@ -1,4 +1,4 @@
-use dgos_types::{DgosError, DgosResult, UsageLog};
+use dgos_types::{DgosError, DgosResult, ExecutionProvenance, UsageLog};
 use sea_orm::*;
 use uuid::Uuid;
 
@@ -26,6 +26,32 @@ impl UsageLogRepository {
         success: bool,
         error_code: Option<String>,
     ) -> DgosResult<UsageLog> {
+        self.create_with_provenance(
+            provider_id,
+            model_id,
+            user_id,
+            request_tokens,
+            response_tokens,
+            latency_ms,
+            success,
+            error_code,
+            None,
+        )
+        .await
+    }
+
+    pub async fn create_with_provenance(
+        &self,
+        provider_id: &str,
+        model_id: &str,
+        user_id: &str,
+        request_tokens: u32,
+        response_tokens: u32,
+        latency_ms: u32,
+        success: bool,
+        error_code: Option<String>,
+        provenance: Option<&ExecutionProvenance>,
+    ) -> DgosResult<UsageLog> {
         let id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
 
@@ -40,6 +66,8 @@ impl UsageLogRepository {
             latency_ms: Set(latency_ms as i32),
             success: Set(success),
             error_code: Set(error_code.clone()),
+            caller: Set(provenance.map(|p| format!("{:?}", p.caller).to_lowercase())),
+            request_id: Set(provenance.map(|p| p.request_id.clone())),
             created_at: Set(now),
         };
 
@@ -59,19 +87,18 @@ impl UsageLogRepository {
             latency_ms,
             success,
             error_code,
+            caller: provenance.map(|p| format!("{:?}", p.caller).to_lowercase()),
+            request_id: provenance.map(|p| p.request_id.clone()),
             created_at: now,
         })
     }
 
     /// List usage logs for a user
     pub async fn list(&self, user_id: &str, limit: Option<usize>) -> DgosResult<Vec<UsageLog>> {
-        let mut query = usage_logs::Entity::find()
+        let query = usage_logs::Entity::find()
             .filter(usage_logs::Column::UserId.eq(user_id))
-            .order_by_desc(usage_logs::Column::CreatedAt);
-
-        if let Some(limit) = limit {
-            query = query.limit(limit as u64);
-        }
+            .order_by_desc(usage_logs::Column::CreatedAt)
+            .limit(limit.unwrap_or(100).min(100) as u64);
 
         let logs = query
             .all(&self.db)
@@ -91,6 +118,8 @@ impl UsageLogRepository {
                 latency_ms: log.latency_ms as u32,
                 success: log.success,
                 error_code: log.error_code,
+                caller: log.caller,
+                request_id: log.request_id,
                 created_at: log.created_at,
             })
             .collect())

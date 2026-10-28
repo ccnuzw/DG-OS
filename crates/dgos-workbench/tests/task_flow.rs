@@ -2,9 +2,12 @@ use dgos_db::{
     migrations::Migrator,
     sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait, Set},
     sea_orm_migration::MigratorTrait,
-    ModelRepository, ProviderRepository,
+    ModelRepository,
 };
-use dgos_providers::ProviderManager;
+use dgos_providers::{
+    test_support::{seed_provider, MemoryCredentialVault},
+    ProviderManager,
+};
 use dgos_skills::SkillsManager;
 use dgos_types::{Model, ProviderConfig};
 use dgos_workbench::{TaskInput, WorkbenchManager};
@@ -32,20 +35,22 @@ async fn setup(base_url: &str) -> Fixture {
         .await
         .unwrap();
     skills.install_skill(SKILL, "alice").await.unwrap();
-    let provider = ProviderRepository::new(db.clone())
-        .create(
-            ProviderConfig {
-                name: "Test provider".into(),
-                provider_type: "openai_compatible".into(),
-                base_url: base_url.into(),
-                api_key: "test-only-secret".into(),
-                enabled: true,
-                config: None,
-            },
-            "alice".into(),
-        )
-        .await
-        .unwrap();
+    let vault = std::sync::Arc::new(MemoryCredentialVault::default());
+    let provider = seed_provider(
+        db.clone(),
+        &vault,
+        ProviderConfig {
+            name: "Test provider".into(),
+            provider_type: "openai_compatible".into(),
+            base_url: base_url.into(),
+            api_key: "test-only-secret".into(),
+            enabled: true,
+            config: None,
+        },
+        "alice",
+    )
+    .await
+    .unwrap();
     ModelRepository::new(db.clone())
         .sync_models(
             &provider.id,
@@ -66,7 +71,7 @@ async fn setup(base_url: &str) -> Fixture {
         .unwrap();
     Fixture {
         workbench: WorkbenchManager::new(db.clone()),
-        providers: ProviderManager::new(&url).await.unwrap(),
+        providers: ProviderManager::with_vault(&url, vault).await.unwrap(),
         db,
         skills,
         input: TaskInput {
@@ -75,6 +80,7 @@ async fn setup(base_url: &str) -> Fixture {
             prompt: PROMPT.into(),
             skill_id: Some(SKILL.into()),
             allow_without_skill: false,
+            client_task_id: None,
         },
         _dir: dir,
     }
@@ -250,6 +256,98 @@ async fn ac21_35_http_mock_runs_exact_selected_context_and_saves_only_safe_audit
     assert!(!serialized.contains(PROMPT));
     assert!(!serialized.contains("Ship on Friday."));
     assert!(!serialized.contains("test-only-secret"));
+    let skill_usage = f.skills.list_usage_logs("alice", None).await.unwrap();
+    let skill_audit = skill_usage
+        .iter()
+        .find(|log| log.task_ref.as_deref() == Some(result.record.task.id.as_str()))
+        .expect("Workbench skill preparation should retain host provenance");
+    assert_eq!(skill_audit.caller.as_deref(), Some("workbench"));
+    assert_eq!(
+        skill_audit.request_id.as_deref(),
+        Some(result.record.task.id.as_str())
+    );
+    assert_eq!(skill_audit.success, true);
+    assert_eq!(
+        skill_audit.input_params,
+        serde_json::json!({"operation": "prepare_content_skill"})
+    );
+}
+
+#[tokio::test]
+async fn shutdown_interrupts_text_task_without_dispatch_or_replay() {
+    let mut server = mockito::Server::new_async().await;
+    let f = setup(&server.url()).await;
+    let http = server
+        .mock("POST", "/chat/completions")
+        .with_status(200)
+        .with_body(r#"{"choices":[{"message":{"content":"must not dispatch"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#)
+        .expect(0)
+        .create_async()
+        .await;
+    f.workbench.shutdown().await.unwrap();
+    let result = f
+        .workbench
+        .run(&f.skills, &f.providers, f.input.clone(), "alice")
+        .await
+        .unwrap();
+    assert_eq!(result.record.task.status, "interrupted");
+    assert_eq!(
+        result.record.task.error_code.as_deref(),
+        Some("process_interrupted")
+    );
+    assert!(result.content.is_none());
+    http.assert_async().await;
+}
+
+#[tokio::test]
+async fn cancel_text_task_interrupts_inflight_provider_without_replay() {
+    let mut server = mockito::Server::new_async().await;
+    let f = setup(&server.url()).await;
+    let http = server
+        .mock("POST", "/chat/completions")
+        .with_chunked_body(|writer| {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let _ = std::io::Write::write_all(
+                writer,
+                br#"{"choices":[{"message":{"content":"late"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#,
+            );
+            Ok(())
+        })
+        .expect(1)
+        .create_async()
+        .await;
+    let task_id = uuid::Uuid::new_v4().to_string();
+    let mut input = f.input.clone();
+    input.client_task_id = Some(task_id.clone());
+    let workbench = f.workbench.clone();
+    let skills = f.skills;
+    let providers = f.providers;
+    let run = tokio::spawn(async move { workbench.run(&skills, &providers, input, "alice").await });
+    let mut dispatched = false;
+    for _ in 0..50 {
+        if http.matched_async().await {
+            dispatched = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        dispatched,
+        "provider request should be observed before cancellation"
+    );
+    assert!(f
+        .workbench
+        .cancel_text_task(&task_id, "alice")
+        .await
+        .unwrap());
+    let result = run.await.unwrap().unwrap();
+    assert_eq!(result.record.task.status, "interrupted");
+    assert_eq!(
+        result.record.task.error_code.as_deref(),
+        Some("task_cancelled")
+    );
+    assert!(result.content.is_none());
+    http.assert_async().await;
 }
 
 #[tokio::test]
@@ -302,20 +400,10 @@ async fn provider_log_alignment_preserves_and_reads_historical_usage_rows() {
     use dgos_db::sea_orm::{ConnectionTrait, DbBackend, Statement};
     let db = Database::connect("sqlite::memory:").await.unwrap();
     Migrator::up(&db, Some(6)).await.unwrap();
-    ProviderRepository::new(db.clone())
-        .create(
-            ProviderConfig {
-                name: "Old provider".into(),
-                provider_type: "openai_compatible".into(),
-                base_url: "http://unused.invalid".into(),
-                api_key: String::new(),
-                enabled: true,
-                config: None,
-            },
-            "alice".into(),
-        )
-        .await
-        .unwrap();
+    // Seed the historical schema directly; the current repository requires
+    // the later credential-reference migration.
+    db.execute_unprepared("INSERT INTO providers (id, name, provider_type, base_url, api_key, enabled, sort_order, user_id, created_at, updated_at) VALUES ('old-provider', 'Old provider', 'openai_compatible', 'http://unused.invalid', '', 1, 0, 'alice', '2026-10-27T00:00:00+00:00', '2026-10-27T00:00:00+00:00');")
+        .await.unwrap();
     db.execute_unprepared("INSERT INTO usage_logs (id, provider_id, model_id, user_id, request_tokens, response_tokens, total_tokens, latency_ms, success, created_at) SELECT 'old-log', id, 'old-model', 'alice', 2, 3, 5, 10, 1, '2026-10-27T00:00:00+00:00' FROM providers;").await.unwrap();
     Migrator::up(&db, None).await.unwrap();
     let logs = dgos_db::UsageLogRepository::new(db.clone())

@@ -17,6 +17,8 @@ const provider = {
   created_at: '2026-10-27T00:00:00Z',
   updated_at: '2026-10-27T00:00:00Z',
   user_id: 'default-user',
+  credential_status: 'stored' as const,
+  config_revision: 0,
 };
 
 beforeEach(() => {
@@ -62,5 +64,57 @@ describe('Provider enablement', () => {
     expect(useProviderStore.getState().providers[0].enabled).toBe(true);
     expect(useProviderStore.getState().error).toBe('Provider not found');
     expect(useProviderStore.getState().loading).toBe(false);
+  });
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+describe('Provider model cache lifecycle', () => {
+  it('publishes only the latest requested provider models', async () => {
+    const first = deferred<unknown>();
+    const second = deferred<unknown>();
+    mockedInvoke.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const oldRequest = useProviderStore.getState().fetchModels('first');
+    const latestRequest = useProviderStore.getState().fetchModels('second');
+    second.resolve({ success: true, data: [{ id: 'second-model', provider_id: 'second' }] });
+    await latestRequest;
+    first.resolve({ success: true, data: [{ id: 'first-model', provider_id: 'first' }] });
+    await oldRequest;
+    expect(useProviderStore.getState().modelsProviderId).toBe('second');
+    expect(useProviderStore.getState().models.map(row => row.id)).toEqual(['second-model']);
+    expect(useProviderStore.getState().modelsLoading).toBe(false);
+  });
+
+  it('clears old models on selection and ignores errors after leaving', async () => {
+    const request = deferred<unknown>();
+    mockedInvoke.mockReturnValueOnce(request.promise);
+    const fetching = useProviderStore.getState().fetchModels('first');
+    expect(useProviderStore.getState().models).toEqual([]);
+    useProviderStore.getState().clearModels();
+    request.reject(new Error('late fixture error'));
+    await fetching;
+    expect(useProviderStore.getState().modelsProviderId).toBeNull();
+    expect(useProviderStore.getState().error).toBeNull();
+    expect(useProviderStore.getState().modelsLoading).toBe(false);
+  });
+
+  it('invalidates a pending cache read when the provider is saved', async () => {
+    const request = deferred<unknown>();
+    mockedInvoke.mockReturnValueOnce(request.promise).mockResolvedValueOnce({
+      success: true, data: { ...provider, config_revision: 1 },
+    });
+    const fetching = useProviderStore.getState().fetchModels(provider.id);
+    await useProviderStore.getState().updateProvider(provider.id, {
+      ...provider, api_key: '',
+    });
+    request.resolve({ success: true, data: [{ id: 'old-cache' }] });
+    await fetching;
+    expect(useProviderStore.getState().selectedProvider?.config_revision).toBe(1);
+    expect(useProviderStore.getState().models).toEqual([]);
   });
 });

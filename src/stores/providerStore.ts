@@ -12,6 +12,9 @@ export interface Provider {
   created_at: string;
   updated_at: string;
   user_id: string;
+  credential_ref?: string;
+  credential_status: 'stored' | 'migration_required' | 'missing';
+  config_revision: number;
   config?: Record<string, unknown>;
 }
 
@@ -49,33 +52,40 @@ interface ProviderStore {
   providers: Provider[];
   selectedProvider: Provider | null;
   models: Model[];
+  modelsProviderId: string | null;
+  modelsLoading: boolean;
+  modelRequest: number;
   loading: boolean;
   error: string | null;
   
   // Actions
-  fetchProviders: (userId: string) => Promise<void>;
-  createProvider: (config: ProviderConfig, userId: string, models?: Model[]) => Promise<boolean>;
+  fetchProviders: () => Promise<void>;
+  createProvider: (config: ProviderConfig, models?: Model[]) => Promise<boolean>;
   updateProvider: (id: string, config: ProviderConfig) => Promise<boolean>;
   toggleProvider: (id: string, enabled: boolean) => Promise<boolean>;
+  migrateCredential: (providerId: string) => Promise<boolean>;
   deleteProvider: (id: string) => Promise<boolean>;
   testConnection: (config: ProviderConfig) => Promise<boolean>;
   fetchModels: (providerId: string) => Promise<void>;
+  clearModels: () => void;
   setSelectedProvider: (provider: Provider | null) => void;
   clearError: () => void;
 }
 
-export const useProviderStore = create<ProviderStore>((set) => ({
+export const useProviderStore = create<ProviderStore>((set, get) => ({
   providers: [],
   selectedProvider: null,
   models: [],
+  modelsProviderId: null,
+  modelsLoading: false,
+  modelRequest: 0,
   loading: false,
   error: null,
 
-  fetchProviders: async (userId: string) => {
+  fetchProviders: async () => {
     set({ loading: true, error: null });
     try {
       const response = await invoke<CommandResponse<Provider[]>>('list_providers', {
-        userId,
       });
       
       if (response.success && response.data) {
@@ -94,7 +104,7 @@ export const useProviderStore = create<ProviderStore>((set) => ({
     }
   },
 
-  createProvider: async (config: ProviderConfig, userId: string, models?: Model[]) => {
+  createProvider: async (config: ProviderConfig, models?: Model[]) => {
     set({ loading: true, error: null });
     try {
       let response;
@@ -103,15 +113,13 @@ export const useProviderStore = create<ProviderStore>((set) => ({
       if (models && models.length > 0) {
         response = await invoke<CommandResponse<Provider>>('create_provider_with_models', {
           config,
-          userId,
-          models,
+            models,
         });
       } else {
         // Otherwise just create provider without models
         response = await invoke<CommandResponse<Provider>>('create_provider', {
           config,
-          userId,
-        });
+          });
       }
       
       if (response.success && response.data) {
@@ -149,6 +157,10 @@ export const useProviderStore = create<ProviderStore>((set) => ({
           providers: state.providers.map((p) =>
             p.id === id ? response.data! : p
           ),
+          selectedProvider: state.selectedProvider?.id === id ? response.data! : state.selectedProvider,
+          ...(state.modelsProviderId === id ? {
+            models: [], modelsProviderId: null, modelsLoading: false, modelRequest: state.modelRequest + 1,
+          } : {}),
           loading: false,
         }));
         return true;
@@ -202,6 +214,27 @@ export const useProviderStore = create<ProviderStore>((set) => ({
     }
   },
 
+  migrateCredential: async (providerId: string) => {
+    set({ loading: true, error: null });
+    try {
+      const response = await invoke<CommandResponse<Provider>>('migrate_provider_credential', { providerId });
+      if (!response.success || !response.data) {
+        set({ loading: false, error: response.error?.message || 'Credential migration is pending. Unlock your OS credential store and try again.' });
+        return false;
+      }
+      const provider = response.data;
+      set(state => ({
+        providers: state.providers.map(row => row.id === providerId ? provider : row),
+        selectedProvider: state.selectedProvider?.id === providerId ? provider : state.selectedProvider,
+        loading: false,
+      }));
+      return true;
+    } catch {
+      set({ loading: false, error: 'Credential migration is pending. Unlock your OS credential store and try again.' });
+      return false;
+    }
+  },
+
   deleteProvider: async (id: string) => {
     set({ loading: true, error: null });
     try {
@@ -214,6 +247,9 @@ export const useProviderStore = create<ProviderStore>((set) => ({
           providers: state.providers.filter((p) => p.id !== id),
           selectedProvider:
             state.selectedProvider?.id === id ? null : state.selectedProvider,
+          ...(state.modelsProviderId === id ? {
+            models: [], modelsProviderId: null, modelsLoading: false, modelRequest: state.modelRequest + 1,
+          } : {}),
           loading: false,
         }));
         return true;
@@ -258,27 +294,34 @@ export const useProviderStore = create<ProviderStore>((set) => ({
   },
 
   fetchModels: async (providerId: string) => {
-    set({ loading: true, error: null });
+    const request = get().modelRequest + 1;
+    set({ modelRequest: request, modelsProviderId: providerId, models: [], modelsLoading: true, error: null });
     try {
       const response = await invoke<CommandResponse<Model[]>>('list_models', {
         providerId,
       });
+      if (get().modelRequest !== request) return;
       
       if (response.success && response.data) {
-        set({ models: response.data, loading: false });
+        set({ models: response.data, modelsLoading: false });
       } else {
         set({ 
           error: response.error?.message || 'Failed to fetch models',
-          loading: false 
+          modelsLoading: false
         });
       }
     } catch (err) {
+      if (get().modelRequest !== request) return;
       set({ 
         error: err instanceof Error ? err.message : 'Unknown error',
-        loading: false 
+        modelsLoading: false
       });
     }
   },
+
+  clearModels: () => set(state => ({
+    models: [], modelsProviderId: null, modelsLoading: false, modelRequest: state.modelRequest + 1,
+  })),
 
   setSelectedProvider: (provider) => set({ selectedProvider: provider }),
   

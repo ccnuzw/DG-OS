@@ -930,6 +930,24 @@
   color: #9e3448;
 }
 
+.provider-management .credential-notice {
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  background: var(--provider-surface, #fff);
+  border: 1px solid var(--provider-border, #d0d7de);
+}
+
+.provider-management .credential-notices {
+  max-height: 32vh;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.provider-management .credential-notice p {
+  flex: 1 1 20rem;
+  margin: 0;
+}
+
 .provider-content {
   display: grid;
   grid-template-columns: minmax(290px, 360px) minmax(0, 1fr);

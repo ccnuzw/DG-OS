@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::{debug, warn};
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::retry::RetryPolicy;
 use crate::traits::{BoxStream, ProviderAdapter};
@@ -17,13 +18,14 @@ use crate::traits::{BoxStream, ProviderAdapter};
 /// OpenAI compatible adapter
 pub struct OpenAIAdapter {
     base_url: String,
-    api_key: String,
+    api_key: Zeroizing<String>,
     client: Client,
     retry_policy: RetryPolicy,
 }
 
 impl OpenAIAdapter {
     pub fn new(base_url: String, api_key: String, retry_config: Option<RetryConfig>) -> Self {
+        let api_key = Zeroizing::new(api_key);
         let client = Client::builder()
             .timeout(Duration::from_secs(60))
             .build()
@@ -33,7 +35,7 @@ impl OpenAIAdapter {
 
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
-            api_key: api_key.trim().to_string(),
+            api_key: Zeroizing::new(api_key.trim().to_string()),
             client,
             retry_policy,
         }
@@ -71,12 +73,12 @@ impl ProviderAdapter for OpenAIAdapter {
     async fn list_models(&self) -> DgosResult<Vec<Model>> {
         let url = format!("{}/models", self.base_url);
 
-        debug!("Fetching models from: {}", url);
+        debug!("Fetching provider model catalog");
 
         let response = self
             .client
             .get(&url)
-            .bearer_auth(&self.api_key)
+            .bearer_auth(self.api_key.as_str())
             .send()
             .await?;
 
@@ -127,7 +129,7 @@ impl ProviderAdapter for OpenAIAdapter {
                 let resp = self
                     .client
                     .post(&url)
-                    .bearer_auth(&self.api_key)
+                    .bearer_auth(self.api_key.as_str())
                     .json(&openai_request)
                     .send()
                     .await?;
@@ -154,6 +156,7 @@ impl ProviderAdapter for OpenAIAdapter {
                         completion_tokens: chat_response.usage.completion_tokens,
                         total_tokens: chat_response.usage.total_tokens,
                     },
+                    audit_warning: false,
                 })
             })
             .await?;
@@ -170,7 +173,7 @@ impl ProviderAdapter for OpenAIAdapter {
         let mut response = self
             .client
             .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
+            .bearer_auth(self.api_key.as_str())
             .json(&serde_json::json!({
                 "model": model_id, "messages": request.messages, "tools": request.tools,
                 "tool_choice": "auto", "parallel_tool_calls": false,
@@ -224,6 +227,7 @@ impl ProviderAdapter for OpenAIAdapter {
         Ok(ToolChatResponse {
             message: choice.message,
             usage: parsed.usage,
+            audit_warning: false,
         })
     }
 
@@ -245,7 +249,7 @@ impl ProviderAdapter for OpenAIAdapter {
         let response = self
             .client
             .post(&url)
-            .bearer_auth(&self.api_key)
+            .bearer_auth(self.api_key.as_str())
             .json(&openai_request)
             .send()
             .await?;
@@ -301,8 +305,8 @@ impl ProviderAdapter for OpenAIAdapter {
                         finish_reason: None,
                     })
                 }
-                Err(e) => {
-                    warn!("Stream error: {}", e);
+                Err(_) => {
+                    warn!("Provider stream interrupted");
                     Err(DgosError::StreamInterrupted)
                 }
             }
@@ -317,7 +321,7 @@ impl ProviderAdapter for OpenAIAdapter {
         let response = self
             .client
             .get(&url)
-            .bearer_auth(&self.api_key)
+            .bearer_auth(self.api_key.as_str())
             .send()
             .await?;
 

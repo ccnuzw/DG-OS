@@ -1,6 +1,7 @@
 //! Explicit opt-in smoke for a configured local Provider plus a real MCP stdio
 //! server. The formal database is read only; all task, usage and MCP records
-//! are written to a temporary database.
+//! are written to a temporary database. The key must be supplied explicitly and
+//! stays in a temporary in-memory vault, never copied out of the formal DB.
 
 use async_trait::async_trait;
 use dgos_db::{
@@ -8,7 +9,10 @@ use dgos_db::{
     ProviderRepository,
 };
 use dgos_mcp::{CreateMcpServerRequest, McpCallPolicy, McpManager, StdioConfig, TransportKind};
-use dgos_providers::ProviderManager;
+use dgos_providers::{
+    test_support::{seed_provider, MemoryCredentialVault},
+    ProviderManager,
+};
 use dgos_skills::SkillsManager;
 use dgos_types::ProviderConfig;
 use dgos_workbench::{TaskInput, ToolAction, ToolSelection, ToolTaskInput, WorkbenchManager};
@@ -30,6 +34,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let provider_name = std::env::var("DGOS_REAL_PROVIDER_NAME")
         .map_err(|_| "Set DGOS_REAL_PROVIDER_NAME to an enabled configured Provider")?;
     let model_id = std::env::var("DGOS_REAL_MODEL").unwrap_or_else(|_| "gpt-6.1-sol".into());
+    let api_key = std::env::var("DGOS_SMOKE_API_KEY").map_err(|_| {
+        "Set DGOS_SMOKE_API_KEY explicitly; Provider DTOs no longer expose credentials"
+    })?;
     let formal = dgos_db::establish_connection(&formal_db).await?;
     let source = ProviderRepository::new(formal.clone())
         .list("default-user")
@@ -49,19 +56,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let db = Database::connect(&db_url).await?;
     Migrator::up(&db, None).await?;
-    let provider = ProviderRepository::new(db.clone())
-        .create(
-            ProviderConfig {
-                name: format!("{} (isolated smoke)", source.name),
-                provider_type: source.provider_type,
-                base_url: source.base_url,
-                api_key: source.api_key,
-                enabled: true,
-                config: source.config,
-            },
-            "default-user".into(),
-        )
-        .await?;
+    let vault = Arc::new(MemoryCredentialVault::default());
+    let provider = seed_provider(
+        db.clone(),
+        &vault,
+        ProviderConfig {
+            name: format!("{} (isolated smoke)", source.name),
+            provider_type: source.provider_type,
+            base_url: source.base_url,
+            api_key,
+            enabled: true,
+            config: source.config,
+        },
+        "default-user",
+    )
+    .await?;
     ModelRepository::new(db.clone())
         .sync_models(
             &provider.id,
@@ -111,7 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .next()
         .ok_or("Smoke MCP server exposed no tools")?;
 
-    let providers = ProviderManager::new(&db_url).await?;
+    let providers = ProviderManager::with_vault(&db_url, vault).await?;
     let skills = SkillsManager::new(db.clone(), dir.path().join("skills"));
     let workbench = WorkbenchManager::new(db.clone());
     let input = ToolTaskInput {
@@ -121,6 +130,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             prompt: "Use the selected echo tool exactly once with {\"text\":\"DGOS-REAL-PROVIDER-MCP-20261028\"}. After the tool result, reply with a short confirmation. Do not answer before calling the tool.".into(),
             skill_id: None,
             allow_without_skill: true,
+            client_task_id: None,
         },
         tools: vec![ToolSelection {
             server_id: tool.server_id.clone(),

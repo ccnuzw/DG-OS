@@ -1,5 +1,7 @@
 # V1-FR-001：Provider 适配框架
 
+> D023 桌面补充基线（2026-10-28）：宿主派生用户身份，Provider DTO 不携带 secret，凭据保存到 OS vault，历史明文字段通过可重试迁移清空。当前字段与迁移规则见 [接口契约 §4.0](../../../04-技术架构/当前版本/V1-接口契约.md#40-当前桌面实施契约d023)、[数据模型 §4.2](../../../04-技术架构/当前版本/V1-数据模型.md#42-provider-管理)；本文早期 AES/SQLCipher 表草图不再作为当前凭据实施依据。前置工作包与证据见 [FR-004 前置收口设计](../../../04-技术架构/当前版本/V1-FR004前置收口设计.md)，不改变既有 AC 编号。
+
 ## 1. 功能元信息
 
 | 属性 | 值 |
@@ -250,7 +252,7 @@ CREATE TABLE provider_usage_logs (
 | --- | --- | --- |
 | 空 Provider 列表 | 用户未配置任何 Provider | 提示"请先配置 Provider" |
 | 重复 Provider 名称 | 创建同名 Provider | 允许（名称可重复，ID 不重复） |
-| API Key 包含特殊字符 | API Key 有空格、换行 | 自动 trim，正常保存 |
+| API Key 包含空白 | 粘贴 key 时前后有空格、换行 | 自动 trim 前后空白；内部空白或非 ASCII 不作为 Bearer key 保存 |
 | 超长 Prompt | Prompt 长度超过模型限制 | 返回错误"超过最大长度" |
 | 并发超过 100 | 100+ 并发请求 | 正常处理，不崩溃 |
 | 网络完全断开 | 调用时无网络 | 返回"网络错误"，不无限等待 |
@@ -604,9 +606,9 @@ impl ProviderAdapter for OpenAIAdapter {
 
 | 需求 | 实现方式 |
 | --- | --- |
-| API Key 加密存储 | 使用 SQLCipher 或 AES-256 加密 |
+| API Key 安全存储 | D023：OS vault 保存 secret，SQLite 仅引用；旧活动明文字段显式迁移，失败保留供重试 |
 | HTTPS 强制 | 调用 Provider 时强制 HTTPS |
-| 敏感信息脱敏 | 日志中 API Key 只显示前 4 位 |
+| 敏感信息脱敏 | D023：不记录 API Key，包括前缀；日志只记录类别与资源引用 |
 
 ### 9.3 可用性需求
 

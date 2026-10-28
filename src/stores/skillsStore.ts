@@ -147,27 +147,27 @@ interface SkillsState {
   updatesError: string | null;
   
   // Actions
-  initialize: (userId: string) => Promise<void>;
+  initialize: () => Promise<void>;
   fetchRegistry: () => Promise<void>;
   searchSkills: (query: string) => Promise<void>;
   getSkillDetail: (skillId: string) => Promise<void>;
   
-  installSkill: (skillId: string, userId: string) => Promise<void>;
-  uninstallSkill: (skillId: string, userId: string) => Promise<void>;
-  listInstalledSkills: (userId: string) => Promise<void>;
-  toggleSkill: (skillId: string, userId: string, enabled: boolean) => Promise<void>;
+  installSkill: (skillId: string) => Promise<void>;
+  uninstallSkill: (skillId: string) => Promise<void>;
+  listInstalledSkills: () => Promise<void>;
+  toggleSkill: (skillId: string, enabled: boolean) => Promise<void>;
   
-  updateSkillConfig: (skillId: string, userId: string, config: any) => Promise<void>;
+  updateSkillConfig: (skillId: string, config: any) => Promise<void>;
   
-  callSkill: (skillId: string, userId: string, params: any) => Promise<any>;
-  prepareContentSkill: (skillId: string, userId: string) => Promise<PreparedContent>;
+  callSkill: (skillId: string, params: any) => Promise<any>;
+  prepareContentSkill: (skillId: string) => Promise<PreparedContent>;
   
-  checkUpdates: (userId: string) => Promise<void>;
-  updateSkill: (skillId: string, userId: string) => Promise<void>;
+  checkUpdates: () => Promise<void>;
+  updateSkill: (skillId: string) => Promise<void>;
   
   checkDependencies: (skillId: string) => Promise<DependencyStatus>;
   
-  listUsageLogs: (userId: string, limit?: number) => Promise<void>;
+  listUsageLogs: (limit?: number) => Promise<void>;
 }
 
 export const useSkillsStore = create<SkillsState>((set, get) => ({
@@ -186,12 +186,12 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
   installedError: null,
   updatesError: null,
 
-  initialize: (userId: string) => {
+  initialize: () => {
     // StrictMode replays effects; share the entire in-flight initialization.
     if (!initializationRequest) {
       initializationRequest = Promise.allSettled([
-        get().fetchRegistry().then(() => get().checkUpdates(userId)),
-        get().listInstalledSkills(userId),
+        get().fetchRegistry().then(() => get().checkUpdates()),
+        get().listInstalledSkills(),
       ]).then(() => {}).finally(() => { initializationRequest = null; });
     }
     return initializationRequest;
@@ -247,11 +247,11 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
     }
   },
 
-  installSkill: async (skillId: string, userId: string) => {
+  installSkill: async (skillId: string) => {
     set({ installing: true });
     try {
-      await invoke<Skill>('install_skill', { skillId, userId });
-      await get().listInstalledSkills(userId);
+      await invoke<Skill>('install_skill', { skillId });
+      await get().listInstalledSkills();
     } catch (error) {
       console.error('Failed to install skill:', error);
       throw error;
@@ -260,20 +260,20 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
     }
   },
 
-  uninstallSkill: async (skillId: string, userId: string) => {
+  uninstallSkill: async (skillId: string) => {
     try {
-      await invoke('uninstall_skill', { skillId, userId });
-      await get().listInstalledSkills(userId);
+      await invoke('uninstall_skill', { skillId });
+      await get().listInstalledSkills();
     } catch (error) {
       console.error('Failed to uninstall skill:', error);
       throw error;
     }
   },
 
-  listInstalledSkills: async (userId: string) => {
+  listInstalledSkills: async () => {
     set({ installedLoading: true, installedError: null });
     try {
-      const skills = await invoke<Skill[]>('list_installed_skills', { userId });
+      const skills = await invoke<Skill[]>('list_installed_skills', {});
       set({ installedSkills: skills });
     } catch (error) {
       set({ installedError: errorMessage(error) });
@@ -283,29 +283,29 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
     }
   },
 
-  toggleSkill: async (skillId: string, userId: string, enabled: boolean) => {
+  toggleSkill: async (skillId: string, enabled: boolean) => {
     try {
-      await invoke('toggle_skill', { skillId, userId, enabled });
-      await get().listInstalledSkills(userId);
+      await invoke('toggle_skill', { skillId, enabled });
+      await get().listInstalledSkills();
     } catch (error) {
       console.error('Failed to toggle skill:', error);
       throw error;
     }
   },
 
-  updateSkillConfig: async (skillId: string, userId: string, config: any) => {
+  updateSkillConfig: async (skillId: string, config: any) => {
     try {
-      await invoke('update_skill_config', { skillId, userId, config });
-      await get().listInstalledSkills(userId);
+      await invoke('update_skill_config', { skillId, config });
+      await get().listInstalledSkills();
     } catch (error) {
       console.error('Failed to update skill config:', error);
       throw error;
     }
   },
 
-  callSkill: async (skillId: string, userId: string, params: any) => {
+  callSkill: async (skillId: string, params: any) => {
     try {
-      const result = await invoke('call_skill', { skillId, userId, params });
+      const result = await invoke('call_skill', { skillId, params });
       return result;
     } catch (error) {
       console.error('Failed to call skill:', error);
@@ -313,13 +313,13 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
     }
   },
 
-  prepareContentSkill: (skillId: string, userId: string) =>
-    invoke<PreparedContent>('prepare_content_skill', { skillId, userId }),
+  prepareContentSkill: (skillId: string) =>
+    invoke<PreparedContent>('prepare_content_skill', { skillId }),
 
-  checkUpdates: async (userId: string) => {
+  checkUpdates: async () => {
     set({ updatesError: null });
     try {
-      const updates = await invoke<SkillUpdate[]>('check_skill_updates', { userId });
+      const updates = await invoke<SkillUpdate[]>('check_skill_updates', {});
       set({ availableUpdates: updates });
     } catch (error) {
       set({ updatesError: errorMessage(error) });
@@ -327,12 +327,12 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
     }
   },
 
-  updateSkill: async (skillId: string, userId: string) => {
+  updateSkill: async (skillId: string) => {
     set({ installing: true });
     try {
-      await invoke<Skill>('update_skill', { skillId, userId });
-      await get().listInstalledSkills(userId);
-      await get().checkUpdates(userId);
+      await invoke<Skill>('update_skill', { skillId });
+      await get().listInstalledSkills();
+      await get().checkUpdates();
     } catch (error) {
       console.error('Failed to update skill:', error);
       throw error;
@@ -351,9 +351,9 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
     }
   },
 
-  listUsageLogs: async (userId: string, limit?: number) => {
+  listUsageLogs: async (limit?: number) => {
     try {
-      const logs = await invoke<SkillUsageLog[]>('list_skill_usage_logs', { userId, limit });
+      const logs = await invoke<SkillUsageLog[]>('list_skill_usage_logs', { limit });
       set({ usageLogs: logs });
     } catch (error) {
       console.error('Failed to list usage logs:', error);

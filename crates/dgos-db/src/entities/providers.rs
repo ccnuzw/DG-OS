@@ -1,10 +1,13 @@
 use sea_orm::entity::prelude::*;
-use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "providers")]
 pub struct Model {
-    #[sea_orm(primary_key, column_type = "String(StringLen::N(36))")]
+    #[sea_orm(
+        primary_key,
+        auto_increment = false,
+        column_type = "String(StringLen::N(36))"
+    )]
     pub id: String,
 
     #[sea_orm(column_type = "String(StringLen::N(255))")]
@@ -19,6 +22,14 @@ pub struct Model {
     #[sea_orm(column_type = "String(StringLen::N(512))")]
     pub api_key: String,
 
+    /// Stable reference into the host credential vault. Legacy rows may have
+    /// this unset while they are waiting for incremental migration.
+    #[sea_orm(column_type = "String(StringLen::N(128))", nullable)]
+    pub credential_ref: Option<String>,
+
+    pub config_revision: i64,
+    pub model_refresh_revision: i64,
+
     pub enabled: bool,
 
     pub sort_order: i32,
@@ -32,6 +43,15 @@ pub struct Model {
 
     #[sea_orm(column_type = "String(StringLen::N(36))")]
     pub user_id: String,
+}
+
+impl std::fmt::Debug for Model {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProviderRecord")
+            .field("id", &self.id)
+            .field("credential_ref", &self.credential_ref)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -14,7 +14,7 @@ export interface McpTool {
   input_schema: unknown; output_schema?: unknown; schema_hash: string; discovered_at: number;
 }
 export interface McpUsageLog {
-  id: number; server_id: string; tool_name: string; task_ref?: string; outcome: string;
+  id: number; server_id: string; tool_name: string; task_ref?: string; caller?: string; outcome: string;
   error_class?: string; duration_ms?: number; created_at: number;
 }
 export interface McpConnectionLog {

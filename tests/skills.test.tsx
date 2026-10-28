@@ -75,7 +75,7 @@ describe('Skills registry failure recovery', () => {
     expect(screen.getByText('CLI')).toBeTruthy();
     fireEvent.click(screen.getByRole('checkbox'));
     await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith('toggle_skill', {
-      skillId: 'calculator', userId: 'default-user', enabled: false,
+      skillId: 'calculator', enabled: false,
     }));
   });
 
@@ -126,7 +126,7 @@ describe('Skills registry failure recovery', () => {
       ? new Promise(resolve => { resolveRegistry = resolve; }) : Promise.resolve([]));
     const first = useSkillsStore.getState().fetchRegistry();
     const second = useSkillsStore.getState().fetchRegistry();
-    await useSkillsStore.getState().listInstalledSkills('default-user');
+    await useSkillsStore.getState().listInstalledSkills();
     expect(useSkillsStore.getState().loading).toBe(true);
     expect(first).toBe(second);
     await act(async () => { resolveRegistry({ skills: [], registry_url: 'https://skills.dgos.ai/registry.json', offline: false, warning: null }); await first; });

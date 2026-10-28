@@ -10,6 +10,7 @@ pub struct Model {
     pub server_id: String,
     pub tool_name: String,
     pub task_ref: Option<String>,
+    pub caller: Option<String>,
     pub request_hash: Option<String>,
     pub outcome: String,
     pub error_class: Option<String>,

@@ -1,8 +1,10 @@
 use dgos_db::{
     migrations::Migrator, sea_orm::Database, sea_orm_migration::MigratorTrait, ModelRepository,
-    ProviderRepository,
 };
-use dgos_providers::ProviderManager;
+use dgos_providers::{
+    test_support::{seed_provider, MemoryCredentialVault},
+    ProviderManager,
+};
 use dgos_skills::SkillsManager;
 use dgos_types::{Model, ProviderConfig};
 use dgos_workbench::{TaskInput, WorkbenchManager};
@@ -24,19 +26,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let db = Database::connect(&url).await?;
     Migrator::up(&db, None).await?;
-    let provider = ProviderRepository::new(db.clone())
-        .create(
-            ProviderConfig {
-                name: "Explicit workbench smoke".into(),
-                provider_type: "openai_compatible".into(),
-                base_url,
-                api_key,
-                enabled: true,
-                config: None,
-            },
-            "smoke-user".into(),
-        )
-        .await?;
+    let vault = std::sync::Arc::new(MemoryCredentialVault::default());
+    let provider = seed_provider(
+        db.clone(),
+        &vault,
+        ProviderConfig {
+            name: "Explicit workbench smoke".into(),
+            provider_type: "openai_compatible".into(),
+            base_url,
+            api_key,
+            enabled: true,
+            config: None,
+        },
+        "smoke-user",
+    )
+    .await?;
     ModelRepository::new(db.clone())
         .sync_models(
             &provider.id,
@@ -62,10 +66,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     let skill_id = "dgos.official.writing.summarize";
     skills.install_skill(skill_id, "smoke-user").await?;
-    let providers = ProviderManager::new(&url).await?;
+    let providers = ProviderManager::with_vault(&url, vault).await?;
     let workbench = WorkbenchManager::new(db);
     let outcome = workbench.run(&skills, &providers, TaskInput {
-        provider_id: provider.id, model_id, skill_id: Some(skill_id.into()), allow_without_skill: false,
+        provider_id: provider.id, model_id, skill_id: Some(skill_id.into()), allow_without_skill: false, client_task_id: None,
         prompt: "请用中文总结以下材料，区分已确认事项和待确认事项。材料：团队会议决定周五发布第一版；负责人为林。预算尚未批准。不要补充材料外的信息。".into(),
     }, "smoke-user").await.map_err(std::io::Error::other)?;
     if outcome.record.task.status != "succeeded" {

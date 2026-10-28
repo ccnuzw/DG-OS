@@ -11,6 +11,12 @@ mod m010_create_workbench_task_tools;
 mod m20261027_000001_create_providers;
 mod m20261027_000002_create_models;
 mod m20261027_000003_create_usage_logs;
+mod m20261028_000004_provider_credentials;
+mod m20261028_000005_provider_revisions;
+mod m20261028_000006_provider_usage_provenance;
+mod m20261028_000007_mcp_usage_provenance;
+mod m20261028_000008_skill_usage_provenance;
+mod m20261028_000009_module_permissions;
 
 pub struct Migrator;
 
@@ -29,6 +35,12 @@ impl MigratorTrait for Migrator {
             Box::new(m008_create_mcp_tables::Migration),
             Box::new(m009_create_mcp_connection_logs::Migration),
             Box::new(m010_create_workbench_task_tools::Migration),
+            Box::new(m20261028_000004_provider_credentials::Migration),
+            Box::new(m20261028_000005_provider_revisions::Migration),
+            Box::new(m20261028_000006_provider_usage_provenance::Migration),
+            Box::new(m20261028_000007_mcp_usage_provenance::Migration),
+            Box::new(m20261028_000008_skill_usage_provenance::Migration),
+            Box::new(m20261028_000009_module_permissions::Migration),
         ]
     }
 }

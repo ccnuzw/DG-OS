@@ -1,8 +1,12 @@
 use crate::{
     content_package::{load_bundled_catalog, validate_package},
-    ContentPreview, ContentSkillMetadata, Result, SkillDetail, SkillError, SkillsManager,
+    ContentPreview, ContentSkillMetadata, Result, SkillDetail, SkillError, SkillUsageLog,
+    SkillsManager,
 };
+use dgos_types::{BuiltinCaller, ExecutionProvenance};
+use serde_json::json;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 // Check each directory before descending so a legacy/local symlink cannot
 // redirect snapshot publication to an unrelated location.
@@ -152,6 +156,61 @@ impl SkillsManager {
 
     /// Context preparation is not model execution or tool authorization.
     pub async fn prepare_content_skill(
+        &self,
+        id: &str,
+        user: &str,
+    ) -> Result<crate::PreparedContent> {
+        self.prepare_content_skill_with_provenance(id, user, None)
+            .await
+    }
+
+    /// Prepare immutable content and optionally record the trusted host source.
+    /// Audit persistence is best-effort: a local content request must not be
+    /// turned into a retryable task merely because its audit row was unavailable.
+    pub async fn prepare_content_skill_with_provenance(
+        &self,
+        id: &str,
+        user: &str,
+        provenance: Option<&ExecutionProvenance>,
+    ) -> Result<crate::PreparedContent> {
+        let started = Instant::now();
+        let result = self.prepare_content_skill_inner(id, user).await;
+        if let Some(provenance) = provenance {
+            let (success, output_result, error_message) = match &result {
+                Ok(content) => (
+                    true,
+                    Some(json!({
+                        "version": content.version,
+                        "content_hash": content.content_hash,
+                    })),
+                    None,
+                ),
+                Err(error) => (false, None, Some(error.error_code().to_string())),
+            };
+            let task_ref = (provenance.caller == BuiltinCaller::Workbench)
+                .then(|| provenance.request_id.clone());
+            let log = SkillUsageLog {
+                id: uuid::Uuid::new_v4().to_string(),
+                skill_id: id.to_string(),
+                user_id: user.to_string(),
+                caller: Some(format!("{:?}", provenance.caller).to_lowercase()),
+                request_id: Some(provenance.request_id.clone()),
+                task_ref,
+                input_params: json!({"operation": "prepare_content_skill"}),
+                output_result,
+                success,
+                error_message,
+                latency_ms: started.elapsed().as_millis().min(i32::MAX as u128) as i32,
+                created_at: chrono::Utc::now().timestamp(),
+            };
+            if let Err(audit_error) = self.skill_repo.insert_usage_log(&log).await {
+                tracing::warn!(skill_id = id, error = %audit_error, "Skill preparation audit write failed");
+            }
+        }
+        result
+    }
+
+    async fn prepare_content_skill_inner(
         &self,
         id: &str,
         user: &str,

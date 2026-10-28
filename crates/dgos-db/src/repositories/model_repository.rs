@@ -19,10 +19,21 @@ impl ModelRepository {
         provider_id: &str,
         new_models: Vec<Model>,
     ) -> DgosResult<Vec<Model>> {
-        // Delete existing models for this provider
+        let tx = self.db.begin().await.map_err(db_error)?;
+        Self::replace_in(&tx, provider_id, new_models).await?;
+        let models = Self::list_in(&tx, provider_id).await?;
+        tx.commit().await.map_err(db_error)?;
+        Ok(models)
+    }
+
+    pub(crate) async fn replace_in(
+        db: &impl ConnectionTrait,
+        provider_id: &str,
+        new_models: Vec<Model>,
+    ) -> DgosResult<()> {
         models::Entity::delete_many()
             .filter(models::Column::ProviderId.eq(provider_id))
-            .exec(&self.db)
+            .exec(db)
             .await
             .map_err(|e| DgosError::DatabaseError(e.to_string()))?;
 
@@ -41,7 +52,7 @@ impl ModelRepository {
 
             let model_entity = models::ActiveModel {
                 id: Set(model.id.clone()),
-                provider_id: Set(model.provider_id.clone()),
+                provider_id: Set(provider_id.to_owned()),
                 model_id: Set(model.model_id.clone()),
                 model_name: Set(model.model_name.clone()),
                 capabilities: Set(serde_json::to_value(&capabilities)
@@ -52,20 +63,27 @@ impl ModelRepository {
             };
 
             models::Entity::insert(model_entity)
-                .exec(&self.db)
+                .exec(db)
                 .await
                 .map_err(|e| DgosError::DatabaseError(e.to_string()))?;
         }
 
-        self.list(provider_id).await
+        Ok(())
     }
 
     /// List all models for a provider
     pub async fn list(&self, provider_id: &str) -> DgosResult<Vec<Model>> {
+        Self::list_in(&self.db, provider_id).await
+    }
+
+    pub(crate) async fn list_in(
+        db: &impl ConnectionTrait,
+        provider_id: &str,
+    ) -> DgosResult<Vec<Model>> {
         let models_data = models::Entity::find()
             .filter(models::Column::ProviderId.eq(provider_id))
             .filter(models::Column::IsAvailable.eq(true))
-            .all(&self.db)
+            .all(db)
             .await
             .map_err(|e| DgosError::DatabaseError(e.to_string()))?;
 
@@ -93,11 +111,19 @@ impl ModelRepository {
 
     /// Get a specific model
     pub async fn get(&self, provider_id: &str, model_id: &str) -> DgosResult<Option<Model>> {
+        Self::get_in(&self.db, provider_id, model_id).await
+    }
+
+    pub(crate) async fn get_in(
+        db: &impl ConnectionTrait,
+        provider_id: &str,
+        model_id: &str,
+    ) -> DgosResult<Option<Model>> {
         let model = models::Entity::find()
             .filter(models::Column::ProviderId.eq(provider_id))
             .filter(models::Column::ModelId.eq(model_id))
             .filter(models::Column::IsAvailable.eq(true))
-            .one(&self.db)
+            .one(db)
             .await
             .map_err(|e| DgosError::DatabaseError(e.to_string()))?;
 
@@ -121,4 +147,8 @@ impl ModelRepository {
             Ok(None)
         }
     }
+}
+
+fn db_error(error: DbErr) -> DgosError {
+    DgosError::DatabaseError(error.to_string())
 }

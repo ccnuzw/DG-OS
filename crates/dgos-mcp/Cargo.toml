@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 dgos-db = { path = "../dgos-db" }
+dgos-types = { path = "../dgos-types" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

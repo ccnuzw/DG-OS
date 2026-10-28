@@ -2,12 +2,24 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum DgosError {
+    #[error("Host permission denied")]
+    PermissionDenied,
+
     // Provider errors (1001xxx)
     #[error("Provider not found: {0}")]
     ProviderNotFound(String),
 
     #[error("Invalid API key")]
     InvalidApiKey,
+
+    #[error("Provider credential is unavailable")]
+    CredentialUnavailable,
+
+    #[error("A new credential is required for this provider endpoint")]
+    CredentialRequired,
+
+    #[error("Provider configuration or model refresh changed; refresh and review before retrying")]
+    ProviderConfigurationChanged,
 
     #[error("Provider unavailable: {0}")]
     ProviderUnavailable(String),
@@ -51,8 +63,12 @@ pub enum DgosError {
 impl DgosError {
     pub fn error_code(&self) -> u32 {
         match self {
+            DgosError::PermissionDenied => 1004004,
             DgosError::ProviderNotFound(_) => 1001001,
             DgosError::InvalidApiKey => 1001002,
+            DgosError::CredentialUnavailable => 1001015,
+            DgosError::CredentialRequired => 1001016,
+            DgosError::ProviderConfigurationChanged => 1001012,
             DgosError::ProviderUnavailable(_) => 1001003,
             DgosError::ModelNotFound(_) => 1001004,
             DgosError::RateLimitExceeded => 1001005,

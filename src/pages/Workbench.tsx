@@ -12,7 +12,7 @@ export interface TaskRecord {
   skills: { skill_id: string; version_id: string; content_hash: string }[];
   tools?: { server_id: string; tool_name: string; schema_hash: string }[];
 }
-interface TaskOutcome { record: TaskRecord; content?: string }
+interface TaskOutcome { record: TaskRecord; content?: string; audit_warning?: boolean }
 interface AvailableTool extends McpTool { server_name: string }
 interface ToolProposal {
   id: string; server_id: string; server_name: string; tool_name: string; schema_hash: string;
@@ -20,8 +20,13 @@ interface ToolProposal {
 }
 interface ToolTaskUpdate extends TaskOutcome { phase: string; proposal?: ToolProposal }
 const toolKey = (tool: McpTool) => JSON.stringify([tool.server_id, tool.tool_name, tool.schema_hash]);
-const userId = 'default-user'; // Desktop-only identity, not remote authentication.
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
+const taskFailureMessage = (status: string, code?: string) => {
+  const detail = `Task ${status}: ${code || 'unknown_error'}`;
+  if (code === 'mcp_unknown_result') return `${detail}. The external tool result is unknown; do not retry automatically. Check the MCP audit before repeating the task.`;
+  if (code === 'mcp_audit_warning') return `${detail}. The tool may have executed, but its audit is incomplete; do not retry automatically.`;
+  return `${detail}. Nothing was retried without your selected skill.`;
+};
 async function command<T>(name: string, args: Record<string, unknown>) {
   const result = await invoke<CommandResponse<T>>(name, args);
   if (!result.success || !result.data) throw new Error(result.error?.message || 'Unable to load configuration');
@@ -55,6 +60,7 @@ export default function Workbench() {
   const submitting = useRef(false);
   const cancelling = useRef(false);
   const taskRef = useRef<string | null>(null);
+  const taskKind = useRef<'text' | 'tool' | null>(null);
   const mounted = useRef(true);
   const generation = useRef(0);
   const proposalHeading = useRef<HTMLHeadingElement>(null);
@@ -65,7 +71,9 @@ export default function Workbench() {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      if (taskRef.current) void invoke('cancel_workbench_tool_task', { taskId: taskRef.current }).catch(() => {});
+      if (taskRef.current) {
+        void invoke(taskKind.current === 'text' ? 'cancel_workbench_task' : 'cancel_workbench_tool_task', { taskId: taskRef.current }).catch(() => {});
+      }
     };
   }, []);
 
@@ -98,15 +106,15 @@ export default function Workbench() {
     setLoading(true);
     setError(null);
     Promise.all([
-      command<Provider[]>('list_providers', { userId }),
-      invoke<Skill[]>('list_installed_skills', { userId }),
+      command<Provider[]>('list_providers', {}),
+      invoke<Skill[]>('list_installed_skills', {}),
     ]).then(([allProviders, allSkills]) => {
       if (!active) return;
-      setProviders(allProviders.filter(p => p.enabled));
+      setProviders(allProviders.filter(p => p.enabled && p.credential_status === 'stored'));
       setSkills(allSkills.filter(s => s.enabled && s.call_type === 'content'));
     }).catch(e => { if (active) setError(`Unable to load workbench: ${message(e)}`); })
       .finally(() => { if (active) setLoading(false); });
-    invoke<TaskRecord[]>('list_workbench_tasks', { userId })
+    invoke<TaskRecord[]>('list_workbench_tasks', {})
       .then(records => { if (active) { setHistory(records); setHistoryError(null); } })
       .catch(() => { if (active) setHistoryError('Task history is unavailable. Refresh to try again.'); });
     return () => { active = false; };
@@ -137,7 +145,31 @@ export default function Workbench() {
     setOutcome(result);
     taskRef.current = result.record.task.status === 'running' ? result.record.task.id : null;
     setHistory(old => [result.record, ...old.filter(row => row.task.id !== result.record.task.id)].slice(0, 50));
-    if (result.record.task.status === 'failed') setError(`Task failed: ${result.record.task.error_code || 'unknown_error'}. No tool was automatically retried. Cancellation does not undo external effects.`);
+    if (result.record.task.status === 'failed') setError(`${taskFailureMessage('failed', result.record.task.error_code)} Cancellation does not undo external effects.`);
+  }
+
+  async function cancelTask() {
+    if (!taskRef.current || cancelling.current) return;
+    const taskId = taskRef.current;
+    const kind = taskKind.current;
+    cancelling.current = true;
+    setCancelPending(true);
+    ++generation.current;
+    setError(null);
+    try {
+      if (kind === 'tool') {
+        const result = await invoke<ToolTaskUpdate>('cancel_workbench_tool_task', { taskId });
+        rememberToolUpdate(result);
+      } else {
+        const cancelled = await invoke<boolean>('cancel_workbench_task', { taskId });
+        if (!cancelled && mounted.current) setError('Task is no longer running. Check task history for its final state.');
+      }
+    } catch (e) {
+      if (mounted.current) setError(`Cancellation not confirmed: ${message(e)}. Check task audit; external effects may already have occurred.`);
+    } finally {
+      cancelling.current = false;
+      if (mounted.current) setCancelPending(false);
+    }
   }
 
   async function run() {
@@ -148,12 +180,15 @@ export default function Workbench() {
     setOutcome(null);
     setToolTask(null);
     const current = ++generation.current;
+    const clientTaskId = crypto.randomUUID();
     try {
+      taskRef.current = clientTaskId;
+      taskKind.current = selectedTools.length ? 'tool' : 'text';
       if (selectedTools.length) {
         const chosen = tools.filter(tool => selectedTools.includes(toolKey(tool)));
         if (chosen.length !== selectedTools.length) throw new Error('Selected tools changed; refresh and select again');
         const started = await invoke<ToolTaskUpdate>('start_workbench_tool_task', { input: {
-          task: { provider_id: providerId, model_id: modelId, prompt, skill_id: skillId || null, allow_without_skill: !skillId && withoutSkill },
+          task: { provider_id: providerId, model_id: modelId, prompt, skill_id: skillId || null, allow_without_skill: !skillId && withoutSkill, client_task_id: clientTaskId },
           tools: chosen.map(tool => ({ server_id: tool.server_id, tool_name: tool.tool_name, schema_hash: tool.schema_hash })),
         } });
         if (!mounted.current) {
@@ -166,15 +201,22 @@ export default function Workbench() {
         return;
       }
       const result = await invoke<TaskOutcome>('run_workbench_task', {
-        userId,
-        input: { provider_id: providerId, model_id: modelId, prompt, skill_id: skillId || null, allow_without_skill: !skillId && withoutSkill },
+        input: { provider_id: providerId, model_id: modelId, prompt, skill_id: skillId || null, allow_without_skill: !skillId && withoutSkill, client_task_id: clientTaskId },
       });
       setOutcome(result);
+      if (result.record.task.status !== 'running' && taskRef.current === clientTaskId) {
+        taskRef.current = null;
+        taskKind.current = null;
+      }
       setHistory(old => [result.record, ...old.filter(row => row.task.id !== result.record.task.id)].slice(0, 50));
-      if (result.record.task.status !== 'succeeded') setError(`Task ${result.record.task.status}: ${result.record.task.error_code || 'unknown_error'}. Nothing was retried without your selected skill.`);
+      if (result.record.task.status !== 'succeeded') setError(taskFailureMessage(result.record.task.status, result.record.task.error_code));
     } catch (e) {
       if (mounted.current && current === generation.current) setError(`Task not completed: ${message(e)}. No fallback request was sent. Check task history before submitting again.`);
     } finally {
+      if (taskKind.current === 'text' && taskRef.current === clientTaskId) {
+        taskRef.current = null;
+        taskKind.current = null;
+      }
       submitting.current = false;
       if (mounted.current) setRunning(false);
     }
@@ -196,20 +238,6 @@ export default function Workbench() {
     } finally { submitting.current = false; if (mounted.current) setRunning(false); }
   }
 
-  async function cancelTools() {
-    if (!taskRef.current || cancelling.current) return;
-    cancelling.current = true;
-    setCancelPending(true);
-    ++generation.current;
-    setError(null);
-    try {
-      const result = await invoke<ToolTaskUpdate>('cancel_workbench_tool_task', { taskId: taskRef.current });
-      rememberToolUpdate(result);
-    } catch (e) {
-      if (mounted.current) setError(`Cancellation not confirmed: ${message(e)}. Check task audit; external effects may already have occurred.`);
-    } finally { cancelling.current = false; if (mounted.current) setCancelPending(false); }
-  }
-
   return <main className="workbench">
     <header className="workbench-header">
       <div><h1>AI Workbench</h1><p>One task, with the skill you choose. Versions stay fixed for each run.</p></div>
@@ -220,7 +248,7 @@ export default function Workbench() {
         <h2 id="task-heading">New task</h2>
         <p>Configure a <Link to="/providers">Provider</Link> and add content from <Link to="/skills">Skills</Link> first.</p>
         {loading && <p role="status">Loading local configuration...</p>}
-        {!loading && !providers.length && <p>No enabled provider. Add or enable one in Providers.</p>}
+        {!loading && !providers.length && <p>No ready provider. Add, enable, or migrate a provider in Providers.</p>}
         <form onSubmit={e => { e.preventDefault(); void run(); }}>
           <fieldset disabled={locked || loading}>
             <div className="workbench-model-row">
@@ -255,8 +283,8 @@ export default function Workbench() {
             <button className="workbench-run" type="submit" disabled={!ready || locked}>{running ? 'Running task...' : skillId ? 'Run with selected skill' : 'Run without a skill'}</button>
           </fieldset>
         </form>
-        {running && <p role="status">{taskActive ? 'Waiting for the model or approved tool. No tool is automatically retried.' : 'Waiting for the model. Leaving this page does not cancel the request.'}</p>}
-        {taskActive && <button type="button" disabled={cancelPending} onClick={() => void cancelTools()}>{cancelPending ? 'Cancelling tool task...' : 'Cancel tool task'}</button>}
+        {running && <p role="status">{taskActive ? 'Waiting for the model or approved tool. No tool is automatically retried.' : 'Waiting for the model. You can cancel this task; leaving the page also requests cancellation.'}</p>}
+        {(running || taskActive) && taskRef.current && <button type="button" disabled={cancelPending} onClick={() => void cancelTask()}>{cancelPending ? 'Cancelling task...' : taskActive ? 'Cancel tool task' : 'Cancel task'}</button>}
         {error && <p className="workbench-error" role="alert">{error}</p>}
       </section>
       <section className="workbench-result" aria-labelledby="result-heading" aria-busy={running}>
@@ -268,6 +296,8 @@ export default function Workbench() {
           {!outcome.record.skills.length && <p>Explicitly run without a skill.</p>}
           {outcome.record.tools?.map(tool => <p key={JSON.stringify([tool.server_id, tool.tool_name])} className="workbench-reference">Selected tool: {tool.tool_name}<br />Server: {tool.server_id}<br />Schema: {tool.schema_hash}</p>)}
           {outcome.content && <pre tabIndex={0}>{outcome.content}</pre>}
+          {outcome.audit_warning && <p role="alert">The provider response completed, but usage audit persistence failed. Do not retry automatically; verify the result before repeating the task.</p>}
+          {toolTask?.audit_warning && <p role="alert">A provider response completed, but usage audit persistence failed. The task was not retried automatically.</p>}
         </>}
         {taskActive && toolTask?.proposal && <section className="workbench-proposal" aria-labelledby="proposal-heading" aria-busy={running}>
           <h3 id="proposal-heading" ref={proposalHeading} tabIndex={-1}>Review proposed tool call</h3>

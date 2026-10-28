@@ -3,12 +3,16 @@ name = "dgos-providers"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+test-support = []
+
 [dependencies]
 dgos-types = { path = "../dgos-types" }
 dgos-db = { path = "../dgos-db" }
 
 async-trait = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
@@ -20,7 +24,10 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 futures = "0.3"
 pin-project = "1.1"
+zeroize = "1"
+sha2 = { workspace = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
 mockito = "1.4"
+tempfile = "3"

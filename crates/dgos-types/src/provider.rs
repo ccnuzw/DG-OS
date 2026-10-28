@@ -51,6 +51,8 @@ pub struct ChatRequest {
 pub struct ChatResponse {
     pub content: String,
     pub usage: TokenUsage,
+    #[serde(default)]
+    pub audit_warning: bool,
 }
 
 /// Structured tool chat stays separate from the existing text-only contract.
@@ -103,6 +105,8 @@ pub struct ToolChatRequest {
 pub struct ToolChatResponse {
     pub message: ToolMessage,
     pub usage: TokenUsage,
+    #[serde(default)]
+    pub audit_warning: bool,
 }
 
 /// Token usage information
@@ -121,7 +125,7 @@ pub struct ChatChunk {
 }
 
 /// Provider configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub name: String,
     pub provider_type: String,
@@ -133,6 +137,16 @@ pub struct ProviderConfig {
     pub config: Option<serde_json::Value>,
 }
 
+impl std::fmt::Debug for ProviderConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProviderConfig")
+            .field("name", &self.name)
+            .field("provider_type", &self.provider_type)
+            .field("api_key", &"[redacted]")
+            .finish_non_exhaustive()
+    }
+}
+
 /// Provider entity
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Provider {
@@ -140,8 +154,11 @@ pub struct Provider {
     pub name: String,
     pub provider_type: String,
     pub base_url: String,
-    #[serde(skip_serializing)]
-    pub api_key: String,
+    /// Host vault reference; the secret itself is never serialized.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_ref: Option<String>,
+    pub credential_status: CredentialStatus,
+    pub config_revision: i64,
     pub enabled: bool,
     pub sort_order: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -149,6 +166,14 @@ pub struct Provider {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub user_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialStatus {
+    Stored,
+    MigrationRequired,
+    Missing,
 }
 
 /// Retry configuration
@@ -182,5 +207,7 @@ pub struct UsageLog {
     pub latency_ms: u32,
     pub success: bool,
     pub error_code: Option<String>,
+    pub caller: Option<String>,
+    pub request_id: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }

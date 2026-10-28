@@ -29,6 +29,12 @@ pub struct Model {
     #[sea_orm(column_type = "String(StringLen::N(50))", nullable)]
     pub error_code: Option<String>,
 
+    #[sea_orm(column_type = "String(StringLen::N(32))", nullable)]
+    pub caller: Option<String>,
+
+    #[sea_orm(column_type = "String(StringLen::N(36))", nullable)]
+    pub request_id: Option<String>,
+
     pub created_at: DateTimeUtc,
 }
 

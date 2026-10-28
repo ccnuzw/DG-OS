@@ -10,7 +10,7 @@ use dgos_db::{
 };
 use dgos_providers::ProviderManager;
 use dgos_skills::SkillsManager;
-use dgos_types::{ChatMessage, ChatRequest};
+use dgos_types::{BuiltinCaller, ChatMessage, ChatRequest, ExecutionProvenance};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
@@ -30,6 +30,8 @@ pub struct TaskInput {
     pub prompt: String,
     pub skill_id: Option<String>,
     pub allow_without_skill: bool,
+    #[serde(default)]
+    pub client_task_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -44,6 +46,7 @@ pub struct TaskRecord {
 pub struct TaskOutcome {
     pub record: TaskRecord,
     pub content: Option<String>,
+    pub audit_warning: bool,
 }
 
 // Request bytes live only in memory, never in the audit table or IPC history.
@@ -57,6 +60,7 @@ pub struct WorkbenchManager {
     db: DatabaseConnection,
     tool_tasks: Arc<Mutex<HashMap<String, Arc<tools::ToolSession>>>>,
     tool_starts: Arc<Mutex<()>>,
+    text_tasks: Arc<Mutex<HashMap<String, (String, tokio_util::sync::CancellationToken)>>>,
     stopping: tokio_util::sync::CancellationToken,
 }
 impl WorkbenchManager {
@@ -65,6 +69,7 @@ impl WorkbenchManager {
             db,
             tool_tasks: Arc::new(Mutex::new(HashMap::new())),
             tool_starts: Arc::new(Mutex::new(())),
+            text_tasks: Arc::new(Mutex::new(HashMap::new())),
             stopping: tokio_util::sync::CancellationToken::new(),
         }
     }
@@ -76,7 +81,7 @@ impl WorkbenchManager {
         user: &str,
         context_window: Option<i32>,
     ) -> Result<PreparedTask> {
-        self.prepare_bound(skills, input, user, context_window, &[])
+        self.prepare_bound(skills, input, user, context_window, &[], None, None)
             .await
     }
 
@@ -87,6 +92,8 @@ impl WorkbenchManager {
         user: &str,
         context_window: Option<i32>,
         tools: &[tools::SelectedTool],
+        provider_revision: Option<i64>,
+        provenance: Option<&ExecutionProvenance>,
     ) -> Result<PreparedTask> {
         // B02-21/22: explicit selection, bounded context, no silent fallback.
         if input.prompt.trim().is_empty() || input.prompt.len() > 16 * 1024 {
@@ -96,10 +103,15 @@ impl WorkbenchManager {
             return Err("Select a skill or explicitly confirm running without one".into());
         }
         let content = match &input.skill_id {
-            Some(id) => Some(skills.prepare_content_skill(id, user).await.map_err(|_| {
-                "Selected skill unavailable: check enablement, compatibility and integrity"
-                    .to_string()
-            })?),
+            Some(id) => Some(
+                skills
+                    .prepare_content_skill_with_provenance(id, user, provenance)
+                    .await
+                    .map_err(|_| {
+                        "Selected skill unavailable: check enablement, compatibility and integrity"
+                            .to_string()
+                    })?,
+            ),
             None => None,
         };
         let mut messages = vec![ChatMessage {
@@ -144,7 +156,12 @@ impl WorkbenchManager {
         {
             return Err("Task exceeds the conservative context budget; shorten input or choose a larger model".into());
         }
-        let task_id = uuid::Uuid::new_v4().to_string();
+        let task_id = input
+            .client_task_id
+            .as_deref()
+            .and_then(|id| uuid::Uuid::parse_str(id).ok())
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let tx = self
             .db
             .begin()
@@ -180,6 +197,7 @@ impl WorkbenchManager {
             finished_at: Set(None),
             error_code: Set(None),
             total_tokens: Set(None),
+            provider_config_revision: Set(provider_revision),
         }
         .insert(&tx)
         .await
@@ -228,38 +246,112 @@ impl WorkbenchManager {
         &self,
         skills: &SkillsManager,
         providers: &ProviderManager,
-        input: TaskInput,
+        mut input: TaskInput,
         user: &str,
     ) -> Result<TaskOutcome> {
-        let model = self.validate_provider(providers, &input, user).await?;
-        let prepared = self
-            .prepare(skills, &input, user, model.context_window)
-            .await?;
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            providers.call_provider(&input.provider_id, &input.model_id, prepared.request, user),
-        )
+        let task_id = input
+            .client_task_id
+            .as_deref()
+            .and_then(|id| uuid::Uuid::parse_str(id).ok())
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        input.client_task_id = Some(task_id.clone());
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        if self
+            .text_tasks
+            .lock()
+            .await
+            .insert(task_id.clone(), (user.to_owned(), cancellation.clone()))
+            .is_some()
+        {
+            return Err("Task is already active; cancel it before starting another".into());
+        }
+        let provenance = ExecutionProvenance {
+            caller: BuiltinCaller::Workbench,
+            request_id: task_id.clone(),
+        };
+        let prepared_result = async {
+            let (provider, model) = self.validate_provider(providers, &input, user).await?;
+            self.prepare_bound(
+                skills,
+                &input,
+                user,
+                model.context_window,
+                &[],
+                Some(provider.config_revision),
+                Some(&provenance),
+            )
+            .await
+        }
         .await;
-        let (status, error, content, tokens) = match result {
-            Ok(Ok(response)) if !response.content.trim().is_empty() => (
+        let prepared = match prepared_result {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.text_tasks.lock().await.remove(&task_id);
+                return Err(error);
+            }
+        };
+        let result = tokio::select! {
+            _ = self.stopping.cancelled() => Err("process_interrupted"),
+            _ = cancellation.cancelled() => Err("task_cancelled"),
+            response = tokio::time::timeout(
+                std::time::Duration::from_secs(120),
+                providers.call_provider_bound_with_provenance(
+                    &input.provider_id,
+                    &input.model_id,
+                    prepared.request,
+                    user,
+                    prepared.record.task.provider_config_revision,
+                    Some(&provenance),
+                ),
+            ) => Ok(response),
+        };
+        let (status, error, content, tokens, audit_warning) = match result {
+            Err(reason) => ("interrupted", Some(reason.into()), None, None, false),
+            Ok(Ok(Ok(response))) if !response.content.trim().is_empty() => (
                 "succeeded",
                 None,
                 Some(response.content),
                 Some(response.usage.total_tokens as i64),
+                response.audit_warning,
             ),
-            Ok(Ok(_)) => ("failed", Some("empty_response".into()), None, None),
-            Ok(Err(error)) => (
+            Ok(Ok(Ok(response))) => (
+                "failed",
+                Some("empty_response".into()),
+                None,
+                None,
+                response.audit_warning,
+            ),
+            Ok(Ok(Err(error))) => (
                 "failed",
                 Some(format!("provider_{}", error.error_code())),
                 None,
                 None,
+                false,
             ),
-            Err(_) => ("failed", Some("provider_timeout".into()), None, None),
+            Ok(Err(_)) => ("failed", Some("provider_timeout".into()), None, None, false),
         };
+        self.text_tasks.lock().await.remove(&task_id);
         self.finish(&prepared.record.task.id, user, status, error, tokens)
             .await?;
         let record = self.record(&prepared.record.task.id, user).await?;
-        Ok(TaskOutcome { record, content })
+        Ok(TaskOutcome {
+            record,
+            content,
+            audit_warning,
+        })
+    }
+
+    pub async fn cancel_text_task(&self, id: &str, user: &str) -> Result<bool> {
+        let tasks = self.text_tasks.lock().await;
+        if let Some((owner, cancellation)) = tasks.get(id) {
+            if owner != user {
+                return Err("Task is not owned by this user".into());
+            }
+            cancellation.cancel();
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     async fn validate_provider(
@@ -267,30 +359,25 @@ impl WorkbenchManager {
         providers: &ProviderManager,
         input: &TaskInput,
         user: &str,
-    ) -> Result<dgos_types::Model> {
+    ) -> Result<(dgos_types::Provider, dgos_types::Model)> {
         // B02-21: never trust a provider/model identifier from the renderer.
-        let provider = providers
-            .get_provider(&input.provider_id)
+        let (provider, model) = providers
+            .model_snapshot(&input.provider_id, &input.model_id, user)
             .await
-            .map_err(|_| "Unable to read provider".to_string())?
-            .ok_or("Provider unavailable")?;
+            .map_err(|_| "Choose a cached chat model from an available provider".to_string())?;
         if provider.user_id != user || !provider.enabled {
             return Err("Provider unavailable for this user".into());
         }
-        let model = dgos_db::ModelRepository::new(self.db.clone())
-            .list(&provider.id)
-            .await
-            .map_err(|_| "Unable to read cached models".to_string())?
-            .into_iter()
-            .find(|m| m.model_id == input.model_id && m.model_type == "chat")
-            .ok_or("Choose a cached chat model from this provider")?;
+        if model.model_type != "chat" {
+            return Err("Choose a cached chat model from this provider".into());
+        }
         if model
             .max_output_tokens
             .is_some_and(|max| max < OUTPUT_TOKENS as i32)
         {
             return Err("Model output limit is below the workbench 1024-token reserve".into());
         }
-        Ok(model)
+        Ok((provider, model))
     }
 
     async fn finish(
@@ -417,6 +504,7 @@ mod tests {
             finished_at: Set(None),
             error_code: Set(None),
             total_tokens: Set(None),
+            provider_config_revision: Set(None),
         }
         .insert(&db)
         .await

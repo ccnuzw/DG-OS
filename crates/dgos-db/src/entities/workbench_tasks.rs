@@ -15,6 +15,7 @@ pub struct Model {
     pub finished_at: Option<i64>,
     pub error_code: Option<String>,
     pub total_tokens: Option<i64>,
+    pub provider_config_revision: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

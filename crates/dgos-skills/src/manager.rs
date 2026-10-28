@@ -11,7 +11,7 @@ pub struct SkillsManager {
     // No undeployed public registry is required for local startup. Only legacy
     // tests configure this endpoint; future external sources get adapters.
     registry_url: String,
-    skill_repo: SkillRepository,
+    pub(crate) skill_repo: SkillRepository,
     registry_repo: RegistryRepository,
     pub(crate) content_repo: ContentRepository,
     http_client: Client,

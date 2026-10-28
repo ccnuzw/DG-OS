@@ -12,7 +12,7 @@ const record = { task: { id: 'task-1', status: 'succeeded', provider_id: 'p1', m
 
 beforeEach(() => {
   mocked.mockImplementation(async command => {
-    if (command === 'list_providers') return { success: true, data: [{ id: 'p1', name: 'My AI', enabled: true }] };
+    if (command === 'list_providers') return { success: true, data: [{ id: 'p1', name: 'My AI', enabled: true, credential_status: 'stored' }] };
     if (command === 'list_models') return { success: true, data: [{ id: 'm1', model_id: 'chat1', provider_id: 'p1', model_name: 'Chat One', model_type: 'chat' }] };
     if (command === 'list_installed_skills') return [skill, { ...skill, id: 'disabled', skill_id: 'disabled', name: 'Disabled skill', enabled: false }];
     if (command === 'list_workbench_tasks') return [];
@@ -38,9 +38,12 @@ it('AC20 sends only the explicitly selected skill and shows the exact bound vers
   fireEvent.change(screen.getByLabelText('Skill for this task'), { target: { value: 'summary' } });
   fireEvent.click(screen.getByRole('button', { name: 'Run with selected skill' }));
   await screen.findByText('The release is Friday.');
-  expect(mocked).toHaveBeenCalledWith('run_workbench_task', { userId: 'default-user', input: {
+  expect(mocked).toHaveBeenCalledWith('run_workbench_task', { input: expect.objectContaining({
     provider_id: 'p1', model_id: 'chat1', prompt: 'Summarize the release notes.', skill_id: 'summary', allow_without_skill: false,
-  } });
+  }) });
+  expect(mocked.mock.calls.find(([name]) => name === 'run_workbench_task')?.[1]).toEqual({
+    input: expect.objectContaining({ client_task_id: expect.stringMatching(/^[0-9a-f-]{36}$/) }),
+  });
   expect(screen.getByText(/Bound version: summary@1.0.0/)).toBeTruthy();
   expect(mocked.mock.calls.some(([name]) => name === 'call_provider')).toBe(false);
 });
@@ -85,6 +88,30 @@ it('AC21 regression prevents duplicate sends while a request is running', async 
   expect(mocked.mock.calls.filter(([name]) => name === 'run_workbench_task')).toHaveLength(1);
   resolve({ record, content: 'Finished once.' });
   await screen.findByText('Finished once.');
+});
+
+it('text task cancellation uses the host text-task command and does not replay', async () => {
+  let resolve!: (value: unknown) => void;
+  const pending = new Promise(r => { resolve = r; });
+  const handler = mocked.getMockImplementation()!;
+  mocked.mockImplementation((command, args) => {
+    if (command === 'run_workbench_task') return pending;
+    if (command === 'cancel_workbench_task') {
+      return Promise.resolve(true);
+    }
+    return handler(command, args);
+  });
+  show();
+  await configure();
+  fireEvent.change(screen.getByLabelText('Skill for this task'), { target: { value: 'summary' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Run with selected skill' }));
+  await screen.findByRole('button', { name: 'Cancel task' });
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel task' }));
+  await waitFor(() => expect(mocked).toHaveBeenCalledWith('cancel_workbench_task', {
+    taskId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+  }));
+  expect(mocked.mock.calls.some(([name]) => name === 'cancel_workbench_tool_task')).toBe(false);
+  resolve({ record: { ...record, task: { ...record.task, status: 'interrupted', error_code: 'task_cancelled' } }, content: null });
 });
 
 it('AC22 rejects oversized UTF-8 input before invoking the backend', async () => {
@@ -141,9 +168,12 @@ it('MCP selection is explicit and approval sends only the host proposal ID', asy
   expect(screen.getByLabelText('Exact tool arguments').textContent).toContain('Review these exact arguments');
   expect(screen.getByRole('heading', { name: 'Review proposed tool call' })).toBe(document.activeElement);
   expect(mocked).toHaveBeenCalledWith('start_workbench_tool_task', { input: {
-    task: { provider_id: 'p1', model_id: 'chat1', prompt: 'Summarize the release notes.', skill_id: 'summary', allow_without_skill: false },
+    task: expect.objectContaining({ provider_id: 'p1', model_id: 'chat1', prompt: 'Summarize the release notes.', skill_id: 'summary', allow_without_skill: false }),
     tools: [{ server_id: 'server-1', tool_name: 'echo', schema_hash: selectedTool.schema_hash }],
   } });
+  expect(mocked.mock.calls.find(([name]) => name === 'start_workbench_tool_task')?.[1]).toEqual({
+    input: expect.objectContaining({ task: expect.objectContaining({ client_task_id: expect.stringMatching(/^[0-9a-f-]{36}$/) }) }),
+  });
   expect(mocked.mock.calls.filter(([name, args]) => name === 'advance_workbench_tool_task' && (args?.action as {type: string}).type === 'approve')).toHaveLength(0);
   const approve = screen.getByRole('button', { name: 'Approve this call once' });
   fireEvent.click(approve); fireEvent.click(approve);
@@ -160,6 +190,19 @@ it('MCP reject stops the task without approving or presenting success', async ()
   expect(screen.getByText(/Task failed: tool_denied/)).toBeTruthy();
   expect(screen.queryByText('Tool-assisted answer')).toBeNull();
   expect(mocked.mock.calls.filter(([name, args]) => name === 'advance_workbench_tool_task' && (args?.action as {type: string}).type === 'approve')).toHaveLength(0);
+});
+
+it('MCP unknown external result is explicit and never presented as success', async () => {
+  mockTools(); show(); await configureTools();
+  const handler = mocked.getMockImplementation()!;
+  mocked.mockImplementation((command, args) => command === 'advance_workbench_tool_task'
+    && (args?.action as { type: string }).type === 'approve'
+    ? Promise.resolve({ record: { ...toolRecord, task: { ...toolRecord.task, status: 'failed', error_code: 'mcp_unknown_result' } }, phase: 'finished' })
+    : handler(command, args));
+  fireEvent.click(screen.getByRole('button', { name: 'Approve this call once' }));
+  await screen.findByRole('alert');
+  expect(screen.getByText(/external tool result is unknown; do not retry automatically/i)).toBeTruthy();
+  expect(screen.queryByText('Tool-assisted answer')).toBeNull();
 });
 
 it('MCP task cancels on leaving the page without replaying approval', async () => {
