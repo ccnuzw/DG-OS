@@ -2873,6 +2873,11 @@
       `;
     }
 
+    function diagramTextLines(lines, x, y, { size = 12, lineHeight = 18, anchor = "start", fill = "#69707a", weight = 400 } = {}) {
+      // SVG text has no automatic wrapping; keep line breaks in the layout, not the document data.
+      return `<text x="${x}" y="${y}" text-anchor="${anchor}" font-size="${size}" font-weight="${weight}" fill="${fill}">${lines.map((line, index) => `<tspan x="${x}" dy="${index === 0 ? 0 : lineHeight}">${escapeHtml(line)}</tspan>`).join("")}</text>`;
+    }
+
     function renderProductArchitectureSvg() {
       return `
         <svg viewBox="0 0 960 560" role="img" aria-label="DGOS 产品架构全景图">
@@ -2882,12 +2887,12 @@
           <text x="36" y="60" font-size="12" fill="#69707a">本地优先：Tauri + React + Rust 领域服务 + SQLite；外部能力只能经宿主策略调用。</text>
           <g stroke="#69707a" stroke-width="1.5" fill="none" marker-end="url(#dgos-arrow-main)">
             <path d="M180 132 H250"></path><path d="M470 132 H540"></path><path d="M760 132 H830"></path>
-            <path d="M370 224 V292"></path><path d="M650 224 V292"></path><path d="M530 398 V460"></path>
+            <path d="M360 184 V292"></path><path d="M650 184 V292"></path><path d="M530 398 V460"></path>
           </g>
           <g>
             <rect x="36" y="92" width="144" height="82" rx="8" fill="#e1f0e8" stroke="#2f7d4f"></rect><text x="108" y="120" text-anchor="middle" font-size="14" font-weight="700" fill="#1d1f22">Tauri 桌面宿主</text><text x="108" y="143" text-anchor="middle" font-size="11" fill="#69707a">窗口 / 权限 / 事件</text>
-            <rect x="250" y="82" width="220" height="102" rx="8" fill="#dcefeb" stroke="#087d75" stroke-width="2"></rect><text x="360" y="110" text-anchor="middle" font-size="15" font-weight="760" fill="#087d75">React 前端模块</text><text x="360" y="136" text-anchor="middle" font-size="11" fill="#69707a">AI 工作台 · 系统设置</text><text x="360" y="157" text-anchor="middle" font-size="11" fill="#69707a">Module Federation · 设计系统</text>
-            <rect x="540" y="82" width="220" height="102" rx="8" fill="#ffffff" stroke="#4056a1" stroke-width="2"></rect><text x="650" y="110" text-anchor="middle" font-size="15" font-weight="760" fill="#4056a1">Tauri IPC 通信层</text><text x="650" y="136" text-anchor="middle" font-size="11" fill="#69707a">Command-based RPC</text><text x="650" y="157" text-anchor="middle" font-size="11" fill="#69707a">Event System · 调用者上下文</text>
+            <rect x="250" y="82" width="220" height="102" rx="8" fill="#dcefeb" stroke="#087d75" stroke-width="2"></rect><text x="360" y="108" text-anchor="middle" font-size="15" font-weight="760" fill="#087d75">React 前端模块</text>${diagramTextLines(["AI 工作台 · 系统设置", "Module Federation", "统一设计系统"], 360, 130, { size: 12, anchor: "middle" })}
+            <rect x="540" y="82" width="220" height="102" rx="8" fill="#ffffff" stroke="#4056a1" stroke-width="2"></rect><text x="650" y="108" text-anchor="middle" font-size="15" font-weight="760" fill="#4056a1">Tauri IPC 通信层</text>${diagramTextLines(["Command-based RPC", "Event System", "调用者上下文"], 650, 130, { size: 12, anchor: "middle" })}
             <rect x="830" y="92" width="94" height="82" rx="8" fill="#f6ead6" stroke="#a96810"></rect><text x="877" y="120" text-anchor="middle" font-size="13" font-weight="700" fill="#1d1f22">远程访问</text><text x="877" y="143" text-anchor="middle" font-size="11" fill="#69707a">局域网 HTTP</text>
           </g>
           <rect x="36" y="292" width="888" height="106" rx="8" fill="#ffffff" stroke="#dedbd2"></rect><text x="52" y="318" font-size="13" font-weight="760" fill="#087d75">Rust 应用与领域服务层</text>
@@ -2908,8 +2913,8 @@
 
     function renderCoreFlowSvg() {
       return `
-        <svg viewBox="0 0 960 330" role="img" aria-label="DGOS AI 工作台调用流程图">
-          <defs><marker id="dgos-arrow-flow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#69707a"></path></marker></defs><rect width="960" height="330" rx="8" fill="#fbfaf7"></rect>
+        <svg viewBox="0 0 960 350" role="img" aria-label="DGOS AI 工作台调用流程图">
+          <defs><marker id="dgos-arrow-flow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#69707a"></path></marker></defs><rect width="960" height="350" rx="8" fill="#fbfaf7"></rect>
           <text x="36" y="38" font-size="18" font-weight="760" fill="#1d1f22">V1 AI 工作台调用流程</text><text x="36" y="62" font-size="12" fill="#69707a">默认路径保持本地可控；Skills 与 MCP 仅在用户选择并通过宿主授权后参与。</text>
           <g stroke="#69707a" stroke-width="1.6" fill="none" marker-end="url(#dgos-arrow-flow)"><path d="M140 146 H196"></path><path d="M304 146 H360"></path><path d="M468 146 H524"></path><path d="M632 146 H688"></path><path d="M796 146 H852"></path></g>
           <g><rect x="36" y="102" width="104" height="88" rx="8" fill="#e1f0e8" stroke="#2f7d4f"></rect><text x="88" y="128" text-anchor="middle" font-size="13" font-weight="700">用户输入</text><text x="88" y="151" text-anchor="middle" font-size="11" fill="#69707a">对话 / Provider</text><text x="88" y="170" text-anchor="middle" font-size="11" fill="#69707a">可选 Skill/MCP</text>
@@ -2919,7 +2924,7 @@
           <rect x="688" y="102" width="108" height="88" rx="8" fill="#ffffff" stroke="#087d75"></rect><text x="742" y="128" text-anchor="middle" font-size="13" font-weight="700">外部能力</text><text x="742" y="151" text-anchor="middle" font-size="11" fill="#69707a">模型 API</text><text x="742" y="170" text-anchor="middle" font-size="11" fill="#69707a">Skill / MCP</text>
           <rect x="852" y="102" width="88" height="88" rx="8" fill="#f4dde4" stroke="#aa2d4d"></rect><text x="896" y="128" text-anchor="middle" font-size="13" font-weight="700">响应</text><text x="896" y="151" text-anchor="middle" font-size="11" fill="#69707a">事件流</text><text x="896" y="170" text-anchor="middle" font-size="11" fill="#69707a">UI 渲染</text></g>
           <path d="M896 190 C896 250 88 250 88 190" fill="none" stroke="#8b929a" stroke-width="1.4" stroke-dasharray="5 5" marker-end="url(#dgos-arrow-flow)"></path><text x="480" y="244" text-anchor="middle" font-size="12" fill="#69707a">失败语义、超时、取消和敏感信息处理由宿主统一控制</text>
-          <rect x="232" y="274" width="496" height="30" rx="7" fill="#ffffff" stroke="#dedbd2"></rect><text x="480" y="294" text-anchor="middle" font-size="11" fill="#69707a">可选增强：Workbench → SkillsManager / MCPClient → 合并结果</text>
+          <rect x="232" y="274" width="496" height="52" rx="7" fill="#ffffff" stroke="#dedbd2"></rect>${diagramTextLines(["可选增强：Workbench → SkillsManager / MCPClient", "合并结果后返回工作台"], 480, 295, { size: 12, anchor: "middle" })}
         </svg>
       `;
     }
@@ -2928,17 +2933,86 @@
       const items = [
         ["V1", "框架底座", "Provider · Skills · MCP · 模块 · 工作台"], ["V2", "无限画布", "节点、连线、执行、工作流"], ["V3", "应用市场", "浏览、安装、审核、更新"], ["V4", "云端与协同", "账号、同步、实时协同"], ["V5", "企业化", "组织、成员、审计、账单"], ["V6", "移动端", "iOS/Android 与离线同步"], ["V7", "AI Agent", "自主任务、多 Agent、自动化"], ["V8", "开发者生态", "门户、API 市场、SDK、模板"]
       ];
-      const rows = items.map((item, i) => `<g><rect x="54" y="${92 + i * 50}" width="120" height="34" rx="7" fill="${i === 0 ? '#dcefeb' : '#ffffff'}" stroke="${i === 0 ? '#087d75' : '#c6c1b5'}"></rect><text x="114" y="${114 + i * 50}" text-anchor="middle" font-size="12" font-weight="760" fill="#1d1f22">${item[0]} · ${item[1]}</text><line x1="174" y1="109" x2="214" y2="109" stroke="#69707a" stroke-width="1.4" marker-end="url(#dgos-arrow-road)"></line><text x="230" y="114" font-size="11" fill="#69707a">${item[2]}</text></g>`).join("");
-      return `<svg viewBox="0 0 960 520" role="img" aria-label="DGOS 版本路线图"><defs><marker id="dgos-arrow-road" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#69707a"></path></marker></defs><rect width="960" height="520" rx="8" fill="#fbfaf7"></rect><text x="36" y="38" font-size="18" font-weight="760" fill="#1d1f22">DGOS V1–V8 版本路线</text><text x="36" y="62" font-size="12" fill="#69707a">每个版本是独立阶段；当前实现以 V1 文档和实现状态为准。</text>${rows}<line x1="114" y1="126" x2="114" y2="492" stroke="#c6c1b5" stroke-width="2" stroke-dasharray="4 4"></line></svg>`;
+      const rowHeight = 56;
+      const rowGap = 10;
+      const rowStart = 92;
+      const footerY = rowStart + items.length * (rowHeight + rowGap) + 18;
+      const height = footerY + 24;
+      const rows = items.map((item, i) => {
+        const y = rowStart + i * (rowHeight + rowGap);
+        const centerY = y + rowHeight / 2;
+        return `<g class="roadmap-row" data-version="${item[0]}">
+          <circle cx="54" cy="${centerY}" r="5" fill="${i === 0 ? '#087d75' : '#c6c1b5'}"></circle>
+          <rect x="76" y="${y}" width="204" height="${rowHeight}" rx="7" fill="${i === 0 ? '#dcefeb' : '#ffffff'}" stroke="${i === 0 ? '#087d75' : '#c6c1b5'}"></rect>
+          ${diagramTextLines([`${item[0]} · ${item[1]}`], 178, centerY + 5, { size: 14, weight: 760, anchor: "middle", fill: "#1d1f22" })}
+          <line x1="280" y1="${centerY}" x2="320" y2="${centerY}" stroke="#69707a" stroke-width="1.4" marker-end="url(#dgos-arrow-road)"></line>
+          ${diagramTextLines([item[2], i === 0 ? "当前版本 · 完成度以实现状态为准" : "后续规划 · 不代表已实现"], 340, centerY - 4, { size: 13, lineHeight: 20 })}
+        </g>`;
+      }).join("");
+      return `<svg viewBox="0 0 960 ${height}" role="img" aria-label="DGOS 版本路线图">
+        <defs><marker id="dgos-arrow-road" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#69707a"></path></marker></defs>
+        <rect width="960" height="${height}" rx="8" fill="#fbfaf7"></rect>
+        <text x="36" y="38" font-size="18" font-weight="760" fill="#1d1f22">DGOS V1–V8 版本路线</text>
+        <text x="36" y="62" font-size="12" fill="#69707a">每个版本是独立阶段；当前实现以 V1 文档和实现状态为准。</text>
+        <line x1="54" y1="${rowStart + rowHeight / 2}" x2="54" y2="${rowStart + (items.length - 1) * (rowHeight + rowGap) + rowHeight / 2}" stroke="#c6c1b5" stroke-width="2" stroke-dasharray="4 4"></line>
+        ${rows}
+        <text x="36" y="${footerY}" font-size="12" fill="#69707a">来源：版本路线图 · 版本顺序不代表全部依赖，进入条件以权威文档为准。</text>
+      </svg>`;
     }
 
     function renderDataDomainSvg() {
-      return `<svg viewBox="0 0 960 410" role="img" aria-label="DGOS 数据域关系图"><defs><marker id="dgos-arrow-data" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#69707a"></path></marker></defs><rect width="960" height="410" rx="8" fill="#fbfaf7"></rect><text x="36" y="38" font-size="18" font-weight="760" fill="#1d1f22">V1 数据域关系</text><text x="36" y="62" font-size="12" fill="#69707a">SQLite 保存本地用户、Provider、Skills、MCP、模块和工作台记录；凭据与敏感输入不进入普通 DTO。</text><g stroke="#69707a" stroke-width="1.4" fill="none" marker-end="url(#dgos-arrow-data)"><path d="M170 132 H280"></path><path d="M430 132 H540"></path><path d="M690 132 H800"></path><path d="M355 168 V240"></path><path d="M615 168 V240"></path><path d="M355 302 H540"></path><path d="M690 302 H800"></path></g><g><rect x="36" y="96" width="134" height="72" rx="8" fill="#e1f0e8" stroke="#2f7d4f"></rect><text x="103" y="124" text-anchor="middle" font-size="14" font-weight="700">用户域</text><text x="103" y="146" text-anchor="middle" font-size="11" fill="#69707a">users / sessions</text><rect x="280" y="96" width="150" height="72" rx="8" fill="#dcefeb" stroke="#087d75"></rect><text x="355" y="124" text-anchor="middle" font-size="14" font-weight="700">Provider 域</text><text x="355" y="146" text-anchor="middle" font-size="11" fill="#69707a">providers / models</text><rect x="540" y="96" width="150" height="72" rx="8" fill="#e6e9f6" stroke="#4056a1"></rect><text x="615" y="124" text-anchor="middle" font-size="14" font-weight="700">扩展能力域</text><text x="615" y="146" text-anchor="middle" font-size="11" fill="#69707a">skills / mcp_servers</text><rect x="800" y="96" width="124" height="72" rx="8" fill="#f6ead6" stroke="#a96810"></rect><text x="862" y="124" text-anchor="middle" font-size="14" font-weight="700">模块域</text><text x="862" y="146" text-anchor="middle" font-size="11" fill="#69707a">modules / grants</text><rect x="280" y="240" width="150" height="72" rx="8" fill="#f4dde4" stroke="#aa2d4d"></rect><text x="355" y="268" text-anchor="middle" font-size="14" font-weight="700">工作台域</text><text x="355" y="290" text-anchor="middle" font-size="11" fill="#69707a">conversations / tasks</text><rect x="540" y="240" width="150" height="72" rx="8" fill="#ffffff" stroke="#087d75"></rect><text x="615" y="268" text-anchor="middle" font-size="14" font-weight="700">用量记录域</text><text x="615" y="290" text-anchor="middle" font-size="11" fill="#69707a">provider / mcp / skill logs</text><rect x="800" y="240" width="124" height="72" rx="8" fill="#ffffff" stroke="#4056a1"></rect><text x="862" y="268" text-anchor="middle" font-size="14" font-weight="700">权限审计域</text><text x="862" y="290" text-anchor="middle" font-size="11" fill="#69707a">permissions / audit</text></g><rect x="36" y="354" width="888" height="30" rx="7" fill="#ffffff" stroke="#dedbd2"></rect><text x="52" y="374" font-size="11" fill="#69707a">领域服务只通过公开接口协作；身份和权限由宿主派生，外部调用必须具备超时、取消、重试和失败语义。</text></svg>`;
+      const domains = [
+        [36, 96, 134, "用户域", ["users / sessions"], "#e1f0e8", "#2f7d4f"],
+        [280, 96, 150, "Provider 域", ["providers / models"], "#dcefeb", "#087d75"],
+        [540, 96, 150, "扩展能力域", ["skills", "mcp_servers"], "#e6e9f6", "#4056a1"],
+        [800, 96, 124, "模块域", ["modules / grants"], "#f6ead6", "#a96810"],
+        [280, 252, 150, "工作台域", ["conversations", "tasks"], "#f4dde4", "#aa2d4d"],
+        [540, 252, 150, "用量记录域", ["provider / mcp", "skill logs"], "#ffffff", "#087d75"],
+        [800, 252, 124, "权限审计域", ["permissions", "audit"], "#ffffff", "#4056a1"]
+      ];
+      return `<svg viewBox="0 0 960 466" role="img" aria-label="DGOS 数据域关系图">
+        <defs><marker id="dgos-arrow-data" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#69707a"></path></marker></defs>
+        <rect width="960" height="466" rx="8" fill="#fbfaf7"></rect>
+        <text x="36" y="38" font-size="18" font-weight="760" fill="#1d1f22">V1 数据域关系</text>
+        ${diagramTextLines(["SQLite 保存本地用户、Provider、Skills、MCP、模块和工作台记录。", "凭据与敏感输入不进入普通 DTO。"], 36, 60)}
+        <g stroke="#69707a" stroke-width="1.4" fill="none" marker-end="url(#dgos-arrow-data)">
+          <path d="M170 144 H280"></path><path d="M430 144 H540"></path><path d="M690 144 H800"></path>
+          <path d="M355 192 V252"></path><path d="M615 192 V252"></path>
+          <path d="M430 300 H540"></path><path d="M690 300 H800"></path>
+        </g>
+        ${domains.map(([x, y, width, title, lines, fill, stroke]) => `<g class="data-domain-card">
+          <rect x="${x}" y="${y}" width="${width}" height="96" rx="8" fill="${fill}" stroke="${stroke}"></rect>
+          ${diagramTextLines([title], x + width / 2, y + 28, { size: 14, weight: 700, anchor: "middle", fill: "#1d1f22" })}
+          ${diagramTextLines(lines, x + width / 2, y + 52, { size: 12, anchor: "middle" })}
+        </g>`).join("")}
+        <rect x="36" y="390" width="888" height="52" rx="7" fill="#ffffff" stroke="#dedbd2"></rect>
+        ${diagramTextLines(["领域服务只通过公开接口协作；身份和权限由宿主派生。", "外部调用必须具备超时、取消、重试和失败语义。"], 52, 411)}
+      </svg>`;
     }
 
     function renderRiskHeatmapSvg() {
-      const cards = [["凭据与敏感数据","Provider API Key、Token 不进入普通 DTO、SQLite、日志和错误消息", "#f4dde4", "#aa2d4d"],["权限与调用者上下文","Tauri command 身份由宿主派生，模块权限运行时拦截", "#f4dde4", "#aa2d4d"],["外部 Provider / MCP","超时、重试、取消、幂等和未知结果必须显式定义", "#f6ead6", "#a96810"],["数据迁移兼容","已执行 migration 只追加；升级失败要可恢复", "#f6ead6", "#a96810"],["模块隔离与热更新","动态模块不能绕过公开接口或跨域读取私有状态", "#e6e9f6", "#4056a1"],["协议兼容与错误语义","OpenAI、Skills、MCP 适配保持向后兼容", "#dcefeb", "#087d75"]];
-      return `<svg viewBox="0 0 960 350" role="img" aria-label="DGOS 风险热区图"><rect width="960" height="350" rx="8" fill="#fbfaf7"></rect><text x="36" y="38" font-size="18" font-weight="760" fill="#1d1f22">架构风险热区</text><text x="36" y="62" font-size="12" fill="#69707a">颜色越深，越需要在实现和验收中保留可追溯证据。</text>${cards.map((c,i)=>{const x=54+(i%3)*292,y=92+Math.floor(i/3)*112;return `<rect x="${x}" y="${y}" width="256" height="86" rx="8" fill="${c[2]}" stroke="${c[3]}"></rect><text x="${x+128}" y="${y+27}" text-anchor="middle" font-size="14" font-weight="760" fill="#1d1f22">${c[0]}</text><text x="${x+128}" y="${y+51}" text-anchor="middle" font-size="10.5" fill="#69707a">${c[1]}</text>`}).join("")}</svg>`;
+      const cards = [
+        ["凭据与敏感数据", ["Provider API Key、Token", "不进入普通 DTO、SQLite、", "日志和错误消息"], "#f4dde4", "#aa2d4d"],
+        ["权限与调用者上下文", ["Tauri command 身份由宿主派生", "模块权限运行时拦截"], "#f4dde4", "#aa2d4d"],
+        ["外部 Provider / MCP", ["超时、重试、取消、幂等", "和未知结果必须显式定义"], "#f6ead6", "#a96810"],
+        ["数据迁移兼容", ["已执行 migration 只追加", "升级失败要可恢复"], "#f6ead6", "#a96810"],
+        ["模块隔离与热更新", ["动态模块不能绕过公开接口", "或跨域读取私有状态"], "#e6e9f6", "#4056a1"],
+        ["协议兼容与错误语义", ["OpenAI、Skills、MCP 适配", "保持向后兼容"], "#dcefeb", "#087d75"]
+      ];
+      return `<svg viewBox="0 0 960 374" role="img" aria-label="DGOS 风险热区图">
+        <rect width="960" height="374" rx="8" fill="#fbfaf7"></rect>
+        <text x="36" y="38" font-size="18" font-weight="760" fill="#1d1f22">架构风险热区</text>
+        <text x="36" y="62" font-size="12" fill="#69707a">颜色越深，越需要在实现和验收中保留可追溯证据。</text>
+        ${cards.map((card, i) => {
+          const x = 36 + (i % 3) * 300;
+          const y = 92 + Math.floor(i / 3) * 132;
+          return `<g class="risk-card">
+            <rect x="${x}" y="${y}" width="288" height="116" rx="8" fill="${card[2]}" stroke="${card[3]}"></rect>
+            ${diagramTextLines([card[0]], x + 16, y + 28, { size: 14, weight: 760, fill: "#1d1f22" })}
+            ${diagramTextLines(card[1], x + 16, y + 53, { size: 12 })}
+          </g>`;
+        }).join("")}
+      </svg>`;
     }
 
     function renderSearch() {
