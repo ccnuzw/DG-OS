@@ -274,13 +274,12 @@ mod tests {
         .unwrap();
         let repository = Arc::new(ModulePermissionRepository::new(db));
         let service = HostCapabilityService::new(repository.clone());
-        let context =
-            HostExecutionContext::for_module_session(
-                &HostSession::local_default(),
-                "module-1",
-                "1.0.0",
-                &"a".repeat(64),
-            );
+        let context = HostExecutionContext::for_module_session(
+            &HostSession::local_default(),
+            "module-1",
+            "1.0.0",
+            &"a".repeat(64),
+        );
         assert!(service
             .authorize(&context, ModulePermission::ProvidersCall)
             .await
