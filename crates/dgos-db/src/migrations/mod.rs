@@ -19,6 +19,7 @@ mod m20261028_000008_skill_usage_provenance;
 mod m20261028_000009_module_permissions;
 mod m20261028_000010_module_release_history;
 mod m20261028_000011_module_release_locks;
+mod m20261028_000012_module_release_operation;
 
 pub struct Migrator;
 
@@ -45,6 +46,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261028_000009_module_permissions::Migration),
             Box::new(m20261028_000010_module_release_history::Migration),
             Box::new(m20261028_000011_module_release_locks::Migration),
+            Box::new(m20261028_000012_module_release_operation::Migration),
         ]
     }
 }

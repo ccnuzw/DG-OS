@@ -1,7 +1,8 @@
 use dgos_db::{
     entities::{module_update_events, module_versions, modules},
     sea_orm::{
-        ActiveModelTrait, ConnectionTrait, DatabaseConnection, EntityTrait, Set, TransactionTrait,
+        ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait,
+        QueryFilter, Set, TransactionTrait,
     },
     ModulePermission, ModulePermissionRepository,
 };
@@ -48,6 +49,7 @@ pub struct Artifact {
 
 #[derive(Clone, Debug)]
 pub struct StagedPackage {
+    operation_id: String,
     module_id: String,
     display_name: String,
     version: String,
@@ -58,6 +60,9 @@ pub struct StagedPackage {
 }
 
 impl StagedPackage {
+    pub fn operation_id(&self) -> &str {
+        &self.operation_id
+    }
     pub fn module_id(&self) -> &str {
         &self.module_id
     }
@@ -151,6 +156,16 @@ impl ModulePublisher {
     /// Copy into a staging directory and validate before it can affect the
     /// current-version pointer. Remote URLs are intentionally not accepted.
     pub fn stage(&self, source: &Path) -> Result<StagedPackage, ModulePackageError> {
+        self.stage_with_operation_id(source, Uuid::new_v4().to_string())
+    }
+
+    /// Stage a package for a caller-provided operation. Retries of one
+    /// application operation can therefore retain the same audit identity.
+    pub fn stage_with_operation_id(
+        &self,
+        source: &Path,
+        operation_id: impl Into<String>,
+    ) -> Result<StagedPackage, ModulePackageError> {
         if !source.is_dir() || fs::symlink_metadata(source)?.file_type().is_symlink() {
             return Err(ModulePackageError::Manifest(
                 "package is not a directory".into(),
@@ -191,6 +206,7 @@ impl ModulePublisher {
         let manifest_value = serde_json::to_value(&manifest)
             .map_err(|error| ModulePackageError::Manifest(error.to_string()))?;
         Ok(StagedPackage {
+            operation_id: operation_id.into(),
             module_id: manifest.id,
             display_name: manifest.name,
             version: manifest.version,
@@ -270,8 +286,15 @@ impl ModulePublisher {
             .join(&package.module_id)
             .join(&package.version);
         if version_dir.exists() {
+            if self
+                .existing_release_matches(&package.module_id, &package.version, &package.integrity)
+                .await?
+            {
+                let _ = fs::remove_dir_all(&package.staging_path);
+                return Ok(());
+            }
             return Err(ModulePackageError::Manifest(
-                "version already exists".into(),
+                "version already exists with a different integrity".into(),
             ));
         }
         fs::create_dir_all(version_dir.parent().unwrap())?;
@@ -331,6 +354,7 @@ impl ModulePublisher {
             }
             module_update_events::ActiveModel {
                 id: Set(Uuid::new_v4().to_string()),
+                operation_id: Set(package.operation_id.clone()),
                 module_id: Set(package.module_id.clone()),
                 from_version: Set(from_version),
                 to_version: Set(package.version.clone()),
@@ -354,6 +378,7 @@ impl ModulePublisher {
             if restore_result.is_err() {
                 let _ = self
                     .record_update_event(
+                        &package.operation_id,
                         &package.module_id,
                         previous.as_deref().map(str::trim),
                         &package.version,
@@ -372,6 +397,7 @@ impl ModulePublisher {
             };
             let _ = self
                 .record_update_event(
+                    &package.operation_id,
                     &package.module_id,
                     previous.as_deref().map(str::trim),
                     &package.version,
@@ -384,6 +410,25 @@ impl ModulePublisher {
             return Err(error);
         }
         Ok(())
+    }
+
+    async fn existing_release_matches(
+        &self,
+        module_id: &str,
+        version: &str,
+        integrity: &str,
+    ) -> Result<bool, ModulePackageError> {
+        let package = self.root.join("versions").join(module_id).join(version);
+        if !package.is_dir() || !package_digest(&package)?.eq_ignore_ascii_case(integrity) {
+            return Ok(false);
+        }
+        let row = module_versions::Entity::find()
+            .filter(module_versions::Column::ModuleId.eq(module_id))
+            .filter(module_versions::Column::Version.eq(version))
+            .one(&self.db)
+            .await
+            .map_err(db_error)?;
+        Ok(row.is_some_and(|row| row.integrity.eq_ignore_ascii_case(integrity)))
     }
 
     /// On startup, only keep a pointer whose package still matches its
@@ -575,6 +620,7 @@ impl ModulePublisher {
 
     async fn record_update_event(
         &self,
+        operation_id: &str,
         module_id: &str,
         from_version: Option<&str>,
         to_version: &str,
@@ -584,6 +630,7 @@ impl ModulePublisher {
     ) -> Result<(), ModulePackageError> {
         module_update_events::ActiveModel {
             id: Set(Uuid::new_v4().to_string()),
+            operation_id: Set(operation_id.to_owned()),
             module_id: Set(module_id.to_owned()),
             from_version: Set(from_version.map(str::to_owned)),
             to_version: Set(to_version.to_owned()),

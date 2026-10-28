@@ -10,6 +10,7 @@ dgos-providers = { path = "../dgos-providers" }
 dgos-types = { path = "../dgos-types" }
 tokio = { workspace = true }
 chrono = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 sha2 = { workspace = true }

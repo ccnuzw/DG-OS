@@ -164,6 +164,7 @@ pub struct ProviderCallService {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModuleReleaseResult {
+    pub operation_id: String,
     pub module_id: String,
     pub version: String,
     pub integrity: String,
@@ -186,8 +187,20 @@ impl ModuleReleaseService {
         &self,
         source: &Path,
     ) -> Result<ModuleReleaseResult, dgos_modules::ModulePackageError> {
-        let staged = self.publisher.stage(source)?;
+        self.publish_with_operation_id(source, uuid::Uuid::new_v4().to_string())
+            .await
+    }
+
+    pub async fn publish_with_operation_id(
+        &self,
+        source: &Path,
+        operation_id: impl Into<String>,
+    ) -> Result<ModuleReleaseResult, dgos_modules::ModulePackageError> {
+        let staged = self
+            .publisher
+            .stage_with_operation_id(source, operation_id)?;
         let result = ModuleReleaseResult {
+            operation_id: staged.operation_id().to_owned(),
             module_id: staged.module_id().to_owned(),
             version: staged.version().to_owned(),
             integrity: staged.integrity().to_owned(),
