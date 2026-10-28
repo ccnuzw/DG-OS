@@ -29,7 +29,12 @@ async fn broker() -> (sea_orm::DatabaseConnection, ModulePermissionRepository) {
 #[tokio::test]
 async fn migration_creates_module_broker_tables() {
     let db = database().await;
-    for table in ["modules", "module_permissions", "module_permission_audits"] {
+    for table in [
+        "modules",
+        "module_permissions",
+        "module_permission_audits",
+        "module_release_locks",
+    ] {
         let row = db
             .query_one(Statement::from_string(
                 db.get_database_backend(),
@@ -160,4 +165,17 @@ async fn invalid_permission_and_disabled_or_unknown_modules_are_rejected() {
         .await
         .unwrap();
     assert!(denied.is_some());
+}
+
+#[tokio::test]
+async fn grants_cannot_exceed_the_published_manifest() {
+    let (_db, broker) = broker().await;
+    assert!(broker
+        .grant("alice", "module-1", ModulePermission::McpCall)
+        .await
+        .is_err());
+    assert!(!broker
+        .check("alice", "module-1", ModulePermission::McpCall)
+        .await
+        .unwrap());
 }

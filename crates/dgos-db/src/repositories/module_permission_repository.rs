@@ -79,7 +79,8 @@ impl ModulePermissionRepository {
 
     /// Register a module row for the broker. This stores only a validated
     /// manifest summary; it does not install or execute a module package.
-    pub async fn register_module(
+    #[cfg(test)]
+    pub(crate) async fn register_module(
         &self,
         id: impl Into<String>,
         module_name: impl Into<String>,
@@ -89,15 +90,22 @@ impl ModulePermissionRepository {
         integrity: impl Into<String>,
         is_enabled: bool,
     ) -> DgosResult<()> {
+        let id = id.into();
+        let version = version.into();
+        let integrity = integrity.into();
+        validate_module_registration(&id, &version, &integrity, &manifest)?;
+        // The broker owns persistence only. A trusted publisher must still be
+        // the caller that supplies the package-backed identity before this row
+        // can be used by Host Capability API.
         let now = chrono::Utc::now().timestamp();
         modules::ActiveModel {
-            id: Set(id.into()),
+            id: Set(id),
             module_name: Set(module_name.into()),
             display_name: Set(display_name.into()),
-            current_version: Set(version.into()),
+            current_version: Set(version),
             description: Set(None),
             manifest: Set(manifest),
-            integrity: Set(integrity.into()),
+            integrity: Set(integrity),
             entry_url: Set(None),
             icon_url: Set(None),
             is_official: Set(false),
@@ -121,6 +129,47 @@ impl ModulePermissionRepository {
             .await
     }
 
+    /// Validates the host-bound module identity before any capability check.
+    /// The renderer cannot satisfy this check by choosing a module id alone:
+    /// version and integrity must match the currently published database row.
+    pub async fn validate_module_identity(
+        &self,
+        module_id: &str,
+        version: &str,
+        integrity: &str,
+    ) -> DgosResult<bool> {
+        let module = modules::Entity::find_by_id(module_id)
+            .one(&self.db)
+            .await
+            .map_err(db_error)?;
+        Ok(module.is_some_and(|module| {
+            module.is_enabled && module.current_version == version && module.integrity == integrity
+        }))
+    }
+
+    /// Validate the complete module capability contract. A persisted grant is
+    /// not sufficient when the currently published manifest did not request
+    /// the capability; this prevents stale grants from expanding a package's
+    /// authority after an update.
+    pub async fn validate_module_capability(
+        &self,
+        module_id: &str,
+        version: &str,
+        integrity: &str,
+        permission: ModulePermission,
+    ) -> DgosResult<bool> {
+        let module = modules::Entity::find_by_id(module_id)
+            .one(&self.db)
+            .await
+            .map_err(db_error)?;
+        Ok(module.is_some_and(|module| {
+            module.is_enabled
+                && module.current_version == version
+                && module.integrity == integrity
+                && manifest_requests_permission(&module.manifest, permission)
+        }))
+    }
+
     pub async fn grant_with_request<P: ModulePermissionInput>(
         &self,
         user_id: &str,
@@ -134,7 +183,9 @@ impl ModulePermissionRepository {
             .one(&tx)
             .await
             .map_err(db_error)?;
-        if module.as_ref().is_none_or(|module| !module.is_enabled) {
+        if module.as_ref().is_none_or(|module| {
+            !module.is_enabled || !manifest_requests_permission(&module.manifest, permission)
+        }) {
             self.audit_in(&tx, user_id, module_id, permission, "denied", request_id)
                 .await?;
             tx.commit().await.map_err(db_error)?;
@@ -331,4 +382,53 @@ impl ModulePermissionRepository {
 
 fn db_error(error: sea_orm::DbErr) -> DgosError {
     DgosError::DatabaseError(error.to_string())
+}
+
+fn manifest_requests_permission(
+    manifest: &serde_json::Value,
+    permission: ModulePermission,
+) -> bool {
+    manifest
+        .get("permissions")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|permissions| {
+            permissions
+                .iter()
+                .any(|value| value.as_str() == Some(permission.as_str()))
+        })
+}
+
+#[cfg(test)]
+fn validate_module_registration(
+    id: &str,
+    version: &str,
+    integrity: &str,
+    manifest: &serde_json::Value,
+) -> DgosResult<()> {
+    if id.is_empty()
+        || id.contains('/')
+        || id.contains('\\')
+        || id == "."
+        || id == ".."
+        || version.is_empty()
+        || version.contains('/')
+        || version.contains('\\')
+        || integrity.len() != 64
+        || !integrity.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(DgosError::InternalError(
+            "invalid module registration identity".into(),
+        ));
+    }
+    let permissions = manifest
+        .get("permissions")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| DgosError::InternalError("module manifest permissions missing".into()))?;
+    for permission in permissions {
+        let value = permission
+            .as_str()
+            .ok_or_else(|| DgosError::InternalError("invalid module permission".into()))?;
+        ModulePermission::parse(value)?;
+    }
+    Ok(())
 }

@@ -4,7 +4,7 @@ use serde::Serialize;
 #[derive(Clone, Debug, Serialize)]
 pub struct HostExecutionContext {
     user_id: String,
-    caller: BuiltinCaller,
+    source: ExecutionSource,
     request_id: String,
 }
 
@@ -19,13 +19,38 @@ pub struct ExecutionProvenance {
 pub enum BuiltinCaller {
     Settings,
     Workbench,
+    Module,
+}
+
+/// A module source is only constructed by a validated host publisher. It is
+/// deliberately not accepted as an IPC field or renderer-provided token.
+#[derive(Clone, Debug, Serialize)]
+pub enum ExecutionSource {
+    Builtin(BuiltinCaller),
+    Module {
+        module_id: String,
+        version: String,
+        integrity: String,
+    },
 }
 
 impl HostExecutionContext {
     pub fn for_builtin(user_id: &str, caller: BuiltinCaller) -> Self {
         Self {
             user_id: user_id.into(),
-            caller,
+            source: ExecutionSource::Builtin(caller),
+            request_id: uuid::Uuid::new_v4().to_string(),
+        }
+    }
+
+    pub fn for_module(user_id: &str, module_id: &str, version: &str, integrity: &str) -> Self {
+        Self {
+            user_id: user_id.into(),
+            source: ExecutionSource::Module {
+                module_id: module_id.into(),
+                version: version.into(),
+                integrity: integrity.into(),
+            },
             request_id: uuid::Uuid::new_v4().to_string(),
         }
     }
@@ -35,7 +60,25 @@ impl HostExecutionContext {
     }
 
     pub fn caller(&self) -> BuiltinCaller {
-        self.caller
+        match &self.source {
+            ExecutionSource::Builtin(caller) => *caller,
+            ExecutionSource::Module { .. } => BuiltinCaller::Module,
+        }
+    }
+
+    pub fn source(&self) -> &ExecutionSource {
+        &self.source
+    }
+
+    pub fn module_identity(&self) -> Option<(&str, &str, &str)> {
+        match &self.source {
+            ExecutionSource::Module {
+                module_id,
+                version,
+                integrity,
+            } => Some((module_id, version, integrity)),
+            ExecutionSource::Builtin(_) => None,
+        }
     }
 
     pub fn request_id(&self) -> &str {
@@ -44,7 +87,7 @@ impl HostExecutionContext {
 
     pub fn provenance(&self) -> ExecutionProvenance {
         ExecutionProvenance {
-            caller: self.caller,
+            caller: self.caller(),
             request_id: self.request_id.clone(),
         }
     }

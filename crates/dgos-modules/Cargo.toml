@@ -1,0 +1,20 @@
+[package]
+name = "dgos-modules"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dgos-db = { path = "../dgos-db" }
+dgos-types = { path = "../dgos-types" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = "2"
+uuid = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { workspace = true }
+sea-orm-migration = { workspace = true }

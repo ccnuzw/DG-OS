@@ -90,29 +90,31 @@ Closes #123
 
 | 范围 | 说明 | 示例 |
 |------|------|------|
-| `providers` | Provider 适配框架 | `feat(providers): add Claude adapter` |
-| `skills` | Skills 管理系统 | `fix(skills): handle skill timeout` |
-| `mcp` | MCP 管理系统 | `feat(mcp): add heartbeat detection` |
-| `modules` | 模块系统 | `refactor(modules): improve loader` |
-| `auth` | 认证与权限 | `fix(auth): validate JWT expiry` |
-| `db` | 数据库相关 | `feat(db): add providers table migration` |
+| `providers` | Provider 适配（`crates/dgos-providers`） | `feat(providers): add Claude adapter` |
+| `skills` | 技能中心（`crates/dgos-skills`、`skills/`） | `fix(skills): reject oversized package` |
+| `mcp` | MCP 管理（`crates/dgos-mcp`） | `feat(mcp): add heartbeat detection` |
+| `workbench` | 工作台任务编排（`crates/dgos-workbench`） | `fix(workbench): stop replay after cancel` |
+| `modules` | 模块系统（`crates/dgos-modules`） | `refactor(modules): split publisher` |
+| `host` | Tauri 宿主与 commands（`src-tauri`） | `fix(host): derive caller from window` |
+| `db` | 实体与 migration（`crates/dgos-db`） | `feat(db): add providers table migration` |
+| `auth` | 用户认证与权限（FR-008/009，规划中） | `feat(auth): add local user sessions` |
 
 ### 3.2 前端范围
 
 | 范围 | 说明 | 示例 |
 |------|------|------|
-| `ui` | 设计系统组件 | `feat(ui): add Button component` |
-| `workbench` | AI 工作台 | `fix(workbench): stream rendering issue` |
-| `settings` | 系统设置 | `feat(settings): add provider management` |
-| `canvas` | 无限画布 | `feat(canvas): add zoom controls` |
+| `ui` | 统一设计系统组件（FR-005，规划中） | `feat(ui): add Button component` |
+| `workbench` | AI 工作台页面 | `fix(workbench): show unknown tool result` |
+| `settings` | 系统设置及 Providers/Skills/MCP 管理页 | `feat(settings): add provider management` |
+| `canvas` | 无限画布（V2） | `feat(canvas): add zoom controls` |
 
 ### 3.3 通用范围
 
 | 范围 | 说明 | 示例 |
 |------|------|------|
 | `docs` | 文档 | `docs(docs): update architecture diagram` |
-| `build` | 构建配置 | `build(deps): upgrade react to 18.3` |
-| `ci` | CI/CD | `ci: add E2E test workflow` |
+| `build` | 构建配置 | `build(deps): upgrade vite to 8.4` |
+| `ci` | CI/CD（尚未配置） | `ci: add rust test workflow` |
 | `test` | 测试 | `test(providers): add integration tests` |
 
 ---
@@ -395,6 +397,6 @@ npx husky add .husky/commit-msg 'npx --no -- commitlint --edit "$1"'
 
 ---
 
-**最后更新**：2026-10-26  
+**最后更新**：2026-10-28  
 **维护人**：开发团队  
 **适用范围**：所有 DGOS 仓库

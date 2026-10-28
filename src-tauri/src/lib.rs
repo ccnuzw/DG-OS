@@ -1,6 +1,7 @@
 // DG-OS: A local-first AI application development framework
 // Main library entry point
 
+mod capabilities;
 mod commands;
 mod host;
 mod provider_credentials;
@@ -102,6 +103,39 @@ pub fn run() {
                     .recover_interrupted()
                     .await
                     .expect("Failed to recover workbench task audit");
+
+                // Keep module authorization behind a host-owned service. No
+                // renderer command receives a module identity at this stage.
+                let module_permissions = Arc::new(
+                    dgos_db::ModulePermissionRepository::new(db.clone()),
+                );
+                let module_store = app_dir.join("modules");
+                std::fs::create_dir_all(&module_store)
+                    .expect("Failed to create module package directory");
+                // The publisher owns staging, integrity validation, atomic
+                // pointer switches and startup recovery. No module is loaded
+                // here; federation remains behind the future FR-004 runtime.
+                let module_publisher = Arc::new(
+                    dgos_modules::ModulePublisher::new(module_store, db.clone()),
+                );
+                let module_release = capabilities::ModuleReleaseService::new(
+                    module_publisher.clone(),
+                );
+                module_release
+                    .recover_registered()
+                    .await
+                    .expect("Failed to recover module package pointers");
+                let host_capabilities =
+                    capabilities::HostCapabilityService::with_publisher(
+                        module_permissions,
+                        module_publisher.clone(),
+                    );
+                app_handle.manage(capabilities::ProviderCallService::new(
+                    host_capabilities.clone(),
+                ));
+                app_handle.manage(module_release);
+                app_handle.manage(host_capabilities);
+                app_handle.manage(module_publisher);
 
                 // Store managers in app state
                 app_handle.manage(manager);

@@ -1,20 +1,25 @@
 # DGOS - 本地优先的 AI 应用开发框架
 
-**DG-OS**（Developer Groundwork Operating System）是一个基于 Rust + Tauri 的本地优先 AI 应用开发框架，提供 Provider 适配、Skills/MCP 管理、模块热更新和无限画布等核心能力。
+**DG-OS**（Developer Groundwork Operating System）是基于 Rust + Tauri 2 的本地优先 AI 应用开发框架。V1 目标是打通 Provider 适配、技能中心、MCP 管理、模块系统和统一设计系统的底层能力闭环；无限画布在 V2 交付。
 
-> ⚠️ **当前状态**：V1.0 开发中，暂未发布
+> ⚠️ **当前状态**：V1 开发中，暂未发布。各功能实现进度只在 [V1 实现状态](docs/02-产品与版本/当前版本/V1-实现状态.md) 维护。
 
 ---
 
 ## ✨ 核心特性
 
-- 🚀 **本地优先**：所有数据存储在本地 SQLite，云端服务可选
-- 🔌 **Provider 适配**：统一接口调用 OpenAI、Claude、Gemini 等 AI 模型
-- 🛠️ **Skills/MCP 管理**：使用标准协议扩展 AI 能力
-- 🔥 **模块热更新**：Module Federation 实现无需重启的模块加载
-- 🎨 **统一设计系统**：所有模块使用统一 UI 组件库，强制视觉一致性
-- 🌐 **局域网协同**：HTTP 服务自动启动，远程设备可访问
-- 📦 **强制模块化**：Rust 编译期保证，避免单文件巨石代码
+下表区分已有实现切片和 V1 目标；“已实现”指代码中已有可运行切片，不代表功能已验收。
+
+| 能力 | 说明 | 当前情况 |
+| --- | --- | --- |
+| 🔌 Provider 适配 | 统一接口调用 OpenAI 兼容模型，凭据存入系统钥匙串 | 已实现核心切片 |
+| 🛠️ 技能中心 | 随应用发布的官方 `SKILL.md` 内容包，工作台按固定版本使用 | 官方本地库已实现；第三方来源未开始 |
+| 🧰 MCP 管理 | stdio / Streamable HTTP 连接、工具发现、逐次确认调用 | 已实现快速迭代版 |
+| 🤖 AI 工作台 | 单任务调用模型，可选一个技能和 MCP 工具 | 单任务切片；多轮对话、流式聊天未实现 |
+| 🔥 模块热更新 | 受信任的本地模块包动态加载与热更新 | 仅有包发布、授权等前置切片；运行时未开始 |
+| 🎨 统一设计系统 | 所有模块复用统一主题与组件 | 未开始 |
+| 👥 本地多用户 / 🌐 局域网协同 | 本地用户登录；局域网 HTTP 访问 | 未开始（当前固定使用宿主派生的本地用户） |
+| 📦 强制模块化 | 按领域拆分 crate，限制单文件行数 | 持续约束 |
 
 ---
 
@@ -22,33 +27,39 @@
 
 ### 环境要求
 
-- **Rust**: 1.75+
-- **Node.js**: 18+
-- **Python**: 3.10+ (可选，用于 Skills)
-- **操作系统**: macOS (V1.0), Windows/Linux (V1.1+)
+- **Rust**：1.90+（当前 Tauri 2.12 依赖要求）
+- **Node.js**：22.22+ 或 24.15+（Vitest 5 / jsdom 30 的引擎要求）
+- **npm**：随 Node.js 安装
+- **操作系统**：macOS（V1 首发平台）；Windows 在 V1 发布门禁后补齐，Linux 计划 V2
 
-### 安装
+### 安装与启动
 
 ```bash
-# 克隆仓库
-git clone https://github.com/your-org/DG-OS.git
+git clone https://github.com/ccnuzw/DG-OS.git
 cd DG-OS
 
-# 安装依赖
-cd server && cargo build
-cd ../frontend && pnpm install
-
-# 启动开发环境
-pnpm dev
+npm install
+npm run tauri:dev
 ```
+
+`npm run tauri:dev` 会启动 Vite 开发服务器（端口 1420）并打开桌面窗口。SQLite 数据库 `dgos.db` 位于系统的应用数据目录，启动时自动执行迁移。
+
+### 常用命令
+
+```bash
+npm test                         # 前端测试（Vitest）
+npm run build                    # 技能包校验 + TypeScript + Vite 构建
+npm run contracts:check          # 桌面 IPC 宿主契约静态检查
+cargo test --offline --workspace # Rust 测试
+```
+
+在 Apple Silicon 上运行 Rust 测试如遇链接错误，见 [工程与本地环境](docs/01-项目概览/工程与本地环境.md) 中的 arm64 环境变量说明。
 
 ### 首次使用
 
-1. 启动应用后创建本地用户
-2. 配置 Provider（OpenAI 兼容）
-3. 打开 AI 工作台，开始对话
-
-详见 [工程与本地环境](docs/01-项目概览/工程与本地环境.md)
+1. 打开 Providers 页面，添加一个 OpenAI 兼容 Provider 并测试连接
+2. 在 Skills 页面浏览官方技能，按需启用
+3. 打开 Workbench，选择模型（可选一个技能）提交任务
 
 ---
 
@@ -57,68 +68,48 @@ pnpm dev
 | 文档 | 说明 |
 |------|------|
 | [文档中心](docs/README.md) | 统一文档入口 |
-| [V1 版本总览](docs/02-产品与版本/当前版本/V1-版本总览.md) | V1.0 功能范围 |
-| [V1 产品需求](docs/02-产品与版本/当前版本/V1-产品需求.md) | V1.0 详细需求 |
-| [功能规格](docs/03-功能规格/V1/README.md) | 10 个核心功能规格 |
+| [V1 版本总览](docs/02-产品与版本/当前版本/V1-版本总览.md) | V1 功能范围 |
+| [V1 实现状态](docs/02-产品与版本/当前版本/V1-实现状态.md) | 当前进度与验证证据（唯一来源） |
+| [功能规格](docs/03-功能规格/V1/README.md) | 10 个 V1 功能规格 |
 | [技术架构](docs/04-技术架构/README.md) | 总体架构和技术设计 |
-| [冻结决策](docs/06-决策记录/V1-冻结决策.md) | D001-D013 关键决策 |
+| [冻结决策](docs/06-决策记录/V1-冻结决策.md) | 跨功能产品与工程决策 |
 
 ---
 
 ## 🏗️ 技术栈
 
-| 层次 | 技术 |
-|------|------|
-| **后端** | Rust + Axum + SeaORM |
-| **桌面** | Tauri 2 |
-| **前端** | React + TypeScript + Vite |
-| **数据库** | SQLite |
-| **模块系统** | Module Federation |
-| **设计系统** | @dgos/ui (自研) |
+| 层次 | 当前采用 | 规划（尚未引入） |
+|------|---------|----------------|
+| **桌面** | Tauri 2 | - |
+| **后端** | Rust workspace（`src-tauri` + `crates/dgos-*`）、SeaORM 1.1、tokio、reqwest | 局域网 HTTP 服务（FR-010） |
+| **前端** | React 19、TypeScript 6、Vite 8、Zustand、React Router 6 | - |
+| **数据库** | SQLite（单文件 `dgos.db`） | - |
+| **测试** | Rust 内置测试、Vitest 5 + Testing Library | E2E 框架 |
+| **模块系统** | 本地模块包发布器（`dgos-modules`，前置切片） | 受信任包的 Module Federation 加载（FR-004） |
+| **设计系统** | - | 自研统一组件库（FR-005） |
 
-详见 [技术栈选型](docs/04-技术架构/技术栈选型.md)
+详见 [技术栈选型](docs/04-技术架构/技术栈选型.md)。
 
 ---
 
 ## 🎯 版本路线图
 
-### V1.0 基础框架（开发中）
+| 版本 | 主题 | 状态 |
+| --- | --- | --- |
+| V1 | 底层能力框架 + AI 工作台、系统设置 | 开发中 |
+| V2 | 无限画布 | 规划中 |
+| V3 | 应用市场 | 规划中 |
+| V4 | 云端账号、同步与实时协同 | 规划中 |
+| V5 | 企业化 | 规划中 |
+| V6 | 移动端 | 规划中 |
+| V7 | AI Agent | 规划中 |
+| V8 | 开发者生态 | 规划中 |
 
-- ✅ Provider 适配框架
-- ✅ Skills/MCP 管理系统
-- ✅ 模块系统与热更新
-- ✅ 统一设计系统
-- ✅ AI 工作台
-- ✅ 系统设置
-- ✅ 本地用户管理
-- ✅ 模块权限管理
-- ✅ 局域网协同
-
-**目标**：打通底层能力框架最小闭环，验证架构可扩展性
-
-### V1.1-V1.5 画布系统（规划中）
-
-- V1.1: Windows 支持 + 更多 Provider 适配器
-- V1.2: 画布核心（视口、缩放、拖拽）
-- V1.3: 10+ 种节点类型
-- V1.4: 实时执行、循环节点
-- V1.5: 工作流导入导出、应用市场
-
-### V2.0+ 云端与协同（未来）
-
-- 云端账号与同步
-- 实时协同编辑
-- 移动端支持
-- AI Agent 能力
-- 开发者生态
-
-详见 [版本路线图](docs/02-产品与版本/版本路线图.md)
+版本只使用 V1–V8 整数编号，详见 [版本路线图](docs/02-产品与版本/版本路线图.md)。
 
 ---
 
 ## 🤝 贡献指南
-
-我们欢迎各种形式的贡献！
 
 ### 提交代码
 
@@ -142,46 +133,38 @@ test: 测试相关
 chore: 构建/工具链相关
 ```
 
+工程约束见 [AGENTS.md](AGENTS.md)。
+
 ---
 
 ## 📖 从老项目学习
 
-DGOS 是从 infinite-canvas-ccnuzw 项目重构而来，吸取了以下教训：
+DGOS 由 infinite-canvas-ccnuzw 项目重构而来：
 
-- ❌ **老项目**：Python + FastAPI，单文件 19,038 行，无法维护
-- ✅ **新架构**：Rust 强制模块化，每个文件 < 1000 行
-- ❌ **老项目**：Electron 过重（>100MB）
-- ✅ **新架构**：Tauri 轻量（<10MB）
-- ❌ **老项目**：无文档、无测试、无规范
-- ✅ **新架构**：spec-docs-pro 规格驱动开发
+- 老项目：Python + FastAPI，`main.py` 单文件 19,038 行，无法维护
+- 新架构：Rust 按领域拆分 crate，限制单文件行数
+- 老项目：无文档、无测试、无规范
+- 新架构：规格驱动开发，功能、决策、实现状态分开维护
 
-详见 [老项目教训分析](docs/90-参考资料/老项目教训分析.md)
+老项目问题的原始记录见 [初始讨论记录](docs/90-参考资料/2024-01-XX-初始讨论完整记录.md) 第一部分。
 
 ---
 
 ## 🔒 许可证
 
-MIT License - 详见 [LICENSE](LICENSE) 文件
+计划采用 MIT（见[产品蓝图](docs/02-产品与版本/产品蓝图.md)第 8.1 节），仓库尚未添加 LICENSE 文件。
 
 ---
 
 ## 📧 联系方式
 
-- **项目主页**: https://github.com/your-org/DG-OS
-- **文档**: https://docs.dg-os.dev
-- **问题反馈**: https://github.com/your-org/DG-OS/issues
+- **项目主页**：https://github.com/ccnuzw/DG-OS
+- **问题反馈**：https://github.com/ccnuzw/DG-OS/issues
 
 ---
 
 ## 🌟 致谢
 
-感谢以下开源项目：
-
 - [Tauri](https://tauri.app/) - 轻量级桌面应用框架
-- [LangChain](https://www.langchain.com/) - Skills 标准协议
-- [Anthropic MCP](https://modelcontextprotocol.io/) - Model Context Protocol
-- [Module Federation](https://module-federation.io/) - 微前端架构
-
----
-
-**开始使用 DGOS，构建你的 AI 应用！** 🚀
+- [Model Context Protocol](https://modelcontextprotocol.io/) - 工具协议
+- [SeaORM](https://www.sea-ql.org/SeaORM/) - Rust ORM

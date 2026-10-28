@@ -1,0 +1,17 @@
+[package]
+name = "dgos-application"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dgos-db = { path = "../dgos-db" }
+dgos-modules = { path = "../dgos-modules" }
+dgos-providers = { path = "../dgos-providers" }
+dgos-types = { path = "../dgos-types" }
+tokio = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+sha2 = { workspace = true }
+tempfile = "3"
+serde_json = { workspace = true }

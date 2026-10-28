@@ -25,6 +25,8 @@ dgos-providers = { path = "../crates/dgos-providers" }
 dgos-skills = { path = "../crates/dgos-skills" }
 dgos-workbench = { path = "../crates/dgos-workbench" }
 dgos-mcp = { path = "../crates/dgos-mcp" }
+dgos-modules = { path = "../crates/dgos-modules" }
+dgos-application = { path = "../crates/dgos-application" }
 
 # Tauri
 tauri = { workspace = true }

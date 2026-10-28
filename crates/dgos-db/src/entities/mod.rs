@@ -5,6 +5,8 @@ pub mod mcp_usage_logs;
 pub mod models;
 pub mod module_permission_audits;
 pub mod module_permissions;
+pub mod module_update_events;
+pub mod module_versions;
 pub mod modules;
 pub mod providers;
 pub mod skill_catalog;
@@ -25,6 +27,8 @@ pub mod prelude {
     pub use super::models::Entity as Models;
     pub use super::module_permission_audits::Entity as ModulePermissionAudits;
     pub use super::module_permissions::Entity as ModulePermissions;
+    pub use super::module_update_events::Entity as ModuleUpdateEvents;
+    pub use super::module_versions::Entity as ModuleVersions;
     pub use super::modules::Entity as Modules;
     pub use super::providers::Entity as Providers;
     pub use super::skill_catalog::Entity as SkillCatalog;

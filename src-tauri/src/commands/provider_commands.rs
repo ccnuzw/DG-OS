@@ -305,16 +305,9 @@ pub async fn call_provider(
         Err(error) => return CommandResponse::from(Err(error)),
     };
     let manager = app.state::<ProviderManager>();
-    let provenance = context.provenance();
-    let result = manager
-        .call_provider_bound_with_provenance(
-            &provider_id,
-            &model_id,
-            request,
-            context.user_id(),
-            None,
-            Some(&provenance),
-        )
+    let service = app.state::<crate::capabilities::ProviderCallService>();
+    let result = service
+        .execute(&context, manager.inner(), &provider_id, &model_id, request)
         .await;
     CommandResponse::from(result)
 }

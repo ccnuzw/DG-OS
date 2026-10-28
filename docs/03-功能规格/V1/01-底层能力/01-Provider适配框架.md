@@ -1,6 +1,6 @@
 # V1-FR-001：Provider 适配框架
 
-> D023 桌面补充基线（2026-10-28）：宿主派生用户身份，Provider DTO 不携带 secret，凭据保存到 OS vault，历史明文字段通过可重试迁移清空。当前字段与迁移规则见 [接口契约 §4.0](../../../04-技术架构/当前版本/V1-接口契约.md#40-当前桌面实施契约d023)、[数据模型 §4.2](../../../04-技术架构/当前版本/V1-数据模型.md#42-provider-管理)；本文早期 AES/SQLCipher 表草图不再作为当前凭据实施依据。前置工作包与证据见 [FR-004 前置收口设计](../../../04-技术架构/当前版本/V1-FR004前置收口设计.md)，不改变既有 AC 编号。
+> D023 桌面补充基线（2026-10-28）：宿主派生用户身份，Provider DTO 不携带 secret，凭据保存到 OS vault，历史明文字段通过可重试迁移清空。当前字段与迁移规则见 [接口契约 §4.0](../../../04-技术架构/当前版本/V1-接口契约.md#40-当前桌面实施契约d023)、[数据模型 §4.2](../../../04-技术架构/当前版本/V1-数据模型.md#42-provider-管理)；本文早期 AES/SQLCipher 表草图不再作为当前凭据实施依据。前置工作包与证据见 [FR-004 前置收口设计](../../../04-技术架构/当前版本/V1-FR004前置收口设计.md)，不改变既有 AC 编号。§6 中带 `user_id` 的命令草案及 `stream_provider` 均为早期草案；当前已注册命令见 `src-tauri/src/lib.rs`、`src-tauri/src/commands/provider_commands.rs` 和接口契约 §4.0。
 
 ## 1. 功能元信息
 
@@ -231,20 +231,20 @@ CREATE TABLE provider_usage_logs (
 
 | AC | 验收重点 | Given | When | Then | 测试层级 | 目标资产 | 目标命令 | 初始资产状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| AC01 | Provider 正常创建 | 用户已登录 | 创建 OpenAI Provider 配置 | Provider 保存成功，模型列表自动获取 | 后端 API + 数据库 | `server/crates/providers/tests/provider_crud.rs` | `cargo test -p dgos-providers provider_create` | 规划中 |
-| AC02 | API Key 无效检测 | 用户输入错误的 API Key | 点击"测试连接" | 返回 401 错误，提示"API Key 无效" | 后端 API | `server/crates/providers/tests/provider_crud.rs` | `cargo test -p dgos-providers invalid_api_key` | 规划中 |
-| AC03 | 模型列表获取与缓存 | Provider 已配置 | 首次获取模型列表 | 调用 Provider API，缓存到 models 表 | 后端 API + 数据库 | `server/crates/providers/tests/model_sync.rs` | `cargo test -p dgos-providers model_sync` | 规划中 |
-| AC04 | 模型分类标签正确 | 模型列表已获取 | 查询模型 | gpt-4 标签为 text-generation，dall-e-3 为 image-generation | 后端逻辑 | `server/crates/providers/tests/model_capabilities.rs` | `cargo test -p dgos-providers model_capabilities` | 规划中 |
-| AC05 | 同步调用成功 | Provider 和模型已配置 | 调用 chat.completions | 返回完整响应，记录使用日志 | 后端 API + 外部集成 | `server/crates/providers/tests/provider_call.rs` | `cargo test -p dgos-providers sync_call` | 规划中 |
-| AC06 | 流式调用成功 | Provider 和模型已配置 | 调用 chat.completions（stream=true） | 返回 SSE 流，逐块接收 | 后端 API + 外部集成 | `server/crates/providers/tests/provider_call.rs` | `cargo test -p dgos-providers stream_call` | 规划中 |
-| AC07 | 流式输出中断处理 | 流式调用进行中 | 网络中断或 Provider 断开 | 保存已接收部分，返回错误码 | 后端 API | `server/crates/providers/tests/provider_call.rs` | `cargo test -p dgos-providers stream_interrupt` | 规划中 |
-| AC08 | 并发调用支持 | 多个应用同时调用 | 5 个并发请求同时发起 | 所有请求都能成功处理，无排队 | 后端 API + 并发测试 | `server/crates/providers/tests/concurrent_calls.rs` | `cargo test -p dgos-providers concurrent_calls` | 规划中 |
-| AC09 | 可配置重试策略 | Provider 配置了 retry_count=3 | API 调用返回 500 | 自动重试 3 次，间隔 1s/2s/4s | 后端逻辑 | `server/crates/providers/tests/retry_strategy.rs` | `cargo test -p dgos-providers retry_strategy` | 规划中 |
-| AC10 | 重试失败后返回错误 | Provider 配置了 retry_count=3 | API 调用 3 次都失败 | 返回错误，不再重试 | 后端逻辑 | `server/crates/providers/tests/retry_strategy.rs` | `cargo test -p dgos-providers retry_exhausted` | 规划中 |
-| AC11 | 多 Provider 排序 | 用户配置了 3 个 Provider | 拖拽调整排序 | 排序保存，默认使用排序第一个 | 后端 API + 前端集成 | `server/crates/providers/tests/provider_crud.rs` | `cargo test -p dgos-providers provider_sort` | 规划中 |
-| AC12 | Provider 启用/禁用 | Provider 已配置 | 禁用某个 Provider | 该 Provider 不出现在可选列表 | 后端 API | `server/crates/providers/tests/provider_crud.rs` | `cargo test -p dgos-providers provider_toggle` | 规划中 |
-| AC13 | 手动刷新模型列表 | 模型列表已缓存 | 点击"刷新模型列表" | 重新获取，更新缓存 | 后端 API + 数据库 | `server/crates/providers/tests/model_sync.rs` | `cargo test -p dgos-providers model_refresh` | 规划中 |
-| AC14 | 使用记录保存 | 调用成功 | 查询使用记录 | 包含 tokens、延迟、时间 | 后端 API + 数据库 | `server/crates/providers/tests/usage_logs.rs` | `cargo test -p dgos-providers usage_logs` | 规划中 |
+| AC01 | Provider 正常创建 | 用户已登录 | 创建 OpenAI Provider 配置 | Provider 保存成功，模型列表自动获取 | 后端 API + 数据库 | `crates/dgos-db/src/provider_scope_tests.rs::provider_and_initial_models_commit_together` | `cargo test --offline -p dgos-db provider_and_initial_models_commit_together` | 已有自动化资产（覆盖原子保存，不覆盖真实 Provider 自动拉取） |
+| AC02 | API Key 无效检测 | 用户输入错误的 API Key | 点击"测试连接" | 返回 401 错误，提示"API Key 无效" | 后端 API | `crates/dgos-providers/tests/provider_connection_tests.rs` | `cargo test --offline -p dgos-providers invalid_api_key` | 无对应自动化测试 |
+| AC03 | 模型列表获取与缓存 | Provider 已配置 | 首次获取模型列表 | 调用 Provider API，缓存到 models 表 | 后端 API + 数据库 | `crates/dgos-providers/src/credential_tests.rs::normal_model_refresh_advances_snapshot_and_bound_call_uses_saved_revision` | `cargo test --offline -p dgos-providers normal_model_refresh_advances_snapshot_and_bound_call_uses_saved_revision` | 已有自动化资产（mock HTTP） |
+| AC04 | 模型分类标签正确 | 模型列表已获取 | 查询模型 | gpt-4 标签为 text-generation，dall-e-3 为 image-generation | 后端逻辑 | `crates/dgos-providers/src/adapters/openai.rs::test_classify_model` | `cargo test --offline -p dgos-providers test_classify_model` | 已有自动化资产 |
+| AC05 | 同步调用成功 | Provider 和模型已配置 | 调用 chat.completions | 返回完整响应，记录使用日志 | 后端 API + 外部集成 | `crates/dgos-providers/src/credential_tests.rs::normal_model_refresh_advances_snapshot_and_bound_call_uses_saved_revision` | `cargo test --offline -p dgos-providers normal_model_refresh_advances_snapshot_and_bound_call_uses_saved_revision` | 已有自动化资产（mock HTTP，非真实 Provider） |
+| AC06 | 流式调用成功 | Provider 和模型已配置 | 调用 chat.completions（stream=true） | 返回 SSE 流，逐块接收 | 后端 API + 外部集成 | `crates/dgos-providers/tests/stream_call_tests.rs` | `cargo test --offline -p dgos-providers stream_call` | 无对应自动化测试 |
+| AC07 | 流式输出中断处理 | 流式调用进行中 | 网络中断或 Provider 断开 | 保存已接收部分，返回错误码 | 后端 API | `crates/dgos-providers/src/manager.rs::cancellable_stream_emits_one_interruption_without_replay` | `cargo test --offline -p dgos-providers cancellable_stream_emits_one_interruption_without_replay` | 已有自动化资产（仅覆盖取消产生一次中断，不覆盖已接收内容的保存） |
+| AC08 | 并发调用支持 | 多个应用同时调用 | 5 个并发请求同时发起 | 所有请求都能成功处理，无排队 | 后端 API + 并发测试 | `crates/dgos-providers/tests/concurrent_call_tests.rs` | `cargo test --offline -p dgos-providers concurrent_calls` | 无对应自动化测试 |
+| AC09 | 可配置重试策略 | Provider 配置了 retry_count=3 | API 调用返回 500 | 自动重试 3 次，间隔 1s/2s/4s | 后端逻辑 | `crates/dgos-providers/src/retry.rs::test_retry_success_after_failures` | `cargo test --offline -p dgos-providers test_retry_success_after_failures` | 已有自动化资产（覆盖重试，不覆盖指定 1s/2s/4s 间隔） |
+| AC10 | 重试失败后返回错误 | Provider 配置了 retry_count=3 | API 调用 3 次都失败 | 返回错误，不再重试 | 后端逻辑 | `crates/dgos-providers/src/retry.rs::test_retry_exhausted` | `cargo test --offline -p dgos-providers test_retry_exhausted` | 已有自动化资产 |
+| AC11 | 多 Provider 排序 | 用户配置了 3 个 Provider | 拖拽调整排序 | 排序保存，默认使用排序第一个 | 后端 API + 前端集成 | `crates/dgos-db/src/provider_scope_tests.rs::scoped_provider_crud_and_transactional_order_preserve_normal_lifecycle` | `cargo test --offline -p dgos-db scoped_provider_crud_and_transactional_order_preserve_normal_lifecycle` | 已有自动化资产（覆盖事务排序，不覆盖拖拽 UI） |
+| AC12 | Provider 启用/禁用 | Provider 已配置 | 禁用某个 Provider | 该 Provider 不出现在可选列表 | 后端 API | `tests/providers.test.tsx::uses the dedicated toggle command and updates both provider collections` | `npm test -- --run tests/providers.test.tsx` | 已有自动化资产（Vitest IPC mock） |
+| AC13 | 手动刷新模型列表 | 模型列表已缓存 | 点击"刷新模型列表" | 重新获取，更新缓存 | 后端 API + 数据库 | `crates/dgos-providers/src/credential_tests.rs::normal_model_refresh_advances_snapshot_and_bound_call_uses_saved_revision` | `cargo test --offline -p dgos-providers normal_model_refresh_advances_snapshot_and_bound_call_uses_saved_revision` | 已有自动化资产（mock HTTP） |
+| AC14 | 使用记录保存 | 调用成功 | 查询使用记录 | 包含 tokens、延迟、时间 | 后端 API + 数据库 | `crates/dgos-providers/src/credential_tests.rs::normal_model_refresh_advances_snapshot_and_bound_call_uses_saved_revision` | `cargo test --offline -p dgos-providers normal_model_refresh_advances_snapshot_and_bound_call_uses_saved_revision` | 已有自动化资产（mock HTTP，检查记录查询及调用 provenance） |
 
 ### 5.2 边界条件测试
 
@@ -258,6 +258,8 @@ CREATE TABLE provider_usage_logs (
 | 网络完全断开 | 调用时无网络 | 返回"网络错误"，不无限等待 |
 
 ## 6. 接口设计
+
+本节命令签名为早期草案；当前已注册命令见 `src-tauri/src/lib.rs`、`src-tauri/src/commands/provider_commands.rs` 和 [接口契约 §4.0](../../../04-技术架构/当前版本/V1-接口契约.md#40-当前桌面实施契约d023)。
 
 ### 6.1 Tauri Commands（桌面端）
 
@@ -339,7 +341,7 @@ GET  /api/v1/usage-logs                   # 使用记录
 ### 7.1 核心 Trait 定义
 
 ```rust
-// server/crates/providers/src/traits.rs
+// crates/dgos-providers/src/traits.rs
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -390,7 +392,7 @@ pub enum Capability {
 ### 7.2 OpenAI 适配器实现
 
 ```rust
-// server/crates/providers/src/adapters/openai.rs
+// crates/dgos-providers/src/adapters/openai.rs
 
 pub struct OpenAIAdapter {
     base_url: String,
@@ -588,6 +590,8 @@ impl ProviderAdapter for OpenAIAdapter {
 | 1001007 | stream_interrupted | 流式输出中断 | 重新生成 |
 | 1001008 | max_retries_exceeded | 重试次数耗尽 | 检查 Provider 状态或配置 |
 
+本表错误码编号与 `crates/dgos-types/src/error.rs::error_code()` 一致，当前未发现编号或含义冲突；后续若发现冲突，应通过冻结决策解决，错误码不得复用。
+
 详见 [V1 错误码](../../../04-技术架构/当前版本/V1-错误码.md)（待创建）。
 
 ## 9. 非功能需求
@@ -623,74 +627,47 @@ impl ProviderAdapter for OpenAIAdapter {
 ### 10.1 验证记录
 
 **说明**：每次验证后更新本节，记录日期、命令、通过率和覆盖说明。格式遵循 spec-docs-pro 标准。
+**状态与证据**：实现状态及测试通过证据仅维护在 [V1 实现状态](../../../02-产品与版本/当前版本/V1-实现状态.md)，本节命令仅列验证目标，不代表已执行或通过。
 
 #### 2026-10-26 后端单元测试
 
 ```bash
-cd server && cargo test -p dgos-providers --lib
+cargo test --offline -p dgos-providers --lib
 ```
 
 **状态**：🔴 未开始
 
-**计划覆盖**：
-- Provider trait 接口定义
-- 模型分类标签逻辑（text-generation, image-generation 等）
-- API Key 加密/解密
-- 重试策略配置解析
-- 指数退避算法
+**目标覆盖**：Provider trait、模型分类、凭据边界及重试策略；具体自动化资产见 §5.1。
 
 ---
 
 #### 2026-10-26 后端集成测试
 
 ```bash
-cd server && DATABASE_URL=sqlite::memory: cargo test -p dgos-providers --test integration_tests
+cargo test --offline -p dgos-db provider_scope_tests
 ```
 
 **状态**：🔴 未开始
 
-**计划覆盖**：
-- ✅ AC01: Provider 正常创建（包含数据库保存、模型列表自动获取）
-- ✅ AC02: API Key 无效检测（401 错误处理）
-- ✅ AC03: 模型列表获取与缓存（首次同步）
-- ✅ AC04: 模型分类标签正确（gpt-4 → text-generation, dall-e-3 → image-generation）
-- ✅ AC08: 并发调用支持（5个并发请求无冲突）
-- ✅ AC09: 可配置重试策略（retry_count=3, 指数退避）
-- ✅ AC10: 重试失败后返回错误（3次重试后放弃）
-- ✅ AC11: 多 Provider 排序（拖拽调整 sort_order）
-- ✅ AC12: Provider 启用/禁用（enabled 字段控制）
-- ✅ AC13: 手动刷新模型列表（强制重新同步）
-- ✅ AC14: 使用记录保存（tokens、latency、success）
-
-**未覆盖**（需要 mock 外部 API）：
-- ⚠️ AC05: 同步调用成功（需要 mock OpenAI API 或使用 wiremock）
-- ⚠️ AC06: 流式调用成功（需要 mock SSE 流）
-- ⚠️ AC07: 流式输出中断处理（需要网络中断模拟）
+**目标覆盖**：Provider/模型持久化与刷新；其余 AC 的现有资产及缺口见 §5.1。
 
 ---
 
 #### 2026-10-26 前端集成测试
 
 ```bash
-cd frontend && pnpm --filter @dgos/desktop test -- provider
+npm test -- --run tests/providers.test.tsx tests/provider-management.test.tsx
 ```
 
 **状态**：🔴 未开始
 
-**计划覆盖**：
-- Provider 配置表单验证（必填字段、URL 格式）
-- Provider 列表渲染（显示名称、状态、排序）
-- 拖拽排序功能（React DnD）
-- 测试连接按钮交互（loading 状态、错误提示）
-- 启用/禁用切换
+**目标覆盖**：Provider 管理页面和 store 的现有 Vitest 覆盖；具体资产见 §5.1。
 
 ---
 
 #### 2026-10-26 E2E 测试
 
-```bash
-cd frontend && pnpm test:e2e provider_management
-```
+**资产状态**：V1-E2E-01 为规划资产（未建立）；当前项目没有 E2E 测试框架，暂无可执行命令。
 
 **状态**：🔴 未开始
 
@@ -805,7 +782,7 @@ FUNCTION stream_provider(provider_id, model_id, request) -> Result<Stream>:
   native_request = adapter.convert_request(model_id, request)
   native_request.stream = TRUE
   
-  // B02-03: 发起 SSE 流式调用
+// B02-03: 发起 SSE 流式调用
   TRY:
     sse_stream = HTTP.post_stream(provider.base_url + "/chat/completions", native_request)
     accumulated_text = ""
@@ -846,6 +823,8 @@ FUNCTION stream_provider(provider_id, model_id, request) -> Result<Stream>:
 ```
 
 #### 分支到测试追踪表
+
+注：本表沿用的 B02-xx ID 与 FR-002 的 B02 前缀冲突；复用这些 ID 前需要先作出决策。
 
 | 分支编号 | 分支描述 | AC 映射 | E2E 映射 | NFR 映射 | 风险级别 |
 |---------|---------|---------|---------|---------|---------|

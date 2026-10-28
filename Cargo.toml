@@ -6,6 +6,8 @@ members = [
     "crates/dgos-types", "crates/dgos-skills",
     "crates/dgos-workbench",
     "crates/dgos-mcp",
+    "crates/dgos-modules",
+    "crates/dgos-application",
 ]
 resolver = "2"
 

@@ -2,7 +2,9 @@ openapi: 3.1.0
 info:
   title: DGOS V1 API
   description: |
-    DGOS V1.0 局域网协同 HTTP API 规范
+    DGOS V1.0 局域网协同 HTTP API 规范（FR-010 规划契约）。当前尚未实现 HTTP route 或 server；桌面端使用 Tauri commands，见 docs/04-技术架构/当前版本/V1-接口契约.md §4.0。
+
+    本文 MCP `status` 枚举（connected/disconnected/error）是旧基线，与桌面当前状态 configured/connecting/ready/degraded/error/disconnecting（D021）不同；在 FR-010 设计时再统一对齐。
 
     D016 修订提示（2026-10-27）：Skills 相关接口仍为旧 HTTP/CLI 基线，
     不代表 V1-FR-002 DGOS 技能中心目标契约；新接口与迁移将在技术设计中统一修订。
@@ -24,7 +26,7 @@ info:
   version: 1.0.0
   contact:
     name: DGOS Team
-    url: https://github.com/your-org/DG-OS
+    url: https://github.com/ccnuzw/DG-OS
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT

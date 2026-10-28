@@ -51,6 +51,9 @@ fn allows(caller: BuiltinCaller, capability: Capability) -> bool {
                 | McpCall
                 | TasksRun
         ),
+        // Module contexts are minted by the capability service, never by a
+        // renderer-facing Tauri command.
+        BuiltinCaller::Module => false,
     }
 }
 
