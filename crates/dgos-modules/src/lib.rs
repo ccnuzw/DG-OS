@@ -10,6 +10,7 @@ use dgos_types::{HostExecutionContext, HostSession};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashSet,
     fs, io,
     path::{Path, PathBuf},
     sync::{
@@ -566,10 +567,72 @@ impl ModulePublisher {
                     model.update(&self.db).await.map_err(db_error)?;
                 }
             }
+            self.cleanup_orphans().await?;
             Ok::<_, ModulePackageError>(ready)
         }
         .await;
         result
+    }
+
+    /// Remove package directories that were moved out of staging but never
+    /// became part of a committed database version. This is deliberately
+    /// allow-list based: only versions represented by the DB or current
+    /// module rows survive startup recovery.
+    pub async fn cleanup_orphans(&self) -> Result<usize, ModulePackageError> {
+        let version_rows = module_versions::Entity::find()
+            .all(&self.db)
+            .await
+            .map_err(db_error)?;
+        let module_rows = modules::Entity::find()
+            .all(&self.db)
+            .await
+            .map_err(db_error)?;
+        let mut allowed = HashSet::new();
+        for row in version_rows {
+            allowed.insert((row.module_id, row.version));
+        }
+        for row in module_rows {
+            allowed.insert((row.id, row.current_version));
+        }
+
+        let mut removed = 0;
+        let staging = self.root.join("staging");
+        if staging.is_dir() {
+            for entry in fs::read_dir(&staging)? {
+                let path = entry?.path();
+                if path.is_dir() {
+                    fs::remove_dir_all(path)?;
+                    removed += 1;
+                }
+            }
+        }
+        let versions_root = self.root.join("versions");
+        if versions_root.is_dir() {
+            for module_entry in fs::read_dir(&versions_root)? {
+                let module_path = module_entry?.path();
+                let Some(module_id) = module_path.file_name().and_then(|value| value.to_str())
+                else {
+                    continue;
+                };
+                if !module_path.is_dir() {
+                    continue;
+                }
+                for version_entry in fs::read_dir(&module_path)? {
+                    let version_path = version_entry?.path();
+                    let Some(version) = version_path.file_name().and_then(|value| value.to_str())
+                    else {
+                        continue;
+                    };
+                    if version_path.is_dir()
+                        && !allowed.contains(&(module_id.to_owned(), version.to_owned()))
+                    {
+                        fs::remove_dir_all(version_path)?;
+                        removed += 1;
+                    }
+                }
+            }
+        }
+        Ok(removed)
     }
 
     const RELEASE_LOCK_KEY: &'static str = "modules";
@@ -1211,6 +1274,8 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].outcome, "failure");
         assert_eq!(events[0].stage, "publish_commit");
+        assert_eq!(publisher.cleanup_orphans().await.unwrap(), 1);
+        assert!(!store.path().join("versions/module-1/1.0.0").exists());
     }
 
     #[tokio::test]
