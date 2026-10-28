@@ -7,6 +7,7 @@
 
 use crate::loader::VerifiedModuleArtifact;
 use dgos_types::HostExecutionContext;
+use std::future::Future;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use thiserror::Error;
@@ -66,6 +67,9 @@ struct RuntimeShared {
     inner: Mutex<RuntimeInner>,
     // Mirrors `stats.in_flight` so drains can await zero without polling.
     in_flight: tokio::sync::watch::Sender<usize>,
+    // True once the loader confirmed it released this instance. Held across
+    // the loader call so concurrent releases serialize and run it once.
+    released: tokio::sync::Mutex<bool>,
 }
 
 impl RuntimeShared {
@@ -100,6 +104,7 @@ impl ModuleRuntimeHandle {
                     stats: ModuleRequestStats::default(),
                 }),
                 in_flight: tokio::sync::watch::Sender::new(0),
+                released: tokio::sync::Mutex::new(false),
             }),
         }
     }
@@ -203,6 +208,24 @@ impl ModuleRuntimeHandle {
         // The sender lives in `shared`, which this handle keeps alive, so the
         // channel cannot close while waiting.
         let _ = receiver.wait_for(|in_flight| *in_flight == 0).await;
+    }
+
+    /// Run the loader release for this instance exactly once. Concurrent
+    /// callers wait for the in-flight attempt; after a confirmed release
+    /// later calls are no-ops. A failed or cancelled attempt is not
+    /// recorded, so the next caller retries.
+    pub(crate) async fn release_once<F, Fut, E>(&self, release: F) -> Result<(), E>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<(), E>>,
+    {
+        let mut released = self.shared.released.lock().await;
+        if *released {
+            return Ok(());
+        }
+        release().await?;
+        *released = true;
+        Ok(())
     }
 
     fn transition(

@@ -298,10 +298,7 @@ impl ModuleRuntimeSupervisor {
     /// failed and release whatever the loader may hold.
     async fn abort_start(&self, handle: &ModuleRuntimeHandle) {
         let _ = handle.fail();
-        let _ = self
-            .loader
-            .stop(handle.runtime_id(), handle.artifact())
-            .await;
+        let _ = release_runtime(self.loader.as_ref(), handle).await;
     }
 
     /// Restore the previous release after a failed activation. On success
@@ -353,11 +350,9 @@ impl ModuleRuntimeSupervisor {
             self.release_when_settled(handle.clone());
             return Err(ModuleSupervisorError::DrainTimeout);
         }
-        if let Err(error) = self
-            .loader
-            .stop(handle.runtime_id(), handle.artifact())
-            .await
-        {
+        // Exactly once per instance: a background release that already
+        // succeeded is not repeated, and a failed one is retried here.
+        if let Err(error) = release_runtime(self.loader.as_ref(), handle).await {
             let _ = handle.fail();
             return Err(error.into());
         }
@@ -372,7 +367,8 @@ impl ModuleRuntimeSupervisor {
         let loader = self.loader.clone();
         runtime.spawn(async move {
             handle.wait_settled().await;
-            let _ = loader.stop(handle.runtime_id(), handle.artifact()).await;
+            // A failure here leaves the release pending for the next `stop`.
+            let _ = release_runtime(loader.as_ref(), &handle).await;
         });
     }
 
@@ -397,6 +393,19 @@ impl ModuleRuntimeSupervisor {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+}
+
+/// The only place that calls `ModuleLoader::stop`. The handle records a
+/// confirmed release, so the loader sees at most one successful `stop` per
+/// runtime instance however `report_failure`, drain timeout, explicit `stop`
+/// and failed-start cleanup interleave.
+async fn release_runtime(
+    loader: &dyn ModuleLoader,
+    handle: &ModuleRuntimeHandle,
+) -> Result<(), ModuleLoadError> {
+    handle
+        .release_once(|| loader.stop(handle.runtime_id(), handle.artifact()))
+        .await
 }
 
 fn is_live(state: ModuleRuntimeState) -> bool {
@@ -434,17 +443,35 @@ mod tests {
     };
     use tempfile::{tempdir, TempDir};
 
-    /// Real local checks, plus scripted start failures and loader accounting.
+    /// Real local checks, plus scripted start/stop failures and loader
+    /// accounting. `stops` lists confirmed releases; `stop_attempts` counts
+    /// every call, including scripted failures.
     #[derive(Default)]
     struct ScriptedLoader {
         fail_start_version: Mutex<Option<String>>,
         starts: AtomicUsize,
+        stop_attempts: AtomicUsize,
+        failing_stops: AtomicUsize,
+        stop_delay: Mutex<Duration>,
         stops: Mutex<Vec<String>>,
     }
 
     impl ScriptedLoader {
         fn fail_start(&self, version: Option<&str>) {
             *self.fail_start_version.lock().unwrap() = version.map(str::to_owned);
+        }
+
+        /// The next `count` stop calls fail without releasing anything.
+        fn fail_next_stops(&self, count: usize) {
+            self.failing_stops.store(count, Ordering::SeqCst);
+        }
+
+        fn delay_stops(&self, delay: Duration) {
+            *self.stop_delay.lock().unwrap() = delay;
+        }
+
+        fn stop_attempts(&self) -> usize {
+            self.stop_attempts.load(Ordering::SeqCst)
         }
 
         fn stops(&self) -> Vec<String> {
@@ -475,6 +502,20 @@ mod tests {
             runtime_id: &str,
             _artifact: &VerifiedModuleArtifact,
         ) -> Result<(), ModuleLoadError> {
+            self.stop_attempts.fetch_add(1, Ordering::SeqCst);
+            let delay = *self.stop_delay.lock().unwrap();
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+            let scripted_failure = self
+                .failing_stops
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                    remaining.checked_sub(1)
+                })
+                .is_ok();
+            if scripted_failure {
+                return Err(ModuleLoadError::Rejected("scripted stop failure".into()));
+            }
             self.stops.lock().unwrap().push(runtime_id.to_owned());
             Ok(())
         }
@@ -708,6 +749,28 @@ mod tests {
         fixture.supervisor.stop(MODULE).await.unwrap();
         assert_eq!(handle.state(), ModuleRuntimeState::Stopped);
         assert_eq!(handle.request_stats().failed, 1);
+        assert_eq!(fixture.loader.stop_attempts(), 1);
+    }
+
+    #[tokio::test]
+    async fn drain_timeout_then_immediate_stop_releases_loader_once() {
+        let fixture = Fixture::new(Duration::from_millis(30)).await;
+        fixture.publish("1.0.0", &[]).await;
+        let handle = fixture.start().await;
+        let request = handle.begin_request().unwrap();
+        assert!(matches!(
+            fixture.supervisor.stop(MODULE).await,
+            Err(ModuleSupervisorError::DrainTimeout)
+        ));
+
+        // Settle and stop right away: the background release and the
+        // explicit stop contend, and only one reaches the loader.
+        request.finish(ModuleRequestOutcome::Succeeded);
+        fixture.supervisor.stop(MODULE).await.unwrap();
+        assert_eq!(handle.state(), ModuleRuntimeState::Stopped);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(fixture.loader.stops(), vec![handle.runtime_id().to_owned()]);
+        assert_eq!(fixture.loader.stop_attempts(), 1);
     }
 
     #[tokio::test]
@@ -843,6 +906,122 @@ mod tests {
         assert_eq!(handle.request_stats().interrupted, 1);
         fixture.supervisor.stop(MODULE).await.unwrap();
         assert_eq!(handle.state(), ModuleRuntimeState::Stopped);
+        assert_eq!(fixture.loader.stops(), vec![handle.runtime_id().to_owned()]);
+        assert_eq!(fixture.loader.stop_attempts(), 1);
+    }
+
+    #[tokio::test]
+    async fn explicit_stop_during_background_release_waits_and_does_not_repeat_it() {
+        let fixture = Fixture::new(ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT).await;
+        fixture.publish("1.0.0", &[]).await;
+        let handle = fixture.start().await;
+        fixture.loader.delay_stops(Duration::from_millis(60));
+        fixture
+            .supervisor
+            .report_failure(MODULE, handle.runtime_id())
+            .unwrap();
+
+        // The background release is now inside `loader.stop`; the explicit
+        // stop must wait for it instead of starting a second release.
+        wait_until(|| fixture.loader.stop_attempts() == 1).await;
+        assert!(fixture.loader.stops().is_empty());
+        fixture.supervisor.stop(MODULE).await.unwrap();
+        assert_eq!(handle.state(), ModuleRuntimeState::Stopped);
+        assert_eq!(fixture.loader.stops(), vec![handle.runtime_id().to_owned()]);
+        assert_eq!(fixture.loader.stop_attempts(), 1);
+    }
+
+    #[tokio::test]
+    async fn duplicate_report_failure_is_idempotent_and_releases_once() {
+        let fixture = Fixture::new(ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT).await;
+        fixture.publish("1.0.0", &[]).await;
+        let handle = fixture.start().await;
+        let request = handle.begin_request().unwrap();
+        for _ in 0..3 {
+            fixture
+                .supervisor
+                .report_failure(MODULE, handle.runtime_id())
+                .unwrap();
+        }
+        assert_eq!(handle.state(), ModuleRuntimeState::Failed);
+        tokio::task::yield_now().await;
+        assert_eq!(fixture.loader.stop_attempts(), 0);
+
+        request.finish(ModuleRequestOutcome::Succeeded);
+        wait_until(|| fixture.loader.stops().len() == 1).await;
+        // A report after the release is still accepted while the runtime is
+        // merely failed, and must not release again.
+        fixture
+            .supervisor
+            .report_failure(MODULE, handle.runtime_id())
+            .unwrap();
+        fixture.supervisor.stop(MODULE).await.unwrap();
+        assert_eq!(handle.state(), ModuleRuntimeState::Stopped);
+
+        // Once stopped, the instance no longer accepts failure reports.
+        assert!(matches!(
+            fixture
+                .supervisor
+                .report_failure(MODULE, handle.runtime_id()),
+            Err(ModuleSupervisorError::Runtime(
+                ModuleRuntimeError::InvalidTransition
+            ))
+        ));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(fixture.loader.stops(), vec![handle.runtime_id().to_owned()]);
+        assert_eq!(fixture.loader.stop_attempts(), 1);
+        let stats = handle.request_stats();
+        assert_eq!(
+            (stats.admitted, stats.succeeded, stats.in_flight),
+            (1, 1, 0)
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_loader_stop_is_retried_by_the_next_stop() {
+        let fixture = Fixture::new(ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT).await;
+        fixture.publish("1.0.0", &[]).await;
+        let handle = fixture.start().await;
+        fixture.loader.fail_next_stops(1);
+
+        assert!(matches!(
+            fixture.supervisor.stop(MODULE).await,
+            Err(ModuleSupervisorError::Load(_))
+        ));
+        assert_eq!(handle.state(), ModuleRuntimeState::Failed);
+        assert!(handle.begin_request().is_err());
+        assert!(fixture.loader.stops().is_empty());
+        assert_eq!(fixture.loader.stop_attempts(), 1);
+
+        fixture.supervisor.stop(MODULE).await.unwrap();
+        assert_eq!(handle.state(), ModuleRuntimeState::Stopped);
+        assert_eq!(fixture.loader.stops(), vec![handle.runtime_id().to_owned()]);
+        assert_eq!(fixture.loader.stop_attempts(), 2);
+
+        // Released: further stops are no-ops and never reach the loader.
+        fixture.supervisor.stop(MODULE).await.unwrap();
+        assert_eq!(fixture.loader.stop_attempts(), 2);
+    }
+
+    #[tokio::test]
+    async fn failed_background_release_is_retried_by_explicit_stop() {
+        let fixture = Fixture::new(ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT).await;
+        fixture.publish("1.0.0", &[]).await;
+        let handle = fixture.start().await;
+        fixture.loader.fail_next_stops(1);
+        fixture
+            .supervisor
+            .report_failure(MODULE, handle.runtime_id())
+            .unwrap();
+        wait_until(|| fixture.loader.stop_attempts() == 1).await;
+        tokio::task::yield_now().await;
+        assert!(fixture.loader.stops().is_empty());
+        assert_eq!(handle.state(), ModuleRuntimeState::Failed);
+
+        fixture.supervisor.stop(MODULE).await.unwrap();
+        assert_eq!(handle.state(), ModuleRuntimeState::Stopped);
+        assert_eq!(fixture.loader.stops(), vec![handle.runtime_id().to_owned()]);
+        assert_eq!(fixture.loader.stop_attempts(), 2);
     }
 
     #[tokio::test]
