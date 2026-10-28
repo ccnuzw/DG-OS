@@ -5,6 +5,10 @@ pub mod entities;
 pub mod migrations;
 pub mod repositories;
 
+#[cfg(test)]
+mod mcp_tests;
+mod workbench_tool_tests;
+
 use sea_orm::{Database, DatabaseConnection, DbErr};
 
 pub async fn establish_connection(database_url: &str) -> Result<DatabaseConnection, DbErr> {

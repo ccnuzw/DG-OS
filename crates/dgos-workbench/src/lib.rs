@@ -1,5 +1,8 @@
 use dgos_db::{
-    entities::{skill_user_states, workbench_task_skills as refs, workbench_tasks as tasks},
+    entities::{
+        skill_user_states, workbench_task_skills as refs, workbench_task_tools as tool_refs,
+        workbench_tasks as tasks,
+    },
     sea_orm::{
         ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
         QuerySelect, Set, TransactionTrait,
@@ -9,6 +12,11 @@ use dgos_providers::ProviderManager;
 use dgos_skills::SkillsManager;
 use dgos_types::{ChatMessage, ChatRequest};
 use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::Mutex;
+
+mod tools;
+pub use tools::{ToolAction, ToolProposal, ToolSelection, ToolTaskInput, ToolTaskUpdate};
 
 type Result<T> = std::result::Result<T, String>;
 const OUTPUT_TOKENS: u32 = 1024;
@@ -28,6 +36,8 @@ pub struct TaskInput {
 pub struct TaskRecord {
     pub task: tasks::Model,
     pub skills: Vec<refs::Model>,
+    #[serde(default)]
+    pub tools: Vec<tool_refs::Model>,
 }
 
 #[derive(Serialize)]
@@ -42,12 +52,21 @@ pub struct PreparedTask {
     pub request: ChatRequest,
 }
 
+#[derive(Clone)]
 pub struct WorkbenchManager {
     db: DatabaseConnection,
+    tool_tasks: Arc<Mutex<HashMap<String, Arc<tools::ToolSession>>>>,
+    tool_starts: Arc<Mutex<()>>,
+    stopping: tokio_util::sync::CancellationToken,
 }
 impl WorkbenchManager {
     pub fn new(db: DatabaseConnection) -> Self {
-        Self { db }
+        Self {
+            db,
+            tool_tasks: Arc::new(Mutex::new(HashMap::new())),
+            tool_starts: Arc::new(Mutex::new(())),
+            stopping: tokio_util::sync::CancellationToken::new(),
+        }
     }
 
     pub async fn prepare(
@@ -56,6 +75,18 @@ impl WorkbenchManager {
         input: &TaskInput,
         user: &str,
         context_window: Option<i32>,
+    ) -> Result<PreparedTask> {
+        self.prepare_bound(skills, input, user, context_window, &[])
+            .await
+    }
+
+    async fn prepare_bound(
+        &self,
+        skills: &SkillsManager,
+        input: &TaskInput,
+        user: &str,
+        context_window: Option<i32>,
+        tools: &[tools::SelectedTool],
     ) -> Result<PreparedTask> {
         // B02-21/22: explicit selection, bounded context, no silent fallback.
         if input.prompt.trim().is_empty() || input.prompt.len() > 16 * 1024 {
@@ -73,7 +104,12 @@ impl WorkbenchManager {
         };
         let mut messages = vec![ChatMessage {
             role: "system".into(),
-            content: HOST_POLICY.into(),
+            content: if tools.is_empty() {
+                HOST_POLICY
+            } else {
+                tools::TOOL_HOST_POLICY
+            }
+            .into(),
         }];
         if let Some(content) = &content {
             if content.body.len() > 16 * 1024 {
@@ -91,7 +127,16 @@ impl WorkbenchManager {
             role: "user".into(),
             content: input.prompt.clone(),
         });
-        let bytes: usize = messages.iter().map(|m| m.content.len()).sum();
+        let descriptors: Vec<_> = tools.iter().map(|tool| &tool.definition).collect();
+        let descriptor_bytes = if tools.is_empty() {
+            0
+        } else {
+            serde_json::to_vec(&descriptors)
+                .map_err(|_| "Unable to encode tools")?
+                .len()
+        };
+        let bytes: usize =
+            messages.iter().map(|m| m.content.len()).sum::<usize>() + descriptor_bytes;
         if bytes > 24 * 1024
             || context_window.is_some_and(|window| {
                 window <= 0 || bytes + 1024 + OUTPUT_TOKENS as usize > window as usize
@@ -146,6 +191,21 @@ impl WorkbenchManager {
                 .await
                 .map_err(|_| "Unable to bind skill version".to_string())?;
         }
+        let mut tool_bindings = Vec::new();
+        for tool in tools {
+            let binding = tool_refs::Model {
+                task_id: task.id.clone(),
+                server_id: tool.tool.server_id.clone(),
+                tool_name: tool.tool.tool_name.clone(),
+                schema_hash: tool.tool.schema_hash.clone(),
+            };
+            let active: tool_refs::ActiveModel = binding.clone().into();
+            active
+                .insert(&tx)
+                .await
+                .map_err(|_| "Unable to bind selected tool")?;
+            tool_bindings.push(binding);
+        }
         tx.commit()
             .await
             .map_err(|_| "Unable to commit task audit".to_string())?;
@@ -153,6 +213,7 @@ impl WorkbenchManager {
             record: TaskRecord {
                 task,
                 skills: bindings,
+                tools: tool_bindings,
             },
             request: ChatRequest {
                 messages,
@@ -170,34 +231,13 @@ impl WorkbenchManager {
         input: TaskInput,
         user: &str,
     ) -> Result<TaskOutcome> {
-        // B02-21: never trust a provider/model identifier from the renderer.
-        let provider = providers
-            .get_provider(&input.provider_id)
-            .await
-            .map_err(|_| "Unable to read provider".to_string())?
-            .ok_or("Provider unavailable")?;
-        if provider.user_id != user || !provider.enabled {
-            return Err("Provider unavailable for this user".into());
-        }
-        let model = dgos_db::ModelRepository::new(self.db.clone())
-            .list(&provider.id)
-            .await
-            .map_err(|_| "Unable to read cached models".to_string())?
-            .into_iter()
-            .find(|m| m.model_id == input.model_id && m.model_type == "chat")
-            .ok_or("Choose a cached chat model from this provider")?;
-        if model
-            .max_output_tokens
-            .is_some_and(|max| max < OUTPUT_TOKENS as i32)
-        {
-            return Err("Model output limit is below the workbench 1024-token reserve".into());
-        }
+        let model = self.validate_provider(providers, &input, user).await?;
         let prepared = self
             .prepare(skills, &input, user, model.context_window)
             .await?;
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(120),
-            providers.call_provider(&provider.id, &input.model_id, prepared.request, user),
+            providers.call_provider(&input.provider_id, &input.model_id, prepared.request, user),
         )
         .await;
         let (status, error, content, tokens) = match result {
@@ -220,6 +260,37 @@ impl WorkbenchManager {
             .await?;
         let record = self.record(&prepared.record.task.id, user).await?;
         Ok(TaskOutcome { record, content })
+    }
+
+    async fn validate_provider(
+        &self,
+        providers: &ProviderManager,
+        input: &TaskInput,
+        user: &str,
+    ) -> Result<dgos_types::Model> {
+        // B02-21: never trust a provider/model identifier from the renderer.
+        let provider = providers
+            .get_provider(&input.provider_id)
+            .await
+            .map_err(|_| "Unable to read provider".to_string())?
+            .ok_or("Provider unavailable")?;
+        if provider.user_id != user || !provider.enabled {
+            return Err("Provider unavailable for this user".into());
+        }
+        let model = dgos_db::ModelRepository::new(self.db.clone())
+            .list(&provider.id)
+            .await
+            .map_err(|_| "Unable to read cached models".to_string())?
+            .into_iter()
+            .find(|m| m.model_id == input.model_id && m.model_type == "chat")
+            .ok_or("Choose a cached chat model from this provider")?;
+        if model
+            .max_output_tokens
+            .is_some_and(|max| max < OUTPUT_TOKENS as i32)
+        {
+            return Err("Model output limit is below the workbench 1024-token reserve".into());
+        }
+        Ok(model)
     }
 
     async fn finish(
@@ -275,7 +346,16 @@ impl WorkbenchManager {
             .all(&self.db)
             .await
             .map_err(|_| "Unable to read skill references".to_string())?;
-        Ok(TaskRecord { task, skills })
+        let tools = tool_refs::Entity::find()
+            .filter(tool_refs::Column::TaskId.eq(id))
+            .all(&self.db)
+            .await
+            .map_err(|_| "Unable to read tool references")?;
+        Ok(TaskRecord {
+            task,
+            skills,
+            tools,
+        })
     }
 
     pub async fn list(&self, user: &str) -> Result<Vec<TaskRecord>> {

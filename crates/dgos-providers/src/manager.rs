@@ -2,7 +2,7 @@ use dgos_db::sea_orm::DatabaseConnection;
 use dgos_db::{establish_connection, ModelRepository, ProviderRepository, UsageLogRepository};
 use dgos_types::{
     ChatRequest, ChatResponse, DgosError, DgosResult, Model, Provider, ProviderConfig, RetryConfig,
-    UsageLog,
+    ToolChatRequest, ToolChatResponse, UsageLog,
 };
 use std::sync::Arc;
 use std::time::Instant;
@@ -248,6 +248,48 @@ impl ProviderManager {
             }
         }
 
+        result
+    }
+
+    /// Structured tool proposals are data; this method never executes a tool.
+    pub async fn call_provider_tools(
+        &self,
+        provider_id: &str,
+        model_id: &str,
+        request: ToolChatRequest,
+        user_id: &str,
+    ) -> DgosResult<ToolChatResponse> {
+        let provider = self
+            .provider_repo
+            .get(provider_id)
+            .await?
+            .filter(|p| p.enabled && p.user_id == user_id)
+            .ok_or_else(|| {
+                DgosError::ProviderUnavailable("Provider unavailable for this user".into())
+            })?;
+        let adapter = self.get_or_create_adapter(&provider).await?;
+        let start = Instant::now();
+        let result = adapter.call_tools(model_id, request).await;
+        let (input, output, error) = match &result {
+            Ok(response) => (
+                response.usage.prompt_tokens,
+                response.usage.completion_tokens,
+                None,
+            ),
+            Err(error) => (0, 0, Some(error.error_code().to_string())),
+        };
+        self.usage_log_repo
+            .create(
+                provider_id,
+                model_id,
+                user_id,
+                input,
+                output,
+                start.elapsed().as_millis() as u32,
+                result.is_ok(),
+                error,
+            )
+            .await?;
         result
     }
 

@@ -5,6 +5,9 @@ mod m004_create_skill_content_tables;
 mod m005_create_workbench_tasks;
 mod m006_align_provider_usage_logs;
 mod m007_reconcile_skill_content_schema;
+mod m008_create_mcp_tables;
+mod m009_create_mcp_connection_logs;
+mod m010_create_workbench_task_tools;
 mod m20261027_000001_create_providers;
 mod m20261027_000002_create_models;
 mod m20261027_000003_create_usage_logs;
@@ -23,6 +26,9 @@ impl MigratorTrait for Migrator {
             Box::new(m005_create_workbench_tasks::Migration),
             Box::new(m006_align_provider_usage_logs::Migration),
             Box::new(m007_reconcile_skill_content_schema::Migration),
+            Box::new(m008_create_mcp_tables::Migration),
+            Box::new(m009_create_mcp_connection_logs::Migration),
+            Box::new(m010_create_workbench_task_tools::Migration),
         ]
     }
 }

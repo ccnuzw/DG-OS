@@ -31,6 +31,15 @@
 .workbench-history ul { list-style: none; }
 .workbench-history li { padding: 16px 0; border-bottom: 1px solid var(--wb-line); overflow-wrap: anywhere; }
 .workbench-history small { color: var(--wb-muted); }
+.workbench-tools { margin-top: 20px; border: 1px solid var(--wb-line); border-radius: 8px; padding: 16px; }
+.workbench-tools h3, .workbench-proposal h3 { font-size: 15px; margin: 0; }
+.workbench-tools h3 span { color: var(--wb-muted); font-weight: 400; }
+.workbench .workbench-tool-choice { flex-direction: row; align-items: flex-start; gap: 12px; font-weight: 500; min-height: 44px; overflow-wrap: anywhere; }
+.workbench-tool-choice input { margin-top: 4px; flex-shrink: 0; }
+.workbench-tool-choice small { display: block; color: var(--wb-muted); font-weight: 400; margin-top: 4px; }
+.workbench-proposal { margin-top: 24px; padding: 20px; border: 2px solid var(--wb-accent); border-radius: 8px; }
+.workbench-proposal-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.workbench-proposal-actions button:first-child { color: #fff; background: var(--wb-accent); border: 1px solid var(--wb-accent); }
 @media (max-width: 800px) {
   .workbench { padding: 20px; }
   .workbench-layout { grid-template-columns: minmax(0, 1fr); }

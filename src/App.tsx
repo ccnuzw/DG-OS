@@ -4,6 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import ProviderManagement from "./pages/ProviderManagement";
 import SkillsManagement from "./pages/SkillsManagement";
 import Workbench from "./pages/Workbench";
+import McpManagement from "./pages/McpManagement";
+import McpConnectionNotice from "./components/McpConnectionNotice";
 import "./App.css";
 
 function App() {
@@ -20,8 +22,11 @@ function App() {
         <Link to="/providers">Providers</Link>
         <Link to="/skills">Skills</Link>
         <Link to="/workbench">Workbench</Link>
+        <Link to="/mcp">MCP</Link>
         <Link to="/settings">Settings</Link>
       </nav>
+
+      <McpConnectionNotice />
 
       <div className="app-content">
         <Routes>
@@ -44,6 +49,7 @@ function App() {
           <Route path="/providers" element={<ProviderManagement />} />
           <Route path="/skills" element={<SkillsManagement />} />
           <Route path="/workbench" element={<Workbench />} />
+          <Route path="/mcp" element={<McpManagement />} />
           <Route path="/settings" element={<div>Settings Page</div>} />
         </Routes>
       </div>

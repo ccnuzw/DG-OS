@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use dgos_types::{
     Capability, ChatChunk, ChatMessage, ChatRequest, ChatResponse, DgosError, DgosResult, Model,
-    RetryConfig, TokenUsage,
+    RetryConfig, TokenUsage, ToolChatRequest, ToolChatResponse, ToolMessage,
 };
 use futures::stream::StreamExt;
 use reqwest::Client;
@@ -159,6 +159,72 @@ impl ProviderAdapter for OpenAIAdapter {
             .await?;
 
         Ok(response)
+    }
+
+    async fn call_tools(
+        &self,
+        model_id: &str,
+        request: ToolChatRequest,
+    ) -> DgosResult<ToolChatResponse> {
+        // One attempt: host tool orchestration never relies on provider retries.
+        let mut response = self
+            .client
+            .post(format!("{}/chat/completions", self.base_url))
+            .bearer_auth(&self.api_key)
+            .json(&serde_json::json!({
+                "model": model_id, "messages": request.messages, "tools": request.tools,
+                "tool_choice": "auto", "parallel_tool_calls": false,
+                "max_tokens": request.max_tokens, "stream": false
+            }))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(match response.status().as_u16() {
+                401 => DgosError::InvalidApiKey,
+                429 => DgosError::RateLimitExceeded,
+                status => DgosError::HttpError(status),
+            });
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if bytes.len() + chunk.len() > 1024 * 1024 {
+                return Err(DgosError::InternalError(
+                    "Tool response exceeds limit".into(),
+                ));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        #[derive(Deserialize)]
+        struct Choice {
+            message: ToolMessage,
+            finish_reason: Option<String>,
+        }
+        #[derive(Deserialize)]
+        struct Response {
+            choices: Vec<Choice>,
+            usage: TokenUsage,
+        }
+        let mut parsed: Response = serde_json::from_slice(&bytes)?;
+        if parsed.choices.len() != 1 {
+            return Err(DgosError::InternalError(
+                "Expected one tool chat choice".into(),
+            ));
+        }
+        let choice = parsed.choices.remove(0);
+        if choice.message.role != "assistant"
+            || !matches!(choice.finish_reason.as_deref(), Some("stop" | "tool_calls"))
+            || (choice.message.tool_calls.is_empty()
+                != (choice.finish_reason.as_deref() == Some("stop")))
+            || choice.message.tool_call_id.is_some()
+        {
+            return Err(DgosError::InternalError(
+                "Invalid or incomplete tool chat response".into(),
+            ));
+        }
+        Ok(ToolChatResponse {
+            message: choice.message,
+            usage: parsed.usage,
+        })
     }
 
     async fn stream(

@@ -1,5 +1,7 @@
 use async_trait::async_trait;
-use dgos_types::{ChatChunk, ChatRequest, ChatResponse, DgosResult, Model};
+use dgos_types::{
+    ChatChunk, ChatRequest, ChatResponse, DgosResult, Model, ToolChatRequest, ToolChatResponse,
+};
 use futures::stream::Stream;
 use std::pin::Pin;
 
@@ -17,6 +19,12 @@ pub trait ProviderAdapter: Send + Sync {
 
     /// Make a synchronous chat completion request
     async fn call(&self, model_id: &str, request: ChatRequest) -> DgosResult<ChatResponse>;
+
+    async fn call_tools(
+        &self,
+        model_id: &str,
+        request: ToolChatRequest,
+    ) -> DgosResult<ToolChatResponse>;
 
     /// Make a streaming chat completion request
     async fn stream(

@@ -1,3 +1,7 @@
+pub mod mcp_connection_logs;
+pub mod mcp_server_tools;
+pub mod mcp_servers;
+pub mod mcp_usage_logs;
 pub mod models;
 pub mod providers;
 pub mod skill_catalog;
@@ -8,9 +12,13 @@ pub mod skill_versions;
 pub mod skills;
 pub mod usage_logs;
 pub mod workbench_task_skills;
+pub mod workbench_task_tools;
 pub mod workbench_tasks;
 
 pub mod prelude {
+    pub use super::mcp_server_tools::Entity as McpServerTools;
+    pub use super::mcp_servers::Entity as McpServers;
+    pub use super::mcp_usage_logs::Entity as McpUsageLogs;
     pub use super::models::Entity as Models;
     pub use super::providers::Entity as Providers;
     pub use super::skill_catalog::Entity as SkillCatalog;

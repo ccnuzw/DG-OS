@@ -4,6 +4,7 @@
 mod commands;
 
 use dgos_db::sea_orm_migration::MigratorTrait;
+use dgos_mcp::McpManager;
 use dgos_providers::ProviderManager;
 use dgos_skills::SkillsManager;
 use std::sync::Arc;
@@ -72,6 +73,20 @@ pub fn run() {
                     manager: Arc::new(RwLock::new(skills_manager)),
                 };
 
+                let mcp_manager = Arc::new(McpManager::with_policy_and_vault(
+                    db.clone(),
+                    Arc::new(commands::DesktopMcpPolicy),
+                    Arc::new(commands::OsCredentialVault),
+                ));
+                mcp_manager
+                    .recover_runtime_status()
+                    .await
+                    .expect("Failed to recover MCP runtime status");
+                mcp_manager.clone().spawn_monitor();
+                let mcp_state = commands::McpState {
+                    manager: mcp_manager,
+                };
+
                 tracing::info!("Database migrations completed");
 
                 let workbench = dgos_workbench::WorkbenchManager::new(db.clone());
@@ -83,6 +98,7 @@ pub fn run() {
                 // Store managers in app state
                 app_handle.manage(manager);
                 app_handle.manage(skills_state);
+                app_handle.manage(mcp_state);
                 app_handle.manage(workbench);
             });
 
@@ -127,7 +143,44 @@ pub fn run() {
             commands::list_skill_usage_logs,
             commands::run_workbench_task,
             commands::list_workbench_tasks,
+            commands::start_workbench_tool_task,
+            commands::advance_workbench_tool_task,
+            commands::cancel_workbench_tool_task,
+            // MCP commands
+            commands::list_mcp_servers,
+            commands::get_mcp_server_config,
+            commands::create_mcp_server,
+            commands::update_mcp_server,
+            commands::toggle_mcp_server,
+            commands::delete_mcp_server,
+            commands::connect_mcp_server,
+            commands::disconnect_mcp_server,
+            commands::list_mcp_tools,
+            commands::refresh_mcp_tools,
+            commands::call_mcp_tool,
+            commands::cancel_mcp_tool,
+            commands::confirm_mcp_tool,
+            commands::set_mcp_bearer_token,
+            commands::clear_mcp_bearer_token,
+            commands::list_mcp_usage_logs,
+            commands::list_mcp_connection_logs,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                let mcp = app.state::<commands::McpState>().manager.clone();
+                let workbench = app.state::<dgos_workbench::WorkbenchManager>().inner().clone();
+                let result = tauri::async_runtime::block_on(async move {
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        async move { tokio::join!(workbench.shutdown(), mcp.shutdown()) },
+                    ).await
+                });
+                match result {
+                    Ok((Ok(()), Ok(()))) => {}
+                    _ => tracing::warn!("Desktop shutdown incomplete; startup recovery will finalize interrupted audits"),
+                }
+            }
+        });
 }

@@ -8,12 +8,16 @@ dgos-db = { path = "../dgos-db" }
 dgos-types = { path = "../dgos-types" }
 dgos-skills = { path = "../dgos-skills" }
 dgos-providers = { path = "../dgos-providers" }
+dgos-mcp = { path = "../dgos-mcp" }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
+jsonschema = { version = "0.49.9", default-features = false }
 uuid = { workspace = true }
 chrono = { workspace = true }
 
 [dev-dependencies]
+async-trait = { workspace = true }
 mockito = "1.0"
 tempfile = "3.8"
-serde_json = { workspace = true }
