@@ -1,0 +1,11 @@
+/* Token definitions: literal colours are allowed here (AC12 exception). */
+:root {
+  --color-primary: #2563eb;
+  --color-on-primary: rgb(255 255 255);
+  --color-border: white;
+  --font-size-base: 14px;
+  --spacing-2: 0.5rem;
+}
+:root[data-theme="dark"] {
+  --color-primary: #60a5fa;
+}

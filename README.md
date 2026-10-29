@@ -48,7 +48,8 @@ npm run tauri:dev
 
 ```bash
 npm test                         # 前端测试（Vitest）
-npm run build                    # 技能包校验 + TypeScript + Vite 构建
+npm run build                    # 技能包校验 + 样式检查（design:check）+ TypeScript + Vite 构建
+npm run design:check             # 样式合规（ESLint + Stylelint + 存量清单，D068）
 npm run contracts:check          # 桌面 IPC 宿主契约静态检查
 cargo test --offline --workspace # Rust 测试
 ```

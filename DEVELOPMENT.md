@@ -22,7 +22,9 @@ npm install            # 安装依赖
 npm run tauri:dev      # 开发模式（Vite 1420 端口 + 桌面窗口）
 npm run tauri:build    # 构建桌面安装包
 npm test               # 前端测试
-npm run build          # 技能包校验 + tsc + vite build
+npm run build          # 技能包校验 + design:check + tsc + vite build
+npm run design:check   # 内联样式、硬编码颜色、未定义变量；存量清单只降不升（D068）
+npm run design:prune   # 迁移页面后收缩存量清单（只能减少，存在违规时拒绝）
 npm run contracts:check
 cargo check --offline --workspace --all-targets
 cargo test --offline --workspace

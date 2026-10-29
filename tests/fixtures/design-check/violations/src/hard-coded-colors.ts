@@ -1,0 +1,9 @@
+export const hex = '#fff';
+export const hexLong = `border: 1px solid #A0B1C2`;
+export const fn = 'rgba(0, 0, 0, .5)';
+export const hslFn = 'hsl(210 40% 50%)';
+export const declaration = 'border: 1px solid red';
+export const fallback = 'var(--border, white)';
+export const palette = { color: 'red', backgroundColor: 'Navy' };
+export const fine = { variant: 'red', ref: 'var(--color-primary)', mix: 'color-mix(in srgb, var(--color-primary) 50%, transparent)', keep: 'currentColor', clear: 'transparent', inherit: 'inherit' };
+export const notColors = ['&#123;', '#anchor', 'id#abc12', 'items[0].name', 'arr[i]'];
