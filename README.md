@@ -1,6 +1,6 @@
 # DGOS - 本地优先的 AI 应用开发框架
 
-**DG-OS**（Developer Groundwork Operating System）是基于 Rust + Tauri 2 的本地优先 AI 应用开发框架。V1 目标是打通 Provider 适配、技能中心、MCP 管理、模块系统和统一设计系统的底层能力闭环；无限画布在 V2 交付。
+**DG-OS**（DGOS，Distributed General Operating System for AI）是基于 Rust + Tauri 2 的本地优先 AI 应用开发框架。V1 目标是打通 Provider 适配、技能中心、MCP 管理、模块系统和统一设计系统的底层能力闭环；无限画布在 V2 交付。
 
 > ⚠️ **当前状态**：V1 开发中，暂未发布。各功能实现进度只在 [V1 实现状态](docs/02-产品与版本/当前版本/V1-实现状态.md) 维护。
 
@@ -98,8 +98,8 @@ cargo test --offline --workspace # Rust 测试
 | --- | --- | --- |
 | V1 | 底层能力框架 + AI 工作台、系统设置 | 开发中 |
 | V2 | 无限画布 | 规划中 |
-| V3 | 应用市场 | 规划中 |
-| V4 | 云端账号、同步与实时协同 | 规划中 |
+| V3 | 应用市场与云端账号 | 规划中 |
+| V4 | 云端同步与实时协同 | 规划中 |
 | V5 | 企业化 | 规划中 |
 | V6 | 移动端 | 规划中 |
 | V7 | AI Agent | 规划中 |

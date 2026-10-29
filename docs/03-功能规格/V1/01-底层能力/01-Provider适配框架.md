@@ -411,7 +411,7 @@ impl OpenAIAdapter {
         }
     }
     
-    // B01-01: 给模型打分类标签（内置维护）
+    // B01-26: 给模型打分类标签（内置维护）
     fn classify_model(&self, model_id: &str) -> Vec<Capability> {
         match model_id {
             "gpt-4" | "gpt-3.5-turbo" | "gpt-4-turbo" => {
@@ -431,7 +431,7 @@ impl ProviderAdapter for OpenAIAdapter {
         "openai_compatible"
     }
     
-    // B01-02: 获取模型列表
+    // B01-27: 获取模型列表
     async fn list_models(&self) -> Result<Vec<Model>> {
         let url = format!("{}/models", self.base_url);
         let response = self.client
@@ -446,7 +446,7 @@ impl ProviderAdapter for OpenAIAdapter {
             .map(|m| Model {
                 id: m.id.clone(),
                 name: m.id,
-                capabilities: self.classify_model(&m.id), // B01-01
+                capabilities: self.classify_model(&m.id), // B01-26
                 context_length: None,
             })
             .collect();
@@ -454,7 +454,7 @@ impl ProviderAdapter for OpenAIAdapter {
         Ok(models)
     }
     
-    // B01-03: 同步调用（支持重试）
+    // B01-28: 同步调用（支持重试）
     async fn call(
         &self,
         model_id: &str,
@@ -468,7 +468,7 @@ impl ProviderAdapter for OpenAIAdapter {
             stream: false,
         };
         
-        // B01-04: 重试逻辑
+        // B01-29: 重试逻辑
         let mut attempts = 0;
         let max_attempts = self.retry_config
             .as_ref()
@@ -494,17 +494,17 @@ impl ProviderAdapter for OpenAIAdapter {
                     });
                 }
                 Ok(resp) if resp.status() == 500 && attempts < max_attempts => {
-                    // B01-05: 500 错误重试，指数退避
+                    // B01-30: 500 错误重试，指数退避
                     let delay = 2u64.pow(attempts - 1);
                     tokio::time::sleep(Duration::from_secs(delay)).await;
                     continue;
                 }
                 Ok(resp) => {
-                    // B01-06: 其他错误不重试
+                    // B01-31: 其他错误不重试
                     return Err(Error::ProviderError(resp.status()));
                 }
                 Err(e) if attempts < max_attempts => {
-                    // B01-07: 网络错误重试
+                    // B01-32: 网络错误重试
                     let delay = 2u64.pow(attempts - 1);
                     tokio::time::sleep(Duration::from_secs(delay)).await;
                     continue;
@@ -516,7 +516,7 @@ impl ProviderAdapter for OpenAIAdapter {
         }
     }
     
-    // B01-08: 流式调用
+    // B01-33: 流式调用
     async fn stream(
         &self,
         model_id: &str,
@@ -537,7 +537,7 @@ impl ProviderAdapter for OpenAIAdapter {
             .send()
             .await?;
         
-        // B01-09: 转换为 SSE Stream
+        // B01-34: 转换为 SSE Stream
         let stream = response
             .bytes_stream()
             .map(|chunk| {
@@ -548,7 +548,7 @@ impl ProviderAdapter for OpenAIAdapter {
         Ok(stream)
     }
     
-    // B01-10: 测试连接
+    // B01-35: 测试连接
     async fn test_connection(&self) -> Result<bool> {
         let url = format!("{}/models", self.base_url);
         let response = self.client
@@ -564,18 +564,20 @@ impl ProviderAdapter for OpenAIAdapter {
 
 ### 7.3 分支到测试追踪表
 
+本节是适配器层分支，编号 B01-26～B01-35；管理器层的同步与流式分支见 §10.2。编号规则与改号对照见 [§10.2 分支编号说明](#分支编号说明2026-10-29)。
+
 | 分支 ID | 分支描述 | AC 映射 | E2E 映射 | NFR 映射 |
 | --- | --- | --- | --- | --- |
-| B01-01 | 模型分类标签 | AC04 | - | - |
-| B01-02 | 获取模型列表 | AC03 | - | - |
-| B01-03 | 同步调用 | AC05 | V1-E2E-01 | - |
-| B01-04～07 | 重试逻辑 | AC09, AC10 | - | V1-NFR-001（可用性） |
-| B01-05 | 500 错误重试 | AC09 | - | - |
-| B01-06 | 其他错误不重试 | AC10 | - | - |
-| B01-07 | 网络错误重试 | AC09 | - | - |
-| B01-08 | 流式调用 | AC06 | V1-E2E-01 | - |
-| B01-09 | SSE Stream 解析 | AC06, AC07 | - | - |
-| B01-10 | 测试连接 | AC02 | - | - |
+| B01-26 | 模型分类标签 | AC04 | - | - |
+| B01-27 | 获取模型列表 | AC03 | - | - |
+| B01-28 | 同步调用 | AC05 | V1-E2E-01 | - |
+| B01-29～32 | 重试逻辑 | AC09, AC10 | - | V1-NFR-001（可用性） |
+| B01-30 | 500 错误重试 | AC09 | - | - |
+| B01-31 | 其他错误不重试 | AC10 | - | - |
+| B01-32 | 网络错误重试 | AC09 | - | - |
+| B01-33 | 流式调用 | AC06 | V1-E2E-01 | - |
+| B01-34 | SSE Stream 解析 | AC06, AC07 | - | - |
+| B01-35 | 测试连接 | AC02 | - | - |
 
 ## 8. 错误码设计
 
@@ -590,9 +592,7 @@ impl ProviderAdapter for OpenAIAdapter {
 | 1001007 | stream_interrupted | 流式输出中断 | 重新生成 |
 | 1001008 | max_retries_exceeded | 重试次数耗尽 | 检查 Provider 状态或配置 |
 
-本表错误码编号与 `crates/dgos-types/src/error.rs::error_code()` 一致，当前未发现编号或含义冲突；后续若发现冲突，应通过冻结决策解决，错误码不得复用。
-
-详见 [V1 错误码](../../../04-技术架构/当前版本/V1-错误码.md)（待创建）。
+本表错误码编号与 `crates/dgos-types/src/error.rs::error_code()` 一致。错误码文档中曾登记的另一套含义已按 [D038](../../../06-决策记录/V1-冻结决策.md#d038-错误码以代码已发出的映射为准) 作废。1001003 也用于 Provider 已禁用和连接测试失败；另有 1001012（配置或模型刷新已变化）、1001015/1001016（凭据，D023）和通用码 1000000，完整列表见 [V1 错误码 §3.1](../../../04-技术架构/当前版本/V1-错误码.md#31-provider-适配框架01)。
 
 ## 9. 非功能需求
 
@@ -772,29 +772,29 @@ FUNCTION call_provider(provider_id, model_id, request) -> Result<Response>:
 
 ```text
 FUNCTION stream_provider(provider_id, model_id, request) -> Result<Stream>:
-  // B02-01: 查询 Provider（复用 B01-01 逻辑）
+  // B01-18: 查询 Provider（复用 B01-01 逻辑）
   provider = DB.query("SELECT * FROM providers WHERE id = ? AND enabled = TRUE", provider_id)
   IF NOT provider:
     RETURN Err(E_PROVIDER_NOT_FOUND)
   
-  // B02-02: 构造流式请求
+  // B01-19: 构造流式请求
   adapter = create_adapter(provider.provider_type, provider.base_url, provider.api_key)
   native_request = adapter.convert_request(model_id, request)
   native_request.stream = TRUE
   
-// B02-03: 发起 SSE 流式调用
+// B01-20: 发起 SSE 流式调用
   TRY:
     sse_stream = HTTP.post_stream(provider.base_url + "/chat/completions", native_request)
     accumulated_text = ""
     
-    // B02-04: 返回流处理器
+    // B01-21: 返回流处理器
     RETURN StreamHandler {
       on_chunk: FUNCTION(chunk):
-        // B02-05: 解析 SSE 数据
+        // B01-22: 解析 SSE 数据
         IF chunk.starts_with("data: "):
           data_str = chunk.trim_prefix("data: ")
           IF data_str == "[DONE]":
-            // B02-06: 流正常结束
+            // B01-23: 流正常结束
             INSERT INTO provider_usage_logs(success = TRUE, response_tokens = count_tokens(accumulated_text))
             RETURN StreamEnd
           
@@ -804,10 +804,10 @@ FUNCTION stream_provider(provider_id, model_id, request) -> Result<Stream>:
           YIELD delta
       
       on_error: FUNCTION(error):
-        // B02-07: 流中断处理
+        // B01-24: 流中断处理
         LOG.warn("Stream interrupted", error)
         
-        // B02-08: 保存已接收部分
+        // B01-25: 保存已接收部分
         INSERT INTO provider_usage_logs(
           provider_id, model_id, user_id,
           response_tokens = count_tokens(accumulated_text),
@@ -824,7 +824,15 @@ FUNCTION stream_provider(provider_id, model_id, request) -> Result<Stream>:
 
 #### 分支到测试追踪表
 
-注：本表沿用的 B02-xx ID 与 FR-002 的 B02 前缀冲突；复用这些 ID 前需要先作出决策。
+##### 分支编号说明（2026-10-29）
+
+分支 ID 前缀是功能编号（FR-001 → `B01`），见[功能文档规范 §8.3](../../功能文档规范.md#83-分支追踪规则)。本文原有两处编号冲突：§10.2 的流式流程使用了 FR-002 的 `B02-01～B02-08`（FR-002 已将其保留给旧规格），§7.2 适配器又把 `B01-01～B01-10` 用作另一组含义。处理方式如下，旧 ID 不再在本功能中使用：
+
+- 本节同步流程的 `B01-01～B01-11` 保持不变（风险说明与检查清单引用的是这一组）。
+- `B01-12～B01-17` 已被[归档的旧 AC 追踪表](../../../99-历史归档/V1-追踪矩阵/2026-10-28-旧AC追踪表.md)占用，跳过不用。
+- 本节流式流程：原 `B02-01～B02-08` → `B01-18～B01-25`（按原顺序一一对应）。
+- §7.2/§7.3 适配器：原 `B01-01～B01-10` → `B01-26～B01-35`（按原顺序一一对应）。
+- 下一个可用编号为 `B01-36`。代码、测试中没有引用这些分支 ID。
 
 | 分支编号 | 分支描述 | AC 映射 | E2E 映射 | NFR 映射 | 风险级别 |
 |---------|---------|---------|---------|---------|---------|
@@ -839,17 +847,17 @@ FUNCTION stream_provider(provider_id, model_id, request) -> Result<Stream>:
 | B01-09 | 5xx 服务器错误重试 | AC09, AC10 | - | V1-NFR-001 | 🔴 高 |
 | B01-10 | 其他错误处理 | AC05 | - | - | 中 |
 | B01-11 | 网络错误重试 | AC09 | - | V1-NFR-001 | 🔴 高 |
-| B02-01 | 查询 Provider（流式） | AC12 | - | - | 低 |
-| B02-02 | 构造流式请求 | AC06 | - | - | 低 |
-| B02-03 | 发起 SSE 调用 | AC06 | V1-E2E-01 | - | 中 |
-| B02-04～B02-05 | 流处理与 SSE 解析 | AC06 | V1-E2E-01 | V1-NFR-003 | 中 |
-| B02-06 | 流正常结束 | AC06 | - | - | 低 |
-| B02-07～B02-08 | 流中断保存已接收 | AC07 | - | V1-NFR-001 | 🔴 高 |
+| B01-18 | 查询 Provider（流式） | AC12 | - | - | 低 |
+| B01-19 | 构造流式请求 | AC06 | - | - | 低 |
+| B01-20 | 发起 SSE 调用 | AC06 | V1-E2E-01 | - | 中 |
+| B01-21～B01-22 | 流处理与 SSE 解析 | AC06 | V1-E2E-01 | V1-NFR-003 | 中 |
+| B01-23 | 流正常结束 | AC06 | - | - | 低 |
+| B01-24～B01-25 | 流中断保存已接收 | AC07 | - | V1-NFR-001 | 🔴 高 |
 
 **高风险分支说明**：
 - 🔴 **B01-04**: 重试循环是可靠性核心，必须充分测试边界（0次、1次、3次重试）
 - 🔴 **B01-08, B01-09, B01-11**: 各种错误的重试逻辑，容易出现死循环或过早放弃
-- 🔴 **B02-07～B02-08**: 流中断时必须保存已接收部分，否则用户看到的内容会丢失
+- 🔴 **B01-24～B01-25**: 流中断时必须保存已接收部分，否则用户看到的内容会丢失
 
 **NFR 映射说明**：
 - **V1-NFR-001 (可靠性)**: 重试机制、错误恢复
@@ -864,7 +872,7 @@ FUNCTION stream_provider(provider_id, model_id, request) -> Result<Stream>:
 
 **代码检查**：
 - [ ] 所有 AC 的目标测试文件已创建
-- [ ] 高风险分支（B01-04, B01-08, B01-09, B01-11, B02-07～B02-08）有独立测试用例
+- [ ] 高风险分支（B01-04, B01-08, B01-09, B01-11, B01-24～B01-25）有独立测试用例
 - [ ] 重试逻辑有完整的单元测试（0次、1次、3次、边界条件）
 - [ ] 流中断场景有明确的回归测试
 
@@ -905,32 +913,20 @@ FUNCTION stream_provider(provider_id, model_id, request) -> Result<Stream>:
 
 | 依赖功能 | 状态 | 影响 |
 | --- | --- | --- |
-| 本地用户管理（V1-FR-008） | 规划中 | 需要先实现用户系统 |
-| SQLite 数据库 | 待初始化 | 需要先创建表结构 |
+| 本地用户管理（V1-FR-008） | 非前置（D023） | 当前使用宿主派生的 `default-user`；完整多用户隔离随 FR-008 验收 |
+| SQLite 数据库 | 迁移依赖 | Provider 相关表由 migration 建立，应用启动时自动迁移 |
 
 ## 12. 实现状态
 
-| 模块 | 状态 | 进度 | 负责人 | 备注 |
-| --- | --- | --- | --- | --- |
-| Provider Trait 定义 | 🔴 未开始 | 0% | TBD | - |
-| OpenAI 适配器 | 🔴 未开始 | 0% | TBD | - |
-| Provider CRUD API | 🔴 未开始 | 0% | TBD | - |
-| 模型同步逻辑 | 🔴 未开始 | 0% | TBD | - |
-| 重试机制 | 🔴 未开始 | 0% | TBD | - |
-| 流式调用 | 🔴 未开始 | 0% | TBD | - |
-| 前端 UI | 🔴 未开始 | 0% | TBD | - |
-| 测试用例 | 🔴 未开始 | 0% | TBD | - |
-
-详见 [V1 实现状态](../../../02-产品与版本/当前版本/V1-实现状态.md)。
+只在 [V1 实现状态](../../../02-产品与版本/当前版本/V1-实现状态.md) 维护功能状态；本节不复制进度或百分比。
 
 ## 13. 变更记录
 
 | 日期 | 变更内容 | 变更人 |
 | --- | --- | --- |
 | 2024-01-XX | 初始版本，基于 spec-docs-pro 创建 | Kiro |
+| 2026-10-29 | §8 按 D038 说明与错误码文档的关系；解决分支 ID 冲突（流式 B02-01～08 → B01-18～25，适配器 B01-01～10 → B01-26～35）；§11.3/§12 删除与 D023 及实现状态矛盾的“规划中/未开始”表述 | Kiro |
 
 ---
 
-**文档状态**：✅ 已完成（待评审）  
-**符合 spec-docs-pro 标准**：✅ 100%  
-**下一步**：评审通过后进入开发
+**文档状态**：持续维护；实现状态以 V1 实现状态为准

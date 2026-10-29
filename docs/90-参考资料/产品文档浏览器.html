@@ -1586,7 +1586,7 @@
     "soft": "#e6e9f6",
     "title": "V1 基础框架：版本总览",
     "file": "../02-产品与版本/当前版本/V1-版本总览.md",
-    "goal": "冻结 DGOS V1 交付范围，明确本地优先 AI 应用框架底座和后续版本边界。"
+    "goal": "冻结 DGOS V1 交付范围，明确本地优先 AI 应用框架底座和后续版本边界；子文档冲突时以本文范围口径为准。"
   },
   {
     "id": "v1-product",
@@ -1596,7 +1596,7 @@
     "soft": "#e6e9f6",
     "title": "V1.0 产品需求",
     "file": "../02-产品与版本/当前版本/V1-产品需求.md",
-    "goal": "定义 DGOS V1.0 功能范围，建立 Provider、Skills/MCP、模块系统与 AI 工作台的最小闭环。"
+    "goal": "定义 V1 功能分层、业务规则、状态机和验收标准；只定义标准，不标记完成。"
   },
   {
     "id": "v1-status",
@@ -1606,7 +1606,7 @@
     "soft": "#e6e9f6",
     "title": "V1.0 实现状态",
     "file": "../02-产品与版本/当前版本/V1-实现状态.md",
-    "goal": "> 2026-10-28 快速迭代收口：V1-FR-001 核心实现已完成并完成真实 Provider 调用验证；V1-FR-002 的 Batch A（官方本地库与单任务技能消费）已完成，Batch B（第三方来源）仍未交付；V1-FR-003 的 D021/D022 核心开发已完成，核心管理、官方兼容、Workbench 桥接、真实 Provider t"
+    "goal": "V1 各功能实现状态、剩余差距和验证证据的唯一权威来源。"
   },
   {
     "id": "doc-001",
@@ -1616,7 +1616,7 @@
     "soft": "#dcefeb",
     "title": "Git 提交信息规范",
     "file": "../01-项目概览/Git提交信息规范.md",
-    "goal": "本文档定义 DGOS 项目的 Git 提交信息规范，遵循 [Conventional Commits](https://www.conventionalcommits.org/) 标准。"
+    "goal": "本文档定义 DGOS 项目的 Git 提交信息规范，遵循 Conventional Commits 标准。"
   },
   {
     "id": "doc-002",
@@ -1626,7 +1626,7 @@
     "soft": "#dcefeb",
     "title": "项目概览导航",
     "file": "../01-项目概览/README.md",
-    "goal": "- [项目首页与快速启动](../../README.md)"
+    "goal": "项目首页、本地环境、Git 规范和架构入口的导航。"
   },
   {
     "id": "doc-003",
@@ -1646,7 +1646,7 @@
     "soft": "#e6e9f6",
     "title": "产品与版本导航",
     "file": "../02-产品与版本/README.md",
-    "goal": "- [产品蓝图](产品蓝图.md)"
+    "goal": "产品蓝图、路线图、演进矩阵、V1 当前版本与 V2–V8 规划的导航。"
   },
   {
     "id": "doc-005",
@@ -1656,7 +1656,77 @@
     "soft": "#e6e9f6",
     "title": "DGOS 产品需求文档 PRD",
     "file": "../02-产品与版本/产品蓝图.md",
-    "goal": "> 文档定位：本文件是跨版本产品蓝图，描述完整产品愿景、使命、核心价值和长期规划，不替代当前 V1 契约。当前 V1 的接口、数据和行为以[当前版本 V1 版本总览](当前版本/V1-版本总览.md)、[V1 接口契约](../04-技术架构/当前版本/V1-接口契约.md)、[V1 数据模型](../04-技术架构/当前版本/V1-数据模型.md)及对应功"
+    "goal": "跨版本产品蓝图：愿景、用户角色、核心场景、版本范围和长期规划；不替代 V1 契约。"
+  },
+  {
+    "id": "doc-050",
+    "version": "V2",
+    "phase": "产品",
+    "accent": "#4056a1",
+    "soft": "#e6e9f6",
+    "title": "V2 画布系统：版本规划",
+    "file": "../02-产品与版本/后续版本/V2-画布系统.md",
+    "goal": "提供无限画布核心能力。"
+  },
+  {
+    "id": "doc-051",
+    "version": "V3",
+    "phase": "产品",
+    "accent": "#4056a1",
+    "soft": "#e6e9f6",
+    "title": "V3 应用市场：版本规划",
+    "file": "../02-产品与版本/后续版本/V3-应用市场.md",
+    "goal": "建立应用模块生态，让第三方开发者发布模块。"
+  },
+  {
+    "id": "doc-052",
+    "version": "V4",
+    "phase": "产品",
+    "accent": "#4056a1",
+    "soft": "#e6e9f6",
+    "title": "V4 云端与协同：版本规划",
+    "file": "../02-产品与版本/后续版本/V4-云端与协同.md",
+    "goal": "提供云端增强和实时协同。"
+  },
+  {
+    "id": "doc-053",
+    "version": "V5",
+    "phase": "产品",
+    "accent": "#4056a1",
+    "soft": "#e6e9f6",
+    "title": "V5 企业化：版本规划",
+    "file": "../02-产品与版本/后续版本/V5-企业化.md",
+    "goal": "支持企业团队使用，提供组织管理、成员权限、企业 Provider、组织账单和审计日志。"
+  },
+  {
+    "id": "doc-054",
+    "version": "V6",
+    "phase": "产品",
+    "accent": "#4056a1",
+    "soft": "#e6e9f6",
+    "title": "V6 移动端：版本规划",
+    "file": "../02-产品与版本/后续版本/V6-移动端.md",
+    "goal": "将 DGOS 扩展到移动平台，交付 iOS 和 Android 应用。"
+  },
+  {
+    "id": "doc-055",
+    "version": "V7",
+    "phase": "产品",
+    "accent": "#4056a1",
+    "soft": "#e6e9f6",
+    "title": "V7 AI Agent：版本规划",
+    "file": "../02-产品与版本/后续版本/V7-AI-Agent.md",
+    "goal": "提供 AI Agent 能力，包括自主任务执行、多 Agent 协作和工作流自动化。"
+  },
+  {
+    "id": "doc-056",
+    "version": "V8",
+    "phase": "产品",
+    "accent": "#4056a1",
+    "soft": "#e6e9f6",
+    "title": "V8 开发者生态：版本规划",
+    "file": "../02-产品与版本/后续版本/V8-开发者生态.md",
+    "goal": "完善开发者生态。"
   },
   {
     "id": "doc-007",
@@ -1676,7 +1746,7 @@
     "soft": "#e1f0e8",
     "title": "功能规格导航",
     "file": "../03-功能规格/README.md",
-    "goal": "- [功能开发流程](功能开发流程.md)：从范围确认到实现、验证和回写的完整流程。"
+    "goal": "功能规格目录说明：每个功能一份中文主规格，技术设计写入 §7 或技术设计文档。"
   },
   {
     "id": "doc-009",
@@ -1686,7 +1756,7 @@
     "soft": "#e1f0e8",
     "title": "V1 需求编号管理",
     "file": "../03-功能规格/V1/00-V1需求编号.md",
-    "goal": "本文档管理 DGOS V1 版本的所有需求编号，确保编号的稳定性和可追溯性。"
+    "goal": "本文登记 V1 功能需求、非功能需求和 E2E 场景的稳定编号。"
   },
   {
     "id": "doc-010",
@@ -1696,7 +1766,7 @@
     "soft": "#e1f0e8",
     "title": "V1 需求追踪矩阵",
     "file": "../03-功能规格/V1/00-V1需求追踪矩阵.md",
-    "goal": "> D016 修订后，本文 Skills 的旧 V1-E2E-02 与通用测试命令仅作历史参考；当前验收、目标命令和证据以第 4.2 节链接的主规格为准。其他功能未在本轮审计。"
+    "goal": "从版本路线图到功能主规格 AC、E2E 编号与验证入口的追踪索引；不复制 AC，不维护状态。"
   },
   {
     "id": "doc-012",
@@ -1706,7 +1776,7 @@
     "soft": "#e1f0e8",
     "title": "V1-FR-001：Provider 适配框架",
     "file": "../03-功能规格/V1/01-底层能力/01-Provider适配框架.md",
-    "goal": "> D023 桌面补充基线（2026-10-28）：宿主派生用户身份，Provider DTO 不携带 secret，凭据保存到 OS vault，历史明文字段通过可重试迁移清空。当前字段与迁移规则见 [接口契约 §4.0](../../../04-技术架构/当前版本/V1-接口契约.md#40-当前桌面实施契约d023)、[数据模型 §4.2](../.."
+    "goal": "统一适配各厂商 AI 模型 API，提供模型列表获取、分类标签、同步/流式调用能力，支持多 Provider 配置、排序和手动选择。"
   },
   {
     "id": "doc-013",
@@ -1716,7 +1786,7 @@
     "soft": "#e1f0e8",
     "title": "V1-FR-002：DGOS 技能中心",
     "file": "../03-功能规格/V1/01-底层能力/02-Skills管理系统.md",
-    "goal": "本文是功能定义，不是数据库 migration、可直接调用的 API 或已交付功能声明。保留原文件路径以避免链接失效。"
+    "goal": "提供官方优先、本地可用、按场景消费的统一技能中心：管理 DGOS 官方内置技能和精选内容，通过预置适配器连接第三方生态，让不同应用通过同一本地服务发现、安装和使用技能。"
   },
   {
     "id": "doc-014",
@@ -1736,7 +1806,7 @@
     "soft": "#e1f0e8",
     "title": "V1-FR-004：模块系统与热更新",
     "file": "../03-功能规格/V1/01-底层能力/04-模块系统与热更新.md",
-    "goal": "基于 Module Federation 实现应用模块的动态加载、热更新和卸载，支持粗粒度权限管理和崩溃隔离，让 DGOS 成为可扩展的应用平台。"
+    "goal": "基于经宿主验证的本地模块包实现应用模块的动态加载、热更新和卸载，支持粗粒度权限管理和 UI 故障隔离，让 DGOS 成为可扩展的应用平台。"
   },
   {
     "id": "doc-016",
@@ -1756,7 +1826,7 @@
     "soft": "#e1f0e8",
     "title": "V1-FR-006：AI 工作台",
     "file": "../03-功能规格/V1/02-应用模块/01-AI工作台.md",
-    "goal": "> D016 衔接提示（2026-10-27）：Skills 行为以[DGOS 技能中心](../01-底层能力/02-Skills管理系统.md)第 4 节为当前依据。本次不重写本功能旧 AC。原 SkillsManager 工具调用示例仅作旧设计参考；新任务需显式选择、锁定版本并按需准备上下文，加载失败须用户确认才能无技能继续。"
+    "goal": "提供简单易用的 AI 对话界面，支持 Provider 选择、流式响应、多轮对话、历史记录管理，可选启用 Skills/MCP 增强生成能力。"
   },
   {
     "id": "doc-020",
@@ -1766,7 +1836,7 @@
     "soft": "#e1f0e8",
     "title": "V1-FR-007：系统设置",
     "file": "../03-功能规格/V1/02-应用模块/02-系统设置.md",
-    "goal": "> D016 衔接提示（2026-10-27）：Skills 行为以[DGOS 技能中心](../01-底层能力/02-Skills管理系统.md)第 4 节为当前依据。本次不重写本功能旧 AC。原 Skills 仓库/HTTP/CLI 管理表述仅作旧设计参考；设置入口需衔接官方本地库、来源状态和用户启用，不将来源离线当作整个中心不可用。"
+    "goal": "提供统一的系统设置界面，集中管理 Provider、Skills、MCP、模块、主题和用户偏好，让用户可以方便地配置和管理 DGOS。"
   },
   {
     "id": "doc-021",
@@ -1786,7 +1856,7 @@
     "soft": "#e1f0e8",
     "title": "V1-FR-009：模块权限管理",
     "file": "../03-功能规格/V1/03-系统功能/02-模块权限管理.md",
-    "goal": "> D016 衔接提示（2026-10-27）：Skills 行为以[DGOS 技能中心](../01-底层能力/02-Skills管理系统.md)第 4 节为当前依据。本次不重写本功能旧 AC。模块授权只是上限，不自动授予技能内容；技能无法覆盖宿主指令，工具动作独立校验，不自动执行下载脚本。"
+    "goal": "提供粗粒度的模块权限管理，定义 6 种权限类型（Provider、Skills、MCP、文件读写、网络），在运行时拦截模块调用并检查权限，记录权限日志。"
   },
   {
     "id": "doc-023",
@@ -1806,7 +1876,7 @@
     "soft": "#e1f0e8",
     "title": "V1 功能规格索引",
     "file": "../03-功能规格/V1/README.md",
-    "goal": "V1 登记 15 个可独立规划和验收的功能。首发交付按底层能力、应用模块和系统功能管理；核心系统另有技术设计；实现状态统一查看[V1 实现状态](../../02-产品与版本/当前版本/V1-实现状态.md)。"
+    "goal": "V1 首发交付范围登记 10 项功能，分为底层能力、应用模块和系统功能。"
   },
   {
     "id": "doc-025",
@@ -1836,7 +1906,7 @@
     "soft": "#f6ead6",
     "title": "技术架构导航",
     "file": "../04-技术架构/README.md",
-    "goal": "- [总体架构](总体架构.md)"
+    "goal": "总体架构、服务边界、技术栈与 V1 接口、数据、错误码和技术设计的导航。"
   },
   {
     "id": "doc-028",
@@ -1846,7 +1916,7 @@
     "soft": "#f6ead6",
     "title": "FR-004 前置收口设计",
     "file": "../04-技术架构/当前版本/V1-FR004前置收口设计.md",
-    "goal": "依据 D023，将 FR-001～003 的既有能力收敛为可信宿主服务，减少后续接入模块时的返工。本轮不实现 federation、模块安装/热更新、模块市场或任意远程 JavaScript 执行。"
+    "goal": "依据 D023 和 D030，将 FR-001～003 的既有能力收敛为可信宿主服务及跨入口 Application Service，减少后续接入模块时的返工。"
   },
   {
     "id": "doc-029",
@@ -1856,7 +1926,7 @@
     "soft": "#f6ead6",
     "title": "V1 MCP 管理系统技术设计",
     "file": "../04-技术架构/当前版本/V1-MCP管理系统技术设计.md",
-    "goal": "> 本文是 V1-FR-003 的实施基线。D021/D022 冻结传输、自动连接、逐次确认、凭据、审计和显式工作台消费默认值；具体字段以接口契约和数据模型为权威来源，测试证据在功能文档第 10 节维护。"
+    "goal": "V1-FR-003 的实施基线：传输、自动连接、逐次确认、凭据与审计默认值（D021/D022）。"
   },
   {
     "id": "doc-030",
@@ -1866,7 +1936,7 @@
     "soft": "#f6ead6",
     "title": "V1 Skills 内容包与发布规范",
     "file": "../04-技术架构/当前版本/V1-Skills内容包与发布规范.md",
-    "goal": "- Skill 是 SKILL.md 指令和受限文本资源，不是 HTTP/CLI 程序。下载和读取不授予权限，不安装运行时、不执行附带脚本。"
+    "goal": "官方 SKILL.md 内容包的结构、目录哈希、版本不可变与发布规范（D016/D017）。"
   },
   {
     "id": "doc-031",
@@ -1876,7 +1946,7 @@
     "soft": "#f6ead6",
     "title": "V1 工作台技能消费设计",
     "file": "../04-技术架构/当前版本/V1-工作台技能消费设计.md",
-    "goal": "日期：2026-10-27。依据：D018、V1-FR-002 AC20–24/AC35、V1-FR-006。前置内容契约见 [Skills 内容包规范](V1-Skills内容包与发布规范.md)。实现状态仅在 [版本状态](../../02-产品与版本/当前版本/V1-实现状态.md) 维护。"
+    "goal": "工作台单任务固定版本技能消费与显式 MCP 工具提案的技术设计（D018/D022）。"
   },
   {
     "id": "doc-032",
@@ -1886,7 +1956,7 @@
     "soft": "#f6ead6",
     "title": "V1 总体架构",
     "file": "../04-技术架构/当前版本/V1-总体架构.md",
-    "goal": "本文档描述 DGOS V1.0 的总体架构设计，包括系统分层、模块组织、数据流和技术选型。"
+    "goal": "本文档混合描述目标架构与当前实现边界；文中部分服务和流程仍是规划，并非已实现事实。"
   },
   {
     "id": "doc-033",
@@ -1896,7 +1966,7 @@
     "soft": "#f6ead6",
     "title": "V1 接口契约",
     "file": "../04-技术架构/当前版本/V1-接口契约.md",
-    "goal": "定义 DGOS V1.0 前后端通信的完整接口契约，包括 Tauri IPC 接口、HTTP API（局域网模式）和事件系统。"
+    "goal": "V1 Tauri command 与规划中局域网 HTTP API 的接口契约；HTTP 字段以 OpenAPI 为准。"
   },
   {
     "id": "doc-034",
@@ -1906,7 +1976,17 @@
     "soft": "#f6ead6",
     "title": "V1 数据模型",
     "file": "../04-技术架构/当前版本/V1-数据模型.md",
-    "goal": "定义 DGOS V1.0 的完整数据库模型，包括表结构、索引、约束和数据关系。"
+    "goal": "V1 数据表结构说明；物理结构以 migration 为准。"
+  },
+  {
+    "id": "doc-057",
+    "version": "V1",
+    "phase": "架构",
+    "accent": "#a96810",
+    "soft": "#f6ead6",
+    "title": "V1 架构优化评审草案",
+    "file": "../04-技术架构/当前版本/V1-架构优化评审草案.md",
+    "goal": "当前代码已经补齐了重要的安全前置：宿主执行上下文、持久化授权 broker、最小 Host Capability API、包 staging/完整性校验、版本目录和启动恢复。"
   },
   {
     "id": "doc-035",
@@ -1926,7 +2006,7 @@
     "soft": "#f6ead6",
     "title": "DGOS 总体架构",
     "file": "../04-技术架构/总体架构.md",
-    "goal": "DGOS 是本地优先的 AI 应用开发框架。它提供统一的 Provider 适配、Skills/MCP 管理和模块系统基础能力；桌面端与局域网 Web 端共用同一套前端应用包、设计系统和版本化 API。本地数据存储在 SQLite，云端服务为可选增强。"
+    "goal": "DGOS 跨版本目标架构：分层、核心模块、运行模式与演进路径；当前实现边界逐节标注。"
   },
   {
     "id": "doc-037",
@@ -1936,7 +2016,7 @@
     "soft": "#f6ead6",
     "title": "技术栈选型",
     "file": "../04-技术架构/技术栈选型.md",
-    "goal": "本文档说明 DGOS 项目的技术栈选择及其决策依据，遵循 [V1 冻结决策](../06-决策记录/V1-冻结决策.md) 中的相关决策。"
+    "goal": "本文档说明 DGOS 项目的技术栈选择及其决策依据，遵循 V1 冻结决策 中的相关决策。"
   },
   {
     "id": "doc-038",
@@ -1949,6 +2029,16 @@
     "goal": "本文档定义 DGOS 的服务架构和领域边界，明确各模块的职责和交互关系。"
   },
   {
+    "id": "doc-058",
+    "version": "00",
+    "phase": "决策",
+    "accent": "#7c3aed",
+    "soft": "#ede9fe",
+    "title": "架构决策记录（ADR）索引",
+    "file": "../06-决策记录/ADR/README.md",
+    "goal": "ADR 目录与编号规则；当前暂无 ADR，V1 决策记录在冻结决策中。"
+  },
+  {
     "id": "doc-039",
     "version": "00",
     "phase": "决策",
@@ -1956,7 +2046,7 @@
     "soft": "#ede9fe",
     "title": "决策记录导航",
     "file": "../06-决策记录/README.md",
-    "goal": "- [V1 冻结决策](V1-冻结决策.md)：当前版本的跨功能产品和工程决策。"
+    "goal": "冻结决策、ADR 与文档变更记录的导航和查找方式。"
   },
   {
     "id": "doc-040",
@@ -1966,7 +2056,7 @@
     "soft": "#ede9fe",
     "title": "V1 冻结决策",
     "file": "../06-决策记录/V1-冻结决策.md",
-    "goal": "本表记录影响范围、协议和架构的一致性决策；新证据到达后追加新编号，不改写历史结论。"
+    "goal": "跨功能产品与工程决策（D001 起），新证据只追加新编号，不改写历史结论。"
   },
   {
     "id": "doc-041",
@@ -1976,7 +2066,7 @@
     "soft": "#ede9fe",
     "title": "V1 文档变更记录",
     "file": "../06-决策记录/V1-文档变更记录.md",
-    "goal": "本文件从本次变更开始记录，不追补未经核验的历史事实。实现进度只在 [V1 实现状态](../02-产品与版本/当前版本/V1-实现状态.md) 维护。"
+    "goal": "本文件从本次变更开始记录，不追补未经核验的历史事实。"
   },
   {
     "id": "doc-042",
@@ -2004,9 +2094,9 @@
     "phase": "参考",
     "accent": "#69707a",
     "soft": "#f1eee7",
-    "title": "DG-OS 文档浏览器生成完成报告",
+    "title": "DG-OS 文档浏览器生成报告",
     "file": "../90-参考资料/文档浏览器生成报告.md",
-    "goal": "1. 产品文档浏览器.html (102 KB, 3,027 行)"
+    "goal": "文档浏览器的生成范围、数据结构与验证记录。"
   },
   {
     "id": "doc-045",
@@ -2019,6 +2109,36 @@
     "goal": "本目录存放已迁移或不再作为当前依据的历史材料。"
   },
   {
+    "id": "doc-017",
+    "version": "00",
+    "phase": "归档",
+    "accent": "#69707a",
+    "soft": "#f1eee7",
+    "title": "历史：V1-FR-001 前端实现完成度检查报告",
+    "file": "../99-历史归档/V1-FR-001/2026-10-27-前端实现检查.md",
+    "goal": "历史快照：2026-10-27 的前端检查报告，2026-10-28 从 docs/03-功能规格/V1/01-底层能力/ 移入归档。"
+  },
+  {
+    "id": "doc-006",
+    "version": "00",
+    "phase": "归档",
+    "accent": "#69707a",
+    "soft": "#f1eee7",
+    "title": "历史：前端集成阶段详解",
+    "file": "../99-历史归档/V1-FR-001/2026-10-27-前端集成阶段说明.md",
+    "goal": "历史快照：2026-10-27 的 FR-001 前端集成说明，2026-10-28 从 docs/02-产品与版本/当前版本/ 移入归档。"
+  },
+  {
+    "id": "doc-018",
+    "version": "00",
+    "phase": "归档",
+    "accent": "#69707a",
+    "soft": "#f1eee7",
+    "title": "历史：V1-FR-001 Provider 适配框架 - 实现检查报告",
+    "file": "../99-历史归档/V1-FR-001/2026-10-27-实现检查报告.md",
+    "goal": "历史快照：2026-10-27 的一次性检查报告，2026-10-28 从 docs/03-功能规格/V1/01-底层能力/ 移入归档。"
+  },
+  {
     "id": "doc-046",
     "version": "00",
     "phase": "归档",
@@ -2026,7 +2146,7 @@
     "soft": "#f1eee7",
     "title": "历史：V1-FR-002：Skills 管理系统",
     "file": "../99-历史归档/V1-FR-002/2026-10-27-旧Skills管理系统.md",
-    "goal": "> 历史归档：2026-10-27 被 D016 与新版 V1-FR-002 取代。仅保留原 AC01–AC15、B02-01–B02-15、错误码与旧设计的追溯，不作为开发或验收依据。原有状态、承诺和验证模板不代表当前事实。"
+    "goal": "历史归档：2026-10-27 被 D016 与新版 V1-FR-002 取代。"
   },
   {
     "id": "doc-047",
@@ -2036,7 +2156,7 @@
     "soft": "#f1eee7",
     "title": "历史：V1-FR-002 旧需求追踪片段",
     "file": "../99-历史归档/V1-FR-002/2026-10-27-旧需求追踪片段.md",
-    "goal": "归档日期：2026-10-27。以下逐字保留原追踪矩阵第 4.2 节。旧矩阵 AC 释义与旧主规格存在不一致，且引用了主规格未定义的 B02-16；不追溯重写这些编号，也不以本片段替代旧主规格。"
+    "goal": "2026-10-27 归档的旧追踪矩阵第 4.2 节，保留旧 AC 释义用于追溯。"
   },
   {
     "id": "doc-048",
@@ -2046,7 +2166,47 @@
     "soft": "#f1eee7",
     "title": "历史：V1-FR-003：MCP 管理系统",
     "file": "../99-历史归档/V1-FR-003/2026-10-28-旧MCP流程与实现草图.md",
-    "goal": "> 历史快照：保留早期流程、SQL、API 和 B03 分支草图用于追溯；不是当前规范、状态或验收结论。当前规范见 [FR-003](../../03-功能规格/V1/01-底层能力/03-MCP管理系统.md)。"
+    "goal": "历史快照：保留早期流程、SQL、API 和 B03 分支草图用于追溯；不是当前规范、状态或验收结论。"
+  },
+  {
+    "id": "doc-059",
+    "version": "00",
+    "phase": "归档",
+    "accent": "#69707a",
+    "soft": "#f1eee7",
+    "title": "历史：V1-FR-005：统一设计系统",
+    "file": "../99-历史归档/V1-FR-005/2026-10-26-统一设计系统-旧版.md",
+    "goal": "历史快照：2026-10-26 规格改写前的备份文件（原名 05-统一设计系统.md.backup），2026-10-28 移入归档。"
+  },
+  {
+    "id": "doc-011",
+    "version": "00",
+    "phase": "归档",
+    "accent": "#69707a",
+    "soft": "#f1eee7",
+    "title": "历史：V1 功能规格补充说明",
+    "file": "../99-历史归档/V1-功能规格/2026-10-26-功能规格补充说明.md",
+    "goal": "历史快照：2026-10-26 的跨功能补充清单，2026-10-28 从 docs/03-功能规格/V1/ 移入归档。"
+  },
+  {
+    "id": "doc-060",
+    "version": "00",
+    "phase": "归档",
+    "accent": "#69707a",
+    "soft": "#f1eee7",
+    "title": "历史：V1 需求追踪矩阵旧 AC 表（2026-10-28）",
+    "file": "../99-历史归档/V1-追踪矩阵/2026-10-28-旧AC追踪表.md",
+    "goal": "历史快照：以下内容逐字保留自 docs/03-功能规格/V1/00-V1需求追踪矩阵.md 的 §4.1 与 §4.4–§4.10，记录归档时仍在矩阵中的旧 AC 表及 E2E 场景。"
+  },
+  {
+    "id": "doc-061",
+    "version": "00",
+    "phase": "归档",
+    "accent": "#69707a",
+    "soft": "#f1eee7",
+    "title": "历史：V1 开发门禁检查记录（2026-10-26）",
+    "file": "../99-历史归档/V1-门禁/2026-10-26-V1开发门禁检查记录.md",
+    "goal": "历史快照：原载于版本进入开发门禁第 3–4 节，2026-10-28 移入归档。"
   },
   {
     "id": "doc-049",
@@ -2056,167 +2216,7 @@
     "soft": "#dcefeb",
     "title": "DGOS 文档中心",
     "file": "../README.md",
-    "goal": "这里是 DGOS 项目的统一文档入口。日常查找从本页开始，不需要记忆文件名或版本目录。"
-  },
-  {
-    "id": "doc-050",
-    "version": "V2",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "V2 画布系统：版本规划",
-    "file": "../02-产品与版本/后续版本/V2-画布系统.md",
-    "goal": "状态：规划中。尚未通过[版本进入开发门禁](../版本进入开发门禁.md)，不分配正式功能编号，不代表任何实现状态。版本顺序和边界以[版本路线图](../版本路线图.md)为准；跨版本能力增量以[功能演进矩阵](../功能演进矩阵.md)为准。"
-  },
-  {
-    "id": "doc-051",
-    "version": "V3",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "V3 应用市场：版本规划",
-    "file": "../02-产品与版本/后续版本/V3-应用市场.md",
-    "goal": "状态：规划中。尚未通过[版本进入开发门禁](../版本进入开发门禁.md)，不分配正式功能编号，不代表任何实现状态。版本顺序和边界以[版本路线图](../版本路线图.md)为准；跨版本能力增量以[功能演进矩阵](../功能演进矩阵.md)为准。"
-  },
-  {
-    "id": "doc-052",
-    "version": "V4",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "V4 云端与协同：版本规划",
-    "file": "../02-产品与版本/后续版本/V4-云端与协同.md",
-    "goal": "状态：规划中。尚未通过[版本进入开发门禁](../版本进入开发门禁.md)，不分配正式功能编号，不代表任何实现状态。版本顺序和边界以[版本路线图](../版本路线图.md)为准；跨版本能力增量以[功能演进矩阵](../功能演进矩阵.md)为准。"
-  },
-  {
-    "id": "doc-053",
-    "version": "V5",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "V5 企业化：版本规划",
-    "file": "../02-产品与版本/后续版本/V5-企业化.md",
-    "goal": "状态：规划中。尚未通过[版本进入开发门禁](../版本进入开发门禁.md)，不分配正式功能编号，不代表任何实现状态。版本顺序和边界以[版本路线图](../版本路线图.md)为准；跨版本能力增量以[功能演进矩阵](../功能演进矩阵.md)为准。"
-  },
-  {
-    "id": "doc-054",
-    "version": "V6",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "V6 移动端：版本规划",
-    "file": "../02-产品与版本/后续版本/V6-移动端.md",
-    "goal": "状态：规划中。尚未通过[版本进入开发门禁](../版本进入开发门禁.md)，不分配正式功能编号，不代表任何实现状态。版本顺序和边界以[版本路线图](../版本路线图.md)为准；跨版本能力增量以[功能演进矩阵](../功能演进矩阵.md)为准。"
-  },
-  {
-    "id": "doc-055",
-    "version": "V7",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "V7 AI Agent：版本规划",
-    "file": "../02-产品与版本/后续版本/V7-AI-Agent.md",
-    "goal": "状态：规划中。尚未通过[版本进入开发门禁](../版本进入开发门禁.md)，不分配正式功能编号，不代表任何实现状态。版本顺序和边界以[版本路线图](../版本路线图.md)为准；跨版本能力增量以[功能演进矩阵](../功能演进矩阵.md)为准。"
-  },
-  {
-    "id": "doc-056",
-    "version": "V8",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "V8 开发者生态：版本规划",
-    "file": "../02-产品与版本/后续版本/V8-开发者生态.md",
-    "goal": "状态：规划中。尚未通过[版本进入开发门禁](../版本进入开发门禁.md)，不分配正式功能编号，不代表任何实现状态。版本顺序和边界以[版本路线图](../版本路线图.md)为准；跨版本能力增量以[功能演进矩阵](../功能演进矩阵.md)为准。"
-  },
-  {
-    "id": "doc-057",
-    "version": "V1",
-    "phase": "架构",
-    "accent": "#a96810",
-    "soft": "#f6ead6",
-    "title": "V1 架构优化评审草案",
-    "file": "../04-技术架构/当前版本/V1-架构优化评审草案.md",
-    "goal": "状态：评审草案（Application Service 分层已由 D030 冻结；发布 lease 与可信注册根已由 D031/D032 冻结；runtime supervisor 第一阶段已由 D033 冻结并实现 Rust 切片，非实现状态来源） 日期：2026-10-28 "
-  },
-  {
-    "id": "doc-058",
-    "version": "00",
-    "phase": "决策",
-    "accent": "#7c3aed",
-    "soft": "#ede9fe",
-    "title": "架构决策记录（ADR）索引",
-    "file": "../06-决策记录/ADR/README.md",
-    "goal": "本目录存放有长期架构影响、需要完整记录备选方案和后果的决策，文件名格式为 NNNN-主题.md（例如 0001-模块执行隔离边界.md），编号一经分配不改变、不复用。"
-  },
-  {
-    "id": "doc-059",
-    "version": "V1",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史：V1-FR-001 前端实现完成度检查报告",
-    "file": "../99-历史归档/V1-FR-001/2026-10-27-前端实现检查.md",
-    "goal": "历史快照：2026-10-27 的前端检查报告，2026-10-28 从 docs/03-功能规格/V1/01-底层能力/ 移入归档。“95%/100% 完成”和前端传 userId 的描述已不符合当前代码（D023 起身份由宿主派生），不作为当前完成度依据。当前状态见 [V1 "
-  },
-  {
-    "id": "doc-060",
-    "version": "V1",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史：前端集成阶段详解",
-    "file": "../99-历史归档/V1-FR-001/2026-10-27-前端集成阶段说明.md",
-    "goal": "历史快照：2026-10-27 的 FR-001 前端集成说明，2026-10-28 从 docs/02-产品与版本/当前版本/ 移入归档。文中“后端已完成”、组件“骨架”和前端传 userId/后端收 user_id 的示例已过时：当前 Provider 页面已实现，命令不接收"
-  },
-  {
-    "id": "doc-061",
-    "version": "V1",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史：V1-FR-001 Provider 适配框架 - 实现检查报告",
-    "file": "../99-历史归档/V1-FR-001/2026-10-27-实现检查报告.md",
-    "goal": "历史快照：2026-10-27 的一次性检查报告，2026-10-28 从 docs/03-功能规格/V1/01-底层能力/ 移入归档。文中的“100% 完成”、凭据“未加密”等结论已被 D023 和后续实现取代，不作为当前完成度或验收依据。当前状态见 [V1 实现状态](../"
-  },
-  {
-    "id": "doc-062",
-    "version": "V1",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史：V1-FR-005：统一设计系统",
-    "file": "../99-历史归档/V1-FR-005/2026-10-26-统一设计系统-旧版.md",
-    "goal": "历史快照：2026-10-26 规格改写前的备份文件（原名 05-统一设计系统.md.backup），2026-10-28 移入归档。当前规格见 [V1-FR-005](../../03-功能规格/V1/01-底层能力/05-统一设计系统.md)；本文仅供追溯，链接已按归档位置调"
-  },
-  {
-    "id": "doc-063",
-    "version": "V1",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史：V1 功能规格补充说明",
-    "file": "../99-历史归档/V1-功能规格/2026-10-26-功能规格补充说明.md",
-    "goal": "历史快照：2026-10-26 的跨功能补充清单，2026-10-28 从 docs/03-功能规格/V1/ 移入归档。其中 Skills 采用 LangChain Tools/HTTP Skill 的描述已被 D016 取代；MCP 心跳“3 次超时、最多重连 5 次”与 FR"
-  },
-  {
-    "id": "doc-064",
-    "version": "V1",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史：2026-10-28-旧AC追踪表",
-    "file": "../99-历史归档/V1-追踪矩阵/2026-10-28-旧AC追踪表.md",
-    "goal": "历史快照：以下内容逐字保留自 docs/03-功能规格/V1/00-V1需求追踪矩阵.md 的 §4.1 与 §4.4–§4.10，记录归档时仍在矩阵中的旧 AC 表及 E2E 场景。它们不再代表当前验收、资产或测试状态。 返回：[当前 V1 需求追踪矩阵](../../03-功"
-  },
-  {
-    "id": "doc-065",
-    "version": "V1",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史：2026-10-26-V1开发门禁检查记录",
-    "file": "../99-历史归档/V1-门禁/2026-10-26-V1开发门禁检查记录.md",
-    "goal": "历史快照：原载于[版本进入开发门禁](../../02-产品与版本/版本进入开发门禁.md)第 3–4 节，2026-10-28 移入归档。原文检查时间写作 2024-10-26，与该文档的 Git 提交日期 2026-10-26 不符，疑为笔误，下文保留原文。 失效原因：记录中"
+    "goal": "DGOS 统一文档入口：按任务查找、目录结构、命名规则与文档权威性。"
   }
 ];
 
@@ -2231,7 +2231,7 @@
   },
   {
     "accent": "#2f7d4f",
-    "text": "D003 不使用 QuickJS/Node.js 作为 Skills/MCP 运行时"
+    "text": "D003 不使用 QuickJS/Node.js 作为 Skills/MCP 运行时（Skills 部分由 D016 取代）"
   },
   {
     "accent": "#a96810",
@@ -2239,7 +2239,7 @@
   },
   {
     "accent": "#aa2d4d",
-    "text": "D005 Skills 和 MCP 使用现有标准协议"
+    "text": "D005 Skills 和 MCP 使用现有标准协议（Skills 部分由 D016 取代）"
   },
   {
     "accent": "#087d75",
@@ -2368,6 +2368,18 @@
   {
     "accent": "#4056a1",
     "text": "D037 Settings 路由由宿主校验与真实 WebView 验证边界"
+  },
+  {
+    "accent": "#2f7d4f",
+    "text": "D038 错误码以代码已发出的映射为准"
+  },
+  {
+    "accent": "#a96810",
+    "text": "D039 局域网服务随应用自动启动，设置开关持久关闭"
+  },
+  {
+    "accent": "#aa2d4d",
+    "text": "D040 云端账号基础能力前移到 V3"
   }
 ];
 
@@ -2601,7 +2613,7 @@
     function renderOverview() {
       const totalLines = state.docs.reduce((sum, doc) => sum + doc.lines, 0);
       const totalHeadings = state.docs.reduce((sum, doc) => sum + doc.headings.length, 0);
-      const versionDocs = state.docs.filter(doc => /^V\d+$/.test(doc.version) && /版本总览|产品需求|实现状态/.test(doc.title));
+      const versionDocs = state.docs.filter(doc => /^V\d+$/.test(doc.version) && /版本总览|产品需求|实现状态|版本规划/.test(doc.title));
       const active = getActiveDoc();
 
       els.outline.innerHTML = "";
@@ -2617,7 +2629,7 @@
 
         <section class="visual-grid">
           ${diagramPanel("DGOS 架构全景", "Tauri 桌面宿主、React 模块、Rust 领域服务与 SQLite 的本地优先边界。", renderProductArchitectureSvg(), "系统结构")}
-          ${diagramPanel("AI 工作台调用流程", "用户输入经 Tauri IPC 进入 Workbench，再由 Provider、Skills 和 MCP 协作完成响应。", renderCoreFlowSvg(), "V1 主流程")}
+          ${diagramPanel("AI 工作台调用流程", "当前单任务切片：Tauri command 进入 Workbench 调用 Provider；技能作为上下文，MCP 工具逐次确认。", renderCoreFlowSvg(), "V1 主流程")}
         </section>
 
         <section class="panel">
@@ -2625,7 +2637,6 @@
           <div class="panel-body">
             <div class="timeline">
               ${versionDocs.map(doc => `<button class="version-node" data-doc="${doc.id}" style="--accent:${doc.accent}"><strong>${escapeHtml(doc.version)} · ${escapeHtml(doc.title)}</strong><span>${escapeHtml(doc.goal)}</span></button>`).join("")}
-              <div class="version-node" style="--accent:#4056a1"><strong>V2–V8 · 规划</strong><span>画布、应用市场、云端协同、企业化、移动端、Agent 与开发者生态，详见版本路线图。</span></div>
             </div>
           </div>
         </section>
@@ -2657,10 +2668,10 @@
           <div class="doc-meta"><span class="tag">分层架构</span><span class="tag">调用流程</span><span class="tag">版本路线</span><span class="tag">数据域</span><span class="tag">风险边界</span></div>
         </section>
         <section class="map-stack">
-          ${diagramPanel("产品架构全景", "来自 V1 总体架构与服务边界：前端、IPC、Rust 领域服务、基础设施和 SQLite。", renderProductArchitectureSvg(), "Architecture")}
+          ${diagramPanel("产品架构全景", "来自 V1 总体架构与服务边界：前端、IPC、Rust 领域服务、基础设施和 SQLite；标“规划”的部分尚未实现。", renderProductArchitectureSvg(), "Architecture")}
           ${diagramPanel("AI 工作台调用流程", "V1 工作台主链路；Skills 与 MCP 是显式可选增强，不能绕过宿主策略。", renderCoreFlowSvg(), "V1 Flow")}
           ${diagramPanel("版本路线图", "V1 底座逐步演进到 V2 画布、V3 市场、V4 云端协同和后续生态。", renderVersionRoadmapSvg(), "V1–V8")}
-          ${diagramPanel("数据域关系图", "按当前数据模型展示用户、Provider、Skills、MCP、模块、对话和用量记录的边界。", renderDataDomainSvg(), "Data Model")}
+          ${diagramPanel("数据域关系图", "按当前 migration 展示 Provider、Skills、MCP、模块、工作台任务和用量记录；users 与对话表为规划。", renderDataDomainSvg(), "Data Model")}
           ${diagramPanel("风险热区图", "凭据、权限、外部调用、迁移和模块隔离是当前架构的主要风险边界。", renderRiskHeatmapSvg(), "Risk")}
         </section>
       `;
@@ -2819,40 +2830,42 @@
       const track = FEATURE_TRACKS[trackId];
       if (!doc || !track) return [];
       const lines = doc.content.replace(/\r\n/g, "\n").split("\n");
+      // Capabilities without a detailed section still get overview-table entries below.
       const sectionStart = lines.findIndex(line => /^##\s+/.test(line) && line.includes(track.title));
-      if (sectionStart < 0) return [];
-      const sectionEnd = lines.findIndex((line, index) => index > sectionStart && /^##\s+/.test(line));
+      const sectionEnd = sectionStart < 0 ? -1 : lines.findIndex((line, index) => index > sectionStart && /^##\s+/.test(line));
       const end = sectionEnd < 0 ? lines.length : sectionEnd;
-      const tableStart = lines.findIndex((line, index) => index > sectionStart && index < end && isTableStart(lines, index));
-      if (tableStart < 0) return [];
+      const tableStart = sectionStart < 0 ? -1 : lines.findIndex((line, index) => index > sectionStart && index < end && isTableStart(lines, index));
 
       const rows = [];
-      for (let index = tableStart + 2; index < end && /^\s*\|.*\|\s*$/.test(lines[index]); index += 1) {
+      for (let index = tableStart + 2; tableStart >= 0 && index < end && /^\s*\|.*\|\s*$/.test(lines[index]); index += 1) {
         const cells = lines[index].trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(cell => cell.trim());
         if (cells.length >= 5) {
           rows.push({ stage: cells[0], change: cells[1], dependencies: cells[2], completion: cells[3], source: cells[4], sourceFile: doc.file });
         }
       }
 
-      const overviewStart = lines.findIndex(line => /^\|\s*能力主线\s*\|/.test(line));
+      const splitRow = line => line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(cell => cell.trim());
+      const overviewStart = lines.findIndex((line, index) => isTableStart(lines, index) && splitRow(line).includes("能力主线"));
       if (overviewStart >= 0) {
+        const header = splitRow(lines[overviewStart]);
+        const nameIndex = header.indexOf("能力主线");
         let index = overviewStart + 2;
         while (index < lines.length && /^\s*\|.*\|\s*$/.test(lines[index])) {
-          const cells = lines[index].trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(cell => cell.trim());
-          if (cells[0] === track.overview) {
-            const columns = [
-              ["v2", "V2", 2], ["v4", "V4", 4], ["v5", "V5", 5], ["v6", "V6", 6],
-              ["v7", "V7", 7], ["v8", "V8", 8], ["future", "后续", 9]
-            ];
+          const cells = splitRow(lines[index]);
+          if (cells[nameIndex] === track.overview) {
+            const columns = ["v2", "v3", "v4", "v5", "v6", "v7", "v8", "future"]
+              .map(versionId => FEATURE_TIMELINE_VERSIONS.find(item => item.id === versionId))
+              .map(version => [version.id, version.label, header.indexOf(version.label)])
+              .filter(([, , cellIndex]) => cellIndex >= 0);
             columns.forEach(([versionId, label, cellIndex]) => {
               const version = FEATURE_TIMELINE_VERSIONS.find(item => item.id === versionId);
-              if (!cells[cellIndex] || stagesForVersion(rows, version).length) return;
+              if (!cells[cellIndex] || cells[cellIndex] === "-" || stagesForVersion(rows, version).length) return;
               rows.push({
                 stage: label === "后续" ? "后续独立增强" : `${label} 总览关联`,
                 change: cells[cellIndex],
-                dependencies: "对应能力详表尚未单独展开；版本进入条件以第 12 节为准",
+                dependencies: "功能演进矩阵未单独展开该能力详表；版本进入条件见版本路线图第 7 节",
                 completion: "该版本进入开发门禁后补充正式功能编号、完成判定和验收证据",
-                source: "[跨版本总览](功能演进矩阵.md#3-跨版本总览)",
+                source: "[能力主线列表](功能演进矩阵.md#2-能力主线列表)",
                 sourceFile: doc.file,
                 overview: true
               });
@@ -2903,36 +2916,15 @@
               </div>
               <h4>${escapeHtml(feature.title)}</h4>
               <p>${escapeHtml(feature.goal || "功能行为以 V1 主文档为准。")}</p>
-              <div class="milestone-facts">
+              ${implementation.backend ? `<div class="milestone-facts">
                 <div class="milestone-fact"><span>后端</span><strong>${escapeHtml(implementation.backend)}</strong></div>
                 <div class="milestone-fact"><span>前端</span><strong>${escapeHtml(implementation.frontend)}</strong></div>
                 <div class="milestone-fact"><span>自动化验证</span><strong>${escapeHtml(implementation.verification)}</strong></div>
-              </div>
-              <div class="milestone-detail"><strong>当前主要差距</strong><span>${escapeHtml(implementation.gap)}</span></div>
+              </div>` : ""}
+              <div class="milestone-detail"><strong>实现状态备注</strong><span>${escapeHtml(implementation.gap)}</span></div>
               <div class="milestone-detail"><strong>上游依赖</strong><span>${escapeHtml(feature.dependencies || "以功能主文档为准")}</span></div>
               <div class="milestone-source"><a href="${escapeHtml(resolveDocHref(feature.file, ""))}" target="_blank" rel="noopener">${escapeHtml(feature.id)} 功能主文档</a></div>
               <div class="milestone-source">状态更新：${escapeHtml(implementation.updatedAt)} · <a href="${escapeHtml(resolveDocHref("../02-产品与版本/当前版本/V1-实现状态.md", ""))}" target="_blank" rel="noopener">查看实现状态依据</a></div>
-            </div>
-          </article>
-        `;
-      }
-
-      if (version.id === "v3") {
-        return `
-          <article class="feature-milestone history">
-            <div class="milestone-axis">
-              <span class="milestone-dot" aria-hidden="true"></span>
-              <strong>V3</strong>
-              <small>历史迁移</small>
-            </div>
-            <div class="milestone-card">
-              <div class="milestone-state-line">
-                <div class="milestone-mobile-meta"><strong>V3</strong><span>历史迁移</span></div>
-                <span class="milestone-state history">历史范围</span>
-              </div>
-              <h4>不参与当前规划</h4>
-              <p>原 V3 多协议范围已经迁入 V1-P1～P3。当前 V3 没有可继承的正式功能范围。</p>
-              <div class="milestone-detail"><strong>进入条件</strong>若未来重新规划 V3，必须重新定义目标、范围、依赖和成功标准。</div>
             </div>
           </article>
         `;
@@ -3063,9 +3055,9 @@
           </g>
           <g>
             <rect x="36" y="92" width="144" height="82" rx="8" fill="#e1f0e8" stroke="#2f7d4f"></rect><text x="108" y="120" text-anchor="middle" font-size="14" font-weight="700" fill="#1d1f22">Tauri 桌面宿主</text><text x="108" y="143" text-anchor="middle" font-size="11" fill="#69707a">窗口 / 权限 / 事件</text>
-            <rect x="250" y="82" width="220" height="102" rx="8" fill="#dcefeb" stroke="#087d75" stroke-width="2"></rect><text x="360" y="108" text-anchor="middle" font-size="15" font-weight="760" fill="#087d75">React 前端模块</text>${diagramTextLines(["AI 工作台 · 系统设置", "Module Federation", "统一设计系统"], 360, 130, { size: 12, anchor: "middle" })}
-            <rect x="540" y="82" width="220" height="102" rx="8" fill="#ffffff" stroke="#4056a1" stroke-width="2"></rect><text x="650" y="108" text-anchor="middle" font-size="15" font-weight="760" fill="#4056a1">Tauri IPC 通信层</text>${diagramTextLines(["Command-based RPC", "Event System", "调用者上下文"], 650, 130, { size: 12, anchor: "middle" })}
-            <rect x="830" y="92" width="94" height="82" rx="8" fill="#f6ead6" stroke="#a96810"></rect><text x="877" y="120" text-anchor="middle" font-size="13" font-weight="700" fill="#1d1f22">远程访问</text><text x="877" y="143" text-anchor="middle" font-size="11" fill="#69707a">局域网 HTTP</text>
+            <rect x="250" y="82" width="220" height="102" rx="8" fill="#dcefeb" stroke="#087d75" stroke-width="2"></rect><text x="360" y="108" text-anchor="middle" font-size="15" font-weight="760" fill="#087d75">React 前端模块</text>${diagramTextLines(["Provider · Skills · MCP · 工作台", "模块加载（FR-004 规划）", "统一设计系统（FR-005 规划）"], 360, 130, { size: 12, anchor: "middle" })}
+            <rect x="540" y="82" width="220" height="102" rx="8" fill="#ffffff" stroke="#4056a1" stroke-width="2"></rect><text x="650" y="108" text-anchor="middle" font-size="15" font-weight="760" fill="#4056a1">Tauri IPC 通信层</text>${diagramTextLines(["Tauri commands", "宿主派生调用上下文", "IPC 契约静态检查"], 650, 130, { size: 12, anchor: "middle" })}
+            <rect x="830" y="92" width="94" height="82" rx="8" fill="#f6ead6" stroke="#a96810"></rect><text x="877" y="120" text-anchor="middle" font-size="13" font-weight="700" fill="#1d1f22">远程访问</text>${diagramTextLines(["局域网 HTTP", "FR-010 规划"], 877, 143, { size: 11, lineHeight: 16, anchor: "middle" })}
           </g>
           <rect x="36" y="292" width="888" height="106" rx="8" fill="#ffffff" stroke="#dedbd2"></rect><text x="52" y="318" font-size="13" font-weight="760" fill="#087d75">Rust 应用与领域服务层</text>
           <g>
@@ -3073,12 +3065,12 @@
             <rect x="198" y="338" width="130" height="44" rx="7" fill="#e1f0e8" stroke="#2f7d4f"></rect><text x="263" y="365" text-anchor="middle" font-size="12" font-weight="700">Providers</text>
             <rect x="344" y="338" width="130" height="44" rx="7" fill="#e6e9f6" stroke="#4056a1"></rect><text x="409" y="365" text-anchor="middle" font-size="12" font-weight="700">Skills / MCP</text>
             <rect x="490" y="338" width="130" height="44" rx="7" fill="#f6ead6" stroke="#a96810"></rect><text x="555" y="365" text-anchor="middle" font-size="12" font-weight="700">Modules</text>
-            <rect x="636" y="338" width="130" height="44" rx="7" fill="#f4dde4" stroke="#aa2d4d"></rect><text x="701" y="365" text-anchor="middle" font-size="12" font-weight="700">Auth / 权限</text>
-            <rect x="782" y="338" width="130" height="44" rx="7" fill="#ffffff" stroke="#69707a"></rect><text x="847" y="365" text-anchor="middle" font-size="12" font-weight="700">Network</text>
+            <rect x="636" y="338" width="130" height="44" rx="7" fill="#f4dde4" stroke="#aa2d4d"></rect><text x="701" y="365" text-anchor="middle" font-size="12" font-weight="700">应用服务 / 授权</text>
+            <rect x="782" y="338" width="130" height="44" rx="7" fill="#ffffff" stroke="#69707a"></rect><text x="847" y="365" text-anchor="middle" font-size="12" font-weight="700">Network（规划）</text>
           </g>
-          <rect x="250" y="460" width="560" height="64" rx="8" fill="#e6e9f6" stroke="#4056a1"></rect><text x="530" y="487" text-anchor="middle" font-size="14" font-weight="760" fill="#1d1f22">基础设施与数据层</text><text x="530" y="508" text-anchor="middle" font-size="11" fill="#69707a">SQLite Storage · Config · Logging · HTTP · migrations</text>
+          <rect x="250" y="460" width="560" height="64" rx="8" fill="#e6e9f6" stroke="#4056a1"></rect><text x="530" y="487" text-anchor="middle" font-size="14" font-weight="760" fill="#1d1f22">基础设施与数据层</text><text x="530" y="508" text-anchor="middle" font-size="11" fill="#69707a">SQLite（dgos.db）· migrations · 系统钥匙串 · tracing · 出站 HTTP client</text>
           <g stroke="#8b929a" stroke-width="1.3" stroke-dasharray="5 5" fill="none" marker-end="url(#dgos-arrow-soft)"><path d="M409 382 C420 420 430 438 450 460"></path><path d="M701 382 C680 420 650 440 620 460"></path><path d="M877 174 C850 238 820 272 780 292"></path></g>
-          <text x="52" y="548" font-size="11" fill="#69707a">实线：宿主内调用边界　虚线：外部访问或基础设施依赖</text>
+          <text x="52" y="548" font-size="11" fill="#69707a">实线：宿主内调用边界　虚线：外部访问或基础设施依赖　标“规划”者尚未实现</text>
         </svg>
       `;
     }
@@ -3087,23 +3079,23 @@
       return `
         <svg viewBox="0 0 960 350" role="img" aria-label="DGOS AI 工作台调用流程图">
           <defs><marker id="dgos-arrow-flow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#69707a"></path></marker></defs><rect width="960" height="350" rx="8" fill="#fbfaf7"></rect>
-          <text x="36" y="38" font-size="18" font-weight="760" fill="#1d1f22">V1 AI 工作台调用流程</text><text x="36" y="62" font-size="12" fill="#69707a">默认路径保持本地可控；Skills 与 MCP 仅在用户选择并通过宿主授权后参与。</text>
+          <text x="36" y="38" font-size="18" font-weight="760" fill="#1d1f22">V1 AI 工作台单任务流程（当前切片）</text><text x="36" y="62" font-size="12" fill="#69707a">默认路径保持本地可控；Skills 与 MCP 仅在用户选择并通过宿主授权后参与。</text>
           <g stroke="#69707a" stroke-width="1.6" fill="none" marker-end="url(#dgos-arrow-flow)"><path d="M140 146 H196"></path><path d="M304 146 H360"></path><path d="M468 146 H524"></path><path d="M632 146 H688"></path><path d="M796 146 H852"></path></g>
-          <g><rect x="36" y="102" width="104" height="88" rx="8" fill="#e1f0e8" stroke="#2f7d4f"></rect><text x="88" y="128" text-anchor="middle" font-size="13" font-weight="700">用户输入</text><text x="88" y="151" text-anchor="middle" font-size="11" fill="#69707a">对话 / Provider</text><text x="88" y="170" text-anchor="middle" font-size="11" fill="#69707a">可选 Skill/MCP</text>
-          <rect x="196" y="102" width="108" height="88" rx="8" fill="#dcefeb" stroke="#087d75"></rect><text x="250" y="128" text-anchor="middle" font-size="13" font-weight="700">Workbench</text><text x="250" y="151" text-anchor="middle" font-size="11" fill="#69707a">应用服务编排</text><text x="250" y="170" text-anchor="middle" font-size="11" fill="#69707a">历史记录</text>
-          <rect x="360" y="102" width="108" height="88" rx="8" fill="#e6e9f6" stroke="#4056a1"></rect><text x="414" y="128" text-anchor="middle" font-size="13" font-weight="700">Tauri IPC</text><text x="414" y="151" text-anchor="middle" font-size="11" fill="#69707a">Command</text><text x="414" y="170" text-anchor="middle" font-size="11" fill="#69707a">调用者上下文</text>
-          <rect x="524" y="102" width="108" height="88" rx="8" fill="#f6ead6" stroke="#a96810"></rect><text x="578" y="128" text-anchor="middle" font-size="13" font-weight="700">Provider</text><text x="578" y="151" text-anchor="middle" font-size="11" fill="#69707a">适配 / 重试</text><text x="578" y="170" text-anchor="middle" font-size="11" fill="#69707a">同步 / 流式</text>
-          <rect x="688" y="102" width="108" height="88" rx="8" fill="#ffffff" stroke="#087d75"></rect><text x="742" y="128" text-anchor="middle" font-size="13" font-weight="700">外部能力</text><text x="742" y="151" text-anchor="middle" font-size="11" fill="#69707a">模型 API</text><text x="742" y="170" text-anchor="middle" font-size="11" fill="#69707a">Skill / MCP</text>
-          <rect x="852" y="102" width="88" height="88" rx="8" fill="#f4dde4" stroke="#aa2d4d"></rect><text x="896" y="128" text-anchor="middle" font-size="13" font-weight="700">响应</text><text x="896" y="151" text-anchor="middle" font-size="11" fill="#69707a">事件流</text><text x="896" y="170" text-anchor="middle" font-size="11" fill="#69707a">UI 渲染</text></g>
+          <g><rect x="36" y="102" width="104" height="88" rx="8" fill="#e1f0e8" stroke="#2f7d4f"></rect><text x="88" y="128" text-anchor="middle" font-size="13" font-weight="700">用户输入</text><text x="88" y="151" text-anchor="middle" font-size="11" fill="#69707a">任务 / 模型</text><text x="88" y="170" text-anchor="middle" font-size="11" fill="#69707a">可选技能 / MCP</text>
+          <rect x="196" y="102" width="108" height="88" rx="8" fill="#dcefeb" stroke="#087d75"></rect><text x="250" y="128" text-anchor="middle" font-size="13" font-weight="700">Tauri IPC</text><text x="250" y="151" text-anchor="middle" font-size="11" fill="#69707a">Command</text><text x="250" y="170" text-anchor="middle" font-size="11" fill="#69707a">宿主派生上下文</text>
+          <rect x="360" y="102" width="108" height="88" rx="8" fill="#e6e9f6" stroke="#4056a1"></rect><text x="414" y="128" text-anchor="middle" font-size="13" font-weight="700">Workbench</text><text x="414" y="151" text-anchor="middle" font-size="11" fill="#69707a">单任务编排</text><text x="414" y="170" text-anchor="middle" font-size="11" fill="#69707a">任务记录</text>
+          <rect x="524" y="102" width="108" height="88" rx="8" fill="#f6ead6" stroke="#a96810"></rect><text x="578" y="128" text-anchor="middle" font-size="13" font-weight="700">Provider</text><text x="578" y="151" text-anchor="middle" font-size="11" fill="#69707a">适配 / 重试</text><text x="578" y="170" text-anchor="middle" font-size="11" fill="#69707a">工作台为同步调用</text>
+          <rect x="688" y="102" width="108" height="88" rx="8" fill="#ffffff" stroke="#087d75"></rect><text x="742" y="128" text-anchor="middle" font-size="13" font-weight="700">外部能力</text><text x="742" y="151" text-anchor="middle" font-size="11" fill="#69707a">模型 API</text><text x="742" y="170" text-anchor="middle" font-size="11" fill="#69707a">MCP 工具（确认后）</text>
+          <rect x="852" y="102" width="88" height="88" rx="8" fill="#f4dde4" stroke="#aa2d4d"></rect><text x="896" y="128" text-anchor="middle" font-size="13" font-weight="700">响应</text><text x="896" y="151" text-anchor="middle" font-size="11" fill="#69707a">任务结果</text><text x="896" y="170" text-anchor="middle" font-size="11" fill="#69707a">UI 渲染</text></g>
           <path d="M896 190 C896 250 88 250 88 190" fill="none" stroke="#8b929a" stroke-width="1.4" stroke-dasharray="5 5" marker-end="url(#dgos-arrow-flow)"></path><text x="480" y="244" text-anchor="middle" font-size="12" fill="#69707a">失败语义、超时、取消和敏感信息处理由宿主统一控制</text>
-          <rect x="232" y="274" width="496" height="52" rx="7" fill="#ffffff" stroke="#dedbd2"></rect>${diagramTextLines(["可选增强：Workbench → SkillsManager / MCPClient", "合并结果后返回工作台"], 480, 295, { size: 12, anchor: "middle" })}
+          <rect x="232" y="274" width="496" height="52" rx="7" fill="#ffffff" stroke="#dedbd2"></rect>${diagramTextLines(["技能：固定版本的 SKILL.md 作为上下文，不执行（D016/D018）", "MCP：模型提出工具调用，用户逐次确认后执行（D022）"], 480, 295, { size: 12, anchor: "middle" })}
         </svg>
       `;
     }
 
     function renderVersionRoadmapSvg() {
       const items = [
-        ["V1", "框架底座", "Provider · Skills · MCP · 模块 · 工作台"], ["V2", "无限画布", "节点、连线、执行、工作流"], ["V3", "应用市场", "浏览、安装、审核、更新"], ["V4", "云端与协同", "账号、同步、实时协同"], ["V5", "企业化", "组织、成员、审计、账单"], ["V6", "移动端", "iOS/Android 与离线同步"], ["V7", "AI Agent", "自主任务、多 Agent、自动化"], ["V8", "开发者生态", "门户、API 市场、SDK、模板"]
+        ["V1", "框架底座", "Provider · Skills · MCP · 模块 · 工作台"], ["V2", "无限画布", "节点、连线、执行、工作流"], ["V3", "应用市场", "账号、浏览、安装、审核"], ["V4", "云端与协同", "同步、官方 Provider、协同"], ["V5", "企业化", "组织、成员、审计、账单"], ["V6", "移动端", "iOS/Android 与离线同步"], ["V7", "AI Agent", "自主任务、多 Agent、自动化"], ["V8", "开发者生态", "门户、API 市场、SDK、模板"]
       ];
       const rowHeight = 56;
       const rowGap = 10;
@@ -3134,19 +3126,19 @@
 
     function renderDataDomainSvg() {
       const domains = [
-        [36, 96, 134, "用户域", ["users / sessions"], "#e1f0e8", "#2f7d4f"],
+        [36, 96, 134, "用户域", ["default-user", "users 表规划"], "#e1f0e8", "#2f7d4f"],
         [280, 96, 150, "Provider 域", ["providers / models"], "#dcefeb", "#087d75"],
-        [540, 96, 150, "扩展能力域", ["skills", "mcp_servers"], "#e6e9f6", "#4056a1"],
-        [800, 96, 124, "模块域", ["modules / grants"], "#f6ead6", "#a96810"],
-        [280, 252, 150, "工作台域", ["conversations", "tasks"], "#f4dde4", "#aa2d4d"],
+        [540, 96, 150, "扩展能力域", ["skill_catalog 等", "mcp_servers 等"], "#e6e9f6", "#4056a1"],
+        [800, 96, 124, "模块域", ["modules", "module_versions"], "#f6ead6", "#a96810"],
+        [280, 252, 150, "工作台域", ["workbench_tasks", "对话表规划"], "#f4dde4", "#aa2d4d"],
         [540, 252, 150, "用量记录域", ["provider / mcp", "skill logs"], "#ffffff", "#087d75"],
-        [800, 252, 124, "权限审计域", ["permissions", "audit"], "#ffffff", "#4056a1"]
+        [800, 252, 124, "权限审计域", ["模块授权", "脱敏审计"], "#ffffff", "#4056a1"]
       ];
       return `<svg viewBox="0 0 960 466" role="img" aria-label="DGOS 数据域关系图">
         <defs><marker id="dgos-arrow-data" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#69707a"></path></marker></defs>
         <rect width="960" height="466" rx="8" fill="#fbfaf7"></rect>
         <text x="36" y="38" font-size="18" font-weight="760" fill="#1d1f22">V1 数据域关系</text>
-        ${diagramTextLines(["SQLite 保存本地用户、Provider、Skills、MCP、模块和工作台记录。", "凭据与敏感输入不进入普通 DTO。"], 36, 60)}
+        ${diagramTextLines(["SQLite（dgos.db）按 user_id 隔离 Provider、Skills、MCP、模块和工作台记录。", "凭据存系统钥匙串，敏感输入不进入普通 DTO。"], 36, 60)}
         <g stroke="#69707a" stroke-width="1.4" fill="none" marker-end="url(#dgos-arrow-data)">
           <path d="M170 144 H280"></path><path d="M430 144 H540"></path><path d="M690 144 H800"></path>
           <path d="M355 192 V252"></path><path d="M615 192 V252"></path>
