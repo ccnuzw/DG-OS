@@ -10,6 +10,8 @@
     "skills:catalog": "node scripts/skills-catalog.mjs --write",
     "contracts:check": "node scripts/check-host-contracts.mjs",
     "smoke:tauri": "npm run build && cargo test -p dgos --features webview-smoke --test webview_smoke -- --nocapture",
+    "docs:browser": "node scripts/generate-doc-browser.mjs",
+    "docs:browser:check": "node scripts/generate-doc-browser.mjs --check",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
