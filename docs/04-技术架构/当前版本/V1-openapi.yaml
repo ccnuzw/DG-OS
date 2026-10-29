@@ -417,7 +417,7 @@ components:
           type: string
         provider_type:
           type: string
-          enum: [openai_compatible]
+          enum: [openai_compatible, anthropic]  # D062：anthropic 为规划值，当前代码只支持 openai_compatible；HTTP 路由尚未注册
         base_url:
           type: string
           format: uri
