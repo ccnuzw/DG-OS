@@ -26,8 +26,8 @@ pub fn context(
     capability: Capability,
 ) -> Result<HostExecutionContext, DgosError> {
     let url = window.url().map_err(|_| DgosError::PermissionDenied)?;
-    let trusted = trusted_origin(&url, cfg!(debug_assertions));
-    if window.label() != "main" || !trusted || !allows(caller, capability) {
+    let trusted = trusted_main_window(window.label(), &url, cfg!(debug_assertions));
+    if !trusted || !allows(caller, capability) {
         return Err(DgosError::PermissionDenied);
     }
     Ok(HostExecutionContext::for_builtin(LOCAL_USER, caller))
@@ -43,6 +43,13 @@ fn trusted_origin(url: &tauri::Url, allow_development: bool) -> bool {
         && matches!(url.host_str(), Some("localhost" | "127.0.0.1"))
         && url.port() == Some(1420);
     packaged || development
+}
+
+/// The only window host pages run in, on a packaged or debug-dev origin.
+/// Every renderer-facing gate starts here; route and caller policy are
+/// layered on top by the gates that need them.
+fn trusted_main_window(label: &str, url: &tauri::Url, allow_development: bool) -> bool {
+    label == "main" && trusted_origin(url, allow_development)
 }
 
 /// The Settings route is `/settings` or a sub-path of it. This is a route
@@ -68,6 +75,20 @@ pub fn module_session(
     }
     debug_assert_eq!(context.user_id(), LOCAL_USER);
     Ok(HostSession::local_default())
+}
+
+/// Entry gate for the module host bridge commands (D046). Window label and
+/// origin only: no caller, capability or route policy, because the page
+/// attaches at application start and its modules outlive SPA navigation.
+/// It is a page-lifecycle transport check, not authorization; admission
+/// (D041) decides what may run.
+pub fn module_host_window(window: &WebviewWindow) -> Result<(), DgosError> {
+    let url = window.url().map_err(|_| DgosError::PermissionDenied)?;
+    if trusted_main_window(window.label(), &url, cfg!(debug_assertions)) {
+        Ok(())
+    } else {
+        Err(DgosError::PermissionDenied)
+    }
 }
 
 // Internal route policy, not a sandbox for code sharing the host's JavaScript realm.
@@ -138,6 +159,52 @@ mod tests {
         ] {
             assert!(!trusted_origin(&url(hostile), true), "{hostile}");
         }
+    }
+
+    #[test]
+    fn bridge_gate_needs_the_main_window_on_a_trusted_origin() {
+        let packaged = url("tauri://localhost/");
+        assert!(trusted_main_window("main", &packaged, false));
+        for label in ["secondary", "Main", "main ", "", "main-2"] {
+            assert!(!trusted_main_window(label, &packaged, true), "{label:?}");
+        }
+        for hostile in [
+            "https://example.com/",
+            "file:///index.html",
+            "http://localhost:1421/",
+            "tauri://localhost.evil.test/",
+        ] {
+            assert!(
+                !trusted_main_window("main", &url(hostile), true),
+                "{hostile}"
+            );
+        }
+        // The dev server is trusted in debug builds only.
+        let dev = url("http://localhost:1420/");
+        assert!(trusted_main_window("main", &dev, true));
+        assert!(!trusted_main_window("main", &dev, false));
+    }
+
+    #[test]
+    fn bridge_gate_ignores_the_route_but_lifecycle_commands_do_not() {
+        // SPA navigation keeps the page, its attachment and its modules, so
+        // the bridge must keep working on every route of a trusted origin.
+        for route in [
+            "tauri://localhost/",
+            "tauri://localhost/workbench",
+            "tauri://localhost/settings",
+            "tauri://localhost/settings/modules?x=1#y",
+            "tauri://localhost/anything/else",
+        ] {
+            let route = url(route);
+            assert!(trusted_main_window("main", &route, false), "{route}");
+        }
+        // The five lifecycle commands (D037) stay Settings-only.
+        assert!(!is_settings_route(&url("tauri://localhost/workbench")));
+        assert!(!is_settings_route(&url("tauri://localhost/")));
+        assert!(is_settings_route(&url(
+            "tauri://localhost/settings/modules"
+        )));
     }
 
     #[test]

@@ -30,6 +30,10 @@ pub enum ModuleRuntimeError {
     NotAccepting(ModuleRuntimeState),
     #[error("module runtime still has in-flight requests")]
     RequestsInFlight(usize),
+    /// The runtime is `ready` but already has the maximum number of requests
+    /// in flight. Retryable; the request was not admitted (D051).
+    #[error("module runtime is at its in-flight request limit")]
+    AtCapacity,
 }
 
 /// Terminal outcome of one admitted request. Each admitted request settles
@@ -142,10 +146,25 @@ impl ModuleRuntimeHandle {
     /// atomic with lifecycle transitions, so a request can never slip in
     /// after draining begins. The returned guard must be settled.
     pub fn begin_request(&self) -> Result<ModuleRequest, ModuleRuntimeError> {
+        self.begin_request_limited(usize::MAX)
+    }
+
+    /// Like `begin_request`, but refuses when `max_in_flight` requests are
+    /// already in flight. The check and the increment happen under one lock,
+    /// so concurrent callers can never exceed the limit. A refused request is
+    /// not counted as admitted, only as rejected (D051).
+    pub fn begin_request_limited(
+        &self,
+        max_in_flight: usize,
+    ) -> Result<ModuleRequest, ModuleRuntimeError> {
         let mut inner = self.shared.lock();
         if inner.state != ModuleRuntimeState::Ready {
             inner.stats.rejected += 1;
             return Err(ModuleRuntimeError::NotAccepting(inner.state));
+        }
+        if inner.stats.in_flight >= max_in_flight {
+            inner.stats.rejected += 1;
+            return Err(ModuleRuntimeError::AtCapacity);
         }
         inner.stats.admitted += 1;
         inner.stats.in_flight += 1;
@@ -292,16 +311,15 @@ mod tests {
             &HostSession::local_default(),
             "module-1",
             "1.0.0",
-            &"a".repeat(64),
+            &format!("v2:{}", "a".repeat(64)),
         );
         ModuleRuntimeHandle::issue(
             context,
             VerifiedModuleArtifact::new(
                 "module-1".into(),
                 "1.0.0".into(),
-                "a".repeat(64),
-                "/nonexistent".into(),
-                "/nonexistent/entry.js".into(),
+                format!("v2:{}", "a".repeat(64)),
+                std::sync::Arc::from(&b"export default {};"[..]),
             ),
         )
     }

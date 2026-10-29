@@ -9,10 +9,10 @@
 
 use super::CommandResponse;
 use crate::host::{self, Capability};
-use dgos_application::ModuleOperationManager;
+use dgos_application::{ModuleCrashService, ModuleManagementService, ModuleOperationManager};
 use dgos_types::{
-    DgosError, ModuleOperationAccepted, ModuleOperationErrorKind, ModuleOperationView,
-    ModuleRuntimeStatusView,
+    DgosError, ModuleCrashView, ModuleOperationAccepted, ModuleOperationErrorKind,
+    ModuleOperationView, ModuleRuntimeStatusView, ModuleSummaryView,
 };
 use tauri::{Manager, WebviewWindow};
 
@@ -89,4 +89,108 @@ pub async fn get_module_runtime_status(
     }
     let manager = app.state::<ModuleOperationManager>();
     into_response(manager.runtime_status(&module_id))
+}
+
+#[tauri::command]
+pub async fn enable_module(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    module_id: String,
+) -> CommandResponse<ModuleOperationAccepted> {
+    let session = match host::module_session(&window, Capability::ModulesManage) {
+        Ok(session) => session,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    let manager = app.state::<ModuleOperationManager>();
+    into_response(manager.enable(&session, &module_id))
+}
+
+/// Stops the runtime, then disables the module.
+#[tauri::command]
+pub async fn disable_module(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    module_id: String,
+) -> CommandResponse<ModuleOperationAccepted> {
+    let session = match host::module_session(&window, Capability::ModulesManage) {
+        Ok(session) => session,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    let manager = app.state::<ModuleOperationManager>();
+    into_response(manager.disable(&session, &module_id))
+}
+
+/// Stops the runtime, then removes the module. Refused for bundled modules.
+#[tauri::command]
+pub async fn uninstall_module(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    module_id: String,
+) -> CommandResponse<ModuleOperationAccepted> {
+    let session = match host::module_session(&window, Capability::ModulesManage) {
+        Ok(session) => session,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    let manager = app.state::<ModuleOperationManager>();
+    into_response(manager.uninstall(&session, &module_id))
+}
+
+#[tauri::command]
+pub async fn list_modules(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+) -> CommandResponse<Vec<ModuleSummaryView>> {
+    let session = match host::module_session(&window, Capability::ModulesRead) {
+        Ok(session) => session,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    let service = app.state::<ModuleManagementService>();
+    CommandResponse::from(service.list(&session).await)
+}
+
+/// Grants one permission the module's manifest declares. The permission is a
+/// D006 string; the host re-reads the manifest and refuses anything else.
+#[tauri::command]
+pub async fn grant_module_permission(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    module_id: String,
+    permission: String,
+) -> CommandResponse<ModuleSummaryView> {
+    let session = match host::module_session(&window, Capability::ModulesManage) {
+        Ok(session) => session,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    let service = app.state::<ModuleManagementService>();
+    CommandResponse::from(service.grant(&session, &module_id, &permission).await)
+}
+
+/// Revocation applies to the next call and never cancels one in flight.
+#[tauri::command]
+pub async fn revoke_module_permission(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    module_id: String,
+    permission: String,
+) -> CommandResponse<ModuleSummaryView> {
+    let session = match host::module_session(&window, Capability::ModulesManage) {
+        Ok(session) => session,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    let service = app.state::<ModuleManagementService>();
+    CommandResponse::from(service.revoke(&session, &module_id, &permission).await)
+}
+
+#[tauri::command]
+pub async fn list_module_crashes(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    module_id: String,
+) -> CommandResponse<Vec<ModuleCrashView>> {
+    let session = match host::module_session(&window, Capability::ModulesRead) {
+        Ok(session) => session,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    let service = app.state::<ModuleCrashService>();
+    CommandResponse::from(service.list(&session, &module_id).await)
 }

@@ -23,7 +23,7 @@ use chrono::Utc;
 use dgos_modules::{
     valid_module_id, LocalModuleSources, ModuleLoader, ModulePackageError, ModulePublisher,
     ModuleRuntimeState, ModuleRuntimeSupervisor, ModuleSourceError, ModuleSupervisorError,
-    ModuleUpdateOutcome,
+    ModuleUpdateOutcome, RuntimeLost,
 };
 use dgos_types::{
     HostSession, ModuleOperationAccepted, ModuleOperationErrorKind as ErrorKind,
@@ -79,9 +79,20 @@ impl ModuleOperationManager {
         loader: Arc<dyn ModuleLoader>,
         sources: LocalModuleSources,
     ) -> Self {
+        let supervisor = ModuleRuntimeSupervisor::new(publisher.clone(), loader);
+        Self::with_supervisor(publisher, supervisor, sources)
+    }
+
+    /// Build around a configured supervisor (admission policy D041, loader
+    /// deadlines D044). `supervisor` must have been built from `publisher`.
+    pub fn with_supervisor(
+        publisher: Arc<ModulePublisher>,
+        supervisor: ModuleRuntimeSupervisor,
+        sources: LocalModuleSources,
+    ) -> Self {
         Self {
             inner: Arc::new(Inner {
-                supervisor: ModuleRuntimeSupervisor::new(publisher.clone(), loader),
+                supervisor,
                 publisher,
                 sources,
                 state: Mutex::new(State {
@@ -93,6 +104,39 @@ impl ModuleOperationManager {
                 }),
             }),
         }
+    }
+
+    /// A loader reports that a loaded runtime's page is gone (D044). The
+    /// runtime becomes `failed`; nothing restarts it. Recovery is an explicit
+    /// `stop` then `start`, which gives a new runtime and a new real load.
+    pub fn report_runtime_lost(&self, module_id: &str, runtime_id: &str) -> Result<(), ErrorKind> {
+        self.inner
+            .supervisor
+            .report_failure(module_id, runtime_id)
+            .map_err(|error| map_supervisor_error(ModuleOperationKind::Stop, &error))
+    }
+
+    /// Drain loader loss events and apply them with `report_runtime_lost`.
+    /// Must be called inside a Tokio runtime. The task ends when the loader
+    /// (the sender) is dropped.
+    pub fn spawn_lost_runtime_reporter(
+        &self,
+        mut events: tokio::sync::mpsc::UnboundedReceiver<RuntimeLost>,
+    ) -> Result<(), ErrorKind> {
+        let runtime = tokio::runtime::Handle::try_current().map_err(|_| ErrorKind::Internal)?;
+        let manager = self.clone();
+        runtime.spawn(async move {
+            while let Some(lost) = events.recv().await {
+                if let Err(kind) = manager.report_runtime_lost(&lost.module_id, &lost.runtime_id) {
+                    tracing::warn!(
+                        module_id = %lost.module_id,
+                        code = kind.code(),
+                        "lost module runtime could not be marked failed"
+                    );
+                }
+            }
+        });
+        Ok(())
     }
 
     /// Startup recovery: reconcile every registered module's pointer, row
@@ -160,6 +204,123 @@ impl ModuleOperationManager {
         self.submit(ModuleOperationKind::Update, session, module_id)
     }
 
+    pub fn enable(
+        &self,
+        session: &HostSession,
+        module_id: &str,
+    ) -> Result<ModuleOperationAccepted, ErrorKind> {
+        self.submit(ModuleOperationKind::Enable, session, module_id)
+    }
+
+    /// Stops the runtime, then disables the module.
+    pub fn disable(
+        &self,
+        session: &HostSession,
+        module_id: &str,
+    ) -> Result<ModuleOperationAccepted, ErrorKind> {
+        self.submit(ModuleOperationKind::Disable, session, module_id)
+    }
+
+    /// Stops the runtime, then removes the module. Refused for a module that
+    /// ships with the host.
+    pub fn uninstall(
+        &self,
+        session: &HostSession,
+        module_id: &str,
+    ) -> Result<ModuleOperationAccepted, ErrorKind> {
+        self.submit(ModuleOperationKind::Uninstall, session, module_id)
+    }
+
+    /// Submit a start for every published, enabled module (D055 startup
+    /// load). Each module succeeds or fails on its own: a refusal for one
+    /// (not admitted, incompatible, host unavailable) never stops the others.
+    /// Operations run in submission order (D034); nothing here waits for them.
+    pub async fn start_enabled(
+        &self,
+        session: &HostSession,
+    ) -> Vec<(String, Result<ModuleOperationAccepted, ErrorKind>)> {
+        let Ok(published) = self
+            .inner
+            .publisher
+            .published_modules(session.user_id())
+            .await
+        else {
+            return Vec::new();
+        };
+        published
+            .into_iter()
+            .filter(|module| module.enabled)
+            .map(|module| {
+                let accepted = self.start(session, &module.module_id);
+                (module.module_id, accepted)
+            })
+            .collect()
+    }
+
+    /// `(module_id, version)` of every published, enabled module. The crash
+    /// service evaluates these at startup (D059).
+    pub async fn enabled_modules(
+        &self,
+        session: &HostSession,
+    ) -> Result<Vec<(String, String)>, ErrorKind> {
+        Ok(self
+            .inner
+            .publisher
+            .published_modules(session.user_id())
+            .await
+            .map_err(map_management_error)?
+            .into_iter()
+            .filter(|module| module.enabled)
+            .map(|module| (module.module_id, module.version))
+            .collect())
+    }
+
+    /// The module's current runtime handle, for tests that report a crash.
+    #[cfg(test)]
+    pub(crate) fn runtime_handle(
+        &self,
+        module_id: &str,
+    ) -> Option<dgos_modules::ModuleRuntimeHandle> {
+        self.inner.supervisor.runtime(module_id)
+    }
+
+    /// Published modules with their declared permissions, which of them the
+    /// session's user granted, and runtime status.
+    pub async fn modules(
+        &self,
+        session: &HostSession,
+    ) -> Result<Vec<dgos_types::ModuleSummaryView>, ErrorKind> {
+        let published = self
+            .inner
+            .publisher
+            .published_modules(session.user_id())
+            .await
+            .map_err(map_management_error)?;
+        let mut views = Vec::with_capacity(published.len());
+        for module in published {
+            let runtime = self.runtime_status(&module.module_id)?;
+            views.push(dgos_types::ModuleSummaryView {
+                permissions: module
+                    .declared
+                    .iter()
+                    .map(|permission| dgos_types::ModulePermissionView {
+                        permission: permission.clone(),
+                        granted: module.granted.contains(permission),
+                    })
+                    .collect(),
+                module_id: module.module_id,
+                name: module.name,
+                version: module.version,
+                integrity: module.integrity,
+                official: module.official,
+                enabled: module.enabled,
+                runtime,
+                recent_crashes: 0,
+            });
+        }
+        Ok(views)
+    }
+
     pub fn operation(&self, operation_id: &str) -> Result<ModuleOperationView, ErrorKind> {
         self.inner
             .state()
@@ -206,6 +367,7 @@ impl ModuleOperationManager {
                 .map_or(0, |handle| handle.request_stats().in_flight),
             pending_releases: supervisor.pending_release_count(module_id),
             active_operation_id: self.inner.state().active.get(module_id).cloned(),
+            executes_module_code: supervisor.executes_module_code(),
         })
     }
 
@@ -312,6 +474,49 @@ impl Inner {
                 .await
                 .map(|()| ModuleOperationOutcome::Stopped)
                 .map_err(|error| map_supervisor_error(kind, &error)),
+            ModuleOperationKind::Enable => self
+                .publisher
+                .set_enabled(module_id, true)
+                .await
+                .map(|()| ModuleOperationOutcome::Enabled)
+                .map_err(map_management_error),
+            ModuleOperationKind::Disable => {
+                // Stop first: a disabled module must not keep a live runtime.
+                // A module that never had a runtime has nothing to stop.
+                match self.supervisor.stop(module_id).await {
+                    Ok(()) | Err(ModuleSupervisorError::NotRunning) => {}
+                    Err(error) => {
+                        return Err(map_supervisor_error(ModuleOperationKind::Stop, &error))
+                    }
+                }
+                self.publisher
+                    .set_enabled(module_id, false)
+                    .await
+                    .map(|()| ModuleOperationOutcome::Disabled)
+                    .map_err(map_management_error)
+            }
+            ModuleOperationKind::Uninstall => {
+                // Refuse before touching the runtime: a bundled module stays as it is.
+                let listed = self
+                    .publisher
+                    .published_modules(session.user_id())
+                    .await
+                    .map_err(map_management_error)?;
+                match listed.iter().find(|module| module.module_id == module_id) {
+                    None => return Err(ErrorKind::ModuleNotFound),
+                    Some(module) if module.official => return Err(ErrorKind::OfficialModule),
+                    Some(_) => {}
+                }
+                self.supervisor
+                    .stop(module_id)
+                    .await
+                    .map_err(|error| map_supervisor_error(ModuleOperationKind::Stop, &error))?;
+                self.publisher
+                    .uninstall(module_id)
+                    .await
+                    .map(|()| ModuleOperationOutcome::Uninstalled)
+                    .map_err(map_management_error)
+            }
             ModuleOperationKind::Update => {
                 let source = self.sources.resolve(module_id).map_err(map_source_error)?;
                 self.supervisor
@@ -399,6 +604,7 @@ fn map_supervisor_error(kind: ModuleOperationKind, error: &ModuleSupervisorError
             ErrorKind::ModuleNotFound
         }
         ModuleSupervisorError::Package(ModulePackageError::Disabled) => ErrorKind::Disabled,
+        ModuleSupervisorError::Package(ModulePackageError::Incompatible) => ErrorKind::Incompatible,
         ModuleSupervisorError::Package(_) => ErrorKind::PackageInvalid,
         ModuleSupervisorError::Load(_) if stopping => ErrorKind::StopFailed,
         ModuleSupervisorError::Load(_) => ErrorKind::LoadFailed,
@@ -418,6 +624,18 @@ fn map_supervisor_error(kind: ModuleOperationKind, error: &ModuleSupervisorError
         ModuleSupervisorError::RollbackFailed {
             module_disabled: false,
         } => ErrorKind::Internal,
+        ModuleSupervisorError::NotAdmitted => ErrorKind::NotAdmitted,
+    }
+}
+
+fn map_management_error(error: dgos_modules::ManagementError) -> ErrorKind {
+    match error {
+        dgos_modules::ManagementError::NotPublished => ErrorKind::ModuleNotFound,
+        dgos_modules::ManagementError::Official => ErrorKind::OfficialModule,
+        dgos_modules::ManagementError::Package(ModulePackageError::Database(_)) => {
+            ErrorKind::Internal
+        }
+        dgos_modules::ManagementError::Package(_) => ErrorKind::PackageInvalid,
     }
 }
 
@@ -440,7 +658,8 @@ mod tests {
         sea_orm::{ConnectionTrait, Database, DatabaseConnection},
     };
     use dgos_modules::{
-        LocalArtifactLoader, ModuleLoadError, ModuleRuntimeError, VerifiedModuleArtifact,
+        LoadPhase, LocalArtifactLoader, ModuleLoadError, ModuleRuntimeError, PageFailureStage,
+        VerifiedModuleArtifact,
     };
     use std::fs;
     use std::future::Future;
@@ -529,24 +748,25 @@ mod tests {
     }
 
     fn write_package(dir: &Path, module_id: &str, version: &str) {
-        use sha2::{Digest, Sha256};
         fs::create_dir_all(dir).unwrap();
-        let body = format!("export default '{module_id}@{version}';");
-        fs::write(dir.join("entry.js"), &body).unwrap();
-        let mut hasher = Sha256::new();
-        hasher.update(b"entry.js");
-        hasher.update([0]);
-        hasher.update(body.as_bytes());
         fs::write(
-            dir.join("manifest.json"),
-            serde_json::json!({
-                "id": module_id, "name": "Example", "version": version, "entry": "entry.js",
-                "artifact": {"version": version, "sha256": format!("{:x}", hasher.finalize())},
-                "permissions": ["providers.call"]
-            })
-            .to_string(),
+            dir.join("entry.js"),
+            format!("export default '{module_id}@{version}';"),
         )
         .unwrap();
+        // The digest excludes `artifact.sha256`, so write a placeholder first.
+        let manifest = |sha256: &str| {
+            serde_json::json!({
+                "id": module_id, "name": "Example", "version": version, "entry": "entry.js",
+                "artifact": {"version": version, "sha256": sha256},
+                "permissions": ["providers.call"]
+            })
+            .to_string()
+        };
+        fs::write(dir.join("manifest.json"), manifest(&"0".repeat(64))).unwrap();
+        let integrity = dgos_modules::package_integrity(dir).unwrap();
+        let hex = integrity.strip_prefix("v2:").unwrap();
+        fs::write(dir.join("manifest.json"), manifest(hex)).unwrap();
     }
 
     struct Fixture {
@@ -1145,11 +1365,6 @@ mod tests {
                 ErrorKind::Disabled,
             ),
             (
-                Start,
-                ModuleSupervisorError::Load(ModuleLoadError::ArtifactChanged),
-                ErrorKind::LoadFailed,
-            ),
-            (
                 Update,
                 ModuleSupervisorError::Load(ModuleLoadError::Rejected("x".into())),
                 ErrorKind::LoadFailed,
@@ -1217,6 +1432,43 @@ mod tests {
                     module_disabled: false,
                 },
                 ErrorKind::Internal,
+            ),
+            (
+                Start,
+                ModuleSupervisorError::NotAdmitted,
+                ErrorKind::NotAdmitted,
+            ),
+            (
+                Update,
+                ModuleSupervisorError::NotAdmitted,
+                ErrorKind::NotAdmitted,
+            ),
+            (
+                Start,
+                ModuleSupervisorError::Load(ModuleLoadError::Timeout(LoadPhase::Start)),
+                ErrorKind::LoadFailed,
+            ),
+            (
+                Stop,
+                ModuleSupervisorError::Load(ModuleLoadError::Timeout(LoadPhase::Stop)),
+                ErrorKind::StopFailed,
+            ),
+            (
+                Start,
+                ModuleSupervisorError::Load(ModuleLoadError::HostNotAttached),
+                ErrorKind::LoadFailed,
+            ),
+            (
+                Start,
+                ModuleSupervisorError::Load(ModuleLoadError::PageRejected(
+                    PageFailureStage::Render,
+                )),
+                ErrorKind::LoadFailed,
+            ),
+            (
+                Stop,
+                ModuleSupervisorError::Load(ModuleLoadError::PageLost),
+                ErrorKind::StopFailed,
             ),
         ];
         for (kind, error, expected) in cases {

@@ -62,7 +62,7 @@ keyring = { version = "3.6", features = ["sync-secret-service", "crypto-rust"] }
 # Real-WebView smoke harness for the module lifecycle commands (D035). Off by
 # default; it embeds ../dist and drives a hidden WKWebView/WebView2 window.
 # Run: npm run smoke:tauri
-webview-smoke = ["tauri/custom-protocol", "dep:sha2"]
+webview-smoke = ["tauri/custom-protocol", "dep:sha2", "dgos-providers/test-support"]
 
 [dependencies.sha2]
 workspace = true
@@ -71,5 +71,23 @@ optional = true
 [[test]]
 name = "webview_smoke"
 path = "tests/webview_smoke.rs"
+harness = false
+required-features = ["webview-smoke"]
+
+[[test]]
+name = "webview_smoke_real"
+path = "tests/webview_smoke_real.rs"
+harness = false
+required-features = ["webview-smoke"]
+
+[[test]]
+name = "webview_smoke_call"
+path = "tests/webview_smoke_call.rs"
+harness = false
+required-features = ["webview-smoke"]
+
+[[test]]
+name = "webview_smoke_modules"
+path = "tests/webview_smoke_modules.rs"
 harness = false
 required-features = ["webview-smoke"]

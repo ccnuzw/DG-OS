@@ -3,6 +3,7 @@ pub mod mcp_server_tools;
 pub mod mcp_servers;
 pub mod mcp_usage_logs;
 pub mod models;
+pub mod module_crash_logs;
 pub mod module_permission_audits;
 pub mod module_permissions;
 pub mod module_update_events;
@@ -25,6 +26,7 @@ pub mod prelude {
     pub use super::mcp_servers::Entity as McpServers;
     pub use super::mcp_usage_logs::Entity as McpUsageLogs;
     pub use super::models::Entity as Models;
+    pub use super::module_crash_logs::Entity as ModuleCrashLogs;
     pub use super::module_permission_audits::Entity as ModulePermissionAudits;
     pub use super::module_permissions::Entity as ModulePermissions;
     pub use super::module_update_events::Entity as ModuleUpdateEvents;

@@ -4,6 +4,7 @@
 mod capabilities;
 mod commands;
 mod host;
+mod module_host;
 mod provider_credentials;
 #[cfg(feature = "webview-smoke")]
 pub mod smoke;
@@ -21,7 +22,7 @@ pub fn run() {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
-    tauri::Builder::default()
+    module_host::install(tauri::Builder::default())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // Initialize database connection
@@ -127,11 +128,64 @@ pub fn run() {
                 let module_release = capabilities::ModuleReleaseService::new(
                     module_publisher.clone(),
                 );
-                let module_operations = capabilities::ModuleOperationManager::new(
+                // Modules shipped with the host (D052). The shipped directory
+                // is checked against the compiled-in pins first; a mismatch
+                // publishes nothing and the host runs without bundled modules.
+                #[cfg(debug_assertions)]
+                let bundled_modules_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../bundled-modules");
+                #[cfg(not(debug_assertions))]
+                let bundled_modules_dir = app_handle
+                    .path()
+                    .resource_dir()
+                    .expect("Failed to locate application resources")
+                    .join("bundled-modules");
+                match module_publisher
+                    .provision_builtin(&bundled_modules_dir)
+                    .await
+                {
+                    Ok(report) => tracing::info!(
+                        "Bundled modules: {} published, {} already present, {} kept at another release",
+                        report.published.len(),
+                        report.present.len(),
+                        report.kept_other_release.len()
+                    ),
+                    Err(dgos_modules::ProvisionError::Bundle(violations)) => tracing::error!(
+                        "Bundled modules rejected, none published: {} violation(s)",
+                        violations.len()
+                    ),
+                    Err(error) => tracing::error!("Bundled modules could not be published: {error}"),
+                }
+                // Real module execution runs in the main WebView page (D042).
+                // Admission is the host's pinned list (D041/D052). With no
+                // page attached `start` fails closed (D043); there is no
+                // fallback to a loader that does not execute code.
+                let module_transport = Arc::new(module_host::ChannelTransport::default());
+                let (module_loader, module_lost) = dgos_modules::PageModuleLoader::new(
+                    module_transport.clone(),
+                    dgos_modules::PageLoaderConfig::default(),
+                );
+                let module_router =
+                    Arc::new(dgos_modules::ModuleCallRouter::new(module_loader.clone()));
+                let module_supervisor = dgos_modules::ModuleRuntimeSupervisor::new(
                     module_publisher.clone(),
-                    Arc::new(dgos_modules::LocalArtifactLoader),
+                    Arc::new(module_loader.clone()),
+                )
+                .with_admission(Arc::new(dgos_modules::PinnedModuleAdmission::builtin()))
+                .with_ready_observer(Arc::new(module_host::RoutePublisher::new(
+                    module_router.clone(),
+                    module_transport.clone(),
+                )));
+                let module_operations = capabilities::ModuleOperationManager::with_supervisor(
+                    module_publisher.clone(),
+                    module_supervisor,
                     dgos_modules::LocalModuleSources::new(module_sources_dir),
                 );
+                module_operations
+                    .spawn_lost_runtime_reporter(module_lost)
+                    .expect("Failed to start the module runtime loss reporter");
+                let module_host_bridge =
+                    module_host::ModuleHostBridge::new(module_loader, module_transport);
                 // Fail-closed (D034): a recovery failure does not abort the
                 // desktop app, but start/update stay refused until a later
                 // recovery succeeds. No module runtime is started here.
@@ -145,18 +199,51 @@ pub fn run() {
                         error.code()
                     ),
                 }
+                let module_permissions_repo = module_permissions.clone();
                 let host_capabilities =
                     capabilities::HostCapabilityService::with_publisher(
                         module_permissions,
                         module_publisher.clone(),
                     );
+                let module_crashes = dgos_application::ModuleCrashService::new(
+                    dgos_db::ModuleCrashRepository::new(db.clone()),
+                    module_operations.clone(),
+                );
+                // D059: a module that already crashed too often inside the
+                // window is disabled before any auto-load can start it.
+                match module_crashes
+                    .enforce_on_startup(&dgos_types::HostSession::local_default())
+                    .await
+                {
+                    Ok(disabled) if disabled.is_empty() => {}
+                    Ok(disabled) => tracing::warn!(
+                        "Startup crash evaluation disabled {} module(s): {}",
+                        disabled.len(),
+                        disabled.join(", ")
+                    ),
+                    Err(error) => {
+                        tracing::error!("Startup crash evaluation failed: {error}")
+                    }
+                }
+                app_handle.manage(dgos_application::ModuleManagementService::new(
+                    module_permissions_repo,
+                    module_operations.clone(),
+                    module_crashes.clone(),
+                ));
+                app_handle.manage(module_crashes);
+                app_handle.manage(module_host::StartupLoad);
                 app_handle.manage(capabilities::ProviderCallService::new(
                     host_capabilities.clone(),
                 ));
+                app_handle.manage(capabilities::ModuleCapabilityDispatchService::new(
+                    host_capabilities.clone(),
+                ));
+                app_handle.manage(module_router);
                 app_handle.manage(module_release);
                 app_handle.manage(module_operations);
                 app_handle.manage(host_capabilities);
                 app_handle.manage(module_publisher);
+                app_handle.manage(module_host_bridge);
 
                 // Store managers in app state
                 app_handle.manage(manager);
@@ -235,6 +322,20 @@ pub fn run() {
             commands::update_module,
             commands::get_module_operation,
             commands::get_module_runtime_status,
+            // Module host bridge (D046): page attach and receipt only
+            commands::attach_module_host,
+            commands::report_module_host,
+            commands::report_module_crash,
+            // Module capability call (D051): typed, one command per capability
+            commands::module_call_provider,
+            // Module management (D055)
+            commands::enable_module,
+            commands::disable_module,
+            commands::uninstall_module,
+            commands::list_modules,
+            commands::grant_module_permission,
+            commands::revoke_module_permission,
+            commands::list_module_crashes,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

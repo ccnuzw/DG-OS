@@ -13,6 +13,9 @@ pub enum ModuleOperationKind {
     Start,
     Stop,
     Update,
+    Enable,
+    Disable,
+    Uninstall,
 }
 
 /// `queued → running → succeeded | failed`. A terminal state never changes.
@@ -42,6 +45,9 @@ pub enum ModuleOperationOutcome {
     Updated,
     UpdatedPendingRelease,
     Unchanged,
+    Enabled,
+    Disabled,
+    Uninstalled,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -75,6 +81,13 @@ pub enum ModuleOperationErrorKind {
     OperationNotFound,
     HostUnavailable,
     Internal,
+    /// The package is not on the host admission list (D041).
+    NotAdmitted,
+    /// The manifest requires a host API or React major this host does not
+    /// provide (D055). Nothing was loaded.
+    Incompatible,
+    /// Uninstall was refused for a module that ships with the host (D055).
+    OfficialModule,
 }
 
 impl ModuleOperationErrorKind {
@@ -93,6 +106,9 @@ impl ModuleOperationErrorKind {
             Self::OperationNotFound => 1004018,
             Self::HostUnavailable => 1004019,
             Self::Internal => 1004020,
+            Self::NotAdmitted => 1004021,
+            Self::Incompatible => 1004022,
+            Self::OfficialModule => 1004023,
         }
     }
 
@@ -111,6 +127,9 @@ impl ModuleOperationErrorKind {
             Self::OperationNotFound => "Module operation not found",
             Self::HostUnavailable => "Module host is not available",
             Self::Internal => "Internal module host error",
+            Self::NotAdmitted => "Module is not admitted for execution",
+            Self::Incompatible => "Module is not compatible with this host version",
+            Self::OfficialModule => "Bundled module cannot be uninstalled; disable it instead",
         }
     }
 
@@ -167,6 +186,9 @@ pub struct ModuleRuntimeStatusView {
     /// Retired runtimes whose loader release is unconfirmed; `stop` retries.
     pub pending_releases: usize,
     pub active_operation_id: Option<String>,
+    /// Whether the host's loader runs module code (D043). `false` means a
+    /// `ready` runtime was only validated, never executed.
+    pub executes_module_code: bool,
 }
 
 /// Returned by lifecycle commands once the host accepted the operation.
@@ -175,11 +197,50 @@ pub struct ModuleOperationAccepted {
     pub operation_id: String,
 }
 
+/// One permission a module declares, and whether the user granted it (D055).
+/// `permission` is the D006 string (`providers.call`, ...).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ModulePermissionView {
+    pub permission: String,
+    pub granted: bool,
+}
+
+/// What the management page shows for one published module. It carries no
+/// path, URL, runtime handle, user id or digest of the source: `integrity`
+/// is the published package digest, shown for support, never an input.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ModuleSummaryView {
+    pub module_id: String,
+    pub name: String,
+    pub version: String,
+    pub integrity: String,
+    /// Ships with the host; it can be disabled but never uninstalled.
+    pub official: bool,
+    pub enabled: bool,
+    pub permissions: Vec<ModulePermissionView>,
+    pub runtime: ModuleRuntimeStatusView,
+    /// Crashes recorded for this module in the last 24 hours.
+    pub recent_crashes: u32,
+}
+
+/// A recorded post-mount crash (D055). Stack frames are host-sanitized:
+/// frame lines only, no message text, no URLs or paths.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ModuleCrashView {
+    pub crash_id: String,
+    pub module_id: String,
+    pub module_version: String,
+    pub source: String,
+    pub error_name: String,
+    pub stack: String,
+    pub created_at: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const ALL: [ModuleOperationErrorKind; 13] = [
+    const ALL: [ModuleOperationErrorKind; 16] = [
         ModuleOperationErrorKind::ModuleNotFound,
         ModuleOperationErrorKind::AlreadyRunning,
         ModuleOperationErrorKind::LoadFailed,
@@ -193,6 +254,9 @@ mod tests {
         ModuleOperationErrorKind::OperationNotFound,
         ModuleOperationErrorKind::HostUnavailable,
         ModuleOperationErrorKind::Internal,
+        ModuleOperationErrorKind::NotAdmitted,
+        ModuleOperationErrorKind::Incompatible,
+        ModuleOperationErrorKind::OfficialModule,
     ];
 
     #[test]

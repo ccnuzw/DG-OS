@@ -121,3 +121,27 @@ describe('viewer', () => {
     expect(content().querySelector('h1, h2')).not.toBeNull();
   });
 });
+
+describe('table styling', () => {
+  // jsdom has no layout engine, but it parses the embedded stylesheet. A header cell that no padding rule
+  // matches is rendered unstyled, which is how the feature list and evolution matrix once looked.
+  function paddingRuleFor(element: Element) {
+    for (const sheet of Array.from(dom.window.document.styleSheets)) {
+      for (const rule of Array.from(sheet.cssRules) as CSSStyleRule[]) {
+        if (!rule.selectorText || !rule.style) continue;
+        try {
+          if (element.matches(rule.selectorText) && rule.style.padding) return rule;
+        } catch {
+          // selector jsdom cannot evaluate
+        }
+      }
+    }
+    return null;
+  }
+
+  it.each(['overview', 'features', 'evolution'])('styles the table header cells of the %s view', async (view) => {
+    const th = (await openView(view)).querySelector('table th');
+    expect(th, `${view} renders a table`).not.toBeNull();
+    expect(paddingRuleFor(th!), `${view} table header has a padding rule`).not.toBeNull();
+  });
+});

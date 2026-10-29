@@ -33,7 +33,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": {"../skills/": "skills/"}
+    "resources": {"../skills/": "skills/", "../bundled-modules/": "bundled-modules/"}
   },
   "plugins": {}
 }

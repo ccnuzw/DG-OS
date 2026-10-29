@@ -1151,7 +1151,9 @@ button {
   border-radius: 8px;
 }
 
-.article table {
+.article table,
+.feature-table table,
+.evolution-grid table {
   width: 100%;
   border-collapse: collapse;
   min-width: 520px;
@@ -1159,21 +1161,46 @@ button {
 }
 
 .article th,
-.article td {
+.article td,
+.feature-table th,
+.feature-table td,
+.evolution-grid th,
+.evolution-grid td {
   padding: 10px 11px;
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: top;
 }
 
-.article th {
+.article th,
+.feature-table th,
+.evolution-grid th {
   background: var(--surface-alt);
   color: var(--muted);
   font-size: 12px;
 }
 
-.article tr:last-child td {
+.article tr:last-child td,
+.feature-table tr:last-child td,
+.evolution-grid tr:last-child td,
+.evolution-grid tr:last-child th {
   border-bottom: 0;
+}
+
+.feature-table td:first-child {
+  white-space: nowrap;
+}
+
+.feature-table td:nth-child(2) {
+  min-width: 220px;
+}
+
+.feature-table td:nth-child(n+3) {
+  white-space: nowrap;
+}
+
+.feature-table td:last-child {
+  white-space: normal;
 }
 
 mark {

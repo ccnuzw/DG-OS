@@ -8,7 +8,6 @@ use dgos_db::{
 };
 use dgos_types::{HostExecutionContext, HostSession};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
     fs, io,
@@ -21,19 +20,48 @@ use std::{
 use thiserror::Error;
 use uuid::Uuid;
 
+mod admission;
+mod bundled;
+mod call_channel;
+mod compat;
+mod digest;
 mod loader;
+mod management;
+mod migration;
+mod page_loader;
+mod release_gate;
 mod runtime;
 mod sources;
 mod supervisor;
 
-pub use loader::{LocalArtifactLoader, ModuleLoadError, ModuleLoader, VerifiedModuleArtifact};
+pub use admission::{ModuleAdmission, PinnedModuleAdmission};
+pub use bundled::{ProvisionError, ProvisionReport};
+pub use call_channel::{
+    BoundModuleCall, CallRejection, ModuleCallRoute, ModuleCallRouter, MAX_IN_FLIGHT_CALLS,
+};
+pub use compat::{Requires, HOST_API_VERSION, HOST_REACT_VERSION};
+pub use digest::package_integrity;
+pub use loader::{
+    LoadPhase, LocalArtifactLoader, ModuleLoadError, ModuleLoader, PageFailureStage,
+    VerifiedModuleArtifact,
+};
+pub use management::{ManagementError, PublishedModule};
+pub use migration::IntegrityMigrationReport;
+pub use page_loader::{
+    Attachment, ModulePageTransport, PageInstruction, PageLoaderConfig, PageModuleLoader,
+    PageReceipt, PageSendError, ReceiptDisposition, RuntimeLost,
+};
+pub use release_gate::{
+    verify_builtin_release_bundle, verify_release_bundle, ReleasePin, ReleaseViolation,
+};
 pub use runtime::{
     ModuleRequest, ModuleRequestOutcome, ModuleRequestStats, ModuleRuntimeError,
     ModuleRuntimeHandle, ModuleRuntimeState,
 };
 pub use sources::{LocalModuleSources, ModuleSourceError};
 pub use supervisor::{
-    ModuleRuntimeSupervisor, ModuleSupervisorError, ModuleUpdateOutcome, ModuleUpdateReport,
+    LoaderTimeouts, ModuleReadyObserver, ModuleRuntimeSupervisor, ModuleSupervisorError,
+    ModuleUpdateOutcome, ModuleUpdateReport,
 };
 
 #[derive(Debug, Error)]
@@ -52,6 +80,9 @@ pub enum ModulePackageError {
     /// The module is registered but disabled (D035).
     #[error("module is disabled")]
     Disabled,
+    /// The manifest's `requires` is not satisfied by this host (D055).
+    #[error("module is not compatible with this host version")]
+    Incompatible,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -64,6 +95,8 @@ pub struct ModuleManifest {
     pub artifact: Artifact,
     #[serde(default)]
     pub permissions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires: Option<Requires>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -183,11 +216,12 @@ impl ModulePublisher {
             .map_err(db_error)?
             .ok_or_else(|| ModulePackageError::Database("module is not registered".into()))?;
         if !module.is_enabled
-            || self.recover(module_id)?.as_deref() != Some(module.current_version.as_str())
+            || self.pointer_version(module_id).as_deref() != Some(module.current_version.as_str())
             || !self.current_package_matches(
                 module_id,
                 &module.current_version,
                 &module.integrity,
+                &module.manifest,
             )?
         {
             return Err(ModulePackageError::Manifest(
@@ -251,6 +285,8 @@ impl ModulePublisher {
             module_id,
             &module.current_version,
             &module.integrity,
+            true,
+            Some(&module.manifest),
         )?;
         let context = HostExecutionContext::for_module_session(
             session,
@@ -261,56 +297,60 @@ impl ModulePublisher {
         Ok(ModuleRuntimeHandle::issue(context, artifact))
     }
 
-    /// The single artifact check used before any loader sees a package:
-    /// identity, manifest/release agreement, local entry rules, no symlinks,
-    /// SHA-256 digest, and a canonical entry that stays inside the package.
+    /// The single artifact check used before any loader sees a package. The
+    /// package is read once (D057): identity, manifest/release agreement, the
+    /// v2 digest and the entry bytes all come from that one read, so what is
+    /// verified is exactly what a loader executes. `integrity` must be a v2
+    /// value; legacy values never execute. `published_manifest` is the
+    /// manifest recorded for the release (the `modules` row or a rollback
+    /// snapshot) and must agree with the one on disk. `require_compatible`
+    /// also enforces the manifest's host requirements; rollback to a
+    /// previously published release passes `false`.
     fn verify_artifact(
         &self,
         package_root: &Path,
         module_id: &str,
         version: &str,
         integrity: &str,
+        require_compatible: bool,
+        published_manifest: Option<&serde_json::Value>,
     ) -> Result<VerifiedModuleArtifact, ModulePackageError> {
         if !valid_module_id(module_id) || !valid_version_path(version) {
             return Err(ModulePackageError::Manifest(
                 "invalid module identity".into(),
             ));
         }
-        if !fs::symlink_metadata(package_root)?.is_dir() {
-            return Err(ModulePackageError::Manifest(
-                "package root is not a directory".into(),
-            ));
+        if !digest::is_v2_integrity(integrity) {
+            return Err(ModulePackageError::Integrity);
         }
-        let manifest: ModuleManifest =
-            serde_json::from_slice(&fs::read(package_root.join("manifest.json"))?)
-                .map_err(|error| ModulePackageError::Manifest(error.to_string()))?;
+        let snapshot = digest::read_package(package_root, false)?;
+        let manifest = &snapshot.manifest;
         if manifest.id != module_id
             || manifest.version != version
             || manifest.artifact.version != version
-            || !valid_relative_entry(&manifest.entry)
         {
             return Err(ModulePackageError::Manifest(
                 "manifest does not match the release".into(),
             ));
         }
-        if !manifest.artifact.sha256.eq_ignore_ascii_case(integrity)
-            || !package_digest(package_root)?.eq_ignore_ascii_case(integrity)
-        {
+        if snapshot.integrity != integrity {
             return Err(ModulePackageError::Integrity);
         }
-        let root = package_root.canonicalize()?;
-        let entry = root.join(&manifest.entry).canonicalize()?;
-        if !entry.starts_with(&root) || !fs::symlink_metadata(&entry)?.is_file() {
-            return Err(ModulePackageError::Manifest(
-                "module entry is not a local package file".into(),
-            ));
+        if let Some(published) = published_manifest {
+            if !manifest_matches(published, manifest) {
+                return Err(ModulePackageError::Manifest(
+                    "manifest does not match the published record".into(),
+                ));
+            }
+        }
+        if require_compatible && compat::check(manifest.requires.as_ref()).is_err() {
+            return Err(ModulePackageError::Incompatible);
         }
         Ok(VerifiedModuleArtifact::new(
             module_id.to_owned(),
             version.to_owned(),
             integrity.to_owned(),
-            root,
-            entry,
+            snapshot.entry,
         ))
     }
 
@@ -325,6 +365,8 @@ impl ModulePublisher {
             &package.module_id,
             &package.version,
             &package.integrity,
+            true,
+            None,
         )
     }
 
@@ -375,6 +417,8 @@ impl ModulePublisher {
             &snapshot.module_id,
             &snapshot.version,
             &snapshot.integrity,
+            false,
+            Some(&snapshot.manifest),
         )?;
         // If the DB step below fails, the caller disables the module, which
         // removes this pointer again; startup recovery follows the DB row.
@@ -467,16 +511,19 @@ impl ModulePublisher {
         version: &str,
         integrity: &str,
     ) -> Result<bool, ModulePackageError> {
-        let module = modules::Entity::find_by_id(module_id)
+        let Some(module) = modules::Entity::find_by_id(module_id)
             .one(&self.db)
             .await
-            .map_err(db_error)?;
-        if !module.is_some_and(|module| {
-            module.is_enabled && module.current_version == version && module.integrity == integrity
-        }) {
+            .map_err(db_error)?
+            .filter(|module| {
+                module.is_enabled
+                    && module.current_version == version
+                    && module.integrity == integrity
+            })
+        else {
             return Ok(false);
-        }
-        self.current_package_matches(module_id, version, integrity)
+        };
+        self.current_package_matches(module_id, version, integrity, &module.manifest)
     }
 
     /// Copy into a staging directory and validate before it can affect the
@@ -547,9 +594,8 @@ impl ModulePublisher {
         &self,
         staging: &Path,
     ) -> Result<(ModuleManifest, String), ModulePackageError> {
-        let manifest_path = staging.join("manifest.json");
-        let manifest: ModuleManifest = serde_json::from_slice(&fs::read(&manifest_path)?)
-            .map_err(|e| ModulePackageError::Manifest(e.to_string()))?;
+        let snapshot = digest::read_package(staging, false)?;
+        let manifest = snapshot.manifest;
         if manifest.id.is_empty()
             || manifest.version.is_empty()
             || manifest.name.is_empty()
@@ -563,7 +609,6 @@ impl ModulePublisher {
                 .bytes()
                 .all(|byte| byte.is_ascii_hexdigit())
             || !valid_relative_entry(&manifest.entry)
-            || !staging.join(&manifest.entry).is_file()
         {
             return Err(ModulePackageError::Manifest(
                 "invalid identity, version or local entry".into(),
@@ -573,25 +618,42 @@ impl ModulePublisher {
             ModulePermission::parse(permission)
                 .map_err(|_| ModulePackageError::Manifest("invalid module permission".into()))?;
         }
-        let integrity = package_digest(staging)?;
-        if !manifest.artifact.sha256.eq_ignore_ascii_case(&integrity) {
+        // The declared digest is a build-tool consistency check for new
+        // packages. It is not part of the digest and is never read at run
+        // time (D057).
+        let declared_matches = digest::v2_hex(&snapshot.integrity)
+            .is_some_and(|hex| manifest.artifact.sha256.eq_ignore_ascii_case(hex));
+        if !declared_matches {
             return Err(ModulePackageError::Integrity);
         }
-        Ok((manifest, integrity))
+        if compat::check(manifest.requires.as_ref()).is_err() {
+            return Err(ModulePackageError::Incompatible);
+        }
+        Ok((manifest, snapshot.integrity))
     }
 
     /// Atomically publish files and then update the DB pointer. The old
     /// version remains on disk so startup recovery can roll back safely.
     pub async fn commit(&self, package: StagedPackage) -> Result<(), ModulePackageError> {
+        self.commit_with(package, FirstPublish::default()).await
+    }
+
+    /// `commit` with the state a first-time row is created in (D058).
+    pub(crate) async fn commit_with(
+        &self,
+        package: StagedPackage,
+        first: FirstPublish,
+    ) -> Result<(), ModulePackageError> {
         let _publish_guard = self.publish_lock.lock().await;
         let lease = self.acquire_release_lock().await?;
-        self.commit_locked(package, &lease).await
+        self.commit_locked(package, &lease, first).await
     }
 
     async fn commit_locked(
         &self,
         package: StagedPackage,
         lease: &ReleaseLease,
+        first: FirstPublish,
     ) -> Result<(), ModulePackageError> {
         lease.ensure_valid()?;
         let (validated_manifest, validated_integrity) =
@@ -608,6 +670,7 @@ impl ModulePublisher {
             .join("versions")
             .join(&package.module_id)
             .join(&package.version);
+        fs::create_dir_all(version_dir.parent().unwrap())?;
         if version_dir.exists() {
             if self
                 .existing_release_matches(&package.module_id, &package.version, &package.integrity)
@@ -616,13 +679,29 @@ impl ModulePublisher {
                 let _ = fs::remove_dir_all(&package.staging_path);
                 return Ok(());
             }
-            return Err(ModulePackageError::Manifest(
-                "version already exists with a different integrity".into(),
-            ));
+            if self
+                .release_is_registered(&package.module_id, &package.version)
+                .await?
+            {
+                return Err(ModulePackageError::Manifest(
+                    "version already exists with a different integrity".into(),
+                ));
+            }
+            // D057: no committed row refers to this directory, so it is the
+            // leftover of an interrupted commit. Redo it from the staged copy
+            // that was just validated instead of trusting the leftover.
+            fs::remove_dir_all(&version_dir)?;
         }
-        fs::create_dir_all(version_dir.parent().unwrap())?;
         fs::rename(&package.staging_path, &version_dir)?;
         fs::File::open(version_dir.parent().unwrap())?.sync_all()?;
+        // The staged copy was validated before the rename. Read what is now
+        // in place once more, so a change in between never becomes a release.
+        let renamed = digest::read_package(&version_dir, false).map(|read| read.integrity);
+        if !matches!(&renamed, Ok(integrity) if integrity.eq_ignore_ascii_case(&package.integrity))
+        {
+            let _ = fs::remove_dir_all(&version_dir);
+            return Err(ModulePackageError::Integrity);
+        }
         let pointer_dir = self.root.join("current").join(&package.module_id);
         let previous = fs::read_to_string(pointer_dir.join("version")).ok();
         let publish_result = async {
@@ -647,8 +726,8 @@ impl ModulePublisher {
                     integrity: Set(package.integrity.clone()),
                     entry_url: Set(Some(package.entry.clone())),
                     icon_url: Set(None),
-                    is_official: Set(false),
-                    is_enabled: Set(true),
+                    is_official: Set(first.official),
+                    is_enabled: Set(first.enabled),
                     installed_at: Set(chrono::Utc::now().timestamp()),
                     updated_at: Set(chrono::Utc::now().timestamp()),
                 }
@@ -737,6 +816,29 @@ impl ModulePublisher {
         Ok(())
     }
 
+    /// A committed release: a `module_versions` row, or the version a
+    /// module row currently points at.
+    async fn release_is_registered(
+        &self,
+        module_id: &str,
+        version: &str,
+    ) -> Result<bool, ModulePackageError> {
+        let version_row = module_versions::Entity::find()
+            .filter(module_versions::Column::ModuleId.eq(module_id))
+            .filter(module_versions::Column::Version.eq(version))
+            .one(&self.db)
+            .await
+            .map_err(db_error)?;
+        if version_row.is_some() {
+            return Ok(true);
+        }
+        Ok(modules::Entity::find_by_id(module_id)
+            .one(&self.db)
+            .await
+            .map_err(db_error)?
+            .is_some_and(|row| row.current_version == version))
+    }
+
     async fn existing_release_matches(
         &self,
         module_id: &str,
@@ -744,8 +846,13 @@ impl ModulePublisher {
         integrity: &str,
     ) -> Result<bool, ModulePackageError> {
         let package = self.root.join("versions").join(module_id).join(version);
-        if !package.is_dir() || !package_digest(&package)?.eq_ignore_ascii_case(integrity) {
-            return Ok(false);
+        match digest::read_package(&package, false) {
+            Ok(read) if read.integrity.eq_ignore_ascii_case(integrity) => {}
+            Ok(_) | Err(ModulePackageError::Manifest(_)) => return Ok(false),
+            Err(ModulePackageError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(false)
+            }
+            Err(error) => return Err(error),
         }
         let row = module_versions::Entity::find()
             .filter(module_versions::Column::ModuleId.eq(module_id))
@@ -756,10 +863,21 @@ impl ModulePublisher {
         Ok(row.is_some_and(|row| row.integrity.eq_ignore_ascii_case(integrity)))
     }
 
-    /// On startup, only keep a pointer whose package still matches its
-    /// manifest/integrity. A missing or corrupt pointer is removed so the
-    /// caller can disable the module instead of loading unknown code.
-    pub fn recover(&self, module_id: &str) -> Result<Option<String>, ModulePackageError> {
+    /// The version the current-version pointer names, if any.
+    fn pointer_version(&self, module_id: &str) -> Option<String> {
+        if !valid_module_id(module_id) {
+            return None;
+        }
+        fs::read_to_string(self.root.join("current").join(module_id).join("version"))
+            .ok()
+            .map(|value| value.trim().to_owned())
+    }
+
+    /// On startup, only keep a pointer whose package still equals the
+    /// integrity committed for that version. A missing or corrupt pointer is
+    /// removed so the caller can disable the module instead of loading
+    /// unknown code.
+    pub async fn recover(&self, module_id: &str) -> Result<Option<String>, ModulePackageError> {
         if !valid_module_id(module_id) {
             return Ok(None);
         }
@@ -773,53 +891,71 @@ impl ModulePublisher {
             fs::remove_file(pointer)?;
             return Ok(None);
         }
+        let committed = module_versions::Entity::find()
+            .filter(module_versions::Column::ModuleId.eq(module_id))
+            .filter(module_versions::Column::Version.eq(&version))
+            .one(&self.db)
+            .await
+            .map_err(db_error)?
+            .map(|row| row.integrity);
         let package = self.root.join("versions").join(module_id).join(&version);
-        let manifest: ModuleManifest =
-            serde_json::from_slice(&fs::read(package.join("manifest.json"))?)
-                .map_err(|e| ModulePackageError::Manifest(e.to_string()))?;
-        if manifest.id != module_id
-            || manifest.version != version
-            || !valid_relative_entry(&manifest.entry)
-            || !package.join(&manifest.entry).is_file()
-            || !package_digest(&package)?.eq_ignore_ascii_case(&manifest.artifact.sha256)
-        {
+        let valid = match committed {
+            Some(integrity) => {
+                match self.verify_artifact(&package, module_id, &version, &integrity, false, None) {
+                    Ok(_) => true,
+                    Err(ModulePackageError::Io(error))
+                        if error.kind() != io::ErrorKind::NotFound =>
+                    {
+                        return Err(error.into())
+                    }
+                    Err(_) => false,
+                }
+            }
+            None => false,
+        };
+        if !valid {
             fs::remove_file(pointer)?;
             return Ok(None);
         }
         Ok(Some(version))
     }
 
+    /// Whether the package on disk is exactly the release the `modules` row
+    /// records: integrity (v2) and manifest, from one read.
     fn current_package_matches(
         &self,
         module_id: &str,
         version: &str,
         integrity: &str,
+        manifest: &serde_json::Value,
     ) -> Result<bool, ModulePackageError> {
-        if !valid_module_id(module_id) || !valid_version_path(version) {
-            return Ok(false);
-        }
         let package = self.root.join("versions").join(module_id).join(version);
-        if !package.is_dir() {
-            return Ok(false);
+        match self.verify_artifact(
+            &package,
+            module_id,
+            version,
+            integrity,
+            false,
+            Some(manifest),
+        ) {
+            Ok(_) => Ok(true),
+            Err(ModulePackageError::Integrity | ModulePackageError::Manifest(_)) => Ok(false),
+            Err(ModulePackageError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                Ok(false)
+            }
+            Err(error) => Err(error),
         }
-        let manifest: ModuleManifest =
-            serde_json::from_slice(&fs::read(package.join("manifest.json"))?)
-                .map_err(|error| ModulePackageError::Manifest(error.to_string()))?;
-        Ok(manifest.id == module_id
-            && manifest.version == version
-            && valid_relative_entry(&manifest.entry)
-            && package.join(&manifest.entry).is_file()
-            && manifest.artifact.sha256.eq_ignore_ascii_case(integrity)
-            && package_digest(&package)?.eq_ignore_ascii_case(integrity))
     }
 
     /// Reconcile every registered module before any future loader is allowed
-    /// to execute code. Invalid pointers are fail-closed by disabling the row.
+    /// to execute code. Legacy integrity values are migrated first (D057);
+    /// invalid pointers are fail-closed by disabling the row.
     pub async fn recover_registered(&self) -> Result<Vec<String>, ModulePackageError> {
         let _publish_guard = self.publish_lock.lock().await;
         let lease = self.acquire_release_lock().await?;
         let result = async {
             lease.ensure_valid()?;
+            self.migrate_legacy_locked(&lease).await?;
             let rows = modules::Entity::find()
                 .all(&self.db)
                 .await
@@ -828,7 +964,12 @@ impl ModulePublisher {
             for row in rows {
                 lease.ensure_valid()?;
                 let valid = self
-                    .current_package_matches(&row.id, &row.current_version, &row.integrity)
+                    .current_package_matches(
+                        &row.id,
+                        &row.current_version,
+                        &row.integrity,
+                        &row.manifest,
+                    )
                     .unwrap_or(false);
                 if valid {
                     self.write_pointer(&row.id, &row.current_version)?;
@@ -1046,6 +1187,33 @@ impl ModulePublisher {
     }
 }
 
+/// State a module row is created in by its first publish (D058). Only used
+/// when no row exists; updates never change `official` or `enabled`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FirstPublish {
+    pub(crate) official: bool,
+    pub(crate) enabled: bool,
+}
+
+impl Default for FirstPublish {
+    fn default() -> Self {
+        Self {
+            official: false,
+            enabled: true,
+        }
+    }
+}
+
+/// Whether the manifest recorded for a release equals the one on disk,
+/// ignoring `artifact.sha256` (D057). A record that does not parse as a
+/// manifest never matches.
+fn manifest_matches(recorded: &serde_json::Value, on_disk: &ModuleManifest) -> bool {
+    let Ok(recorded) = serde_json::from_value::<ModuleManifest>(recorded.clone()) else {
+        return false;
+    };
+    digest::manifest_canon(&recorded) == digest::manifest_canon(on_disk)
+}
+
 /// Authoritative release fields captured before a hot update (D033).
 #[derive(Clone, Debug)]
 pub(crate) struct ReleaseSnapshot {
@@ -1136,50 +1304,11 @@ fn error_class(error: &ModulePackageError) -> String {
         ModulePackageError::Io(_) => "io".into(),
         ModulePackageError::Manifest(_) => "manifest".into(),
         ModulePackageError::Integrity => "integrity".into(),
+        ModulePackageError::Incompatible => "incompatible".into(),
         ModulePackageError::Database(_) => "database".into(),
         ModulePackageError::NotPublished => "not_published".into(),
         ModulePackageError::Disabled => "disabled".into(),
     }
-}
-
-fn package_digest(root: &Path) -> Result<String, ModulePackageError> {
-    let mut files = Vec::new();
-    collect_files(root, root, &mut files)?;
-    files.sort_by(|a, b| a.0.cmp(&b.0));
-    let mut hasher = Sha256::new();
-    for (relative, path) in files {
-        hasher.update(relative.as_bytes());
-        hasher.update([0]);
-        hasher.update(fs::read(path)?);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
-}
-
-fn collect_files(
-    root: &Path,
-    current: &Path,
-    files: &mut Vec<(String, PathBuf)>,
-) -> Result<(), ModulePackageError> {
-    for entry in fs::read_dir(current)? {
-        let entry = entry?;
-        let path = entry.path();
-        if fs::symlink_metadata(&path)?.file_type().is_symlink() {
-            return Err(ModulePackageError::Manifest(
-                "symbolic links are not allowed".into(),
-            ));
-        }
-        if path.is_dir() {
-            collect_files(root, &path, files)?;
-        } else if path.file_name().is_some_and(|name| name != "manifest.json") {
-            let relative = path
-                .strip_prefix(root)
-                .unwrap()
-                .to_string_lossy()
-                .replace('\\', "/");
-            files.push((relative, path));
-        }
-    }
-    Ok(())
 }
 
 fn copy_dir(source: &Path, target: &Path) -> Result<(), ModulePackageError> {
@@ -1214,33 +1343,47 @@ mod tests {
     use sea_orm_migration::MigratorTrait;
     use tempfile::tempdir;
 
-    fn write_package(dir: &Path, digest: &str) {
-        fs::write(dir.join("entry.js"), "export default {};").unwrap();
-        let manifest = serde_json::json!({"id":"module-1","name":"Example","version":"1.0.0","entry":"entry.js","artifact":{"version":"1.0.0","sha256":digest},"permissions":[]});
+    /// Write `manifest` with its digest sealed in: placeholder first, then
+    /// the v2 value of the resulting package (the manifest is part of the
+    /// digest, the declared `sha256` is not). Returns the integrity, or an
+    /// empty string when the manifest cannot be digested.
+    fn seal_manifest(dir: &Path, manifest: &serde_json::Value) -> String {
+        let mut manifest = manifest.clone();
+        manifest["artifact"]["sha256"] = "0".repeat(64).into();
         fs::write(
             dir.join("manifest.json"),
             serde_json::to_vec(&manifest).unwrap(),
         )
         .unwrap();
+        let Ok(integrity) = package_integrity(dir) else {
+            return String::new();
+        };
+        manifest["artifact"]["sha256"] = digest::v2_hex(&integrity).unwrap().into();
+        fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        integrity
+    }
+
+    fn example_manifest(version: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": "module-1", "name": "Example", "version": version, "entry": "entry.js",
+            "artifact": {"version": version, "sha256": "0".repeat(64)},
+            "permissions": []
+        })
+    }
+
+    /// An entry plus a sealed manifest for `module-1@1.0.0`.
+    fn write_package(dir: &Path) -> String {
+        fs::write(dir.join("entry.js"), "export default {};").unwrap();
+        seal_manifest(dir, &example_manifest("1.0.0"))
     }
 
     fn write_versioned_package(dir: &Path, version: &str) -> String {
         fs::write(dir.join("entry.js"), format!("export default '{version}';")).unwrap();
-        let digest = package_digest(dir).unwrap();
-        let manifest = serde_json::json!({
-            "id": "module-1",
-            "name": "Example",
-            "version": version,
-            "entry": "entry.js",
-            "artifact": {"version": version, "sha256": digest},
-            "permissions": []
-        });
-        fs::write(
-            dir.join("manifest.json"),
-            serde_json::to_vec(&manifest).unwrap(),
-        )
-        .unwrap();
-        digest
+        seal_manifest(dir, &example_manifest(version))
     }
 
     async fn insert_module_row(
@@ -1270,9 +1413,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn digest_excludes_manifest_and_rejects_bad_integrity() {
+    async fn a_declared_digest_that_is_not_the_v2_digest_is_rejected() {
         let root = tempdir().unwrap();
-        write_package(root.path(), &"0".repeat(64));
+        fs::write(root.path().join("entry.js"), "export default {};").unwrap();
+        fs::write(
+            root.path().join("manifest.json"),
+            serde_json::to_vec(&example_manifest("1.0.0")).unwrap(),
+        )
+        .unwrap();
         let db = Database::connect("sqlite::memory:").await.unwrap();
         let store = tempdir().unwrap();
         let publisher = ModulePublisher::new(store.path(), db);
@@ -1327,20 +1475,9 @@ mod tests {
 
         let root = tempdir().unwrap();
         fs::write(root.path().join("entry.js"), "export default {}; ").unwrap();
-        let digest = package_digest(root.path()).unwrap();
-        fs::write(
-            root.path().join("manifest.json"),
-            serde_json::json!({
-                "id": "module-1",
-                "name": "Example",
-                "version": "1.0.0",
-                "entry": "entry.js",
-                "artifact": {"version": "1.0.0", "sha256": digest},
-                "permissions": ["providers.unknown"]
-            })
-            .to_string(),
-        )
-        .unwrap();
+        let mut manifest = example_manifest("1.0.0");
+        manifest["permissions"] = serde_json::json!(["providers.unknown"]);
+        seal_manifest(root.path(), &manifest);
         assert!(matches!(
             publisher.stage(root.path()),
             Err(ModulePackageError::Manifest(_))
@@ -1372,9 +1509,7 @@ mod tests {
     #[tokio::test]
     async fn stage_commit_and_recover_pointer() {
         let source = tempdir().unwrap();
-        fs::write(source.path().join("entry.js"), "export default {};").unwrap();
-        let digest = package_digest(source.path()).unwrap();
-        write_package(source.path(), &digest);
+        write_package(source.path());
         let db = Database::connect("sqlite::memory:").await.unwrap();
         Migrator::up(&db, None).await.unwrap();
         insert_module_row(
@@ -1396,7 +1531,7 @@ mod tests {
         assert_eq!(version_count, 1);
         assert_eq!(event_count, 1);
         assert_eq!(
-            publisher.recover("module-1").unwrap().as_deref(),
+            publisher.recover("module-1").await.unwrap().as_deref(),
             Some("1.0.0")
         );
         let context = publisher
@@ -1413,17 +1548,15 @@ mod tests {
             vec!["module-1"]
         );
         assert_eq!(
-            publisher.recover("module-1").unwrap().as_deref(),
+            publisher.recover("module-1").await.unwrap().as_deref(),
             Some("1.0.0")
         );
     }
 
     #[tokio::test]
-    async fn recovery_accepts_uppercase_manifest_digest_and_rejects_traversal_pointer() {
+    async fn recovery_does_not_read_the_declared_digest_and_rejects_traversal_pointer() {
         let source = tempdir().unwrap();
-        fs::write(source.path().join("entry.js"), "export default {};").unwrap();
-        let digest = package_digest(source.path()).unwrap();
-        write_package(source.path(), &digest);
+        let digest = write_package(source.path());
         let db = Database::connect("sqlite::memory:").await.unwrap();
         Migrator::up(&db, None).await.unwrap();
         let store = tempdir().unwrap();
@@ -1431,13 +1564,16 @@ mod tests {
         let staged = publisher.stage(source.path()).unwrap();
         publisher.commit(staged).await.unwrap();
 
+        // `artifact.sha256` is not authoritative at run time (D057): any
+        // value there leaves the package and its recovery unchanged.
         let manifest_path = store.path().join("versions/module-1/1.0.0/manifest.json");
         let mut manifest: serde_json::Value =
             serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
-        manifest["artifact"]["sha256"] = digest.to_ascii_uppercase().into();
+        manifest["artifact"]["sha256"] =
+            digest::v2_hex(&digest).unwrap().to_ascii_uppercase().into();
         fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
         assert_eq!(
-            publisher.recover("module-1").unwrap().as_deref(),
+            publisher.recover("module-1").await.unwrap().as_deref(),
             Some("1.0.0")
         );
 
@@ -1446,16 +1582,116 @@ mod tests {
         publisher
             .write_pointer("module-1", "../../outside")
             .unwrap();
-        assert_eq!(publisher.recover("module-1").unwrap(), None);
+        assert_eq!(publisher.recover("module-1").await.unwrap(), None);
         assert_eq!(fs::read_to_string(sentinel).unwrap(), "keep");
+    }
+
+    fn write_package_requiring(dir: &Path, requires: Option<serde_json::Value>) {
+        fs::write(dir.join("entry.js"), "export default {};").unwrap();
+        let mut manifest = example_manifest("1.0.0");
+        if let Some(requires) = requires {
+            manifest["requires"] = requires;
+        }
+        seal_manifest(dir, &manifest);
+    }
+
+    #[tokio::test]
+    async fn stage_enforces_declared_host_requirements() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        let store = tempdir().unwrap();
+        let publisher = ModulePublisher::new(store.path(), db);
+
+        for requires in [
+            serde_json::json!({"react": "^20"}),
+            serde_json::json!({"api": HOST_API_VERSION + 1}),
+        ] {
+            let source = tempdir().unwrap();
+            write_package_requiring(source.path(), Some(requires));
+            assert!(matches!(
+                publisher.stage(source.path()),
+                Err(ModulePackageError::Incompatible)
+            ));
+        }
+        assert!(fs::read_dir(store.path().join("staging"))
+            .unwrap()
+            .next()
+            .is_none());
+
+        for requires in [
+            None,
+            Some(serde_json::json!({})),
+            Some(serde_json::json!({"react": "^19", "api": HOST_API_VERSION})),
+        ] {
+            let source = tempdir().unwrap();
+            write_package_requiring(source.path(), requires);
+            publisher.stage(source.path()).unwrap();
+        }
+
+        let source = tempdir().unwrap();
+        write_package_requiring(
+            source.path(),
+            Some(serde_json::json!({"react": "not a range"})),
+        );
+        assert!(matches!(
+            publisher.stage(source.path()),
+            Err(ModulePackageError::Manifest(_))
+        ));
+        assert_eq!(
+            error_class(&ModulePackageError::Incompatible),
+            "incompatible"
+        );
+    }
+
+    #[tokio::test]
+    async fn recovery_keeps_an_already_published_incompatible_module_enabled() {
+        // Compatibility is checked at stage and start, never at recovery
+        // (D055). Such a release cannot be staged any more, so it is placed
+        // the way an older host published it.
+        let source = tempdir().unwrap();
+        write_package_requiring(source.path(), Some(serde_json::json!({"react": "^20"})));
+        let integrity = package_integrity(source.path()).unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(source.path().join("manifest.json")).unwrap())
+                .unwrap();
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        Migrator::up(&db, None).await.unwrap();
+        let store = tempdir().unwrap();
+        let version_dir = store.path().join("versions/module-1/1.0.0");
+        copy_dir(source.path(), &version_dir).unwrap();
+        insert_module_row(&db, "1.0.0", &integrity, manifest).await;
+        module_versions::ActiveModel {
+            id: Set(Uuid::new_v4().to_string()),
+            module_id: Set("module-1".into()),
+            version: Set("1.0.0".into()),
+            integrity: Set(integrity),
+            entry_path: Set("entry.js".into()),
+            created_at: Set(0),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+        let publisher = ModulePublisher::new(store.path(), db.clone());
+
+        assert_eq!(
+            publisher.recover_registered().await.unwrap(),
+            vec!["module-1"]
+        );
+        assert_eq!(
+            publisher.recover("module-1").await.unwrap().as_deref(),
+            Some("1.0.0")
+        );
+        let row = modules::Entity::find_by_id("module-1")
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(row.is_enabled);
     }
 
     #[tokio::test]
     async fn database_publish_failure_restores_pointer_and_keeps_old_module_row() {
         let source = tempdir().unwrap();
-        fs::write(source.path().join("entry.js"), "export default {};").unwrap();
-        let digest = package_digest(source.path()).unwrap();
-        write_package(source.path(), &digest);
+        write_package(source.path());
         let db = Database::connect("sqlite::memory:").await.unwrap();
         Migrator::up(&db, None).await.unwrap();
         insert_module_row(
@@ -1515,7 +1751,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            publisher_a.recover("module-1").unwrap().as_deref(),
+            publisher_a.recover("module-1").await.unwrap().as_deref(),
             Some(module.current_version.as_str())
         );
     }
@@ -1580,9 +1816,7 @@ mod tests {
     #[tokio::test]
     async fn first_install_failure_is_audited_without_creating_module_identity() {
         let source = tempdir().unwrap();
-        fs::write(source.path().join("entry.js"), "export default {};").unwrap();
-        let digest = package_digest(source.path()).unwrap();
-        write_package(source.path(), &digest);
+        write_package(source.path());
         let db = Database::connect("sqlite::memory:").await.unwrap();
         Migrator::up(&db, None).await.unwrap();
         db.execute_unprepared(
@@ -1611,9 +1845,7 @@ mod tests {
     #[tokio::test]
     async fn verified_package_commit_registers_identity_from_manifest() {
         let source = tempdir().unwrap();
-        fs::write(source.path().join("entry.js"), "export default {};").unwrap();
-        let digest = package_digest(source.path()).unwrap();
-        write_package(source.path(), &digest);
+        let digest = write_package(source.path());
         let db = Database::connect("sqlite::memory:").await.unwrap();
         Migrator::up(&db, None).await.unwrap();
         let store = tempdir().unwrap();
@@ -1629,7 +1861,7 @@ mod tests {
         assert_eq!(module.integrity, digest);
         assert_eq!(module.manifest["id"], "module-1");
         assert_eq!(
-            publisher.recover("module-1").unwrap().as_deref(),
+            publisher.recover("module-1").await.unwrap().as_deref(),
             Some("1.0.0")
         );
     }
@@ -1637,9 +1869,7 @@ mod tests {
     #[tokio::test]
     async fn execution_context_rejects_database_integrity_that_does_not_match_package() {
         let source = tempdir().unwrap();
-        fs::write(source.path().join("entry.js"), "export default {};").unwrap();
-        let digest = package_digest(source.path()).unwrap();
-        write_package(source.path(), &digest);
+        write_package(source.path());
         let db = Database::connect("sqlite::memory:").await.unwrap();
         Migrator::up(&db, None).await.unwrap();
         insert_module_row(
@@ -1655,9 +1885,12 @@ mod tests {
         // The package is published, but the DB row deliberately claims a
         // different digest. Context minting must fail closed.
         publisher.commit(staged).await.unwrap();
-        db.execute_unprepared("UPDATE modules SET integrity = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' WHERE id = 'module-1';")
-            .await
-            .unwrap();
+        db.execute_unprepared(&format!(
+            "UPDATE modules SET integrity = 'v2:{}' WHERE id = 'module-1';",
+            "a".repeat(64)
+        ))
+        .await
+        .unwrap();
         assert!(publisher
             .execution_context(&dgos_types::HostSession::local_default(), "module-1")
             .await
@@ -1688,6 +1921,243 @@ mod tests {
         handle.stop().unwrap();
         assert_eq!(handle.state(), ModuleRuntimeState::Stopped);
         assert!(handle.fail().is_err());
+    }
+
+    /// Publish `module-1@1.0.0` with the given permissions and return the
+    /// publisher, the store and the db.
+    async fn published(
+        permissions: &[&str],
+    ) -> (
+        ModulePublisher,
+        tempfile::TempDir,
+        dgos_db::sea_orm::DatabaseConnection,
+    ) {
+        let source = tempdir().unwrap();
+        fs::write(source.path().join("entry.js"), "export default 1;").unwrap();
+        let mut manifest = example_manifest("1.0.0");
+        manifest["permissions"] = serde_json::json!(permissions);
+        seal_manifest(source.path(), &manifest);
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        Migrator::up(&db, None).await.unwrap();
+        let store = tempdir().unwrap();
+        let publisher = ModulePublisher::new(store.path(), db.clone());
+        publisher
+            .commit(publisher.stage(source.path()).unwrap())
+            .await
+            .unwrap();
+        (publisher, store, db)
+    }
+
+    fn installed_manifest(store: &tempfile::TempDir) -> std::path::PathBuf {
+        store.path().join("versions/module-1/1.0.0/manifest.json")
+    }
+
+    #[tokio::test]
+    async fn widening_the_declared_permissions_in_an_installed_manifest_cannot_execute() {
+        let (publisher, store, db) = published(&["providers.call"]).await;
+        let session = dgos_types::HostSession::local_default();
+        publisher
+            .runtime_handle(&session, "module-1")
+            .await
+            .unwrap();
+
+        // Only the manifest changes; every other file is byte-identical, which
+        // the v1 digest could not see.
+        let path = installed_manifest(&store);
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        manifest["permissions"] = serde_json::json!(["providers.call", "providers.list"]);
+        fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
+        assert!(matches!(
+            publisher.runtime_handle(&session, "module-1").await,
+            Err(ModulePackageError::Integrity)
+        ));
+        assert!(publisher
+            .execution_context(&session, "module-1")
+            .await
+            .is_err());
+        assert!(!publisher
+            .validate_execution_identity(
+                "module-1",
+                "1.0.0",
+                &modules::Entity::find_by_id("module-1")
+                    .one(&db)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .integrity,
+            )
+            .await
+            .unwrap());
+        // Startup recovery fails closed: the module is disabled, not run.
+        assert!(publisher.recover_registered().await.unwrap().is_empty());
+        assert!(
+            !modules::Entity::find_by_id("module-1")
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_enabled
+        );
+    }
+
+    #[tokio::test]
+    async fn the_executed_bytes_are_the_verified_bytes_when_the_entry_changes_afterwards() {
+        let (publisher, store, _db) = published(&[]).await;
+        let session = dgos_types::HostSession::local_default();
+        let handle = publisher
+            .runtime_handle(&session, "module-1")
+            .await
+            .unwrap();
+        assert_eq!(handle.artifact().entry_bytes(), b"export default 1;");
+
+        // A change between verification and use does not reach the artifact;
+        // it only makes the next verification fail.
+        fs::write(
+            store.path().join("versions/module-1/1.0.0/entry.js"),
+            "export default 'evil';",
+        )
+        .unwrap();
+        assert_eq!(handle.artifact().entry_bytes(), b"export default 1;");
+        assert!(matches!(
+            publisher.runtime_handle(&session, "module-1").await,
+            Err(ModulePackageError::Integrity)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_legacy_integrity_value_is_never_executable() {
+        let (publisher, _store, db) = published(&[]).await;
+        db.execute_unprepared(&format!(
+            "UPDATE modules SET integrity = '{0}' WHERE id = 'module-1'; \
+             UPDATE module_versions SET integrity = '{0}' WHERE module_id = 'module-1'",
+            "a".repeat(64)
+        ))
+        .await
+        .unwrap();
+        assert!(matches!(
+            publisher
+                .runtime_handle(&dgos_types::HostSession::local_default(), "module-1")
+                .await,
+            Err(ModulePackageError::Integrity)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_staged_copy_changed_before_commit_is_refused() {
+        let source = tempdir().unwrap();
+        write_package(source.path());
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        Migrator::up(&db, None).await.unwrap();
+        let store = tempdir().unwrap();
+        let publisher = ModulePublisher::new(store.path(), db.clone());
+        let staged = publisher.stage(source.path()).unwrap();
+        fs::write(staged.staging_path.join("entry.js"), "export default 'x';").unwrap();
+        assert!(publisher.commit(staged).await.is_err());
+        assert!(modules::Entity::find_by_id("module-1")
+            .one(&db)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(!store.path().join("versions/module-1/1.0.0").exists());
+    }
+
+    #[tokio::test]
+    async fn a_leftover_version_directory_from_an_interrupted_commit_is_redone() {
+        let source = tempdir().unwrap();
+        let integrity = write_package(source.path());
+        for leftover in ["garbage", "same-content"] {
+            let db = Database::connect("sqlite::memory:").await.unwrap();
+            Migrator::up(&db, None).await.unwrap();
+            let store = tempdir().unwrap();
+            let publisher = ModulePublisher::new(store.path(), db.clone());
+            // The directory was renamed into `versions/` but no row was ever
+            // written: exactly what a crash between the two steps leaves.
+            let version_dir = store.path().join("versions/module-1/1.0.0");
+            if leftover == "same-content" {
+                copy_dir(source.path(), &version_dir).unwrap();
+            } else {
+                fs::create_dir_all(&version_dir).unwrap();
+                fs::write(version_dir.join("entry.js"), "leftover").unwrap();
+            }
+            publisher
+                .commit(publisher.stage(source.path()).unwrap())
+                .await
+                .unwrap();
+            let row = modules::Entity::find_by_id("module-1")
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(row.integrity, integrity, "{leftover}");
+            assert_eq!(
+                package_integrity(&version_dir).unwrap(),
+                integrity,
+                "{leftover}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_registered_version_with_different_content_is_never_replaced() {
+        let (publisher, store, _db) = published(&[]).await;
+        let other = tempdir().unwrap();
+        fs::write(other.path().join("entry.js"), "export default 2;").unwrap();
+        seal_manifest(other.path(), &example_manifest("1.0.0"));
+        let staged = publisher.stage(other.path()).unwrap();
+        assert!(matches!(
+            publisher.commit(staged).await,
+            Err(ModulePackageError::Manifest(reason)) if reason.contains("different integrity")
+        ));
+        assert_eq!(
+            fs::read(store.path().join("versions/module-1/1.0.0/entry.js")).unwrap(),
+            b"export default 1;"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_first_publish_state_is_written_in_the_same_transaction() {
+        let source = tempdir().unwrap();
+        write_package(source.path());
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        Migrator::up(&db, None).await.unwrap();
+        let store = tempdir().unwrap();
+        let publisher = ModulePublisher::new(store.path(), db.clone());
+        publisher
+            .commit_with(
+                publisher.stage(source.path()).unwrap(),
+                FirstPublish {
+                    official: true,
+                    enabled: false,
+                },
+            )
+            .await
+            .unwrap();
+        let row = modules::Entity::find_by_id("module-1")
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(row.is_official && !row.is_enabled);
+
+        // A later release changes neither flag.
+        let next = tempdir().unwrap();
+        write_versioned_package(next.path(), "1.1.0");
+        publisher
+            .commit_with(
+                publisher.stage(next.path()).unwrap(),
+                FirstPublish::default(),
+            )
+            .await
+            .unwrap();
+        let row = modules::Entity::find_by_id("module-1")
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.current_version, "1.1.0");
+        assert!(row.is_official && !row.is_enabled);
     }
 
     #[test]

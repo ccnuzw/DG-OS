@@ -11,8 +11,8 @@ pub use execution::{
     BuiltinCaller, ExecutionProvenance, ExecutionSource, HostExecutionContext, HostSession,
 };
 pub use module_operation::{
-    ModuleOperationAccepted, ModuleOperationErrorKind, ModuleOperationFailure, ModuleOperationKind,
-    ModuleOperationOutcome, ModuleOperationState, ModuleOperationView, ModuleRuntimeStatusState,
-    ModuleRuntimeStatusView,
+    ModuleCrashView, ModuleOperationAccepted, ModuleOperationErrorKind, ModuleOperationFailure,
+    ModuleOperationKind, ModuleOperationOutcome, ModuleOperationState, ModuleOperationView,
+    ModulePermissionView, ModuleRuntimeStatusState, ModuleRuntimeStatusView, ModuleSummaryView,
 };
 pub use provider::*;

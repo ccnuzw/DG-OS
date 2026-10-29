@@ -1,0 +1,13 @@
+{
+  "id": "provider-console",
+  "name": "Provider Console",
+  "version": "1.0.0",
+  "entry": "entry.js",
+  "artifact": {
+    "version": "1.0.0",
+    "sha256": "6d50d95a70ebfb98d727891d9961c04c9328173c72467573c1f1ca3eec5abe2a"
+  },
+  "permissions": [
+    "providers.call"
+  ]
+}

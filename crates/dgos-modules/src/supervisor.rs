@@ -8,14 +8,16 @@
 //! release back, and a failed rollback disables the module.
 
 use crate::{
+    admission::ModuleAdmission,
     error_class,
-    loader::ModuleLoader,
+    loader::{LoadPhase, ModuleLoader, VerifiedModuleArtifact},
     runtime::{ModuleRuntimeError, ModuleRuntimeHandle, ModuleRuntimeState},
     ModuleLoadError, ModulePackageError, ModulePublisher, ReleaseSnapshot, StagedPackage,
 };
 use dgos_types::HostSession;
 use std::{
     collections::HashMap,
+    future::Future,
     path::Path,
     sync::{Arc, Mutex, MutexGuard},
     time::Duration,
@@ -47,6 +49,10 @@ pub enum ModuleSupervisorError {
     RolledBack(#[source] Box<ModuleSupervisorError>),
     #[error("update and rollback failed (module disabled: {module_disabled})")]
     RollbackFailed { module_disabled: bool },
+    /// The package is not on the host admission list, or an executing
+    /// loader has no admission policy (D041).
+    #[error("module package is not admitted for execution")]
+    NotAdmitted,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -71,9 +77,58 @@ pub struct ModuleUpdateReport {
     pub outcome: ModuleUpdateOutcome,
 }
 
+/// Deadlines for single loader calls (D044). On expiry only the loader
+/// future is dropped, never the supervisor's own, and the normal failure
+/// cleanup runs afterwards. Loaders must therefore be cancel-safe.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LoaderTimeouts {
+    pub smoke: Duration,
+    pub start: Duration,
+    pub stop: Duration,
+}
+
+impl LoaderTimeouts {
+    pub const DEFAULT: Self = Self {
+        smoke: Duration::from_secs(5),
+        start: Duration::from_secs(15),
+        stop: Duration::from_secs(10),
+    };
+}
+
+impl Default for LoaderTimeouts {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+/// Run one loader call under its deadline.
+async fn bounded<T>(
+    phase: LoadPhase,
+    limit: Duration,
+    call: impl Future<Output = Result<T, ModuleLoadError>>,
+) -> Result<T, ModuleLoadError> {
+    match tokio::time::timeout(limit, call).await {
+        Ok(result) => result,
+        Err(_) => Err(ModuleLoadError::Timeout(phase)),
+    }
+}
+
+/// Told once a runtime has become `ready`, before `start`/`update` return
+/// (D051). Used by the host to hand the page a call route for exactly that
+/// runtime. Best effort and synchronous: it must not block, and a failure
+/// inside it never changes the runtime's state.
+pub trait ModuleReadyObserver: Send + Sync {
+    fn runtime_ready(&self, runtime: &ModuleRuntimeHandle);
+}
+
 pub struct ModuleRuntimeSupervisor {
     publisher: Arc<ModulePublisher>,
     loader: Arc<dyn ModuleLoader>,
+    // Host policy deciding what may execute (D041). Without one, only
+    // loaders that do not execute module code are usable.
+    admission: Option<Arc<dyn ModuleAdmission>>,
+    ready_observer: Option<Arc<dyn ModuleReadyObserver>>,
+    timeouts: LoaderTimeouts,
     drain_timeout: Duration,
     // Serializes start/stop/update. Request admission never takes this lock.
     lifecycle: tokio::sync::Mutex<()>,
@@ -91,11 +146,31 @@ impl ModuleRuntimeSupervisor {
         Self {
             publisher,
             loader,
+            admission: None,
+            ready_observer: None,
+            timeouts: LoaderTimeouts::DEFAULT,
             drain_timeout: Self::DEFAULT_DRAIN_TIMEOUT,
             lifecycle: tokio::sync::Mutex::new(()),
             runtimes: Mutex::new(HashMap::new()),
             retired: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Enforce `admission` before every preflight, start and update commit.
+    pub fn with_admission(mut self, admission: Arc<dyn ModuleAdmission>) -> Self {
+        self.admission = Some(admission);
+        self
+    }
+
+    /// Observe every runtime that becomes `ready` (D051).
+    pub fn with_ready_observer(mut self, observer: Arc<dyn ModuleReadyObserver>) -> Self {
+        self.ready_observer = Some(observer);
+        self
+    }
+
+    pub fn with_loader_timeouts(mut self, timeouts: LoaderTimeouts) -> Self {
+        self.timeouts = timeouts;
+        self
     }
 
     #[cfg(test)]
@@ -107,6 +182,30 @@ impl ModuleRuntimeSupervisor {
         Self {
             drain_timeout,
             ..Self::new(publisher, loader)
+        }
+    }
+
+    /// Whether the configured loader runs module code. Lets a status view
+    /// tell a really loaded `ready` runtime from a validated-only one.
+    pub fn executes_module_code(&self) -> bool {
+        self.loader.executes_module_code()
+    }
+
+    /// D041: execution needs an explicit admission. A loader that executes
+    /// module code without a policy is refused, never trusted by default.
+    fn admit(&self, artifact: &VerifiedModuleArtifact) -> Result<(), ModuleSupervisorError> {
+        let admitted = match &self.admission {
+            Some(admission) => admission.admits(
+                artifact.module_id(),
+                artifact.version(),
+                artifact.integrity(),
+            ),
+            None => !self.loader.executes_module_code(),
+        };
+        if admitted {
+            Ok(())
+        } else {
+            Err(ModuleSupervisorError::NotAdmitted)
         }
     }
 
@@ -141,9 +240,17 @@ impl ModuleRuntimeSupervisor {
             }
         }
         let handle = self.publisher.runtime_handle(session, module_id).await?;
+        // Not admitted: refuse before the handle is registered, so nothing
+        // needs cleaning up and nothing is preflighted or started (D041).
+        self.admit(handle.artifact())?;
         self.registry().insert(module_id.to_owned(), handle.clone());
         let loaded = async {
-            self.loader.smoke(handle.artifact()).await?;
+            bounded(
+                LoadPhase::Smoke,
+                self.timeouts.smoke,
+                self.loader.smoke(handle.artifact()),
+            )
+            .await?;
             self.activate(&handle).await
         }
         .await;
@@ -323,15 +430,31 @@ impl ModuleRuntimeSupervisor {
 
     async fn smoke_staged(&self, staged: &StagedPackage) -> Result<(), ModuleSupervisorError> {
         let artifact = self.publisher.verify_staged(staged)?;
-        self.loader.smoke(&artifact).await?;
+        // Admission comes first so an unadmitted package is never even
+        // preflighted, and the pointer cannot move for it (D041).
+        self.admit(&artifact)?;
+        bounded(
+            LoadPhase::Smoke,
+            self.timeouts.smoke,
+            self.loader.smoke(&artifact),
+        )
+        .await?;
         Ok(())
     }
 
     async fn activate(&self, handle: &ModuleRuntimeHandle) -> Result<(), ModuleSupervisorError> {
-        self.loader
-            .start(handle.runtime_id(), handle.artifact())
-            .await?;
+        // Defense in depth: the same decision again right before code runs.
+        self.admit(handle.artifact())?;
+        bounded(
+            LoadPhase::Start,
+            self.timeouts.start,
+            self.loader.start(handle.runtime_id(), handle.artifact()),
+        )
+        .await?;
         handle.mark_ready()?;
+        if let Some(observer) = &self.ready_observer {
+            observer.runtime_ready(handle);
+        }
         Ok(())
     }
 
@@ -339,7 +462,7 @@ impl ModuleRuntimeSupervisor {
     /// failed and release whatever the loader may hold.
     async fn abort_start(&self, handle: &ModuleRuntimeHandle) -> Result<(), ModuleLoadError> {
         let _ = handle.fail();
-        release_runtime(self.loader.as_ref(), handle).await
+        release_runtime(self.loader.as_ref(), handle, self.timeouts.stop).await
     }
 
     /// Restore the previous release after a failed activation. On success
@@ -393,7 +516,8 @@ impl ModuleRuntimeSupervisor {
         }
         // Exactly once per instance: a background release that already
         // succeeded is not repeated, and a failed one is retried here.
-        if let Err(error) = release_runtime(self.loader.as_ref(), handle).await {
+        if let Err(error) = release_runtime(self.loader.as_ref(), handle, self.timeouts.stop).await
+        {
             let _ = handle.fail();
             return Err(error.into());
         }
@@ -406,10 +530,11 @@ impl ModuleRuntimeSupervisor {
             return;
         };
         let loader = self.loader.clone();
+        let stop_timeout = self.timeouts.stop;
         runtime.spawn(async move {
             handle.wait_settled().await;
             // A failure here leaves the release pending for the next `stop`.
-            let _ = release_runtime(loader.as_ref(), &handle).await;
+            let _ = release_runtime(loader.as_ref(), &handle, stop_timeout).await;
         });
     }
 
@@ -488,9 +613,17 @@ impl ModuleRuntimeSupervisor {
 async fn release_runtime(
     loader: &dyn ModuleLoader,
     handle: &ModuleRuntimeHandle,
+    stop_timeout: Duration,
 ) -> Result<(), ModuleLoadError> {
+    // A timed-out stop is not recorded as released, so the next call retries.
     handle
-        .release_once(|| loader.stop(handle.runtime_id(), handle.artifact()))
+        .release_once(|| {
+            bounded(
+                LoadPhase::Stop,
+                stop_timeout,
+                loader.stop(handle.runtime_id(), handle.artifact()),
+            )
+        })
         .await
 }
 
@@ -506,6 +639,7 @@ fn supervisor_error_class(error: &ModuleSupervisorError) -> String {
         ModuleSupervisorError::Package(error) => error_class(error),
         ModuleSupervisorError::Load(_) => "load".into(),
         ModuleSupervisorError::Runtime(_) => "runtime".into(),
+        ModuleSupervisorError::NotAdmitted => "admission".into(),
         _ => "lifecycle".into(),
     }
 }
@@ -514,7 +648,8 @@ fn supervisor_error_class(error: &ModuleSupervisorError) -> String {
 mod tests {
     use super::*;
     use crate::{
-        package_digest, LocalArtifactLoader, ModuleRequestOutcome, VerifiedModuleArtifact,
+        digest, package_integrity, LocalArtifactLoader, ModuleRequestOutcome,
+        VerifiedModuleArtifact,
     };
     use async_trait::async_trait;
     use dgos_db::{
@@ -525,7 +660,7 @@ mod tests {
     use sea_orm_migration::MigratorTrait;
     use std::{
         fs,
-        sync::atomic::{AtomicUsize, Ordering},
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     };
     use tempfile::{tempdir, TempDir};
 
@@ -535,6 +670,11 @@ mod tests {
     #[derive(Default)]
     struct ScriptedLoader {
         fail_start_version: Mutex<Option<String>>,
+        executes: AtomicBool,
+        hang_smoke: AtomicBool,
+        hang_start: AtomicBool,
+        hanging_stops: AtomicUsize,
+        smokes: AtomicUsize,
         starts: AtomicUsize,
         stop_attempts: AtomicUsize,
         failing_stops: AtomicUsize,
@@ -545,6 +685,19 @@ mod tests {
     impl ScriptedLoader {
         fn fail_start(&self, version: Option<&str>) {
             *self.fail_start_version.lock().unwrap() = version.map(str::to_owned);
+        }
+
+        fn hang_smoke(&self, hang: bool) {
+            self.hang_smoke.store(hang, Ordering::SeqCst);
+        }
+
+        fn hang_start(&self, hang: bool) {
+            self.hang_start.store(hang, Ordering::SeqCst);
+        }
+
+        /// The next `count` stop calls never return (until dropped).
+        fn hang_stops(&self, count: usize) {
+            self.hanging_stops.store(count, Ordering::SeqCst);
         }
 
         /// The next `count` stop calls fail without releasing anything.
@@ -567,7 +720,15 @@ mod tests {
 
     #[async_trait]
     impl ModuleLoader for ScriptedLoader {
+        fn executes_module_code(&self) -> bool {
+            self.executes.load(Ordering::SeqCst)
+        }
+
         async fn smoke(&self, artifact: &VerifiedModuleArtifact) -> Result<(), ModuleLoadError> {
+            self.smokes.fetch_add(1, Ordering::SeqCst);
+            if self.hang_smoke.load(Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
             LocalArtifactLoader.smoke(artifact).await
         }
 
@@ -576,6 +737,9 @@ mod tests {
             runtime_id: &str,
             artifact: &VerifiedModuleArtifact,
         ) -> Result<(), ModuleLoadError> {
+            if self.hang_start.load(Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
             if self.fail_start_version.lock().unwrap().as_deref() == Some(artifact.version()) {
                 return Err(ModuleLoadError::Rejected("scripted start failure".into()));
             }
@@ -589,6 +753,15 @@ mod tests {
             _artifact: &VerifiedModuleArtifact,
         ) -> Result<(), ModuleLoadError> {
             self.stop_attempts.fetch_add(1, Ordering::SeqCst);
+            let hang = self
+                .hanging_stops
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                    remaining.checked_sub(1)
+                })
+                .is_ok();
+            if hang {
+                std::future::pending::<()>().await;
+            }
             let delay = *self.stop_delay.lock().unwrap();
             if !delay.is_zero() {
                 tokio::time::sleep(delay).await;
@@ -718,6 +891,7 @@ mod tests {
         body: Option<&'a str>,
         permissions: &'a [&'a str],
         digest: Option<&'a str>,
+        requires: Option<serde_json::Value>,
     }
 
     impl Default for PackageSpec<'_> {
@@ -729,6 +903,7 @@ mod tests {
                 body: None,
                 permissions: &[],
                 digest: None,
+                requires: None,
             }
         }
     }
@@ -741,23 +916,29 @@ mod tests {
             spec.body.unwrap_or(&default_body),
         )
         .unwrap();
-        let digest = spec
-            .digest
-            .map(str::to_owned)
-            .unwrap_or_else(|| package_digest(dir.path()).unwrap());
-        fs::write(
-            dir.path().join("manifest.json"),
-            serde_json::json!({
-                "id": spec.module_id,
-                "name": "Example",
-                "version": spec.version,
-                "entry": spec.entry,
-                "artifact": {"version": spec.version, "sha256": digest},
-                "permissions": spec.permissions,
-            })
-            .to_string(),
-        )
-        .unwrap();
+        let mut manifest = serde_json::json!({
+            "id": spec.module_id,
+            "name": "Example",
+            "version": spec.version,
+            "entry": spec.entry,
+            "artifact": {"version": spec.version, "sha256": "0".repeat(64)},
+            "permissions": spec.permissions,
+        });
+        if let Some(requires) = spec.requires {
+            manifest["requires"] = requires;
+        }
+        fs::write(dir.path().join("manifest.json"), manifest.to_string()).unwrap();
+        // The manifest is part of the v2 digest, the declared value is not:
+        // seal it after the rest is written. A package that cannot be
+        // digested (invalid entry) keeps the placeholder.
+        let declared = spec.digest.map(str::to_owned).unwrap_or_else(|| {
+            package_integrity(dir.path())
+                .ok()
+                .and_then(|integrity| digest::v2_hex(&integrity).map(str::to_owned))
+                .unwrap_or_else(|| "0".repeat(64))
+        });
+        manifest["artifact"]["sha256"] = declared.into();
+        fs::write(dir.path().join("manifest.json"), manifest.to_string()).unwrap();
         dir
     }
 
@@ -769,6 +950,71 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
         panic!("condition not reached");
+    }
+
+    #[derive(Default)]
+    struct RecordingObserver {
+        seen: Mutex<Vec<(String, ModuleRuntimeState)>>,
+    }
+
+    impl ModuleReadyObserver for RecordingObserver {
+        fn runtime_ready(&self, runtime: &ModuleRuntimeHandle) {
+            self.seen
+                .lock()
+                .unwrap()
+                .push((runtime.runtime_id().to_owned(), runtime.state()));
+        }
+    }
+
+    #[tokio::test]
+    async fn the_ready_observer_sees_each_runtime_once_and_only_when_it_is_ready() {
+        let mut fixture = Fixture::new(ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT).await;
+        let observer = Arc::new(RecordingObserver::default());
+        fixture.supervisor = ModuleRuntimeSupervisor::with_drain_timeout(
+            fixture.publisher.clone(),
+            fixture.loader.clone(),
+            ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT,
+        )
+        .with_ready_observer(observer.clone());
+        fixture.publish("1.0.0", &[]).await;
+
+        // A failed start never reaches the observer.
+        fixture.loader.fail_start(Some("1.0.0"));
+        assert!(fixture
+            .supervisor
+            .start(&HostSession::local_default(), MODULE)
+            .await
+            .is_err());
+        assert!(observer.seen.lock().unwrap().is_empty());
+        fixture.supervisor.stop(MODULE).await.unwrap();
+        fixture.loader.fail_start(None);
+
+        let first = fixture.start().await;
+        let source = package(PackageSpec {
+            version: "2.0.0",
+            ..PackageSpec::default()
+        });
+        fixture.update(&source).await.unwrap();
+        let second = fixture.supervisor.runtime(MODULE).unwrap();
+
+        // The observer saw the candidate of each successful activation, in
+        // `ready` state, before the call returned.
+        assert_eq!(
+            *observer.seen.lock().unwrap(),
+            vec![
+                (first.runtime_id().to_owned(), ModuleRuntimeState::Ready),
+                (second.runtime_id().to_owned(), ModuleRuntimeState::Ready),
+            ]
+        );
+
+        // A candidate whose start fails is rolled back and never observed.
+        let broken = package(PackageSpec {
+            version: "3.0.0",
+            ..PackageSpec::default()
+        });
+        fixture.loader.fail_start(Some("3.0.0"));
+        assert!(fixture.update(&broken).await.is_err());
+        assert_eq!(observer.seen.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]
@@ -887,7 +1133,7 @@ mod tests {
         for name in ["entry.js", "manifest.json"] {
             fs::copy(source.path().join(name), target.join(name)).unwrap();
         }
-        let digest = package_digest(&target).unwrap();
+        let digest = package_integrity(&target).unwrap();
         fixture
             .publisher
             .write_pointer("module-2", "1.0.0")
@@ -1201,6 +1447,112 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_refuses_an_incompatible_package_and_leaves_the_previous_release_running() {
+        let fixture = Fixture::new(ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT).await;
+        fixture.publish("1.0.0", &[]).await;
+        let previous = fixture.start().await;
+        for requires in [
+            serde_json::json!({"react": "^20"}),
+            serde_json::json!({"api": 2}),
+        ] {
+            let source = package(PackageSpec {
+                version: "2.0.0",
+                requires: Some(requires),
+                ..PackageSpec::default()
+            });
+            assert!(matches!(
+                fixture.update(&source).await,
+                Err(ModuleSupervisorError::Package(
+                    ModulePackageError::Incompatible
+                ))
+            ));
+        }
+
+        assert!(fixture
+            .supervisor
+            .runtime(MODULE)
+            .unwrap()
+            .is_same_runtime(&previous));
+        assert_eq!(previous.state(), ModuleRuntimeState::Ready);
+        assert_eq!(fixture.module_row().await.current_version, "1.0.0");
+        assert_eq!(fixture.pointer().as_deref(), Some("1.0.0"));
+        assert!(fixture.staging_is_empty());
+        assert_eq!(fixture.loader.starts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn start_refuses_an_incompatible_published_release_and_recovery_keeps_it_enabled() {
+        let fixture = Fixture::new(ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT).await;
+        // A release that is already incompatible cannot be staged any more, so
+        // it is placed the way an older host published it: a sealed package,
+        // its files under `versions/`, and the committed rows (D055).
+        let source = package(PackageSpec {
+            requires: Some(serde_json::json!({"react": "^20"})),
+            ..PackageSpec::default()
+        });
+        let integrity = package_integrity(source.path()).unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(source.path().join("manifest.json")).unwrap())
+                .unwrap();
+        let target = fixture
+            .store
+            .path()
+            .join("versions")
+            .join(MODULE)
+            .join("1.0.0");
+        crate::copy_dir(source.path(), &target).unwrap();
+        modules::ActiveModel {
+            id: Set(MODULE.into()),
+            module_name: Set(MODULE.into()),
+            display_name: Set("Example".into()),
+            current_version: Set("1.0.0".into()),
+            description: Set(None),
+            manifest: Set(manifest),
+            integrity: Set(integrity.clone()),
+            entry_url: Set(Some("entry.js".into())),
+            icon_url: Set(None),
+            is_official: Set(false),
+            is_enabled: Set(true),
+            installed_at: Set(0),
+            updated_at: Set(0),
+        }
+        .insert(&fixture.db)
+        .await
+        .unwrap();
+        dgos_db::entities::module_versions::ActiveModel {
+            id: Set(Uuid::new_v4().to_string()),
+            module_id: Set(MODULE.into()),
+            version: Set("1.0.0".into()),
+            integrity: Set(integrity),
+            entry_path: Set("entry.js".into()),
+            created_at: Set(0),
+        }
+        .insert(&fixture.db)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            fixture.publisher.recover_registered().await.unwrap(),
+            vec![MODULE]
+        );
+        assert!(fixture.module_row().await.is_enabled);
+        assert_eq!(fixture.pointer().as_deref(), Some("1.0.0"));
+
+        assert!(matches!(
+            fixture
+                .supervisor
+                .start(&HostSession::local_default(), MODULE)
+                .await,
+            Err(ModuleSupervisorError::Package(
+                ModulePackageError::Incompatible
+            ))
+        ));
+        assert!(fixture.supervisor.runtime(MODULE).is_none());
+        assert_eq!(fixture.loader.starts.load(Ordering::SeqCst), 0);
+        assert!(fixture.module_row().await.is_enabled);
+    }
+
+    #[tokio::test]
     async fn smoke_failure_keeps_previous_release_and_discards_staging() {
         let fixture = Fixture::new(ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT).await;
         fixture.publish("1.0.0", &[]).await;
@@ -1489,5 +1841,193 @@ mod tests {
             fixture.loader.stops(),
             vec![previous.runtime_id().to_owned()]
         );
+    }
+
+    fn pin_current(fixture: &Fixture, version: &str, integrity: &str) -> Arc<dyn ModuleAdmission> {
+        let _ = fixture;
+        Arc::new(crate::PinnedModuleAdmission::new([(
+            MODULE, version, integrity,
+        )]))
+    }
+
+    async fn current_integrity(fixture: &Fixture) -> String {
+        fixture
+            .publisher
+            .release_snapshot(MODULE)
+            .await
+            .unwrap()
+            .unwrap()
+            .integrity()
+            .to_owned()
+    }
+
+    #[tokio::test]
+    async fn executing_loader_without_admission_is_refused_before_any_loader_call() {
+        let fixture = Fixture::new(ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT).await;
+        fixture.loader.executes.store(true, Ordering::SeqCst);
+        fixture.publish("1.0.0", &[]).await;
+
+        assert!(matches!(
+            fixture
+                .supervisor
+                .start(&HostSession::local_default(), MODULE)
+                .await,
+            Err(ModuleSupervisorError::NotAdmitted)
+        ));
+        assert!(fixture.supervisor.runtime(MODULE).is_none());
+        assert_eq!(fixture.loader.smokes.load(Ordering::SeqCst), 0);
+        assert_eq!(fixture.loader.starts.load(Ordering::SeqCst), 0);
+        assert_eq!(fixture.loader.stop_attempts(), 0);
+    }
+
+    #[tokio::test]
+    async fn only_pinned_releases_run_and_unpinned_updates_never_commit() {
+        let mut fixture = Fixture::new(ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT).await;
+        fixture.publish("1.0.0", &[]).await;
+        let integrity = current_integrity(&fixture).await;
+        fixture.supervisor = ModuleRuntimeSupervisor::with_drain_timeout(
+            fixture.publisher.clone(),
+            fixture.loader.clone(),
+            ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT,
+        )
+        .with_admission(pin_current(&fixture, "1.0.0", &integrity));
+        fixture.loader.executes.store(true, Ordering::SeqCst);
+
+        let previous = fixture.start().await;
+        assert_eq!(previous.state(), ModuleRuntimeState::Ready);
+        let smokes = fixture.loader.smokes.load(Ordering::SeqCst);
+
+        // A self-consistent package that is not pinned: its digest matches
+        // its own manifest, which is exactly what admission must not trust.
+        let source = package(PackageSpec {
+            version: "2.0.0",
+            ..PackageSpec::default()
+        });
+        assert!(matches!(
+            fixture.update(&source).await,
+            Err(ModuleSupervisorError::NotAdmitted)
+        ));
+        assert_eq!(fixture.pointer().as_deref(), Some("1.0.0"));
+        assert_eq!(fixture.module_row().await.current_version, "1.0.0");
+        assert!(fixture.staging_is_empty());
+        // Refused before the loader preflight, and the old runtime serves on.
+        assert_eq!(fixture.loader.smokes.load(Ordering::SeqCst), smokes);
+        assert_eq!(previous.state(), ModuleRuntimeState::Ready);
+        assert!(fixture
+            .supervisor
+            .runtime(MODULE)
+            .unwrap()
+            .is_same_runtime(&previous));
+    }
+
+    #[tokio::test]
+    async fn start_deadline_fails_the_runtime_releases_the_loader_and_frees_the_lifecycle() {
+        let mut fixture = Fixture::new(ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT).await;
+        fixture.supervisor = ModuleRuntimeSupervisor::with_drain_timeout(
+            fixture.publisher.clone(),
+            fixture.loader.clone(),
+            ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT,
+        )
+        .with_loader_timeouts(LoaderTimeouts {
+            smoke: Duration::from_secs(5),
+            start: Duration::from_millis(50),
+            stop: Duration::from_secs(5),
+        });
+        fixture.publish("1.0.0", &[]).await;
+        fixture.loader.hang_start(true);
+
+        let error = fixture
+            .supervisor
+            .start(&HostSession::local_default(), MODULE)
+            .await
+            .err()
+            .expect("start must time out");
+        assert!(matches!(
+            error,
+            ModuleSupervisorError::Load(ModuleLoadError::Timeout(LoadPhase::Start))
+        ));
+        let failed = fixture.supervisor.runtime(MODULE).unwrap();
+        assert_eq!(failed.state(), ModuleRuntimeState::Failed);
+        assert!(failed.begin_request().is_err());
+        // The hung loader call was abandoned, and cleanup still reached it.
+        assert_eq!(fixture.loader.stops(), vec![failed.runtime_id().to_owned()]);
+
+        // The lifecycle lock is free and a retry is a new runtime.
+        fixture.loader.hang_start(false);
+        let restarted = fixture.start().await;
+        assert_eq!(restarted.state(), ModuleRuntimeState::Ready);
+        assert_ne!(restarted.runtime_id(), failed.runtime_id());
+        assert_eq!(failed.state(), ModuleRuntimeState::Stopped);
+    }
+
+    #[tokio::test]
+    async fn stop_deadline_is_retryable_and_releases_exactly_once() {
+        let mut fixture = Fixture::new(ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT).await;
+        fixture.supervisor = ModuleRuntimeSupervisor::with_drain_timeout(
+            fixture.publisher.clone(),
+            fixture.loader.clone(),
+            ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT,
+        )
+        .with_loader_timeouts(LoaderTimeouts {
+            smoke: Duration::from_secs(5),
+            start: Duration::from_secs(5),
+            stop: Duration::from_millis(50),
+        });
+        fixture.publish("1.0.0", &[]).await;
+        let handle = fixture.start().await;
+        fixture.loader.hang_stops(1);
+
+        assert!(matches!(
+            fixture.supervisor.stop(MODULE).await,
+            Err(ModuleSupervisorError::Load(ModuleLoadError::Timeout(
+                LoadPhase::Stop
+            )))
+        ));
+        // Unconfirmed release: refused for new requests but not stopped.
+        assert_eq!(handle.state(), ModuleRuntimeState::Failed);
+        assert!(handle.begin_request().is_err());
+        assert!(fixture.loader.stops().is_empty());
+
+        fixture.supervisor.stop(MODULE).await.unwrap();
+        assert_eq!(handle.state(), ModuleRuntimeState::Stopped);
+        assert_eq!(fixture.loader.stops(), vec![handle.runtime_id().to_owned()]);
+        assert_eq!(fixture.loader.stop_attempts(), 2);
+    }
+
+    #[tokio::test]
+    async fn preflight_deadline_during_update_leaves_pointer_and_runtime_unchanged() {
+        let mut fixture = Fixture::new(ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT).await;
+        fixture.supervisor = ModuleRuntimeSupervisor::with_drain_timeout(
+            fixture.publisher.clone(),
+            fixture.loader.clone(),
+            ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT,
+        )
+        .with_loader_timeouts(LoaderTimeouts {
+            smoke: Duration::from_millis(50),
+            start: Duration::from_secs(5),
+            stop: Duration::from_secs(5),
+        });
+        fixture.publish("1.0.0", &[]).await;
+        let previous = fixture.start().await;
+        fixture.loader.hang_smoke(true);
+
+        let source = package(PackageSpec {
+            version: "2.0.0",
+            ..PackageSpec::default()
+        });
+        assert!(matches!(
+            fixture.update(&source).await,
+            Err(ModuleSupervisorError::Load(ModuleLoadError::Timeout(
+                LoadPhase::Smoke
+            )))
+        ));
+        assert_eq!(fixture.pointer().as_deref(), Some("1.0.0"));
+        assert_eq!(fixture.module_row().await.current_version, "1.0.0");
+        assert!(fixture.staging_is_empty());
+        assert_eq!(previous.state(), ModuleRuntimeState::Ready);
+        assert!(fixture
+            .events()
+            .await
+            .contains(&("load_smoke".into(), "failure".into())));
     }
 }

@@ -19,7 +19,6 @@ use dgos_modules::{
     VerifiedModuleArtifact,
 };
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -33,6 +32,13 @@ use tokio::net::TcpListener;
 use tokio::sync::{broadcast, oneshot, watch};
 
 const WATCHDOG: Duration = Duration::from_secs(240);
+
+mod call;
+mod modules;
+mod real;
+pub use call::run_call;
+pub use modules::run_modules;
+pub use real::run_real;
 const STEP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Scripted loader: optional start gate and scripted stop failures around the
@@ -92,13 +98,13 @@ impl ModuleLoader for SmokeLoader {
 }
 
 #[derive(Default)]
-struct Pending(Mutex<HashMap<String, oneshot::Sender<String>>>);
+pub(crate) struct Pending(Mutex<HashMap<String, oneshot::Sender<String>>>);
 
 struct LoadEvents(broadcast::Sender<(String, String)>);
 
 /// The only harness-specific command: the evaluated script reports its result.
 #[tauri::command]
-fn smoke_report(pending: tauri::State<'_, Pending>, id: String, payload: String) {
+pub(crate) fn smoke_report(pending: tauri::State<'_, Pending>, id: String, payload: String) {
     if let Some(sender) = pending.0.lock().unwrap().remove(&id) {
         let _ = sender.send(payload);
     }
@@ -231,25 +237,31 @@ async fn wait_until(mut condition: impl FnMut() -> bool, what: &str) -> Result<(
 }
 
 fn write_package(dir: &Path, module_id: &str, version: &str) -> String {
-    fs::create_dir_all(dir).unwrap();
     let body = format!("export default '{module_id}@{version}';");
-    fs::write(dir.join("entry.js"), &body).unwrap();
-    let mut hasher = Sha256::new();
-    hasher.update(b"entry.js");
-    hasher.update([0]);
-    hasher.update(body.as_bytes());
-    let digest = format!("{:x}", hasher.finalize());
-    fs::write(
-        dir.join("manifest.json"),
-        json!({
-            "id": module_id, "name": "Smoke", "version": version, "entry": "entry.js",
-            "artifact": {"version": version, "sha256": digest},
-            "permissions": ["providers.call"]
-        })
-        .to_string(),
-    )
-    .unwrap();
-    digest
+    write_package_with(dir, module_id, version, &body)
+}
+
+/// Write a one-file package whose entry is `body`; returns the package's v2 integrity.
+fn write_package_with(dir: &Path, module_id: &str, version: &str, body: &str) -> String {
+    fs::create_dir_all(dir).unwrap();
+    fs::write(dir.join("entry.js"), body).unwrap();
+    let write_manifest = |sha256: &str| {
+        fs::write(
+            dir.join("manifest.json"),
+            json!({
+                "id": module_id, "name": "Smoke", "version": version, "entry": "entry.js",
+                "artifact": {"version": version, "sha256": sha256},
+                "permissions": ["providers.call"]
+            })
+            .to_string(),
+        )
+        .unwrap();
+    };
+    // The manifest is part of the v2 digest, the declared value is not.
+    write_manifest(&"0".repeat(64));
+    let integrity = dgos_modules::package_integrity(dir).unwrap();
+    write_manifest(integrity.strip_prefix("v2:").unwrap());
+    integrity
 }
 
 #[derive(Default)]
