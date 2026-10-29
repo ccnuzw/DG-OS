@@ -6,6 +6,8 @@ pub mod migrations;
 pub mod repositories;
 
 #[cfg(test)]
+mod appearance_tests;
+#[cfg(test)]
 mod mcp_tests;
 #[cfg(test)]
 mod module_permission_tests;

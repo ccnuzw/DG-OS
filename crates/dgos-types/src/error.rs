@@ -6,6 +6,16 @@ pub enum DgosError {
     #[error("Host permission denied")]
     PermissionDenied,
 
+    // Appearance preference errors (1005xxx, D065); fixed messages that never echo input.
+    #[error("Unknown theme")]
+    ThemeNotFound,
+
+    #[error("Unsupported interface density")]
+    InvalidDensity,
+
+    #[error("Invalid appearance preferences patch")]
+    InvalidAppearancePatch,
+
     // Module lifecycle errors (1004xxx); the message is a fixed string.
     #[error("{}", .0.message())]
     ModuleOperation(ModuleOperationErrorKind),
@@ -69,6 +79,9 @@ impl DgosError {
     pub fn error_code(&self) -> u32 {
         match self {
             DgosError::PermissionDenied => 1004004,
+            DgosError::ThemeNotFound => 1005001,
+            DgosError::InvalidAppearancePatch => 1005002,
+            DgosError::InvalidDensity => 1005006,
             DgosError::ModuleOperation(kind) => kind.code(),
             DgosError::ProviderNotFound(_) => 1001001,
             DgosError::InvalidApiKey => 1001002,

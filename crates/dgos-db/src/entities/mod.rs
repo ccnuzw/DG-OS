@@ -16,6 +16,7 @@ pub mod skill_usage_logs;
 pub mod skill_user_states;
 pub mod skill_versions;
 pub mod skills;
+pub mod system_settings;
 pub mod usage_logs;
 pub mod workbench_task_skills;
 pub mod workbench_task_tools;
