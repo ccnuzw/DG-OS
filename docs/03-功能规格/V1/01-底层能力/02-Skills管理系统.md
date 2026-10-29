@@ -1,16 +1,27 @@
+---
+title: "DGOS 技能中心"
+version: V1
+feature_id: V1-FR-002
+domain: 底层能力
+spec_status: Ready
+risk: 高风险
+track: Skills 能力
+updated: 2026-10-29
+---
 # V1-FR-002：DGOS 技能中心
 
 ## 1. 功能元信息
 
-| 属性 | 值 |
+| 项目 | 内容 |
 | --- | --- |
-| 功能编号 | V1-FR-002（不变） |
+| 编号 | V1-FR-002（不变） |
 | 功能名称 | DGOS 技能中心（原 Skills 管理系统） |
 | 所属版本 / 领域 | V1 / 底层能力 |
+| 规格状态 | Ready |
 | 优先级 / 风险 | P0 / 高风险：第三方内容、文件安装、场景权限与版本一致性 |
 | 核心用户 | 本地用户、消费技能的 DGOS 应用、维护官方内容的开发者 |
 | 独立验收目标 | 用户无需连接外站即可浏览官方内置分类库；能安装预置来源的技能，并在 AI 工作台中明确选择、按固定版本使用 |
-| 依赖 | V1-FR-001 模型调用；V1-FR-005 设计系统；V1-FR-008 用户隔离；V1-FR-009 权限边界 |
+| 上游依赖 | V1-FR-001 模型调用；V1-FR-005 设计系统；V1-FR-008 用户隔离；V1-FR-009 权限边界 |
 | 协作功能 | V1-FR-006 AI 工作台负责实际任务；V1-FR-007 设置负责管理入口；V1-FR-003 MCP 提供可选工具 |
 | 决策依据 | [D016](../../../06-决策记录/V1-冻结决策.md#d016-skills-定位为官方优先的本地技能中心) |
 | 实现状态 | 只在 [V1 实现状态](../../../02-产品与版本/当前版本/V1-实现状态.md) 维护；本文不声明实现完成率 |
@@ -186,28 +197,193 @@ Tauri/HTTP 具体字段、分页、错误码、权限声明及 migration 在下�
 
 以下是**目标测试资产**，本轮不创建测试或宣称通过。每个 `cargo test --test ...` 目标须有实际测试且断言覆盖对应 AC；缺文件、零用例或仅 mock 不能算通过。前端/集成文件扩展名与当前 Vitest 配置匹配。
 
-| AC | 批次 | Given / When / Then | 测试层级 | 目标资产 | 目标命令 |
-| --- | --- | --- | --- | --- | --- |
-| AC16 | A | 全新安装且断网 / 打开中心 / 至少 2 类各 1 个官方技能可浏览，无外站前置请求 | 包资源+集成 | `crates/dgos-skills/tests/bundled_catalog.rs` | `cargo test -p dgos-skills --test bundled_catalog` |
-| AC17 | A | 混合内容身份 / 分类、标签、来源及场景筛选 / 结果准确且不把第三方标成官方 | 前端 | `tests/skills-center.test.tsx` | `npm test -- tests/skills-center.test.tsx -t AC17` |
-| AC18 | A | 官方或第三方条目 / 查看详情 / 展示作者、许可、来源、实际修订、依赖与验证范围 | 前端 | `tests/skills-center.test.tsx` | `npm test -- tests/skills-center.test.tsx -t AC18` |
-| AC19 | A | 同包重复初始化或应用升级 / 导入官方内容 / 不重复创建、不重置禁用、不覆盖副本 | 后端+文件系统 | `crates/dgos-skills/tests/bundled_catalog.rs` | `cargo test -p dgos-skills --test bundled_catalog` |
-| AC20 | A | 已安装技能 / 切换启用及应用/会话选择 / 新任务只取得当前用户选中的兼容技能 | 后端+前端 | `tests/skills-bindings.test.tsx` | `npm test -- tests/skills-bindings.test.tsx -t AC20` |
-| AC21 | A | 已配置模型与官方技能 / 在 AI 工作台发起任务 / 加载指定正文并完成任务，记录确切版本，不注入无关技能 | 真实集成 | `tests/skills-workbench.test.tsx` | `npm test -- tests/skills-workbench.test.tsx -t AC21` |
-| AC22 | A | 缺依赖、选中技能损坏、冲突或超预算 / 准备任务 / 明确拒绝与原因；不静默降级，用户确认才继续无技能任务 | 后端+集成 | `crates/dgos-skills/tests/context_prepare.rs` | `cargo test -p dgos-skills --test context_prepare` |
-| AC23 | A | 技能包含恶意指令或脚本 / 安装、加载并尝试工具调用 / 不自动执行，不扩权，不泄漏凭据或越界文件 | 安全+集成 | `crates/dgos-skills/tests/skill_security.rs` | `cargo test -p dgos-skills --test skill_security` |
-| AC24 | A | 两个本地用户与远程只读用户 / 访问绑定、记录和管理入口 / 用户隔离有效，远程管理被拒绝 | 权限+集成 | `crates/dgos-skills/tests/skill_permissions.rs` | `cargo test -p dgos-skills --test skill_permissions` |
-| AC25 | B | 同上游由两个渠道发现及同名不同作者 / 合并目录 / 前者单一身份保留渠道，后者不合并 | 后端 | `crates/dgos-skills/tests/source_identity.rs` | `cargo test -p dgos-skills --test source_identity` |
-| AC26 | B | 一个真实可用来源 / 搜索、查看、安装并在工作台使用 / 得到真实内容与来源修订，可完成任务 | 外部真实集成 | `tests/skills-source-live.test.tsx` | `DGOS_SKILLS_LIVE=1 npm test -- tests/skills-source-live.test.tsx -t AC26` |
-| AC27 | B | 来源支持部分能力 / 请求不支持列表或更新 / 返回明确能力限制，不编造列表、版本或更新 | 适配器契约 | `crates/dgos-skills/tests/source_capabilities.rs` | `cargo test -p dgos-skills --test source_capabilities` |
-| AC28 | B | 断网、401、429及已有/无缓存 / 并发刷新、失败后重试 / 来源隔离、缓存提示正确、无重复风暴或未处理拒绝，恢复后消除错误 | 后端+前端 | `tests/skills-source-failure.test.tsx` | `npm test -- tests/skills-source-failure.test.tsx -t AC28` |
-| AC29 | B | 合法第三方包或无版本号上游 / 安装固定修订 / 保存内容哈希与真实修订，不执行脚本、不编造版本 | 后端+文件系统 | `crates/dgos-skills/tests/package_install.rs` | `cargo test -p dgos-skills --test package_install` |
-| AC30 | B | 越界路径、符号链接、超限包、错误哈希或磁盘不足 / 安装 / 拒绝且无半安装记录，旧版本不受损 | 安全+故障注入 | `crates/dgos-skills/tests/package_install.rs` | `cargo test -p dgos-skills --test package_install` |
-| AC31 | B | 并发安装及文件/数据库提交间崩溃 / 重试或重启 / 幂等恢复，不重复安装，无错误就绪状态 | 并发+恢复 | `crates/dgos-skills/tests/package_recovery.rs` | `cargo test -p dgos-skills --test package_recovery` |
-| AC32 | B | 上游更新且旧任务运行 / 用户确认更新或更新失败 / 旧任务版本不变，新任务用已确认版本；失败可继续旧版，新增权限重新确认 | 后端+集成 | `crates/dgos-skills/tests/package_update.rs` | `cargo test -p dgos-skills --test package_update` |
-| AC33 | B | 内置包、在用版本及下载包 / 禁用或卸载 / 禁止新任务使用被禁用项，不删除在用/应用资源，失效绑定不改绑 | 后端+文件系统 | `crates/dgos-skills/tests/package_remove.rs` | `cargo test -p dgos-skills --test package_remove` |
-| AC34 | B | 已修改的用户副本及受限制许可 / 上游更新或官方打包 / 副本独立不覆盖，保留署名，不违法再分发、不继承官方背书 | 后端+发布检查 | `crates/dgos-skills/tests/provenance.rs` | `cargo test -p dgos-skills --test provenance` |
-| AC35 | A | 成功与失败任务、含敏感输入 / 查看使用记录 / 可追溯用户、场景与版本，仅记录安全摘要，无凭据和默认完整输入输出 | 后端+日志检查 | `crates/dgos-skills/tests/skill_usage.rs` | `cargo test -p dgos-skills --test skill_usage` |
+#### AC16 打开中心
+
+Given 全新安装且断网
+
+When 打开中心
+
+Then 至少 2 类各 1 个官方技能可浏览，无外站前置请求
+
+#### AC17 分类、标签、来源及场景筛选
+
+Given 混合内容身份
+
+When 分类、标签、来源及场景筛选
+
+Then 结果准确且不把第三方标成官方
+
+#### AC18 查看详情
+
+Given 官方或第三方条目
+
+When 查看详情
+
+Then 展示作者、许可、来源、实际修订、依赖与验证范围
+
+#### AC19 导入官方内容
+
+Given 同包重复初始化或应用升级
+
+When 导入官方内容
+
+Then 不重复创建、不重置禁用、不覆盖副本
+
+#### AC20 切换启用及应用/会话选择
+
+Given 已安装技能
+
+When 切换启用及应用/会话选择
+
+Then 新任务只取得当前用户选中的兼容技能
+
+#### AC21 在 AI 工作台发起任务
+
+Given 已配置模型与官方技能
+
+When 在 AI 工作台发起任务
+
+Then 加载指定正文并完成任务，记录确切版本，不注入无关技能
+
+#### AC22 准备任务
+
+Given 缺依赖、选中技能损坏、冲突或超预算
+
+When 准备任务
+
+Then 明确拒绝与原因；不静默降级，用户确认才继续无技能任务
+
+#### AC23 安装、加载并尝试工具调用
+
+Given 技能包含恶意指令或脚本
+
+When 安装、加载并尝试工具调用
+
+Then 不自动执行，不扩权，不泄漏凭据或越界文件
+
+#### AC24 访问绑定、记录和管理入口
+
+Given 两个本地用户与远程只读用户
+
+When 访问绑定、记录和管理入口
+
+Then 用户隔离有效，远程管理被拒绝
+
+#### AC25 合并目录
+
+Given 同上游由两个渠道发现及同名不同作者
+
+When 合并目录
+
+Then 前者单一身份保留渠道，后者不合并
+
+#### AC26 搜索、查看、安装并在工作台使用
+
+Given 一个真实可用来源
+
+When 搜索、查看、安装并在工作台使用
+
+Then 得到真实内容与来源修订，可完成任务
+
+#### AC27 请求不支持列表或更新
+
+Given 来源支持部分能力
+
+When 请求不支持列表或更新
+
+Then 返回明确能力限制，不编造列表、版本或更新
+
+#### AC28 并发刷新、失败后重试
+
+Given 断网、401、429及已有/无缓存
+
+When 并发刷新、失败后重试
+
+Then 来源隔离、缓存提示正确、无重复风暴或未处理拒绝，恢复后消除错误
+
+#### AC29 安装固定修订
+
+Given 合法第三方包或无版本号上游
+
+When 安装固定修订
+
+Then 保存内容哈希与真实修订，不执行脚本、不编造版本
+
+#### AC30 安装
+
+Given 越界路径、符号链接、超限包、错误哈希或磁盘不足
+
+When 安装
+
+Then 拒绝且无半安装记录，旧版本不受损
+
+#### AC31 重试或重启
+
+Given 并发安装及文件/数据库提交间崩溃
+
+When 重试或重启
+
+Then 幂等恢复，不重复安装，无错误就绪状态
+
+#### AC32 用户确认更新或更新失败
+
+Given 上游更新且旧任务运行
+
+When 用户确认更新或更新失败
+
+Then 旧任务版本不变，新任务用已确认版本；失败可继续旧版，新增权限重新确认
+
+#### AC33 禁用或卸载
+
+Given 内置包、在用版本及下载包
+
+When 禁用或卸载
+
+Then 禁止新任务使用被禁用项，不删除在用/应用资源，失效绑定不改绑
+
+#### AC34 上游更新或官方打包
+
+Given 已修改的用户副本及受限制许可
+
+When 上游更新或官方打包
+
+Then 副本独立不覆盖，保留署名，不违法再分发、不继承官方背书
+
+#### AC35 查看使用记录
+
+Given 成功与失败任务、含敏感输入
+
+When 查看使用记录
+
+Then 可追溯用户、场景与版本，仅记录安全摘要，无凭据和默认完整输入输出
+
+#### AC 逐项测试设计
+
+证据状态按 spec-docs-pro 词表记录：未创建 / 已创建 / 静态核验 / 本地通过 / 预发通过 / 生产通过 / 失败 / 不适用。原“批次”列的内容移入“备注”，不代表升格。
+
+| AC | 验收重点 | 测试层级 | 目标资产 | 目标命令 | 证据状态 | 备注 |
+| --- | --- | --- | --- | --- | --- | --- |
+| AC16 | 打开中心 | 包资源+集成 | `crates/dgos-skills/tests/bundled_catalog.rs` | `cargo test -p dgos-skills --test bundled_catalog` | 未创建 | 批次 A |
+| AC17 | 分类、标签、来源及场景筛选 | 前端 | `tests/skills-center.test.tsx` | `npm test -- tests/skills-center.test.tsx -t AC17` | 未创建 | 批次 A |
+| AC18 | 查看详情 | 前端 | `tests/skills-center.test.tsx` | `npm test -- tests/skills-center.test.tsx -t AC18` | 未创建 | 批次 A |
+| AC19 | 导入官方内容 | 后端+文件系统 | `crates/dgos-skills/tests/bundled_catalog.rs` | `cargo test -p dgos-skills --test bundled_catalog` | 未创建 | 批次 A |
+| AC20 | 切换启用及应用/会话选择 | 后端+前端 | `tests/skills-bindings.test.tsx` | `npm test -- tests/skills-bindings.test.tsx -t AC20` | 未创建 | 批次 A |
+| AC21 | 在 AI 工作台发起任务 | 真实集成 | `tests/skills-workbench.test.tsx` | `npm test -- tests/skills-workbench.test.tsx -t AC21` | 未创建 | 批次 A |
+| AC22 | 准备任务 | 后端+集成 | `crates/dgos-skills/tests/context_prepare.rs` | `cargo test -p dgos-skills --test context_prepare` | 未创建 | 批次 A |
+| AC23 | 安装、加载并尝试工具调用 | 安全+集成 | `crates/dgos-skills/tests/skill_security.rs` | `cargo test -p dgos-skills --test skill_security` | 未创建 | 批次 A |
+| AC24 | 访问绑定、记录和管理入口 | 权限+集成 | `crates/dgos-skills/tests/skill_permissions.rs` | `cargo test -p dgos-skills --test skill_permissions` | 未创建 | 批次 A |
+| AC25 | 合并目录 | 后端 | `crates/dgos-skills/tests/source_identity.rs` | `cargo test -p dgos-skills --test source_identity` | 未创建 | 批次 B |
+| AC26 | 搜索、查看、安装并在工作台使用 | 外部真实集成 | `tests/skills-source-live.test.tsx` | `DGOS_SKILLS_LIVE=1 npm test -- tests/skills-source-live.test.tsx -t AC26` | 未创建 | 批次 B |
+| AC27 | 请求不支持列表或更新 | 适配器契约 | `crates/dgos-skills/tests/source_capabilities.rs` | `cargo test -p dgos-skills --test source_capabilities` | 未创建 | 批次 B |
+| AC28 | 并发刷新、失败后重试 | 后端+前端 | `tests/skills-source-failure.test.tsx` | `npm test -- tests/skills-source-failure.test.tsx -t AC28` | 未创建 | 批次 B |
+| AC29 | 安装固定修订 | 后端+文件系统 | `crates/dgos-skills/tests/package_install.rs` | `cargo test -p dgos-skills --test package_install` | 未创建 | 批次 B |
+| AC30 | 安装 | 安全+故障注入 | `crates/dgos-skills/tests/package_install.rs` | `cargo test -p dgos-skills --test package_install` | 未创建 | 批次 B |
+| AC31 | 重试或重启 | 并发+恢复 | `crates/dgos-skills/tests/package_recovery.rs` | `cargo test -p dgos-skills --test package_recovery` | 未创建 | 批次 B |
+| AC32 | 用户确认更新或更新失败 | 后端+集成 | `crates/dgos-skills/tests/package_update.rs` | `cargo test -p dgos-skills --test package_update` | 未创建 | 批次 B |
+| AC33 | 禁用或卸载 | 后端+文件系统 | `crates/dgos-skills/tests/package_remove.rs` | `cargo test -p dgos-skills --test package_remove` | 未创建 | 批次 B |
+| AC34 | 上游更新或官方打包 | 后端+发布检查 | `crates/dgos-skills/tests/provenance.rs` | `cargo test -p dgos-skills --test provenance` | 未创建 | 批次 B |
+| AC35 | 查看使用记录 | 后端+日志检查 | `crates/dgos-skills/tests/skill_usage.rs` | `cargo test -p dgos-skills --test skill_usage` | 未创建 | 批次 A |
+
 
 AC21/AC26 的 mock 用例可用于日常回归，但发布证据必须另有真实模型/来源运行记录；没有凭据时标为未执行，不能用 skip 或返回静态答案代替。新增目标测试整体证据见第 9 节。
 

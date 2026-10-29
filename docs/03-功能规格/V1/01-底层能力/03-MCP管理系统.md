@@ -1,19 +1,30 @@
+---
+title: "MCP 管理系统"
+version: V1
+feature_id: V1-FR-003
+domain: 底层能力
+spec_status: Ready
+risk: 高风险
+track: MCP 能力
+updated: 2026-10-29
+---
 # V1-FR-003：MCP 管理系统
 
 ## 1. 功能元信息
 
-| 属性 | 值 |
+| 项目 | 内容 |
 | --- | --- |
-| 功能编号 | V1-FR-003 |
+| 编号 | V1-FR-003 |
 | 功能名称 | MCP 管理系统 |
 | 所属版本 | V1 |
-| 所属领域 | 底层能力 |
+| 领域 | 底层能力 |
+| 规格状态 | Ready |
 | 优先级 | P0（必须） |
-| 风险级别 | 高（涉及本地进程、网络凭据、工具权限与外部副作用） |
-| 依赖功能 | V1-FR-001（Provider 框架，MCP 工具可能调用 AI） |
-| 被依赖功能 | V1-FR-006（AI 工作台）、V2 画布系统 |
-| 负责人 | TBD |
-| 当前状态 | 只在 [V1 实现状态](../../../02-产品与版本/当前版本/V1-实现状态.md) 维护 |
+| 风险等级 | 高（涉及本地进程、网络凭据、工具权限与外部副作用） |
+| 上游依赖 | V1-FR-001（Provider 框架，MCP 工具可能调用 AI） |
+| 下游影响 | V1-FR-006（AI 工作台）、V2 画布系统 |
+| 规格负责人 | TBD |
+| 实现状态 | 见 [V1 实现状态](../../../02-产品与版本/当前版本/V1-实现状态.md)，本文不记录 |
 
 ## 2. 功能概述
 
@@ -124,23 +135,148 @@ MCP 管理系统让 DGOS 能够连接 MCP 服务器，使 AI 可以访问文件�
 
 > 保留原有 AC01–AC15 的语义与编号。fake 证据不等同于完整 AC 或真实 Server 验收。资产路径相对 `crates/dgos-mcp`；裸函数名位于 `tests/manager.rs`。
 
-| AC | 验收重点 | Given | When | Then | 测试层级 | 目标资产 | 目标命令 | 证据限制 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| AC01 | 配置 Stdio MCP 服务器 | 本地用户进入可信主窗口 | 保存 executable + argv | 配置落库且保存不连接 | 单元/集成 | `server_crud_isolation_defaults_and_duplicates` | `cargo test --offline -p dgos-mcp` | fake 配置测试通过 |
-| AC02 | 配置 HTTP MCP 服务器 | 本地用户进入可信主窗口 | 保存 URL 与凭据引用 | 通过校验，credential_ref 独立保存 | 单元/集成 | `tests/credentials.rs`、`credential_refs_are_separate_from_config_and_fail_closed_without_vault` | `cargo test --offline -p dgos-mcp` | fake 作用域隔离/轮换/清理通过；macOS OS 凭据另有测试证据 |
-| AC03 | 连接 Stdio MCP 服务器 | Server 已配置并启用 | 启动连接 | initialize/initialized 完成并进入 ready | 单元/集成 | `tools_discovery_schema_confirmation_and_redacted_audit` | `cargo test --offline -p dgos-mcp` | fake stdio 通过；另有第 10.4 节官方 filesystem smoke |
-| AC04 | 连接 HTTP MCP 服务器 | Server 已配置并启用 | 启动连接 | HTTP initialize 成功 | 单元/集成 | `src/transport_tests.rs`、`tests/credentials.rs` | `cargo test --offline -p dgos-mcp` | fake Manager 认证握手/调用与官方 SDK HTTP/SSE smoke 通过；macOS 原生 HTTP 连接见第 10.3 节，非跨平台发布验收 |
-| AC05 | 获取工具列表 | 连接已建立 | tools/list 分页 | 校验并缓存工具列表 | 单元/集成 | `tools_discovery_schema_confirmation_and_redacted_audit` | `cargo test --offline -p dgos-mcp` | fake 通过 |
-| AC06 | 调用 MCP 工具 | 工具已发现且通过宿主权限 | 确认后调用指定工具 | 返回工具结果 | 单元/集成 | `tools_discovery_schema_confirmation_and_redacted_audit` | `cargo test --offline -p dgos-mcp` | fake echo、官方 filesystem list_directory 与 SDK echo smoke 通过；macOS 原生 Provider→MCP→Provider 与 filesystem 调用见第 10.3 节，非跨平台发布验收 |
-| AC07 | 心跳检测 | 连接已建立 | 发送 ping | 连接保持 | 单元/集成 | `src/manager.rs::lifecycle_tests` | `cargo test --offline -p dgos-mcp` | 状态机测试；真实心跳待验收 |
-| AC08 | 断开检测 | 心跳超时 | 5 秒无响应 | 标记断开 | 单元/集成 | `src/manager.rs::lifecycle_tests::heartbeat_rpc_error_and_timeout_disconnect_then_recover_without_startup_autoconnect` | `cargo test --offline -p dgos-mcp` | fake 心跳 RPC error 和 5 秒超时通过 |
-| AC09 | 自动重连 | 曾成功连接且非手动断开 | 触发重连 | 恢复 ready | 单元/集成 | `src/manager.rs::lifecycle_tests` | `cargo test --offline -p dgos-mcp` | fake 自动成功、退避和手动断开通过 |
-| AC10 | 重连失败处理 | 最多 3 次重连仍失败 | 停止重连 | 标记不可用并通知用户 | 单元/集成 | `src/manager.rs::lifecycle_tests` | `cargo test --offline -p dgos-mcp` | 退避耗尽覆盖；全局恢复失败通知已有 mock UI 覆盖，真实故障恢复仍待原生验收 |
-| AC11 | 并发调用 | 多个应用同时调用 | 5 个并发请求 | 所有请求正确配对并成功 | 单元/集成 | `five_simultaneous_calls_complete_with_reverse_order_responses` | `cargo test --offline -p dgos-mcp` | fake barrier 验证 5 在途倒序响应；另有 128 请求突发/8 在途上限测试；真实多应用待验收 |
-| AC12 | 连接日志记录 | 连接事件发生 | 查询连接日志 | 包含脱敏 connected/disconnected 事件 | 单元/集成 | `connection_events_are_persisted_isolated_bounded_and_redacted` | `cargo test --offline -p dgos-mcp -p dgos-db` | fake 事件持久化/隔离/条数上限及 m009 存量迁移通过 |
-| AC13 | 工具使用记录 | 调用完成 | 查询当前用户日志 | 仅含引用、hash、耗时和结果类别 | 单元/集成 | `tools_discovery_schema_confirmation_and_redacted_audit` 及第 10.2 节取消/中断专项 | `cargo test --offline -p dgos-mcp` | fake 脱敏/隔离、拒绝/取消、pending 中断恢复和结果审计失败提示通过 |
-| AC14 | MCP 服务器启用/禁用 | Server 已配置 | 禁用 Server | 阻止新调用并等待在途调用结束后断开 | 单元/集成 | `disabling_waits_for_inflight_call_then_revokes_connections_and_consent` | `cargo test --offline -p dgos-mcp` | fake 通过 |
-| AC15 | 刷新工具列表 | 已有工具缓存 | 点击刷新 | 成功替换，失败保留旧快照 | 单元/集成 | `refresh_uses_same_session_replaces_snapshot_and_revokes_only_its_consent`、`failed_refresh_preserves_entire_snapshot_and_live_session`、`snapshot_database_failure_rolls_back_without_stuck_connecting_status` | `cargo test --offline -p dgos-mcp` | fake 同会话刷新、分页失败保留与 DB 回滚通过 |
+#### AC01 配置 Stdio MCP 服务器
+
+Given 本地用户进入可信主窗口
+
+When 保存 executable + argv
+
+Then 配置落库且保存不连接
+
+#### AC02 配置 HTTP MCP 服务器
+
+Given 本地用户进入可信主窗口
+
+When 保存 URL 与凭据引用
+
+Then 通过校验，credential_ref 独立保存
+
+#### AC03 连接 Stdio MCP 服务器
+
+Given Server 已配置并启用
+
+When 启动连接
+
+Then initialize/initialized 完成并进入 ready
+
+#### AC04 连接 HTTP MCP 服务器
+
+Given Server 已配置并启用
+
+When 启动连接
+
+Then HTTP initialize 成功
+
+#### AC05 获取工具列表
+
+Given 连接已建立
+
+When tools/list 分页
+
+Then 校验并缓存工具列表
+
+#### AC06 调用 MCP 工具
+
+Given 工具已发现且通过宿主权限
+
+When 确认后调用指定工具
+
+Then 返回工具结果
+
+#### AC07 心跳检测
+
+Given 连接已建立
+
+When 发送 ping
+
+Then 连接保持
+
+#### AC08 断开检测
+
+Given 心跳超时
+
+When 5 秒无响应
+
+Then 标记断开
+
+#### AC09 自动重连
+
+Given 曾成功连接且非手动断开
+
+When 触发重连
+
+Then 恢复 ready
+
+#### AC10 重连失败处理
+
+Given 最多 3 次重连仍失败
+
+When 停止重连
+
+Then 标记不可用并通知用户
+
+#### AC11 并发调用
+
+Given 多个应用同时调用
+
+When 5 个并发请求
+
+Then 所有请求正确配对并成功
+
+#### AC12 连接日志记录
+
+Given 连接事件发生
+
+When 查询连接日志
+
+Then 包含脱敏 connected/disconnected 事件
+
+#### AC13 工具使用记录
+
+Given 调用完成
+
+When 查询当前用户日志
+
+Then 仅含引用、hash、耗时和结果类别
+
+#### AC14 MCP 服务器启用/禁用
+
+Given Server 已配置
+
+When 禁用 Server
+
+Then 阻止新调用并等待在途调用结束后断开
+
+#### AC15 刷新工具列表
+
+Given 已有工具缓存
+
+When 点击刷新
+
+Then 成功替换，失败保留旧快照
+
+#### AC 逐项测试设计
+
+证据状态按 spec-docs-pro 词表记录：未创建 / 已创建 / 静态核验 / 本地通过 / 预发通过 / 生产通过 / 失败 / 不适用。原“证据限制”列的内容移入“备注”，不代表升格。
+
+| AC | 验收重点 | 测试层级 | 目标资产 | 目标命令 | 证据状态 | 备注 |
+| --- | --- | --- | --- | --- | --- | --- |
+| AC01 | 配置 Stdio MCP 服务器 | 单元/集成 | `server_crud_isolation_defaults_and_duplicates` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake 配置测试通过 |
+| AC02 | 配置 HTTP MCP 服务器 | 单元/集成 | `tests/credentials.rs`、`credential_refs_are_separate_from_config_and_fail_closed_without_vault` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake 作用域隔离/轮换/清理通过；macOS OS 凭据另有测试证据 |
+| AC03 | 连接 Stdio MCP 服务器 | 单元/集成 | `tools_discovery_schema_confirmation_and_redacted_audit` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake stdio 通过；另有第 10.4 节官方 filesystem smoke |
+| AC04 | 连接 HTTP MCP 服务器 | 单元/集成 | `src/transport_tests.rs`、`tests/credentials.rs` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake Manager 认证握手/调用与官方 SDK HTTP/SSE smoke 通过；macOS 原生 HTTP 连接见第 10.3 节，非跨平台发布验收 |
+| AC05 | 获取工具列表 | 单元/集成 | `tools_discovery_schema_confirmation_and_redacted_audit` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake 通过 |
+| AC06 | 调用 MCP 工具 | 单元/集成 | `tools_discovery_schema_confirmation_and_redacted_audit` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake echo、官方 filesystem list_directory 与 SDK echo smoke 通过；macOS 原生 Provider→MCP→Provider 与 filesystem 调用见第 10.3 节，非跨平台发布验收 |
+| AC07 | 心跳检测 | 单元/集成 | `src/manager.rs::lifecycle_tests` | `cargo test --offline -p dgos-mcp` | 已创建 | 状态机测试；真实心跳待验收 |
+| AC08 | 断开检测 | 单元/集成 | `src/manager.rs::lifecycle_tests::heartbeat_rpc_error_and_timeout_disconnect_then_recover_without_startup_autoconnect` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake 心跳 RPC error 和 5 秒超时通过 |
+| AC09 | 自动重连 | 单元/集成 | `src/manager.rs::lifecycle_tests` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake 自动成功、退避和手动断开通过 |
+| AC10 | 重连失败处理 | 单元/集成 | `src/manager.rs::lifecycle_tests` | `cargo test --offline -p dgos-mcp` | 已创建 | 退避耗尽覆盖；全局恢复失败通知已有 mock UI 覆盖，真实故障恢复仍待原生验收 |
+| AC11 | 并发调用 | 单元/集成 | `five_simultaneous_calls_complete_with_reverse_order_responses` | `cargo test --offline -p dgos-mcp` | 已创建 | fake barrier 验证 5 在途倒序响应；另有 128 请求突发/8 在途上限测试；真实多应用待验收 |
+| AC12 | 连接日志记录 | 单元/集成 | `connection_events_are_persisted_isolated_bounded_and_redacted` | `cargo test --offline -p dgos-mcp -p dgos-db` | 本地通过 | fake 事件持久化/隔离/条数上限及 m009 存量迁移通过 |
+| AC13 | 工具使用记录 | 单元/集成 | `tools_discovery_schema_confirmation_and_redacted_audit` 及第 10.2 节取消/中断专项 | `cargo test --offline -p dgos-mcp` | 本地通过 | fake 脱敏/隔离、拒绝/取消、pending 中断恢复和结果审计失败提示通过 |
+| AC14 | MCP 服务器启用/禁用 | 单元/集成 | `disabling_waits_for_inflight_call_then_revokes_connections_and_consent` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake 通过 |
+| AC15 | 刷新工具列表 | 单元/集成 | `refresh_uses_same_session_replaces_snapshot_and_revokes_only_its_consent`、`failed_refresh_preserves_entire_snapshot_and_live_session`、`snapshot_database_failure_rolls_back_without_stuck_connecting_status` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake 同会话刷新、分页失败保留与 DB 回滚通过 |
+
 
 ### 5.2 边界条件测试
 

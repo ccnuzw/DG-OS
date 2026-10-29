@@ -1,108 +1,123 @@
 // @vitest-environment node
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-const browserUrl = new URL('../docs/90-参考资料/产品文档浏览器.html', import.meta.url);
+const dir = new URL('../docs/90-参考资料/', import.meta.url);
+const decisionLog = new URL('../docs/06-决策记录/V1-冻结决策.md', import.meta.url);
+const browserUrl = new URL('产品文档浏览器.html', dir);
+const dataUrl = new URL('产品文档浏览器-文档数据.js', dir);
+const VIEWS = ['overview', 'reader', 'features', 'map', 'evolution', 'timeline'];
+
+type Feature = {
+  id: string;
+  title: string;
+  acCount: number;
+  track: string | null;
+  implementation: { statusKey: string; statusLabel: string };
+};
+type Data = {
+  docs: { id: string; path: string }[];
+  features: Feature[];
+  decisions: { id: string }[];
+  versions: { id: string }[];
+  warnings: unknown[];
+  content: Record<string, string>;
+};
+
 let dom: JSDOM;
+let data: Data;
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const content = () => dom.window.document.querySelector('#content')!;
+async function openView(view: string) {
+  (dom.window.document.querySelector(`[data-view="${view}"]`) as HTMLElement).click();
+  await wait(0);
+  return content();
+}
 
 beforeAll(async () => {
   const html = readFileSync(browserUrl, 'utf8');
   dom = new JSDOM(html, { url: browserUrl.href, runScripts: 'outside-only' });
-  // File URLs have an opaque origin; the standalone page only needs these storage methods.
+  // File URLs have an opaque origin, so localStorage is unavailable; the viewer only needs these methods.
   Object.defineProperty(dom.window, 'localStorage', {
     value: { getItem: () => null, setItem: () => {} },
   });
-  dom.window.eval(readFileSync(new URL('产品文档浏览器-文档数据.js', browserUrl), 'utf8'));
+  dom.window.eval(readFileSync(dataUrl, 'utf8'));
   for (const match of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)) {
     if (match[1].trim()) dom.window.eval(match[1]);
   }
-  await vi.waitFor(() => {
-    expect(dom.window.document.querySelector('#loadStatus')?.textContent).toContain('份 PRD');
-  });
+  dom.window.document.dispatchEvent(new dom.window.Event('DOMContentLoaded'));
+  await wait(50);
+  data = (dom.window as unknown as { SPEC_DOCS_DATA: Data }).SPEC_DOCS_DATA;
 });
 
 afterAll(() => dom?.window.close());
 
-function openView(id: string) {
-  dom.window.document.getElementById(id)!.click();
-  return dom.window.document.querySelector('#content')!;
-}
-
-describe('DGOS document browser diagrams', () => {
-  it('renders the project diagrams in both overview and map views', () => {
-    const overview = openView('tabOverview');
-    expect(overview.querySelectorAll('.diagram svg')).toHaveLength(2);
-    const map = openView('tabMap');
-    expect(map.querySelectorAll('.diagram svg')).toHaveLength(5);
-    for (const svg of map.querySelectorAll('.diagram svg')) {
-      expect(svg.getAttribute('aria-label')).toContain('DGOS');
-    }
-    expect(map.textContent).not.toMatch(/TUZAI|协议网关|充值订单|供应商账务/);
+describe('generated data', () => {
+  it('covers every Markdown document and all ten V1 features', () => {
+    expect(data.docs.length).toBeGreaterThanOrEqual(66);
+    for (const doc of data.docs) expect(data.content[doc.id], doc.path).toBeTruthy();
+    expect(data.features.map((feature) => feature.id)).toEqual(
+      Array.from({ length: 10 }, (_, i) => `V1-FR-${String(i + 1).padStart(3, '0')}`),
+    );
   });
 
-  it('positions every roadmap connector and description in its own version row', () => {
-    const map = openView('tabMap');
-    const rows = [...map.querySelectorAll('.roadmap-row')];
-    expect(rows.map(row => row.getAttribute('data-version'))).toEqual(
+  it('has no data-quality warnings and links every feature to its status and track', () => {
+    expect(data.warnings).toEqual([]);
+    for (const feature of data.features) {
+      expect(feature.implementation.statusKey, feature.id).not.toBe('unknown');
+      expect(feature.track, feature.id).toBeTruthy();
+      expect(feature.acCount, feature.id).toBeGreaterThan(0);
+    }
+  });
+
+  it('never carries placeholder text in feature, decision or version fields', () => {
+    const visible = JSON.stringify({
+      features: data.features,
+      decisions: data.decisions,
+      versions: data.versions,
+    });
+    expect(visible).not.toMatch(/"(?:undefined|NaN|null)"|undefined|\[object Object\]/);
+  });
+
+  it('lists V1 through V8 and every frozen decision', () => {
+    expect(data.versions.map((version) => version.id)).toEqual(
       Array.from({ length: 8 }, (_, i) => `V${i + 1}`),
     );
-    let previousBottom = 0;
-    for (const row of rows) {
-      const rect = row.querySelector('rect')!;
-      const top = Number(rect.getAttribute('y'));
-      const bottom = top + Number(rect.getAttribute('height'));
-      const center = (top + bottom) / 2;
-      const line = row.querySelector('line')!;
-      expect(top).toBeGreaterThan(previousBottom);
-      expect(Number(line.getAttribute('y1'))).toBe(center);
-      expect(Number(line.getAttribute('y2'))).toBe(center);
-      expect(Number(line.getAttribute('x1'))).toBe(
-        Number(rect.getAttribute('x')) + Number(rect.getAttribute('width')),
-      );
-      const description = row.querySelectorAll('text')[1];
-      expect(Number(description.getAttribute('y'))).toBeGreaterThan(top);
-      expect(Number(description.getAttribute('y')) + 20).toBeLessThan(bottom);
-      expect(description.querySelectorAll('tspan')).toHaveLength(2);
-      previousBottom = bottom;
-    }
-    const svg = rows[0].closest('svg')!;
-    const spine = svg.querySelector(':scope > line')!;
-    expect(Number(spine.getAttribute('x1'))).toBeLessThan(
-      Number(rows[0].querySelector('rect')!.getAttribute('x')),
-    );
-    const footer = svg.querySelector(':scope > text:last-child')!;
-    const height = Number(svg.getAttribute('viewBox')!.split(' ')[3]);
-    expect(Number(footer.getAttribute('y'))).toBeGreaterThan(previousBottom);
-    expect(Number(footer.getAttribute('y'))).toBeLessThan(height - 12);
+    const log = readFileSync(decisionLog, 'utf8');
+    const ids = [...log.matchAll(/^## (D\d{3}) /gm)].map((match) => match[1]);
+    expect(data.decisions.map((decision) => decision.id)).toEqual(ids);
+  });
+});
+
+describe('viewer', () => {
+  it('finishes loading and reports the document and feature counts', () => {
+    expect(dom.window.document.querySelector('#loadStatus')?.textContent).toMatch(/\d+ 份文档 · 10 个功能/);
   });
 
-  it('uses explicit lines and sufficient vertical space for risk and domain cards', () => {
-    const map = openView('tabMap');
-    expect(map.querySelectorAll('.risk-card')).toHaveLength(6);
-    expect(map.querySelectorAll('.data-domain-card')).toHaveLength(7);
-    for (const card of map.querySelectorAll('.risk-card, .data-domain-card')) {
-      const rect = card.querySelector('rect')!;
-      const bottom = Number(rect.getAttribute('y')) + Number(rect.getAttribute('height'));
-      const body = card.querySelectorAll('text')[1];
-      const lines = [...body.querySelectorAll('tspan')];
-      expect(lines.length).toBeGreaterThan(0);
-      const lastBaseline = Number(body.getAttribute('y'))
-        + lines.reduce((total, line) => total + Number(line.getAttribute('dy')), 0);
-      expect(lastBaseline).toBeLessThan(bottom - 12);
-    }
-    for (const card of map.querySelectorAll('.risk-card')) {
-      expect(card.querySelectorAll('text')[1].querySelectorAll('tspan').length).toBeGreaterThanOrEqual(2);
+  it('renders every view without placeholder text', async () => {
+    for (const view of VIEWS) {
+      const text = (await openView(view)).textContent ?? '';
+      expect(text.length, view).toBeGreaterThan(200);
+      expect(text, view).not.toMatch(/undefined|NaN|\[object Object\]/);
     }
   });
 
-  it('escapes line content while retaining explicit SVG line coordinates', () => {
-    const markup = dom.window.eval('diagramTextLines(["<unsafe>&", "second line"], 40, 60)');
-    const host = dom.window.document.createElement('div');
-    host.innerHTML = `<svg>${markup}</svg>`;
-    expect(host.querySelector('unsafe')).toBeNull();
-    expect(host.querySelector('tspan')?.textContent).toBe('<unsafe>&');
-    expect([...host.querySelectorAll('tspan')].map(line => [line.getAttribute('x'), line.getAttribute('dy')]))
-      .toEqual([['40', '0'], ['40', '18']]);
+  it('draws the version roadmap and the capability heat map from the data', async () => {
+    const map = await openView('map');
+    for (let i = 1; i <= 8; i += 1) expect(map.textContent).toContain(`V${i}`);
+    expect(map.querySelectorAll('table, svg, .heat-cell, .heatmap').length).toBeGreaterThan(0);
+  });
+
+  it('shows all ten features in the feature view', async () => {
+    const text = (await openView('features')).textContent ?? '';
+    for (const feature of data.features) expect(text, feature.id).toContain(feature.id);
+  });
+
+  it('opens a document by deep link and renders its headings', async () => {
+    (dom.window.document.querySelector('#docList a, #docList button') as HTMLElement).click();
+    await wait(0);
+    expect(content().querySelector('h1, h2')).not.toBeNull();
   });
 });

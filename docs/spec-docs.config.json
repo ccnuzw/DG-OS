@@ -1,0 +1,27 @@
+{
+  "project": {
+    "name": "DGOS",
+    "description": "本地优先的 AI 应用开发框架（Distributed General Operating System for AI）"
+  },
+  "browser": {
+    "outDir": "90-参考资料"
+  },
+  "exclude": [],
+  "featureTracks": {
+    "V1-FR-001": "Provider 能力",
+    "V1-FR-002": "Skills 能力",
+    "V1-FR-003": "MCP 能力",
+    "V1-FR-004": "模块系统",
+    "V1-FR-005": "设计系统",
+    "V1-FR-006": "AI 工作台",
+    "V1-FR-007": "系统设置",
+    "V1-FR-008": "身份管理",
+    "V1-FR-009": "权限系统",
+    "V1-FR-010": "局域网协同"
+  },
+  "keyDecisions": [],
+  "docGoals": {},
+  "check": {
+    "ignore": ["REF001"]
+  }
+}

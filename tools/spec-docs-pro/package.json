@@ -1,0 +1,28 @@
+{
+  "name": "spec-docs-pro",
+  "version": "2.0.0",
+  "description": "规格驱动开发设计顾问：设计评审、文档标准、一致性检查与离线文档浏览器",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "check": "node scripts/check-docs.mjs",
+    "browser": "node scripts/generate-browser.mjs",
+    "test": "node tests/run-tests.mjs"
+  },
+  "keywords": [
+    "spec-driven-development",
+    "requirement-tracking",
+    "adr",
+    "documentation",
+    "agent-skill"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ccnuzw/daoge-skills.git",
+    "directory": "skills/spec-docs-pro"
+  }
+}

@@ -3,3492 +3,2976 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="generator" content="spec-docs-pro">
   <title>DGOS 产品文档浏览器</title>
   <style>
-    :root {
-      --bg: #f7f5ef;
-      --surface: #ffffff;
-      --surface-alt: #fbfaf7;
-      --ink: #1d1f22;
-      --muted: #69707a;
-      --faint: #8b929a;
-      --line: #dedbd2;
-      --line-strong: #c6c1b5;
-      --teal: #087d75;
-      --teal-soft: #dcefeb;
-      --indigo: #4056a1;
-      --indigo-soft: #e6e9f6;
-      --amber: #a96810;
-      --amber-soft: #f6ead6;
-      --rose: #aa2d4d;
-      --rose-soft: #f4dde4;
-      --green: #2f7d4f;
-      --green-soft: #e1f0e8;
-      --code-bg: #f1eee7;
-      --shadow: 0 12px 32px rgba(31, 35, 40, 0.08);
-      --radius: 8px;
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-
-    * { box-sizing: border-box; }
-
-    html,
-    body {
-      height: 100%;
-      margin: 0;
-      background: var(--bg);
-      color: var(--ink);
-      font-family: var(--sans);
-      font-size: 14px;
-      letter-spacing: 0;
-    }
-
-    body {
-      overflow: hidden;
-    }
-
-    button,
-    input,
-    select {
-      font: inherit;
-    }
-
-    button {
-      cursor: pointer;
-    }
-
-    .app {
-      display: grid;
-      grid-template-columns: 282px minmax(0, 1fr) 292px;
-      grid-template-rows: 58px minmax(0, 1fr);
-      height: 100vh;
-    }
-
-    .topbar {
-      grid-column: 1 / -1;
-      display: grid;
-      grid-template-columns: 282px minmax(240px, 1fr) 292px;
-      align-items: center;
-      gap: 14px;
-      padding: 0 16px;
-      border-bottom: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.92);
-      backdrop-filter: blur(12px);
-      z-index: 10;
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      min-width: 0;
-    }
-
-    .brand-mark {
-      display: grid;
-      place-items: center;
-      width: 34px;
-      height: 34px;
-      border-radius: 8px;
-      color: white;
-      background: linear-gradient(135deg, var(--teal), var(--indigo));
-      font-weight: 760;
-      letter-spacing: 0;
-      flex: 0 0 auto;
-    }
-
-    .brand h1 {
-      margin: 0;
-      font-size: 15px;
-      line-height: 1.1;
-    }
-
-    .brand small {
-      display: block;
-      margin-top: 3px;
-      color: var(--muted);
-      font-size: 11px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .searchbar {
-      position: relative;
-      min-width: 0;
-    }
-
-    .searchbar input {
-      width: 100%;
-      height: 38px;
-      padding: 0 42px 0 42px;
-      border: 1px solid var(--line-strong);
-      border-radius: 8px;
-      background: var(--surface);
-      color: var(--ink);
-      outline: none;
-    }
-
-    .searchbar input:focus {
-      border-color: var(--teal);
-      box-shadow: 0 0 0 3px var(--teal-soft);
-    }
-
-    .search-icon,
-    .clear-search {
-      position: absolute;
-      top: 50%;
-      transform: translateY(-50%);
-      color: var(--muted);
-    }
-
-    .search-icon {
-      left: 14px;
-      width: 18px;
-      height: 18px;
-      pointer-events: none;
-    }
-
-    .clear-search {
-      right: 8px;
-      display: none;
-      width: 28px;
-      height: 28px;
-      border: 0;
-      border-radius: 6px;
-      background: transparent;
-      color: var(--muted);
-    }
-
-    .clear-search:hover {
-      background: var(--code-bg);
-      color: var(--ink);
-    }
-
-    .top-actions {
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 8px;
-      min-width: 0;
-    }
-
-    .segmented {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      width: 100%;
-      max-width: 330px;
-      padding: 3px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--surface-alt);
-    }
-
-    .segmented button {
-      min-width: 0;
-      height: 30px;
-      border: 0;
-      border-radius: 6px;
-      background: transparent;
-      color: var(--muted);
-      font-size: 12px;
-      white-space: nowrap;
-    }
-
-    .segmented button.active {
-      background: var(--surface);
-      color: var(--ink);
-      box-shadow: 0 1px 4px rgba(31, 35, 40, 0.1);
-    }
-
-    .sidebar {
-      grid-row: 2;
-      border-right: 1px solid var(--line);
-      background: var(--surface-alt);
-      overflow: auto;
-      padding: 14px;
-    }
-
-    .side-title {
-      margin: 2px 2px 10px;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 720;
-    }
-
-    .doc-list {
-      display: grid;
-      gap: 8px;
-    }
-
-    .doc-item {
-      width: 100%;
-      display: grid;
-      grid-template-columns: 42px minmax(0, 1fr);
-      gap: 10px;
-      align-items: center;
-      min-height: 58px;
-      padding: 9px;
-      border: 1px solid transparent;
-      border-radius: 8px;
-      background: transparent;
-      color: inherit;
-      text-align: left;
-    }
-
-    .doc-item:hover {
-      background: var(--surface);
-      border-color: var(--line);
-    }
-
-    .doc-item.active {
-      background: var(--surface);
-      border-color: var(--accent, var(--teal));
-      box-shadow: var(--shadow);
-    }
-
-    .doc-badge {
-      display: grid;
-      place-items: center;
-      width: 42px;
-      height: 40px;
-      border-radius: 8px;
-      background: var(--accent-soft, var(--teal-soft));
-      color: var(--accent, var(--teal));
-      font-weight: 780;
-      font-size: 13px;
-    }
-
-    .doc-name {
-      min-width: 0;
-    }
-
-    .doc-name strong {
-      display: block;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-size: 13px;
-      line-height: 1.2;
-    }
-
-    .doc-name span {
-      display: block;
-      margin-top: 5px;
-      color: var(--muted);
-      font-size: 11px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .main {
-      position: relative;
-      grid-row: 2;
-      min-width: 0;
-      overflow: auto;
-      scroll-behavior: smooth;
-      background: var(--bg);
-    }
-
-    .content {
-      width: min(1100px, calc(100% - 32px));
-      margin: 0 auto;
-      padding: 18px 0 72px;
-    }
-
-    .rightbar {
-      grid-row: 2;
-      border-left: 1px solid var(--line);
-      background: var(--surface-alt);
-      overflow: auto;
-      padding: 14px;
-    }
-
-    .panel {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--surface);
-      box-shadow: 0 1px 0 rgba(31, 35, 40, 0.02);
-    }
-
-    .panel + .panel {
-      margin-top: 12px;
-    }
-
-    .panel-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      min-height: 42px;
-      padding: 11px 13px;
-      border-bottom: 1px solid var(--line);
-    }
-
-    .panel-head h2,
-    .panel-head h3 {
-      margin: 0;
-      font-size: 13px;
-      line-height: 1.2;
-    }
-
-    .panel-body {
-      padding: 13px;
-    }
-
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 10px;
-      margin-bottom: 12px;
-    }
-
-    .stat {
-      min-height: 86px;
-      padding: 14px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--surface);
-    }
-
-    .stat span {
-      display: block;
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    .stat strong {
-      display: block;
-      margin-top: 10px;
-      font-size: 25px;
-      line-height: 1;
-    }
-
-    .timeline {
-      display: grid;
-      grid-template-columns: repeat(8, minmax(86px, 1fr));
-      gap: 8px;
-      overflow-x: auto;
-      padding-bottom: 2px;
-    }
-
-    .feature-query {
-      margin-bottom: 12px;
-      padding: 16px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--surface);
-    }
-
-    .feature-query h2 {
-      margin: 0 0 6px;
-      font-size: 18px;
-    }
-
-    .feature-query > p {
-      margin: 0 0 13px;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.55;
-    }
-
-    .feature-controls {
-      display: grid;
-      grid-template-columns: minmax(0, 0.85fr) minmax(260px, 1.15fr);
-      gap: 10px;
-    }
-
-    .feature-field {
-      display: grid;
-      gap: 6px;
-    }
-
-    .feature-field label {
-      color: var(--muted);
-      font-size: 11px;
-      font-weight: 700;
-    }
-
-    .feature-field input,
-    .feature-field select {
-      width: 100%;
-      height: 40px;
-      padding: 0 11px;
-      border: 1px solid var(--line-strong);
-      border-radius: 8px;
-      background: var(--surface);
-      color: var(--ink);
-      outline: none;
-    }
-
-    .feature-field input:focus,
-    .feature-field select:focus {
-      border-color: var(--teal);
-      box-shadow: 0 0 0 3px var(--teal-soft);
-    }
-
-    .feature-summary {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 18px;
-      align-items: start;
-      margin-bottom: 12px;
-      padding: 18px;
-      border: 1px solid var(--line);
-      border-left: 5px solid var(--teal);
-      border-radius: 8px;
-      background: var(--surface);
-    }
-
-    .feature-summary h2 {
-      margin: 7px 0 8px;
-      font-size: 23px;
-      line-height: 1.2;
-    }
-
-    .feature-summary p {
-      margin: 0;
-      color: var(--muted);
-      line-height: 1.65;
-    }
-
-    .feature-summary-meta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 7px;
-    }
-
-    .feature-summary-links {
-      display: grid;
-      gap: 8px;
-      min-width: 160px;
-    }
-
-    .feature-summary-links a,
-    .milestone-source a {
-      color: var(--teal);
-      text-decoration: none;
-      font-weight: 650;
-    }
-
-    .feature-summary-links a:hover,
-    .milestone-source a:hover {
-      text-decoration: underline;
-    }
-
-    .feature-timeline-panel {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--surface);
-      overflow: hidden;
-    }
-
-    .feature-timeline-head {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 18px;
-      padding: 16px 18px;
-      border-bottom: 1px solid var(--line);
-      background: var(--surface-alt);
-    }
-
-    .feature-timeline-head h3 {
-      margin: 0;
-      font-size: 15px;
-    }
-
-    .feature-timeline-title p {
-      margin: 5px 0 0;
-      color: var(--muted);
-      font-size: 11px;
-      line-height: 1.5;
-    }
-
-    .timeline-legend {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-      gap: 7px 12px;
-      max-width: 430px;
-      color: var(--muted);
-      font-size: 10px;
-      line-height: 1.4;
-    }
-
-    .timeline-legend span {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      white-space: nowrap;
-    }
-
-    .timeline-legend i {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--indigo);
-    }
-
-    .timeline-legend .current i {
-      background: var(--green);
-    }
-
-    .timeline-legend .gate i {
-      background: var(--amber);
-    }
-
-    .timeline-legend .history i {
-      background: var(--muted);
-    }
-
-    .feature-timeline-scroll {
-      padding: 24px 28px 28px;
-    }
-
-    .feature-version-timeline {
-      --timeline-axis-width: 112px;
-      --timeline-axis-gap: 24px;
-      position: relative;
-      display: grid;
-      gap: 14px;
-      width: min(100%, 920px);
-      margin: 0 auto;
-    }
-
-    .feature-version-timeline::before {
-      content: "";
-      position: absolute;
-      top: 25px;
-      bottom: 25px;
-      left: calc(var(--timeline-axis-width) - 1px);
-      width: 2px;
-      border-radius: 2px;
-      background: var(--line-strong);
-    }
-
-    .feature-milestone {
-      position: relative;
-      display: grid;
-      grid-template-columns: var(--timeline-axis-width) minmax(0, 1fr);
-      gap: var(--timeline-axis-gap);
-      align-items: start;
-      min-width: 0;
-    }
-
-    .milestone-axis {
-      position: relative;
-      min-height: 50px;
-      padding: 12px 21px 0 0;
-      text-align: right;
-    }
-
-    .milestone-axis strong,
-    .milestone-axis small {
-      display: block;
-    }
-
-    .milestone-axis strong {
-      color: var(--text);
-      font-size: 13px;
-      line-height: 1.3;
-    }
-
-    .milestone-axis small {
-      margin-top: 3px;
-      color: var(--muted);
-      font-size: 10px;
-      font-weight: 650;
-      line-height: 1.35;
-    }
-
-    .milestone-dot {
-      position: absolute;
-      top: 17px;
-      right: -7px;
-      z-index: 1;
-      width: 14px;
-      height: 14px;
-      border: 3px solid var(--surface);
-      border-radius: 50%;
-      background: var(--indigo);
-      box-shadow: 0 0 0 2px var(--indigo);
-    }
-
-    .milestone-card {
-      min-width: 0;
-      padding: 9px 0 22px;
-      border-bottom: 1px solid var(--line);
-    }
-
-    .feature-milestone:last-child .milestone-card {
-      padding-bottom: 4px;
-      border-bottom: 0;
-    }
-
-    .feature-milestone.current .milestone-dot {
-      background: var(--green);
-      box-shadow: 0 0 0 2px var(--green);
-    }
-
-    .feature-milestone.gate .milestone-dot {
-      background: var(--amber);
-      box-shadow: 0 0 0 2px var(--amber);
-    }
-
-    .feature-milestone.history .milestone-dot,
-    .feature-milestone.empty .milestone-dot {
-      background: var(--surface);
-      box-shadow: 0 0 0 2px var(--muted);
-    }
-
-    .milestone-state-line {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 6px 12px;
-      min-height: 18px;
-      margin-bottom: 7px;
-      color: var(--muted);
-      font-size: 10px;
-      font-weight: 700;
-    }
-
-    .milestone-state,
-    .implementation-state {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .milestone-state::before,
-    .implementation-state::before {
-      content: "";
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--indigo);
-    }
-
-    .milestone-state.current::before,
-    .implementation-state.completed::before {
-      background: var(--green);
-    }
-
-    .milestone-state.gate::before,
-    .implementation-state.implementing::before,
-    .implementation-state.partial::before {
-      background: var(--amber);
-    }
-
-    .milestone-state.history::before,
-    .milestone-state.empty::before,
-    .implementation-state.foundation::before {
-      background: var(--muted);
-    }
-
-    .implementation-state.local-verified::before {
-      background: var(--teal);
-    }
-
-    .completion-state {
-      margin-left: auto;
-      padding-left: 12px;
-      border-left: 1px solid var(--line);
-      color: var(--muted);
-      font-weight: 650;
-    }
-
-    .completion-state.completed {
-      color: var(--green);
-    }
-
-    .milestone-mobile-meta {
-      display: none;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .milestone-mobile-meta strong {
-      color: var(--text);
-      font-size: 11px;
-    }
-
-    .milestone-mobile-meta span {
-      color: var(--muted);
-      font-size: 10px;
-      font-weight: 650;
-    }
-
-    .milestone-card h4 {
-      margin: 0 0 7px;
-      font-size: 17px;
-      line-height: 1.3;
-    }
-
-    .milestone-card p {
-      margin: 0 0 10px;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.58;
-    }
-
-    .milestone-facts {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      margin-top: 13px;
-      border-top: 1px solid var(--line);
-      border-bottom: 1px solid var(--line);
-      background: var(--surface-alt);
-    }
-
-    .milestone-fact {
-      min-width: 0;
-      padding: 9px 10px;
-      font-size: 11px;
-      line-height: 1.55;
-    }
-
-    .milestone-fact + .milestone-fact {
-      border-left: 1px solid var(--line);
-    }
-
-    .milestone-fact span,
-    .milestone-detail strong {
-      display: block;
-      margin-bottom: 3px;
-      color: var(--muted);
-      font-size: 10px;
-      font-weight: 650;
-    }
-
-    .milestone-fact strong {
-      color: var(--text);
-      font-size: 11px;
-      font-weight: 600;
-    }
-
-    .milestone-detail {
-      display: grid;
-      grid-template-columns: 104px minmax(0, 1fr);
-      gap: 10px;
-      padding: 9px 0;
-      border-bottom: 1px dotted var(--line-strong);
-      font-size: 11px;
-      line-height: 1.55;
-    }
-
-    .milestone-detail strong {
-      margin: 0;
-    }
-
-    .milestone-source {
-      margin-top: 9px;
-      font-size: 11px;
-      line-height: 1.5;
-    }
-
-    .feature-status {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      color: var(--muted);
-      font-size: 11px;
-      font-weight: 700;
-    }
-
-    .feature-status::before {
-      content: "";
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--muted);
-    }
-
-    .feature-status.local-verified::before {
-      background: var(--teal);
-    }
-
-    .feature-status.implementing::before,
-    .feature-status.partial::before {
-      background: var(--amber);
-    }
-
-    .feature-status.completed::before {
-      background: var(--green);
-    }
-
-    .feature-empty-result {
-      padding: 12px;
-      border: 1px dashed var(--line-strong);
-      border-radius: 8px;
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    .visual-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-      margin-bottom: 12px;
-    }
-
-    .visual-grid.single {
-      grid-template-columns: 1fr;
-    }
-
-    .diagram {
-      min-width: 0;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--surface);
-      overflow: hidden;
-    }
-
-    .diagram-head {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 11px 13px;
-      border-bottom: 1px solid var(--line);
-      background: var(--surface-alt);
-    }
-
-    .diagram-head h3 {
-      margin: 0;
-      font-size: 13px;
-      overflow-wrap: anywhere;
-    }
-
-    .diagram-body {
-      overflow-x: auto;
-      padding: 10px;
-    }
-
-    .diagram svg {
-      display: block;
-      width: 100%;
-      min-width: 640px;
-      height: auto;
-    }
-
-    .diagram-caption {
-      padding: 0 13px 13px;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.55;
-      overflow-wrap: anywhere;
-    }
-
-    .legend-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    .legend-dot {
-      width: 9px;
-      height: 9px;
-      border-radius: 50%;
-      background: var(--legend, var(--teal));
-    }
-
-    .map-stack {
-      display: grid;
-      gap: 12px;
-    }
-
-    .version-node {
-      min-height: 126px;
-      padding: 12px;
-      border: 1px solid var(--line);
-      border-top: 4px solid var(--accent, var(--teal));
-      border-radius: 8px;
-      background: var(--surface);
-      text-align: left;
-    }
-
-    .version-node:hover {
-      border-color: var(--accent, var(--teal));
-    }
-
-    .version-node strong {
-      display: block;
-      font-size: 14px;
-    }
-
-    .version-node span {
-      display: block;
-      margin-top: 8px;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.45;
-    }
-
-    .matrix {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-    }
-
-    .matrix th,
-    .matrix td {
-      padding: 11px 12px;
-      border-bottom: 1px solid var(--line);
-      text-align: left;
-      vertical-align: top;
-    }
-
-    .matrix th {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 720;
-      background: var(--surface-alt);
-    }
-
-    .matrix tr:last-child td {
-      border-bottom: 0;
-    }
-
-    .tag {
-      display: inline-flex;
-      align-items: center;
-      min-height: 22px;
-      padding: 2px 7px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      background: var(--surface-alt);
-      color: var(--muted);
-      font-size: 11px;
-      white-space: nowrap;
-    }
-
-    .decision-list {
-      display: grid;
-      gap: 9px;
-      margin: 0;
-      padding: 0;
-      list-style: none;
-    }
-
-    .decision-list li {
-      padding: 10px 11px;
-      border: 1px solid var(--line);
-      border-left: 4px solid var(--accent, var(--teal));
-      border-radius: 8px;
-      background: var(--surface);
-      line-height: 1.5;
-    }
-
-    .doc-header {
-      margin-bottom: 12px;
-      padding: 18px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--surface);
-    }
-
-    .doc-kicker {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      color: var(--muted);
-      font-size: 12px;
-      flex-wrap: wrap;
-    }
-
-    .doc-header h2 {
-      margin: 10px 0 8px;
-      font-size: 25px;
-      line-height: 1.18;
-    }
-
-    .doc-meta {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-
-    .article {
-      padding: 10px 26px 34px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--surface);
-      line-height: 1.72;
-      overflow: hidden;
-    }
-
-    .article h1,
-    .article h2,
-    .article h3,
-    .article h4 {
-      line-height: 1.25;
-      scroll-margin-top: 76px;
-    }
-
-    .article h1 {
-      margin: 22px 0 18px;
-      font-size: 28px;
-    }
-
-    .article h2 {
-      margin: 34px -26px 15px;
-      padding: 15px 26px 13px;
-      border-top: 1px solid var(--line);
-      border-bottom: 1px solid var(--line);
-      background: var(--surface-alt);
-      font-size: 20px;
-    }
-
-    .article h3 {
-      margin: 25px 0 10px;
-      font-size: 16px;
-    }
-
-    .article h4 {
-      margin: 18px 0 8px;
-      color: var(--muted);
-      font-size: 14px;
-    }
-
-    .article p {
-      margin: 9px 0;
-    }
-
-    .article ul,
-    .article ol {
-      margin: 8px 0 13px;
-      padding-left: 23px;
-    }
-
-    .article li {
-      margin: 5px 0;
-    }
-
-    .article code {
-      padding: 2px 5px;
-      border-radius: 5px;
-      background: var(--code-bg);
-      font-family: var(--mono);
-      font-size: 0.92em;
-    }
-
-    .article pre {
-      overflow: auto;
-      margin: 13px 0;
-      padding: 13px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #24272b;
-      color: #f8f6ef;
-      line-height: 1.55;
-    }
-
-    .article pre code {
-      padding: 0;
-      background: transparent;
-      color: inherit;
-    }
-
-    .article blockquote {
-      margin: 12px 0;
-      padding: 9px 13px;
-      border-left: 4px solid var(--amber);
-      background: var(--amber-soft);
-      color: #4b3a1e;
-    }
-
-    .doc-figure {
-      margin: 16px 0 20px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      overflow: hidden;
-      background: #fbfaf7;
-    }
-
-    .doc-figure a {
-      display: block;
-      cursor: zoom-in;
-    }
-
-    .doc-figure img {
-      display: block;
-      width: 100%;
-      height: auto;
-    }
-
-    .doc-figure figcaption {
-      padding: 9px 12px;
-      border-top: 1px solid var(--line);
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.45;
-    }
-
-    @media (max-width: 760px) {
-      .doc-figure {
-        overflow-x: auto;
-        overflow-y: hidden;
-      }
-
-      .doc-figure a {
-        width: 1040px;
-      }
-
-      .doc-figure img {
-        max-width: none;
-      }
-
-      .feature-controls,
-      .feature-summary {
-        grid-template-columns: 1fr;
-      }
-
-      .feature-summary-links {
-        min-width: 0;
-      }
-    }
-
-    .table-wrap {
-      overflow-x: auto;
-      margin: 13px 0;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-    }
-
-    .article table {
-      width: 100%;
-      border-collapse: collapse;
-      min-width: 520px;
-      font-size: 13px;
-    }
-
-    .article th,
-    .article td {
-      padding: 10px 11px;
-      border-bottom: 1px solid var(--line);
-      text-align: left;
-      vertical-align: top;
-    }
-
-    .article th {
-      background: var(--surface-alt);
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    .article tr:last-child td {
-      border-bottom: 0;
-    }
-
-    mark {
-      padding: 0 2px;
-      border-radius: 3px;
-      background: #ffe08a;
-      color: inherit;
-    }
-
-    .outline {
-      display: grid;
-      gap: 2px;
-    }
-
-    .outline a {
-      display: block;
-      padding: 7px 8px;
-      border-radius: 6px;
-      color: var(--muted);
-      text-decoration: none;
-      font-size: 12px;
-      line-height: 1.35;
-    }
-
-    .outline a:hover,
-    .outline a.active {
-      background: var(--surface);
-      color: var(--ink);
-    }
-
-    .outline .lv3 { padding-left: 18px; }
-    .outline .lv4 { padding-left: 28px; }
-
-    .search-results {
-      display: none;
-      position: fixed;
-      top: 55px;
-      left: 305px;
-      right: 322px;
-      max-height: min(460px, calc(100vh - 90px));
-      overflow: auto;
-      border: 1px solid var(--line-strong);
-      border-radius: 8px;
-      background: var(--surface);
-      box-shadow: var(--shadow);
-      z-index: 30;
-    }
-
-    .search-results.open {
-      display: block;
-    }
-
-    .result-item {
-      width: 100%;
-      padding: 12px 14px;
-      border: 0;
-      border-bottom: 1px solid var(--line);
-      background: transparent;
-      color: inherit;
-      text-align: left;
-    }
-
-    .result-item:hover {
-      background: var(--surface-alt);
-    }
-
-    .result-item:last-child {
-      border-bottom: 0;
-    }
-
-    .result-top {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 6px;
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    .result-line {
-      color: var(--ink);
-      line-height: 1.5;
-    }
-
-    .empty {
-      padding: 18px;
-      color: var(--muted);
-      text-align: center;
-    }
-
-    .progress {
-      position: fixed;
-      left: 282px;
-      right: 292px;
-      top: 58px;
-      height: 3px;
-      background: transparent;
-      z-index: 12;
-    }
-
-    .progress span {
-      display: block;
-      width: 0;
-      height: 100%;
-      background: linear-gradient(90deg, var(--teal), var(--amber), var(--rose));
-    }
-
-    .sr-only {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border: 0;
-    }
-
-    @media (max-width: 1120px) {
-      .app {
-        grid-template-columns: 250px minmax(0, 1fr);
-      }
-
-      .topbar {
-        grid-template-columns: 250px minmax(240px, 1fr) 230px;
-      }
-
-      .rightbar {
-        display: none;
-      }
-
-      .progress {
-        left: 250px;
-        right: 0;
-      }
-
-      .search-results {
-        left: 270px;
-        right: 18px;
-      }
-
-      .stats {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .visual-grid {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    @media (max-width: 760px) {
-      body {
-        overflow: auto;
-      }
-
-      .app {
-        display: block;
-        height: auto;
-      }
-
-      .topbar {
-        position: sticky;
-        top: 0;
-        display: grid;
-        grid-template-columns: 1fr;
-        height: auto;
-        padding: 10px;
-      }
-
-      .sidebar {
-        border-right: 0;
-        border-bottom: 1px solid var(--line);
-        overflow: visible;
-      }
-
-      .doc-list {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .main {
-        overflow: visible;
-      }
-
-      .content {
-        width: calc(100% - 20px);
-        padding-top: 10px;
-      }
-
-      .stats {
-        grid-template-columns: 1fr;
-      }
-
-      .visual-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .article {
-        padding: 8px 14px 28px;
-      }
-
-      .article h2 {
-        margin-left: -14px;
-        margin-right: -14px;
-        padding-left: 14px;
-        padding-right: 14px;
-      }
-
-      .rightbar,
-      .progress {
-        display: none;
-      }
-
-      .search-results {
-        position: fixed;
-        left: 10px;
-        right: 10px;
-        top: 132px;
-      }
-
-      .feature-summary {
-        grid-template-columns: 1fr;
-      }
-
-      .feature-summary-links {
-        min-width: 0;
-      }
-
-      .feature-timeline-head {
-        display: grid;
-        gap: 10px;
-        padding: 14px;
-      }
-
-      .timeline-legend {
-        justify-content: flex-start;
-        max-width: none;
-      }
-
-      .feature-timeline-scroll {
-        padding: 18px 12px 22px;
-      }
-
-      .feature-version-timeline {
-        --timeline-axis-width: 28px;
-        --timeline-axis-gap: 10px;
-        gap: 12px;
-      }
-
-      .milestone-axis {
-        min-height: 42px;
-        padding: 0;
-      }
-
-      .milestone-axis strong,
-      .milestone-axis small {
-        display: none;
-      }
-
-      .milestone-dot {
-        top: 19px;
-      }
-
-      .milestone-card {
-        padding: 7px 0 20px;
-      }
-
-      .milestone-mobile-meta {
-        display: flex;
-      }
-
-      .milestone-state-line {
-        margin-bottom: 7px;
-      }
-
-      .completion-state {
-        width: 100%;
-        margin-left: 0;
-        padding: 5px 0 0;
-        border-top: 1px dotted var(--line-strong);
-        border-left: 0;
-      }
-
-      .milestone-facts {
-        grid-template-columns: 1fr;
-      }
-
-      .milestone-fact + .milestone-fact {
-        border-top: 1px solid var(--line);
-        border-left: 0;
-      }
-
-      .milestone-detail {
-        grid-template-columns: 1fr;
-        gap: 3px;
-      }
-    }
+:root {
+  --bg: #f7f5ef;
+  --surface: #ffffff;
+  --surface-alt: #fbfaf7;
+  --ink: #1d1f22;
+  --muted: #69707a;
+  --faint: #8b929a;
+  --line: #dedbd2;
+  --line-strong: #c6c1b5;
+  --teal: #087d75;
+  --teal-soft: #dcefeb;
+  --indigo: #4056a1;
+  --indigo-soft: #e6e9f6;
+  --amber: #a96810;
+  --amber-soft: #f6ead6;
+  --rose: #aa2d4d;
+  --rose-soft: #f4dde4;
+  --green: #2f7d4f;
+  --green-soft: #e1f0e8;
+  --code-bg: #f1eee7;
+  --shadow: 0 12px 32px rgba(31, 35, 40, 0.08);
+  --radius: 8px;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
+body {
+  overflow: hidden;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 282px minmax(0, 1fr) 292px;
+  grid-template-rows: 58px minmax(0, 1fr);
+  height: 100vh;
+}
+
+.topbar {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 282px minmax(240px, 1fr) 292px;
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+  z-index: 10;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  color: white;
+  background: linear-gradient(135deg, var(--teal), var(--indigo));
+  font-weight: 760;
+  letter-spacing: 0;
+  flex: 0 0 auto;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.1;
+}
+
+.brand small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.searchbar {
+  position: relative;
+  min-width: 0;
+}
+
+.searchbar input {
+  width: 100%;
+  height: 38px;
+  padding: 0 42px 0 42px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  outline: none;
+}
+
+.searchbar input:focus {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px var(--teal-soft);
+}
+
+.search-icon,
+.clear-search {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+}
+
+.search-icon {
+  left: 14px;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+}
+
+.clear-search {
+  right: 8px;
+  display: none;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.clear-search:hover {
+  background: var(--code-bg);
+  color: var(--ink);
+}
+
+.top-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  width: 100%;
+  max-width: 380px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-alt);
+}
+
+.segmented button {
+  min-width: 0;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.segmented button.active {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 4px rgba(31, 35, 40, 0.1);
+}
+
+.sidebar {
+  grid-row: 2;
+  border-right: 1px solid var(--line);
+  background: var(--surface-alt);
+  overflow: auto;
+  padding: 14px;
+}
+
+.side-title {
+  margin: 2px 2px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.doc-list {
+  display: grid;
+  gap: 8px;
+}
+
+.doc-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 58px;
+  padding: 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.doc-item:hover {
+  background: var(--surface);
+  border-color: var(--line);
+}
+
+.doc-item.active {
+  background: var(--surface);
+  border-color: var(--accent, var(--teal));
+  box-shadow: var(--shadow);
+}
+
+.doc-badge {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--accent-soft, var(--teal-soft));
+  color: var(--accent, var(--teal));
+  font-weight: 780;
+  font-size: 13px;
+}
+
+.doc-name {
+  min-width: 0;
+}
+
+.doc-name strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.doc-name span {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.main {
+  position: relative;
+  grid-row: 2;
+  min-width: 0;
+  overflow: auto;
+  scroll-behavior: smooth;
+  background: var(--bg);
+}
+
+.content {
+  width: min(1100px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 18px 0 72px;
+}
+
+.rightbar {
+  grid-row: 2;
+  border-left: 1px solid var(--line);
+  background: var(--surface-alt);
+  overflow: auto;
+  padding: 14px;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 1px 0 rgba(31, 35, 40, 0.02);
+}
+
+.panel + .panel {
+  margin-top: 12px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  padding: 11px 13px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-head h2,
+.panel-head h3 {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.panel-body {
+  padding: 13px;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.stat {
+  min-height: 86px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.stat span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.stat strong {
+  display: block;
+  margin-top: 10px;
+  font-size: 25px;
+  line-height: 1;
+}
+
+.version-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.feature-query {
+  margin-bottom: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.feature-query h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.feature-query > p {
+  margin: 0 0 13px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.feature-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(260px, 1.15fr);
+  gap: 10px;
+}
+
+.feature-field {
+  display: grid;
+  gap: 6px;
+}
+
+.feature-field label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.feature-field input,
+.feature-field select {
+  width: 100%;
+  height: 40px;
+  padding: 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  outline: none;
+}
+
+.feature-field input:focus,
+.feature-field select:focus {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px var(--teal-soft);
+}
+
+.feature-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 12px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--teal);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.feature-summary h2 {
+  margin: 7px 0 8px;
+  font-size: 23px;
+  line-height: 1.2;
+}
+
+.feature-summary p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.feature-summary-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.feature-summary-links {
+  display: grid;
+  gap: 8px;
+  min-width: 160px;
+}
+
+.feature-summary-links a,
+.milestone-source a {
+  color: var(--teal);
+  text-decoration: none;
+  font-weight: 650;
+}
+
+.feature-summary-links a:hover,
+.milestone-source a:hover {
+  text-decoration: underline;
+}
+
+.feature-timeline-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.feature-timeline-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-alt);
+}
+
+.feature-timeline-head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.feature-timeline-title p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.timeline-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px 12px;
+  max-width: 430px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.timeline-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.timeline-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--indigo);
+}
+
+.timeline-legend .current i {
+  background: var(--green);
+}
+
+.timeline-legend .gate i {
+  background: var(--amber);
+}
+
+.timeline-legend .history i {
+  background: var(--muted);
+}
+
+.feature-timeline-scroll {
+  padding: 24px 28px 28px;
+}
+
+.feature-version-timeline {
+  --timeline-axis-width: 112px;
+  --timeline-axis-gap: 24px;
+  position: relative;
+  display: grid;
+  gap: 14px;
+  width: min(100%, 920px);
+  margin: 0 auto;
+}
+
+.feature-version-timeline::before {
+  content: "";
+  position: absolute;
+  top: 25px;
+  bottom: 25px;
+  left: calc(var(--timeline-axis-width) - 1px);
+  width: 2px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+
+.feature-milestone {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--timeline-axis-width) minmax(0, 1fr);
+  gap: var(--timeline-axis-gap);
+  align-items: start;
+  min-width: 0;
+}
+
+.milestone-axis {
+  position: relative;
+  min-height: 50px;
+  padding: 12px 21px 0 0;
+  text-align: right;
+}
+
+.milestone-axis strong,
+.milestone-axis small {
+  display: block;
+}
+
+.milestone-axis strong {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.milestone-axis small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.milestone-dot {
+  position: absolute;
+  top: 17px;
+  right: -7px;
+  z-index: 1;
+  width: 14px;
+  height: 14px;
+  border: 3px solid var(--surface);
+  border-radius: 50%;
+  background: var(--indigo);
+  box-shadow: 0 0 0 2px var(--indigo);
+}
+
+.milestone-card {
+  min-width: 0;
+  padding: 9px 0 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+.feature-milestone:last-child .milestone-card {
+  padding-bottom: 4px;
+  border-bottom: 0;
+}
+
+.feature-milestone.current .milestone-dot {
+  background: var(--green);
+  box-shadow: 0 0 0 2px var(--green);
+}
+
+.feature-milestone.gate .milestone-dot {
+  background: var(--amber);
+  box-shadow: 0 0 0 2px var(--amber);
+}
+
+.feature-milestone.history .milestone-dot,
+.feature-milestone.empty .milestone-dot {
+  background: var(--surface);
+  box-shadow: 0 0 0 2px var(--muted);
+}
+
+.milestone-state-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-height: 18px;
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.milestone-state,
+.implementation-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.milestone-state::before,
+.implementation-state::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--indigo);
+}
+
+.milestone-state.current::before,
+.implementation-state.completed::before {
+  background: var(--green);
+}
+
+.milestone-state.gate::before,
+.implementation-state.implementing::before,
+.implementation-state.partial::before {
+  background: var(--amber);
+}
+
+.milestone-state.history::before,
+.milestone-state.empty::before,
+.implementation-state.foundation::before {
+  background: var(--muted);
+}
+
+.implementation-state.local-verified::before {
+  background: var(--teal);
+}
+
+.completion-state {
+  margin-left: auto;
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.completion-state.completed {
+  color: var(--green);
+}
+
+.milestone-mobile-meta {
+  display: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.milestone-mobile-meta strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.milestone-mobile-meta span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.milestone-card h4 {
+  margin: 0 0 7px;
+  font-size: 17px;
+  line-height: 1.3;
+}
+
+.milestone-card p {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.58;
+}
+
+.milestone-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 13px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-alt);
+}
+
+.milestone-fact {
+  min-width: 0;
+  padding: 9px 10px;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.milestone-fact + .milestone-fact {
+  border-left: 1px solid var(--line);
+}
+
+.milestone-fact span,
+.milestone-detail strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.milestone-fact strong {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.milestone-detail {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px dotted var(--line-strong);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.milestone-detail strong {
+  margin: 0;
+}
+
+.milestone-source {
+  margin-top: 9px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.feature-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.feature-status::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.feature-status.local-verified::before {
+  background: var(--teal);
+}
+
+.feature-status.implementing::before,
+.feature-status.partial::before {
+  background: var(--amber);
+}
+
+.feature-status.completed::before {
+  background: var(--green);
+}
+
+.feature-empty-result {
+  padding: 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.visual-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.visual-grid.single {
+  grid-template-columns: 1fr;
+}
+
+.diagram {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.diagram-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 13px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-alt);
+}
+
+.diagram-head h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.diagram-body {
+  overflow-x: auto;
+  padding: 10px;
+}
+
+.diagram svg {
+  display: block;
+  width: 100%;
+  min-width: 640px;
+  height: auto;
+}
+
+.diagram-caption {
+  padding: 0 13px 13px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--legend, var(--teal));
+}
+
+.map-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.version-node {
+  min-height: 126px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-top: 4px solid var(--accent, var(--teal));
+  border-radius: 8px;
+  background: var(--surface);
+  text-align: left;
+}
+
+.version-node:hover {
+  border-color: var(--accent, var(--teal));
+}
+
+.version-node strong {
+  display: block;
+  font-size: 14px;
+}
+
+.version-node span {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.matrix th,
+.matrix td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.matrix th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 720;
+  background: var(--surface-alt);
+}
+
+.matrix tr:last-child td {
+  border-bottom: 0;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.decision-list {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.decision-list li {
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent, var(--teal));
+  border-radius: 8px;
+  background: var(--surface);
+  line-height: 1.5;
+}
+
+.doc-header {
+  margin-bottom: 12px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.doc-kicker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.doc-header h2 {
+  margin: 10px 0 8px;
+  font-size: 25px;
+  line-height: 1.18;
+}
+
+.doc-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.article {
+  padding: 10px 26px 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  line-height: 1.72;
+  overflow: hidden;
+}
+
+.article h1,
+.article h2,
+.article h3,
+.article h4 {
+  line-height: 1.25;
+  scroll-margin-top: 76px;
+}
+
+.article h1 {
+  margin: 22px 0 18px;
+  font-size: 28px;
+}
+
+.article h2 {
+  margin: 34px -26px 15px;
+  padding: 15px 26px 13px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-alt);
+  font-size: 20px;
+}
+
+.article h3 {
+  margin: 25px 0 10px;
+  font-size: 16px;
+}
+
+.article h4 {
+  margin: 18px 0 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.article p {
+  margin: 9px 0;
+}
+
+.article ul,
+.article ol {
+  margin: 8px 0 13px;
+  padding-left: 23px;
+}
+
+.article li {
+  margin: 5px 0;
+}
+
+.article code {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: var(--code-bg);
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+
+.article pre {
+  overflow: auto;
+  margin: 13px 0;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #24272b;
+  color: #f8f6ef;
+  line-height: 1.55;
+}
+
+.article pre code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.article blockquote {
+  margin: 12px 0;
+  padding: 9px 13px;
+  border-left: 4px solid var(--amber);
+  background: var(--amber-soft);
+  color: #4b3a1e;
+}
+
+.doc-figure {
+  margin: 16px 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fbfaf7;
+}
+
+.doc-figure a {
+  display: block;
+  cursor: zoom-in;
+}
+
+.doc-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.doc-figure figcaption {
+  padding: 9px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@media (max-width: 760px) {
+  .doc-figure {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .doc-figure a {
+    width: 1040px;
+  }
+
+  .doc-figure img {
+    max-width: none;
+  }
+
+  .feature-controls,
+  .feature-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .feature-summary-links {
+    min-width: 0;
+  }
+}
+
+.table-wrap {
+  overflow-x: auto;
+  margin: 13px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.article table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 520px;
+  font-size: 13px;
+}
+
+.article th,
+.article td {
+  padding: 10px 11px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.article th {
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.article tr:last-child td {
+  border-bottom: 0;
+}
+
+mark {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: #ffe08a;
+  color: inherit;
+}
+
+.outline {
+  display: grid;
+  gap: 2px;
+}
+
+.outline a {
+  display: block;
+  padding: 7px 8px;
+  border-radius: 6px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.outline a:hover,
+.outline a.active {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.outline .lv3 { padding-left: 18px; }
+.outline .lv4 { padding-left: 28px; }
+
+.search-results {
+  display: none;
+  position: fixed;
+  top: 55px;
+  left: 305px;
+  right: 322px;
+  max-height: min(460px, calc(100vh - 90px));
+  overflow: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  z-index: 30;
+}
+
+.search-results.open {
+  display: block;
+}
+
+.result-item {
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.result-item:hover {
+  background: var(--surface-alt);
+}
+
+.result-item:last-child {
+  border-bottom: 0;
+}
+
+.result-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.result-line {
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.empty {
+  padding: 18px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.progress {
+  position: fixed;
+  left: 282px;
+  right: 292px;
+  top: 58px;
+  height: 3px;
+  background: transparent;
+  z-index: 12;
+}
+
+.progress span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: linear-gradient(90deg, var(--teal), var(--amber), var(--rose));
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 1120px) {
+  .app {
+    grid-template-columns: 250px minmax(0, 1fr);
+  }
+
+  .topbar {
+    grid-template-columns: 250px minmax(240px, 1fr) 230px;
+  }
+
+  .rightbar {
+    display: none;
+  }
+
+  .progress {
+    left: 250px;
+    right: 0;
+  }
+
+  .search-results {
+    left: 270px;
+    right: 18px;
+  }
+
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .visual-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  body {
+    overflow: auto;
+  }
+
+  .app {
+    display: block;
+    height: auto;
+  }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    display: grid;
+    grid-template-columns: 1fr;
+    height: auto;
+    padding: 10px;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    overflow: visible;
+  }
+
+  .doc-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .main {
+    overflow: visible;
+  }
+
+  .content {
+    width: calc(100% - 20px);
+    padding-top: 10px;
+  }
+
+  .stats {
+    grid-template-columns: 1fr;
+  }
+
+  .visual-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .article {
+    padding: 8px 14px 28px;
+  }
+
+  .article h2 {
+    margin-left: -14px;
+    margin-right: -14px;
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .rightbar,
+  .progress {
+    display: none;
+  }
+
+  .search-results {
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    top: 132px;
+  }
+
+  .feature-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .feature-summary-links {
+    min-width: 0;
+  }
+
+  .feature-timeline-head {
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+  }
+
+  .timeline-legend {
+    justify-content: flex-start;
+    max-width: none;
+  }
+
+  .feature-timeline-scroll {
+    padding: 18px 12px 22px;
+  }
+
+  .feature-version-timeline {
+    --timeline-axis-width: 28px;
+    --timeline-axis-gap: 10px;
+    gap: 12px;
+  }
+
+  .milestone-axis {
+    min-height: 42px;
+    padding: 0;
+  }
+
+  .milestone-axis strong,
+  .milestone-axis small {
+    display: none;
+  }
+
+  .milestone-dot {
+    top: 19px;
+  }
+
+  .milestone-card {
+    padding: 7px 0 20px;
+  }
+
+  .milestone-mobile-meta {
+    display: flex;
+  }
+
+  .milestone-state-line {
+    margin-bottom: 7px;
+  }
+
+  .completion-state {
+    width: 100%;
+    margin-left: 0;
+    padding: 5px 0 0;
+    border-top: 1px dotted var(--line-strong);
+    border-left: 0;
+  }
+
+  .milestone-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .milestone-fact + .milestone-fact {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
+  .milestone-detail {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+}
+
+/* ---- spec-docs-pro additions ---- */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -40px;
+  z-index: 100;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: #fff;
+}
+
+.skip-link:focus {
+  top: 8px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.doc-group {
+  margin-bottom: 8px;
+}
+
+.doc-group > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 720;
+  cursor: pointer;
+  list-style: none;
+}
+
+.doc-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.doc-group > summary::before {
+  content: "▸";
+  margin-right: 4px;
+}
+
+.doc-group[open] > summary::before {
+  content: "▾";
+}
+
+.doc-group > summary span:first-child {
+  flex: 1;
+}
+
+.doc-group .doc-item + .doc-item {
+  margin-top: 4px;
+}
+
+.version-node {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  min-height: 110px;
+}
+
+.version-node:disabled {
+  cursor: default;
+  color: var(--ink);
+}
+
+.decision-list a {
+  text-decoration: none;
+  font-weight: 650;
+}
+
+.decision-list a:hover {
+  text-decoration: underline;
+}
+
+.decision-list small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.version-node.current {
+  --accent: var(--green);
+}
+
+.version-node.planned {
+  --accent: var(--indigo);
+}
+
+.version-node.history {
+  --accent: var(--faint);
+  border-style: dashed;
+}
+
+.version-node .tag {
+  justify-self: start;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.status-pill::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+
+.status-pill.in-progress::before { background: var(--amber); }
+.status-pill.local-verified::before { background: var(--teal); }
+.status-pill.pending-acceptance::before { background: var(--indigo); }
+.status-pill.done::before { background: var(--green); }
+.status-pill.blocked::before { background: var(--rose); }
+.status-pill.deprecated::before { background: var(--faint); }
+.status-pill.unknown { color: var(--muted); border-style: dashed; }
+
+.status-bars {
+  display: grid;
+  gap: 8px;
+}
+
+.status-bar {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) 40px;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-bar .bar {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--code-bg);
+  overflow: hidden;
+}
+
+.status-bar .bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--teal), var(--green));
+}
+
+.status-bar strong {
+  text-align: right;
+}
+
+.risk {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.risk.high {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--rose-soft);
+  color: var(--rose);
+  font-weight: 700;
+}
+
+.feature-table td,
+.evolution-grid td {
+  vertical-align: top;
+}
+
+.feature-table a,
+.doc-meta a,
+.feature-summary-links a,
+.decision-list a,
+.quality-list a,
+.matrix a,
+.article a {
+  color: var(--teal);
+}
+
+.evolution-grid table {
+  min-width: 900px;
+}
+
+.evolution-grid th small {
+  color: var(--faint);
+  font-weight: 500;
+}
+
+.cell-stage {
+  margin-bottom: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: var(--teal-soft);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.cell-stage.gate {
+  background: var(--amber-soft);
+}
+
+.cell-overview {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.quality-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.broken-link {
+  color: var(--rose);
+  text-decoration: underline dotted;
+  cursor: help;
+}
+
+.inline-img {
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.article hr {
+  margin: 20px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.article input[type="checkbox"] {
+  margin-right: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main {
+    scroll-behavior: auto;
+  }
+}
+
   </style>
 </head>
 <body>
+  <a class="skip-link" href="#mainScroll">跳到正文</a>
   <div class="app">
     <header class="topbar">
       <div class="brand">
-        <div class="brand-mark">D</div>
+        <div class="brand-mark" aria-hidden="true">DG</div>
         <div>
-          <h1>PRD Viewer</h1>
-          <small id="loadStatus">加载中</small>
+          <h1>DGOS</h1>
+          <small id="loadStatus" aria-live="polite">加载中</small>
         </div>
       </div>
 
-      <div class="searchbar">
+      <div class="searchbar" role="search">
         <svg class="search-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="m21 21-4.2-4.2m1.2-5.3a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
-        <label class="sr-only" for="searchInput">搜索</label>
-        <input id="searchInput" autocomplete="off" placeholder="搜索 PRD / API / 数据表 / 风险">
-        <button class="clear-search" id="clearSearch" aria-label="清空搜索">
+        <label class="sr-only" for="searchInput">搜索文档、功能编号、接口或决策</label>
+        <input id="searchInput" type="search" autocomplete="off" placeholder="搜索文档 / 功能编号 / 接口 / 决策（⌘K）" aria-controls="searchResults">
+        <button class="clear-search" id="clearSearch" type="button" aria-label="清空搜索">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
             <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
           </svg>
         </button>
       </div>
 
-      <div class="top-actions">
-        <div class="segmented" aria-label="视图切换">
-          <button id="tabOverview" class="active" data-view="overview">总览</button>
-          <button id="tabReader" data-view="reader">阅读</button>
-          <button id="tabMap" data-view="map">图谱</button>
-          <button id="tabEvolution" data-view="evolution">功能演进</button>
-          <button id="tabFeatureTimeline" data-view="feature-timeline" title="具体功能时间线">时间线</button>
+      <nav class="top-actions" aria-label="视图切换">
+        <div class="segmented">
+          <button type="button" data-view="overview">总览</button>
+          <button type="button" data-view="reader">阅读</button>
+          <button type="button" data-view="features">功能</button>
+          <button type="button" data-view="map">图谱</button>
+          <button type="button" data-view="evolution">演进</button>
+          <button type="button" data-view="timeline">时间线</button>
         </div>
-      </div>
+      </nav>
     </header>
 
-    <aside class="sidebar">
+    <aside class="sidebar" aria-label="文档目录">
       <div class="side-title">文档</div>
       <div class="doc-list" id="docList"></div>
     </aside>
 
-    <div class="progress"><span id="readProgress"></span></div>
+    <div class="progress" aria-hidden="true"><span id="readProgress"></span></div>
 
-    <main class="main" id="mainScroll">
-      <div class="content" id="content"></div>
+    <main class="main" id="mainScroll" tabindex="-1">
+      <div class="content" id="content">
+        <noscript><p class="empty">此页面需要启用 JavaScript。</p></noscript>
+      </div>
     </main>
 
-    <aside class="rightbar">
-      <div class="panel">
+    <aside class="rightbar" aria-label="辅助信息">
+      <section class="panel">
         <div class="panel-head">
           <h3>章节</h3>
           <span class="tag" id="outlineCount">0</span>
         </div>
         <div class="panel-body">
-          <nav class="outline" id="outline"></nav>
+          <nav class="outline" id="outline" aria-label="本页章节"></nav>
         </div>
-      </div>
-
-      <div class="panel">
+      </section>
+      <section class="panel">
         <div class="panel-head">
           <h3>关键口径</h3>
         </div>
         <div class="panel-body">
           <ul class="decision-list" id="sideDecisions"></ul>
         </div>
-      </div>
+      </section>
+      <section class="panel" id="sideQualityPanel" hidden>
+        <div class="panel-head">
+          <h3>数据质量</h3>
+          <span class="tag" id="sideQualityCount">0</span>
+        </div>
+        <div class="panel-body" id="sideQuality"></div>
+      </section>
     </aside>
   </div>
 
-  <div class="search-results" id="searchResults"></div>
+  <div class="search-results" id="searchResults" role="listbox" aria-label="搜索结果"></div>
 
-  <script src="产品文档浏览器-文档数据.js"></script>
+  <script src="%E4%BA%A7%E5%93%81%E6%96%87%E6%A1%A3%E6%B5%8F%E8%A7%88%E5%99%A8-%E6%96%87%E6%A1%A3%E6%95%B0%E6%8D%AE.js"></script>
   <script>
-            const DOCS = [
-  {
-    "id": "roadmap",
-    "version": "00",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "DGOS 版本路线图",
-    "file": "../02-产品与版本/版本路线图.md",
-    "goal": "本文档是 DGOS 产品版本规划的权威索引，定义版本编号、范围边界、依赖关系和进入条件。"
-  },
-  {
-    "id": "evolution",
-    "version": "EV",
-    "phase": "演进",
-    "accent": "#a96810",
-    "soft": "#f6ead6",
-    "title": "DGOS 功能演进矩阵",
-    "file": "../02-产品与版本/功能演进矩阵.md",
-    "goal": "本文档以\"能力主线\"为单位，说明同一项产品能力如何从 V1 底座逐步演进到画布系统、应用市场、云端协同、企业化、移动端、AI Agent 和开发者生态。"
-  },
-  {
-    "id": "v1-overview",
-    "version": "V1",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "V1 基础框架：版本总览",
-    "file": "../02-产品与版本/当前版本/V1-版本总览.md",
-    "goal": "冻结 DGOS V1 交付范围，明确本地优先 AI 应用框架底座和后续版本边界；子文档冲突时以本文范围口径为准。"
-  },
-  {
-    "id": "v1-product",
-    "version": "V1",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "V1.0 产品需求",
-    "file": "../02-产品与版本/当前版本/V1-产品需求.md",
-    "goal": "定义 V1 功能分层、业务规则、状态机和验收标准；只定义标准，不标记完成。"
-  },
-  {
-    "id": "v1-status",
-    "version": "V1",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "V1.0 实现状态",
-    "file": "../02-产品与版本/当前版本/V1-实现状态.md",
-    "goal": "V1 各功能实现状态、剩余差距和验证证据的唯一权威来源。"
-  },
-  {
-    "id": "doc-001",
-    "version": "00",
-    "phase": "概览",
-    "accent": "#087d75",
-    "soft": "#dcefeb",
-    "title": "Git 提交信息规范",
-    "file": "../01-项目概览/Git提交信息规范.md",
-    "goal": "本文档定义 DGOS 项目的 Git 提交信息规范，遵循 Conventional Commits 标准。"
-  },
-  {
-    "id": "doc-002",
-    "version": "00",
-    "phase": "概览",
-    "accent": "#087d75",
-    "soft": "#dcefeb",
-    "title": "项目概览导航",
-    "file": "../01-项目概览/README.md",
-    "goal": "项目首页、本地环境、Git 规范和架构入口的导航。"
-  },
-  {
-    "id": "doc-003",
-    "version": "00",
-    "phase": "概览",
-    "accent": "#087d75",
-    "soft": "#dcefeb",
-    "title": "工程与本地环境",
-    "file": "../01-项目概览/工程与本地环境.md",
-    "goal": "本文档说明 DGOS 项目的环境要求、本地开发环境搭建、项目结构和常用开发命令。"
-  },
-  {
-    "id": "doc-004",
-    "version": "00",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "产品与版本导航",
-    "file": "../02-产品与版本/README.md",
-    "goal": "产品蓝图、路线图、演进矩阵、V1 当前版本与 V2–V8 规划的导航。"
-  },
-  {
-    "id": "doc-005",
-    "version": "00",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "DGOS 产品需求文档 PRD",
-    "file": "../02-产品与版本/产品蓝图.md",
-    "goal": "跨版本产品蓝图：愿景、用户角色、核心场景、版本范围和长期规划；不替代 V1 契约。"
-  },
-  {
-    "id": "doc-050",
-    "version": "V2",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "V2 画布系统：版本规划",
-    "file": "../02-产品与版本/后续版本/V2-画布系统.md",
-    "goal": "提供无限画布核心能力。"
-  },
-  {
-    "id": "doc-051",
-    "version": "V3",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "V3 应用市场：版本规划",
-    "file": "../02-产品与版本/后续版本/V3-应用市场.md",
-    "goal": "建立应用模块生态，让第三方开发者发布模块。"
-  },
-  {
-    "id": "doc-052",
-    "version": "V4",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "V4 云端与协同：版本规划",
-    "file": "../02-产品与版本/后续版本/V4-云端与协同.md",
-    "goal": "提供云端增强和实时协同。"
-  },
-  {
-    "id": "doc-053",
-    "version": "V5",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "V5 企业化：版本规划",
-    "file": "../02-产品与版本/后续版本/V5-企业化.md",
-    "goal": "支持企业团队使用，提供组织管理、成员权限、企业 Provider、组织账单和审计日志。"
-  },
-  {
-    "id": "doc-054",
-    "version": "V6",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "V6 移动端：版本规划",
-    "file": "../02-产品与版本/后续版本/V6-移动端.md",
-    "goal": "将 DGOS 扩展到移动平台，交付 iOS 和 Android 应用。"
-  },
-  {
-    "id": "doc-055",
-    "version": "V7",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "V7 AI Agent：版本规划",
-    "file": "../02-产品与版本/后续版本/V7-AI-Agent.md",
-    "goal": "提供 AI Agent 能力，包括自主任务执行、多 Agent 协作和工作流自动化。"
-  },
-  {
-    "id": "doc-056",
-    "version": "V8",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "V8 开发者生态：版本规划",
-    "file": "../02-产品与版本/后续版本/V8-开发者生态.md",
-    "goal": "完善开发者生态。"
-  },
-  {
-    "id": "doc-007",
-    "version": "00",
-    "phase": "产品",
-    "accent": "#4056a1",
-    "soft": "#e6e9f6",
-    "title": "版本进入开发门禁",
-    "file": "../02-产品与版本/版本进入开发门禁.md",
-    "goal": "本文档定义版本进入开发阶段的强制门禁条件，确保开发前规格已充分收敛，避免边开发边改需求导致的返工。"
-  },
-  {
-    "id": "doc-008",
-    "version": "00",
-    "phase": "规格",
-    "accent": "#2f7d4f",
-    "soft": "#e1f0e8",
-    "title": "功能规格导航",
-    "file": "../03-功能规格/README.md",
-    "goal": "功能规格目录说明：每个功能一份中文主规格，技术设计写入 §7 或技术设计文档。"
-  },
-  {
-    "id": "doc-009",
-    "version": "V1",
-    "phase": "规格",
-    "accent": "#2f7d4f",
-    "soft": "#e1f0e8",
-    "title": "V1 需求编号管理",
-    "file": "../03-功能规格/V1/00-V1需求编号.md",
-    "goal": "本文登记 V1 功能需求、非功能需求和 E2E 场景的稳定编号。"
-  },
-  {
-    "id": "doc-010",
-    "version": "V1",
-    "phase": "规格",
-    "accent": "#2f7d4f",
-    "soft": "#e1f0e8",
-    "title": "V1 需求追踪矩阵",
-    "file": "../03-功能规格/V1/00-V1需求追踪矩阵.md",
-    "goal": "从版本路线图到功能主规格 AC、E2E 编号与验证入口的追踪索引；不复制 AC，不维护状态。"
-  },
-  {
-    "id": "doc-012",
-    "version": "V1",
-    "phase": "规格",
-    "accent": "#2f7d4f",
-    "soft": "#e1f0e8",
-    "title": "V1-FR-001：Provider 适配框架",
-    "file": "../03-功能规格/V1/01-底层能力/01-Provider适配框架.md",
-    "goal": "统一适配各厂商 AI 模型 API，提供模型列表获取、分类标签、同步/流式调用能力，支持多 Provider 配置、排序和手动选择。"
-  },
-  {
-    "id": "doc-013",
-    "version": "V1",
-    "phase": "规格",
-    "accent": "#2f7d4f",
-    "soft": "#e1f0e8",
-    "title": "V1-FR-002：DGOS 技能中心",
-    "file": "../03-功能规格/V1/01-底层能力/02-Skills管理系统.md",
-    "goal": "提供官方优先、本地可用、按场景消费的统一技能中心：管理 DGOS 官方内置技能和精选内容，通过预置适配器连接第三方生态，让不同应用通过同一本地服务发现、安装和使用技能。"
-  },
-  {
-    "id": "doc-014",
-    "version": "V1",
-    "phase": "规格",
-    "accent": "#2f7d4f",
-    "soft": "#e1f0e8",
-    "title": "V1-FR-003：MCP 管理系统",
-    "file": "../03-功能规格/V1/01-底层能力/03-MCP管理系统.md",
-    "goal": "连接和管理 MCP（Model Context Protocol）服务器，提供工具列表获取、工具调用、连接状态监控和自动重连能力，让 AI 可以访问外部数据源和服务。"
-  },
-  {
-    "id": "doc-015",
-    "version": "V1",
-    "phase": "规格",
-    "accent": "#2f7d4f",
-    "soft": "#e1f0e8",
-    "title": "V1-FR-004：模块系统与热更新",
-    "file": "../03-功能规格/V1/01-底层能力/04-模块系统与热更新.md",
-    "goal": "基于经宿主验证的本地模块包实现应用模块的动态加载、热更新和卸载，支持粗粒度权限管理和 UI 故障隔离，让 DGOS 成为可扩展的应用平台。"
-  },
-  {
-    "id": "doc-016",
-    "version": "V1",
-    "phase": "规格",
-    "accent": "#2f7d4f",
-    "soft": "#e1f0e8",
-    "title": "V1-FR-005：统一设计系统",
-    "file": "../03-功能规格/V1/01-底层能力/05-统一设计系统.md",
-    "goal": "建立完整的 Design Tokens 体系、主题系统、密度系统、基础组件库和错误通知规范，所有模块强制复用，确保 DGOS 全局视觉和交互的完全一致性。"
-  },
-  {
-    "id": "doc-019",
-    "version": "V1",
-    "phase": "规格",
-    "accent": "#2f7d4f",
-    "soft": "#e1f0e8",
-    "title": "V1-FR-006：AI 工作台",
-    "file": "../03-功能规格/V1/02-应用模块/01-AI工作台.md",
-    "goal": "提供简单易用的 AI 对话界面，支持 Provider 选择、流式响应、多轮对话、历史记录管理，可选启用 Skills/MCP 增强生成能力。"
-  },
-  {
-    "id": "doc-020",
-    "version": "V1",
-    "phase": "规格",
-    "accent": "#2f7d4f",
-    "soft": "#e1f0e8",
-    "title": "V1-FR-007：系统设置",
-    "file": "../03-功能规格/V1/02-应用模块/02-系统设置.md",
-    "goal": "提供统一的系统设置界面，集中管理 Provider、Skills、MCP、模块、主题和用户偏好，让用户可以方便地配置和管理 DGOS。"
-  },
-  {
-    "id": "doc-021",
-    "version": "V1",
-    "phase": "规格",
-    "accent": "#2f7d4f",
-    "soft": "#e1f0e8",
-    "title": "V1-FR-008：本地用户管理",
-    "file": "../03-功能规格/V1/03-系统功能/01-本地用户管理.md",
-    "goal": "提供本地用户的创建、登录、切换和删除功能，支持密码认证和数据隔离，让多个用户可以在同一台电脑上独立使用 DGOS。"
-  },
-  {
-    "id": "doc-022",
-    "version": "V1",
-    "phase": "规格",
-    "accent": "#2f7d4f",
-    "soft": "#e1f0e8",
-    "title": "V1-FR-009：模块权限管理",
-    "file": "../03-功能规格/V1/03-系统功能/02-模块权限管理.md",
-    "goal": "提供粗粒度的模块权限管理，定义 6 种权限类型（Provider、Skills、MCP、文件读写、网络），在运行时拦截模块调用并检查权限，记录权限日志。"
-  },
-  {
-    "id": "doc-023",
-    "version": "V1",
-    "phase": "规格",
-    "accent": "#2f7d4f",
-    "soft": "#e1f0e8",
-    "title": "V1-FR-010：局域网协同",
-    "file": "../03-功能规格/V1/03-系统功能/03-局域网协同.md",
-    "goal": "在本地启动 HTTP 服务，让局域网内的其他设备（手机、平板、其他电脑）可以通过浏览器访问 DGOS，支持简单的 token 认证和设备管理。"
-  },
-  {
-    "id": "doc-024",
-    "version": "V1",
-    "phase": "规格",
-    "accent": "#2f7d4f",
-    "soft": "#e1f0e8",
-    "title": "V1 功能规格索引",
-    "file": "../03-功能规格/V1/README.md",
-    "goal": "V1 首发交付范围登记 10 项功能，分为底层能力、应用模块和系统功能。"
-  },
-  {
-    "id": "doc-025",
-    "version": "00",
-    "phase": "规格",
-    "accent": "#2f7d4f",
-    "soft": "#e1f0e8",
-    "title": "功能开发流程",
-    "file": "../03-功能规格/功能开发流程.md",
-    "goal": "本文档定义 DGOS 项目从需求到交付的完整功能开发流程，遵循 spec-docs-pro 规格驱动开发方法。"
-  },
-  {
-    "id": "doc-026",
-    "version": "00",
-    "phase": "规格",
-    "accent": "#2f7d4f",
-    "soft": "#e1f0e8",
-    "title": "功能文档规范",
-    "file": "../03-功能规格/功能文档规范.md",
-    "goal": "本文档定义 DGOS 项目功能规格文档的标准格式和编写规范，确保所有功能文档的一致性和完整性。"
-  },
-  {
-    "id": "doc-027",
-    "version": "00",
-    "phase": "架构",
-    "accent": "#a96810",
-    "soft": "#f6ead6",
-    "title": "技术架构导航",
-    "file": "../04-技术架构/README.md",
-    "goal": "总体架构、服务边界、技术栈与 V1 接口、数据、错误码和技术设计的导航。"
-  },
-  {
-    "id": "doc-028",
-    "version": "V1",
-    "phase": "架构",
-    "accent": "#a96810",
-    "soft": "#f6ead6",
-    "title": "FR-004 前置收口设计",
-    "file": "../04-技术架构/当前版本/V1-FR004前置收口设计.md",
-    "goal": "依据 D023 和 D030，将 FR-001～003 的既有能力收敛为可信宿主服务及跨入口 Application Service，减少后续接入模块时的返工。"
-  },
-  {
-    "id": "doc-029",
-    "version": "V1",
-    "phase": "架构",
-    "accent": "#a96810",
-    "soft": "#f6ead6",
-    "title": "V1 MCP 管理系统技术设计",
-    "file": "../04-技术架构/当前版本/V1-MCP管理系统技术设计.md",
-    "goal": "V1-FR-003 的实施基线：传输、自动连接、逐次确认、凭据与审计默认值（D021/D022）。"
-  },
-  {
-    "id": "doc-030",
-    "version": "V1",
-    "phase": "架构",
-    "accent": "#a96810",
-    "soft": "#f6ead6",
-    "title": "V1 Skills 内容包与发布规范",
-    "file": "../04-技术架构/当前版本/V1-Skills内容包与发布规范.md",
-    "goal": "官方 SKILL.md 内容包的结构、目录哈希、版本不可变与发布规范（D016/D017）。"
-  },
-  {
-    "id": "doc-031",
-    "version": "V1",
-    "phase": "架构",
-    "accent": "#a96810",
-    "soft": "#f6ead6",
-    "title": "V1 工作台技能消费设计",
-    "file": "../04-技术架构/当前版本/V1-工作台技能消费设计.md",
-    "goal": "工作台单任务固定版本技能消费与显式 MCP 工具提案的技术设计（D018/D022）。"
-  },
-  {
-    "id": "doc-032",
-    "version": "V1",
-    "phase": "架构",
-    "accent": "#a96810",
-    "soft": "#f6ead6",
-    "title": "V1 总体架构",
-    "file": "../04-技术架构/当前版本/V1-总体架构.md",
-    "goal": "本文档混合描述目标架构与当前实现边界；文中部分服务和流程仍是规划，并非已实现事实。"
-  },
-  {
-    "id": "doc-033",
-    "version": "V1",
-    "phase": "架构",
-    "accent": "#a96810",
-    "soft": "#f6ead6",
-    "title": "V1 接口契约",
-    "file": "../04-技术架构/当前版本/V1-接口契约.md",
-    "goal": "V1 Tauri command 与规划中局域网 HTTP API 的接口契约；HTTP 字段以 OpenAPI 为准。"
-  },
-  {
-    "id": "doc-034",
-    "version": "V1",
-    "phase": "架构",
-    "accent": "#a96810",
-    "soft": "#f6ead6",
-    "title": "V1 数据模型",
-    "file": "../04-技术架构/当前版本/V1-数据模型.md",
-    "goal": "V1 数据表结构说明；物理结构以 migration 为准。"
-  },
-  {
-    "id": "doc-057",
-    "version": "V1",
-    "phase": "架构",
-    "accent": "#a96810",
-    "soft": "#f6ead6",
-    "title": "V1 架构优化评审草案",
-    "file": "../04-技术架构/当前版本/V1-架构优化评审草案.md",
-    "goal": "当前代码已经补齐了重要的安全前置：宿主执行上下文、持久化授权 broker、最小 Host Capability API、包 staging/完整性校验、版本目录和启动恢复。"
-  },
-  {
-    "id": "doc-035",
-    "version": "V1",
-    "phase": "架构",
-    "accent": "#a96810",
-    "soft": "#f6ead6",
-    "title": "V1 错误码",
-    "file": "../04-技术架构/当前版本/V1-错误码.md",
-    "goal": "本文档汇总 DGOS V1 的所有错误码，确保全局唯一、语义清晰、易于维护。"
-  },
-  {
-    "id": "doc-036",
-    "version": "00",
-    "phase": "架构",
-    "accent": "#a96810",
-    "soft": "#f6ead6",
-    "title": "DGOS 总体架构",
-    "file": "../04-技术架构/总体架构.md",
-    "goal": "DGOS 跨版本目标架构：分层、核心模块、运行模式与演进路径；当前实现边界逐节标注。"
-  },
-  {
-    "id": "doc-037",
-    "version": "00",
-    "phase": "架构",
-    "accent": "#a96810",
-    "soft": "#f6ead6",
-    "title": "技术栈选型",
-    "file": "../04-技术架构/技术栈选型.md",
-    "goal": "本文档说明 DGOS 项目的技术栈选择及其决策依据，遵循 V1 冻结决策 中的相关决策。"
-  },
-  {
-    "id": "doc-038",
-    "version": "00",
-    "phase": "架构",
-    "accent": "#a96810",
-    "soft": "#f6ead6",
-    "title": "服务与领域边界",
-    "file": "../04-技术架构/服务与领域边界.md",
-    "goal": "本文档定义 DGOS 的服务架构和领域边界，明确各模块的职责和交互关系。"
-  },
-  {
-    "id": "doc-058",
-    "version": "00",
-    "phase": "决策",
-    "accent": "#7c3aed",
-    "soft": "#ede9fe",
-    "title": "架构决策记录（ADR）索引",
-    "file": "../06-决策记录/ADR/README.md",
-    "goal": "ADR 目录与编号规则；当前暂无 ADR，V1 决策记录在冻结决策中。"
-  },
-  {
-    "id": "doc-039",
-    "version": "00",
-    "phase": "决策",
-    "accent": "#7c3aed",
-    "soft": "#ede9fe",
-    "title": "决策记录导航",
-    "file": "../06-决策记录/README.md",
-    "goal": "冻结决策、ADR 与文档变更记录的导航和查找方式。"
-  },
-  {
-    "id": "doc-040",
-    "version": "V1",
-    "phase": "决策",
-    "accent": "#7c3aed",
-    "soft": "#ede9fe",
-    "title": "V1 冻结决策",
-    "file": "../06-决策记录/V1-冻结决策.md",
-    "goal": "跨功能产品与工程决策（D001 起），新证据只追加新编号，不改写历史结论。"
-  },
-  {
-    "id": "doc-041",
-    "version": "V1",
-    "phase": "决策",
-    "accent": "#7c3aed",
-    "soft": "#ede9fe",
-    "title": "V1 文档变更记录",
-    "file": "../06-决策记录/V1-文档变更记录.md",
-    "goal": "本文件从本次变更开始记录，不追补未经核验的历史事实。"
-  },
-  {
-    "id": "doc-042",
-    "version": "00",
-    "phase": "参考",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "2024-01-XX DGOS 初始讨论完整记录",
-    "file": "../90-参考资料/2024-01-XX-初始讨论完整记录.md",
-    "goal": "本文档记录 DGOS 项目从概念到架构设计的完整对话过程，是所有后续文档的原始来源。"
-  },
-  {
-    "id": "doc-043",
-    "version": "00",
-    "phase": "参考",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "参考资料索引",
-    "file": "../90-参考资料/README.md",
-    "goal": "本目录存放外部参考、调研材料、对话记录和辅助文档。"
-  },
-  {
-    "id": "doc-044",
-    "version": "00",
-    "phase": "参考",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "DG-OS 文档浏览器生成报告",
-    "file": "../90-参考资料/文档浏览器生成报告.md",
-    "goal": "文档浏览器的生成范围、数据结构与验证记录。"
-  },
-  {
-    "id": "doc-045",
-    "version": "00",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史归档索引",
-    "file": "../99-历史归档/README.md",
-    "goal": "本目录存放已迁移或不再作为当前依据的历史材料。"
-  },
-  {
-    "id": "doc-017",
-    "version": "00",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史：V1-FR-001 前端实现完成度检查报告",
-    "file": "../99-历史归档/V1-FR-001/2026-10-27-前端实现检查.md",
-    "goal": "历史快照：2026-10-27 的前端检查报告，2026-10-28 从 docs/03-功能规格/V1/01-底层能力/ 移入归档。"
-  },
-  {
-    "id": "doc-006",
-    "version": "00",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史：前端集成阶段详解",
-    "file": "../99-历史归档/V1-FR-001/2026-10-27-前端集成阶段说明.md",
-    "goal": "历史快照：2026-10-27 的 FR-001 前端集成说明，2026-10-28 从 docs/02-产品与版本/当前版本/ 移入归档。"
-  },
-  {
-    "id": "doc-018",
-    "version": "00",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史：V1-FR-001 Provider 适配框架 - 实现检查报告",
-    "file": "../99-历史归档/V1-FR-001/2026-10-27-实现检查报告.md",
-    "goal": "历史快照：2026-10-27 的一次性检查报告，2026-10-28 从 docs/03-功能规格/V1/01-底层能力/ 移入归档。"
-  },
-  {
-    "id": "doc-046",
-    "version": "00",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史：V1-FR-002：Skills 管理系统",
-    "file": "../99-历史归档/V1-FR-002/2026-10-27-旧Skills管理系统.md",
-    "goal": "历史归档：2026-10-27 被 D016 与新版 V1-FR-002 取代。"
-  },
-  {
-    "id": "doc-047",
-    "version": "00",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史：V1-FR-002 旧需求追踪片段",
-    "file": "../99-历史归档/V1-FR-002/2026-10-27-旧需求追踪片段.md",
-    "goal": "2026-10-27 归档的旧追踪矩阵第 4.2 节，保留旧 AC 释义用于追溯。"
-  },
-  {
-    "id": "doc-048",
-    "version": "00",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史：V1-FR-003：MCP 管理系统",
-    "file": "../99-历史归档/V1-FR-003/2026-10-28-旧MCP流程与实现草图.md",
-    "goal": "历史快照：保留早期流程、SQL、API 和 B03 分支草图用于追溯；不是当前规范、状态或验收结论。"
-  },
-  {
-    "id": "doc-059",
-    "version": "00",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史：V1-FR-005：统一设计系统",
-    "file": "../99-历史归档/V1-FR-005/2026-10-26-统一设计系统-旧版.md",
-    "goal": "历史快照：2026-10-26 规格改写前的备份文件（原名 05-统一设计系统.md.backup），2026-10-28 移入归档。"
-  },
-  {
-    "id": "doc-011",
-    "version": "00",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史：V1 功能规格补充说明",
-    "file": "../99-历史归档/V1-功能规格/2026-10-26-功能规格补充说明.md",
-    "goal": "历史快照：2026-10-26 的跨功能补充清单，2026-10-28 从 docs/03-功能规格/V1/ 移入归档。"
-  },
-  {
-    "id": "doc-060",
-    "version": "00",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史：V1 需求追踪矩阵旧 AC 表（2026-10-28）",
-    "file": "../99-历史归档/V1-追踪矩阵/2026-10-28-旧AC追踪表.md",
-    "goal": "历史快照：以下内容逐字保留自 docs/03-功能规格/V1/00-V1需求追踪矩阵.md 的 §4.1 与 §4.4–§4.10，记录归档时仍在矩阵中的旧 AC 表及 E2E 场景。"
-  },
-  {
-    "id": "doc-061",
-    "version": "00",
-    "phase": "归档",
-    "accent": "#69707a",
-    "soft": "#f1eee7",
-    "title": "历史：V1 开发门禁检查记录（2026-10-26）",
-    "file": "../99-历史归档/V1-门禁/2026-10-26-V1开发门禁检查记录.md",
-    "goal": "历史快照：原载于版本进入开发门禁第 3–4 节，2026-10-28 移入归档。"
-  },
-  {
-    "id": "doc-049",
-    "version": "00",
-    "phase": "其他",
-    "accent": "#087d75",
-    "soft": "#dcefeb",
-    "title": "DGOS 文档中心",
-    "file": "../README.md",
-    "goal": "DGOS 统一文档入口：按任务查找、目录结构、命名规则与文档权威性。"
-  }
-];
+"use strict";
+// spec-docs-pro document viewer. Reads only window.SPEC_DOCS_DATA; contains no project-specific data.
 
-        const DECISIONS = [
-  {
-    "accent": "#087d75",
-    "text": "D001 使用 Rust + Tauri 而非 Node.js + Electron"
-  },
-  {
-    "accent": "#4056a1",
-    "text": "D002 使用 SQLite 而非 PostgreSQL"
-  },
-  {
-    "accent": "#2f7d4f",
-    "text": "D003 不使用 QuickJS/Node.js 作为 Skills/MCP 运行时（Skills 部分由 D016 取代）"
-  },
-  {
-    "accent": "#a96810",
-    "text": "D004 使用 Module Federation 实现模块热更新"
-  },
-  {
-    "accent": "#aa2d4d",
-    "text": "D005 Skills 和 MCP 使用现有标准协议（Skills 部分由 D016 取代）"
-  },
-  {
-    "accent": "#087d75",
-    "text": "D006 权限模型采用粗粒度模块级权限"
-  },
-  {
-    "accent": "#4056a1",
-    "text": "D007 局域网 HTTP 服务始终开启"
-  },
-  {
-    "accent": "#2f7d4f",
-    "text": "D008 所有模块强制使用统一设计系统"
-  },
-  {
-    "accent": "#a96810",
-    "text": "D009 无限画布分多版本实现，不阻塞 V1"
-  },
-  {
-    "accent": "#aa2d4d",
-    "text": "D010 应用市场采用中心化模式，人工审核"
-  },
-  {
-    "accent": "#087d75",
-    "text": "D011 官方 Provider 采用积分制，按类型计费"
-  },
-  {
-    "accent": "#4056a1",
-    "text": "D012 Provider 支持同类型多配置和排序机制"
-  },
-  {
-    "accent": "#2f7d4f",
-    "text": "D013 局域网协同需要简单认证和实时状态显示"
-  },
-  {
-    "accent": "#a96810",
-    "text": "D014 模型分类标签内置维护，不自动提取"
-  },
-  {
-    "accent": "#aa2d4d",
-    "text": "D015 模块更新自动推送，图标显示版本提示"
-  },
-  {
-    "accent": "#087d75",
-    "text": "D016 Skills 定位为官方优先的本地技能中心"
-  },
-  {
-    "accent": "#4056a1",
-    "text": "D017 官方内容包固定发布摘要，Legacy 执行关闭"
-  },
-  {
-    "accent": "#2f7d4f",
-    "text": "D018 工作台单任务固定版本与最小审计"
-  },
-  {
-    "accent": "#a96810",
-    "text": "D019 对齐 Provider 使用日志物理表"
-  },
-  {
-    "accent": "#aa2d4d",
-    "text": "D020 兼容已执行但结构过期的 Skills migration"
-  },
-  {
-    "accent": "#087d75",
-    "text": "D021 MCP V1 客户端边界与安全默认值"
-  },
-  {
-    "accent": "#4056a1",
-    "text": "D022 Workbench 显式 MCP 工具提案与逐次确认"
-  },
-  {
-    "accent": "#2f7d4f",
-    "text": "D023 FR-004 前置收口采用宿主身份与能力边界"
-  },
-  {
-    "accent": "#a96810",
-    "text": "D024 FR-004 模块契约命名与发布对象收敛"
-  },
-  {
-    "accent": "#aa2d4d",
-    "text": "D025 模块身份必须由宿主发布器构造"
-  },
-  {
-    "accent": "#087d75",
-    "text": "D026 Host Capability API 是唯一模块能力入口"
-  },
-  {
-    "accent": "#4056a1",
-    "text": "D027 模块包发布采用可恢复文件状态机"
-  },
-  {
-    "accent": "#2f7d4f",
-    "text": "D028 V1 模块信任范围与验收边界"
-  },
-  {
-    "accent": "#a96810",
-    "text": "D029 模块 manifest 是能力上限，授权 broker 只授予交集"
-  },
-  {
-    "accent": "#aa2d4d",
-    "text": "D030 Application Service 是跨入口用例编排边界"
-  },
-  {
-    "accent": "#087d75",
-    "text": "D031 模块发布互斥采用可恢复 lease"
-  },
-  {
-    "accent": "#4056a1",
-    "text": "D032 模块可信注册只能来自发布应用服务"
-  },
-  {
-    "accent": "#2f7d4f",
-    "text": "D033 模块 runtime supervisor 第一阶段：本地受信任加载与热更新回滚"
-  },
-  {
-    "accent": "#a96810",
-    "text": "D034 模块宿主操作编排：operation ID、取消语义、并发与 renderer 信任边界"
-  },
-  {
-    "accent": "#aa2d4d",
-    "text": "D035 模块错误码冲突：1004004 与未发布、未启用、包无效的分类"
-  },
-  {
-    "accent": "#087d75",
-    "text": "D036 operation 历史的重启语义"
-  },
-  {
-    "accent": "#4056a1",
-    "text": "D037 Settings 路由由宿主校验与真实 WebView 验证边界"
-  },
-  {
-    "accent": "#2f7d4f",
-    "text": "D038 错误码以代码已发出的映射为准"
-  },
-  {
-    "accent": "#a96810",
-    "text": "D039 局域网服务随应用自动启动，设置开关持久关闭"
-  },
-  {
-    "accent": "#aa2d4d",
-    "text": "D040 云端账号基础能力前移到 V3"
-  }
-];
+const DATA = window.SPEC_DOCS_DATA || null;
+const VIEWS = ["overview", "reader", "features", "map", "evolution", "timeline"];
+const STORAGE_PREFIX = `spec-docs:${DATA && DATA.project ? DATA.project.name : "default"}:`;
+const KIND_LABELS = {
+  current: "当前版本",
+  planned: "规划",
+  released: "已发布",
+  history: "历史"
+};
+const STATUS_ORDER = ["planned", "in-progress", "local-verified", "pending-acceptance", "done", "blocked", "deprecated", "unknown"];
 
-        const FEATURE_TRACKS = {
-  "provider": {
-    "title": "Provider 能力演进",
-    "overview": "Provider 能力",
-    "accent": "#087d75"
-  },
-  "skills": {
-    "title": "Skills 能力演进",
-    "overview": "Skills 能力",
-    "accent": "#2f7d4f"
-  },
-  "mcp": {
-    "title": "MCP 能力演进",
-    "overview": "MCP 能力",
-    "accent": "#4056a1"
-  },
-  "module": {
-    "title": "模块系统演进",
-    "overview": "模块系统",
-    "accent": "#a96810"
-  },
-  "design": {
-    "title": "设计系统演进",
-    "overview": "设计系统",
-    "accent": "#aa2d4d"
-  },
-  "workbench": {
-    "title": "AI 工作台演进",
-    "overview": "AI 工作台",
-    "accent": "#087d75"
-  },
-  "settings": {
-    "title": "系统设置演进",
-    "overview": "系统设置",
-    "accent": "#4056a1"
-  },
-  "identity": {
-    "title": "身份管理演进",
-    "overview": "身份管理",
-    "accent": "#2f7d4f"
-  },
-  "permissions": {
-    "title": "权限管理演进",
-    "overview": "权限系统",
-    "accent": "#7c3aed"
-  },
-  "lan": {
-    "title": "局域网协同演进",
-    "overview": "局域网协同",
-    "accent": "#a96810"
-  }
+const state = {
+  view: "overview",
+  activeDocId: null,
+  activeFeatureId: null,
+  featureFilter: "",
+  query: ""
 };
 
-    const FEATURE_TIMELINE_VERSIONS = [
-      { "id": "v1", "label": "V1", "kind": "current" },
-      { "id": "gate", "label": "V1 门禁", "kind": "gate" },
-      { "id": "v2", "label": "V2", "kind": "planned" },
-      { "id": "v3", "label": "V3", "kind": "planned" },
-      { "id": "v4", "label": "V4", "kind": "planned" },
-      { "id": "v5", "label": "V5", "kind": "planned" },
-      { "id": "v6", "label": "V6", "kind": "planned" },
-      { "id": "v7", "label": "V7", "kind": "planned" },
-      { "id": "v8", "label": "V8", "kind": "planned" },
-      { "id": "future", "label": "后续", "kind": "planned" }
-    ];
+const els = {};
+let docIndex = new Map();
+let featureIndex = new Map();
+let trackIndex = new Map();
+let versionIndex = new Map();
 
-    const state = {
-      docs: [],
-      features: Array.isArray(window.DGOS_FEATURE_BROWSER_DATA) ? window.DGOS_FEATURE_BROWSER_DATA : [],
-      activeDocId: localStorage.getItem("prd.activeDoc") || "roadmap",
-      activeFeatureId: localStorage.getItem("prd.activeFeature") || "V1-FR-001",
-      view: localStorage.getItem("prd.view") || "overview",
-      query: ""
-    };
+document.addEventListener("DOMContentLoaded", init);
 
-    const els = {
-      loadStatus: document.getElementById("loadStatus"),
-      docList: document.getElementById("docList"),
-      content: document.getElementById("content"),
-      mainScroll: document.getElementById("mainScroll"),
-      outline: document.getElementById("outline"),
-      outlineCount: document.getElementById("outlineCount"),
-      sideDecisions: document.getElementById("sideDecisions"),
-      searchInput: document.getElementById("searchInput"),
-      searchResults: document.getElementById("searchResults"),
-      clearSearch: document.getElementById("clearSearch"),
-      readProgress: document.getElementById("readProgress"),
-      tabs: [...document.querySelectorAll(".segmented button")]
-    };
+function init() {
+  for (const id of ["loadStatus", "docList", "content", "mainScroll", "outline", "outlineCount", "sideDecisions",
+    "searchInput", "searchResults", "clearSearch", "readProgress", "sideQuality", "sideQualityPanel", "sideQualityCount"]) {
+    els[id] = document.getElementById(id);
+  }
+  els.tabs = [...document.querySelectorAll(".segmented button")];
 
-    init();
+  if (!DATA || !Array.isArray(DATA.docs)) {
+    els.loadStatus.textContent = "加载失败";
+    els.content.innerHTML = panel("无法读取文档数据", `
+      <p>没有找到 <code>window.SPEC_DOCS_DATA</code>。请确认数据文件与当前 HTML 位于同一目录，然后重新运行：</p>
+      <pre><code>node &lt;skill&gt;/scripts/generate-browser.mjs --docs docs</code></pre>`);
+    return;
+  }
 
-    async function init() {
-      renderSideDecisions();
-      bindEvents();
+  docIndex = new Map(DATA.docs.map(doc => [doc.id, doc]));
+  featureIndex = new Map((DATA.features || []).map(feature => [feature.id, feature]));
+  trackIndex = new Map((DATA.tracks || []).map(track => [track.id, track]));
+  versionIndex = new Map((DATA.versions || []).map(version => [version.id, version]));
 
-      try {
-        state.docs = await Promise.all(DOCS.map(loadDoc));
-        if (state.features.length === 0) throw new Error(`未加载功能数据`);
-        els.loadStatus.textContent = `${state.docs.length} 份 PRD · ${state.features.length} 功能${location.protocol === "file:" ? " · 本地" : ""}`;
-        renderDocList();
-        setView(state.view);
-      } catch (error) {
-        els.loadStatus.textContent = "加载失败";
-        els.content.innerHTML = `
-          <section class="panel">
-            <div class="panel-head"><h2>无法读取 Markdown</h2></div>
-            <div class="panel-body">
-              <p>请确认 <code>产品文档浏览器-文档数据.js</code> 与当前 HTML 位于同一目录。</p>
-              <pre><code>${escapeHtml(error.message)}</code></pre>
-            </div>
-          </section>
-        `;
-      }
+  const counts = [`${DATA.docs.length} 份文档`];
+  if (DATA.features && DATA.features.length) counts.push(`${DATA.features.length} 个功能`);
+  if (location.protocol === "file:") counts.push("离线");
+  els.loadStatus.textContent = counts.join(" · ");
+  els.loadStatus.title = DATA.generatedAt ? `生成于 ${DATA.generatedAt}` : "";
+
+  renderSideDecisions();
+  renderSideQuality();
+  bindEvents();
+  renderDocList();
+
+  const fromHash = parseHash();
+  const saved = {
+    view: readStore("view"),
+    doc: readStore("doc"),
+    feature: readStore("feature")
+  };
+  state.activeDocId = docIndex.has(fromHash.doc) ? fromHash.doc : docIndex.has(saved.doc) ? saved.doc : DATA.docs[0] && DATA.docs[0].id;
+  state.activeFeatureId = featureIndex.has(fromHash.feature) ? fromHash.feature
+    : featureIndex.has(saved.feature) ? saved.feature
+    : DATA.features && DATA.features[0] ? DATA.features[0].id : null;
+  setView(fromHash.view || saved.view || "overview", { replace: true });
+}
+
+function readStore(key) {
+  try { return localStorage.getItem(STORAGE_PREFIX + key); } catch { return null; }
+}
+
+function writeStore(key, value) {
+  try { localStorage.setItem(STORAGE_PREFIX + key, value); } catch { /* storage may be disabled for file:// */ }
+}
+
+function parseHash() {
+  const params = new URLSearchParams(location.hash.replace(/^#/, ""));
+  return { view: params.get("view"), doc: params.get("doc"), feature: params.get("feature") };
+}
+
+function updateHash(replace) {
+  const params = new URLSearchParams({ view: state.view });
+  if (state.view === "reader" && state.activeDocId) params.set("doc", state.activeDocId);
+  if (state.view === "timeline" && state.activeFeatureId) params.set("feature", state.activeFeatureId);
+  const next = `#${params.toString()}`;
+  if (next === location.hash) return;
+  if (replace) history.replaceState(null, "", next);
+  else history.pushState(null, "", next);
+}
+
+function bindEvents() {
+  els.tabs.forEach(button => button.addEventListener("click", () => setView(button.dataset.view)));
+
+  els.searchInput.addEventListener("input", debounce(() => {
+    state.query = els.searchInput.value.trim();
+    els.clearSearch.style.display = state.query ? "block" : "none";
+    renderSearch();
+  }, 150));
+
+  els.clearSearch.addEventListener("click", closeSearch);
+
+  document.addEventListener("keydown", event => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      els.searchInput.focus();
+      els.searchInput.select();
     }
+    if (event.key === "Escape") els.searchResults.classList.remove("open");
+  });
 
-    async function loadDoc(doc) {
-      let content = window.DGOS_DOC_BROWSER_DATA?.[doc.id];
-      if (location.protocol !== "file:") {
-        try {
-          const response = await fetch(encodeURI(doc.file), { cache: "no-store" });
-          if (!response.ok) throw new Error(`${doc.file}: ${response.status}`);
-          content = await response.text();
-        } catch (error) {
-          if (typeof content !== "string") throw error;
-        }
-      }
-      if (typeof content !== "string") {
-        throw new Error(`缺少离线文档数据: ${doc.id}`);
-      }
-      const headings = extractHeadings(content);
-      return {
-        ...doc,
-        content,
-        headings,
-        lines: content.split(/\r?\n/).length,
-        words: content.replace(/\s+/g, "").length
-      };
-    }
-
-    function bindEvents() {
-      els.tabs.forEach(button => {
-        button.addEventListener("click", () => setView(button.dataset.view));
-      });
-
-      els.searchInput.addEventListener("input", debounce(() => {
-        state.query = els.searchInput.value.trim();
-        els.clearSearch.style.display = state.query ? "block" : "none";
-        renderSearch();
-      }, 150));
-
-      els.clearSearch.addEventListener("click", () => {
-        els.searchInput.value = "";
-        state.query = "";
-        els.clearSearch.style.display = "none";
-        els.searchResults.classList.remove("open");
-      });
-
-      document.addEventListener("keydown", event => {
-        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-          event.preventDefault();
-          els.searchInput.focus();
-        }
-        if (event.key === "Escape") {
-          els.searchResults.classList.remove("open");
-        }
-      });
-
-      els.mainScroll.addEventListener("scroll", () => {
-        updateProgress();
-        updateActiveOutline();
-      });
-    }
-
-    function renderDocList() {
-      els.docList.innerHTML = state.docs.map(doc => `
-        <button class="doc-item ${doc.id === state.activeDocId ? "active" : ""}" data-doc="${doc.id}" style="--accent:${doc.accent};--accent-soft:${doc.soft}">
-          <span class="doc-badge">${doc.version}</span>
-          <span class="doc-name">
-            <strong>${escapeHtml(doc.title)}</strong>
-            <span>${escapeHtml(doc.phase)} · ${doc.lines} 行</span>
-          </span>
-        </button>
-      `).join("");
-
-      els.docList.querySelectorAll("button").forEach(button => {
-        button.addEventListener("click", () => {
-          openDoc(button.dataset.doc);
-        });
-      });
-    }
-
-    function setView(view) {
-      if (view === "matrix") view = "evolution";
-      if (!["overview", "reader", "map", "evolution", "feature-timeline"].includes(view)) view = "overview";
-      state.view = view;
-      localStorage.setItem("prd.view", view);
-      els.tabs.forEach(tab => tab.classList.toggle("active", tab.dataset.view === view));
-
-      if (view === "overview") renderOverview();
-      if (view === "reader") renderReader();
-      if (view === "map") renderMap();
-      if (view === "evolution") {
-        state.activeDocId = "evolution";
-        localStorage.setItem("prd.activeDoc", state.activeDocId);
-        renderDocList();
-        renderEvolution();
-      }
-      if (view === "feature-timeline") {
-        state.activeDocId = "feature-timeline";
-        localStorage.setItem("prd.activeDoc", state.activeDocId);
-        renderDocList();
-        renderFeatureTimeline();
-      }
-
-      els.mainScroll.scrollTop = 0;
-      updateProgress();
-    }
-
-    function openDoc(docId) {
-      state.activeDocId = docId;
-      localStorage.setItem("prd.activeDoc", docId);
-      renderDocList();
-      setView(docId === "evolution" ? "evolution" : docId === "feature-timeline" ? "feature-timeline" : "reader");
+  document.addEventListener("click", event => {
+    if (!els.searchResults.contains(event.target) && event.target !== els.searchInput) {
       els.searchResults.classList.remove("open");
     }
+    const link = event.target.closest("[data-open-doc],[data-open-feature]");
+    if (!link) return;
+    event.preventDefault();
+    if (link.dataset.openDoc) openDoc(link.dataset.openDoc, link.dataset.anchor);
+    else openFeature(link.dataset.openFeature);
+  });
 
-    function renderOverview() {
-      const totalLines = state.docs.reduce((sum, doc) => sum + doc.lines, 0);
-      const totalHeadings = state.docs.reduce((sum, doc) => sum + doc.headings.length, 0);
-      const versionDocs = state.docs.filter(doc => /^V\d+$/.test(doc.version) && /版本总览|产品需求|实现状态|版本规划/.test(doc.title));
-      const active = getActiveDoc();
+  window.addEventListener("popstate", () => {
+    const hash = parseHash();
+    if (docIndex.has(hash.doc)) state.activeDocId = hash.doc;
+    if (featureIndex.has(hash.feature)) state.activeFeatureId = hash.feature;
+    setView(hash.view || "overview", { fromHistory: true });
+  });
 
-      els.outline.innerHTML = "";
-      els.outlineCount.textContent = "0";
+  els.mainScroll.addEventListener("scroll", () => {
+    updateProgress();
+    updateActiveOutline();
+  });
+}
 
-      els.content.innerHTML = `
-        <section class="stats">
-          ${statBlock("文档", state.docs.length, "Markdown")}
-          ${statBlock("总行数", formatNumber(totalLines), "文档内容")}
-          ${statBlock("章节", formatNumber(totalHeadings), "H1-H4")}
-          ${statBlock("V1 功能", state.features.length, "功能规格")}
-        </section>
+function closeSearch() {
+  els.searchInput.value = "";
+  state.query = "";
+  els.clearSearch.style.display = "none";
+  els.searchResults.classList.remove("open");
+}
 
-        <section class="visual-grid">
-          ${diagramPanel("DGOS 架构全景", "Tauri 桌面宿主、React 模块、Rust 领域服务与 SQLite 的本地优先边界。", renderProductArchitectureSvg(), "系统结构")}
-          ${diagramPanel("AI 工作台调用流程", "当前单任务切片：Tauri command 进入 Workbench 调用 Provider；技能作为上下文，MCP 工具逐次确认。", renderCoreFlowSvg(), "V1 主流程")}
-        </section>
+function setView(view, options = {}) {
+  if (!VIEWS.includes(view)) view = "overview";
+  if (view === "timeline" && !(DATA.features || []).length) view = "features";
+  state.view = view;
+  writeStore("view", view);
+  els.tabs.forEach(tab => {
+    const active = tab.dataset.view === view;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-pressed", String(active));
+  });
 
-        <section class="panel">
-          <div class="panel-head"><h2>版本链路</h2><span class="tag">V1 → V8</span></div>
-          <div class="panel-body">
-            <div class="timeline">
-              ${versionDocs.map(doc => `<button class="version-node" data-doc="${doc.id}" style="--accent:${doc.accent}"><strong>${escapeHtml(doc.version)} · ${escapeHtml(doc.title)}</strong><span>${escapeHtml(doc.goal)}</span></button>`).join("")}
-            </div>
-          </div>
-        </section>
+  if (view === "overview") renderOverview();
+  if (view === "reader") renderReader();
+  if (view === "features") renderFeatures();
+  if (view === "map") renderMap();
+  if (view === "evolution") renderEvolution();
+  if (view === "timeline") renderTimeline();
 
-        <section class="panel">
-          <div class="panel-head"><h2>关键决策</h2><span class="tag">已收敛</span></div>
-          <div class="panel-body"><ul class="decision-list">${DECISIONS.map(item => `<li style="--accent:${item.accent}">${escapeHtml(item.text)}</li>`).join("")}</ul></div>
-        </section>
+  renderDocList();
+  if (!options.fromHistory) updateHash(options.replace);
+  if (!options.keepScroll) els.mainScroll.scrollTop = 0;
+  updateProgress();
+}
 
-        <section class="panel">
-          <div class="panel-head"><h2>当前入口</h2><span class="tag">${escapeHtml(active.version)}</span></div>
-          <div class="panel-body"><table class="matrix"><tbody>
-            <tr><th>文件</th><td><code>${escapeHtml(active.file)}</code></td></tr>
-            <tr><th>定位</th><td>${escapeHtml(active.goal)}</td></tr>
-            <tr><th>规模</th><td>${active.lines} 行，${active.headings.length} 个章节</td></tr>
-          </tbody></table></div>
-        </section>
-      `;
-      els.content.querySelectorAll("[data-doc]").forEach(button => button.addEventListener("click", () => openDoc(button.dataset.doc)));
-    }
+function openDoc(docId, anchor) {
+  if (!docIndex.has(docId)) return;
+  state.activeDocId = docId;
+  writeStore("doc", docId);
+  els.searchResults.classList.remove("open");
+  setView("reader");
+  if (anchor) {
+    const target = findHeading(anchor);
+    if (target) target.scrollIntoView({ block: "start" });
+  }
+}
 
-    function renderMap() {
-      els.outline.innerHTML = "";
-      els.outlineCount.textContent = "5";
-      els.content.innerHTML = `
-        <section class="doc-header">
-          <div class="doc-kicker"><span class="tag">Visual</span><span>DGOS 架构图谱</span></div>
-          <h2>DGOS 产品与技术图谱</h2>
-          <div class="doc-meta"><span class="tag">分层架构</span><span class="tag">调用流程</span><span class="tag">版本路线</span><span class="tag">数据域</span><span class="tag">风险边界</span></div>
-        </section>
-        <section class="map-stack">
-          ${diagramPanel("产品架构全景", "来自 V1 总体架构与服务边界：前端、IPC、Rust 领域服务、基础设施和 SQLite；标“规划”的部分尚未实现。", renderProductArchitectureSvg(), "Architecture")}
-          ${diagramPanel("AI 工作台调用流程", "V1 工作台主链路；Skills 与 MCP 是显式可选增强，不能绕过宿主策略。", renderCoreFlowSvg(), "V1 Flow")}
-          ${diagramPanel("版本路线图", "V1 底座逐步演进到 V2 画布、V3 市场、V4 云端协同和后续生态。", renderVersionRoadmapSvg(), "V1–V8")}
-          ${diagramPanel("数据域关系图", "按当前 migration 展示 Provider、Skills、MCP、模块、工作台任务和用量记录；users 与对话表为规划。", renderDataDomainSvg(), "Data Model")}
-          ${diagramPanel("风险热区图", "凭据、权限、外部调用、迁移和模块隔离是当前架构的主要风险边界。", renderRiskHeatmapSvg(), "Risk")}
-        </section>
-      `;
-    }
+function openFeature(featureId) {
+  if (!featureIndex.has(featureId)) return;
+  state.activeFeatureId = featureId;
+  writeStore("feature", featureId);
+  els.searchResults.classList.remove("open");
+  setView("timeline");
+}
 
-    function renderEvolution() {
-      const doc = state.docs.find(item => item.id === "evolution");
-      if (!doc) return;
-      const rendered = renderMarkdown(doc.content, doc.file);
+// Accepts a GitHub-style slug, a heading id, or a stable ID prefix such as "D061" / "AC03".
+function findHeading(anchor) {
+  let decoded = anchor;
+  try { decoded = decodeURIComponent(anchor); } catch { /* keep raw */ }
+  const wanted = slug(decoded);
+  const headings = [...document.querySelectorAll("#article h1,#article h2,#article h3,#article h4")];
+  return headings.find(heading => heading.dataset.slug === wanted || heading.id === anchor)
+    || headings.find(heading => heading.textContent.trim().toLowerCase().startsWith(`${decoded.toLowerCase()} `))
+    || headings.find(heading => heading.dataset.slug.startsWith(wanted));
+}
 
-      els.content.innerHTML = `
-        <section class="doc-header" style="--accent:${doc.accent}">
-          <div class="doc-kicker">
-            <span class="tag">${escapeHtml(doc.version)}</span>
-            <span>${escapeHtml(doc.phase)}</span>
-            <span>V1 当前 · V2～V8 规划</span>
-          </div>
-          <h2>${escapeHtml(doc.title)}</h2>
-          <div class="doc-meta">
-            <span class="tag">能力主线</span>
-            <span class="tag">版本里程碑</span>
-            <span class="tag">依赖与门禁</span>
-            <span class="tag">状态与来源</span>
-          </div>
-        </section>
-        <article class="article" id="article">${rendered.html}</article>
-      `;
+// ---------- shared rendering helpers ----------
 
-      renderOutline(rendered.outline);
-      updateProgress();
-    }
+function panel(title, body, tag = "") {
+  return `
+    <section class="panel">
+      <div class="panel-head"><h2>${escapeHtml(title)}</h2>${tag ? `<span class="tag">${escapeHtml(tag)}</span>` : ""}</div>
+      <div class="panel-body">${body}</div>
+    </section>`;
+}
 
-    function renderFeatureTimeline(filterQuery = "") {
-      const feature = state.features.find(item => item.id === state.activeFeatureId) || state.features[0];
-      if (!feature) return;
-      state.activeFeatureId = feature.id;
-      localStorage.setItem("prd.activeFeature", feature.id);
+function statBlock(label, value, caption) {
+  return `
+    <div class="stat">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(String(value))}</strong>
+      <span>${escapeHtml(caption)}</span>
+    </div>`;
+}
 
-      const track = FEATURE_TRACKS[feature.track];
-      const stages = extractEvolutionStages(feature.track);
-      const filteredFeatures = filterFeatures(filterQuery);
-      const options = (filteredFeatures.length ? filteredFeatures : state.features).map(item => `
-        <option value="${escapeHtml(item.id)}" ${item.id === feature.id ? "selected" : ""}>
-          ${escapeHtml(item.id)} · ${escapeHtml(item.title)}
-        </option>
-      `).join("");
-      const featureHref = resolveDocHref(feature.file, "");
-      const statusHref = resolveDocHref("../02-产品与版本/当前版本/V1-实现状态.md", "");
-      const implementation = feature.implementation || { key: "foundation", label: "状态待同步" };
+function statusPill(implementation) {
+  const info = implementation || { statusKey: "unknown", statusLabel: "未同步" };
+  return `<span class="status-pill ${escapeHtml(info.statusKey)}">${escapeHtml(info.statusLabel)}</span>`;
+}
 
-      els.content.innerHTML = `
-        <section class="feature-query" id="feature-picker">
-          <h2>查询具体功能</h2>
-          <p>支持按编号、名称、领域或目标筛选；选择后生成 V1、门禁、V2～V8 和后续增强的完整时间线。</p>
-          <div class="feature-controls">
-            <div class="feature-field">
-              <label for="featureFilter">关键词筛选</label>
-              <input id="featureFilter" value="${escapeHtml(filterQuery)}" placeholder="例如 V1-FR-005、Provider、Skills、MCP">
-            </div>
-            <div class="feature-field">
-              <label for="featureSelect">具体功能（${filteredFeatures.length || state.features.length} 个结果）</label>
-              <select id="featureSelect">${options}</select>
-            </div>
-          </div>
-          ${filteredFeatures.length || !filterQuery ? "" : `<div class="feature-empty-result">没有匹配项，当前仍显示 ${escapeHtml(feature.id)}。</div>`}
-        </section>
+function docLink(docId, label, anchor = "") {
+  if (!docIndex.has(docId)) return escapeHtml(label);
+  return `<a href="#view=reader&doc=${encodeURIComponent(docId)}" data-open-doc="${escapeHtml(docId)}"${anchor ? ` data-anchor="${escapeHtml(anchor)}"` : ""}>${escapeHtml(label)}</a>`;
+}
 
-        <section class="feature-summary" id="feature-summary" style="border-left-color:${track?.accent || "#087d75"}">
-          <div>
-            <div class="feature-summary-meta">
-              <span class="tag">${escapeHtml(feature.id)}</span>
-              <span class="tag">V1 当前版本</span>
-              <span class="feature-status ${escapeHtml(implementation.key)}">工程：${escapeHtml(implementation.label)}</span>
-              <span class="tag">${escapeHtml(feature.domain || "未标注领域")}</span>
-              <span class="tag">主责：${escapeHtml(feature.trackName)}</span>
-            </div>
-            <h2>${escapeHtml(feature.title)}</h2>
-            <p>${escapeHtml(feature.goal || "功能目标以主文档为准。")}</p>
-          </div>
-          <div class="feature-summary-links">
-            <a href="${escapeHtml(featureHref)}" target="_blank" rel="noopener">打开 V1 功能主文档</a>
-            <a href="${escapeHtml(statusHref)}" target="_blank" rel="noopener">查看 V1 实现状态</a>
-          </div>
-        </section>
+function featureLink(featureId, label) {
+  return `<a href="#view=timeline&feature=${encodeURIComponent(featureId)}" data-open-feature="${escapeHtml(featureId)}">${escapeHtml(label || featureId)}</a>`;
+}
 
-        <section class="feature-timeline-panel" id="feature-timeline">
-          <div class="feature-timeline-head">
-            <div class="feature-timeline-title">
-              <h3>${escapeHtml(feature.id)} · 完整版本时间线</h3>
-              <p>版本归属与工程完成度采用独立状态口径。</p>
-            </div>
-            <div class="timeline-legend" aria-label="时间线图例">
-              <span class="current"><i></i>当前版本</span>
-              <span class="gate"><i></i>当前门禁</span>
-              <span><i></i>未来规划</span>
-              <span class="history"><i></i>历史或未规划</span>
-            </div>
-          </div>
-          <div class="feature-timeline-scroll">
-            <div class="feature-version-timeline">
-              ${FEATURE_TIMELINE_VERSIONS.map(version => renderFeatureMilestone(feature, version, stages)).join("")}
-            </div>
-          </div>
-        </section>
-      `;
+function renderSideDecisions() {
+  const items = DATA.keyDecisions || [];
+  els.sideDecisions.innerHTML = items.length
+    ? items.map(item => `<li>
+        ${item.id ? `<strong>${escapeHtml(item.id)}</strong> ` : ""}${item.doc ? docLink(item.doc, item.title, item.id) : escapeHtml(item.title)}
+        ${item.summary ? `<small>${escapeHtml(item.summary)}</small>` : ""}
+      </li>`).join("")
+    : `<li class="muted">未发现冻结决策。在 <code>06-决策记录/V1-冻结决策.md</code> 中按 <code>## D001 标题</code> 记录。</li>`;
+}
 
-      const filterInput = document.getElementById("featureFilter");
-      const select = document.getElementById("featureSelect");
-      filterInput.addEventListener("input", () => updateFeatureOptions(select, filterInput.value, feature.id));
-      filterInput.addEventListener("keydown", event => {
-        if (event.key !== "Enter") return;
-        const match = filterFeatures(filterInput.value)[0];
-        if (match) selectFeature(match.id, filterInput.value);
-      });
-      select.addEventListener("change", () => selectFeature(select.value, filterInput.value));
+function renderSideQuality() {
+  const warnings = DATA.warnings || [];
+  if (!warnings.length) return;
+  els.sideQualityPanel.hidden = false;
+  els.sideQualityCount.textContent = String(warnings.length);
+  els.sideQuality.innerHTML = `<ul class="quality-list">${warnings.slice(0, 12).map(item => `
+    <li><code>${escapeHtml(item.code)}</code> ${item.doc ? docLink(item.doc, item.message) : escapeHtml(item.message)}</li>`).join("")}</ul>
+    ${warnings.length > 12 ? `<p class="muted">另有 ${warnings.length - 12} 条，运行 <code>check-docs.mjs</code> 查看完整列表。</p>` : ""}`;
+}
 
-      renderOutline([
-        { id: "feature-picker", text: "选择具体功能", level: 2 },
-        { id: "feature-summary", text: `${feature.id} ${feature.title}`, level: 2 },
-        { id: "feature-timeline", text: "完整版本时间线", level: 2 }
-      ]);
-      updateProgress();
-    }
+function renderDocList() {
+  const groups = new Map();
+  for (const doc of DATA.docs) {
+    if (!groups.has(doc.group)) groups.set(doc.group, []);
+    groups.get(doc.group).push(doc);
+  }
+  const html = [];
+  for (const [group, docs] of groups) {
+    const open = docs.some(doc => doc.id === state.activeDocId) || groups.size <= 3;
+    html.push(`<details class="doc-group" ${open ? "open" : ""}>
+      <summary><span>${escapeHtml(docs[0].groupLabel || group)}</span><span class="tag">${docs.length}</span></summary>
+      ${docs.map(doc => `
+        <button type="button" class="doc-item ${doc.id === state.activeDocId && state.view === "reader" ? "active" : ""}" data-open-doc="${escapeHtml(doc.id)}"
+          style="--accent:${safeColor(doc.accent)};--accent-soft:${safeColor(doc.soft)}" title="${escapeHtml(doc.path)}">
+          <span class="doc-badge">${escapeHtml(doc.badge || "··")}</span>
+          <span class="doc-name">
+            <strong>${escapeHtml(doc.title)}</strong>
+            <span>${escapeHtml(doc.subgroup || doc.groupLabel)} · ${doc.lines} 行</span>
+          </span>
+        </button>`).join("")}
+    </details>`);
+  }
+  els.docList.innerHTML = html.join("");
+}
 
-    function filterFeatures(query) {
-      const normalized = query.trim().toLowerCase();
-      if (!normalized) return state.features;
-      return state.features.filter(feature => [
-        feature.id,
-        feature.number,
-        feature.title,
-        feature.domain,
-        feature.trackName,
-        feature.goal
-      ].some(value => String(value || "").toLowerCase().includes(normalized)));
-    }
+function renderOutline(items) {
+  els.outlineCount.textContent = String(items.length);
+  els.outline.innerHTML = items.slice(0, 120).map(item => `
+    <a href="#${escapeHtml(item.id)}" class="lv${item.level}" data-target="${escapeHtml(item.id)}">${escapeHtml(item.text)}</a>`).join("");
+  els.outline.querySelectorAll("a").forEach(link => {
+    link.addEventListener("click", event => {
+      event.preventDefault();
+      const target = document.getElementById(link.dataset.target);
+      if (target) target.scrollIntoView({ block: "start" });
+    });
+  });
+}
 
-    function updateFeatureOptions(select, query, activeId) {
-      const matches = filterFeatures(query);
-      select.innerHTML = matches.length
-        ? matches.map(feature => `<option value="${escapeHtml(feature.id)}">${escapeHtml(feature.id)} · ${escapeHtml(feature.title)}</option>`).join("")
-        : `<option value="">没有匹配项</option>`;
-      if (matches.some(feature => feature.id === activeId)) select.value = activeId;
-    }
+function updateProgress() {
+  const max = els.mainScroll.scrollHeight - els.mainScroll.clientHeight;
+  const value = max > 0 ? Math.min(100, Math.max(0, (els.mainScroll.scrollTop / max) * 100)) : 0;
+  els.readProgress.style.width = `${value}%`;
+}
 
-    function selectFeature(featureId, filterQuery = "") {
-      if (!state.features.some(feature => feature.id === featureId)) return;
-      state.activeFeatureId = featureId;
-      localStorage.setItem("prd.activeFeature", featureId);
-      renderFeatureTimeline(filterQuery);
-      els.mainScroll.scrollTop = 0;
-    }
+function updateActiveOutline() {
+  const headings = [...els.content.querySelectorAll("h1[id],h2[id],h3[id],h4[id]")];
+  let active = "";
+  for (const heading of headings) {
+    if (heading.getBoundingClientRect().top < 110) active = heading.id;
+  }
+  els.outline.querySelectorAll("a").forEach(link => link.classList.toggle("active", link.dataset.target === active));
+}
 
-    function extractEvolutionStages(trackId) {
-      const doc = state.docs.find(item => item.id === "evolution");
-      const track = FEATURE_TRACKS[trackId];
-      if (!doc || !track) return [];
-      const lines = doc.content.replace(/\r\n/g, "\n").split("\n");
-      // Capabilities without a detailed section still get overview-table entries below.
-      const sectionStart = lines.findIndex(line => /^##\s+/.test(line) && line.includes(track.title));
-      const sectionEnd = sectionStart < 0 ? -1 : lines.findIndex((line, index) => index > sectionStart && /^##\s+/.test(line));
-      const end = sectionEnd < 0 ? lines.length : sectionEnd;
-      const tableStart = sectionStart < 0 ? -1 : lines.findIndex((line, index) => index > sectionStart && index < end && isTableStart(lines, index));
+function versionsOrdered() {
+  return DATA.versions || [];
+}
 
-      const rows = [];
-      for (let index = tableStart + 2; tableStart >= 0 && index < end && /^\s*\|.*\|\s*$/.test(lines[index]); index += 1) {
-        const cells = lines[index].trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(cell => cell.trim());
-        if (cells.length >= 5) {
-          rows.push({ stage: cells[0], change: cells[1], dependencies: cells[2], completion: cells[3], source: cells[4], sourceFile: doc.file });
-        }
-      }
+function currentVersion() {
+  return versionIndex.get(DATA.currentVersion) || versionsOrdered()[0] || null;
+}
 
-      const splitRow = line => line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(cell => cell.trim());
-      const overviewStart = lines.findIndex((line, index) => isTableStart(lines, index) && splitRow(line).includes("能力主线"));
-      if (overviewStart >= 0) {
-        const header = splitRow(lines[overviewStart]);
-        const nameIndex = header.indexOf("能力主线");
-        let index = overviewStart + 2;
-        while (index < lines.length && /^\s*\|.*\|\s*$/.test(lines[index])) {
-          const cells = splitRow(lines[index]);
-          if (cells[nameIndex] === track.overview) {
-            const columns = ["v2", "v3", "v4", "v5", "v6", "v7", "v8", "future"]
-              .map(versionId => FEATURE_TIMELINE_VERSIONS.find(item => item.id === versionId))
-              .map(version => [version.id, version.label, header.indexOf(version.label)])
-              .filter(([, , cellIndex]) => cellIndex >= 0);
-            columns.forEach(([versionId, label, cellIndex]) => {
-              const version = FEATURE_TIMELINE_VERSIONS.find(item => item.id === versionId);
-              if (!cells[cellIndex] || cells[cellIndex] === "-" || stagesForVersion(rows, version).length) return;
-              rows.push({
-                stage: label === "后续" ? "后续独立增强" : `${label} 总览关联`,
-                change: cells[cellIndex],
-                dependencies: "功能演进矩阵未单独展开该能力详表；版本进入条件见版本路线图第 7 节",
-                completion: "该版本进入开发门禁后补充正式功能编号、完成判定和验收证据",
-                source: "[能力主线列表](功能演进矩阵.md#2-能力主线列表)",
-                sourceFile: doc.file,
-                overview: true
-              });
-            });
-            break;
-          }
-          index += 1;
-        }
-      }
-      return rows;
-    }
+function countBy(list, key) {
+  return list.reduce((acc, item) => {
+    const value = typeof key === "function" ? key(item) : item[key];
+    acc[value] = (acc[value] || 0) + 1;
+    return acc;
+  }, {});
+}
 
-    function stagesForVersion(stages, version) {
-      if (version.id === "gate") return stages.filter(stage => /^V1\s+发布门禁/.test(stage.stage));
-      if (version.id === "future") return stages.filter(stage => /^后续/.test(stage.stage));
-      if (/^v[2-8]$/.test(version.id)) {
-        const label = version.label;
-        return stages.filter(stage => stage.stage === label || stage.stage.startsWith(`${label} `));
-      }
-      return [];
-    }
+function safeColor(value) {
+  return /^#[0-9a-f]{3,8}$/i.test(String(value || "")) ? value : "#69707a";
+}
 
-    function renderFeatureMilestone(feature, version, stages) {
-      if (version.id === "v1") {
-        const implementation = feature.implementation || {
-          key: "foundation",
-          label: "状态待同步",
-          backend: "以 V1 实现状态为准",
-          frontend: "以 V1 实现状态为准",
-          verification: "以 V1 实现状态为准",
-          gap: "尚未同步到离线数据",
-          updatedAt: "未标注"
-        };
-        const completed = implementation.key === "completed";
-        return `
-          <article class="feature-milestone current">
-            <div class="milestone-axis">
-              <span class="milestone-dot" aria-hidden="true"></span>
-              <strong>V1</strong>
-              <small>精确功能</small>
-            </div>
-            <div class="milestone-card">
-              <div class="milestone-state-line">
-                <div class="milestone-mobile-meta"><strong>V1</strong><span>精确功能</span></div>
-                <span class="milestone-state current">当前版本</span>
-                <span class="implementation-state ${escapeHtml(implementation.key)}">工程状态 · ${escapeHtml(implementation.label)}</span>
-                <span class="completion-state ${completed ? "completed" : ""}">${completed ? "已标记完成" : "未标记为已完成"}</span>
-              </div>
-              <h4>${escapeHtml(feature.title)}</h4>
-              <p>${escapeHtml(feature.goal || "功能行为以 V1 主文档为准。")}</p>
-              ${implementation.backend ? `<div class="milestone-facts">
-                <div class="milestone-fact"><span>后端</span><strong>${escapeHtml(implementation.backend)}</strong></div>
-                <div class="milestone-fact"><span>前端</span><strong>${escapeHtml(implementation.frontend)}</strong></div>
-                <div class="milestone-fact"><span>自动化验证</span><strong>${escapeHtml(implementation.verification)}</strong></div>
-              </div>` : ""}
-              <div class="milestone-detail"><strong>实现状态备注</strong><span>${escapeHtml(implementation.gap)}</span></div>
-              <div class="milestone-detail"><strong>上游依赖</strong><span>${escapeHtml(feature.dependencies || "以功能主文档为准")}</span></div>
-              <div class="milestone-source"><a href="${escapeHtml(resolveDocHref(feature.file, ""))}" target="_blank" rel="noopener">${escapeHtml(feature.id)} 功能主文档</a></div>
-              <div class="milestone-source">状态更新：${escapeHtml(implementation.updatedAt)} · <a href="${escapeHtml(resolveDocHref("../02-产品与版本/当前版本/V1-实现状态.md", ""))}" target="_blank" rel="noopener">查看实现状态依据</a></div>
-            </div>
-          </article>
-        `;
-      }
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
 
-      const matches = stagesForVersion(stages, version);
-      if (!matches.length) {
-        return `
-          <article class="feature-milestone empty">
-            <div class="milestone-axis">
-              <span class="milestone-dot" aria-hidden="true"></span>
-              <strong>${escapeHtml(version.label)}</strong>
-              <small>无单独规划</small>
-            </div>
-            <div class="milestone-card">
-              <div class="milestone-state-line">
-                <div class="milestone-mobile-meta"><strong>${escapeHtml(version.label)}</strong><span>无单独规划</span></div>
-                <span class="milestone-state empty">当前未分配</span>
-              </div>
-              <h4>当前未分配阶段</h4>
-              <p>${version.id === "gate" ? "该主责能力没有单独列出 V1 发布门禁。" : "该主责能力在此版本没有明确的阶段变化。"}</p>
-              <div class="milestone-detail"><strong>说明</strong>空白不代表取消；后续调整应先更新权威版本规划和功能演进矩阵。</div>
-            </div>
-          </article>
-        `;
-      }
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
-      const match = matches[0];
-      const milestoneStatus = version.kind === "gate" ? "发布门禁" : match.overview ? "总览关联" : "关联能力规划";
-      return `
-        <article class="feature-milestone ${version.kind === "gate" ? "gate" : "planned"}">
-          <div class="milestone-axis">
-            <span class="milestone-dot" aria-hidden="true"></span>
-            <strong>${escapeHtml(version.label)}</strong>
-            <small>${milestoneStatus}</small>
-          </div>
-          <div class="milestone-card">
-            <div class="milestone-state-line">
-              <div class="milestone-mobile-meta"><strong>${escapeHtml(version.label)}</strong><span>${milestoneStatus}</span></div>
-              <span class="milestone-state ${version.kind === "gate" ? "gate" : "planned"}">${version.kind === "gate" ? "当前门禁" : "未来规划"}</span>
-              <span>${milestoneStatus}</span>
-            </div>
-            <h4>${escapeHtml(match.stage)}</h4>
-            <p>${inline(match.change, match.sourceFile)}</p>
-            <div class="milestone-detail"><strong>依赖与边界</strong>${inline(match.dependencies, match.sourceFile)}</div>
-            <div class="milestone-detail"><strong>完成判定</strong>${inline(match.completion, match.sourceFile)}</div>
-            <div class="milestone-source">${inline(match.source, match.sourceFile)}</div>
-            ${matches.length > 1 ? `<div class="milestone-source">同版本另有 ${matches.length - 1} 个关联阶段，详见功能演进矩阵。</div>` : ""}
-          </div>
-        </article>
-      `;
-    }
+function slug(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/<[^>]+>/g, "")
+    .replace(/[`*_~]/g, "")
+    .replace(/[^\p{Letter}\p{Number}\s-]/gu, "")
+    .trim()
+    .replace(/\s+/g, "-");
+}
 
-    function renderReader() {
-      const doc = getActiveDoc();
-      const rendered = renderMarkdown(doc.content, doc.file);
+function debounce(fn, delay) {
+  let timer = null;
+  return (...args) => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => fn(...args), delay);
+  };
+}
 
-      els.content.innerHTML = `
-        <section class="doc-header" style="--accent:${doc.accent}">
-          <div class="doc-kicker">
-            <span class="tag">${escapeHtml(doc.version)}</span>
-            <span>${escapeHtml(doc.phase)}</span>
-            <span>${escapeHtml(doc.file)}</span>
-          </div>
-          <h2>${escapeHtml(doc.title)}</h2>
-          <div class="doc-meta">
-            <span class="tag">${doc.lines} 行</span>
-            <span class="tag">${rendered.outline.length} 章节</span>
-            <span class="tag">${escapeHtml(doc.goal)}</span>
-          </div>
-        </section>
-        <article class="article" id="article">${rendered.html}</article>
-      `;
 
-      renderOutline(rendered.outline);
-      updateProgress();
-    }
+// ---------- markdown rendering (escape first, then add a small whitelist of markup) ----------
 
-    function renderOutline(outline) {
-      els.outlineCount.textContent = String(outline.length);
-      els.outline.innerHTML = outline.slice(0, 80).map(item => `
-        <a href="#${item.id}" class="lv${item.level}" data-target="${item.id}">${escapeHtml(item.text)}</a>
-      `).join("");
+function stripFrontmatter(source) {
+  return String(source || "").replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---[ \t]*(\r?\n|$)/, "");
+}
 
-      els.outline.querySelectorAll("a").forEach(link => {
-        link.addEventListener("click", event => {
-          event.preventDefault();
-          const target = document.getElementById(link.dataset.target);
-          if (target) target.scrollIntoView({ block: "start" });
-        });
-      });
-    }
+function renderMarkdown(source, sourcePath) {
+  const lines = String(source || "").replace(/\r\n/g, "\n").split("\n");
+  const html = [];
+  const outline = [];
+  const used = new Map();
+  let index = 0;
 
-    function renderSideDecisions() {
-      els.sideDecisions.innerHTML = DECISIONS.map(item => `
-        <li style="--accent:${item.accent}">${escapeHtml(item.text)}</li>
-      `).join("");
-    }
+  const headingId = text => {
+    const base = slug(text) || "section";
+    const count = used.get(base) || 0;
+    used.set(base, count + 1);
+    return { id: `h-${count ? `${base}-${count}` : base}`, slug: base };
+  };
 
-    function diagramPanel(title, caption, svg, label) {
-      return `
-        <section class="diagram">
-          <div class="diagram-head">
-            <h3>${escapeHtml(title)}</h3>
-            <span class="tag">${escapeHtml(label)}</span>
-          </div>
-          <div class="diagram-body">${svg}</div>
-          <div class="diagram-caption">${escapeHtml(caption)}</div>
-        </section>
-      `;
-    }
+  while (index < lines.length) {
+    const line = lines[index];
 
-    function diagramTextLines(lines, x, y, { size = 12, lineHeight = 18, anchor = "start", fill = "#69707a", weight = 400 } = {}) {
-      // SVG text has no automatic wrapping; keep line breaks in the layout, not the document data.
-      return `<text x="${x}" y="${y}" text-anchor="${anchor}" font-size="${size}" font-weight="${weight}" fill="${fill}">${lines.map((line, index) => `<tspan x="${x}" dy="${index === 0 ? 0 : lineHeight}">${escapeHtml(line)}</tspan>`).join("")}</text>`;
-    }
-
-    function renderProductArchitectureSvg() {
-      return `
-        <svg viewBox="0 0 960 560" role="img" aria-label="DGOS 产品架构全景图">
-          <defs><marker id="dgos-arrow-main" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#69707a"></path></marker><marker id="dgos-arrow-soft" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#8b929a"></path></marker></defs>
-          <rect width="960" height="560" rx="8" fill="#fbfaf7"></rect>
-          <text x="36" y="36" font-size="18" font-weight="760" fill="#1d1f22">DGOS 模块化单体架构</text>
-          <text x="36" y="60" font-size="12" fill="#69707a">本地优先：Tauri + React + Rust 领域服务 + SQLite；外部能力只能经宿主策略调用。</text>
-          <g stroke="#69707a" stroke-width="1.5" fill="none" marker-end="url(#dgos-arrow-main)">
-            <path d="M180 132 H250"></path><path d="M470 132 H540"></path><path d="M760 132 H830"></path>
-            <path d="M360 184 V292"></path><path d="M650 184 V292"></path><path d="M530 398 V460"></path>
-          </g>
-          <g>
-            <rect x="36" y="92" width="144" height="82" rx="8" fill="#e1f0e8" stroke="#2f7d4f"></rect><text x="108" y="120" text-anchor="middle" font-size="14" font-weight="700" fill="#1d1f22">Tauri 桌面宿主</text><text x="108" y="143" text-anchor="middle" font-size="11" fill="#69707a">窗口 / 权限 / 事件</text>
-            <rect x="250" y="82" width="220" height="102" rx="8" fill="#dcefeb" stroke="#087d75" stroke-width="2"></rect><text x="360" y="108" text-anchor="middle" font-size="15" font-weight="760" fill="#087d75">React 前端模块</text>${diagramTextLines(["Provider · Skills · MCP · 工作台", "模块加载（FR-004 规划）", "统一设计系统（FR-005 规划）"], 360, 130, { size: 12, anchor: "middle" })}
-            <rect x="540" y="82" width="220" height="102" rx="8" fill="#ffffff" stroke="#4056a1" stroke-width="2"></rect><text x="650" y="108" text-anchor="middle" font-size="15" font-weight="760" fill="#4056a1">Tauri IPC 通信层</text>${diagramTextLines(["Tauri commands", "宿主派生调用上下文", "IPC 契约静态检查"], 650, 130, { size: 12, anchor: "middle" })}
-            <rect x="830" y="92" width="94" height="82" rx="8" fill="#f6ead6" stroke="#a96810"></rect><text x="877" y="120" text-anchor="middle" font-size="13" font-weight="700" fill="#1d1f22">远程访问</text>${diagramTextLines(["局域网 HTTP", "FR-010 规划"], 877, 143, { size: 11, lineHeight: 16, anchor: "middle" })}
-          </g>
-          <rect x="36" y="292" width="888" height="106" rx="8" fill="#ffffff" stroke="#dedbd2"></rect><text x="52" y="318" font-size="13" font-weight="760" fill="#087d75">Rust 应用与领域服务层</text>
-          <g>
-            <rect x="52" y="338" width="130" height="44" rx="7" fill="#dcefeb" stroke="#087d75"></rect><text x="117" y="365" text-anchor="middle" font-size="12" font-weight="700">Workbench</text>
-            <rect x="198" y="338" width="130" height="44" rx="7" fill="#e1f0e8" stroke="#2f7d4f"></rect><text x="263" y="365" text-anchor="middle" font-size="12" font-weight="700">Providers</text>
-            <rect x="344" y="338" width="130" height="44" rx="7" fill="#e6e9f6" stroke="#4056a1"></rect><text x="409" y="365" text-anchor="middle" font-size="12" font-weight="700">Skills / MCP</text>
-            <rect x="490" y="338" width="130" height="44" rx="7" fill="#f6ead6" stroke="#a96810"></rect><text x="555" y="365" text-anchor="middle" font-size="12" font-weight="700">Modules</text>
-            <rect x="636" y="338" width="130" height="44" rx="7" fill="#f4dde4" stroke="#aa2d4d"></rect><text x="701" y="365" text-anchor="middle" font-size="12" font-weight="700">应用服务 / 授权</text>
-            <rect x="782" y="338" width="130" height="44" rx="7" fill="#ffffff" stroke="#69707a"></rect><text x="847" y="365" text-anchor="middle" font-size="12" font-weight="700">Network（规划）</text>
-          </g>
-          <rect x="250" y="460" width="560" height="64" rx="8" fill="#e6e9f6" stroke="#4056a1"></rect><text x="530" y="487" text-anchor="middle" font-size="14" font-weight="760" fill="#1d1f22">基础设施与数据层</text><text x="530" y="508" text-anchor="middle" font-size="11" fill="#69707a">SQLite（dgos.db）· migrations · 系统钥匙串 · tracing · 出站 HTTP client</text>
-          <g stroke="#8b929a" stroke-width="1.3" stroke-dasharray="5 5" fill="none" marker-end="url(#dgos-arrow-soft)"><path d="M409 382 C420 420 430 438 450 460"></path><path d="M701 382 C680 420 650 440 620 460"></path><path d="M877 174 C850 238 820 272 780 292"></path></g>
-          <text x="52" y="548" font-size="11" fill="#69707a">实线：宿主内调用边界　虚线：外部访问或基础设施依赖　标“规划”者尚未实现</text>
-        </svg>
-      `;
-    }
-
-    function renderCoreFlowSvg() {
-      return `
-        <svg viewBox="0 0 960 350" role="img" aria-label="DGOS AI 工作台调用流程图">
-          <defs><marker id="dgos-arrow-flow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#69707a"></path></marker></defs><rect width="960" height="350" rx="8" fill="#fbfaf7"></rect>
-          <text x="36" y="38" font-size="18" font-weight="760" fill="#1d1f22">V1 AI 工作台单任务流程（当前切片）</text><text x="36" y="62" font-size="12" fill="#69707a">默认路径保持本地可控；Skills 与 MCP 仅在用户选择并通过宿主授权后参与。</text>
-          <g stroke="#69707a" stroke-width="1.6" fill="none" marker-end="url(#dgos-arrow-flow)"><path d="M140 146 H196"></path><path d="M304 146 H360"></path><path d="M468 146 H524"></path><path d="M632 146 H688"></path><path d="M796 146 H852"></path></g>
-          <g><rect x="36" y="102" width="104" height="88" rx="8" fill="#e1f0e8" stroke="#2f7d4f"></rect><text x="88" y="128" text-anchor="middle" font-size="13" font-weight="700">用户输入</text><text x="88" y="151" text-anchor="middle" font-size="11" fill="#69707a">任务 / 模型</text><text x="88" y="170" text-anchor="middle" font-size="11" fill="#69707a">可选技能 / MCP</text>
-          <rect x="196" y="102" width="108" height="88" rx="8" fill="#dcefeb" stroke="#087d75"></rect><text x="250" y="128" text-anchor="middle" font-size="13" font-weight="700">Tauri IPC</text><text x="250" y="151" text-anchor="middle" font-size="11" fill="#69707a">Command</text><text x="250" y="170" text-anchor="middle" font-size="11" fill="#69707a">宿主派生上下文</text>
-          <rect x="360" y="102" width="108" height="88" rx="8" fill="#e6e9f6" stroke="#4056a1"></rect><text x="414" y="128" text-anchor="middle" font-size="13" font-weight="700">Workbench</text><text x="414" y="151" text-anchor="middle" font-size="11" fill="#69707a">单任务编排</text><text x="414" y="170" text-anchor="middle" font-size="11" fill="#69707a">任务记录</text>
-          <rect x="524" y="102" width="108" height="88" rx="8" fill="#f6ead6" stroke="#a96810"></rect><text x="578" y="128" text-anchor="middle" font-size="13" font-weight="700">Provider</text><text x="578" y="151" text-anchor="middle" font-size="11" fill="#69707a">适配 / 重试</text><text x="578" y="170" text-anchor="middle" font-size="11" fill="#69707a">工作台为同步调用</text>
-          <rect x="688" y="102" width="108" height="88" rx="8" fill="#ffffff" stroke="#087d75"></rect><text x="742" y="128" text-anchor="middle" font-size="13" font-weight="700">外部能力</text><text x="742" y="151" text-anchor="middle" font-size="11" fill="#69707a">模型 API</text><text x="742" y="170" text-anchor="middle" font-size="11" fill="#69707a">MCP 工具（确认后）</text>
-          <rect x="852" y="102" width="88" height="88" rx="8" fill="#f4dde4" stroke="#aa2d4d"></rect><text x="896" y="128" text-anchor="middle" font-size="13" font-weight="700">响应</text><text x="896" y="151" text-anchor="middle" font-size="11" fill="#69707a">任务结果</text><text x="896" y="170" text-anchor="middle" font-size="11" fill="#69707a">UI 渲染</text></g>
-          <path d="M896 190 C896 250 88 250 88 190" fill="none" stroke="#8b929a" stroke-width="1.4" stroke-dasharray="5 5" marker-end="url(#dgos-arrow-flow)"></path><text x="480" y="244" text-anchor="middle" font-size="12" fill="#69707a">失败语义、超时、取消和敏感信息处理由宿主统一控制</text>
-          <rect x="232" y="274" width="496" height="52" rx="7" fill="#ffffff" stroke="#dedbd2"></rect>${diagramTextLines(["技能：固定版本的 SKILL.md 作为上下文，不执行（D016/D018）", "MCP：模型提出工具调用，用户逐次确认后执行（D022）"], 480, 295, { size: 12, anchor: "middle" })}
-        </svg>
-      `;
-    }
-
-    function renderVersionRoadmapSvg() {
-      const items = [
-        ["V1", "框架底座", "Provider · Skills · MCP · 模块 · 工作台"], ["V2", "无限画布", "节点、连线、执行、工作流"], ["V3", "应用市场", "账号、浏览、安装、审核"], ["V4", "云端与协同", "同步、官方 Provider、协同"], ["V5", "企业化", "组织、成员、审计、账单"], ["V6", "移动端", "iOS/Android 与离线同步"], ["V7", "AI Agent", "自主任务、多 Agent、自动化"], ["V8", "开发者生态", "门户、API 市场、SDK、模板"]
-      ];
-      const rowHeight = 56;
-      const rowGap = 10;
-      const rowStart = 92;
-      const footerY = rowStart + items.length * (rowHeight + rowGap) + 18;
-      const height = footerY + 24;
-      const rows = items.map((item, i) => {
-        const y = rowStart + i * (rowHeight + rowGap);
-        const centerY = y + rowHeight / 2;
-        return `<g class="roadmap-row" data-version="${item[0]}">
-          <circle cx="54" cy="${centerY}" r="5" fill="${i === 0 ? '#087d75' : '#c6c1b5'}"></circle>
-          <rect x="76" y="${y}" width="204" height="${rowHeight}" rx="7" fill="${i === 0 ? '#dcefeb' : '#ffffff'}" stroke="${i === 0 ? '#087d75' : '#c6c1b5'}"></rect>
-          ${diagramTextLines([`${item[0]} · ${item[1]}`], 178, centerY + 5, { size: 14, weight: 760, anchor: "middle", fill: "#1d1f22" })}
-          <line x1="280" y1="${centerY}" x2="320" y2="${centerY}" stroke="#69707a" stroke-width="1.4" marker-end="url(#dgos-arrow-road)"></line>
-          ${diagramTextLines([item[2], i === 0 ? "当前版本 · 完成度以实现状态为准" : "后续规划 · 不代表已实现"], 340, centerY - 4, { size: 13, lineHeight: 20 })}
-        </g>`;
-      }).join("");
-      return `<svg viewBox="0 0 960 ${height}" role="img" aria-label="DGOS 版本路线图">
-        <defs><marker id="dgos-arrow-road" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#69707a"></path></marker></defs>
-        <rect width="960" height="${height}" rx="8" fill="#fbfaf7"></rect>
-        <text x="36" y="38" font-size="18" font-weight="760" fill="#1d1f22">DGOS V1–V8 版本路线</text>
-        <text x="36" y="62" font-size="12" fill="#69707a">每个版本是独立阶段；当前实现以 V1 文档和实现状态为准。</text>
-        <line x1="54" y1="${rowStart + rowHeight / 2}" x2="54" y2="${rowStart + (items.length - 1) * (rowHeight + rowGap) + rowHeight / 2}" stroke="#c6c1b5" stroke-width="2" stroke-dasharray="4 4"></line>
-        ${rows}
-        <text x="36" y="${footerY}" font-size="12" fill="#69707a">来源：版本路线图 · 版本顺序不代表全部依赖，进入条件以权威文档为准。</text>
-      </svg>`;
-    }
-
-    function renderDataDomainSvg() {
-      const domains = [
-        [36, 96, 134, "用户域", ["default-user", "users 表规划"], "#e1f0e8", "#2f7d4f"],
-        [280, 96, 150, "Provider 域", ["providers / models"], "#dcefeb", "#087d75"],
-        [540, 96, 150, "扩展能力域", ["skill_catalog 等", "mcp_servers 等"], "#e6e9f6", "#4056a1"],
-        [800, 96, 124, "模块域", ["modules", "module_versions"], "#f6ead6", "#a96810"],
-        [280, 252, 150, "工作台域", ["workbench_tasks", "对话表规划"], "#f4dde4", "#aa2d4d"],
-        [540, 252, 150, "用量记录域", ["provider / mcp", "skill logs"], "#ffffff", "#087d75"],
-        [800, 252, 124, "权限审计域", ["模块授权", "脱敏审计"], "#ffffff", "#4056a1"]
-      ];
-      return `<svg viewBox="0 0 960 466" role="img" aria-label="DGOS 数据域关系图">
-        <defs><marker id="dgos-arrow-data" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#69707a"></path></marker></defs>
-        <rect width="960" height="466" rx="8" fill="#fbfaf7"></rect>
-        <text x="36" y="38" font-size="18" font-weight="760" fill="#1d1f22">V1 数据域关系</text>
-        ${diagramTextLines(["SQLite（dgos.db）按 user_id 隔离 Provider、Skills、MCP、模块和工作台记录。", "凭据存系统钥匙串，敏感输入不进入普通 DTO。"], 36, 60)}
-        <g stroke="#69707a" stroke-width="1.4" fill="none" marker-end="url(#dgos-arrow-data)">
-          <path d="M170 144 H280"></path><path d="M430 144 H540"></path><path d="M690 144 H800"></path>
-          <path d="M355 192 V252"></path><path d="M615 192 V252"></path>
-          <path d="M430 300 H540"></path><path d="M690 300 H800"></path>
-        </g>
-        ${domains.map(([x, y, width, title, lines, fill, stroke]) => `<g class="data-domain-card">
-          <rect x="${x}" y="${y}" width="${width}" height="96" rx="8" fill="${fill}" stroke="${stroke}"></rect>
-          ${diagramTextLines([title], x + width / 2, y + 28, { size: 14, weight: 700, anchor: "middle", fill: "#1d1f22" })}
-          ${diagramTextLines(lines, x + width / 2, y + 52, { size: 12, anchor: "middle" })}
-        </g>`).join("")}
-        <rect x="36" y="390" width="888" height="52" rx="7" fill="#ffffff" stroke="#dedbd2"></rect>
-        ${diagramTextLines(["领域服务只通过公开接口协作；身份和权限由宿主派生。", "外部调用必须具备超时、取消、重试和失败语义。"], 52, 411)}
-      </svg>`;
-    }
-
-    function renderRiskHeatmapSvg() {
-      const cards = [
-        ["凭据与敏感数据", ["Provider API Key、Token", "不进入普通 DTO、SQLite、", "日志和错误消息"], "#f4dde4", "#aa2d4d"],
-        ["权限与调用者上下文", ["Tauri command 身份由宿主派生", "模块权限运行时拦截"], "#f4dde4", "#aa2d4d"],
-        ["外部 Provider / MCP", ["超时、重试、取消、幂等", "和未知结果必须显式定义"], "#f6ead6", "#a96810"],
-        ["数据迁移兼容", ["已执行 migration 只追加", "升级失败要可恢复"], "#f6ead6", "#a96810"],
-        ["模块隔离与热更新", ["动态模块不能绕过公开接口", "或跨域读取私有状态"], "#e6e9f6", "#4056a1"],
-        ["协议兼容与错误语义", ["OpenAI、Skills、MCP 适配", "保持向后兼容"], "#dcefeb", "#087d75"]
-      ];
-      return `<svg viewBox="0 0 960 374" role="img" aria-label="DGOS 风险热区图">
-        <rect width="960" height="374" rx="8" fill="#fbfaf7"></rect>
-        <text x="36" y="38" font-size="18" font-weight="760" fill="#1d1f22">架构风险热区</text>
-        <text x="36" y="62" font-size="12" fill="#69707a">颜色越深，越需要在实现和验收中保留可追溯证据。</text>
-        ${cards.map((card, i) => {
-          const x = 36 + (i % 3) * 300;
-          const y = 92 + Math.floor(i / 3) * 132;
-          return `<g class="risk-card">
-            <rect x="${x}" y="${y}" width="288" height="116" rx="8" fill="${card[2]}" stroke="${card[3]}"></rect>
-            ${diagramTextLines([card[0]], x + 16, y + 28, { size: 14, weight: 760, fill: "#1d1f22" })}
-            ${diagramTextLines(card[1], x + 16, y + 53, { size: 12 })}
-          </g>`;
-        }).join("")}
-      </svg>`;
-    }
-
-    function renderSearch() {
-      if (!state.query) {
-        els.searchResults.classList.remove("open");
-        els.searchResults.innerHTML = "";
-        return;
-      }
-
-      const query = state.query.toLowerCase();
-      const results = [];
-      const featureResults = filterFeatures(state.query).slice(0, 20);
-
-      state.docs.forEach(doc => {
-        doc.content.split(/\r?\n/).forEach((line, index) => {
-          if (line.toLowerCase().includes(query)) {
-            results.push({
-              doc,
-              line: line.trim() || "(空行)",
-              lineNo: index + 1
-            });
-          }
-        });
-      });
-
-      const limited = results.slice(0, Math.max(0, 80 - featureResults.length));
-      els.searchResults.innerHTML = featureResults.length || limited.length
-        ? `${featureResults.map(feature => `
-            <button class="result-item" data-feature="${escapeHtml(feature.id)}">
-              <span class="result-top">
-                <span>${escapeHtml(feature.id)} · 具体功能时间线</span>
-                <span>${escapeHtml(feature.trackName)}</span>
-              </span>
-              <span class="result-line">${highlight(`${feature.title} · ${feature.goal}`, state.query)}</span>
-            </button>
-          `).join("")}${limited.map(result => `
-            <button class="result-item" data-doc="${result.doc.id}">
-              <span class="result-top">
-                <span>${escapeHtml(result.doc.version)} · ${escapeHtml(result.doc.title)}</span>
-                <span>Line ${result.lineNo}</span>
-              </span>
-              <span class="result-line">${highlight(result.line, state.query)}</span>
-            </button>
-          `).join("")}`
-        : `<div class="empty">没有匹配项</div>`;
-
-      els.searchResults.classList.add("open");
-      els.searchResults.querySelectorAll("[data-doc]").forEach(button => {
-        button.addEventListener("click", () => openDoc(button.dataset.doc));
-      });
-      els.searchResults.querySelectorAll("[data-feature]").forEach(button => {
-        button.addEventListener("click", () => {
-          state.activeFeatureId = button.dataset.feature;
-          localStorage.setItem("prd.activeFeature", state.activeFeatureId);
-          els.searchResults.classList.remove("open");
-          setView("feature-timeline");
-        });
-      });
-    }
-
-    function renderMarkdown(source, sourceFile = "") {
-      const lines = source.replace(/\r\n/g, "\n").split("\n");
-      const html = [];
-      const outline = [];
-      let index = 0;
-
-      while (index < lines.length) {
-        const line = lines[index];
-
-        if (/^```/.test(line)) {
-          const lang = line.replace(/^```/, "").trim();
-          const code = [];
-          index += 1;
-          while (index < lines.length && !/^```/.test(lines[index])) {
-            code.push(lines[index]);
-            index += 1;
-          }
-          index += 1;
-          html.push(`<pre><code data-lang="${escapeHtml(lang)}">${escapeHtml(code.join("\n"))}</code></pre>`);
-          continue;
-        }
-
-        const heading = /^(#{1,4})\s+(.+)$/.exec(line);
-        if (heading) {
-          const level = heading[1].length;
-          const text = heading[2].trim();
-          const id = makeHeadingId(text, outline.length);
-          outline.push({ id, text, level });
-          html.push(`<h${level} id="${id}">${inline(text, sourceFile)}</h${level}>`);
-          index += 1;
-          continue;
-        }
-
-        if (isTableStart(lines, index)) {
-          const block = [];
-          while (index < lines.length && /^\s*\|.*\|\s*$/.test(lines[index])) {
-            block.push(lines[index]);
-            index += 1;
-          }
-          html.push(renderTable(block, sourceFile));
-          continue;
-        }
-
-        if (/^\s*[-*]\s+/.test(line)) {
-          const items = [];
-          while (index < lines.length && /^\s*[-*]\s+/.test(lines[index])) {
-            items.push(lines[index].replace(/^\s*[-*]\s+/, ""));
-            index += 1;
-          }
-          html.push(`<ul>${items.map(item => `<li>${inline(item, sourceFile)}</li>`).join("")}</ul>`);
-          continue;
-        }
-
-        if (/^\s*\d+\.\s+/.test(line)) {
-          const items = [];
-          while (index < lines.length && /^\s*\d+\.\s+/.test(lines[index])) {
-            items.push(lines[index].replace(/^\s*\d+\.\s+/, ""));
-            index += 1;
-          }
-          html.push(`<ol>${items.map(item => `<li>${inline(item, sourceFile)}</li>`).join("")}</ol>`);
-          continue;
-        }
-
-        if (/^\s*>\s?/.test(line)) {
-          const quote = [];
-          while (index < lines.length && /^\s*>\s?/.test(lines[index])) {
-            quote.push(lines[index].replace(/^\s*>\s?/, ""));
-            index += 1;
-          }
-          html.push(`<blockquote>${quote.map(item => inline(item, sourceFile)).join("<br>")}</blockquote>`);
-          continue;
-        }
-
-        const standaloneImage = /^!\[([^\]]*)\]\(([^)]+)\)\s*$/.exec(line.trim());
-        if (standaloneImage) {
-          html.push(renderDocFigure(standaloneImage[1], standaloneImage[2], sourceFile));
-          index += 1;
-          continue;
-        }
-
-        if (line.trim() === "") {
-          index += 1;
-          continue;
-        }
-
-        const paragraph = [line];
+    const fence = /^\s*(`{3,}|~{3,})\s*([\w+-]*)/.exec(line);
+    if (fence) {
+      const marker = fence[1];
+      const code = [];
+      index += 1;
+      while (index < lines.length && !new RegExp(`^\\s*${marker[0] === "`" ? "`" : "~"}{${marker.length},}\\s*$`).test(lines[index])) {
+        code.push(lines[index]);
         index += 1;
-        while (
-          index < lines.length &&
-          lines[index].trim() !== "" &&
-          !/^(#{1,4})\s+/.test(lines[index]) &&
-          !/^```/.test(lines[index]) &&
-          !/^!\[[^\]]*\]\([^)]+\)\s*$/.test(lines[index].trim()) &&
-          !/^\s*[-*]\s+/.test(lines[index]) &&
-          !/^\s*\d+\.\s+/.test(lines[index]) &&
-          !isTableStart(lines, index)
-        ) {
-          paragraph.push(lines[index]);
-          index += 1;
-        }
-        html.push(`<p>${inline(paragraph.join(" "), sourceFile)}</p>`);
       }
-
-      return { html: html.join("\n"), outline };
+      index += 1;
+      html.push(`<pre><code data-lang="${escapeHtml(fence[2])}">${escapeHtml(code.join("\n"))}</code></pre>`);
+      continue;
     }
 
-    function renderDocFigure(alt, href, sourceFile) {
-      const decodedHref = decodeMarkdownHref(href);
-      const resolvedHref = resolveDocHref(decodedHref, sourceFile);
-      const safeAlt = escapeHtml(alt || "文档图表");
-      return `
-        <figure class="doc-figure">
-          <a href="${escapeHtml(resolvedHref)}" target="_blank" rel="noopener">
-            <img src="${escapeHtml(resolvedHref)}" alt="${safeAlt}" loading="lazy" decoding="async">
-          </a>
-          <figcaption>${safeAlt} · 点击查看原图</figcaption>
-        </figure>
-      `;
+    const heading = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    if (heading) {
+      const level = Math.min(heading[1].length, 4);
+      const text = heading[2].replace(/[`*_]/g, "");
+      const { id, slug: key } = headingId(text);
+      outline.push({ id, text, level });
+      html.push(`<h${level} id="${id}" data-slug="${escapeHtml(key)}">${inline(heading[2], sourcePath)}</h${level}>`);
+      index += 1;
+      continue;
     }
 
-    function isTableStart(lines, index) {
-      return (
-        index + 1 < lines.length &&
-        /^\s*\|.*\|\s*$/.test(lines[index]) &&
-        /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(lines[index + 1])
-      );
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+      html.push("<hr>");
+      index += 1;
+      continue;
     }
 
-    function renderTable(block, sourceFile = "") {
-      const rows = block
-        .filter((_, index) => index !== 1)
-        .map(line => line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(cell => cell.trim()));
+    if (isTableStartLine(lines, index)) {
+      const block = [];
+      while (index < lines.length && /^\s*\|.*\|\s*$/.test(lines[index])) {
+        block.push(lines[index]);
+        index += 1;
+      }
+      html.push(renderTable(block, sourcePath));
+      continue;
+    }
 
-      if (!rows.length) return "";
-      const head = rows[0];
-      const body = rows.slice(1);
-      return `
-        <div class="table-wrap">
-          <table>
-            <thead><tr>${head.map(cell => `<th>${inline(cell, sourceFile)}</th>`).join("")}</tr></thead>
-            <tbody>${body.map(row => `<tr>${row.map(cell => `<td>${inline(cell, sourceFile)}</td>`).join("")}</tr>`).join("")}</tbody>
-          </table>
+    if (/^\s*([-*+]|\d+[.)])\s+/.test(line)) {
+      const block = [];
+      while (index < lines.length && (/^\s*([-*+]|\d+[.)])\s+/.test(lines[index]) || (/^\s{2,}\S/.test(lines[index]) && block.length))) {
+        block.push(lines[index]);
+        index += 1;
+      }
+      html.push(renderList(block, sourcePath));
+      continue;
+    }
+
+    if (/^\s*>/.test(line)) {
+      const quote = [];
+      while (index < lines.length && /^\s*>/.test(lines[index])) {
+        quote.push(lines[index].replace(/^\s*>\s?/, ""));
+        index += 1;
+      }
+      html.push(`<blockquote>${renderMarkdown(quote.join("\n"), sourcePath).html}</blockquote>`);
+      continue;
+    }
+
+    const image = /^\s*!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)\s*$/.exec(line);
+    if (image) {
+      html.push(renderFigure(image[1], image[2], sourcePath));
+      index += 1;
+      continue;
+    }
+
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+
+    const paragraph = [line];
+    index += 1;
+    while (index < lines.length && lines[index].trim() && !/^\s*(#{1,6}\s|`{3,}|~{3,}|>|([-*+]|\d+[.)])\s)/.test(lines[index]) && !isTableStartLine(lines, index)) {
+      paragraph.push(lines[index]);
+      index += 1;
+    }
+    html.push(`<p>${inline(paragraph.join("\n"), sourcePath).replace(/\n/g, " ")}</p>`);
+  }
+
+  return { html: html.join("\n"), outline };
+}
+
+function renderList(block, sourcePath) {
+  const items = [];
+  for (const raw of block) {
+    const match = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(raw);
+    if (match) items.push({ indent: match[1].replace(/\t/g, "  ").length, ordered: /\d/.test(match[2]), text: match[3] });
+    else if (items.length) items[items.length - 1].text += ` ${raw.trim()}`;
+  }
+  const build = (start, indent) => {
+    const ordered = items[start].ordered;
+    const out = [];
+    let i = start;
+    while (i < items.length && items[i].indent >= indent) {
+      if (items[i].indent > indent) {
+        const nested = build(i, items[i].indent);
+        out[out.length - 1] = out[out.length - 1].replace(/<\/li>$/, `${nested.html}</li>`);
+        i = nested.next;
+        continue;
+      }
+      const task = /^\[([ xX])\]\s+(.*)$/.exec(items[i].text);
+      const body = task
+        ? `<input type="checkbox" disabled ${task[1].trim() ? "checked" : ""} aria-label="${task[1].trim() ? "已完成" : "未完成"}"> ${inline(task[2], sourcePath)}`
+        : inline(items[i].text, sourcePath);
+      out.push(`<li>${body}</li>`);
+      i += 1;
+    }
+    const tag = ordered ? "ol" : "ul";
+    return { html: `<${tag}>${out.join("")}</${tag}>`, next: i };
+  };
+  const parts = [];
+  let i = 0;
+  while (i < items.length) {
+    const result = build(i, items[i].indent);
+    parts.push(result.html);
+    i = result.next;
+  }
+  return parts.join("");
+}
+
+function isTableStartLine(lines, index) {
+  return index + 1 < lines.length &&
+    /^\s*\|.*\|\s*$/.test(lines[index]) &&
+    /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(lines[index + 1]);
+}
+
+function splitTableRow(line) {
+  const text = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  const cells = [];
+  let current = "";
+  let code = false;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === "\\" && text[i + 1] === "|") { current += "|"; i += 1; continue; }
+    if (text[i] === "`") code = !code;
+    if (text[i] === "|" && !code) { cells.push(current.trim()); current = ""; continue; }
+    current += text[i];
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+function renderTable(block, sourcePath) {
+  const rows = block.filter((_, i) => i !== 1).map(splitTableRow);
+  if (!rows.length) return "";
+  const [head, ...body] = rows;
+  return `<div class="table-wrap"><table>
+    <thead><tr>${head.map(cell => `<th scope="col">${inline(cell, sourcePath)}</th>`).join("")}</tr></thead>
+    <tbody>${body.map(row => `<tr>${row.map(cell => `<td>${inline(cell, sourcePath)}</td>`).join("")}</tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function renderFigure(alt, href, sourcePath) {
+  const url = safeUrl(resolveHref(href, sourcePath));
+  const label = escapeHtml(alt || "文档图表");
+  if (!url) return `<p class="muted">[图片已忽略：${label}]</p>`;
+  return `<figure class="doc-figure">
+    <a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(url)}" alt="${label}" loading="lazy" decoding="async"></a>
+    <figcaption>${label}</figcaption>
+  </figure>`;
+}
+
+// Inline spans: code first (protected), then links, emphasis and <br>.
+function inline(value, sourcePath) {
+  const codes = [];
+  let text = String(value ?? "").replace(/`([^`]+)`/g, (_, code) => {
+    codes.push(`<code>${escapeHtml(code)}</code>`);
+    return `\u0000${codes.length - 1}\u0000`;
+  });
+  text = escapeHtml(text);
+  text = text.replace(/&lt;br\s*\/?&gt;/gi, "<br>");
+  text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_, alt, href) => {
+    const url = safeUrl(resolveHref(unescapeHtml(href), sourcePath));
+    return url ? `<img class="inline-img" src="${escapeHtml(url)}" alt="${alt}">` : alt;
+  });
+  text = text.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (_, label, href) => linkHtml(label, unescapeHtml(href), sourcePath));
+  text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  text = text.replace(/(^|[^*\w])\*([^*\s][^*]*)\*(?!\w)/g, "$1<em>$2</em>");
+  text = text.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+  return text.replace(/\u0000(\d+)\u0000/g, (_, i) => codes[Number(i)]);
+}
+
+function linkHtml(label, href, sourcePath) {
+  const [target, anchor = ""] = href.split("#");
+  if (!/^[a-z][a-z\d+.-]*:/i.test(href) && /\.md$/i.test(target || "")) {
+    const docPath = joinPath(sourcePath, decodeURIComponentSafe(target));
+    const docId = docPath.replace(/\.md$/i, "");
+    if (docIndex.has(docId)) {
+      return `<a href="#view=reader&doc=${encodeURIComponent(docId)}" data-open-doc="${escapeHtml(docId)}"${anchor ? ` data-anchor="${escapeHtml(anchor)}"` : ""}>${label}</a>`;
+    }
+    return `<span class="broken-link" title="链接目标不存在：${escapeHtml(docPath)}">${label}</span>`;
+  }
+  if (!target && anchor) {
+    return `<a href="#${escapeHtml(anchor)}" data-open-doc="${escapeHtml(state.activeDocId || "")}" data-anchor="${escapeHtml(anchor)}">${label}</a>`;
+  }
+  const url = safeUrl(resolveHref(href, sourcePath));
+  if (!url) return label;
+  const external = /^https?:/i.test(url);
+  return `<a href="${escapeHtml(url)}"${external ? ` target="_blank" rel="noopener noreferrer"` : ""}>${label}</a>`;
+}
+
+// Paths in the data are relative to docs/; the HTML lives in docs/<outputDir>/.
+function resolveHref(href, sourcePath) {
+  if (!href || /^(?:[a-z][a-z\d+.-]*:|#|\/)/i.test(href)) return href;
+  const joined = joinPath(sourcePath, href);
+  return `${DATA.docsBase || ""}${joined.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+function joinPath(sourcePath, href) {
+  const base = String(sourcePath || "").split("/").slice(0, -1);
+  for (const part of String(href).split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") base.pop();
+    else base.push(part);
+  }
+  return base.join("/");
+}
+
+function safeUrl(url) {
+  const value = String(url || "").trim();
+  if (!value) return "";
+  if (/^(https?:|mailto:|#|\.{0,2}\/|[^:]*$)/i.test(value)) return value;
+  return "";
+}
+
+function unescapeHtml(value) {
+  return String(value).replace(/&amp;/g, "&").replace(/&quot;/g, "\"").replace(/&#039;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+}
+
+function decodeURIComponentSafe(value) {
+  try { return decodeURIComponent(value); } catch { return value; }
+}
+
+
+// ---------- views ----------
+
+function renderOverview() {
+  const features = DATA.features || [];
+  const current = currentVersion();
+  const statusCounts = countBy(features, item => (item.implementation || {}).statusKey || "unknown");
+  const done = statusCounts.done || 0;
+  const frozen = (DATA.decisions || []).filter(item => item.statusKey === "frozen").length;
+  const versions = versionsOrdered();
+
+  els.content.innerHTML = `
+    <section class="doc-header">
+      <div class="doc-kicker"><span class="tag">总览</span><span>${escapeHtml(DATA.project.name)}</span>${current ? `<span>当前版本 ${escapeHtml(current.id)}</span>` : ""}</div>
+      <h2>${escapeHtml(DATA.project.name)} 文档总览</h2>
+      ${DATA.project.description ? `<p class="muted">${escapeHtml(DATA.project.description)}</p>` : ""}
+    </section>
+
+    <section class="stats">
+      ${statBlock("文档", DATA.docs.length, "Markdown")}
+      ${statBlock("功能", features.length, current ? `${current.id} 等版本` : "功能主文档")}
+      ${statBlock("已完成", features.length ? `${done}/${features.length}` : "—", "以实现状态表为准")}
+      ${statBlock("冻结决策", frozen || (DATA.decisions || []).length, `${(DATA.adrs || []).length} 份 ADR`)}
+    </section>
+
+    ${versions.length ? panel("版本链路", `
+      <div class="version-strip">
+        ${versions.map(version => `
+          <button type="button" class="version-node ${escapeHtml(version.kind)}" ${version.doc ? `data-open-doc="${escapeHtml(version.doc)}"` : "disabled"}>
+            <strong>${escapeHtml(version.id)}${version.title ? ` · ${escapeHtml(version.title)}` : ""}</strong>
+            <span class="tag">${escapeHtml(KIND_LABELS[version.kind] || version.kind)}</span>
+            <span>${escapeHtml(version.goal || "（版本路线图未写目标）")}</span>
+          </button>`).join("")}
+      </div>`, `${versions.length} 个版本`) : ""}
+
+    ${features.length ? panel("实现状态分布", statusBars(statusCounts, features.length), "来源：实现状态表") : ""}
+
+    ${panel("文档结构", groupTable(), `${new Set(DATA.docs.map(doc => doc.group)).size} 个分区`)}
+  `;
+  renderOutline([]);
+}
+
+function statusBars(counts, total) {
+  const labels = {
+    planned: "规划中", "in-progress": "开发中", "local-verified": "本地验证", "pending-acceptance": "待验收",
+    done: "已完成", blocked: "阻塞", deprecated: "已废弃", unknown: "未同步"
+  };
+  return `<div class="status-bars">${STATUS_ORDER.filter(key => counts[key]).map(key => `
+    <div class="status-bar">
+      <span class="status-pill ${key}">${labels[key]}</span>
+      <span class="bar"><i style="width:${((counts[key] / total) * 100).toFixed(1)}%"></i></span>
+      <strong>${counts[key]}</strong>
+    </div>`).join("")}</div>
+    ${counts.unknown ? `<p class="muted">“未同步”表示该功能没有出现在版本实现状态表中。状态只在实现状态表维护，功能主文档不重复记录。</p>` : ""}`;
+}
+
+function groupTable() {
+  const groups = new Map();
+  for (const doc of DATA.docs) {
+    const entry = groups.get(doc.group) || { label: doc.groupLabel, count: 0, lines: 0, first: doc.id };
+    entry.count += 1;
+    entry.lines += doc.lines;
+    groups.set(doc.group, entry);
+  }
+  return `<table class="matrix"><thead><tr><th>分区</th><th>文档</th><th>行数</th></tr></thead><tbody>
+    ${[...groups].map(([group, entry]) => `<tr><td>${docLink(entry.first, group)}</td><td>${entry.count}</td><td>${formatNumber(entry.lines)}</td></tr>`).join("")}
+  </tbody></table>`;
+}
+
+function renderReader() {
+  const doc = docIndex.get(state.activeDocId) || DATA.docs[0];
+  if (!doc) {
+    els.content.innerHTML = panel("没有文档", "<p>docs/ 目录下没有 Markdown 文件。</p>");
+    return;
+  }
+  state.activeDocId = doc.id;
+  const source = (DATA.content || {})[doc.id];
+  if (typeof source !== "string") {
+    els.content.innerHTML = panel("缺少文档内容", `<p>数据文件中没有 <code>${escapeHtml(doc.path)}</code> 的内容，请重新生成。</p>`);
+    renderOutline([]);
+    return;
+  }
+  const rendered = renderMarkdown(stripFrontmatter(source), doc.path);
+  const feature = doc.featureId ? featureIndex.get(doc.featureId) : null;
+
+  els.content.innerHTML = `
+    <section class="doc-header" style="--accent:${safeColor(doc.accent)}">
+      <div class="doc-kicker">
+        <span class="tag">${escapeHtml(doc.groupLabel)}</span>
+        ${doc.version ? `<span class="tag">${escapeHtml(doc.version)}</span>` : ""}
+        <code>${escapeHtml(doc.path)}</code>
+      </div>
+      <h2>${escapeHtml(doc.title)}</h2>
+      <div class="doc-meta">
+        <span class="tag">${doc.lines} 行</span>
+        <span class="tag">${rendered.outline.length} 章节</span>
+        ${feature ? `<span class="tag">${escapeHtml(feature.id)}</span>${statusPill(feature.implementation)}${featureLink(feature.id, "查看时间线")}` : ""}
+      </div>
+      ${doc.goal ? `<p class="muted">${escapeHtml(doc.goal)}</p>` : ""}
+    </section>
+    <article class="article" id="article">${rendered.html}</article>`;
+  renderOutline(rendered.outline);
+}
+
+function renderFeatures() {
+  const features = DATA.features || [];
+  if (!features.length) {
+    els.content.innerHTML = panel("还没有功能主文档", `
+      <p>生成器会把 <code>03-功能规格/V{n}/{领域}/NN-功能名.md</code> 识别为功能主文档。
+      建议在 frontmatter 中写 <code>feature_id: V1-FR-001</code>。</p>`);
+    renderOutline([]);
+    return;
+  }
+  const query = state.featureFilter.toLowerCase();
+  const rows = features.filter(item => !query || [item.id, item.title, item.domain, item.trackName, item.goal,
+    (item.implementation || {}).statusLabel].some(value => String(value || "").toLowerCase().includes(query)));
+  const domains = [...new Set(features.map(item => item.domain || "未分组"))];
+
+  els.content.innerHTML = `
+    <section class="doc-header">
+      <div class="doc-kicker"><span class="tag">功能</span><span>${features.length} 个功能 · ${domains.length} 个领域</span></div>
+      <h2>功能清单</h2>
+      <div class="feature-controls">
+        <div class="feature-field">
+          <label for="featureFilter">筛选（编号 / 名称 / 领域 / 状态）</label>
+          <input id="featureFilter" value="${escapeHtml(state.featureFilter)}" placeholder="例如 V1-FR-005、支付、开发中">
         </div>
-      `;
-    }
+      </div>
+    </section>
+    <div class="table-wrap feature-table"><table>
+      <thead><tr><th>编号</th><th>功能</th><th>领域</th><th>风险</th><th>规格</th><th>实现状态</th><th>AC</th><th>主责能力</th></tr></thead>
+      <tbody>${rows.map(item => `<tr>
+        <td><code>${escapeHtml(item.id)}</code></td>
+        <td>${docLink(item.doc, item.title)}${item.design ? ` · ${docLink(item.design, "技术设计")}` : ""}</td>
+        <td>${escapeHtml(item.domain || "—")}</td>
+        <td>${item.risk === "high" ? `<span class="risk high">高风险</span>` : `<span class="risk">标准</span>`}</td>
+        <td>${escapeHtml(item.specStatus || "—")}</td>
+        <td>${statusPill(item.implementation)}</td>
+        <td>${item.acCount || 0}</td>
+        <td>${item.trackName ? featureLink(item.id, item.trackName.replace(/演进$/, "")) : "—"}</td>
+      </tr>`).join("") || `<tr><td colspan="8" class="empty">没有匹配项</td></tr>`}</tbody>
+    </table></div>`;
 
-    function extractHeadings(content) {
-      return content
-        .split(/\r?\n/)
-        .filter(line => /^(#{1,4})\s+/.test(line))
-        .map(line => line.replace(/^(#{1,4})\s+/, "").trim());
-    }
+  const input = document.getElementById("featureFilter");
+  input.addEventListener("input", debounce(() => {
+    state.featureFilter = input.value.trim();
+    const caret = input.selectionStart;
+    renderFeatures();
+    const next = document.getElementById("featureFilter");
+    next.focus();
+    next.setSelectionRange(caret, caret);
+  }, 200));
+  renderOutline([]);
+}
 
-    function inline(value, sourceFile = "") {
-      let output = escapeHtml(value);
-      output = output.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-      output = output.replace(/`([^`]+)`/g, "<code>$1</code>");
-      output = output.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, href) => {
-        const decodedHref = decodeMarkdownHref(href);
-        return `<a href="${escapeHtml(resolveDocHref(decodedHref, sourceFile))}">${label}</a>`;
-      });
-      return output;
-    }
+function renderEvolution() {
+  const doc = DATA.evolutionDoc ? docIndex.get(DATA.evolutionDoc) : null;
+  const tracks = DATA.tracks || [];
+  if (!doc) {
+    els.content.innerHTML = panel("没有功能演进矩阵", `
+      <p>在 <code>02-产品与版本/功能演进矩阵.md</code> 中按能力主线编写表格后，这里会显示跨版本演进。
+      格式见 skill 的 <code>assets/templates/feature-evolution-matrix.md</code>。</p>`);
+    renderOutline([]);
+    return;
+  }
+  const versions = versionsOrdered();
+  const columns = [...versions.map(version => version.id), "future"];
+  const cell = (track, version) => {
+    const stages = stagesFor(track, version);
+    if (stages.length) return stages.map(stage => `<div class="cell-stage ${stage.gate ? "gate" : ""}">${escapeHtml(stage.stage)}</div>`).join("");
+    const overview = track.overviewCells && track.overviewCells[version];
+    return overview ? `<div class="cell-overview">${escapeHtml(overview)}</div>` : `<span class="muted">—</span>`;
+  };
+  const rendered = renderMarkdown(stripFrontmatter((DATA.content || {})[doc.id] || ""), doc.path);
 
-    function decodeMarkdownHref(href) {
-      return href.replace(/&amp;/g, "&").replace(/&quot;/g, "\"").replace(/&#039;/g, "'");
-    }
+  els.content.innerHTML = `
+    <section class="doc-header">
+      <div class="doc-kicker"><span class="tag">演进</span><span>${tracks.length} 条能力主线 · ${versions.length} 个版本</span></div>
+      <h2>${escapeHtml(doc.title)}</h2>
+      <div class="doc-meta">${docLink(doc.id, "打开原文")}</div>
+    </section>
+    ${tracks.length ? `<div class="table-wrap evolution-grid"><table>
+      <thead><tr><th>能力主线</th>${columns.map(id => `<th>${escapeHtml(id === "future" ? "后续" : id)}${versionIndex.get(id) ? `<br><small>${escapeHtml(KIND_LABELS[versionIndex.get(id).kind] || "")}</small>` : ""}</th>`).join("")}</tr></thead>
+      <tbody>${tracks.map(track => `<tr>
+        <th style="border-left:4px solid ${safeColor(track.accent)}">${escapeHtml(track.title)}</th>
+        ${columns.map(id => `<td>${cell(track, id)}</td>`).join("")}
+      </tr>`).join("")}</tbody>
+    </table></div>` : panel("未识别到能力主线表格", `<p>每条能力主线需要一个 <code>## 能力名称演进</code> 章节和一张以“阶段”开头的表格。</p>`)}
+    <article class="article" id="article">${rendered.html}</article>`;
+  renderOutline(rendered.outline);
+}
 
-    function resolveDocHref(href, sourceFile) {
-      if (!sourceFile || /^(?:[a-z][a-z\d+.-]*:|#|\/)/i.test(href)) return href;
-      try {
-        const sourceUrl = new URL(encodeURI(sourceFile), window.location.href);
-        return new URL(encodeURI(href), sourceUrl).href;
-      } catch {
-        return href;
-      }
-    }
+function stagesFor(track, versionId) {
+  return (track.stages || []).filter(stage => stage.version === versionId);
+}
 
-    function statBlock(label, value, caption) {
-      return `
-        <div class="stat">
-          <span>${escapeHtml(label)}</span>
-          <strong>${value}</strong>
-          <span>${escapeHtml(caption)}</span>
+function renderTimeline() {
+  const features = DATA.features || [];
+  const feature = featureIndex.get(state.activeFeatureId) || features[0];
+  if (!feature) return renderFeatures();
+  state.activeFeatureId = feature.id;
+  const track = feature.track ? trackIndex.get(feature.track) : null;
+  const versions = versionsOrdered();
+  const impl = feature.implementation || {};
+  const statusDoc = impl.source || (DATA.statusDocs || [])[0];
+
+  const milestones = versions.map(version => milestone(feature, track, version));
+  const futureStages = track ? stagesFor(track, "future") : [];
+  if (futureStages.length || (track && track.overviewCells && track.overviewCells.future)) {
+    milestones.push(milestone(feature, track, { id: "future", label: "后续", kind: "planned", title: "后续独立增强" }));
+  }
+
+  els.content.innerHTML = `
+    <section class="feature-query" id="feature-picker">
+      <h2>功能时间线</h2>
+      <p>当前版本节点来自功能主文档和实现状态表；其他版本节点来自功能演进矩阵中主责能力的阶段，表示“关联能力规划”，不代表该功能已获得后续版本编号或开发承诺。</p>
+      <div class="feature-controls">
+        <div class="feature-field">
+          <label for="featureSelect">选择功能（${features.length} 个）</label>
+          <select id="featureSelect">${features.map(item => `<option value="${escapeHtml(item.id)}" ${item.id === feature.id ? "selected" : ""}>${escapeHtml(item.id)} · ${escapeHtml(item.title)}</option>`).join("")}</select>
         </div>
-      `;
-    }
+      </div>
+    </section>
 
-    function getActiveDoc() {
-      return state.docs.find(doc => doc.id === state.activeDocId) || state.docs[0];
-    }
+    <section class="feature-summary" id="feature-summary" style="border-left-color:${safeColor(track ? track.accent : "")}">
+      <div>
+        <div class="feature-summary-meta">
+          <span class="tag">${escapeHtml(feature.id)}</span>
+          ${statusPill(impl)}
+          <span class="tag">${escapeHtml(feature.domain || "未标注领域")}</span>
+          ${feature.risk === "high" ? `<span class="risk high">高风险</span>` : ""}
+          <span class="tag">主责：${escapeHtml(track ? track.title : "未关联能力主线")}</span>
+        </div>
+        <h2>${escapeHtml(feature.title)}</h2>
+        <p>${escapeHtml(feature.goal || "功能目标以主文档为准。")}</p>
+      </div>
+      <div class="feature-summary-links">
+        ${docLink(feature.doc, "打开功能主文档")}
+        ${feature.design ? docLink(feature.design, "打开技术设计") : ""}
+        ${statusDoc ? docLink(statusDoc, "查看实现状态") : ""}
+      </div>
+    </section>
 
-    function makeHeadingId(text, index) {
-      const base = text
-        .toLowerCase()
-        .replace(/`/g, "")
-        .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, 64);
-      return `h-${index}-${base || "section"}`;
-    }
+    <section class="feature-timeline-panel" id="feature-timeline">
+      <div class="feature-timeline-head">
+        <div class="feature-timeline-title">
+          <h3>${escapeHtml(feature.id)} · 版本时间线</h3>
+          <p>${track ? (feature.trackSource === "domain" ? "主责能力按领域名称推断，可在功能主文档 frontmatter 中用 track 字段指定。" : "主责能力来自显式映射。") : "该功能没有关联能力主线，只显示当前版本节点。"}</p>
+        </div>
+        <div class="timeline-legend" aria-label="图例">
+          <span class="current"><i></i>当前版本</span>
+          <span class="gate"><i></i>发布门禁</span>
+          <span><i></i>规划</span>
+          <span class="history"><i></i>历史或无规划</span>
+        </div>
+      </div>
+      <div class="feature-timeline-scroll"><div class="feature-version-timeline">${milestones.join("")}</div></div>
+    </section>`;
 
-    function updateProgress() {
-      const max = els.mainScroll.scrollHeight - els.mainScroll.clientHeight;
-      const value = max > 0 ? Math.min(100, Math.max(0, (els.mainScroll.scrollTop / max) * 100)) : 0;
-      els.readProgress.style.width = `${value}%`;
-    }
+  document.getElementById("featureSelect").addEventListener("change", event => openFeature(event.target.value));
+  renderOutline([
+    { id: "feature-picker", text: "选择功能", level: 2 },
+    { id: "feature-summary", text: `${feature.id} ${feature.title}`, level: 2 },
+    { id: "feature-timeline", text: "版本时间线", level: 2 }
+  ]);
+}
 
-    function updateActiveOutline() {
-      const article = document.getElementById("article");
-      if (!article) return;
+function milestone(feature, track, version) {
+  const axis = (label, caption) => `
+    <div class="milestone-axis"><span class="milestone-dot" aria-hidden="true"></span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(caption)}</small></div>`;
+  const mobile = (label, caption) => `<div class="milestone-mobile-meta"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(caption)}</span></div>`;
+  const stages = track ? stagesFor(track, version.id) : [];
+  const ownVersion = version.id === feature.version;
 
-      const headings = [...article.querySelectorAll("h1,h2,h3,h4")];
-      let active = "";
-      for (const heading of headings) {
-        if (heading.getBoundingClientRect().top < 110) active = heading.id;
-      }
-      els.outline.querySelectorAll("a").forEach(link => {
-        link.classList.toggle("active", link.dataset.target === active);
-      });
-    }
+  if (ownVersion) {
+    const impl = feature.implementation || {};
+    const gates = stages.filter(stage => stage.gate);
+    return `
+      <article class="feature-milestone current">
+        ${axis(version.id, "本功能所在版本")}
+        <div class="milestone-card">
+          <div class="milestone-state-line">${mobile(version.id, "本功能所在版本")}<span class="milestone-state current">${escapeHtml(KIND_LABELS[version.kind] || "版本")}</span>${statusPill(impl)}</div>
+          <h4>${escapeHtml(feature.title)}</h4>
+          <p>${escapeHtml(feature.goal || "功能行为以主文档为准。")}</p>
+          <div class="milestone-facts">
+            <div class="milestone-fact"><span>后端</span><strong>${escapeHtml(impl.backend || "—")}</strong></div>
+            <div class="milestone-fact"><span>前端</span><strong>${escapeHtml(impl.frontend || "—")}</strong></div>
+            <div class="milestone-fact"><span>验证</span><strong>${escapeHtml(impl.verification || "—")}</strong></div>
+          </div>
+          ${impl.gap ? `<div class="milestone-detail"><strong>当前差距</strong><span>${escapeHtml(impl.gap)}</span></div>` : ""}
+          ${feature.dependencies ? `<div class="milestone-detail"><strong>上游依赖</strong><span>${escapeHtml(feature.dependencies)}</span></div>` : ""}
+          ${gates.map(stage => `<div class="milestone-detail"><strong>${escapeHtml(stage.stage)}</strong><span>${inline(stage.change, DATA.evolutionPath)}</span></div>`).join("")}
+          <div class="milestone-source">状态更新：${escapeHtml(impl.updatedAt || "未标注")}${impl.statusKey === "unknown" ? " · 实现状态表中没有该功能" : ""}</div>
+        </div>
+      </article>`;
+  }
 
-    function formatNumber(value) {
-      return new Intl.NumberFormat("zh-CN").format(value);
-    }
+  if (version.kind === "history" && !stages.length) {
+    return `
+      <article class="feature-milestone history">
+        ${axis(version.id, "历史")}
+        <div class="milestone-card">
+          <div class="milestone-state-line">${mobile(version.id, "历史")}<span class="milestone-state history">历史范围</span></div>
+          <h4>${escapeHtml(version.title || "不参与当前规划")}</h4>
+          <p>${escapeHtml(version.goal || "该版本已归档，不参与当前规划。")}</p>
+        </div>
+      </article>`;
+  }
 
-    function highlight(line, query) {
-      const escaped = escapeHtml(line);
-      const pattern = new RegExp(escapeRegExp(query), "gi");
-      return escaped.replace(pattern, match => `<mark>${match}</mark>`);
-    }
+  if (!stages.length) {
+    const overview = track && track.overviewCells ? track.overviewCells[version.id] : "";
+    const caption = overview ? "总览关联" : "无单独规划";
+    return `
+      <article class="feature-milestone ${overview ? "planned" : "empty"}">
+        ${axis(version.label || version.id, caption)}
+        <div class="milestone-card">
+          <div class="milestone-state-line">${mobile(version.label || version.id, caption)}<span class="milestone-state ${overview ? "" : "empty"}">${overview ? "总览关联" : "无阶段"}</span></div>
+          <h4>${escapeHtml(overview ? `${version.label || version.id} 总览` : "该能力在此版本没有阶段变化")}</h4>
+          <p>${escapeHtml(overview || "空白不代表取消；调整规划时先更新版本路线图和功能演进矩阵。")}</p>
+        </div>
+      </article>`;
+  }
 
-    function escapeHtml(value) {
-      return String(value)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-    }
+  const main = stages.find(stage => !stage.gate) || stages[0];
+  const caption = main.gate ? "发布门禁" : "关联能力规划";
+  return `
+    <article class="feature-milestone ${main.gate ? "gate" : "planned"}">
+      ${axis(version.label || version.id, caption)}
+      <div class="milestone-card">
+        <div class="milestone-state-line">${mobile(version.label || version.id, caption)}<span class="milestone-state ${main.gate ? "gate" : ""}">${escapeHtml(caption)}</span></div>
+        <h4>${escapeHtml(main.stage)}</h4>
+        <p>${inline(main.change, DATA.evolutionPath)}</p>
+        ${main.dependencies ? `<div class="milestone-detail"><strong>依赖与边界</strong><span>${inline(main.dependencies, DATA.evolutionPath)}</span></div>` : ""}
+        ${main.completion ? `<div class="milestone-detail"><strong>完成判定</strong><span>${inline(main.completion, DATA.evolutionPath)}</span></div>` : ""}
+        ${main.source ? `<div class="milestone-source">${inline(main.source, DATA.evolutionPath)}</div>` : ""}
+        ${stages.length > 1 ? `<div class="milestone-source">同版本另有 ${stages.length - 1} 个阶段，详见功能演进矩阵。</div>` : ""}
+      </div>
+    </article>`;
+}
 
-    function escapeRegExp(value) {
-      return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function renderSearch() {
+  if (!state.query) {
+    els.searchResults.classList.remove("open");
+    els.searchResults.innerHTML = "";
+    return;
+  }
+  const query = state.query.toLowerCase();
+  const featureHits = (DATA.features || []).filter(item => [item.id, item.title, item.domain, item.goal]
+    .some(value => String(value || "").toLowerCase().includes(query))).slice(0, 12);
+  const decisionHits = (DATA.decisions || []).filter(item => `${item.id} ${item.title} ${item.summary}`.toLowerCase().includes(query)).slice(0, 8);
+  const lineHits = [];
+  for (const doc of DATA.docs) {
+    const source = (DATA.content || {})[doc.id] || "";
+    const lines = source.split(/\r?\n/);
+    for (let index = 0; index < lines.length && lineHits.length < 80; index += 1) {
+      if (lines[index].toLowerCase().includes(query)) lineHits.push({ doc, line: lines[index].trim(), lineNo: index + 1 });
     }
+  }
+  const item = (attrs, top, right, body) => `
+    <button type="button" class="result-item" ${attrs}>
+      <span class="result-top"><span>${top}</span><span>${right}</span></span>
+      <span class="result-line">${body}</span>
+    </button>`;
+  const html = [
+    ...featureHits.map(feature => item(`data-open-feature="${escapeHtml(feature.id)}"`, `${escapeHtml(feature.id)} · 功能`, escapeHtml((feature.implementation || {}).statusLabel || ""), highlight(`${feature.title} · ${feature.goal || ""}`, state.query))),
+    ...decisionHits.map(decision => item(`data-open-doc="${escapeHtml(decision.doc)}" data-anchor="${escapeHtml(decision.id)}"`, `${escapeHtml(decision.id)} · 决策`, escapeHtml(decision.status), highlight(`${decision.title} ${decision.summary || ""}`, state.query))),
+    ...lineHits.map(hit => item(`data-open-doc="${escapeHtml(hit.doc.id)}"`, escapeHtml(hit.doc.title), `第 ${hit.lineNo} 行`, highlight(hit.line || "(空行)", state.query)))
+  ];
+  els.searchResults.innerHTML = html.length ? html.join("") : `<div class="empty">没有匹配项</div>`;
+  els.searchResults.classList.add("open");
+}
 
-    function debounce(fn, delay) {
-      let timer = null;
-      return (...args) => {
-        window.clearTimeout(timer);
-        timer = window.setTimeout(() => fn(...args), delay);
-      };
-    }
+function renderMap() {
+  const sections = [
+    diagram("版本路线", "按版本顺序展示目标和状态；来源：版本路线图与版本文档。", versionRoadmapSvg()),
+    diagram("能力 × 版本热力图", "每格表示该能力主线在该版本是否有阶段变化；来源：功能演进矩阵。", heatmapSvg()),
+    diagram("领域与实现状态", "按功能领域统计实现状态；来源：功能主文档与实现状态表。", domainStatusSvg()),
+    diagram("风险分布", "高风险功能需要独立技术设计；来源：功能主文档与技术设计文件。", riskSvg())
+  ].filter(Boolean);
+  els.content.innerHTML = `
+    <section class="doc-header">
+      <div class="doc-kicker"><span class="tag">图谱</span><span>全部由文档数据生成</span></div>
+      <h2>${escapeHtml(DATA.project.name)} 结构图谱</h2>
+    </section>
+    <section class="map-stack">${sections.join("") || panel("暂无可视化数据", "<p>补充版本路线图、功能演进矩阵或功能主文档后再生成。</p>")}</section>`;
+  renderOutline([]);
+}
+
+function diagram(title, caption, svg) {
+  if (!svg) return "";
+  return `
+    <section class="diagram">
+      <div class="diagram-head"><h3>${escapeHtml(title)}</h3></div>
+      <div class="diagram-body">${svg}</div>
+      <div class="diagram-caption">${escapeHtml(caption)}</div>
+    </section>`;
+}
+
+function svgText(x, y, text, attrs = "") {
+  return `<text x="${x}" y="${y}" ${attrs}>${escapeHtml(text)}</text>`;
+}
+
+function clip(text, max) {
+  const value = String(text || "");
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+function versionRoadmapSvg() {
+  const versions = versionsOrdered();
+  if (!versions.length) return "";
+  const colors = { current: "#2f7d4f", planned: "#4056a1", released: "#087d75", history: "#8b929a" };
+  const perRow = 4;
+  const width = 960;
+  const cardW = 210;
+  const gap = (width - 72 - perRow * cardW) / (perRow - 1);
+  const rows = Math.ceil(versions.length / perRow);
+  const height = 70 + rows * 120;
+  const cards = versions.map((version, index) => {
+    const x = 36 + (index % perRow) * (cardW + gap);
+    const y = 56 + Math.floor(index / perRow) * 120;
+    const color = colors[version.kind] || colors.planned;
+    const dashed = version.kind === "history" ? ` stroke-dasharray="5 5"` : "";
+    return `<g>
+      <rect x="${x}" y="${y}" width="${cardW}" height="92" rx="8" fill="#ffffff" stroke="${color}"${dashed}></rect>
+      <rect x="${x}" y="${y}" width="6" height="92" rx="3" fill="${color}"></rect>
+      ${svgText(x + 18, y + 26, `${version.id}${version.title ? ` · ${clip(version.title, 10)}` : ""}`, `font-size="14" font-weight="700" fill="#1d1f22"`)}
+      ${svgText(x + 18, y + 46, KIND_LABELS[version.kind] || version.kind, `font-size="11" fill="${color}"`)}
+      ${svgText(x + 18, y + 68, clip(version.goal || "", 15), `font-size="11" fill="#69707a"`)}
+      ${svgText(x + 18, y + 84, clip((version.goal || "").slice(15), 15), `font-size="11" fill="#69707a"`)}
+    </g>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="版本路线">
+    <rect width="${width}" height="${height}" rx="8" fill="#fbfaf7"></rect>
+    ${svgText(36, 34, `${versions.length} 个版本`, `font-size="16" font-weight="700" fill="#1d1f22"`)}
+    ${cards}
+  </svg>`;
+}
+
+function heatmapSvg() {
+  const tracks = DATA.tracks || [];
+  const versions = versionsOrdered();
+  if (!tracks.length || !versions.length) return "";
+  const columns = [...versions.map(version => version.id), "future"];
+  const labelW = 230;
+  const cellW = Math.max(56, Math.floor((960 - labelW - 48) / columns.length));
+  const cellH = 34;
+  const width = labelW + cellW * columns.length + 48;
+  const height = 70 + tracks.length * (cellH + 6);
+  const header = columns.map((id, index) => svgText(labelW + index * cellW + cellW / 2, 52, id === "future" ? "后续" : id, `font-size="12" text-anchor="middle" fill="#69707a"`)).join("");
+  const rows = tracks.map((track, row) => {
+    const y = 62 + row * (cellH + 6);
+    const cells = columns.map((id, index) => {
+      const stages = stagesFor(track, id);
+      const overview = track.overviewCells && track.overviewCells[id];
+      const fill = stages.some(stage => stage.gate) ? "#f6ead6" : stages.length ? "#dcefeb" : overview ? "#eef1f8" : "#ffffff";
+      const stroke = stages.length ? safeColor(track.accent) : "#dedbd2";
+      const label = stages.length ? String(stages.length) : overview ? "·" : "";
+      const x = labelW + index * cellW;
+      return `<rect x="${x + 3}" y="${y}" width="${cellW - 6}" height="${cellH}" rx="6" fill="${fill}" stroke="${stroke}"></rect>
+        ${label ? svgText(x + cellW / 2, y + 22, label, `font-size="12" text-anchor="middle" fill="#1d1f22"`) : ""}`;
+    }).join("");
+    return `${svgText(36, y + 22, clip(track.title.replace(/演进$/, ""), 14), `font-size="12" fill="#1d1f22"`)}${cells}`;
+  }).join("");
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="能力版本热力图">
+    <rect width="${width}" height="${height}" rx="8" fill="#fbfaf7"></rect>
+    ${svgText(36, 30, "数字 = 阶段数；· = 仅在总览中提及；浅橙 = 含发布门禁", `font-size="12" fill="#69707a"`)}
+    ${header}${rows}
+  </svg>`;
+}
+
+function domainStatusSvg() {
+  const features = DATA.features || [];
+  if (!features.length) return "";
+  const colors = {
+    planned: "#c6c1b5", "in-progress": "#a96810", "local-verified": "#087d75", "pending-acceptance": "#4056a1",
+    done: "#2f7d4f", blocked: "#aa2d4d", deprecated: "#8b929a", unknown: "#e5e1d8"
+  };
+  const domains = [...new Set(features.map(item => item.domain || "未分组"))];
+  const barW = 600;
+  const height = 70 + domains.length * 38 + 30;
+  const rows = domains.map((domain, row) => {
+    const list = features.filter(item => (item.domain || "未分组") === domain);
+    const counts = countBy(list, item => (item.implementation || {}).statusKey || "unknown");
+    let x = 260;
+    const y = 56 + row * 38;
+    const segments = STATUS_ORDER.filter(key => counts[key]).map(key => {
+      const w = (counts[key] / list.length) * barW;
+      const rect = `<rect x="${x}" y="${y}" width="${Math.max(w, 2)}" height="24" fill="${colors[key]}"><title>${escapeHtml(key)}: ${counts[key]}</title></rect>`;
+      x += w;
+      return rect;
+    }).join("");
+    return `${svgText(36, y + 17, `${clip(domain, 12)}（${list.length}）`, `font-size="12" fill="#1d1f22"`)}${segments}`;
+  }).join("");
+  const legendLabels = { planned: "规划中", "in-progress": "开发中", "local-verified": "本地验证", "pending-acceptance": "待验收", done: "已完成", blocked: "阻塞", deprecated: "已废弃", unknown: "未同步" };
+  const legend = STATUS_ORDER.map((key, index) => `<rect x="${36 + index * 110}" y="${height - 26}" width="12" height="12" fill="${colors[key]}"></rect>${svgText(54 + index * 110, height - 16, legendLabels[key], `font-size="11" fill="#69707a"`)}`).join("");
+  return `<svg viewBox="0 0 960 ${height}" role="img" aria-label="领域与实现状态">
+    <rect width="960" height="${height}" rx="8" fill="#fbfaf7"></rect>
+    ${svgText(36, 32, `${domains.length} 个领域 · ${features.length} 个功能`, `font-size="14" font-weight="700" fill="#1d1f22"`)}
+    ${rows}${legend}
+  </svg>`;
+}
+
+function riskSvg() {
+  const features = DATA.features || [];
+  if (!features.length) return "";
+  const high = features.filter(item => item.risk === "high");
+  const missingDesign = high.filter(item => !item.design).length;
+  const width = 960;
+  const height = 150;
+  const ratio = features.length ? high.length / features.length : 0;
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="风险分布">
+    <rect width="${width}" height="${height}" rx="8" fill="#fbfaf7"></rect>
+    ${svgText(36, 36, `高风险 ${high.length} / ${features.length}`, `font-size="16" font-weight="700" fill="#1d1f22"`)}
+    <rect x="36" y="56" width="888" height="26" rx="6" fill="#e1f0e8"></rect>
+    <rect x="36" y="56" width="${(888 * ratio).toFixed(1)}" height="26" rx="6" fill="#f4dde4" stroke="#aa2d4d"></rect>
+    ${svgText(36, 112, missingDesign ? `${missingDesign} 个高风险功能缺少独立技术设计` : "所有高风险功能都有独立技术设计", `font-size="13" fill="${missingDesign ? "#aa2d4d" : "#2f7d4f"}"`)}
+  </svg>`;
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat("zh-CN").format(value);
+}
+
+function highlight(line, query) {
+  const escaped = escapeHtml(clip(line, 220));
+  if (!query) return escaped;
+  return escaped.replace(new RegExp(escapeRegExp(escapeHtml(query)), "gi"), match => `<mark>${match}</mark>`);
+}
+
   </script>
 </body>
 </html>

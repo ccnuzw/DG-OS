@@ -140,7 +140,7 @@ Workbench 的未完成工具任务在正常退出时撤销提案、释放正文�
 
 ### 4.5 `mcp_connection_logs`
 
-增量 migration `m009_create_mcp_connection_logs` 保存脱敏连接事件；字段与索引只在 [V1 数据模型](V1-数据模型.md#mcp_connection_logsmcp-连接事件) 维护。m008 已应用的用户数据库通过 m009 升级，不重建 Server 或清理旧工具/使用记录。
+增量 migration `m009_create_mcp_connection_logs` 保存脱敏连接事件；字段与索引只在 [V1 数据模型 §4.4](V1-数据模型.md#44-mcp-管理) 维护。m008 已应用的用户数据库通过 m009 升级，不重建 Server 或清理旧工具/使用记录。
 
 ## 5. Tauri 命令边界
 

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="generator" content="spec-docs-pro">
+  <title>{{TITLE}}</title>
+  <style>
+{{CSS}}
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#mainScroll">跳到正文</a>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">{{BRAND}}</div>
+        <div>
+          <h1>{{PROJECT}}</h1>
+          <small id="loadStatus" aria-live="polite">加载中</small>
+        </div>
+      </div>
+
+      <div class="searchbar" role="search">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="m21 21-4.2-4.2m1.2-5.3a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <label class="sr-only" for="searchInput">搜索文档、功能编号、接口或决策</label>
+        <input id="searchInput" type="search" autocomplete="off" placeholder="搜索文档 / 功能编号 / 接口 / 决策（⌘K）" aria-controls="searchResults">
+        <button class="clear-search" id="clearSearch" type="button" aria-label="清空搜索">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+            <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+
+      <nav class="top-actions" aria-label="视图切换">
+        <div class="segmented">
+          <button type="button" data-view="overview">总览</button>
+          <button type="button" data-view="reader">阅读</button>
+          <button type="button" data-view="features">功能</button>
+          <button type="button" data-view="map">图谱</button>
+          <button type="button" data-view="evolution">演进</button>
+          <button type="button" data-view="timeline">时间线</button>
+        </div>
+      </nav>
+    </header>
+
+    <aside class="sidebar" aria-label="文档目录">
+      <div class="side-title">文档</div>
+      <div class="doc-list" id="docList"></div>
+    </aside>
+
+    <div class="progress" aria-hidden="true"><span id="readProgress"></span></div>
+
+    <main class="main" id="mainScroll" tabindex="-1">
+      <div class="content" id="content">
+        <noscript><p class="empty">此页面需要启用 JavaScript。</p></noscript>
+      </div>
+    </main>
+
+    <aside class="rightbar" aria-label="辅助信息">
+      <section class="panel">
+        <div class="panel-head">
+          <h3>章节</h3>
+          <span class="tag" id="outlineCount">0</span>
+        </div>
+        <div class="panel-body">
+          <nav class="outline" id="outline" aria-label="本页章节"></nav>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-head">
+          <h3>关键口径</h3>
+        </div>
+        <div class="panel-body">
+          <ul class="decision-list" id="sideDecisions"></ul>
+        </div>
+      </section>
+      <section class="panel" id="sideQualityPanel" hidden>
+        <div class="panel-head">
+          <h3>数据质量</h3>
+          <span class="tag" id="sideQualityCount">0</span>
+        </div>
+        <div class="panel-body" id="sideQuality"></div>
+      </section>
+    </aside>
+  </div>
+
+  <div class="search-results" id="searchResults" role="listbox" aria-label="搜索结果"></div>
+
+  <script src="{{DATA_FILE}}"></script>
+  <script>
+{{JS}}
+  </script>
+</body>
+</html>
