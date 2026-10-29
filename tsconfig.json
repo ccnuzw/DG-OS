@@ -14,6 +14,9 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* `@dgos/ui` is a path alias to src/ui (D066); keep in sync with vite.config.ts and vitest.config.ts */
+    "paths": { "@dgos/ui": ["./src/ui/index.ts"], "@dgos/ui/*": ["./src/ui/*"] },
+
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,

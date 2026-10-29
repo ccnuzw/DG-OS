@@ -1,0 +1,10 @@
+/*
+ * Entry stylesheet of the design system. No Tailwind preflight is imported: it would restyle every
+ * existing page, and page migration is Phase 7. Utilities are scanned from src/ and index.html only.
+ */
+@layer theme, base, components, utilities;
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@source "../../index.html";
+@source "../";
+@import "./tokens/index.css";
+@import "./tailwind.css";

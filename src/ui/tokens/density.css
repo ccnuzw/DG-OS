@@ -1,0 +1,16 @@
+/* FR-005 §6.2.1: density is the root font size, set only by the data-density attribute (D064, D068 R1). */
+html {
+  font-size: 14px;
+}
+html[data-density="75"] {
+  font-size: 10.5px;
+}
+html[data-density="125"] {
+  font-size: 17.5px;
+}
+html[data-density="150"] {
+  font-size: 21px;
+}
+html[data-density="175"] {
+  font-size: 24.5px;
+}

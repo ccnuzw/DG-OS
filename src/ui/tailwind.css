@@ -1,0 +1,116 @@
+/*
+ * Tailwind <-> FR-005 mapping (D066). Colour, radius, shadow, easing, font weight and opacity share names
+ * with Tailwind's theme keys, so tokens/*.css already registers them. Everything else is mapped here with
+ * `inline`, which substitutes the target variable into each utility and emits no variable of its own.
+ *
+ * Do not alias a token to a variable of the same name (e.g. `--color-primary: var(--color-primary)`):
+ * Tailwind emits the declaration and the result is a self-referencing, invalid custom property.
+ */
+
+/* Shadcn semantic colour names -> FR-005 tokens. These exist only as utility names (bg-background, ...);
+   no bare --background/--primary variables exist at runtime. See FR-005 §4.7 for the full table. */
+@theme inline {
+  --color-background: var(--color-bg-primary);
+  --color-foreground: var(--color-text-primary);
+  --color-card: var(--color-bg-secondary);
+  --color-card-foreground: var(--color-text-primary);
+  --color-popover: var(--color-bg-primary);
+  --color-popover-foreground: var(--color-text-primary);
+  --color-primary-foreground: var(--color-on-primary);
+  --color-secondary: var(--color-bg-tertiary);
+  --color-secondary-foreground: var(--color-text-primary);
+  --color-muted: var(--color-bg-secondary);
+  --color-muted-foreground: var(--color-text-secondary);
+  --color-accent: var(--color-bg-tertiary);
+  --color-accent-foreground: var(--color-text-primary);
+  --color-destructive: var(--color-error);
+  --color-destructive-foreground: var(--color-on-error);
+  --color-input: var(--color-border-control);
+  --color-ring: var(--color-focus-ring);
+
+  /* The base unit: p-2 = 2 * 4px at a 14px root. */
+  --spacing: var(--spacing-unit);
+
+  --font-sans: var(--font-family-base);
+  --font-mono: var(--font-family-mono);
+
+  --text-xs: var(--font-size-xs);
+  --text-xs--line-height: var(--line-height-normal);
+  --text-sm: var(--font-size-sm);
+  --text-sm--line-height: var(--line-height-normal);
+  --text-base: var(--font-size-base);
+  --text-base--line-height: var(--line-height-normal);
+  --text-lg: var(--font-size-lg);
+  --text-lg--line-height: var(--line-height-normal);
+  --text-xl: var(--font-size-xl);
+  --text-xl--line-height: var(--line-height-tight);
+  --text-2xl: var(--font-size-2xl);
+  --text-2xl--line-height: var(--line-height-tight);
+  --text-3xl: var(--font-size-3xl);
+  --text-3xl--line-height: var(--line-height-tight);
+  --text-4xl: var(--font-size-4xl);
+  --text-4xl--line-height: var(--line-height-tight);
+
+  --leading-tight: var(--line-height-tight);
+  --leading-normal: var(--line-height-normal);
+  --leading-relaxed: var(--line-height-relaxed);
+
+  --default-transition-duration: var(--duration-fast);
+  --default-transition-timing-function: var(--ease-in-out);
+}
+
+/* Animations of V1 components. Tailwind's default theme (and its animate-*) is not imported (§4.7), so they are
+   declared here and emitted only when a utility (animate-spin, animate-toast-in, ...) is used. */
+@theme {
+  --animate-spin: spin 1s linear infinite;
+  --animate-toast-in: toast-in var(--duration-base) var(--ease-out) both;
+  --animate-toast-out: toast-out var(--duration-base) var(--ease-in) both;
+  --animate-overlay-in: overlay-in var(--duration-slow) var(--ease-out) both;
+  --animate-modal-in: modal-in var(--duration-slow) var(--ease-out) both;
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateX(100%);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes toast-out {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+
+  @keyframes overlay-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: var(--opacity-overlay);
+    }
+  }
+
+  @keyframes modal-in {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}

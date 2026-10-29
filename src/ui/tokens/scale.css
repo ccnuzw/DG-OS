@@ -1,0 +1,92 @@
+/*
+ * FR-005 §4.2-§4.6 non-colour tokens. Sizes are rem on a 14px root (D064): `calc(Nrem / 14)` is N px at
+ * 100%. Names that Tailwind also uses (radius, shadow, easing, font weight, opacity) go in `@theme static`
+ * so one name carries one value; names Tailwind spells differently stay plain and are mapped in
+ * ../tailwind.css. Nothing here is a breakpoint: V1 has none (D064).
+ */
+:root {
+  --font-family-base: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-family-mono: "SF Mono", Monaco, "Cascadia Code", monospace;
+
+  /* Smallest effective text size. 75% density makes the root 10.5px, so every size token is floored (D064). */
+  --font-size-min: 11px;
+  --font-size-xs: max(calc(12rem / 14), var(--font-size-min));
+  --font-size-sm: max(calc(13rem / 14), var(--font-size-min));
+  --font-size-base: max(calc(14rem / 14), var(--font-size-min));
+  --font-size-lg: max(calc(16rem / 14), var(--font-size-min));
+  --font-size-xl: max(calc(18rem / 14), var(--font-size-min));
+  --font-size-2xl: max(calc(20rem / 14), var(--font-size-min));
+  --font-size-3xl: max(calc(24rem / 14), var(--font-size-min));
+  --font-size-4xl: max(calc(30rem / 14), var(--font-size-min));
+
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.75;
+
+  --spacing-unit: calc(4rem / 14);
+  --spacing-0: calc(var(--spacing-unit) * 0);
+  --spacing-1: calc(var(--spacing-unit) * 1);
+  --spacing-2: calc(var(--spacing-unit) * 2);
+  --spacing-3: calc(var(--spacing-unit) * 3);
+  --spacing-4: calc(var(--spacing-unit) * 4);
+  --spacing-5: calc(var(--spacing-unit) * 5);
+  --spacing-6: calc(var(--spacing-unit) * 6);
+  --spacing-8: calc(var(--spacing-unit) * 8);
+  --spacing-10: calc(var(--spacing-unit) * 10);
+  --spacing-12: calc(var(--spacing-unit) * 12);
+
+  --duration-fast: 150ms;
+  --duration-base: 250ms;
+  --duration-slow: 350ms;
+
+  /* Shadow strength per theme; the geometry is theme independent (§4.5). */
+  --shadow-alpha-sm: 0.05;
+  --shadow-alpha-md: 0.1;
+  --shadow-alpha-lg: 0.1;
+  --shadow-alpha-xl: 0.15;
+}
+
+:root[data-theme="dark"] {
+  --shadow-alpha-sm: 0.3;
+  --shadow-alpha-md: 0.4;
+  --shadow-alpha-lg: 0.5;
+  --shadow-alpha-xl: 0.6;
+}
+
+@theme static {
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --radius-none: 0px;
+  --radius-sm: calc(4rem / 14);
+  --radius-md: calc(8rem / 14);
+  --radius-lg: calc(12rem / 14);
+  --radius-xl: calc(16rem / 14);
+  --radius-full: 9999px;
+
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / var(--shadow-alpha-sm));
+  --shadow-md: 0 4px 6px 0 rgb(0 0 0 / var(--shadow-alpha-md));
+  --shadow-lg: 0 10px 15px 0 rgb(0 0 0 / var(--shadow-alpha-lg));
+  --shadow-xl: 0 20px 25px 0 rgb(0 0 0 / var(--shadow-alpha-xl));
+
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+
+  --opacity-disabled: 0.4;
+  --opacity-hover: 0.8;
+  --opacity-overlay: 0.6;
+
+  /*
+   * Global stacking layers (FR-005 §4.8). Only portalled overlays use these; they are the only z-index values
+   * above 49. 0-49 is reserved for stacking inside a page: a page or canvas that layers its own content (edges,
+   * nodes, selection, remote cursors, minimap) creates its own stacking context (`isolate`) and uses plain
+   * z-0..z-49 inside it, so nothing in it can rise above a dialog. Popovers sit above dialogs because a Select
+   * or Tooltip inside a dialog must show over it; toasts sit above everything.
+   */
+  --z-index-modal: 50;
+  --z-index-popover: 60;
+  --z-index-toast: 70;
+}

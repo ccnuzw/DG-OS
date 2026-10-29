@@ -1,0 +1,13 @@
+/*
+ * First-frame gate (D065, FR-005 B05-25). index.html marks <html data-appearance-pending>; the appearance
+ * controller removes it after data-theme/data-density are set. Until then nothing is painted, and the
+ * canvas follows the OS so a dark-OS user is not flashed white while the preference is read.
+ */
+html[data-appearance-pending] {
+  color-scheme: light dark;
+}
+html[data-appearance-pending] body {
+  visibility: hidden;
+  /* Not the light token: let the canvas follow the OS (color-scheme above) until the preference is known. */
+  background-color: transparent;
+}

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Routes, Route, Link, useLocation } from "react-router-dom";
+import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import ProviderManagement from "./pages/ProviderManagement";
 import SkillsManagement from "./pages/SkillsManagement";
@@ -10,6 +10,7 @@ import ModuleHostBootstrap from "./modules/ModuleHostBootstrap";
 import ModuleManagement from "./pages/ModuleManagement";
 import ModulePanel from "./pages/ModulePanel";
 import { useModuleInstances } from "./modules/ModuleSlots";
+import { ErrorPage } from "@dgos/ui";
 import { isHostSettingsPath } from "./modules/hostRoutes";
 import "./App.css";
 
@@ -47,6 +48,12 @@ function ModuleNavLinks() {
       ))}
     </>
   );
+}
+
+// AC19: a path that matches no route shows the shared error page, not a blank content area.
+export function NotFoundRoute() {
+  const navigate = useNavigate();
+  return <ErrorPage kind="not-found" onHome={() => navigate("/")} />;
 }
 
 function App() {
@@ -95,6 +102,7 @@ function App() {
           <Route path="/workbench" element={<Workbench />} />
           <Route path="/mcp" element={<McpManagement />} />
           <Route path="/settings/*" caseSensitive element={<SettingsPage />} />
+          <Route path="*" element={<NotFoundRoute />} />
         </Routes>
       </div>
     </div>
