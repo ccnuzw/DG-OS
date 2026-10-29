@@ -248,6 +248,7 @@ pub fn run() {
                 // Store managers in app state
                 app_handle.manage(manager);
                 app_handle.manage(skills_state);
+                app_handle.manage(dgos_db::AppearanceRepository::new(db.clone()));
                 app_handle.manage(mcp_state);
                 app_handle.manage(workbench);
             });
@@ -326,6 +327,9 @@ pub fn run() {
             commands::attach_module_host,
             commands::report_module_host,
             commands::report_module_crash,
+            // Appearance preferences (D065): typed, no generic settings access
+            commands::get_appearance_preferences,
+            commands::set_appearance_preferences,
             // Module capability call (D051): typed, one command per capability
             commands::module_call_provider,
             // Module management (D055)

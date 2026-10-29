@@ -87,6 +87,18 @@ harness = false
 required-features = ["webview-smoke"]
 
 [[test]]
+name = "webview_smoke_appearance"
+path = "tests/webview_smoke_appearance.rs"
+harness = false
+required-features = ["webview-smoke"]
+
+[[test]]
+name = "webview_smoke_appearance_host"
+path = "tests/webview_smoke_appearance_host.rs"
+harness = false
+required-features = ["webview-smoke"]
+
+[[test]]
 name = "webview_smoke_modules"
 path = "tests/webview_smoke_modules.rs"
 harness = false

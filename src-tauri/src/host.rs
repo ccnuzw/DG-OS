@@ -18,6 +18,7 @@ pub enum Capability {
     TasksRun,
     ModulesRead,
     ModulesManage,
+    Appearance,
 }
 
 pub fn context(

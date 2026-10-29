@@ -33,9 +33,13 @@ use tokio::sync::{broadcast, oneshot, watch};
 
 const WATCHDOG: Duration = Duration::from_secs(240);
 
+mod appearance;
+mod appearance_host;
 mod call;
 mod modules;
 mod real;
+pub use appearance::run_appearance;
+pub use appearance_host::run_appearance_host;
 pub use call::run_call;
 pub use modules::run_modules;
 pub use real::run_real;

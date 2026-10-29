@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { checkReactVersions } from './react-version.mjs';
 
 // Static contract checks supplement compilation; they do not prove WebView isolation.
-const files = ['provider_commands', 'skills', 'mcp', 'workbench', 'modules', 'module_host'];
+const files = ['provider_commands', 'skills', 'mcp', 'workbench', 'modules', 'module_host', 'appearance'];
 // D046: the module host bridge serves the page's own lifecycle. Its only
 // parameters are the Tauri context, the instruction channel, and the
 // host-issued attachment id, ticket and receipt. No identity, module,
@@ -31,6 +31,13 @@ const recordCommands = new Map([
 const lifecycleParams = new Set(['app', 'window', 'module_id', 'operation_id']);
 const permissionCommands = new Set(['grant_module_permission', 'revoke_module_permission']);
 const permissionParams = new Set([...lifecycleParams, 'permission']);
+// D065: appearance preferences. Exact allow-list: the Tauri context and, for the write, the patch
+// object. No user id, settings key or value parameter may appear, so the renderer can neither pick
+// a user nor reach any other setting.
+const appearanceParams = new Map([
+  ['get_appearance_preferences', new Set(['app', 'window'])],
+  ['set_appearance_preferences', new Set(['app', 'window', 'patch'])],
+]);
 let commands = 0;
 for (const file of files) {
   const source = readFileSync(new URL(`../src-tauri/src/commands/${file}.rs`, import.meta.url), 'utf8');
@@ -60,6 +67,15 @@ for (const file of files) {
         const record = body.indexOf('ModuleCrashService');
         assert.ok(resolve >= 0 && record > resolve, `${name}: the route must be resolved before the crash service is used`);
       }
+    } else if (file === 'appearance') {
+      const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
+      const allowed = appearanceParams.get(name);
+      assert.ok(allowed, `${name}: appearance commands must be registered in appearanceParams`);
+      for (const param of names) {
+        assert.ok(allowed.has(param), `${name}: appearance command parameter \`${param}\` is not allowed`);
+      }
+      assert.equal(names.length, allowed.size, `${name}: every allowed parameter must be present`);
+      assert.match(body, /host::context\(\s*&window,/, `${name}: missing host entry gate`);
     } else if (file === 'modules') {
       const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
       const allowed = permissionCommands.has(name) ? permissionParams : lifecycleParams;
