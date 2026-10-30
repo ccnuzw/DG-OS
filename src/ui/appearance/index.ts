@@ -2,6 +2,7 @@ import {
   createAppearanceController,
   type AppearanceController,
 } from './controller';
+import { handleError } from '../errors/handleError';
 import { readAppearancePreferences, writeAppearancePreferences } from './host';
 import type { Appearance, Density, ResolvedTheme, Theme } from './model';
 
@@ -19,6 +20,8 @@ function instance(): AppearanceController {
     read: readAppearancePreferences,
     write: writeAppearancePreferences,
     matchMedia: typeof window.matchMedia === 'function' ? window.matchMedia.bind(window) : undefined,
+    // The controller has already rolled the interface back (AC21); this tells the user the save failed.
+    onWriteError: (error) => handleError(error, { where: 'appearance' }),
   });
   return controller;
 }

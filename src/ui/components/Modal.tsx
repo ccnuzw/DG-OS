@@ -147,7 +147,7 @@ function ModalView(props: ModalProps) {
             const target = returnFocusTo.current;
             if (target && target !== document.body && target.isConnected) target.focus();
           }}
-          className="fixed inset-4 z-modal m-auto flex h-fit max-h-9/10 w-fit min-w-100 max-w-150 flex-col gap-4 overflow-y-auto rounded-lg border border-input bg-popover p-6 text-popover-foreground shadow-xl animate-modal-in motion-reduce:animate-none"
+          className="fixed inset-4 z-modal m-auto flex h-fit max-h-9/10 w-fit min-w-100 max-w-150 flex-col gap-4 overflow-y-auto rounded-lg border border-input bg-popover p-6 text-popover-foreground shadow-xl wrap-anywhere animate-modal-in motion-reduce:animate-none"
         >
           <div className="flex items-start gap-3 pr-8">
             {icon ? <StatusIcon name={icon} className={ICON_COLOR[icon]} /> : null}

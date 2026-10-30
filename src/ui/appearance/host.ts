@@ -10,8 +10,10 @@ interface CommandResponse<T> {
 
 function unwrap<T>(command: string, response: CommandResponse<T> | undefined): T | undefined {
   if (!response?.success) {
-    const detail = response?.error?.code !== undefined ? ` (code ${response.error.code})` : '';
-    throw new Error(`${command} failed${detail}`);
+    const code = response?.error?.code;
+    const detail = code !== undefined ? ` (code ${code})` : '';
+    // The numeric `code` lets handleError map the failure (FR-005 §8.3); the message is unchanged.
+    throw Object.assign(new Error(`${command} failed${detail}`), code !== undefined ? { code } : {});
   }
   return response.data;
 }

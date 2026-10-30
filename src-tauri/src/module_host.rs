@@ -359,6 +359,10 @@ pub fn handle_page_load<R: tauri::Runtime>(
         if let Some(bridge) = webview.try_state::<ModuleHostBridge>() {
             bridge.page_started(webview.label());
         }
+        // A reload drops the page's Channel; its streams would otherwise run to the end unseen.
+        if let Some(streams) = webview.try_state::<crate::provider_streams::ProviderStreams>() {
+            streams.cancel_owner(webview.label());
+        }
     }
 }
 
@@ -369,6 +373,9 @@ pub fn handle_window_event<R: tauri::Runtime>(
     if matches!(event, tauri::WindowEvent::Destroyed) {
         if let Some(bridge) = window.try_state::<ModuleHostBridge>() {
             bridge.window_destroyed(window.label());
+        }
+        if let Some(streams) = window.try_state::<crate::provider_streams::ProviderStreams>() {
+            streams.cancel_owner(window.label());
         }
     }
 }

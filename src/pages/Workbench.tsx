@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Link } from 'react-router-dom';
+import { Button, Card, Checkbox, Input, Loading, Select, Stack, StatusIcon, cn } from '@dgos/ui';
+import { usePageError } from '../pageError';
 import type { Provider, Model } from '../stores/providerStore';
 import type { Skill } from '../stores/skillsStore';
 import type { McpServer, McpTool } from '../stores/mcpStore';
-import './Workbench.css';
 
-interface CommandResponse<T> { success: boolean; data?: T; error?: { message: string } }
+interface CommandResponse<T> { success: boolean; data?: T; error?: { code?: number; message: string } }
 export interface TaskRecord {
   task: { id: string; status: string; provider_id: string; model_id: string; created_at: number; error_code?: string; total_tokens?: number };
   skills: { skill_id: string; version_id: string; content_hash: string }[];
@@ -29,8 +30,30 @@ const taskFailureMessage = (status: string, code?: string) => {
 };
 async function command<T>(name: string, args: Record<string, unknown>) {
   const result = await invoke<CommandResponse<T>>(name, args);
-  if (!result.success || !result.data) throw new Error(result.error?.message || 'Unable to load configuration');
+  if (!result.success || !result.data) {
+    // The message stays as it was; the numeric code (when the host sent one) rides along so handleError can map it.
+    const failure: Error & { code?: number } = new Error(result.error?.message || 'Unable to load configuration');
+    if (typeof result.error?.code === 'number') failure.code = result.error.code;
+    throw failure;
+  }
   return result.data;
+}
+
+// Radix Select items cannot carry an empty value, so "nothing chosen" travels as this sentinel.
+const NONE = '__none__';
+const PARA = 'm-0 text-sm text-muted-foreground';
+const LINK = 'text-primary underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring';
+const FOCUS = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring';
+const PRE = cn('m-0 rounded-md bg-secondary p-4 text-sm whitespace-pre-wrap wrap-anywhere', FOCUS);
+
+function Notice({ tone, children }: { tone: 'error' | 'warning'; children: ReactNode }) {
+  return (
+    <div role="alert" className={cn('flex items-start gap-2 rounded-md border-l-4 p-3 text-sm',
+      tone === 'error' ? 'border-error bg-error-bg text-error-text' : 'border-warning bg-warning-bg text-warning-text')}>
+      <StatusIcon name={tone === 'error' ? 'error' : 'warning'} className="mt-0.5" />
+      <p className="m-0 min-w-0 wrap-anywhere">{children}</p>
+    </div>
+  );
 }
 
 export default function Workbench() {
@@ -64,6 +87,9 @@ export default function Workbench() {
   const mounted = useRef(true);
   const generation = useRef(0);
   const proposalHeading = useRef<HTMLHeadingElement>(null);
+  const reportError = usePageError('Workbench');
+  const report = useRef(reportError);
+  useEffect(() => { report.current = reportError; }, [reportError]);
   const taskActive = toolTask?.record.task.status === 'running';
   const locked = running || taskActive || cancelPending;
 
@@ -96,7 +122,7 @@ export default function Workbench() {
         return listed.map(tool => ({ ...tool, server_name: server.name }));
       }));
       if (active) setTools(groups.flat());
-    }).catch(() => { if (active) { setTools([]); setToolsError('MCP tools unavailable. Text-only tasks still work; open MCP management to connect a server.'); } })
+    }).catch(e => { if (active) { setTools([]); setToolsError('MCP tools unavailable. Text-only tasks still work; open MCP management to connect a server.'); report.current(e); } })
       .finally(() => { if (active) setToolsLoading(false); });
     return () => { active = false; };
   }, [reload]);
@@ -112,11 +138,11 @@ export default function Workbench() {
       if (!active) return;
       setProviders(allProviders.filter(p => p.enabled && p.credential_status === 'stored'));
       setSkills(allSkills.filter(s => s.enabled && s.call_type === 'content'));
-    }).catch(e => { if (active) setError(`Unable to load workbench: ${message(e)}`); })
+    }).catch(e => { if (active) { setError(`Unable to load workbench: ${message(e)}`); report.current(e); } })
       .finally(() => { if (active) setLoading(false); });
     invoke<TaskRecord[]>('list_workbench_tasks', {})
       .then(records => { if (active) { setHistory(records); setHistoryError(null); } })
-      .catch(() => { if (active) setHistoryError('Task history is unavailable. Refresh to try again.'); });
+      .catch(e => { if (active) { setHistoryError('Task history is unavailable. Refresh to try again.'); report.current(e); } });
     return () => { active = false; };
   }, [reload]);
 
@@ -128,8 +154,8 @@ export default function Workbench() {
     if (!providerId) return;
     setModelsLoading(true);
     command<Model[]>('list_models', { providerId }).then(allModels => {
-      if (active) setModels(allModels.filter(m => m.model_type === 'chat'));
-    }).catch(() => { if (active) setError('Unable to load models. Check your provider configuration.'); })
+      if (active) setModels(allModels.filter(m => m.model_type === 'text-generation' || m.model_type === 'chat'));
+    }).catch(e => { if (active) { setError('Unable to load models. Check your provider configuration.'); report.current(e); } })
       .finally(() => { if (active) setModelsLoading(false); });
     return () => { active = false; };
   }, [providerId, reload]);
@@ -165,7 +191,7 @@ export default function Workbench() {
         if (!cancelled && mounted.current) setError('Task is no longer running. Check task history for its final state.');
       }
     } catch (e) {
-      if (mounted.current) setError(`Cancellation not confirmed: ${message(e)}. Check task audit; external effects may already have occurred.`);
+      if (mounted.current) { setError(`Cancellation not confirmed: ${message(e)}. Check task audit; external effects may already have occurred.`); report.current(e); }
     } finally {
       cancelling.current = false;
       if (mounted.current) setCancelPending(false);
@@ -211,7 +237,7 @@ export default function Workbench() {
       setHistory(old => [result.record, ...old.filter(row => row.task.id !== result.record.task.id)].slice(0, 50));
       if (result.record.task.status !== 'succeeded') setError(taskFailureMessage(result.record.task.status, result.record.task.error_code));
     } catch (e) {
-      if (mounted.current && current === generation.current) setError(`Task not completed: ${message(e)}. No fallback request was sent. Check task history before submitting again.`);
+      if (mounted.current && current === generation.current) { setError(`Task not completed: ${message(e)}. No fallback request was sent. Check task history before submitting again.`); report.current(e); }
     } finally {
       if (taskKind.current === 'text' && taskRef.current === clientTaskId) {
         taskRef.current = null;
@@ -234,94 +260,140 @@ export default function Workbench() {
       });
       if (current === generation.current) rememberToolUpdate(result);
     } catch (e) {
-      if (mounted.current && current === generation.current) setError(`Task action not completed: ${message(e)}. Do not repeat approval; cancel and check task audit.`);
+      if (mounted.current && current === generation.current) { setError(`Task action not completed: ${message(e)}. Do not repeat approval; cancel and check task audit.`); report.current(e); }
     } finally { submitting.current = false; if (mounted.current) setRunning(false); }
   }
 
-  return <main className="workbench">
-    <header className="workbench-header">
-      <div><h1>AI Workbench</h1><p>One task, with the skill you choose. Versions stay fixed for each run.</p></div>
-      <button type="button" disabled={locked || loading} onClick={() => setReload(n => n + 1)}>Refresh configuration</button>
+  const proposalExpired = !!toolTask?.proposal && now >= toolTask.proposal.expires_at * 1000;
+  const providerOptions = [{ value: NONE, label: 'Choose a provider' }, ...providers.map(p => ({ value: p.id, label: p.name }))];
+  const modelPlaceholder = modelsLoading ? 'Loading models...' : 'Choose a cached model';
+  const modelOptions = [{ value: NONE, label: modelPlaceholder }, ...models.map(m => ({ value: m.model_id, label: m.model_name }))];
+  const skillOptions = [{ value: NONE, label: 'No skill selected' }, ...skills.map(s => ({ value: s.skill_id, label: `${s.name} — v${s.version}` }))];
+  const fromSelect = (value: string) => value === NONE ? '' : value;
+
+  return <main className="h-full min-w-0 overflow-y-auto bg-background p-8 text-foreground">
+    <header className="mb-6 flex flex-wrap items-start justify-between gap-6">
+      <div className="min-w-0">
+        <h1 className="m-0 mb-2 text-3xl font-semibold text-foreground">AI Workbench</h1>
+        <p className={PARA}>One task, with the skill you choose. Versions stay fixed for each run.</p>
+      </div>
+      <Button variant="secondary" disabled={locked || loading} onClick={() => setReload(n => n + 1)}>Refresh configuration</Button>
     </header>
-    <div className="workbench-layout">
-      <section className="workbench-composer" aria-labelledby="task-heading">
-        <h2 id="task-heading">New task</h2>
-        <p>Configure a <Link to="/providers">Provider</Link> and add content from <Link to="/skills">Skills</Link> first.</p>
-        {loading && <p role="status">Loading local configuration...</p>}
-        {!loading && !providers.length && <p>No ready provider. Add, enable, or migrate a provider in Providers.</p>}
-        <form onSubmit={e => { e.preventDefault(); void run(); }}>
-          <fieldset disabled={locked || loading}>
-            <div className="workbench-model-row">
-              <label>Provider<select value={providerId} onChange={e => { setProviderId(e.target.value); setError(null); }}>
-                <option value="">Choose a provider</option>{providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select></label>
-              <label>Model<select value={modelId} disabled={!providerId || modelsLoading} onChange={e => setModelId(e.target.value)}>
-                <option value="">{modelsLoading ? 'Loading models...' : 'Choose a cached model'}</option>{models.map(m => <option key={m.id} value={m.model_id}>{m.model_name}</option>)}
-              </select></label>
-            </div>
-            {!!providerId && !modelsLoading && !models.length && <p>Refresh or select models in Providers before running a task.</p>}
-            <label>Skill for this task<select value={skillId} onChange={e => { setSkillId(e.target.value); setWithoutSkill(false); }}>
-              <option value="">No skill selected</option>{skills.map(s => <option key={s.id} value={s.skill_id}>{s.name} — v{s.version}</option>)}
-            </select></label>
-            <p>Only enabled content skills are listed. Compatibility and integrity are rechecked before sending; a rejected skill is never silently skipped.</p>
-            {!skillId && <label className="workbench-confirm"><input type="checkbox" checked={withoutSkill} onChange={e => setWithoutSkill(e.target.checked)} />I explicitly want to run without a skill</label>}
-            <section className="workbench-tools" aria-labelledby="tools-heading">
-              <h3 id="tools-heading">MCP tools for this task <span>{selectedTools.length} / 8</span></h3>
-              <p>Optional. Only selected tools are sent to the Provider. Every model-proposed call requires your separate approval.</p>
-              {toolsLoading && <p role="status">Loading connected tools...</p>}
-              {toolsError && <p>{toolsError}</p>}
-              {!toolsLoading && !toolsError && !tools.length && <p>No connected tools. Connect an enabled server in <Link to="/mcp">MCP management</Link>, then refresh.</p>}
-              {tools.map(tool => <label className="workbench-tool-choice" key={toolKey(tool)}>
-                <input type="checkbox" checked={selectedTools.includes(toolKey(tool))}
-                  disabled={!selectedTools.includes(toolKey(tool)) && selectedTools.length >= 8}
-                  onChange={e => setSelectedTools(old => e.target.checked ? [...old, toolKey(tool)] : old.filter(key => key !== toolKey(tool)))} />
-                <span>{tool.server_name} / {tool.tool_name}<small>{tool.description || 'No description supplied'}</small></span>
-              </label>)}
-            </section>
-            <label>Task input<textarea rows={9} value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Describe your task and paste the material to work with." aria-describedby="input-budget" /></label>
-            <p id="input-budget">{bytes.toLocaleString()} / 16,384 UTF-8 bytes. Text, selected skill{selectedTools.length ? ', selected tool descriptions and approved results' : ''} are sent to the chosen Provider. {selectedTools.length ? 'Unselected tools remain unavailable.' : 'No tools are selected.'}</p>
-            <button className="workbench-run" type="submit" disabled={!ready || locked}>{running ? 'Running task...' : skillId ? 'Run with selected skill' : 'Run without a skill'}</button>
-          </fieldset>
-        </form>
-        {running && <p role="status">{taskActive ? 'Waiting for the model or approved tool. No tool is automatically retried.' : 'Waiting for the model. You can cancel this task; leaving the page also requests cancellation.'}</p>}
-        {(running || taskActive) && taskRef.current && <button type="button" disabled={cancelPending} onClick={() => void cancelTask()}>{cancelPending ? 'Cancelling task...' : taskActive ? 'Cancel tool task' : 'Cancel task'}</button>}
-        {error && <p className="workbench-error" role="alert">{error}</p>}
+    <div className="flex flex-wrap items-start gap-8">
+      <section className="min-w-0 grow basis-64" aria-labelledby="task-heading">
+        <Card>
+          <Card.Header><h2 id="task-heading" className="m-0 text-lg font-semibold">New task</h2></Card.Header>
+          <Card.Body>
+            <Stack gap={4}>
+              <p className={PARA}>Configure a <Link to="/providers" className={LINK}>Provider</Link> and add content from <Link to="/skills" className={LINK}>Skills</Link> first.</p>
+              {loading && <Loading label="Loading local configuration..." />}
+              {!loading && !providers.length && <p className={PARA}>No ready provider. Add, enable, or migrate a provider in Providers.</p>}
+              <form onSubmit={e => { e.preventDefault(); void run(); }}>
+                <fieldset disabled={locked || loading} className="m-0 min-w-0 border-0 p-0">
+                  <Stack gap={4}>
+                    <div className="flex flex-wrap gap-4">
+                      <div className="min-w-0 grow basis-40">
+                        <Select label="Provider" options={providerOptions} value={providerId} placeholder="Choose a provider" className="overflow-hidden"
+                          onChange={value => { setProviderId(fromSelect(value)); setError(null); }} />
+                      </div>
+                      <div className="min-w-0 grow basis-40">
+                        <Select label="Model" options={modelOptions} value={modelId} placeholder={modelPlaceholder} className="overflow-hidden"
+                          disabled={!providerId || modelsLoading} onChange={value => setModelId(fromSelect(value))} />
+                      </div>
+                    </div>
+                    {!!providerId && !modelsLoading && !models.length && <p className={PARA}>Refresh or select models in Providers before running a task.</p>}
+                    <Select label="Skill for this task" options={skillOptions} value={skillId} placeholder="No skill selected" className="overflow-hidden"
+                      onChange={value => { setSkillId(fromSelect(value)); setWithoutSkill(false); }} />
+                    <p className={PARA}>Only enabled content skills are listed. Compatibility and integrity are rechecked before sending; a rejected skill is never silently skipped.</p>
+                    {!skillId && <Checkbox label="I explicitly want to run without a skill" checked={withoutSkill} onChange={setWithoutSkill} />}
+                    <section aria-labelledby="tools-heading">
+                      <Card className="bg-background shadow-none">
+                        <Card.Body>
+                          <Stack gap={3}>
+                            <h3 id="tools-heading" className="m-0 text-base font-semibold">MCP tools for this task <span className="font-normal text-muted-foreground">{selectedTools.length} / 8</span></h3>
+                            <p className={PARA}>Optional. Only selected tools are sent to the Provider. Every model-proposed call requires your separate approval.</p>
+                            {toolsLoading && <Loading label="Loading connected tools..." />}
+                            {toolsError && <p className={PARA}>{toolsError}</p>}
+                            {!toolsLoading && !toolsError && !tools.length && <p className={PARA}>No connected tools. Connect an enabled server in <Link to="/mcp" className={LINK}>MCP management</Link>, then refresh.</p>}
+                            {tools.map(tool => {
+                              const key = toolKey(tool);
+                              const checked = selectedTools.includes(key);
+                              return <Checkbox key={key} className="max-w-full items-start wrap-anywhere" checked={checked}
+                                disabled={!checked && selectedTools.length >= 8}
+                                onChange={on => setSelectedTools(old => on ? [...old, key] : old.filter(k => k !== key))}
+                                label={<span>{tool.server_name} / {tool.tool_name}<small className="mt-1 block text-xs text-muted-foreground">{tool.description || 'No description supplied'}</small></span>} />;
+                            })}
+                          </Stack>
+                        </Card.Body>
+                      </Card>
+                    </section>
+                    <Input multiline label="Task input" rows={9} value={prompt} onChange={e => setPrompt(e.target.value)} className="resize-y leading-relaxed"
+                      placeholder="Describe your task and paste the material to work with." aria-describedby="input-budget" />
+                    <p id="input-budget" className={PARA}>{bytes.toLocaleString()} / 16,384 UTF-8 bytes. Text, selected skill{selectedTools.length ? ', selected tool descriptions and approved results' : ''} are sent to the chosen Provider. {selectedTools.length ? 'Unselected tools remain unavailable.' : 'No tools are selected.'}</p>
+                    <div><Button type="submit" loading={running} disabled={!ready || locked}>{running ? 'Running task...' : skillId ? 'Run with selected skill' : 'Run without a skill'}</Button></div>
+                  </Stack>
+                </fieldset>
+              </form>
+              {running && <Loading label={taskActive ? 'Waiting for the model or approved tool. No tool is automatically retried.' : 'Waiting for the model. You can cancel this task; leaving the page also requests cancellation.'} />}
+              {(running || taskActive) && taskRef.current && <div><Button variant="secondary" disabled={cancelPending} loading={cancelPending} onClick={() => void cancelTask()}>{cancelPending ? 'Cancelling task...' : taskActive ? 'Cancel tool task' : 'Cancel task'}</Button></div>}
+              {error && <Notice tone="error">{error}</Notice>}
+            </Stack>
+          </Card.Body>
+        </Card>
       </section>
-      <section className="workbench-result" aria-labelledby="result-heading" aria-busy={running}>
-        <h2 id="result-heading">Result</h2>
-        {!outcome && <p>No result yet. Responses appear here as plain text, never executable content.</p>}
-        {outcome && <>
-          <p>Task: {outcome.record.task.id} · {outcome.record.task.status}</p>
-          {outcome.record.skills.map(s => <p key={s.version_id} className="workbench-reference">Bound version: {s.version_id}<br />SHA-256: {s.content_hash}</p>)}
-          {!outcome.record.skills.length && <p>Explicitly run without a skill.</p>}
-          {outcome.record.tools?.map(tool => <p key={JSON.stringify([tool.server_id, tool.tool_name])} className="workbench-reference">Selected tool: {tool.tool_name}<br />Server: {tool.server_id}<br />Schema: {tool.schema_hash}</p>)}
-          {outcome.content && <pre tabIndex={0}>{outcome.content}</pre>}
-          {outcome.audit_warning && <p role="alert">The provider response completed, but usage audit persistence failed. Do not retry automatically; verify the result before repeating the task.</p>}
-          {toolTask?.audit_warning && <p role="alert">A provider response completed, but usage audit persistence failed. The task was not retried automatically.</p>}
-        </>}
-        {taskActive && toolTask?.proposal && <section className="workbench-proposal" aria-labelledby="proposal-heading" aria-busy={running}>
-          <h3 id="proposal-heading" ref={proposalHeading} tabIndex={-1}>Review proposed tool call</h3>
-          <p>The model requests <strong>{toolTask.proposal.server_name} / {toolTask.proposal.tool_name}</strong>. Review the exact arguments. Tools may modify data or send it externally; descriptions are not guarantees.</p>
-          <pre tabIndex={0} aria-label="Exact tool arguments">{JSON.stringify(toolTask.proposal.arguments, null, 2)}</pre>
-          <p>{Math.max(0, Math.ceil((toolTask.proposal.expires_at * 1000 - now) / 1000))} seconds remaining. Approval applies once to this exact call, not future calls.</p>
-          <div className="workbench-proposal-actions">
-            <button type="button" disabled={running || cancelPending || now >= toolTask.proposal.expires_at * 1000} onClick={() => void decide('approve')}>Approve this call once</button>
-            <button type="button" disabled={running || cancelPending || now >= toolTask.proposal.expires_at * 1000} onClick={() => void decide('deny')}>Reject and stop</button>
-          </div>
+      <section className="min-w-0 grow basis-64" aria-labelledby="result-heading" aria-busy={running}>
+        <Card>
+          <Card.Header><h2 id="result-heading" className="m-0 text-lg font-semibold">Result</h2></Card.Header>
+          <Card.Body>
+            <Stack gap={3}>
+              {!outcome && <p className={PARA}>No result yet. Responses appear here as plain text, never executable content.</p>}
+              {outcome && <>
+                <p className="m-0 text-sm wrap-anywhere">Task: {outcome.record.task.id} · {outcome.record.task.status}</p>
+                {outcome.record.skills.map(s => <p key={s.version_id} className="m-0 font-mono text-xs text-muted-foreground wrap-anywhere">Bound version: {s.version_id}<br />SHA-256: {s.content_hash}</p>)}
+                {!outcome.record.skills.length && <p className={PARA}>Explicitly run without a skill.</p>}
+                {outcome.record.tools?.map(tool => <p key={JSON.stringify([tool.server_id, tool.tool_name])} className="m-0 font-mono text-xs text-muted-foreground wrap-anywhere">Selected tool: {tool.tool_name}<br />Server: {tool.server_id}<br />Schema: {tool.schema_hash}</p>)}
+                {outcome.content && <pre tabIndex={0} className={cn(PRE, 'font-sans leading-relaxed')}>{outcome.content}</pre>}
+                {outcome.audit_warning && <Notice tone="warning">The provider response completed, but usage audit persistence failed. Do not retry automatically; verify the result before repeating the task.</Notice>}
+                {toolTask?.audit_warning && <Notice tone="warning">A provider response completed, but usage audit persistence failed. The task was not retried automatically.</Notice>}
+              </>}
+            </Stack>
+          </Card.Body>
+        </Card>
+        {taskActive && toolTask?.proposal && <section className="mt-6" aria-labelledby="proposal-heading" aria-busy={running}>
+          <Card className="border-2 border-primary">
+            <Card.Body>
+              <Stack gap={3}>
+                <h3 id="proposal-heading" ref={proposalHeading} tabIndex={-1} className={cn('m-0 text-base font-semibold', FOCUS)}>Review proposed tool call</h3>
+                <p className="m-0 text-sm wrap-anywhere">The model requests <strong>{toolTask.proposal.server_name} / {toolTask.proposal.tool_name}</strong>. Review the exact arguments. Tools may modify data or send it externally; descriptions are not guarantees.</p>
+                <pre tabIndex={0} aria-label="Exact tool arguments" className={cn(PRE, 'font-mono')}>{JSON.stringify(toolTask.proposal.arguments, null, 2)}</pre>
+                <p className={PARA}>{Math.max(0, Math.ceil((toolTask.proposal.expires_at * 1000 - now) / 1000))} seconds remaining. Approval applies once to this exact call, not future calls.</p>
+                <div className="flex flex-wrap gap-3">
+                  <Button disabled={running || cancelPending || proposalExpired} onClick={() => void decide('approve')}>Approve this call once</Button>
+                  <Button variant="secondary" disabled={running || cancelPending || proposalExpired} onClick={() => void decide('deny')}>Reject and stop</Button>
+                </div>
+              </Stack>
+            </Card.Body>
+          </Card>
         </section>}
       </section>
     </div>
-    <section className="workbench-history" aria-labelledby="history-heading">
-      <h2 id="history-heading">Recent task audit</h2>
-      <p>Only versions, tool schema references, status and usage are saved. Full inputs and outputs are not stored and disappear when you leave this page. Tool tasks are cancelled on leaving this page; cancellation cannot undo external effects. No automatic replay after a restart.</p>
-      {historyError && <p role="alert">{historyError}</p>}
-      {!history.length && <p>No saved tasks.</p>}
-      <ul>{history.map(row => <li key={row.task.id}>
-        <strong>{row.task.status}</strong> · {row.task.model_id} · {new Date(row.task.created_at * 1000).toLocaleString()}
-        <p>{row.skills.map(s => s.version_id).join(', ') || 'No skill'}{row.task.error_code ? ` · ${row.task.error_code}` : ''}{row.task.total_tokens != null ? ` · ${row.task.total_tokens} tokens` : ''}</p>
-        {!!row.tools?.length && <p>{row.tools.map(tool => tool.tool_name).join(', ')} · {row.tools.length} selected tool references</p>}
-        <small>{row.task.id}</small>
-      </li>)}</ul>
+    <section className="mt-8" aria-labelledby="history-heading">
+      <Card>
+        <Card.Header><h2 id="history-heading" className="m-0 text-lg font-semibold">Recent task audit</h2></Card.Header>
+        <Card.Body>
+          <Stack gap={3}>
+            <p className={PARA}>Only versions, tool schema references, status and usage are saved. Full inputs and outputs are not stored and disappear when you leave this page. Tool tasks are cancelled on leaving this page; cancellation cannot undo external effects. No automatic replay after a restart.</p>
+            {historyError && <Notice tone="error">{historyError}</Notice>}
+            {!history.length && <p className={PARA}>No saved tasks.</p>}
+            {!!history.length && <ul className="m-0 list-none p-0">{history.map(row => <li key={row.task.id} className="border-t border-border py-4 wrap-anywhere first:border-t-0 first:pt-0">
+              <strong>{row.task.status}</strong> · {row.task.model_id} · {new Date(row.task.created_at * 1000).toLocaleString()}
+              <p className={cn(PARA, 'mt-1')}>{row.skills.map(s => s.version_id).join(', ') || 'No skill'}{row.task.error_code ? ` · ${row.task.error_code}` : ''}{row.task.total_tokens != null ? ` · ${row.task.total_tokens} tokens` : ''}</p>
+              {!!row.tools?.length && <p className={cn(PARA, 'mt-1')}>{row.tools.map(tool => tool.tool_name).join(', ')} · {row.tools.length} selected tool references</p>}
+              <small className="mt-1 block text-xs text-muted-foreground">{row.task.id}</small>
+            </li>)}</ul>}
+          </Stack>
+        </Card.Body>
+      </Card>
     </section>
   </main>;
 }

@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
+import { ToastViewport, clearToasts } from '@dgos/ui';
 import App from '../src/App';
 
 interface Call {
@@ -181,6 +182,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  clearToasts();
   act(() => fakeHost.set([]));
   vi.clearAllMocks();
 });
@@ -275,6 +277,24 @@ describe('Module management list', () => {
 
     expect(await screen.findByText(/newer or older host version/)).toBeTruthy();
     expect(screen.getByText(/code 1004022/)).toBeTruthy();
+  });
+
+  it('reports a failed action inline next to its module and once as a Toast that carries only the code', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    state.failures.update_module = { kind: 'update_failed', code: 1004013 };
+    renderAt('/settings/modules');
+    render(<ToastViewport />);
+    await screen.findByRole('heading', { name: 'Beta' });
+
+    fireEvent.click(card('dgos.beta').getByRole('button', { name: 'Update' }));
+
+    const inline = await card('dgos.beta').findByRole('alert');
+    expect(within(inline).getByText('Update failed, the previous version was restored')).toBeTruthy();
+    expect(within(inline).getByText(/code 1004013/)).toBeTruthy();
+    // 1004xxx has no registry entry (FR-005 §13.2): the Toast is the generic text with the code, never the host message.
+    expect(await screen.findAllByText('操作失败（错误码 1004013）')).toHaveLength(1);
+    expect(logged).toHaveBeenCalledWith('[dgos] error', { code: 1004013, where: 'ModuleManagement' });
+    logged.mockRestore();
   });
 
   it('reloads with stop followed by start', async () => {

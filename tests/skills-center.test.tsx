@@ -76,10 +76,12 @@ it('AC20 adds an official skill and disables it without uninstalling bundled fil
   const add = await screen.findByRole('button', { name: 'Add to My Skills' });
   fireEvent.click(add);
   await screen.findByText(/Skill added to My Skills/);
-  fireEvent.click(screen.getByRole('button', { name: 'Installed (1)' }));
-  const toggle = screen.getByRole('checkbox', { name: 'Enable Summary' });
+  fireEvent.mouseDown(screen.getByRole('tab', { name: 'Installed (1)' }), { button: 0 });
+  const toggle = screen.getByRole('switch', { name: 'Enable Summary' });
+  expect(toggle.getAttribute('aria-checked')).toBe('true');
   fireEvent.click(toggle);
   await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith('toggle_skill', { skillId: official.skill_id, enabled: false }));
+  await waitFor(() => expect(screen.getByRole('switch', { name: 'Enable Summary' }).getAttribute('aria-checked')).toBe('false'));
   expect(screen.queryByRole('button', { name: 'Uninstall' })).toBeNull();
 });
 

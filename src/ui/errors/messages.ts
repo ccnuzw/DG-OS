@@ -82,6 +82,26 @@ export const ERROR_MESSAGES: Readonly<Record<number, ErrorMessage>> = Object.fre
     description: '更换地址或类型后需要重新填写 API Key',
     severity: 'moderate',
   },
+  1001019: {
+    message: 'Provider 权限不足',
+    description: 'Key 有效但无权限，或所在地区受限，请检查 Key 权限与地区',
+    severity: 'moderate',
+  },
+  1001020: {
+    message: '请求不受支持',
+    description: '该请求或配置不被此服务支持，请调整后重试',
+    severity: 'moderate',
+  },
+  1001023: {
+    message: '不允许使用明文 HTTP',
+    description: '请改用 https，或在高级选项中确认明文传输',
+    severity: 'moderate',
+  },
+  1001025: {
+    message: 'Provider 响应无效',
+    description: '请检查 Base URL 是否缺少 /v1，或填成了网页地址',
+    severity: 'moderate',
+  },
 });
 
 /** Own entries only: a code such as `0` must not reach `Object.prototype`. */

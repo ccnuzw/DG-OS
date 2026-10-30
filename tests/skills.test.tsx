@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
+import { ToastViewport, clearToasts } from '@dgos/ui';
 import SkillsManagement from '../src/pages/SkillsManagement';
 import { useSkillsStore } from '../src/stores/skillsStore';
 
@@ -28,7 +29,7 @@ beforeEach(() => {
     return [];
   });
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { act(() => clearToasts()); cleanup(); vi.restoreAllMocks(); });
 
 describe('Skills registry failure recovery', () => {
   it('deduplicates StrictMode initialization, shows offline empty state and retries successfully', async () => {
@@ -62,7 +63,7 @@ describe('Skills registry failure recovery', () => {
     });
     render(<StrictMode><SkillsManagement /></StrictMode>);
     await screen.findByText('Offline mode');
-    await screen.findByRole('button', { name: 'Installed (1)' });
+    await screen.findByRole('tab', { name: 'Installed (1)' });
     fireEvent.change(screen.getByRole('textbox', { name: 'Search skills' }), { target: { value: 'Calc' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search', exact: true }));
     await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith('search_skills', { query: 'Calc' }));
@@ -70,10 +71,11 @@ describe('Skills registry failure recovery', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     await screen.findByText('Call Type:');
     expect(screen.getByText('cli')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Close skill details' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Installed (1)' }));
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Installed (1)' }), { button: 0 });
     expect(screen.getByText('CLI')).toBeTruthy();
-    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('switch'));
     await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith('toggle_skill', {
       skillId: 'calculator', enabled: false,
     }));
@@ -118,6 +120,46 @@ describe('Skills registry failure recovery', () => {
     await screen.findByText('Unable to load skill details: read failed');
     fireEvent.click(screen.getByRole('button', { name: 'Search', exact: true }));
     await screen.findByText('Search failed: read failed');
+  });
+
+  it('reports a failed search and a failed install through the unified toast, keeping the inline text', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const official = { ...skillInfo, identity: 'dgos_official', source_kind: 'dgos_official' };
+    mockedInvoke.mockImplementation(async (command) => {
+      if (command === 'fetch_skills_registry') return { skills: [official], registry_url: 'https://skills.dgos.ai/registry.json', offline: false, warning: null };
+      if (command === 'search_skills') throw 'read failed /Users/secret/path';
+      if (command === 'check_dependencies') return { satisfied: true, missing: [] };
+      if (command === 'install_skill') throw 'disk full';
+      return [];
+    });
+    render(<><ToastViewport /><SkillsManagement /></>);
+    await screen.findByText('Calculator');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Search', exact: true }));
+    await screen.findByText('Search failed: read failed /Users/secret/path');
+    expect((await screen.findByText('操作失败')).textContent).toBe('操作失败');
+    expect(errors).toHaveBeenCalledWith('[dgos] error', { code: null, where: 'SkillsManagement' });
+    expect((await screen.findByText('操作失败')).closest('[role="alert"]')?.textContent).not.toContain('secret');
+
+    act(() => clearToasts());
+    fireEvent.click(screen.getByRole('button', { name: 'Add to My Skills' }));
+    await screen.findByText('Unable to add skill: disk full');
+    expect(await screen.findByText('操作失败')).toBeTruthy();
+  });
+
+  it('shows missing dependencies inline only: no operation failed, so no toast', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const official = { ...skillInfo, identity: 'dgos_official', source_kind: 'dgos_official' };
+    mockedInvoke.mockImplementation(async (command) => {
+      if (command === 'fetch_skills_registry') return { skills: [official], registry_url: 'https://skills.dgos.ai/registry.json', offline: false, warning: null };
+      if (command === 'check_dependencies') return { satisfied: false, missing: ['python'] };
+      return [];
+    });
+    render(<><ToastViewport /><SkillsManagement /></>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add to My Skills' }));
+    await screen.findByText('Missing dependencies: python');
+    expect(screen.queryByText('操作失败')).toBeNull();
+    expect(errors).not.toHaveBeenCalled();
   });
 
   it('does not let an installed-list response clear registry loading or start duplicate fetches', async () => {

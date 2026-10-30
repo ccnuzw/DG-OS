@@ -1,9 +1,11 @@
 // Provider Console: a first-party module shipped with the host (D052).
 // Single-file ES module, no build step: this file is the artifact the pin covers.
 // Contract (D042): default export `createModule(host)` returning `{ Component, onLoad?, onUnload? }`.
+// UI comes from `host.ui` (D067): shared components, no inline styles, no own controls.
 export default function createModule(host) {
   const React = host.React;
   const h = React.createElement;
+  const { Button, Card, Input, Loading, Stack } = host.ui;
 
   function Component() {
     const [providerId, setProviderId] = React.useState('');
@@ -25,20 +27,26 @@ export default function createModule(host) {
     };
 
     const ready = providerId.trim() !== '' && modelId.trim() !== '' && prompt.trim() !== '' && state.kind !== 'pending';
-    const field = (label, value, set, extra = {}) =>
-      h('label', { style: { display: 'block', marginBottom: 8 } }, label, h('input', { value, onChange: (e) => set(e.target.value), ...extra }));
 
     return h(
-      'section',
+      Card,
       { 'data-testid': 'provider-console' },
-      h('h3', null, 'Provider Console'),
-      field('Provider id ', providerId, setProviderId),
-      field('Model id ', modelId, setModelId),
-      h('textarea', { value: prompt, onChange: (e) => setPrompt(e.target.value), rows: 4, 'aria-label': 'Prompt' }),
-      h('div', null, h('button', { disabled: !ready, onClick: send }, 'Send')),
-      state.kind === 'pending' && h('p', { role: 'status' }, 'Waiting for the provider...'),
-      state.kind === 'done' && h('pre', { 'data-testid': 'provider-console-reply' }, state.content),
-      state.kind === 'error' && h('p', { role: 'alert' }, 'The call was refused or failed (code ' + String(state.code) + ').'),
+      h(Card.Header, null, h('h3', null, 'Provider Console')),
+      h(
+        Card.Body,
+        null,
+        h(
+          Stack,
+          { gap: 3 },
+          h(Input, { label: 'Provider id', value: providerId, onChange: (e) => setProviderId(e.target.value) }),
+          h(Input, { label: 'Model id', value: modelId, onChange: (e) => setModelId(e.target.value) }),
+          h(Input, { multiline: true, rows: 4, 'aria-label': 'Prompt', value: prompt, onChange: (e) => setPrompt(e.target.value) }),
+          h(Stack, { gap: 2, direction: 'horizontal' }, h(Button, { disabled: !ready, onClick: send }, 'Send')),
+          state.kind === 'pending' && h(Loading, { label: 'Waiting for the provider...' }),
+          state.kind === 'done' && h('pre', { 'data-testid': 'provider-console-reply' }, state.content),
+          state.kind === 'error' && h('p', { role: 'alert' }, 'The call was refused or failed (code ' + String(state.code) + ').'),
+        ),
+      ),
     );
   }
 

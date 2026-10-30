@@ -9,6 +9,7 @@ import * as React from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot, type Root } from 'react-dom/client';
 import { Channel, invoke as tauriInvoke } from '@tauri-apps/api/core';
+import { moduleHostUi, type ModuleHostUi } from './moduleHostUi';
 
 export type LoadFailureStage = 'import' | 'contract' | 'render' | 'hook' | 'timeout' | 'cancelled';
 
@@ -134,6 +135,8 @@ interface ModuleHostApi {
   readonly providers: Readonly<{
     call: (providerId: string, modelId: string, request: ProviderChatRequest) => Promise<ProviderChatResponse>;
   }>;
+  // D067: added alongside the existing fields; `apiVersion` stays 1.
+  readonly ui: ModuleHostUi;
 }
 
 function newCallId(): string {
@@ -527,6 +530,7 @@ export class ModuleRuntimeHost {
         call: (providerId: string, modelId: string, request: ProviderChatRequest) =>
           this.callProvider(runtimeId, providerId, modelId, request),
       }),
+      ui: moduleHostUi,
     });
     let produced: unknown;
     try {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Button, Stack } from '@dgos/ui';
 import { ModuleSlot, useModuleInstance } from '../modules/ModuleSlots';
 import {
   listModuleCrashes,
@@ -9,12 +10,13 @@ import {
   type ModuleCrashRecord,
   type ModuleSummary,
 } from '../modules/moduleApi';
-import { CrashLogList, ErrorNotice, toApiError } from './ModuleManagement';
-import './ModuleManagement.css';
+import { usePageError } from '../pageError';
+import { CrashLogList, ErrorNotice, MODULE_LINK_CLASS, NoticeBox, toApiError } from './ModuleManagement';
 
 export default function ModulePanel() {
   const { moduleId = '' } = useParams();
   const navigate = useNavigate();
+  const reportError = usePageError('ModulePanel');
   const instance = useModuleInstance(moduleId);
   const crashed = instance?.crashed === true;
   const runtimeId = instance?.runtimeId ?? null;
@@ -60,6 +62,7 @@ export default function ModulePanel() {
       await task();
     } catch (failure) {
       if (mounted.current) setError(toApiError(failure));
+      reportError(failure);
     }
     if (!mounted.current) return;
     await refresh();
@@ -90,38 +93,42 @@ export default function ModulePanel() {
   const showCrashed = crashed || (summary !== null && summary.runtime.state === 'failed' && summary.recent_crashes > 0);
 
   return (
-    <div className="module-panel">
-      <h1>{summary?.name ?? moduleId}</h1>
-      <p>
-        <Link to="/settings/modules">Back to module management</Link>
+    <div className="mx-auto min-w-0 max-w-240 p-8 text-foreground">
+      <h1 className="m-0 mb-2 text-2xl font-semibold text-foreground wrap-anywhere">{summary?.name ?? moduleId}</h1>
+      <p className="m-0 mb-4 text-sm">
+        <Link to="/settings/modules" className={MODULE_LINK_CLASS}>Back to module management</Link>
       </p>
 
       {showCrashed && (
-        <div role="alert" className="module-banner">
-          <strong>Module {moduleId} crashed</strong>
-          <button type="button" disabled={busy} onClick={viewDetails}>View details</button>
-          <button type="button" disabled={busy} onClick={reload}>Reload module</button>
-          <button type="button" disabled={busy || !canUninstall} onClick={() => setConfirmUninstall(true)}>Uninstall</button>
-        </div>
+        <NoticeBox tone="error" role="alert" className="my-4 items-center">
+          <Stack direction="horizontal" gap={3} className="flex-wrap items-center">
+            <strong>Module {moduleId} crashed</strong>
+            <Button variant="secondary" size="sm" disabled={busy} onClick={viewDetails}>View details</Button>
+            <Button variant="secondary" size="sm" disabled={busy} onClick={reload}>Reload module</Button>
+            <Button variant="danger" size="sm" disabled={busy || !canUninstall} onClick={() => setConfirmUninstall(true)}>Uninstall</Button>
+          </Stack>
+        </NoticeBox>
       )}
       {faulty && (
-        <div role="alert" className="module-notice module-notice-warning">
+        <NoticeBox tone="warning" role="alert">
           This module may be faulty; it was disabled. Consider uninstalling it.
-        </div>
+        </NoticeBox>
       )}
       {error !== null && <ErrorNotice error={error} />}
       {confirmUninstall && (
-        <section role="dialog" aria-label={`Uninstall ${moduleId}`} className="module-dialog">
-          <p>Uninstall {summary?.name ?? moduleId}? The module is stopped and removed.</p>
-          <div className="module-actions">
-            <button type="button" disabled={busy} onClick={uninstall}>Confirm uninstall</button>
-            <button type="button" disabled={busy} onClick={() => setConfirmUninstall(false)}>Cancel</button>
-          </div>
+        <section role="dialog" aria-label={`Uninstall ${moduleId}`} className="my-3 rounded-lg border border-border bg-muted p-4 text-sm text-foreground">
+          <Stack gap={3}>
+            <p className="m-0">Uninstall {summary?.name ?? moduleId}? The module is stopped and removed.</p>
+            <Stack direction="horizontal" gap={2} className="flex-wrap">
+              <Button variant="danger" disabled={busy} onClick={uninstall}>Confirm uninstall</Button>
+              <Button variant="secondary" disabled={busy} onClick={() => setConfirmUninstall(false)}>Cancel</Button>
+            </Stack>
+          </Stack>
         </section>
       )}
       {crashes !== null && <CrashLogList crashes={crashes} />}
 
-      {instance === null ? <p>This module is not running</p> : <ModuleSlot instance={instance} />}
+      {instance === null ? <p className="text-sm text-muted-foreground">This module is not running</p> : <ModuleSlot instance={instance} />}
     </div>
   );
 }

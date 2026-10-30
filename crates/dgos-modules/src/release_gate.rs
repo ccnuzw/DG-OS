@@ -653,4 +653,99 @@ mod tests {
             );
         }
     }
+
+    // The tests below tamper with a copy of the package that actually ships,
+    // not with a hand-built one. A digest the test computed itself would be
+    // self-consistent by construction and prove nothing about the pins.
+
+    fn copy_tree(from: &Path, to: &Path) {
+        for entry in fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            let destination = to.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                fs::create_dir_all(&destination).unwrap();
+                copy_tree(&entry.path(), &destination);
+            } else {
+                fs::copy(entry.path(), &destination).unwrap();
+            }
+        }
+    }
+
+    fn copy_of_shipped_bundle() -> TempDir {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bundled-modules");
+        let copy = bundle();
+        copy_tree(&source, copy.path());
+        copy
+    }
+
+    const CONSOLE_DIR: &str = "provider-console/1.0.0";
+
+    #[test]
+    fn an_untouched_copy_of_the_shipped_bundle_passes() {
+        let copy = copy_of_shipped_bundle();
+        assert_eq!(verify_builtin_release_bundle(copy.path()), vec![]);
+    }
+
+    #[test]
+    fn one_changed_byte_in_the_shipped_entry_fails_the_pin() {
+        let copy = copy_of_shipped_bundle();
+        let entry = copy.path().join(CONSOLE_DIR).join("entry.js");
+        let mut bytes = fs::read(&entry).unwrap();
+        bytes.extend_from_slice(b"\n");
+        fs::write(&entry, bytes).unwrap();
+        assert_eq!(
+            kinds(&verify_builtin_release_bundle(copy.path())),
+            ["digest_mismatch"]
+        );
+    }
+
+    #[test]
+    fn a_tampered_shipped_entry_with_a_refreshed_manifest_still_fails_the_pin() {
+        let copy = copy_of_shipped_bundle();
+        let dir = copy.path().join(CONSOLE_DIR);
+        fs::write(dir.join("entry.js"), "export default function () {}").unwrap();
+        // Make the package agree with itself, as a tampering build step would.
+        let integrity = digest::package_integrity(&dir).unwrap();
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join("manifest.json")).unwrap()).unwrap();
+        manifest["artifact"]["sha256"] = digest::v2_hex(&integrity).unwrap().into();
+        fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            kinds(&verify_builtin_release_bundle(copy.path())),
+            ["digest_mismatch"]
+        );
+    }
+
+    #[test]
+    fn a_module_that_is_not_pinned_cannot_ride_along_with_the_shipped_bundle() {
+        let copy = copy_of_shipped_bundle();
+        publish(copy.path(), "not-pinned", "1.0.0", "export default 1;");
+        assert_eq!(
+            kinds(&verify_builtin_release_bundle(copy.path())),
+            ["unpinned"]
+        );
+    }
+
+    #[test]
+    fn production_admission_takes_the_recomputed_shipped_digest_and_nothing_else() {
+        use crate::{ModuleAdmission, PinnedModuleAdmission};
+        let shipped = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../bundled-modules")
+            .join(CONSOLE_DIR);
+        let real = digest::package_integrity(&shipped).unwrap();
+        let admission = PinnedModuleAdmission::builtin();
+        assert!(admission.admits("provider-console", "1.0.0", &real));
+
+        let copy = copy_of_shipped_bundle();
+        let dir = copy.path().join(CONSOLE_DIR);
+        fs::write(dir.join("entry.js"), "export default function () {}").unwrap();
+        let tampered = digest::package_integrity(&dir).unwrap();
+        assert_ne!(real, tampered);
+        assert!(!admission.admits("provider-console", "1.0.0", &tampered));
+        assert!(!admission.admits("unpinned-module", "1.0.0", &real));
+    }
 }

@@ -75,14 +75,14 @@ fn write_pkg(dir: &Path, id: &str, version: &str, body: &str, requires: Option<V
     integrity
 }
 
-struct ModWorld {
-    root: PathBuf,
+pub(super) struct ModWorld {
+    pub(super) root: PathBuf,
     sources: PathBuf,
     store: PathBuf,
-    manager: ModuleOperationManager,
-    router: Arc<ModuleCallRouter>,
-    crashes: ModuleCrashService,
-    management: ModuleManagementService,
+    pub(super) manager: ModuleOperationManager,
+    pub(super) router: Arc<ModuleCallRouter>,
+    pub(super) crashes: ModuleCrashService,
+    pub(super) management: ModuleManagementService,
     /// Test pins for versions that arrive later through the update source.
     pins: Arc<Mutex<Vec<(String, String, String)>>>,
 }
@@ -103,7 +103,12 @@ impl ModuleAdmission for GrowingAdmission {
     }
 }
 
-async fn build_world() -> (ModWorld, ModuleHostBridge) {
+pub(super) async fn build_world() -> (ModWorld, ModuleHostBridge) {
+    build_world_with(&[]).await
+}
+
+/// `extra` are additional one-file fixture modules (id, source) published and pinned like the others.
+pub(super) async fn build_world_with(extra: &[(&str, &str)]) -> (ModWorld, ModuleHostBridge) {
     let root =
         std::env::temp_dir().join(format!("dgos-webview-smoke-modules-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
@@ -129,6 +134,9 @@ async fn build_world() -> (ModWorld, ModuleHostBridge) {
     published.push((CRASH_ID.into(), CRASH));
     published.push((REACT_ID.into(), REACT_IDENTITY));
     published.push((BARE_ID.into(), BARE_IMPORT));
+    for (id, body) in extra {
+        published.push(((*id).to_owned(), *body));
+    }
     for (id, body) in &published {
         let dir = root.join(format!("pkg-{id}"));
         let digest = write_pkg(&dir, id, "1.0.0", body, None);
@@ -715,7 +723,7 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
     );
     js(
         &app,
-        "const d = document.querySelector('[role=\"dialog\"]'); d.querySelector('input[type=\"checkbox\"]').click(); return true;",
+        "const d = document.querySelector('[role=\"dialog\"]'); d.querySelector('[role=\"checkbox\"]').click(); return true;",
     )
     .await;
     tokio::time::sleep(Duration::from_millis(150)).await;

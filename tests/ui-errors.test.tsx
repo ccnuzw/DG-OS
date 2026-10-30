@@ -7,8 +7,9 @@
 //    the caller can navigate and the route exists, that the table holds no code the registry does not mark in use,
 //    ErrorPage's two forms, ErrorBoundary's fallback without leaking the thrown error, and that the real `App` route
 //    table shows ErrorPage for an unknown path.
-//  - NOT proven here, left to a real WebView (Phase 8) or later phases: that a real host error reaches handleError
-//    in the shipped pages (no page calls it yet, pages migrate in Phase 7), and the visual layout of ErrorPage.
+//  - NOT proven here, left to a real WebView (Phase 8): that a real host error reaches handleError from a shipped
+//    page in the running app (page wiring is covered with a mocked core in tests/app-shell.test.tsx and the page
+//    test files), and the visual layout of ErrorPage.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { readFileSync } from 'node:fs';

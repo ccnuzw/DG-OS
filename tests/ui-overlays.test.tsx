@@ -635,7 +635,7 @@ describe('overlay tokens and class literals (D066, D069)', () => {
     const css = await compileUi([
       'bg-overlay', 'opacity-overlay', 'animate-overlay-in', 'animate-modal-in', 'z-modal', 'z-popover', 'fixed', 'inset-0', 'inset-4',
       'm-auto', 'h-fit', 'w-fit', 'min-w-100', 'max-w-150', 'max-h-9/10', 'max-w-75', 'overflow-y-auto', 'border-input',
-      'shadow-xl', 'bg-popover', 'text-popover-foreground', 'text-muted-foreground', 'text-error-text', 'wrap-break-word',
+      'shadow-xl', 'bg-popover', 'text-popover-foreground', 'text-muted-foreground', 'text-error-text', 'wrap-break-word', 'wrap-anywhere',
     ]);
     expect(css).toMatch(/\.bg-overlay\s*\{\s*background-color:\s*var\(--color-overlay\)/);
     expect(css).toMatch(/\.opacity-overlay\s*\{\s*opacity:\s*var\(--opacity-overlay\)/);
@@ -649,5 +649,6 @@ describe('overlay tokens and class literals (D066, D069)', () => {
     expect(css).toMatch(/\.max-w-150\s*\{\s*max-width:\s*calc\(var\(--spacing-unit\)\s*\*\s*150\)/);
     expect(css).toMatch(/\.max-h-9\\\/10\s*\{\s*max-height:\s*calc\(9 \/ 10 \* 100%\)/);
     expect(css).toMatch(/\.wrap-break-word\s*\{\s*overflow-wrap:\s*break-word/);
+    expect(css).toMatch(/\.wrap-anywhere\s*\{\s*overflow-wrap:\s*anywhere/);
   });
 });
