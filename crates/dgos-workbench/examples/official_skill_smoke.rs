@@ -55,6 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 supports_streaming: false,
                 supports_vision: false,
                 cached_at: String::new(),
+                ..Default::default()
             }],
         )
         .await?;

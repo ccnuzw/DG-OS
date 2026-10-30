@@ -69,6 +69,9 @@ struct PendingProposal {
     public: ToolProposal,
     selected: usize,
     call: ToolCall,
+    /// The upstream's whole assistant message, reasoning included. It goes back unchanged once
+    /// the user approves; only memory holds it (never SQLite, audit or logs).
+    assistant: ToolMessage,
     expires: Instant,
 }
 
@@ -206,6 +209,7 @@ impl WorkbenchManager {
                     content: Some(message.content),
                     tool_call_id: None,
                     tool_calls: vec![],
+                    reasoning: None,
                 })
                 .collect(),
             tools,
@@ -419,12 +423,11 @@ impl WorkbenchManager {
             if result.outcome == "error" && !result.content.is_array() {
                 return Err("mcp_unknown_result".into());
             }
-            context.messages.push(ToolMessage {
-                role: "assistant".into(),
-                content: None,
-                tool_call_id: None,
-                tool_calls: vec![pending.call.clone()],
-            });
+            // The assistant message is kept as the upstream produced it: its text, its single
+            // tool call and its reasoning (thinking blocks with signatures, or the reasoning
+            // fields the service sent), so the next round is accepted and the system prompt and
+            // tool definitions stay unchanged.
+            context.messages.push(pending.assistant);
             context.messages.push(ToolMessage {
                 role: "tool".into(),
                 content: Some(
@@ -434,6 +437,7 @@ impl WorkbenchManager {
                 ),
                 tool_call_id: Some(pending.call.id),
                 tool_calls: vec![],
+                reasoning: None,
             });
         }
         let request = ToolChatRequest {
@@ -478,6 +482,7 @@ impl WorkbenchManager {
         if response.message.tool_calls.len() != 1 || context.calls.len() >= MAX_CALLS {
             return Err("tool_call_limit".into());
         }
+        let assistant = response.message.clone();
         let call = response.message.tool_calls.into_iter().next().unwrap();
         if call.kind != "function"
             || call.id.is_empty()
@@ -520,6 +525,7 @@ impl WorkbenchManager {
             },
             selected,
             call,
+            assistant,
             expires: Instant::now() + Duration::from_secs(120),
         });
         Ok(None)
@@ -632,9 +638,17 @@ impl WorkbenchManager {
 }
 
 fn validate_budget(request: &ToolChatRequest, window: Option<i32>) -> Result<()> {
+    // Reasoning is not part of the serialized message but it is sent upstream, so it counts.
+    let reasoning: usize = request
+        .messages
+        .iter()
+        .filter_map(|message| message.reasoning.as_ref())
+        .map(|reasoning| reasoning.encoded_len())
+        .sum();
     let bytes = serde_json::to_vec(request)
         .map_err(|_| "context_encoding_failed")?
-        .len();
+        .len()
+        + reasoning;
     if bytes > 24 * 1024
         || window.is_some_and(|window| {
             window <= 0 || bytes + 1024 + OUTPUT_TOKENS as usize > window as usize
@@ -675,6 +689,7 @@ mod tests {
             content: Some("x".repeat(24 * 1024)),
             tool_call_id: Some("call_1".into()),
             tool_calls: vec![],
+            reasoning: None,
         });
         assert!(validate_budget(&request, None).is_err());
     }

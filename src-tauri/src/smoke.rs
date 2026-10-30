@@ -37,12 +37,17 @@ mod appearance;
 mod appearance_host;
 mod call;
 mod modules;
+mod provider_stream;
 mod real;
+mod ui;
+mod ui_keys;
 pub use appearance::run_appearance;
 pub use appearance_host::run_appearance_host;
 pub use call::run_call;
 pub use modules::run_modules;
+pub use provider_stream::run_provider_stream;
 pub use real::run_real;
+pub use ui::run_ui;
 const STEP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Scripted loader: optional start gate and scripted stop failures around the

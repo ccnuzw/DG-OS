@@ -26,6 +26,7 @@ use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 /// Total host-owned deadline of one module `providers.call` (D051).
 pub const PROVIDER_CALL_DEADLINE: Duration = Duration::from_secs(120);
@@ -420,6 +421,36 @@ impl ProviderCallService {
     ) -> DgosResult<ChatResponse> {
         self.capabilities
             .call_provider(context, providers, provider_id, model_id, request)
+            .await
+    }
+
+    /// Streaming counterpart of [`execute`](Self::execute) for the built-in renderer. Caller and
+    /// request id come from the host context, so the stream's one usage record is attributed
+    /// exactly like a synchronous call's (AC33). Module contexts are refused: `providers.call`
+    /// (D051) is a non-streaming capability and no streaming permission exists.
+    pub async fn execute_stream(
+        &self,
+        context: &HostExecutionContext,
+        providers: &ProviderManager,
+        provider_id: &str,
+        model_id: &str,
+        request: ChatRequest,
+        cancellation: CancellationToken,
+    ) -> DgosResult<dgos_providers::BoxStream<dgos_types::ChatChunk>> {
+        if context.module_identity().is_some() {
+            return Err(DgosError::PermissionDenied);
+        }
+        let provenance = context.provenance();
+        providers
+            .stream_provider_bound_cancellable_with_provenance(
+                provider_id,
+                model_id,
+                request,
+                context.user_id(),
+                None,
+                Some(&provenance),
+                cancellation,
+            )
             .await
     }
 }
@@ -904,6 +935,7 @@ mod tests {
                 temperature: None,
                 max_tokens: Some(32),
                 stream: Some(false),
+                ..Default::default()
             }
         }
 
@@ -1452,5 +1484,238 @@ mod tests {
             );
             assert_redacted("error", &format!("{result:?}"));
         }
+    }
+}
+
+/// AC33 at the service layer: a renderer stream is attributed like a synchronous call, cancelling
+/// it settles one failed record, and module contexts cannot stream. Local servers stand in for
+/// the upstream; no real provider is called.
+#[cfg(test)]
+mod provider_stream_service {
+    use super::*;
+    use dgos_db::{migrations::Migrator, sea_orm_migration::MigratorTrait};
+    use dgos_providers::test_support::{seed_provider, MemoryCredentialVault};
+    use dgos_types::{ChatMessage, HostSession, ProviderConfig};
+    use futures::StreamExt;
+    use tempfile::{tempdir, TempDir};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    struct Fixture {
+        _dir: TempDir,
+        providers: ProviderManager,
+        provider_id: String,
+        service: ProviderCallService,
+    }
+
+    async fn fixture(base_url: String) -> Fixture {
+        let dir = tempdir().unwrap();
+        let url = format!(
+            "sqlite://{}?mode=rwc",
+            dir.path().join("fixture.db").display()
+        );
+        let db = dgos_db::establish_connection(&url).await.unwrap();
+        Migrator::up(&db, None).await.unwrap();
+        let vault = Arc::new(MemoryCredentialVault::default());
+        let provider = seed_provider(
+            db.clone(),
+            &vault,
+            ProviderConfig {
+                name: "Synthetic fixture".into(),
+                provider_type: "openai_compatible".into(),
+                base_url,
+                api_key: "synthetic-stream-key".into(),
+                enabled: true,
+                config: None,
+            },
+            "default-user",
+        )
+        .await
+        .unwrap();
+        let providers = ProviderManager::with_vault(&url, vault).await.unwrap();
+        let permissions = Arc::new(ModulePermissionRepository::new(db));
+        Fixture {
+            _dir: dir,
+            providers,
+            provider_id: provider.id,
+            service: ProviderCallService::new(HostCapabilityService::new(permissions)),
+        }
+    }
+
+    fn request() -> ChatRequest {
+        ChatRequest {
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "hello".into(),
+            }],
+            max_tokens: Some(16),
+            stream: Some(true),
+            ..Default::default()
+        }
+    }
+
+    fn sse(events: &[&str]) -> String {
+        events.iter().map(|e| format!("data: {e}\n\n")).collect()
+    }
+
+    const DELTA: &str = r#"{"choices":[{"delta":{"content":"hi"},"finish_reason":null}]}"#;
+    const FINISH: &str = r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#;
+    const USAGE: &str =
+        r#"{"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}"#;
+
+    #[tokio::test]
+    async fn provider_stream_usage_record_carries_the_callers_provenance() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "text/event-stream")
+            .with_body(sse(&[DELTA, FINISH, USAGE, "[DONE]"]))
+            .expect(1)
+            .create_async()
+            .await;
+        let f = fixture(server.url()).await;
+        let context = HostExecutionContext::for_builtin("default-user", BuiltinCaller::Settings);
+
+        let stream = f
+            .service
+            .execute_stream(
+                &context,
+                &f.providers,
+                &f.provider_id,
+                "m",
+                request(),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let items: Vec<_> = stream.collect().await;
+        assert!(items.iter().all(|item| item.is_ok()));
+
+        let rows = f
+            .providers
+            .list_usage_logs("default-user", None)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1, "exactly one record per stream");
+        assert!(rows[0].success);
+        assert_eq!((rows[0].request_tokens, rows[0].response_tokens), (7, 3));
+        assert_eq!(rows[0].caller.as_deref(), Some("settings"));
+        assert_eq!(rows[0].request_id.as_deref(), Some(context.request_id()));
+    }
+
+    #[tokio::test]
+    async fn provider_stream_cancel_emits_one_interruption_and_one_failed_record() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        // Sends one delta, then goes silent until the test ends.
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = vec![0u8; 8192];
+            let mut seen = Vec::new();
+            while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = socket.read(&mut buffer).await.unwrap();
+                if n == 0 {
+                    return;
+                }
+                seen.extend_from_slice(&buffer[..n]);
+            }
+            let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n";
+            socket.write_all(head.as_bytes()).await.unwrap();
+            socket.write_all(sse(&[DELTA]).as_bytes()).await.unwrap();
+            socket.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        let f = fixture(format!("http://{address}")).await;
+        let context = HostExecutionContext::for_builtin("default-user", BuiltinCaller::Settings);
+        let token = CancellationToken::new();
+
+        let mut stream = f
+            .service
+            .execute_stream(
+                &context,
+                &f.providers,
+                &f.provider_id,
+                "m",
+                request(),
+                token.clone(),
+            )
+            .await
+            .unwrap();
+        let first = tokio::time::timeout(Duration::from_secs(5), stream.next())
+            .await
+            .expect("the first delta arrives")
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.delta, "hi");
+
+        token.cancel();
+        let interrupted = tokio::time::timeout(Duration::from_secs(5), stream.next())
+            .await
+            .expect("cancellation ends the wait")
+            .unwrap();
+        assert!(matches!(interrupted, Err(DgosError::StreamInterrupted)));
+        assert!(
+            stream.next().await.is_none(),
+            "nothing follows the interruption"
+        );
+        drop(stream);
+
+        // The record is written from the dropped stream, on the runtime.
+        let mut rows = Vec::new();
+        for _ in 0..100 {
+            rows = f
+                .providers
+                .list_usage_logs("default-user", None)
+                .await
+                .unwrap();
+            if !rows.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(rows.len(), 1);
+        assert!(!rows[0].success);
+        assert_eq!(rows[0].error_code.as_deref(), Some("1001007"));
+        assert_eq!(rows[0].caller.as_deref(), Some("settings"));
+        assert_eq!(rows[0].request_id.as_deref(), Some(context.request_id()));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn provider_stream_is_refused_for_module_contexts_before_any_request() {
+        let mut server = mockito::Server::new_async().await;
+        let upstream = server
+            .mock("POST", "/chat/completions")
+            .with_status(200)
+            .expect(0)
+            .create_async()
+            .await;
+        let f = fixture(server.url()).await;
+        let context = HostExecutionContext::for_module_session(
+            &HostSession::local_default(),
+            "module-1",
+            "1.0.0",
+            &"a".repeat(64),
+        );
+
+        let result = f
+            .service
+            .execute_stream(
+                &context,
+                &f.providers,
+                &f.provider_id,
+                "m",
+                request(),
+                CancellationToken::new(),
+            )
+            .await;
+        assert!(matches!(result, Err(DgosError::PermissionDenied)));
+        upstream.assert_async().await;
+        assert!(f
+            .providers
+            .list_usage_logs("default-user", None)
+            .await
+            .unwrap()
+            .is_empty());
     }
 }

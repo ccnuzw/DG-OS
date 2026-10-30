@@ -54,6 +54,37 @@ pub enum DgosError {
     #[error("Max retries exceeded")]
     MaxRetriesExceeded,
 
+    // V1-FR-001 §8.1 (D063). Fixed messages: upstream bodies, keys and user input are never echoed.
+    #[error("Provider upstream server error")]
+    UpstreamServerError,
+
+    #[error("Provider rejected the request parameters")]
+    ProviderRequestRejected,
+
+    #[error("Input exceeds the model context window")]
+    ContextLengthExceeded,
+
+    #[error("Provider denied permission for this key or region")]
+    ProviderPermissionDenied,
+
+    #[error("Request is not supported by the provider protocol")]
+    RequestNotSupported,
+
+    #[error("Provider output is empty or does not match the requested schema")]
+    StructuredOutputInvalid,
+
+    #[error("Unsupported provider type")]
+    UnsupportedProviderType,
+
+    #[error("Endpoint must use https unless it is a local or private address")]
+    InsecureEndpoint,
+
+    #[error("Provider quota exhausted")]
+    ProviderQuotaExhausted,
+
+    #[error("Provider response is not the expected format")]
+    ProviderResponseInvalid,
+
     // Network errors
     #[error("Network error: {0}")]
     NetworkError(String),
@@ -94,6 +125,16 @@ impl DgosError {
             DgosError::Timeout => 1001006,
             DgosError::StreamInterrupted => 1001007,
             DgosError::MaxRetriesExceeded => 1001008,
+            DgosError::UpstreamServerError => 1001014,
+            DgosError::ProviderRequestRejected => 1001017,
+            DgosError::ContextLengthExceeded => 1001018,
+            DgosError::ProviderPermissionDenied => 1001019,
+            DgosError::RequestNotSupported => 1001020,
+            DgosError::StructuredOutputInvalid => 1001021,
+            DgosError::UnsupportedProviderType => 1001022,
+            DgosError::InsecureEndpoint => 1001023,
+            DgosError::ProviderQuotaExhausted => 1001024,
+            DgosError::ProviderResponseInvalid => 1001025,
             _ => 1000000,
         }
     }
@@ -140,6 +181,27 @@ mod tests {
         assert_eq!(DgosError::RateLimitExceeded.error_code(), 1001005);
         assert_eq!(DgosError::Timeout.error_code(), 1001006);
         assert_eq!(DgosError::MaxRetriesExceeded.error_code(), 1001008);
+    }
+
+    #[test]
+    fn fr001_extension_codes_match_the_registry_and_use_fixed_messages() {
+        let cases = [
+            (DgosError::UpstreamServerError, 1001014),
+            (DgosError::ProviderRequestRejected, 1001017),
+            (DgosError::ContextLengthExceeded, 1001018),
+            (DgosError::ProviderPermissionDenied, 1001019),
+            (DgosError::RequestNotSupported, 1001020),
+            (DgosError::StructuredOutputInvalid, 1001021),
+            (DgosError::UnsupportedProviderType, 1001022),
+            (DgosError::InsecureEndpoint, 1001023),
+            (DgosError::ProviderQuotaExhausted, 1001024),
+            (DgosError::ProviderResponseInvalid, 1001025),
+        ];
+        for (error, code) in cases {
+            assert_eq!(error.error_code(), code);
+            // Fixed text: nothing a caller or an upstream body could inject.
+            assert!(!error.to_string().contains(':'), "{error}");
+        }
     }
 
     #[test]

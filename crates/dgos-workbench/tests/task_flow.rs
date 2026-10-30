@@ -65,6 +65,7 @@ async fn setup(base_url: &str) -> Fixture {
                 supports_streaming: false,
                 supports_vision: false,
                 cached_at: String::new(),
+                ..Default::default()
             }],
         )
         .await

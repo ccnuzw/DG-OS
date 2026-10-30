@@ -118,3 +118,80 @@ describe('Provider model cache lifecycle', () => {
     expect(useProviderStore.getState().models).toEqual([]);
   });
 });
+
+describe('Provider creation with a probe model', () => {
+  const config = { name: 'New', provider_type: 'openai_compatible', base_url: 'https://svc.example/v1', api_key: 'synthetic-key', enabled: true };
+  const model = {
+    id: 'm1', provider_id: 'preview', model_id: 'm-one', model_name: 'm-one', model_type: 'text-generation',
+    supports_streaming: true, supports_vision: false, cached_at: '2026-10-30T00:00:00Z',
+  };
+
+  it('sends probeModel (trimmed) with create_provider only when it is set', async () => {
+    mockedInvoke.mockResolvedValue({ success: true, data: provider });
+    await useProviderStore.getState().createProvider(config, [], '  probe-model  ');
+    expect(mockedInvoke).toHaveBeenLastCalledWith('create_provider', { config, probeModel: 'probe-model' });
+
+    await useProviderStore.getState().createProvider(config, [], '   ');
+    expect(mockedInvoke).toHaveBeenLastCalledWith('create_provider', { config });
+    await useProviderStore.getState().createProvider(config);
+    expect(mockedInvoke).toHaveBeenLastCalledWith('create_provider', { config });
+  });
+
+  it('sends probeModel with create_provider_with_models only when it is set', async () => {
+    mockedInvoke.mockResolvedValue({ success: true, data: provider });
+    await useProviderStore.getState().createProvider(config, [model], 'probe-model');
+    expect(mockedInvoke).toHaveBeenLastCalledWith('create_provider_with_models', { config, models: [model], probeModel: 'probe-model' });
+    await useProviderStore.getState().createProvider(config, [model]);
+    expect(mockedInvoke).toHaveBeenLastCalledWith('create_provider_with_models', { config, models: [model] });
+  });
+});
+
+describe('Provider vendors', () => {
+  it('loads the vendor table from the host', async () => {
+    const vendors = [{ vendor_id: 'acme', display_name: 'Acme', endpoints: [{ provider_type: 'openai_compatible', display_name: 'OpenAI compatible', default_base_url: 'https://acme.example/v1' }] }];
+    mockedInvoke.mockResolvedValue({ success: true, data: vendors });
+    await useProviderStore.getState().fetchVendors();
+    expect(mockedInvoke).toHaveBeenCalledWith('list_provider_vendors', {});
+    expect(useProviderStore.getState().vendors).toEqual(vendors);
+    expect(useProviderStore.getState().vendorsStatus).toBe('loaded');
+  });
+
+  it('marks the table as failed without touching the general error', async () => {
+    mockedInvoke.mockRejectedValue(new Error('host down'));
+    await useProviderStore.getState().fetchVendors();
+    expect(useProviderStore.getState().vendorsStatus).toBe('error');
+    expect(useProviderStore.getState().vendors).toEqual([]);
+    expect(useProviderStore.getState().error).toBeNull();
+  });
+});
+
+describe('Manual models', () => {
+  const manual = {
+    id: 'mm1', provider_id: provider.id, model_id: 'my-model', model_name: 'my-model', model_type: 'embedding',
+    supports_streaming: false, supports_vision: false, cached_at: '2026-10-30T00:00:00Z', source: 'manual' as const,
+  };
+
+  it('adds a manual model, omitting kind when it is not given, and shows the returned row', async () => {
+    useProviderStore.setState({ models: [], modelsProviderId: provider.id });
+    mockedInvoke.mockResolvedValue({ success: true, data: manual });
+    expect(await useProviderStore.getState().addManualModel(provider.id, 'my-model')).toBe(true);
+    expect(mockedInvoke).toHaveBeenLastCalledWith('add_manual_model', { providerId: provider.id, modelId: 'my-model' });
+    expect(await useProviderStore.getState().addManualModel(provider.id, 'my-model', 'embedding')).toBe(true);
+    expect(mockedInvoke).toHaveBeenLastCalledWith('add_manual_model', { providerId: provider.id, modelId: 'my-model', kind: 'embedding' });
+    expect(useProviderStore.getState().models).toEqual([manual]);
+  });
+
+  it('keeps the raw failure of a rejected add for the page to report', async () => {
+    mockedInvoke.mockResolvedValue({ success: false, error: { code: 1001020, message: 'bad kind' } });
+    expect(await useProviderStore.getState().addManualModel(provider.id, 'x', 'nonsense')).toBe(false);
+    expect(useProviderStore.getState().lastFailure).toEqual({ code: 1001020, message: 'bad kind' });
+  });
+
+  it('removes a manual model by provider and model id', async () => {
+    useProviderStore.setState({ models: [manual], modelsProviderId: provider.id });
+    mockedInvoke.mockResolvedValue({ success: true, data: null });
+    expect(await useProviderStore.getState().removeManualModel(provider.id, 'my-model')).toBe(true);
+    expect(mockedInvoke).toHaveBeenCalledWith('remove_manual_model', { providerId: provider.id, modelId: 'my-model' });
+    expect(useProviderStore.getState().models).toEqual([]);
+  });
+});

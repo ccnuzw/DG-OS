@@ -238,6 +238,7 @@ impl WorkbenchManager {
                 temperature: None,
                 max_tokens: Some(OUTPUT_TOKENS),
                 stream: Some(false),
+                ..Default::default()
             },
         })
     }
@@ -368,7 +369,9 @@ impl WorkbenchManager {
         if provider.user_id != user || !provider.enabled {
             return Err("Provider unavailable for this user".into());
         }
-        if model.model_type != "chat" {
+        // The repository reports the host-derived kind; the legacy `chat` placeholder never
+        // comes back from a read.
+        if model.model_type != "text-generation" {
             return Err("Choose a cached chat model from this provider".into());
         }
         if model

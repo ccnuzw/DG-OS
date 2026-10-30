@@ -19,12 +19,14 @@ fn request() -> ToolChatRequest {
                         arguments: "{}".into(),
                     },
                 }],
+                reasoning: None,
             },
             ToolMessage {
                 role: "tool".into(),
                 content: Some("untrusted result".into()),
                 tool_call_id: Some("call_1".into()),
                 tool_calls: vec![],
+                reasoning: None,
             },
         ],
         tools: vec![ToolDefinition {

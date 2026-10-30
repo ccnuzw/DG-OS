@@ -1,4 +1,6 @@
-use dgos_types::{CredentialStatus, DgosError, DgosResult, Model, Provider, ProviderConfig};
+use dgos_types::{
+    CredentialStatus, DgosError, DgosResult, Model, ModelSource, Provider, ProviderConfig,
+};
 use sea_orm::*;
 use uuid::Uuid;
 
@@ -483,11 +485,102 @@ impl ProviderRepository {
         if update.rows_affected != 1 {
             return Err(DgosError::ProviderConfigurationChanged);
         }
-        ModelRepository::replace_in(&tx, &ticket.provider.id, models).await?;
+        ModelRepository::replace_remote_in(&tx, &ticket.provider.id, models).await?;
         let models = ModelRepository::list_in(&tx, &ticket.provider.id).await?;
         tx.commit().await.map_err(db_error)?;
         Ok(models)
     }
+
+    /// Inserts a host-built `source = manual` model. Idempotent per `(provider_id, model_id)`:
+    /// an existing row is returned untouched and the revision is not advanced. A real insert
+    /// advances `config_revision` in the same transaction so an in-flight refresh is rejected.
+    pub async fn add_manual_model(
+        &self,
+        provider_id: &str,
+        user_id: &str,
+        mut model: Model,
+    ) -> DgosResult<Model> {
+        let tx = self.db.begin().await.map_err(db_error)?;
+        self.owned_row(&tx, provider_id, user_id).await?;
+        if let Some(existing) =
+            ModelRepository::find_row_in(&tx, provider_id, &model.model_id).await?
+        {
+            let existing = ModelRepository::to_model_in(&tx, existing).await?;
+            tx.commit().await.map_err(db_error)?;
+            return Ok(existing);
+        }
+        model.provider_id = provider_id.to_owned();
+        model.source = ModelSource::Manual;
+        ModelRepository::insert_in(
+            &tx,
+            provider_id,
+            &model,
+            ModelSource::Manual,
+            chrono::Utc::now(),
+        )
+        .await?;
+        bump_revision(&tx, provider_id, user_id).await?;
+        let stored = ModelRepository::get_in(&tx, provider_id, &model.model_id)
+            .await?
+            .ok_or_else(|| DgosError::ModelNotFound(model.model_id.clone()))?;
+        tx.commit().await.map_err(db_error)?;
+        Ok(stored)
+    }
+
+    /// Deletes only `source = manual` rows. A missing model, or a remote one, is a successful
+    /// no-op and does not advance the revision.
+    pub async fn remove_manual_model(
+        &self,
+        provider_id: &str,
+        user_id: &str,
+        model_id: &str,
+    ) -> DgosResult<()> {
+        let tx = self.db.begin().await.map_err(db_error)?;
+        self.owned_row(&tx, provider_id, user_id).await?;
+        if ModelRepository::delete_manual_in(&tx, provider_id, model_id).await? > 0 {
+            bump_revision(&tx, provider_id, user_id).await?;
+        }
+        tx.commit().await.map_err(db_error)
+    }
+
+    async fn owned_row(
+        &self,
+        db: &impl ConnectionTrait,
+        provider_id: &str,
+        user_id: &str,
+    ) -> DgosResult<providers::Model> {
+        providers::Entity::find_by_id(provider_id)
+            .filter(providers::Column::UserId.eq(user_id))
+            .one(db)
+            .await
+            .map_err(db_error)?
+            .ok_or_else(|| DgosError::ProviderNotFound(provider_id.into()))
+    }
+}
+
+async fn bump_revision(
+    db: &impl ConnectionTrait,
+    provider_id: &str,
+    user_id: &str,
+) -> DgosResult<()> {
+    let result = providers::Entity::update_many()
+        .col_expr(
+            providers::Column::ConfigRevision,
+            sea_query::Expr::col(providers::Column::ConfigRevision).add(1),
+        )
+        .col_expr(
+            providers::Column::UpdatedAt,
+            sea_query::Expr::value(chrono::Utc::now()),
+        )
+        .filter(providers::Column::Id.eq(provider_id))
+        .filter(providers::Column::UserId.eq(user_id))
+        .exec(db)
+        .await
+        .map_err(db_error)?;
+    if result.rows_affected != 1 {
+        return Err(DgosError::ProviderNotFound(provider_id.into()));
+    }
+    Ok(())
 }
 
 fn metadata_only(config: &ProviderConfig) -> DgosResult<()> {

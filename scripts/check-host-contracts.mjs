@@ -38,6 +38,20 @@ const appearanceParams = new Map([
   ['get_appearance_preferences', new Set(['app', 'window'])],
   ['set_appearance_preferences', new Set(['app', 'window', 'patch'])],
 ]);
+// FR-001 §6.3: exact parameter lists of the provider commands added or extended by the third-party
+// compatible protocol extension. `probe_model` is an optional model name for services without a
+// model list endpoint; identity never appears. A new parameter must be added here deliberately.
+const providerExactParams = new Map([
+  ['list_provider_vendors', ['app', 'window']],
+  ['add_manual_model', ['app', 'window', 'provider_id', 'model_id', 'kind']],
+  ['remove_manual_model', ['app', 'window', 'provider_id', 'model_id']],
+  ['call_provider_stream', ['app', 'window', 'provider_id', 'model_id', 'request', 'on_event']],
+  ['cancel_provider_stream', ['app', 'window', 'stream_id']],
+  ['test_provider_connection', ['app', 'window', 'config', 'probe_model']],
+  ['test_provider_by_id', ['app', 'window', 'provider_id', 'probe_model']],
+  ['create_provider', ['app', 'window', 'config', 'probe_model']],
+  ['create_provider_with_models', ['app', 'window', 'config', 'models', 'probe_model']],
+]);
 let commands = 0;
 for (const file of files) {
   const source = readFileSync(new URL(`../src-tauri/src/commands/${file}.rs`, import.meta.url), 'utf8');
@@ -86,6 +100,22 @@ for (const file of files) {
     } else {
       assert.doesNotMatch(args, /\b(?:user_id|module_id|caller)\s*:/, `${name}: identity belongs to the host`);
       assert.match(body, /host::context\(\s*&window,/, `${name}: missing host entry gate`);
+      const exact = providerExactParams.get(name);
+      if (file === 'provider_commands' && exact) {
+        const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
+        assert.deepEqual([...names].sort(), [...exact].sort(), `${name}: parameter list must be exactly ${[...exact].join(', ')}`);
+      }
+      if (name === 'call_provider_stream') {
+        // The stream reaches only the Channel the caller passed; a global event would be readable
+        // by every page in the realm (D042). Caller and request id come from the host context.
+        assert.match(args, /on_event:\s*Channel<ProviderStreamEvent>/, `${name}: events must go to the caller's Channel`);
+        assert.doesNotMatch(body, /\.emit(?:_to|_filter)?\(|emit_all/, `${name}: must not use global events`);
+        assert.match(body, /execute_stream\(\s*&context,/, `${name}: must run through ProviderCallService with the host context`);
+        assert.match(body, /register\(window\.label\(\)\)/, `${name}: the stream must be owned by the calling window`);
+      }
+      if (name === 'cancel_provider_stream') {
+        assert.match(body, /\.cancel\(window\.label\(\),/, `${name}: may cancel only streams of the calling window`);
+      }
     }
     commands += 1;
   }

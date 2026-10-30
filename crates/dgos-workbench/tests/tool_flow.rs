@@ -147,6 +147,10 @@ async fn setup(url: &str) -> Fixture {
 }
 
 async fn setup_mode(url: &str, mode: &str) -> Fixture {
+    setup_provider(url, mode, "openai_compatible").await
+}
+
+async fn setup_provider(url: &str, mode: &str, provider_type: &str) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let db_url = format!(
         "sqlite://{}?mode=rwc",
@@ -160,7 +164,7 @@ async fn setup_mode(url: &str, mode: &str) -> Fixture {
         &vault,
         ProviderConfig {
             name: "fixture".into(),
-            provider_type: "openai_compatible".into(),
+            provider_type: provider_type.into(),
             base_url: url.into(),
             api_key: "synthetic-secret".into(),
             enabled: true,
@@ -184,6 +188,7 @@ async fn setup_mode(url: &str, mode: &str) -> Fixture {
                 supports_streaming: false,
                 supports_vision: false,
                 cached_at: String::new(),
+                ..Default::default()
             }],
         )
         .await
@@ -818,4 +823,802 @@ async fn oversized_result_context_ends_task_without_resending_or_truncating() {
     assert!(done.content.is_none());
     first.assert_async().await;
     f.stop().await;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Provider protocol parity (AC22) and reasoning round trip (AC24)
+// ---------------------------------------------------------------------------------------------
+
+use dgos_db::sea_orm::{ConnectionTrait, DbBackend, Statement};
+use std::sync::Mutex;
+
+const THOUGHT: &str = "PRIVATE-THOUGHT-7f3a";
+const SIGNATURE: &str = "PRIVATE-SIGNATURE-7f3a";
+const OPAQUE: &str = "PRIVATE-OPAQUE-7f3a";
+const UPSTREAM_MARKER: &str = "UPSTREAM-MARKER-91c2";
+
+/// A follow-up round ends with the tool result (OpenAI `tool` role, Anthropic `tool_result` block).
+fn is_followup(body: &Value) -> bool {
+    body["messages"]
+        .as_array()
+        .and_then(|messages| messages.last())
+        .is_some_and(|last| {
+            last["role"] == "tool"
+                || last["content"]
+                    .as_array()
+                    .is_some_and(|blocks| blocks.iter().any(|block| block["type"] == "tool_result"))
+        })
+}
+
+type Seen = Arc<Mutex<[Vec<Value>; 2]>>;
+
+fn recorder(
+    round: usize,
+    seen: Seen,
+) -> impl Fn(&mockito::Request) -> bool + Send + Sync + 'static {
+    move |request| {
+        let body: Value = serde_json::from_slice(request.body().unwrap()).unwrap();
+        let matches = is_followup(&body) == (round == 1);
+        if matches {
+            seen.lock().unwrap()[round].push(body);
+        }
+        matches
+    }
+}
+
+/// Two sequential model rounds on one path. The request bodies the upstream received are kept.
+/// `second: None` means the provider must not be called a second time.
+struct Rounds {
+    first: mockito::Mock,
+    second: mockito::Mock,
+    seen: Seen,
+}
+
+impl Rounds {
+    fn body(&self, round: usize) -> Value {
+        self.seen.lock().unwrap()[round]
+            .last()
+            .cloned()
+            .unwrap_or_else(|| panic!("round {round} was never requested"))
+    }
+    async fn assert(&self) {
+        self.first.assert_async().await;
+        self.second.assert_async().await;
+    }
+}
+
+async fn mock_rounds(
+    server: &mut mockito::ServerGuard,
+    path: &str,
+    first: Value,
+    second: Option<Value>,
+) -> Rounds {
+    let seen: Seen = Arc::new(Mutex::new([Vec::new(), Vec::new()]));
+    let first = server
+        .mock("POST", path)
+        .match_request(recorder(0, seen.clone()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(first.to_string())
+        .expect(1)
+        .create_async()
+        .await;
+    let (status, body, hits) = match second {
+        Some(body) => (200, body, 1),
+        None => (500, json!({"error": "unexpected second round"}), 0),
+    };
+    let second = server
+        .mock("POST", path)
+        .match_request(recorder(1, seen.clone()))
+        .with_status(status)
+        .with_header("content-type", "application/json")
+        .with_body(body.to_string())
+        .expect(hits)
+        .create_async()
+        .await;
+    Rounds {
+        first,
+        second,
+        seen,
+    }
+}
+
+fn tool_use(id: &str, name: &str, input: Value) -> Value {
+    json!({"type": "tool_use", "id": id, "name": name, "input": input})
+}
+
+fn anthropic_text(text: &str) -> Value {
+    json!({"type": "text", "text": text})
+}
+
+fn anthropic_message(content: Vec<Value>, stop_reason: &str, input: u32, output: u32) -> Value {
+    json!({"id": "msg_1", "type": "message", "role": "assistant", "model": "chat",
+        "content": content, "stop_reason": stop_reason,
+        "usage": {"input_tokens": input, "output_tokens": output}})
+}
+
+fn openai_final(text: &str) -> Value {
+    json!({"choices":[{"message":{"role":"assistant","content":text},"finish_reason":"stop"}],
+        "usage":{"prompt_tokens":8,"completion_tokens":3,"total_tokens":11}})
+}
+
+/// start -> model round -> (approve | deny when a proposal exists). Every update is kept.
+async fn drive(f: &Fixture, approve: bool) -> Vec<ToolTaskUpdate> {
+    let mut updates = vec![f.start().await];
+    let id = updates[0].record.task.id.clone();
+    let proposed = f
+        .workbench
+        .advance_tool_task(&f.providers, &f.mcp, &id, "alice", ToolAction::RunModel)
+        .await
+        .unwrap();
+    let proposal = proposed.proposal.as_ref().map(|p| p.id.clone());
+    updates.push(proposed);
+    if let Some(proposal_id) = proposal {
+        let action = if approve {
+            ToolAction::Approve { proposal_id }
+        } else {
+            ToolAction::Deny { proposal_id }
+        };
+        updates.push(
+            f.workbench
+                .advance_tool_task(&f.providers, &f.mcp, &id, "alice", action)
+                .await
+                .unwrap(),
+        );
+    }
+    updates
+}
+
+/// Every row of every table, as text.
+async fn dump_database(f: &Fixture) -> String {
+    let sql = |text: String| Statement::from_string(DbBackend::Sqlite, text);
+    let tables =
+        f.db.query_all(sql(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'".into(),
+        ))
+        .await
+        .unwrap();
+    let mut out = String::new();
+    for table in tables {
+        let name: String = table.try_get("", "name").unwrap();
+        let columns =
+            f.db.query_all(sql(format!("SELECT name FROM pragma_table_info('{name}')")))
+                .await
+                .unwrap();
+        let columns: Vec<String> = columns
+            .iter()
+            .map(|column| {
+                let column: String = column.try_get("", "name").unwrap();
+                format!("COALESCE(CAST(\"{column}\" AS TEXT),'')")
+            })
+            .collect();
+        if columns.is_empty() {
+            continue;
+        }
+        let rows =
+            f.db.query_all(sql(format!(
+                "SELECT {} AS line FROM \"{name}\"",
+                columns.join(" || '|' || ")
+            )))
+            .await
+            .unwrap();
+        for row in rows {
+            out.push_str(&row.try_get::<String>("", "line").unwrap());
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The markers must be nowhere: SQLite rows and files, provider and MCP usage logs, the task
+/// audit list and every update returned along the way (proposals included).
+async fn assert_private(f: &Fixture, updates: &[ToolTaskUpdate], markers: &[&str]) {
+    let mut corpus = dump_database(f).await;
+    assert!(
+        corpus.contains("fixture-server"),
+        "the database dump must see stored rows"
+    );
+    for entry in std::fs::read_dir(f._dir.path()).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() {
+            corpus.push_str(&String::from_utf8_lossy(&std::fs::read(path).unwrap()));
+        }
+    }
+    let provider_logs = f.providers.list_usage_logs("alice", None).await.unwrap();
+    assert!(!provider_logs.is_empty());
+    corpus.push_str(&serde_json::to_string(&provider_logs).unwrap());
+    corpus.push_str(
+        &serde_json::to_string(&f.mcp.list_usage_logs("alice", None, None).await.unwrap()).unwrap(),
+    );
+    corpus.push_str(&serde_json::to_string(&f.workbench.list("alice").await.unwrap()).unwrap());
+    for update in updates {
+        corpus.push_str(&serde_json::to_string(update).unwrap());
+    }
+    for marker in markers {
+        assert!(!corpus.contains(marker), "{marker} leaked");
+    }
+}
+
+/// Round two of an Anthropic tool loop: same request, plus the assistant turn kept whole and
+/// the user turn answering it with a `tool_result`.
+fn assert_anthropic_followup(
+    first: &Value,
+    second: &Value,
+    assistant_content: &[Value],
+    result_marker: &str,
+) {
+    for key in ["system", "tools"] {
+        assert!(!first[key].is_null(), "{key} missing from round one");
+    }
+    for key in ["model", "max_tokens", "system", "tools", "tool_choice"] {
+        assert_eq!(first[key], second[key], "{key} changed between rounds");
+    }
+    assert!(first.get("thinking").is_none() && second.get("thinking").is_none());
+    let a = first["messages"].as_array().unwrap();
+    let b = second["messages"].as_array().unwrap();
+    assert_eq!(a.last().unwrap()["role"], "user");
+    assert_eq!(b.len(), a.len() + 2);
+    assert_eq!(&b[..a.len()], &a[..]);
+    let assistant = &b[a.len()];
+    assert_eq!(assistant["role"], "assistant");
+    assert_eq!(assistant["content"], json!(assistant_content));
+    let tool_use = assistant_content.last().unwrap();
+    assert_eq!(tool_use["type"], "tool_use");
+    let result = &b[a.len() + 1];
+    assert_eq!(result["role"], "user");
+    let block = &result["content"][0];
+    assert_eq!(block["type"], "tool_result");
+    assert_eq!(block["tool_use_id"], tool_use["id"]);
+    assert!(block["content"].as_str().unwrap().contains(result_marker));
+}
+
+#[tokio::test]
+async fn anthropic_approved_tool_round_keeps_tool_use_then_tool_result_and_pins_system_and_tools() {
+    let mut server = mockito::Server::new_async().await;
+    let content = vec![
+        anthropic_text("Calling the tool"),
+        tool_use(
+            "toolu_01A",
+            "dgos_tool_0",
+            json!({"text": "synthetic-anthropic-flow"}),
+        ),
+    ];
+    let rounds = mock_rounds(
+        &mut server,
+        "/v1/messages",
+        anthropic_message(content.clone(), "tool_use", 5, 2),
+        Some(anthropic_message(
+            vec![anthropic_text("Anthropic final")],
+            "end_turn",
+            8,
+            3,
+        )),
+    )
+    .await;
+    let f = setup_provider(&server.url(), "normal", "anthropic").await;
+    let updates = drive(&f, true).await;
+    assert_eq!(updates.len(), 3);
+    assert_eq!(updates[1].phase, "awaiting_confirmation");
+    let proposal = updates[1].proposal.as_ref().unwrap();
+    assert_eq!(
+        proposal.arguments,
+        json!({"text": "synthetic-anthropic-flow"})
+    );
+    assert_eq!(proposal.tool_name, f.tool.tool_name);
+    let done = &updates[2];
+    assert_eq!(done.record.task.status, "succeeded");
+    assert_eq!(done.content.as_deref(), Some("Anthropic final"));
+    assert_eq!(done.record.task.total_tokens, Some(18));
+    let logs = f.mcp.list_usage_logs("alice", None, None).await.unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].caller.as_deref(), Some("workbench"));
+    let (first, second) = (rounds.body(0), rounds.body(1));
+    assert_eq!(first["tools"][0]["name"], "dgos_tool_0");
+    assert_eq!(
+        first["tools"][0]["input_schema"]["required"],
+        json!(["text"])
+    );
+    assert_anthropic_followup(&first, &second, &content, "synthetic-anthropic-flow");
+    rounds.assert().await;
+    f.stop().await;
+}
+
+#[tokio::test]
+async fn anthropic_denied_proposal_fails_with_tool_denied_and_never_calls_the_provider_again() {
+    let mut server = mockito::Server::new_async().await;
+    let rounds = mock_rounds(
+        &mut server,
+        "/v1/messages",
+        anthropic_message(
+            vec![tool_use(
+                "toolu_01A",
+                "dgos_tool_0",
+                json!({"text": "private"}),
+            )],
+            "tool_use",
+            5,
+            2,
+        ),
+        None,
+    )
+    .await;
+    let f = setup_provider(&server.url(), "normal", "anthropic").await;
+    let updates = drive(&f, false).await;
+    assert_eq!(updates.len(), 3);
+    assert!(updates[1].proposal.is_some());
+    let done = &updates[2];
+    assert_eq!(done.record.task.status, "failed");
+    assert_eq!(done.record.task.error_code.as_deref(), Some("tool_denied"));
+    assert!(done.content.is_none());
+    assert!(f
+        .mcp
+        .list_usage_logs("alice", None, None)
+        .await
+        .unwrap()
+        .is_empty());
+    rounds.assert().await;
+    f.stop().await;
+}
+
+#[tokio::test]
+async fn anthropic_invalid_tool_responses_stop_before_confirmation_with_the_same_codes_as_openai() {
+    let text = || anthropic_text(UPSTREAM_MARKER);
+    let cases: Vec<(&str, Vec<Value>, &str, &str)> = vec![
+        (
+            "unselected tool",
+            vec![
+                text(),
+                tool_use("toolu_1", "unselected", json!({"text": "x"})),
+            ],
+            "tool_use",
+            "unselected_tool",
+        ),
+        (
+            "wrong argument type",
+            vec![
+                text(),
+                tool_use("toolu_1", "dgos_tool_0", json!({"text": 42})),
+            ],
+            "tool_use",
+            "invalid_tool_arguments",
+        ),
+        (
+            "non-object input",
+            vec![
+                text(),
+                tool_use("toolu_1", "dgos_tool_0", json!("not-an-object")),
+            ],
+            "tool_use",
+            "invalid_tool_arguments",
+        ),
+        (
+            "two tool_use blocks",
+            vec![
+                text(),
+                tool_use("toolu_1", "dgos_tool_0", json!({"text": "a"})),
+                tool_use("toolu_2", "dgos_tool_0", json!({"text": "b"})),
+            ],
+            "tool_use",
+            "tool_call_limit",
+        ),
+        (
+            "tool_use block with end_turn",
+            vec![
+                text(),
+                tool_use("toolu_1", "dgos_tool_0", json!({"text": "a"})),
+            ],
+            "end_turn",
+            "provider_",
+        ),
+        (
+            "tool_use block with max_tokens",
+            vec![
+                text(),
+                tool_use("toolu_1", "dgos_tool_0", json!({"text": "a"})),
+            ],
+            "max_tokens",
+            "provider_",
+        ),
+        (
+            "tool_use stop_reason without a block",
+            vec![text()],
+            "tool_use",
+            "provider_",
+        ),
+    ];
+    for (label, content, stop_reason, code) in cases {
+        let mut server = mockito::Server::new_async().await;
+        let rounds = mock_rounds(
+            &mut server,
+            "/v1/messages",
+            anthropic_message(content, stop_reason, 5, 2),
+            None,
+        )
+        .await;
+        let f = setup_provider(&server.url(), "normal", "anthropic").await;
+        let updates = drive(&f, true).await;
+        assert_eq!(updates.len(), 2, "{label}");
+        let done = &updates[1];
+        assert!(done.proposal.is_none(), "{label}");
+        assert_eq!(done.record.task.status, "failed", "{label}");
+        let error = done.record.task.error_code.as_deref().unwrap();
+        if code == "provider_" {
+            assert!(error.starts_with(code), "{label}: {error}");
+        } else {
+            assert_eq!(error, code, "{label}");
+        }
+        assert!(f
+            .mcp
+            .list_usage_logs("alice", None, None)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_private(&f, &updates, &[UPSTREAM_MARKER, "synthetic-secret"]).await;
+        rounds.assert().await;
+        f.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn reasoning_round_trip_anthropic_resends_thinking_blocks_first_and_leaves_no_trace() {
+    for with_text in [true, false] {
+        let mut server = mockito::Server::new_async().await;
+        let thinking = json!({"type": "thinking", "thinking": format!("{THOUGHT} first plan"),
+            "signature": SIGNATURE});
+        let redacted = json!({"type": "redacted_thinking", "data": OPAQUE});
+        let mut content = vec![thinking.clone(), redacted.clone()];
+        if with_text {
+            content.push(anthropic_text("Let me call the tool"));
+        }
+        content.push(tool_use(
+            "toolu_01A",
+            "dgos_tool_0",
+            json!({"text": "synthetic-thinking-flow"}),
+        ));
+        let rounds = mock_rounds(
+            &mut server,
+            "/v1/messages",
+            anthropic_message(content.clone(), "tool_use", 5, 2),
+            Some(anthropic_message(
+                vec![anthropic_text("Thinking final")],
+                "end_turn",
+                8,
+                3,
+            )),
+        )
+        .await;
+        let f = setup_provider(&server.url(), "normal", "anthropic").await;
+        let updates = drive(&f, true).await;
+        let done = updates.last().unwrap();
+        assert_eq!(
+            done.record.task.status, "succeeded",
+            "with_text={with_text}"
+        );
+        assert_eq!(done.content.as_deref(), Some("Thinking final"));
+        let (first, second) = (rounds.body(0), rounds.body(1));
+        // The caller never asked for reasoning, yet the blocks the model sent come back.
+        assert!(first.get("thinking").is_none());
+        assert!(!first.to_string().contains(THOUGHT));
+        let messages = second["messages"].as_array().unwrap();
+        let assistant = &messages[messages.len() - 2];
+        assert_eq!(assistant["content"][0], thinking);
+        assert_eq!(assistant["content"][1], redacted);
+        assert!(second.to_string().contains(SIGNATURE));
+        assert_anthropic_followup(&first, &second, &content, "synthetic-thinking-flow");
+        assert_private(&f, &updates, &[THOUGHT, SIGNATURE, OPAQUE]).await;
+        rounds.assert().await;
+        f.stop().await;
+    }
+}
+
+fn openai_proposal(content: Option<&str>, extra: Option<(&str, Value)>) -> Value {
+    let mut message = json!({"role": "assistant", "content": content, "tool_calls": [{
+        "id": "call_1", "type": "function",
+        "function": {"name": "dgos_tool_0",
+            "arguments": json!({"text": "synthetic-openai-reasoning"}).to_string()}}]});
+    if let Some((name, value)) = extra {
+        message[name] = value;
+    }
+    json!({"choices": [{"message": message, "finish_reason": "tool_calls"}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}})
+}
+
+async fn openai_reasoning_case(content: Option<&str>, extra: Option<(&'static str, Value)>) {
+    let mut server = mockito::Server::new_async().await;
+    let rounds = mock_rounds(
+        &mut server,
+        "/chat/completions",
+        openai_proposal(content, extra.clone()),
+        Some(openai_final("Completed")),
+    )
+    .await;
+    let f = setup(&server.url()).await;
+    let updates = drive(&f, true).await;
+    let done = updates.last().unwrap();
+    assert_eq!(done.record.task.status, "succeeded");
+    assert_eq!(done.content.as_deref(), Some("Completed"));
+    let (first, second) = (rounds.body(0), rounds.body(1));
+    let a = first["messages"].as_array().unwrap();
+    let b = second["messages"].as_array().unwrap();
+    assert_eq!(b.len(), a.len() + 2);
+    assert_eq!(&b[..a.len()], &a[..]);
+    assert_eq!(first["tools"], second["tools"]);
+    assert_eq!(first["parallel_tool_calls"], second["parallel_tool_calls"]);
+    let assistant = &b[a.len()];
+    assert_eq!(assistant["role"], "assistant");
+    assert_eq!(
+        assistant.get("content").cloned().unwrap_or(Value::Null),
+        json!(content)
+    );
+    assert_eq!(assistant["tool_calls"][0]["id"], "call_1");
+    assert_eq!(
+        serde_json::from_str::<Value>(
+            assistant["tool_calls"][0]["function"]["arguments"]
+                .as_str()
+                .unwrap()
+        )
+        .unwrap(),
+        json!({"text": "synthetic-openai-reasoning"})
+    );
+    for name in ["reasoning_content", "reasoning", "reasoning_details"] {
+        match &extra {
+            Some((kept, value)) if *kept == name => {
+                assert_eq!(&assistant[name], value, "{name} must come back unchanged")
+            }
+            _ => assert!(assistant.get(name).is_none(), "{name} must not be added"),
+        }
+    }
+    assert_eq!(b[a.len() + 1]["role"], "tool");
+    assert_eq!(b[a.len() + 1]["tool_call_id"], "call_1");
+    assert_private(&f, &updates, &[THOUGHT, OPAQUE, SIGNATURE]).await;
+    rounds.assert().await;
+    f.stop().await;
+}
+
+#[tokio::test]
+async fn reasoning_round_trip_openai_compatible_reasoning_content_comes_back_under_the_same_name() {
+    openai_reasoning_case(
+        Some("Let me call the tool"),
+        Some(("reasoning_content", json!(format!("{THOUGHT} plan")))),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn reasoning_round_trip_openai_compatible_reasoning_comes_back_under_the_same_name() {
+    openai_reasoning_case(None, Some(("reasoning", json!(format!("{THOUGHT} plan"))))).await;
+}
+
+#[tokio::test]
+async fn reasoning_round_trip_openai_compatible_reasoning_details_come_back_under_the_same_name() {
+    openai_reasoning_case(
+        Some("Let me call the tool"),
+        Some((
+            "reasoning_details",
+            json!([{"type": "reasoning.text", "text": format!("{THOUGHT} detail")},
+                {"type": "reasoning.encrypted", "data": OPAQUE}]),
+        )),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn reasoning_round_trip_openai_compatible_adds_no_reasoning_field_when_upstream_sent_none() {
+    openai_reasoning_case(Some("Let me call the tool"), None).await;
+}
+
+#[tokio::test]
+async fn reasoning_round_trip_counts_toward_the_context_budget() {
+    for provider in ["anthropic", "openai_compatible"] {
+        for large in [true, false] {
+            let filler = "x".repeat(if large { 30 * 1024 } else { 16 });
+            let mut server = mockito::Server::new_async().await;
+            let (path, first, second) = if provider == "anthropic" {
+                (
+                    "/v1/messages",
+                    anthropic_message(
+                        vec![
+                            json!({"type": "thinking", "thinking": THOUGHT,
+                                "signature": format!("{SIGNATURE}{filler}")}),
+                            tool_use(
+                                "toolu_01A",
+                                "dgos_tool_0",
+                                json!({"text": "synthetic-budget"}),
+                            ),
+                        ],
+                        "tool_use",
+                        5,
+                        2,
+                    ),
+                    anthropic_message(vec![anthropic_text("Budget final")], "end_turn", 8, 3),
+                )
+            } else {
+                (
+                    "/chat/completions",
+                    openai_proposal(
+                        None,
+                        Some(("reasoning_content", json!(format!("{THOUGHT}{filler}")))),
+                    ),
+                    openai_final("Budget final"),
+                )
+            };
+            let rounds = mock_rounds(&mut server, path, first, (!large).then_some(second)).await;
+            let f = setup_provider(&server.url(), "normal", provider).await;
+            let updates = drive(&f, true).await;
+            let done = updates.last().unwrap();
+            let label = format!("{provider} large={large}");
+            let logs = f.mcp.list_usage_logs("alice", None, None).await.unwrap();
+            assert_eq!(logs.len(), 1, "{label}");
+            assert_eq!(logs[0].outcome, "success", "{label}");
+            if large {
+                assert_eq!(done.record.task.status, "failed", "{label}");
+                assert_eq!(
+                    done.record.task.error_code.as_deref(),
+                    Some("context_budget_exceeded"),
+                    "{label}"
+                );
+                assert!(done.content.is_none(), "{label}");
+            } else {
+                assert_eq!(done.record.task.status, "succeeded", "{label}");
+                assert_eq!(done.content.as_deref(), Some("Budget final"), "{label}");
+            }
+            assert_private(&f, &updates, &[THOUGHT, SIGNATURE]).await;
+            rounds.assert().await;
+            f.stop().await;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// AC24: reasoning text never reaches the log.
+//
+// One process-wide subscriber at TRACE writes into a shared buffer. A global default is used on
+// purpose: `set_default` is per thread, and the flow also logs from sqlx worker threads, the
+// mockito server thread and spawned tasks, which a thread-local subscriber would miss. The
+// subscriber is installed once (`OnceLock`) and never removed; each test uses markers that no
+// other test logs, so parallel tests sharing the buffer cannot disturb each other's assertions.
+// ---------------------------------------------------------------------------------------------
+
+use std::sync::OnceLock;
+use tracing_subscriber::fmt::MakeWriter;
+
+#[derive(Clone, Default)]
+struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogBuffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> MakeWriter<'a> for LogBuffer {
+    type Writer = LogBuffer;
+    fn make_writer(&'a self) -> LogBuffer {
+        self.clone()
+    }
+}
+
+impl LogBuffer {
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+}
+
+fn captured_log() -> LogBuffer {
+    static LOG: OnceLock<LogBuffer> = OnceLock::new();
+    LOG.get_or_init(|| {
+        let buffer = LogBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .with_writer(buffer.clone())
+            .finish();
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("no other subscriber may be installed in this test binary");
+        buffer
+    })
+    .clone()
+}
+
+#[tokio::test]
+async fn reasoning_round_trip_log_capture_sees_events_from_this_and_other_threads() {
+    // Positive control for the two tests below: the same subscriber must see a marker logged
+    // from the test task, from a spawned task and from a plain OS thread.
+    let log = captured_log();
+    tracing::info!(marker = "LOG-CONTROL-task-5d1e", "control event");
+    tokio::spawn(async { tracing::debug!(marker = "LOG-CONTROL-spawned-5d1e", "control event") })
+        .await
+        .unwrap();
+    std::thread::spawn(|| tracing::trace!(marker = "LOG-CONTROL-thread-5d1e", "control event"))
+        .join()
+        .unwrap();
+    let text = log.text();
+    for marker in [
+        "LOG-CONTROL-task-5d1e",
+        "LOG-CONTROL-spawned-5d1e",
+        "LOG-CONTROL-thread-5d1e",
+    ] {
+        assert!(text.contains(marker), "{marker} missing from the capture");
+    }
+}
+
+#[tokio::test]
+async fn reasoning_round_trip_anthropic_thinking_never_reaches_the_log() {
+    const LOG_THOUGHT: &str = "LOG-THOUGHT-anthropic-2b9c";
+    const LOG_SIGNATURE: &str = "LOG-SIGNATURE-anthropic-2b9c";
+    const LOG_OPAQUE: &str = "LOG-OPAQUE-anthropic-2b9c";
+    let log = captured_log();
+    let mut server = mockito::Server::new_async().await;
+    let content = vec![
+        json!({"type": "thinking", "thinking": format!("{LOG_THOUGHT} plan"),
+            "signature": LOG_SIGNATURE}),
+        json!({"type": "redacted_thinking", "data": LOG_OPAQUE}),
+        anthropic_text("Let me call the tool"),
+        tool_use(
+            "toolu_01A",
+            "dgos_tool_0",
+            json!({"text": "synthetic-log-flow"}),
+        ),
+    ];
+    let rounds = mock_rounds(
+        &mut server,
+        "/v1/messages",
+        anthropic_message(content, "tool_use", 5, 2),
+        Some(anthropic_message(
+            vec![anthropic_text("Log final")],
+            "end_turn",
+            8,
+            3,
+        )),
+    )
+    .await;
+    let f = setup_provider(&server.url(), "normal", "anthropic").await;
+    let updates = drive(&f, true).await;
+    assert_eq!(updates.last().unwrap().record.task.status, "succeeded");
+    // The reasoning really travelled through the code under test: it went back upstream.
+    let second = rounds.body(1).to_string();
+    assert!(second.contains(LOG_THOUGHT) && second.contains(LOG_SIGNATURE));
+    assert!(second.contains(LOG_OPAQUE));
+    rounds.assert().await;
+    f.stop().await;
+    let text = log.text();
+    for marker in [LOG_THOUGHT, LOG_SIGNATURE, LOG_OPAQUE] {
+        assert!(!text.contains(marker), "{marker} reached the log");
+    }
+}
+
+#[tokio::test]
+async fn reasoning_round_trip_openai_compatible_reasoning_content_never_reaches_the_log() {
+    const LOG_THOUGHT: &str = "LOG-THOUGHT-openai-8e44";
+    let log = captured_log();
+    let mut server = mockito::Server::new_async().await;
+    let rounds = mock_rounds(
+        &mut server,
+        "/chat/completions",
+        openai_proposal(
+            Some("Let me call the tool"),
+            Some(("reasoning_content", json!(format!("{LOG_THOUGHT} plan")))),
+        ),
+        Some(openai_final("Completed")),
+    )
+    .await;
+    let f = setup(&server.url()).await;
+    let updates = drive(&f, true).await;
+    assert_eq!(updates.last().unwrap().record.task.status, "succeeded");
+    let second = rounds.body(1);
+    let messages = second["messages"].as_array().unwrap();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message["reasoning_content"] == json!(format!("{LOG_THOUGHT} plan"))),
+        "the reasoning must have come back upstream"
+    );
+    rounds.assert().await;
+    f.stop().await;
+    let text = log.text();
+    assert!(!text.contains(LOG_THOUGHT), "{LOG_THOUGHT} reached the log");
 }

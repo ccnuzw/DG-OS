@@ -259,7 +259,7 @@ FUNCTION normalize_openai(body):
 FUNCTION apply_response_format(protocol, profile, request):
   SWITCH (protocol, profile.structured_output):                    // B01-52
     (openai_compatible, json_schema) → response_format = {type: json_schema, json_schema: {...}}   // 通用画像默认
-    (openai_compatible, json_object) → response_format = {type: json_object}
+    (openai_compatible, json_object) → response_format = {type: json_object}   // V1 未实现，待首个只支持 json_object 的厂商加入时再做
                                        + 宿主追加一条包含 schema 和 "JSON" 字样的 system 指令
                                        （OpenAI 与 DeepSeek 都要求消息中提到 JSON 才会输出 JSON）
     (anthropic, native)              → output_config.format = {type: json_schema, schema}
@@ -498,7 +498,7 @@ FUNCTION workbench_tool_round(context, response):                  // dgos-workb
 | 工具结果 | `role: tool` | user 消息开头的 `tool_result` 块，紧跟 `tool_use` 所在轮 |
 | 推理请求 | 画像的推理参数模板 | 官方画像：`thinking: {type: adaptive, display: summarized}` 加 `output_config.effort`；通用画像：`thinking: {type: enabled, budget_tokens}` |
 | 推理返回 | 白名单字段 `reasoning_content`、`reasoning`、`reasoning_details`，命中哪个记录哪个 | thinking 与 redacted_thinking 块；5.x 模型默认 `display: omitted`，文本为空，块仍须回传 |
-| 结构化输出 | `response_format`：`json_schema`（通用画像默认）或 `json_object` | 官方画像 `output_config.format: {type: json_schema, schema}`；通用画像用 system 指令加宿主校验 |
+| 结构化输出 | `response_format`：`json_schema`（通用画像默认；`json_object` 模式 V1 未实现，见“已知差异”第 3 项） | 官方画像 `output_config.format: {type: json_schema, schema}`；通用画像用 system 指令加宿主校验 |
 | 结束原因 | 原值（`function_call` 映射为 `tool_calls`） | 见 B01-50 |
 | 用量 | `prompt_tokens`、`completion_tokens`、`total_tokens` | 输入为三项输入字段之和；不返回总数，宿主计算 |
 | 流式 | `data:` 行加 `[DONE]`；`include_usage` 时 `[DONE]` 前有一块 `choices: []` 的用量；流被截断时可能没有 | 带类型的事件；`message_delta.usage` 累计；必须忽略未知事件 |
@@ -530,7 +530,7 @@ FUNCTION workbench_tool_round(context, response):                  // dgos-workb
 | 画像 | 生效条件 | 适配器 | 鉴权与版本头 | 与通用画像的差异 |
 | --- | --- | --- | --- | --- |
 | OpenAI 官方 | OpenAI 厂商且主机为 `api.openai.com` | `openai_compatible` | Bearer | `max_completion_tokens`；推理档位非 `none` 时本地拒绝 `temperature`、`top_p`（官方文档规则）；结构化输出 `json_schema`；部分模型在 Chat Completions 中不支持工具，不据此拦截 |
-| Anthropic 官方 | Anthropic 厂商且主机为 `api.anthropic.com` | `anthropic` | 仅 Bearer；`anthropic-version: 2026-10-21`；可选 `anthropic-workspace-id` | 本地拒绝 `temperature`、`top_p`、`top_k`；推理 `thinking: adaptive` 加 `output_config.effort`；结构化输出 `output_config.format`；模型列表返回 `capabilities`、`max_input_tokens`、`max_tokens` |
+| Anthropic 官方 | Anthropic 厂商且主机为 `api.anthropic.com` | `anthropic` | 仅 Bearer；`anthropic-version: 2026-10-21`；可选 `anthropic-workspace-id` | 本地拒绝 `temperature`（`ChatRequest` 目前没有 `top_p`、`top_k`，见“已知差异”第 1 项）；推理 `thinking: adaptive` 加 `output_config.effort`；结构化输出 `output_config.format`；模型列表返回 `capabilities`、`max_input_tokens`、`max_tokens` |
 | 通用 `openai_compatible` | 其他所有主机 | `openai_compatible` | Bearer | `max_tokens`；流式带 `stream_options.include_usage`，带工具时发 `tool_choice`、`parallel_tool_calls`，被点名拒绝时降级一次；推理 `reasoning_effort` 原样；结构化输出 `json_schema` |
 | 通用 `anthropic` | 其他所有主机 | `anthropic` | Bearer 加 `x-api-key`；`anthropic-version: 2023-06-01` | 推理 `thinking: enabled` 加 `budget_tokens`；结构化输出用 system 指令加宿主校验；模型列表可能没有（404 转探测） |
 
@@ -608,6 +608,28 @@ OpenAI 是否以 `context_length_exceeded` 表示上下文超长，在可访问�
 | `openrouter/auto`、`meta-llama/llama-3-70b` | `text-generation` | default | 路径前缀被去掉后再匹配 |
 | `scotts-chat`（构造用例） | `text-generation` | default | `tts` 出现在词中间（`scotts`），不在左边界，不能误判为语音合成 |
 
+## 实现与规格的已知差异
+
+2026-10-30 按代码核对。这里记录事实，不改写冻结决策原文（D062、D063 评审结果待定）。第 1～4 项已在 2026-10-30 按下方“处理结果”处理，仍需评审时确认；第 5～7 项是事实记录。
+
+| # | 规格或设计的说法 | 代码的实际行为 | 影响与待决事项 |
+| --- | --- | --- | --- |
+| 1 | “官方 Anthropic 画像本地拒绝 `temperature`、`top_p`、`top_k`”（§2.4.6 第 7 项、AC26、上文画像表） | `ChatRequest` 只有 `messages`、`temperature`、`max_tokens`、`stream`、`reasoning`、`response_format`，没有 `top_p`、`top_k`。官方画像只拒绝 `temperature`。调用方发来的 `top_p`、`top_k` 在反序列化时被丢弃（结构体没有 `deny_unknown_fields`），既不发往上游，也不报错 | 规格里“拒绝 `top_p`/`top_k`”的那一半目前没有可测的路径。选项：(a) 规格改为“只有 `ChatRequest` 里存在的采样参数才受此约束”；(b) 给 `ChatRequest` 增加这两个可选字段，随之要在两个适配器、官方画像拒绝逻辑和测试里实现，并且模块 `providers.call` 的请求字段随之变化。丢弃而不报错这一点也需要确认 |
+| 2 | Anthropic 的 `max_tokens` 取“请求值，其次模型的 `max_output_tokens`，再次画像默认值”，没有给默认值的数字 | 画像默认值是 4096（`vendor.rs` 的 `ANTHROPIC_DEFAULT_MAX_TOKENS`），是实现选择，规格和官方文档都没有给数 | 4096 可能截断较长的回答，调用方可显式给 `max_tokens`。需要评审确认或改值；没有用真实 Anthropic 官方服务校准过（2026-10-30：不传 `max_tokens` 的请求在一个第三方网关上被接受，回复很短，没有测截断；见 §2.4.6。同日补充：这个网关的模型行没有 `max_output_tokens`，调用方不传 `max_tokens` 时实际用的就是 4096） |
+| 3 | 画像字段“结构化输出方式”和上文映射表列出 `json_schema` 或 `json_object` 两种 | 只实现了 `json_schema`。`response_format.type` 不是 `json_schema` 时 `check_format` 返回 `request_not_supported`，上游 0 次请求。`json_object` 模式没有实现，伪代码里 `(openai_compatible, json_object)` 分支没有对应代码 | 只支持 JSON Schema 的服务可用；只支持 `json_object` 的服务（候选表里的 DeepSeek、智谱、硅基流动）暂时不能用结构化输出。需要决定：规格去掉 `json_object`，或补实现 |
+| 4 | 规格没有规定工具调用响应的结束原因与内容矛盾时的错误码（AC22 备注） | 两个适配器的 `parse_tool_response` 在结束原因不是 `stop`/`tool_calls`，或 `stop` 带工具调用，或 `tool_calls` 不带工具调用时，返回 `InternalError`（1000000）；`openai_compatible` 另在 `choices` 不止一项、角色不是 `assistant`、带 `tool_call_id` 时同样返回 1000000。任务错误码因此是 `provider_1000000` | 这是上游响应异常，不是宿主内部错误，1000000 不准确。候选：归为 `provider_response_invalid`（1001025）。改码会影响工作台任务错误码和 `tool_flow` 测试里只断言前缀 `provider_` 的用例 |
+| 5 | “失败的调用记 0 token” 的一般口径 | `structured_output_invalid` 失败时，上游已回答并可能计费，使用记录写上游真实返回的输入、输出 token（`ProviderAdapter::call_with_usage`，`CallFailure.usage`）。其他失败仍记 0。上游没有返回用量时仍记 0 | 这是用户在本轮指定的取舍。`call_tools` 路径不校验结构化输出，不受影响；流式不支持 `response_format` |
+| 6 | AC31 “连接超时 10 秒” | 默认值由 `AdapterOptions.connect_timeout` 提供；测试用 300 ms 的注入值，对接受 TCP 连接但不回应 TLS 握手的本机监听器验证。验证的是“连接阶段（含 TLS 握手）超时”，不是“TCP 三次握手无响应”：后者需要会丢弃 SYN 的网络环境，macOS 本机构造不出 | AC31 的连接超时证据是握手阶段，不覆盖 SYN 黑洞场景 |
+| 7 | AC09 “间隔 1s/2s/4s” | 策略层用 tokio 虚拟时间验证，3 次重试的等待恰好是 1 s、2 s、4 s，共 4 次尝试，最终 1001008。适配器层只能用真实时间的缩小版（基准 100 ms）验证次数和“不短于 100/200/400 ms”：下限能拒绝固定 100 ms 的等待，但上界 +500 ms 的容差宽于相邻档位的间隔，固定约 400 ms 的等待也能通过，所以它不能证明倍增 | 精确的 1/2/4 秒只在策略层有证据；适配器层只证明接线（4 次请求、等待不短于各档下限） |
+
+**处理结果（2026-10-30，助手按用户授权选定，评审结果待定）**
+
+1. `top_p`/`top_k`：改规格，不改代码。规格、画像表和 D063 都写明“只有 `ChatRequest` 里存在的采样参数受官方画像拒绝约束”，目前就是 `temperature`。`top_p`、`top_k` 仍被反序列化丢弃、不报错。要支持它们需要先决定是否给 `ChatRequest` 加字段，那会改变模块 `providers.call` 的请求字段，另行决策。
+2. `max_tokens` 默认 4096：保留，标注为推断值。调用方（工作台、应用层）都显式传了 `max_tokens`，默认值只影响没传的调用方；等真实调用再校准。
+3. `json_object`：改规格，标注 V1 未实现。需要它的厂商（候选表里的 DeepSeek、智谱、硅基流动）加入时再做。
+4. 结束原因与内容矛盾：保持 1000000，不改成 1001025。1001025 的含义是“响应不是预期的 JSON、超限或收到 3xx”，这里是合法 JSON 但内容自相矛盾，语义不同；改码还会影响工作台任务错误码和 `tool_flow` 里只断言前缀 `provider_` 的用例。代价是这类上游异常在任务里显示为 `provider_1000000`，和宿主内部错误分不开；以后需要区分时另行登记新码。
+
+
 ## 变更记录
 
 | 日期 | 变更 | 关联决策 |
@@ -615,3 +637,4 @@ OpenAI 是否以 `context_length_exceeded` 表示上下文超长，在可访问�
 | 2026-10-29 | 初始版本：多协议扩展草案，分支 B01-36～B01-67 | D062、D063、ADR-0003 |
 | 2026-10-29 | 厂商表恢复并改为端点列表加“自定义”厂商：`infer_vendor`、`resolve_profile(vendor, provider_type, base_url)`、校验“该厂商有对应端点”；候选厂商建议 DeepSeek 先行（待真实验证）；B01-36、B01-44 的含义随之调整，编号不变 | D062、D063、ADR-0003 |
 | 2026-10-29 | 范围收窄后重写：厂商预设改为兼容画像，去掉能力拦截与统一模型选择器，新增模型自动分类、宽容读取、不跟随重定向、参数降级和保存时重算（B01-68～B01-71，B01-44、B01-45、B01-67 重新定义），补充既有 OpenAI 兼容实现缺口；AC15～AC37 | D062、D063、ADR-0003 |
+| 2026-10-30 | 记录实现与设计的差异（见“实现与规格的已知差异”）：`top_p`/`top_k` 不在 `ChatRequest`、`max_tokens` 兜底 4096、`json_object` 未实现、工具调用结束原因与内容矛盾返回 1000000、`structured_output_invalid` 的使用记录写上游真实 token。只记录事实，不改冻结决策 | D062、D063 |

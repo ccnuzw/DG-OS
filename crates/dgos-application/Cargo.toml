@@ -9,6 +9,7 @@ dgos-modules = { path = "../dgos-modules" }
 dgos-providers = { path = "../dgos-providers" }
 dgos-types = { path = "../dgos-types" }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 tracing = { workspace = true }

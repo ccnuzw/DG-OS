@@ -1,8 +1,13 @@
 use crate::host::{self, Capability};
+use crate::provider_streams::{self, ProviderStreams};
 use dgos_providers::ProviderManager;
 use dgos_types::BuiltinCaller;
-use dgos_types::{ChatRequest, ChatResponse, DgosError, Model, Provider, ProviderConfig, UsageLog};
+use dgos_types::{
+    ChatRequest, ChatResponse, DgosError, Model, Provider, ProviderConfig, ProviderStreamEvent,
+    ProviderVendor, UsageLog,
+};
 use serde::Serialize;
+use tauri::ipc::Channel;
 use tauri::{Manager, WebviewWindow};
 
 /// Response wrapper for Tauri commands
@@ -63,6 +68,7 @@ pub async fn create_provider(
     app: tauri::AppHandle,
     window: WebviewWindow,
     config: ProviderConfig,
+    probe_model: Option<String>,
 ) -> CommandResponse<Provider> {
     let context = match host::context(
         &window,
@@ -74,7 +80,7 @@ pub async fn create_provider(
     };
     let manager = app.state::<ProviderManager>();
     let result = manager
-        .create_provider(config, context.user_id().into())
+        .create_provider(config, context.user_id().into(), probe_model.as_deref())
         .await;
     CommandResponse::from(result)
 }
@@ -86,6 +92,7 @@ pub async fn create_provider_with_models(
     window: WebviewWindow,
     config: ProviderConfig,
     models: Vec<Model>,
+    probe_model: Option<String>,
 ) -> CommandResponse<Provider> {
     let context = match host::context(
         &window,
@@ -97,7 +104,12 @@ pub async fn create_provider_with_models(
     };
     let manager = app.state::<ProviderManager>();
     let result = manager
-        .create_provider_with_models(config, context.user_id().into(), models)
+        .create_provider_with_models(
+            config,
+            context.user_id().into(),
+            models,
+            probe_model.as_deref(),
+        )
         .await;
     CommandResponse::from(result)
 }
@@ -174,6 +186,7 @@ pub async fn test_provider_connection(
     app: tauri::AppHandle,
     window: WebviewWindow,
     config: ProviderConfig,
+    probe_model: Option<String>,
 ) -> CommandResponse<bool> {
     let _context = match host::context(
         &window,
@@ -184,7 +197,9 @@ pub async fn test_provider_connection(
         Err(error) => return CommandResponse::from(Err(error)),
     };
     let manager = app.state::<ProviderManager>();
-    let result = manager.test_connection(&config).await;
+    let result = manager
+        .test_connection(&config, probe_model.as_deref())
+        .await;
     CommandResponse::from(result)
 }
 
@@ -214,6 +229,7 @@ pub async fn test_provider_by_id(
     app: tauri::AppHandle,
     window: WebviewWindow,
     provider_id: String,
+    probe_model: Option<String>,
 ) -> CommandResponse<bool> {
     let context = match host::context(
         &window,
@@ -226,7 +242,7 @@ pub async fn test_provider_by_id(
     let manager = app.state::<ProviderManager>();
 
     let result = manager
-        .test_provider_by_id(&provider_id, context.user_id())
+        .test_provider_by_id(&provider_id, context.user_id(), probe_model.as_deref())
         .await;
     CommandResponse::from(result)
 }
@@ -348,4 +364,132 @@ pub async fn list_usage_logs(
     let manager = app.state::<ProviderManager>();
     let result = manager.list_usage_logs(context.user_id(), limit).await;
     CommandResponse::from(result)
+}
+
+/// List the built-in vendors (the only vendor table; the renderer ships none)
+#[tauri::command]
+pub async fn list_provider_vendors(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+) -> CommandResponse<Vec<ProviderVendor>> {
+    let _context = match host::context(&window, BuiltinCaller::Settings, Capability::ProvidersRead)
+    {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    let _ = &app;
+    CommandResponse::from(Ok(dgos_providers::list_vendors()))
+}
+
+/// Add a manual model (idempotent)
+#[tauri::command]
+pub async fn add_manual_model(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    provider_id: String,
+    model_id: String,
+    kind: Option<String>,
+) -> CommandResponse<Model> {
+    let context = match host::context(
+        &window,
+        BuiltinCaller::Settings,
+        Capability::ProvidersManage,
+    ) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    let manager = app.state::<ProviderManager>();
+    let result = manager
+        .add_manual_model(&provider_id, context.user_id(), &model_id, kind.as_deref())
+        .await;
+    CommandResponse::from(result)
+}
+
+/// Remove a manual model (a missing or remote one is a successful no-op)
+#[tauri::command]
+pub async fn remove_manual_model(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    provider_id: String,
+    model_id: String,
+) -> CommandResponse<()> {
+    let context = match host::context(
+        &window,
+        BuiltinCaller::Settings,
+        Capability::ProvidersManage,
+    ) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    let manager = app.state::<ProviderManager>();
+    let result = manager
+        .remove_manual_model(&provider_id, context.user_id(), &model_id)
+        .await;
+    CommandResponse::from(result)
+}
+
+#[derive(Serialize)]
+pub struct StreamStarted {
+    pub stream_id: String,
+}
+
+/// Call a provider with streaming. Events go only to `on_event`, the Channel the caller passed;
+/// no global event is emitted, so other pages in the same realm cannot listen (D042).
+#[tauri::command]
+pub async fn call_provider_stream(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    provider_id: String,
+    model_id: String,
+    request: ChatRequest,
+    on_event: Channel<ProviderStreamEvent>,
+) -> CommandResponse<StreamStarted> {
+    let context = match host::context(&window, BuiltinCaller::Settings, Capability::ProvidersCall) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    let streams = app.state::<ProviderStreams>();
+    let (stream_id, token) = streams.register(window.label());
+    let manager = app.state::<ProviderManager>();
+    let service = app.state::<crate::capabilities::ProviderCallService>();
+    let stream = match service
+        .execute_stream(
+            &context,
+            manager.inner(),
+            &provider_id,
+            &model_id,
+            request,
+            token,
+        )
+        .await
+    {
+        Ok(stream) => stream,
+        Err(error) => {
+            streams.finish(&stream_id);
+            return CommandResponse::from(Err(error));
+        }
+    };
+    let handle = app.clone();
+    let finished_id = stream_id.clone();
+    tauri::async_runtime::spawn(async move {
+        provider_streams::pump(stream, |event| on_event.send(event).is_ok()).await;
+        handle.state::<ProviderStreams>().finish(&finished_id);
+    });
+    CommandResponse::from(Ok(StreamStarted { stream_id }))
+}
+
+/// Cancel a stream this window started. Unknown, finished or foreign ids answer `false`.
+#[tauri::command]
+pub async fn cancel_provider_stream(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    stream_id: String,
+) -> CommandResponse<bool> {
+    if let Err(error) = host::context(&window, BuiltinCaller::Settings, Capability::ProvidersCall) {
+        return CommandResponse::from(Err(error));
+    }
+    let streams = app.state::<ProviderStreams>();
+    CommandResponse::from(Ok::<bool, DgosError>(
+        streams.cancel(window.label(), &stream_id),
+    ))
 }

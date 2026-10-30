@@ -25,6 +25,20 @@ pub struct Model {
     pub is_available: bool,
 
     pub synced_at: DateTimeUtc,
+
+    /// `remote` or `manual` (V1-FR-001 §4.3).
+    #[sea_orm(column_type = "Text")]
+    pub source: String,
+
+    /// NULL on rows written before the kind migration; the reader derives it.
+    #[sea_orm(column_type = "Text", nullable)]
+    pub kind: Option<String>,
+
+    #[sea_orm(column_type = "Text", nullable)]
+    pub kind_source: Option<String>,
+
+    #[sea_orm(nullable)]
+    pub max_output_tokens: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -6,6 +6,7 @@ mod commands;
 mod host;
 mod module_host;
 mod provider_credentials;
+mod provider_streams;
 #[cfg(feature = "webview-smoke")]
 pub mod smoke;
 
@@ -232,6 +233,7 @@ pub fn run() {
                 ));
                 app_handle.manage(module_crashes);
                 app_handle.manage(module_host::StartupLoad);
+                app_handle.manage(provider_streams::ProviderStreams::default());
                 app_handle.manage(capabilities::ProviderCallService::new(
                     host_capabilities.clone(),
                 ));
@@ -278,6 +280,11 @@ pub fn run() {
             commands::update_provider_order,
             commands::list_usage_logs,
             commands::migrate_provider_credential,
+            commands::list_provider_vendors,
+            commands::add_manual_model,
+            commands::remove_manual_model,
+            commands::call_provider_stream,
+            commands::cancel_provider_stream,
             // Skills commands
             commands::fetch_skills_registry,
             commands::search_skills,
