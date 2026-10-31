@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { checkReactVersions } from './react-version.mjs';
 
 // Static contract checks supplement compilation; they do not prove WebView isolation.
-const files = ['provider_commands', 'skills', 'mcp', 'workbench', 'modules', 'module_host', 'appearance'];
+const files = ['provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'modules', 'module_host', 'appearance'];
 // D046: the module host bridge serves the page's own lifecycle. Its only
 // parameters are the Tauri context, the instruction channel, and the
 // host-issued attachment id, ticket and receipt. No identity, module,
@@ -51,6 +51,22 @@ const providerExactParams = new Map([
   ['test_provider_by_id', ['app', 'window', 'provider_id', 'probe_model']],
   ['create_provider', ['app', 'window', 'config', 'probe_model']],
   ['create_provider_with_models', ['app', 'window', 'config', 'models', 'probe_model']],
+]);
+// FR-006 / interface contract §10.1: exact parameter lists of the chat commands. Each takes one typed
+// `input` (deny_unknown_fields) and reads managed state from the AppHandle; identity comes from
+// `host::context`, never from a parameter. Streaming commands take the caller's Channel (`on_event`).
+const chatExactParams = new Map([
+  ['create_chat_session', ['app', 'window', 'input']],
+  ['list_chat_sessions', ['app', 'window', 'input']],
+  ['rename_chat_session', ['app', 'window', 'input']],
+  ['update_chat_session_target', ['app', 'window', 'input']],
+  ['delete_chat_session', ['app', 'window', 'input']],
+  ['search_chat_sessions', ['app', 'window', 'input']],
+  ['list_chat_messages', ['app', 'window', 'input']],
+  ['send_chat_message', ['app', 'window', 'input', 'on_event']],
+  ['regenerate_chat_message', ['app', 'window', 'input', 'on_event']],
+  ['advance_chat_tool_turn', ['app', 'window', 'input']],
+  ['cancel_chat_generation', ['app', 'window', 'task_id']],
 ]);
 let commands = 0;
 for (const file of files) {
@@ -115,6 +131,21 @@ for (const file of files) {
       }
       if (name === 'cancel_provider_stream') {
         assert.match(body, /\.cancel\(window\.label\(\),/, `${name}: may cancel only streams of the calling window`);
+      }
+      if (file === 'chat') {
+        const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
+        const exact = chatExactParams.get(name);
+        assert.ok(exact, `${name}: chat commands must be registered in chatExactParams`);
+        assert.deepEqual([...names].sort(), [...exact].sort(), `${name}: parameter list must be exactly ${exact.join(', ')}`);
+        assert.match(body, /host::context\(\s*&window,\s*BuiltinCaller::Workbench,\s*Capability::TasksRun/, `${name}: chat commands use the Workbench caller and TasksRun`);
+        assert.doesNotMatch(body, /\.emit(?:_to|_filter)?\(|emit_all/, `${name}: chat must not use global events`);
+        if (exact.includes('on_event')) {
+          assert.match(args, /on_event:\s*Channel<ChatEvent>/, `${name}: events must go to the caller's Channel`);
+          assert.match(body, /window\.label\(\)/, `${name}: the generation must be owned by the calling window`);
+        }
+        if (exact.includes('input')) {
+          assert.match(args, /input:\s*\w+Input/, `${name}: input must be a typed deny_unknown_fields struct`);
+        }
       }
     }
     commands += 1;

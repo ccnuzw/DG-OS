@@ -4,6 +4,8 @@
 mod capabilities;
 mod commands;
 mod host;
+mod instance_lock;
+mod logging;
 mod module_host;
 mod provider_credentials;
 mod provider_streams;
@@ -21,7 +23,7 @@ use tokio::sync::RwLock;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize logging
-    tracing_subscriber::fmt::init();
+    logging::init();
 
     module_host::install(tauri::Builder::default())
         .plugin(tauri_plugin_opener::init())
@@ -37,6 +39,22 @@ pub fn run() {
 
                 // Create directory if it doesn't exist
                 std::fs::create_dir_all(&app_dir).expect("Failed to create app data directory");
+
+                // One process per data directory (D077): recovery below assumes nobody else is
+                // generating. Exit before touching the database if another instance holds it.
+                match instance_lock::InstanceLock::acquire(&app_dir) {
+                    Ok(lock) => {
+                        app_handle.manage(lock);
+                    }
+                    Err(instance_lock::LockError::AlreadyRunning) => {
+                        tracing::error!("Another DG-OS instance is already running for this data directory");
+                        std::process::exit(1);
+                    }
+                    Err(instance_lock::LockError::Io(error)) => {
+                        tracing::error!("Unable to take the instance lock: {error}");
+                        std::process::exit(1);
+                    }
+                }
 
                 // Database path
                 let db_path = app_dir.join("dgos.db");
@@ -107,6 +125,13 @@ pub fn run() {
                     .recover_interrupted()
                     .await
                     .expect("Failed to recover workbench task audit");
+
+                // Chat generations left `generating` by a previous run end as interrupted; nothing
+                // is resent (D074). Safe because the instance lock above is held.
+                let chat = dgos_workbench::ChatManager::new(db.clone());
+                chat.recover_interrupted()
+                    .await
+                    .expect("Failed to recover chat generations");
 
                 // Keep module authorization behind a host-owned service. No
                 // renderer command receives a module identity.
@@ -253,6 +278,7 @@ pub fn run() {
                 app_handle.manage(dgos_db::AppearanceRepository::new(db.clone()));
                 app_handle.manage(mcp_state);
                 app_handle.manage(workbench);
+                app_handle.manage(chat);
             });
 
             // Open dev tools in debug mode
@@ -306,6 +332,17 @@ pub fn run() {
             commands::advance_workbench_tool_task,
             commands::cancel_workbench_tool_task,
             commands::cancel_workbench_task,
+            commands::create_chat_session,
+            commands::list_chat_sessions,
+            commands::rename_chat_session,
+            commands::update_chat_session_target,
+            commands::delete_chat_session,
+            commands::search_chat_sessions,
+            commands::list_chat_messages,
+            commands::send_chat_message,
+            commands::regenerate_chat_message,
+            commands::cancel_chat_generation,
+            commands::advance_chat_tool_turn,
             // MCP commands
             commands::list_mcp_servers,
             commands::get_mcp_server_config,
@@ -354,14 +391,15 @@ pub fn run() {
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 let mcp = app.state::<commands::McpState>().manager.clone();
                 let workbench = app.state::<dgos_workbench::WorkbenchManager>().inner().clone();
+                let chat = app.state::<dgos_workbench::ChatManager>().inner().clone();
                 let result = tauri::async_runtime::block_on(async move {
                     tokio::time::timeout(
                         std::time::Duration::from_secs(5),
-                        async move { tokio::join!(workbench.shutdown(), mcp.shutdown()) },
+                        async move { tokio::join!(workbench.shutdown(), mcp.shutdown(), chat.shutdown()) },
                     ).await
                 });
                 match result {
-                    Ok((Ok(()), Ok(()))) => {}
+                    Ok((Ok(()), Ok(()), true)) => {}
                     _ => tracing::warn!("Desktop shutdown incomplete; startup recovery will finalize interrupted audits"),
                 }
             }

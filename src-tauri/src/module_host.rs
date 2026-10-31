@@ -363,6 +363,10 @@ pub fn handle_page_load<R: tauri::Runtime>(
         if let Some(streams) = webview.try_state::<crate::provider_streams::ProviderStreams>() {
             streams.cancel_owner(webview.label());
         }
+        // Same for chat: the received part is saved as interrupted (D074).
+        if let Some(chat) = webview.try_state::<dgos_workbench::ChatManager>() {
+            chat.cancel_window(webview.label());
+        }
     }
 }
 
@@ -376,6 +380,9 @@ pub fn handle_window_event<R: tauri::Runtime>(
         }
         if let Some(streams) = window.try_state::<crate::provider_streams::ProviderStreams>() {
             streams.cancel_owner(window.label());
+        }
+        if let Some(chat) = window.try_state::<dgos_workbench::ChatManager>() {
+            chat.cancel_window(window.label());
         }
     }
 }

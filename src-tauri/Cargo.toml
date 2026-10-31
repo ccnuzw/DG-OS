@@ -45,7 +45,7 @@ serde_json = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 # Utilities
 anyhow = { workspace = true }
@@ -118,5 +118,14 @@ required-features = ["webview-smoke"]
 [[test]]
 name = "webview_smoke_provider_stream"
 path = "tests/webview_smoke_provider_stream.rs"
+harness = false
+required-features = ["webview-smoke"]
+
+[dev-dependencies]
+tempfile = "3.8"
+
+[[test]]
+name = "webview_smoke_chat"
+path = "tests/webview_smoke_chat.rs"
 harness = false
 required-features = ["webview-smoke"]

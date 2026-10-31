@@ -22,6 +22,9 @@ pub struct CommandResponse<T> {
 pub struct CommandError {
     pub code: u32,
     pub message: String,
+    /// Present only for `destination_changed` (chat): `{fingerprint, host}`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<serde_json::Value>,
 }
 
 impl<T> From<Result<T, DgosError>> for CommandResponse<T>
@@ -41,6 +44,7 @@ where
                 error: Some(CommandError {
                     code: e.error_code(),
                     message: e.to_string(),
+                    detail: None,
                 }),
             },
         }
