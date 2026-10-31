@@ -24,7 +24,11 @@ beforeEach(() => {
   });
 });
 afterEach(() => { cleanup(); clearToasts(); vi.restoreAllMocks(); });
-const show = () => render(<MemoryRouter><Workbench /></MemoryRouter>);
+const show = () => {
+  const view = render(<MemoryRouter><Workbench /></MemoryRouter>);
+  fireEvent.mouseDown(screen.getByRole('tab', { name: '单任务' }), { button: 0 });
+  return view;
+};
 async function open(name: string) {
   const trigger = await screen.findByRole('combobox', { name });
   await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));

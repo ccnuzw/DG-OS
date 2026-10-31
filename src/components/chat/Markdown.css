@@ -1,0 +1,55 @@
+/* Syntax colours for highlighted code blocks (FR-006 AC14). Only design tokens: no literal colours (R2), and every
+   variable is one the token files define (R3). The class names come from highlight.js through lowlight. */
+.chat-code .hljs-comment,
+.chat-code .hljs-quote {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+.chat-code .hljs-keyword,
+.chat-code .hljs-selector-tag,
+.chat-code .hljs-literal,
+.chat-code .hljs-doctag,
+.chat-code .hljs-name {
+  color: var(--color-primary-active);
+}
+
+.chat-code .hljs-string,
+.chat-code .hljs-regexp,
+.chat-code .hljs-meta-string,
+.chat-code .hljs-addition {
+  color: var(--color-success-text);
+}
+
+.chat-code .hljs-number,
+.chat-code .hljs-symbol,
+.chat-code .hljs-bullet,
+.chat-code .hljs-attr,
+.chat-code .hljs-attribute,
+.chat-code .hljs-variable,
+.chat-code .hljs-template-variable {
+  color: var(--color-warning-text);
+}
+
+.chat-code .hljs-title,
+.chat-code .hljs-section,
+.chat-code .hljs-built_in,
+.chat-code .hljs-type,
+.chat-code .hljs-class,
+.chat-code .hljs-selector-id,
+.chat-code .hljs-selector-class,
+.chat-code .hljs-meta {
+  color: var(--color-info-text);
+}
+
+.chat-code .hljs-deletion {
+  color: var(--color-error-text);
+}
+
+.chat-code .hljs-emphasis {
+  font-style: italic;
+}
+
+.chat-code .hljs-strong {
+  font-weight: var(--font-weight-bold);
+}
