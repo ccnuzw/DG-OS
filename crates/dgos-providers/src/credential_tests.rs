@@ -926,6 +926,47 @@ async fn stream_usage_is_recorded_once_with_the_reported_tokens() {
     assert_eq!(rows.len(), 1, "exactly one record per stream: {rows:?}");
     assert!(rows[0].success && rows[0].error_code.is_none());
     assert_eq!((rows[0].request_tokens, rows[0].response_tokens), (11, 7));
+    assert_eq!(rows[0].usage_reported, Some(true));
+}
+
+#[tokio::test]
+async fn stream_that_ends_without_usage_is_recorded_as_usage_unknown_not_as_zero() {
+    // D081: a stream that completes but whose upstream never reports usage has an unknown cost;
+    // the zeros in the token columns must not read as "free".
+    let (_dir, url, db) = database().await;
+    let vault = Arc::new(MemoryCredentialVault::default());
+    let mut server = mockito::Server::new_async().await;
+    let provider = crate::test_support::seed_provider(
+        db,
+        &vault,
+        config(&server.url(), "synthetic-stream"),
+        "local",
+    )
+    .await
+    .unwrap();
+    let manager = ProviderManager::with_vault(&url, vault).await.unwrap();
+    let _call = server
+        .mock("POST", "/chat/completions")
+        .with_status(200)
+        .with_header("content-type", "text/event-stream")
+        .with_body(concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        ))
+        .create_async()
+        .await;
+    let mut stream = manager
+        .stream_provider(&provider.id, "m", user_request(), "local")
+        .await
+        .unwrap();
+    while stream.next().await.is_some() {}
+    drop(stream);
+    let rows = usage_rows(&manager).await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert!(rows[0].success, "the stream itself completed");
+    assert_eq!((rows[0].request_tokens, rows[0].response_tokens), (0, 0));
+    assert_eq!(rows[0].usage_reported, Some(false));
 }
 
 #[tokio::test]
@@ -972,6 +1013,7 @@ async fn stream_failure_after_output_is_recorded_once_as_interrupted() {
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert!(!rows[0].success);
     assert_eq!(rows[0].error_code.as_deref(), Some("1001007"));
+    assert_eq!(rows[0].usage_reported, Some(false));
 }
 
 #[tokio::test]
@@ -1008,6 +1050,11 @@ async fn stream_dropped_early_is_recorded_once_as_interrupted() {
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert!(!rows[0].success);
     assert_eq!(rows[0].error_code.as_deref(), Some("1001007"));
+    assert_eq!(
+        rows[0].usage_reported,
+        Some(false),
+        "a cancelled stream's cost is unknown"
+    );
 }
 
 #[tokio::test]
@@ -1038,6 +1085,7 @@ async fn stream_rejected_before_it_starts_is_recorded_once_with_the_upstream_cod
     let rows = usage_rows(&manager).await;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].error_code.as_deref(), Some("1001002"));
+    assert_eq!(rows[0].usage_reported, Some(false));
 }
 
 // =============================================================================================
@@ -1563,6 +1611,7 @@ async fn legacy_provider_without_vendor_id_is_created_and_called_as_before() {
         assert_eq!(rows.len(), 1);
         assert!(rows[0].success && rows[0].error_code.is_none());
         assert_eq!((rows[0].request_tokens, rows[0].response_tokens), (3, 2));
+        assert_eq!(rows[0].usage_reported, Some(true));
         list.assert_async().await;
         call.assert_async().await;
     }
@@ -1615,6 +1664,11 @@ async fn retry_keys_coexist_with_vendor_id_and_drive_the_retry_count() {
     assert_eq!(rows.len(), 1);
     assert!(!rows[0].success);
     assert_eq!(rows[0].error_code.as_deref(), Some("1001008"));
+    assert_eq!(
+        rows[0].usage_reported,
+        Some(false),
+        "a failed call without usage is unknown, not free"
+    );
 }
 
 #[tokio::test]

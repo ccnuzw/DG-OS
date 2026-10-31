@@ -19,11 +19,9 @@ async fn retry_classification_429_waits_for_the_smaller_of_retry_after_and_max_d
     ])
     .await;
     // max_delay is 40 ms here, so the 30 s the upstream asked for must be capped.
+    let adapter = adapter(&stub.url, 3, 10);
     let started = Instant::now();
-    let reply = adapter(&stub.url, 3, 10)
-        .call("m", request())
-        .await
-        .unwrap();
+    let reply = adapter.call("m", request()).await.unwrap();
     assert_eq!(reply.content, "ok");
     assert_eq!(stub.hits(), 2);
     assert!(started.elapsed().as_secs() < 5, "{:?}", started.elapsed());

@@ -72,6 +72,28 @@ impl AnthropicAdapter {
         }
     }
 
+    /// As [`Self::with_profile`], reusing a client the manager built once.
+    pub(crate) fn with_client(
+        client: Option<reqwest::Client>,
+        base_url: String,
+        api_key: String,
+        retry_config: Option<RetryConfig>,
+        options: AdapterOptions,
+        profile: &'static Profile,
+    ) -> Self {
+        Self {
+            transport: Transport::with_client(
+                client,
+                normalize_anthropic_base(&base_url),
+                api_key,
+                retry_config,
+                options,
+                profile,
+                ANTHROPIC_DOWNGRADABLE,
+            ),
+        }
+    }
+
     fn profile(&self) -> &'static Profile {
         self.transport.profile
     }

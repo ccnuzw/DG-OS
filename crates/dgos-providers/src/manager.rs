@@ -34,6 +34,11 @@ pub struct ProviderManager {
     // Serialize credential pointer changes and their outbox cleanup. Network
     // calls release this lock after obtaining their immutable adapter snapshot.
     credentials_lock: Mutex<()>,
+    /// Built once and cloned into every adapter (clones share one connection pool). Building a
+    /// client per call stalled for about 3 s on macOS, outside every timeout and while
+    /// `credentials_lock` was held. Built with the default connect timeout, which is the only
+    /// one `create_adapter` uses.
+    http: Option<reqwest::Client>,
 }
 
 impl ProviderManager {
@@ -61,6 +66,7 @@ impl ProviderManager {
             usage_log_repo,
             vault,
             credentials_lock: Mutex::new(()),
+            http: crate::transport::http_client(AdapterOptions::default().connect_timeout),
         })
     }
 
@@ -362,14 +368,19 @@ impl ProviderManager {
         // the host then rejected carries the upstream's own numbers.
         match &result {
             Ok(response) => {
+                let (prompt, completion) = (
+                    response.usage.prompt_tokens,
+                    response.usage.completion_tokens,
+                );
                 if let Err(audit_error) = self
                     .usage_log_repo
                     .create_with_provenance(
                         provider_id,
                         model_id,
                         user_id,
-                        response.usage.prompt_tokens,
-                        response.usage.completion_tokens,
+                        prompt,
+                        completion,
+                        prompt > 0 || completion > 0,
                         latency_ms,
                         true,
                         None,
@@ -395,6 +406,7 @@ impl ProviderManager {
                         user_id,
                         prompt,
                         completion,
+                        prompt > 0 || completion > 0,
                         latency_ms,
                         false,
                         Some(e.error_code().to_string()),
@@ -479,6 +491,7 @@ impl ProviderManager {
                 user_id,
                 input,
                 output,
+                input > 0 || output > 0,
                 start.elapsed().as_millis() as u32,
                 result.is_ok(),
                 error,
@@ -917,7 +930,8 @@ impl ProviderManager {
             ..Default::default()
         };
         let adapter: Arc<dyn ProviderAdapter> = if normalized.provider_type == PROTOCOL_ANTHROPIC {
-            Arc::new(AnthropicAdapter::with_profile(
+            Arc::new(AnthropicAdapter::with_client(
+                self.http.clone(),
                 normalized.base_url,
                 config.api_key.clone(),
                 retry_config,
@@ -925,7 +939,8 @@ impl ProviderManager {
                 normalized.profile,
             ))
         } else {
-            Arc::new(OpenAIAdapter::with_profile(
+            Arc::new(OpenAIAdapter::with_client(
+                self.http.clone(),
                 normalized.base_url,
                 config.api_key.clone(),
                 retry_config,
@@ -951,7 +966,10 @@ fn prepare_config(config: &mut ProviderConfig) -> DgosResult<()> {
 }
 
 enum StreamOutcome {
-    Done { prompt: u32, completion: u32 },
+    /// `usage` is `None` when the upstream ended the stream without reporting usage.
+    Done {
+        usage: Option<(u32, u32)>,
+    },
     Failed(u32),
 }
 
@@ -964,9 +982,14 @@ async fn write_stream_log(
     started: Instant,
     outcome: StreamOutcome,
 ) {
-    let (prompt, completion, error_code) = match outcome {
-        StreamOutcome::Done { prompt, completion } => (prompt, completion, None),
-        StreamOutcome::Failed(code) => (0, 0, Some(code.to_string())),
+    // A stream that fails or is cancelled never has usage (D081): the upstream may already
+    // have produced and billed output, so the zeros are recorded as unknown, not as free.
+    let (prompt, completion, reported, error_code) = match outcome {
+        StreamOutcome::Done {
+            usage: Some((prompt, completion)),
+        } => (prompt, completion, prompt > 0 || completion > 0, None),
+        StreamOutcome::Done { usage: None } => (0, 0, false, None),
+        StreamOutcome::Failed(code) => (0, 0, false, Some(code.to_string())),
     };
     if let Err(error) = UsageLogRepository::new(db.clone())
         .create_with_provenance(
@@ -975,6 +998,7 @@ async fn write_stream_log(
             user_id,
             prompt,
             completion,
+            reported,
             started.elapsed().as_millis() as u32,
             error_code.is_none(),
             error_code,
@@ -1060,13 +1084,11 @@ fn audited_stream(
                 Some(Ok(chunk)) => {
                     // Only the terminal chunk carries a finish reason.
                     if chunk.finish_reason.is_some() {
-                        let usage = chunk.usage.clone().unwrap_or_default();
-                        audit
-                            .finish(StreamOutcome::Done {
-                                prompt: usage.prompt_tokens,
-                                completion: usage.completion_tokens,
-                            })
-                            .await;
+                        let usage = chunk
+                            .usage
+                            .as_ref()
+                            .map(|usage| (usage.prompt_tokens, usage.completion_tokens));
+                        audit.finish(StreamOutcome::Done { usage }).await;
                     }
                     Some((Ok(chunk), (stream, audit)))
                 }

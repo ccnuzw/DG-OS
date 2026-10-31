@@ -459,8 +459,9 @@ async fn unauthorized_before_the_stream_starts_is_an_error_not_a_chunk() {
         &error_body("authentication_error"),
     )])
     .await;
+    let adapter = anthropic(&stub.url, 3, 1);
     let started = Instant::now();
-    let error = anthropic(&stub.url, 3, 1)
+    let error = adapter
         .stream("m", request())
         .await
         .err()
@@ -506,14 +507,9 @@ async fn rate_limit_before_the_stream_starts_is_retried_once_then_streams() {
     ])
     .await;
     // max_delay is 40 ms here, so the 30 s the upstream asked for must be capped.
+    let adapter = anthropic(&stub.url, 1, 10);
     let started = Instant::now();
-    let items = drain(
-        anthropic(&stub.url, 1, 10)
-            .stream("m", request())
-            .await
-            .unwrap(),
-    )
-    .await;
+    let items = drain(adapter.stream("m", request()).await.unwrap()).await;
     assert!(items.iter().all(|item| item.is_ok()), "{items:?}");
     assert_eq!(text_of(&items), "ok");
     assert_eq!(stub.hits(), 2, "one call and one retry");

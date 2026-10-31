@@ -84,7 +84,20 @@ pub struct Transport {
     downgradable: &'static [&'static str],
 }
 
+/// The one way an HTTP client is built: redirects are never followed, so a 3xx is final and the
+/// credential only goes to the configured host (B01-68). `None` only if the TLS backend failed to
+/// initialise. Building one can stall for seconds (one build took about 3.1 s on macOS), so the
+/// manager builds it once and shares it; a `reqwest::Client` clone shares its connection pool.
+pub(crate) fn http_client(connect_timeout: Duration) -> Option<Client> {
+    Client::builder()
+        .redirect(redirect::Policy::none())
+        .connect_timeout(connect_timeout)
+        .build()
+        .ok()
+}
+
 impl Transport {
+    /// Builds its own client. Adapters made directly (tests, examples) use this.
     pub fn new(
         base_url: String,
         api_key: String,
@@ -93,14 +106,30 @@ impl Transport {
         profile: &'static Profile,
         downgradable: &'static [&'static str],
     ) -> Self {
+        let client = http_client(options.connect_timeout);
+        Self::with_client(
+            client,
+            base_url,
+            api_key,
+            retry_config,
+            options,
+            profile,
+            downgradable,
+        )
+    }
+
+    /// Uses a client built by [`http_client`] elsewhere. Its connect timeout is fixed when it
+    /// is built, so `options.connect_timeout` must be the value it was built with.
+    pub(crate) fn with_client(
+        client: Option<Client>,
+        base_url: String,
+        api_key: String,
+        retry_config: Option<RetryConfig>,
+        options: AdapterOptions,
+        profile: &'static Profile,
+        downgradable: &'static [&'static str],
+    ) -> Self {
         let api_key = Zeroizing::new(api_key);
-        // Redirects are never followed: a 3xx is final and the credential only goes to the
-        // configured host (B01-68).
-        let client = Client::builder()
-            .redirect(redirect::Policy::none())
-            .connect_timeout(options.connect_timeout)
-            .build()
-            .ok();
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key: Zeroizing::new(api_key.trim().to_string()),

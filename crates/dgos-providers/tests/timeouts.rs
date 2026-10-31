@@ -55,11 +55,11 @@ async fn a_synchronous_call_is_bounded_by_the_request_deadline() {
         sleep(5_000),
     ]])
     .await;
+    // Built first: creating the HTTP client can stall for seconds on macOS (one build took
+    // 3.1 s in a 40-run probe) and is not part of the request deadline under test.
+    let adapter = adapter_with(&stub.url, 0, 1, options(300, 5_000));
     let started = Instant::now();
-    let error = adapter_with(&stub.url, 0, 1, options(300, 5_000))
-        .call("m", request())
-        .await
-        .unwrap_err();
+    let error = adapter.call("m", request()).await.unwrap_err();
     assert!(matches!(error, DgosError::Timeout), "{error:?}");
     assert_eq!(error.error_code(), 1001006);
     assert!(started.elapsed() < Duration::from_secs(3));
@@ -74,14 +74,9 @@ async fn an_idle_stream_times_out_once_keeping_what_arrived_and_is_not_retried()
         sleep(10_000),
     ]])
     .await;
+    let adapter = adapter_with(&stub.url, 3, 1, options(5_000, 300));
     let started = Instant::now();
-    let items = drain(
-        adapter_with(&stub.url, 3, 1, options(5_000, 300))
-            .stream("m", request())
-            .await
-            .unwrap(),
-    )
-    .await;
+    let items = drain(adapter.stream("m", request()).await.unwrap()).await;
     assert_eq!(text_of(&items), "one two");
     assert_eq!(items.iter().filter(|item| item.is_err()).count(), 1);
     let error = items.last().unwrap().as_ref().unwrap_err();
@@ -94,12 +89,9 @@ async fn an_idle_stream_times_out_once_keeping_what_arrived_and_is_not_retried()
 #[tokio::test]
 async fn a_stream_that_never_sends_a_byte_times_out_without_retrying() {
     let stub = serve(vec![vec![sleep(10_000)]]).await;
+    let adapter = adapter_with(&stub.url, 3, 1, options(5_000, 300));
     let started = Instant::now();
-    let error = adapter_with(&stub.url, 3, 1, options(5_000, 300))
-        .stream("m", request())
-        .await
-        .err()
-        .unwrap();
+    let error = adapter.stream("m", request()).await.err().unwrap();
     assert!(matches!(error, DgosError::Timeout), "{error:?}");
     assert!(started.elapsed() < Duration::from_secs(5));
     assert_eq!(stub.hits(), 1);
@@ -193,11 +185,9 @@ async fn anthropic_synchronous_call_is_bounded_by_the_request_deadline() {
         sleep(5_000),
     ]])
     .await;
+    let adapter = anthropic_with(&stub.url, 0, 1, options(300, 5_000));
     let started = Instant::now();
-    let error = anthropic_with(&stub.url, 0, 1, options(300, 5_000))
-        .call("m", request())
-        .await
-        .unwrap_err();
+    let error = adapter.call("m", request()).await.unwrap_err();
     assert!(matches!(error, DgosError::Timeout), "{error:?}");
     assert_eq!(error.error_code(), 1001006);
     assert!(started.elapsed() < Duration::from_secs(3));
@@ -213,14 +203,9 @@ async fn anthropic_idle_stream_times_out_once_keeping_what_arrived_and_is_not_re
         sleep(10_000),
     ]])
     .await;
+    let adapter = anthropic_with(&stub.url, 3, 1, options(5_000, 300));
     let started = Instant::now();
-    let items = drain(
-        anthropic_with(&stub.url, 3, 1, options(5_000, 300))
-            .stream("m", request())
-            .await
-            .unwrap(),
-    )
-    .await;
+    let items = drain(adapter.stream("m", request()).await.unwrap()).await;
     assert_eq!(text_of(&items), "one two");
     assert_eq!(items.iter().filter(|item| item.is_err()).count(), 1);
     let error = items.last().unwrap().as_ref().unwrap_err();
@@ -233,12 +218,9 @@ async fn anthropic_idle_stream_times_out_once_keeping_what_arrived_and_is_not_re
 #[tokio::test]
 async fn anthropic_stream_that_never_sends_a_byte_times_out_without_retrying() {
     let stub = serve(vec![vec![sleep(10_000)]]).await;
+    let adapter = anthropic_with(&stub.url, 3, 1, options(5_000, 300));
     let started = Instant::now();
-    let error = anthropic_with(&stub.url, 3, 1, options(5_000, 300))
-        .stream("m", request())
-        .await
-        .err()
-        .unwrap();
+    let error = adapter.stream("m", request()).await.err().unwrap();
     assert!(matches!(error, DgosError::Timeout), "{error:?}");
     assert!(started.elapsed() < Duration::from_secs(5));
     assert_eq!(stub.hits(), 1);

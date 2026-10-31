@@ -65,6 +65,28 @@ impl OpenAIAdapter {
         }
     }
 
+    /// As [`Self::with_profile`], reusing a client the manager built once.
+    pub(crate) fn with_client(
+        client: Option<reqwest::Client>,
+        base_url: String,
+        api_key: String,
+        retry_config: Option<RetryConfig>,
+        options: AdapterOptions,
+        profile: &'static Profile,
+    ) -> Self {
+        Self {
+            transport: Transport::with_client(
+                client,
+                base_url,
+                api_key,
+                retry_config,
+                options,
+                profile,
+                OPENAI_DOWNGRADABLE,
+            ),
+        }
+    }
+
     fn profile(&self) -> &'static Profile {
         self.transport.profile
     }
