@@ -432,11 +432,11 @@ CREATE TABLE provider_usage_logs (
 | `models.max_output_tokens` | 新增可空整数列（现有表没有这一列，DTO 字段一直为空） | 旧行为 NULL |
 | `models.capabilities` | JSON 形状从能力数组扩展为对象 `{streaming, vision, tools, reasoning, structured_output}`，每项为 `supported`、`unsupported` 或 `unknown` | 读取时兼容旧数组（数组里的 `streaming`、`vision` 视为 `supported`，其余为 `unknown`），不需要 migration |
 | `providers.config` | JSON 中增加 `vendor_id`、`auth_style`、`allow_insecure_http`，与现有重试配置并存 | `vendor_id` 缺省时按 `provider_type` 和 base_url 推断（官方主机归对应厂商，否则 `custom`）；`auth_style` 缺省为画像默认值，`allow_insecure_http` 缺省为 `false`；不需要 migration。已知细节：现有代码把整个 `config` 反序列化为重试配置，缺少重试三项时解析失败并回落到默认重试（`manager.rs` 的 `create_adapter`），新增键不改变这一行为 |
-| `provider_usage_logs` | 不变 | 两种协议都把推理 token 计入输出 token；Anthropic 不返回总数，由宿主计算输入加输出；缓存 token 不在范围内；上游不返回用量时记 0（没有“未知”标记列，这是已知限制） |
+| `provider_usage_logs` | 新增可空列 `usage_reported`（[D081](../../../06-决策记录/V1-冻结决策.md#d081-provider-使用记录区分用量未知与用量为零)，migration `m20261031_000017_usage_reported`） | 两种协议都把推理 token 计入输出 token；Anthropic 不返回总数，由宿主计算输入加输出；缓存 token 不在范围内。上游不返回用量时 token 列仍记 0，`usage_reported = 0` 表示这些 0 是“未知”而不是“免费”；流被取消、中断或失败一律为 0；旧行为 NULL。取消与网络中断在使用记录中仍都是 `1001007` |
 
 分类是 `(协议, model_id)` 的函数，仍然持久化，原因有两个：手动模型的 `kind` 由用户指定，规则表以后更新时已保存模型的分类不应悄悄变化（沿用“永久缓存，手动刷新”）。
 
-推理文本和思考块（含签名）不写入 SQLite、使用记录、审计或日志，只在同一工具循环的内存上下文中传递。工作台是否持久化可展示的推理文本由 FR-006 决定。
+推理文本和思考块（含签名）不写入 SQLite、使用记录、审计或日志，只在同一工具循环的内存上下文中传递。工作台对可展示推理文本的处理已由 FR-006 回答（D072）：`reasoning_delta` 只实时显示，不写库、不写日志、不作为后续轮次上下文回传给上游。聊天经 `ProviderManager::stream_provider_bound_cancellable_with_provenance` 调用，调用方为 `BuiltinCaller::Workbench`，`request_id` 等于任务 ID；上游未给用量时聊天消息存 NULL 而不是 0（D074），Provider 层的使用记录以 `usage_reported = 0` 标记同一情况（D081）。
 
 ## 5. 验收标准
 
