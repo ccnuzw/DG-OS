@@ -14,7 +14,8 @@ impl UsageLogRepository {
         Self { db }
     }
 
-    /// Create a usage log entry
+    /// Create a usage log entry. Usage counts as reported when any token count is non-zero, the
+    /// same rule the chat terminal uses for an all-zero `usage` (D074).
     pub async fn create(
         &self,
         provider_id: &str,
@@ -32,6 +33,7 @@ impl UsageLogRepository {
             user_id,
             request_tokens,
             response_tokens,
+            request_tokens > 0 || response_tokens > 0,
             latency_ms,
             success,
             error_code,
@@ -40,6 +42,9 @@ impl UsageLogRepository {
         .await
     }
 
+    /// `usage_reported = false` records that the upstream gave no usage, so the zero token
+    /// counts are unknown rather than free (D081).
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_with_provenance(
         &self,
         provider_id: &str,
@@ -47,6 +52,7 @@ impl UsageLogRepository {
         user_id: &str,
         request_tokens: u32,
         response_tokens: u32,
+        usage_reported: bool,
         latency_ms: u32,
         success: bool,
         error_code: Option<String>,
@@ -68,6 +74,7 @@ impl UsageLogRepository {
             error_code: Set(error_code.clone()),
             caller: Set(provenance.map(|p| format!("{:?}", p.caller).to_lowercase())),
             request_id: Set(provenance.map(|p| p.request_id.clone())),
+            usage_reported: Set(Some(usage_reported)),
             created_at: Set(now),
         };
 
@@ -89,6 +96,7 @@ impl UsageLogRepository {
             error_code,
             caller: provenance.map(|p| format!("{:?}", p.caller).to_lowercase()),
             request_id: provenance.map(|p| p.request_id.clone()),
+            usage_reported: Some(usage_reported),
             created_at: now,
         })
     }
@@ -120,6 +128,7 @@ impl UsageLogRepository {
                 error_code: log.error_code,
                 caller: log.caller,
                 request_id: log.request_id,
+                usage_reported: log.usage_reported,
                 created_at: log.created_at,
             })
             .collect())

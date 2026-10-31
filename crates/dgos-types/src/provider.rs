@@ -387,6 +387,9 @@ pub struct UsageLog {
     pub error_code: Option<String>,
     pub caller: Option<String>,
     pub request_id: Option<String>,
+    /// D081: whether the upstream reported usage. `Some(false)` means the token counts are
+    /// unknown (the call may still have been billed); `None` is a row older than the field.
+    pub usage_reported: Option<bool>,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 

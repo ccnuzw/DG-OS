@@ -35,6 +35,10 @@ pub struct Model {
     #[sea_orm(column_type = "String(StringLen::N(36))", nullable)]
     pub request_id: Option<String>,
 
+    /// D081: `Some(true)` the upstream reported usage; `Some(false)` it did not, so the token
+    /// columns are unknown rather than zero; `None` a row older than the column.
+    pub usage_reported: Option<bool>,
+
     pub created_at: DateTimeUtc,
 }
 

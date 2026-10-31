@@ -23,6 +23,8 @@ mod m20261028_000012_module_release_operation;
 mod m20261029_000013_module_crash_logs;
 mod m20261029_000014_system_settings;
 mod m20261030_000015_model_kind_and_source;
+mod m20261030_000016_chat_sessions_and_messages;
+mod m20261031_000017_usage_reported;
 
 pub struct Migrator;
 
@@ -53,6 +55,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20261029_000013_module_crash_logs::Migration),
             Box::new(m20261029_000014_system_settings::Migration),
             Box::new(m20261030_000015_model_kind_and_source::Migration),
+            Box::new(m20261030_000016_chat_sessions_and_messages::Migration),
+            Box::new(m20261031_000017_usage_reported::Migration),
         ]
     }
 }

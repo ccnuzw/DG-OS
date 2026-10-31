@@ -16,6 +16,12 @@ pub struct Model {
     pub error_code: Option<String>,
     pub total_tokens: Option<i64>,
     pub provider_config_revision: Option<i64>,
+    /// Chat session this generation belongs to; cleared when the session is deleted (D072).
+    pub session_id: Option<String>,
+    /// `single` (D018/D022 task page) or `chat` (D073). Survives session deletion.
+    pub kind: String,
+    /// Hash of provider type + scheme/host/port; never the raw URL (D075).
+    pub endpoint_fingerprint: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
