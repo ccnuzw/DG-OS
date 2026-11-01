@@ -1,13 +1,26 @@
 // @vitest-environment node
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const dir = new URL('../docs/90-参考资料/', import.meta.url);
-const decisionLog = new URL('../docs/06-决策记录/V1-冻结决策.md', import.meta.url);
+const specRoot = new URL('../docs/03-功能规格/', import.meta.url);
+// Every frozen-decision log the generator reads: V1 and the versions in gate preparation (D100).
+const decisionLogs = ['V1-冻结决策.md', 'V2-冻结决策.md'].map(
+  (name) => new URL(`../docs/06-决策记录/${name}`, import.meta.url),
+);
 const browserUrl = new URL('产品文档浏览器.html', dir);
 const dataUrl = new URL('产品文档浏览器-文档数据.js', dir);
 const VIEWS = ['overview', 'reader', 'features', 'map', 'evolution', 'timeline'];
+
+/** Feature IDs of the feature main documents on disk (technical designs share the ID and are not features). */
+function featureIdsOnDisk(): string[] {
+  const ids = readdirSync(specRoot, { recursive: true, encoding: 'utf8' })
+    .filter((path) => path.endsWith('.md') && !path.endsWith('-技术设计.md'))
+    .map((path) => readFileSync(new URL(path, specRoot), 'utf8').match(/^feature_id: *(V\d+-FR-\d{3})\s*$/m)?.[1])
+    .filter((id): id is string => Boolean(id));
+  return [...new Set(ids)].sort();
+}
 
 type Feature = {
   id: string;
@@ -55,12 +68,14 @@ beforeAll(async () => {
 afterAll(() => dom?.window.close());
 
 describe('generated data', () => {
-  it('covers every Markdown document and all ten V1 features', () => {
+  it('covers every Markdown document and every feature main document', () => {
     expect(data.docs.length).toBeGreaterThanOrEqual(66);
     for (const doc of data.docs) expect(data.content[doc.id], doc.path).toBeTruthy();
-    expect(data.features.map((feature) => feature.id)).toEqual(
+    const onDisk = featureIdsOnDisk();
+    expect(onDisk).toEqual(expect.arrayContaining(
       Array.from({ length: 10 }, (_, i) => `V1-FR-${String(i + 1).padStart(3, '0')}`),
-    );
+    ));
+    expect(data.features.map((feature) => feature.id)).toEqual(onDisk);
   });
 
   it('has no data-quality warnings and links every feature to its status and track', () => {
@@ -85,15 +100,18 @@ describe('generated data', () => {
     expect(data.versions.map((version) => version.id)).toEqual(
       Array.from({ length: 8 }, (_, i) => `V${i + 1}`),
     );
-    const log = readFileSync(decisionLog, 'utf8');
-    const ids = [...log.matchAll(/^## (D\d{3}) /gm)].map((match) => match[1]);
+    const ids = decisionLogs.flatMap((log) =>
+      [...readFileSync(log, 'utf8').matchAll(/^## (D\d{3}) /gm)].map((match) => match[1]),
+    );
     expect(data.decisions.map((decision) => decision.id)).toEqual(ids);
   });
 });
 
 describe('viewer', () => {
   it('finishes loading and reports the document and feature counts', () => {
-    expect(dom.window.document.querySelector('#loadStatus')?.textContent).toMatch(/\d+ 份文档 · 10 个功能/);
+    expect(dom.window.document.querySelector('#loadStatus')?.textContent).toContain(
+      `${data.docs.length} 份文档 · ${data.features.length} 个功能`,
+    );
   });
 
   it('renders every view without placeholder text', async () => {
@@ -110,7 +128,7 @@ describe('viewer', () => {
     expect(map.querySelectorAll('table, svg, .heat-cell, .heatmap').length).toBeGreaterThan(0);
   });
 
-  it('shows all ten features in the feature view', async () => {
+  it('shows every feature in the feature view', async () => {
     const text = (await openView('features')).textContent ?? '';
     for (const feature of data.features) expect(text, feature.id).toContain(feature.id);
   });
