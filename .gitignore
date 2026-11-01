@@ -29,6 +29,10 @@ Cargo.lock
 src-tauri/target/
 src-tauri/WixTools/
 
+# Local Herdr topology, isolated worktrees and temporary task handoffs
+.herdr-team/
+.vitest/
+
 # IDE
 .vscode/
 .idea/

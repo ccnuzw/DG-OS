@@ -35,7 +35,17 @@ export default defineConfig(() => ({
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // Local herdr worktrees contain several complete copies of this
+      // repository. Watching them makes Vite retain a graph for every copy
+      // and can grow the dev Node process until it reaches the V8 heap limit.
+      ignored: [
+        "**/src-tauri/**",
+        "**/.herdr-team/**",
+        "**/.vitest/**",
+        "**/target/**",
+        "**/dist/**",
+        "**/dist-lan/**",
+      ],
     },
   },
 }));

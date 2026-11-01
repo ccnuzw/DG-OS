@@ -262,10 +262,15 @@ impl ModuleMcpService {
         arguments: Value,
     ) -> DgosResult<ModuleMcpResult> {
         let started = admitted_at;
+        let control = call.control();
         let module_name = self.module_name(&grant.module_id).await;
-        let verdict = self
-            .confirmations
-            .ask(
+        // A cancel during the user's confirmation ends the call `Cancelled`:
+        // dropping `ask` removes the pending entry and closes the prompt, and
+        // no tool call was made (D113).
+        let verdict = tokio::select! {
+            biased;
+            _ = control.cancelled() => None,
+            verdict = self.confirmations.ask(
                 McpConfirmationRequest {
                     user_id: &grant.user_id,
                     attachment_id: call.attachment_id(),
@@ -275,37 +280,49 @@ impl ModuleMcpService {
                     arguments: &arguments,
                 },
                 self.deadline.saturating_sub(started.elapsed()),
-            )
-            .await;
+            ) => Some(verdict),
+        };
+        let Some(verdict) = verdict else {
+            call.finish_cancelled();
+            return Err(DgosError::ModuleCallCancelled);
+        };
         if verdict != McpVerdict::Approved {
             // Refused by the user, expired or abandoned: not a permission
             // failure, so no permission audit row; the external call never ran.
-            call.finish(ModuleRequestOutcome::Denied);
+            if !call.finish(ModuleRequestOutcome::Denied) {
+                return Err(DgosError::ModuleCallCancelled);
+            }
             return Err(DgosError::CapabilityFailed {
                 code: CONFIRMATION_REFUSED_CODE,
                 message: CONFIRMATION_REFUSED_MESSAGE.to_owned(),
             });
         }
         let remaining = self.deadline.saturating_sub(started.elapsed());
-        match tokio::time::timeout(
-            remaining,
-            self.invoke(&grant, server_id, tool_name, arguments, remaining),
-        )
-        .await
-        {
-            Ok(result) => {
+        let marker = control.clone();
+        let invocation = async {
+            // The tool call starts here; a cancel from now on only stops the
+            // wait and the call settles `Interrupted` (D113).
+            marker.mark_started();
+            self.invoke(&grant, server_id, tool_name, arguments, remaining)
+                .await
+        };
+        tokio::select! {
+            biased;
+            _ = control.cancelled() => {
+                call.finish_cancelled();
+                Err(DgosError::ModuleCallCancelled)
+            }
+            outcome = tokio::time::timeout(remaining, invocation) => match outcome {
                 // A tool that answers `is_error` still completed the call.
-                call.finish(if result.is_ok() {
-                    ModuleRequestOutcome::Succeeded
-                } else {
-                    ModuleRequestOutcome::Failed
-                });
-                result
-            }
-            Err(_) => {
-                call.finish(ModuleRequestOutcome::Interrupted);
-                Err(DgosError::Timeout)
-            }
+                Ok(result) => crate::settle_bound(call, result),
+                Err(_) => {
+                    if call.finish(ModuleRequestOutcome::Interrupted) {
+                        Err(DgosError::Timeout)
+                    } else {
+                        Err(DgosError::ModuleCallCancelled)
+                    }
+                }
+            },
         }
     }
 
@@ -691,6 +708,10 @@ mod tests {
             PageLost,
             /// The grant is revoked while the prompt is open, then approved.
             RevokeThenApprove,
+            /// The page cancels the call while the prompt is open.
+            CancelWhileAsking,
+            /// The user approves, the tool starts, then the page cancels.
+            ApproveThenCancel,
             /// No prompt may appear.
             NoPrompt,
         }
@@ -839,14 +860,13 @@ mod tests {
                 arguments: Value,
                 answer: Answer,
             ) -> (DgosResult<ModuleMcpResult>, Option<Opened>) {
+                let call_id = uuid::Uuid::new_v4().to_string();
                 let call = self
                     .router
-                    .admit_once(
-                        &self.route,
-                        &self.attachment,
-                        &uuid::Uuid::new_v4().to_string(),
-                    )
+                    .admit_once(&self.route, &self.attachment, &call_id)
                     .unwrap();
+                let router = &self.router;
+                let route = self.route.clone();
                 let service = self.service.clone();
                 let confirmations = service.confirmations().clone();
                 let permissions = self.permissions.clone();
@@ -877,6 +897,17 @@ mod tests {
                         }
                         Answer::Unanswered | Answer::NoPrompt => {}
                         Answer::PageLost => confirmations.attachment_lost(&attachment),
+                        Answer::CancelWhileAsking => {
+                            assert_eq!(router.cancel(&route, &attachment, &call_id), Ok(true));
+                        }
+                        Answer::ApproveThenCancel => {
+                            confirmations
+                                .resolve(USER, &prompt.confirmation_id, true)
+                                .unwrap();
+                            // The tool sleeps for seconds; give it time to start.
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            assert_eq!(router.cancel(&route, &attachment, &call_id), Ok(true));
+                        }
                         Answer::RevokeThenApprove => {
                             permissions
                                 .revoke(USER, MODULE, ModulePermission::McpCall)
@@ -1077,6 +1108,70 @@ mod tests {
             assert!(matches!(result, Err(DgosError::Timeout)));
             let stats = world.handle.request_stats();
             assert_eq!((stats.interrupted, stats.in_flight), (1, 0));
+            world.finish().await;
+        }
+
+        #[tokio::test]
+        async fn cancelling_during_the_confirmation_never_runs_the_tool_and_settles_cancelled() {
+            let mut world = World::new().await;
+            world.grant().await;
+            let (result, prompt) = world.call("echo", echo(), Answer::CancelWhileAsking).await;
+            assert!(matches!(result, Err(DgosError::ModuleCallCancelled)));
+            assert_eq!(DgosError::ModuleCallCancelled.error_code(), 1004028);
+            // The prompt was closed with the call: its id can no longer be answered.
+            assert!(matches!(
+                world
+                    .service
+                    .confirmations()
+                    .resolve(USER, &prompt.unwrap().confirmation_id, true),
+                Err(DgosError::PermissionDenied)
+            ));
+            assert_eq!(world.tool_calls().await, 0);
+            let stats = world.handle.request_stats();
+            assert_eq!(
+                (
+                    stats.admitted,
+                    stats.cancelled,
+                    stats.denied,
+                    stats.interrupted
+                ),
+                (1, 1, 0, 0)
+            );
+            assert_eq!(stats.in_flight, 0);
+            assert_eq!(
+                stats.admitted,
+                stats.in_flight as u64
+                    + stats.succeeded
+                    + stats.failed
+                    + stats.denied
+                    + stats.interrupted
+                    + stats.cancelled
+            );
+            world.finish().await;
+        }
+
+        #[tokio::test]
+        async fn cancelling_after_the_tool_started_stops_waiting_and_settles_interrupted() {
+            let mut world = World::new().await;
+            world.grant().await;
+            let (result, _) = world
+                .call(
+                    "echo",
+                    json!({"text": "slow", "delay": 5000}),
+                    Answer::ApproveThenCancel,
+                )
+                .await;
+            assert!(matches!(result, Err(DgosError::ModuleCallCancelled)));
+            let stats = world.handle.request_stats();
+            assert_eq!(
+                (
+                    stats.admitted,
+                    stats.interrupted,
+                    stats.cancelled,
+                    stats.in_flight
+                ),
+                (1, 1, 0, 0)
+            );
             world.finish().await;
         }
 

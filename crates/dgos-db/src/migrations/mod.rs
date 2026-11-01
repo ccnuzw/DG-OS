@@ -28,6 +28,7 @@ mod m20261031_000017_usage_reported;
 mod m20261101_000018_module_storage;
 mod m20261101_000019_local_accounts;
 mod m20261101_000020_lan_audit_events;
+mod m20261102_000021_skill_install_operations;
 
 pub struct Migrator;
 
@@ -63,6 +64,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261101_000018_module_storage::Migration),
             Box::new(m20261101_000019_local_accounts::Migration),
             Box::new(m20261101_000020_lan_audit_events::Migration),
+            Box::new(m20261102_000021_skill_install_operations::Migration),
         ]
     }
 }

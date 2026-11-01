@@ -328,7 +328,7 @@ describe('Module management list', () => {
     expect(screen.getByText(/code 1004022/)).toBeTruthy();
   });
 
-  it('reports a failed action inline next to its module and once as a Toast that carries only the code', async () => {
+  it('reports a failed action inline next to its module and once as a Toast with the registered text, never the host message', async () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     state.failures.update_module = { kind: 'update_failed', code: 1004013 };
     renderAt('/settings/modules');
@@ -340,8 +340,10 @@ describe('Module management list', () => {
     const inline = await card('dgos.beta').findByRole('alert');
     expect(within(inline).getByText('Update failed, the previous version was restored')).toBeTruthy();
     expect(within(inline).getByText(/code 1004013/)).toBeTruthy();
-    // 1004xxx has no registry entry (FR-005 §13.2): the Toast is the generic text with the code, never the host message.
-    expect(await screen.findAllByText('操作失败（错误码 1004013）')).toHaveLength(1);
+    // 1004013 is registered (D110): the Toast shows the registered message and advice, never the host message.
+    expect(await screen.findAllByText('模块更新失败')).toHaveLength(1);
+    expect(screen.getByText('已保留当前版本，请稍后重试')).toBeTruthy();
+    expect(screen.queryByText('操作失败（错误码 1004013）')).toBeNull();
     expect(logged).toHaveBeenCalledWith('[dgos] error', { code: 1004013, where: 'ModuleManagement' });
     logged.mockRestore();
   });

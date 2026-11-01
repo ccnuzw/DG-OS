@@ -267,11 +267,11 @@ Then 成功替换，失败保留旧快照
 | AC04 | 连接 HTTP MCP 服务器 | 单元/集成 | `src/transport_tests.rs`、`tests/credentials.rs` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake Manager 认证握手/调用与官方 SDK HTTP/SSE smoke 通过；macOS 原生 HTTP 连接见第 10.3 节，非跨平台发布验收 |
 | AC05 | 获取工具列表 | 单元/集成 | `tools_discovery_schema_confirmation_and_redacted_audit` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake 通过 |
 | AC06 | 调用 MCP 工具 | 单元/集成 | `tools_discovery_schema_confirmation_and_redacted_audit` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake echo、官方 filesystem list_directory 与 SDK echo smoke 通过；macOS 原生 Provider→MCP→Provider 与 filesystem 调用见第 10.3 节，非跨平台发布验收 |
-| AC07 | 心跳检测 | 单元/集成 | `src/manager.rs::lifecycle_tests` | `cargo test --offline -p dgos-mcp` | 已创建 | 状态机测试；真实心跳待验收 |
+| AC07 | 心跳检测 | 单元/集成 | `src/manager.rs::lifecycle_tests::successful_heartbeat_keeps_the_same_ready_session` | `cargo test --offline -p dgos-mcp` | 本地通过 | 2026-11-01：`cargo test --offline -p dgos-mcp -- lifecycle_tests` 10/10 通过。fake stdio（`ping-count` 模式）连续 3 次监控 tick：fixture 收到 3 次 ping，会话是同一个对象，状态仍为 `ready`、无错误类别、无重试记录，连接日志只有一条 `connected`。变异验证：心跳改发 `tools/list` 时该测试失败（ping 计数 0≠3）。真实第三方 Server 的长时间心跳未验证 |
 | AC08 | 断开检测 | 单元/集成 | `src/manager.rs::lifecycle_tests::heartbeat_rpc_error_and_timeout_disconnect_then_recover_without_startup_autoconnect` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake 心跳 RPC error 和 5 秒超时通过 |
 | AC09 | 自动重连 | 单元/集成 | `src/manager.rs::lifecycle_tests` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake 自动成功、退避和手动断开通过 |
-| AC10 | 重连失败处理 | 单元/集成 | `src/manager.rs::lifecycle_tests` | `cargo test --offline -p dgos-mcp` | 已创建 | 退避耗尽覆盖；全局恢复失败通知已有 mock UI 覆盖，真实故障恢复仍待原生验收 |
-| AC11 | 并发调用 | 单元/集成 | `five_simultaneous_calls_complete_with_reverse_order_responses` | `cargo test --offline -p dgos-mcp` | 已创建 | fake barrier 验证 5 在途倒序响应；另有 128 请求突发/8 在途上限测试；真实多应用待验收 |
+| AC10 | 重连失败处理 | 单元/集成 + 前端 | `src/manager.rs::lifecycle_tests::monitor_retry_is_bounded_backed_off_and_manual_connect_resets_it`；`tests/mcp-management.test.tsx`（`shows recovery exhaustion outside management…`） | `cargo test --offline -p dgos-mcp`；`npx vitest run tests/mcp-management.test.tsx` | 本地通过 | 2026-11-01：后端 10/10、前端 24/24 通过。3 次失败后 `reconnect_exhausted` 为真、状态为 `error`，连接日志恰有一条 `reconnect_exhausted`（`reconnect_attempt=3`）；把退避时间强制到期后再 tick，`connect_failed` 仍为 3 条、不发起第 4 次；手动连接重置预算。通知：`McpConnectionNotice` 在工作台页面显示告警，恢复或禁用后消失（jsdom + IPC mock）。变异验证：上限改为 4 时该测试失败（4≠3）。真实故障恢复与真实 WebView 中的通知未验证 |
+| AC11 | 并发调用 | 单元/集成 | `five_simultaneous_calls_complete_with_reverse_order_responses` | `cargo test --offline -p dgos-mcp` | 本地通过 | 2026-11-01：`cargo test --offline -p dgos-mcp` 56 通过、3 ignored（官方兼容）。5 个调用分别以 workbench、settings、module 三种调用方与不同 `task_ref` 发出，fixture 收齐 5 个在途请求后倒序响应；每个调用拿到自己的结果，审计 5 条 `success`，`task_ref` 与调用方一一对应。另有 128 请求突发/8 在途上限测试。“多个应用”以同一 Manager 上的不同调用方来源模拟，没有真实模块与工作台同时运行 |
 | AC12 | 连接日志记录 | 单元/集成 | `connection_events_are_persisted_isolated_bounded_and_redacted` | `cargo test --offline -p dgos-mcp -p dgos-db` | 本地通过 | fake 事件持久化/隔离/条数上限及 m009 存量迁移通过 |
 | AC13 | 工具使用记录 | 单元/集成 | `tools_discovery_schema_confirmation_and_redacted_audit` 及第 10.2 节取消/中断专项 | `cargo test --offline -p dgos-mcp` | 本地通过 | fake 脱敏/隔离、拒绝/取消、pending 中断恢复和结果审计失败提示通过 |
 | AC14 | MCP 服务器启用/禁用 | 单元/集成 | `disabling_waits_for_inflight_call_then_revokes_connections_and_consent` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake 通过 |
@@ -431,6 +431,12 @@ cargo test --offline -p dgos-mcp -p dgos-db
 - dgos-mcp manager：27/27 通过（用户隔离、CRUD、快照、input/output schema、确认令牌、5 并发、128 请求突发、版本协商、无 tools 能力、重连、凭据 fail-closed、使用/连接审计、同会话刷新、DB 故障回滚、取消及晚到响应、拒绝审计、中断恢复、最终审计写入失败和正常退出/握手退出竞争）
 - 证据等级：fake stdio/HTTP 集成测试；另有下方官方兼容性 smoke，不将两者混算为完整 E2E。
 
+**验证记录（2026-11-01，AC07/AC10/AC11 收口）**：Homebrew rustc 1.99.1，macOS arm64。
+- `cargo test --offline -p dgos-mcp`：lib 26、credentials 3、manager 27 通过，official_compat 3 ignored。新增 `successful_heartbeat_keeps_the_same_ready_session`（fixture 新增 `ping-count` 模式，ping 计数经 `tools/call` 读出）；`monitor_retry_is_bounded_backed_off_and_manual_connect_resets_it` 增加“退避到期后不发起第 4 次”和 `reconnect_exhausted` 事件、`error` 状态断言；`five_simultaneous_calls_complete_with_reverse_order_responses` 改为三种调用方与不同 `task_ref`，并断言审计配对。
+- 变异验证（临时修改后已还原）：重试上限 `< 3` 改为 `< 4`，AC10 测试失败；心跳请求 `ping` 改为 `tools/list`，AC07 测试失败。
+- `npx vitest run tests/mcp-management.test.tsx`：24/24 通过（jsdom + IPC mock）。
+- 证据等级：fake stdio + jsdom，不等于真实 Server 故障恢复或桌面 E2E。
+
 **macOS 原生凭据验证**：同一 arm64 环境执行 `cargo test --offline -p dgos --lib os_keychain_roundtrip_for_isolated_synthetic_token -- --ignored`：1/1 通过。创建随机隔离的合成测试条目，验证写入、读取、删除和删除后不存在；不读用户既有密钥。Windows/Linux 尚未做原生运行时验收。
 
 **全仓编译检查**：同一 arm64 环境执行 `cargo check --offline --workspace --all-targets` 通过；未覆盖跨平台链接或发布签名。
@@ -539,6 +545,7 @@ npm test -- --run tests/mcp-management.test.tsx
 | 2026-10-27 | 补齐 OS 凭据接入、编辑和双步工具确认 UI、m009 连接事件、同会话刷新、5 并发及心跳恢复测试；证据和剩余差距见第 10 节与实现状态 | Codex |
 | 2026-10-27 | 补齐按用户/Server/call_id 取消、专用 stdio writer、拒绝/超时/取消审计、启动 pending 中断恢复和取消 UI；不把取消声称为外部回滚 | Codex |
 | 2026-11-01 | 按代码事实核对：§6.1 补模块发起的 `mcp.call` 路径（D093）；§11.3 用户依赖改为宿主会话派生；AC 原文、编号与证据状态未改 | Kiro |
+| 2026-11-01 | AC07、AC10、AC11 改为“本地通过”：新增成功心跳测试，加强重试耗尽与多调用方并发配对断言，两处变异验证；AC 原文与编号不变 | Kiro |
 
 ---
 

@@ -130,6 +130,36 @@ describe('gate', () => {
     expect(await screen.findByRole('heading', { name: '无法读取账户状态' })).toBeTruthy();
     expect(screen.queryByText('Welcome to DG-OS')).toBeNull();
   });
+
+  it('a database that could not be opened shows the reason and the file location, and offers no retry', async () => {
+    const path = '/Users/someone/Library/Application Support/com.dgos.app/dgos.db';
+    reply('get_account_state', fail(1008012, { stage: 'open', reason: 'Execution Error: file is not a database', path }));
+    renderApp();
+    expect(await screen.findByRole('heading', { name: '无法打开本机数据库' })).toBeTruthy();
+    expect(screen.getByText('打开数据库文件时失败')).toBeTruthy();
+    expect(screen.getByText('Execution Error: file is not a database')).toBeTruthy();
+    expect(screen.getByText(path)).toBeTruthy();
+    expect(screen.getByText(/没有修改这个文件/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '重试' })).toBeNull();
+    expect(screen.queryByText('Welcome to DG-OS')).toBeNull();
+    expect(callsOf('get_account_state')).toHaveLength(1);
+  });
+
+  it('a failed migration is named as such', async () => {
+    reply('get_account_state', fail(1008012, { stage: 'migrate', reason: 'Custom Error: Migration file is missing', path: '/d/dgos.db' }));
+    renderApp();
+    expect(await screen.findByText('升级数据库结构时失败')).toBeTruthy();
+    expect(screen.getByText('Custom Error: Migration file is missing')).toBeTruthy();
+    expect(screen.getByText('/d/dgos.db')).toBeTruthy();
+  });
+
+  it('1008012 without a usable detail falls back to the retry panel', async () => {
+    reply('get_account_state', fail(1008012, { stage: 'open' }), ok(signedIn));
+    renderApp();
+    expect(await screen.findByRole('heading', { name: '无法读取账户状态' })).toBeTruthy();
+    press('重试');
+    await appVisible();
+  });
 });
 
 describe('first launch (no_accounts)', () => {

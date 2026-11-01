@@ -4,9 +4,10 @@
 // a number over IPC are listed. Reserved and voided codes are deliberately absent, so they take the generic
 // fallback instead of a message nobody can trigger yet. Skills codes (1002xxx) are absent too: Skills commands
 // return `Result<_, String>`, not a numeric code (registry §3.2), and so do MCP commands. Module codes (1004xxx)
-// reach the frontend but their text and severity are undecided (FR-005 §13.2). Add a code here only together with
-// its registry status. The Provider codes 1001014, 1001017, 1001018, 1001021, 1001022 and 1001024 were added by D098;
-// their advice is the registry's 处理建议 column.
+// reach the frontend as numbers: all 21 "使用中" codes are listed per D110; the six reserved ones (1004005, 1004008,
+// 1004010, 1004011, 1004012, 1004014) take the fallback. Add a code here only together with its registry status.
+// The Provider codes 1001014, 1001017, 1001018, 1001021, 1001022 and 1001024 were added by D098; their advice is
+// the registry's 处理建议 column.
 //
 // Severity is a presentation decision made here, not by the host: `minor` is a 3 s toast, `moderate` a 5 s toast
 // with advice, `severe` a Modal that needs acknowledging (§8.3).
@@ -134,6 +135,113 @@ export const ERROR_MESSAGES: Readonly<Record<number, ErrorMessage>> = Object.fre
     description: '请检查 Base URL 是否缺少 /v1，或填成了网页地址',
     severity: 'moderate',
   },
+  1004001: {
+    message: '模块不存在',
+    description: '请检查模块 ID 或刷新模块列表',
+    severity: 'moderate',
+    action: { label: '查看模块列表', route: '/settings/modules' },
+  },
+  1004002: {
+    message: '模块已在运行',
+    description: '无需重复启动',
+    severity: 'minor',
+  },
+  1004003: {
+    message: '模块加载失败',
+    description: '模块清单或入口无效，可在模块管理查看崩溃记录',
+    severity: 'moderate',
+  },
+  1004004: {
+    message: '没有权限执行此操作',
+    description: '请在模块管理确认权限后重试',
+    severity: 'moderate',
+  },
+  1004006: {
+    message: '模块版本冲突',
+    description: '请更新到兼容版本',
+    severity: 'moderate',
+  },
+  1004007: {
+    message: '模块停止失败',
+    description: '请稍后重试',
+    severity: 'moderate',
+  },
+  1004009: {
+    message: '模块已禁用',
+    description: '请先在模块管理中启用',
+    severity: 'moderate',
+    action: { label: '查看模块列表', route: '/settings/modules' },
+  },
+  1004013: {
+    message: '模块更新失败',
+    description: '已保留当前版本，请稍后重试',
+    severity: 'moderate',
+  },
+  1004015: {
+    message: '模块包无效',
+    description: '模块文件与清单不一致，请重新安装应用',
+    severity: 'moderate',
+  },
+  1004016: {
+    message: '模块未运行',
+    description: '请先启动模块',
+    severity: 'minor',
+  },
+  1004017: {
+    message: '模块正在执行其他操作',
+    description: '请等当前操作完成后重试',
+    severity: 'minor',
+  },
+  1004018: {
+    message: '操作记录不存在',
+    description: '操作已过期或应用已重启，请刷新状态',
+    severity: 'minor',
+  },
+  1004019: {
+    message: '模块服务不可用',
+    description: '启动恢复未成功，请重启应用或查看恢复日志',
+    severity: 'severe',
+  },
+  1004020: {
+    message: '模块服务内部错误',
+    description: '请稍后重试，持续出现时查看日志',
+    severity: 'moderate',
+  },
+  1004021: {
+    message: '模块未通过准入',
+    description: '该模块不在受信任清单中',
+    severity: 'moderate',
+  },
+  1004022: {
+    message: '模块与当前应用不兼容',
+    description: '请安装兼容版本或升级应用',
+    severity: 'moderate',
+  },
+  1004023: {
+    message: '内置模块不能卸载',
+    description: '可以改为禁用',
+    severity: 'minor',
+  },
+  1004024: {
+    message: '参数无效',
+    description: '请检查输入后重试',
+    severity: 'moderate',
+  },
+  1004025: {
+    message: '模块存储空间已满',
+    description: '存储超过 5 MiB，请删除不需要的数据',
+    severity: 'moderate',
+  },
+  1004026: {
+    message: '拒绝访问非本机地址',
+    description: '模块只能访问本机服务',
+    severity: 'moderate',
+  },
+  1004027: {
+    message: '响应过大',
+    description: '本机服务的响应超过 1 MiB',
+    severity: 'moderate',
+  },
   1008001: {
     message: '用户名已存在',
     description: '请换一个用户名',
@@ -168,6 +276,11 @@ export const ERROR_MESSAGES: Readonly<Record<number, ErrorMessage>> = Object.fre
     message: '尝试次数过多',
     description: '请稍等片刻后再试',
     severity: 'moderate',
+  },
+  1008012: {
+    message: '无法打开本机数据库',
+    description: '查看数据库文件位置，备份或移走该文件后重启应用',
+    severity: 'severe',
   },
 });
 

@@ -4,6 +4,7 @@
 pub mod entities;
 pub mod migrations;
 pub mod repositories;
+pub mod startup;
 
 #[cfg(test)]
 mod appearance_tests;

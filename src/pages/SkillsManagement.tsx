@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Button, Card, Input, Loading, Modal, Stack, Switch, Tabs } from '@dgos/ui';
 import { usePageError } from '../pageError';
-import { useSkillsStore } from '../stores/skillsStore';
+import { SkillInstallPreview, useSkillsStore } from '../stores/skillsStore';
 import './SkillsManagement.css';
 
 const NOTICE = 'flex flex-wrap items-start justify-between gap-4 rounded-lg border p-4 text-sm wrap-anywhere';
@@ -38,6 +38,10 @@ const SkillsManagement: React.FC = () => {
     installSkill,
     toggleSkill,
     checkDependencies,
+    previewExternalSource,
+    previewExternalPackage,
+    confirmExternalInstall,
+    cancelExternalInstall,
   } = useSkillsStore();
   const reportError = usePageError('SkillsManagement');
 
@@ -48,6 +52,8 @@ const SkillsManagement: React.FC = () => {
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [externalSource, setExternalSource] = useState('');
+  const [externalPreview, setExternalPreview] = useState<SkillInstallPreview | null>(null);
 
   // Desktop-only placeholder; derive from a trusted session before remote use.
 
@@ -110,6 +116,46 @@ const SkillsManagement: React.FC = () => {
       await toggleSkill(skillId, enabled);
     } catch (error) {
       setActionError(`Toggle failed: ${error}`);
+      reportError(error);
+    }
+  };
+
+  const handleExternalPreview = async () => {
+    setActionError(null);
+    setActionNotice(null);
+    try {
+      setExternalPreview(await previewExternalSource(externalSource.trim()));
+    } catch (error) {
+      setActionError(`Unable to preview source: ${error}`);
+      reportError(error);
+    }
+  };
+
+  const handleExternalPackage = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setActionError(null);
+    setActionNotice(null);
+    try {
+      const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+      setExternalPreview(await previewExternalPackage(bytes));
+    } catch (error) {
+      setActionError(`Unable to preview package: ${error}`);
+      reportError(error);
+    }
+  };
+
+  const handleExternalConfirm = async () => {
+    if (!externalPreview) return;
+    setActionError(null);
+    try {
+      await confirmExternalInstall(externalPreview.operation_id);
+      setActionNotice(`${externalPreview.name} was installed and enabled for this account.`);
+      setExternalPreview(null);
+      setExternalSource('');
+    } catch (error) {
+      setActionError(`Unable to install source: ${error}`);
       reportError(error);
     }
   };
@@ -184,6 +230,56 @@ const SkillsManagement: React.FC = () => {
           </div>
         )}
         {updatesError && <p className={`${NOTICE_ERROR} m-0`} role="alert">Unable to check skill updates: {updatesError}</p>}
+
+        <Card>
+          <Card.Header>
+            <h2 className="m-0 text-base font-semibold">Install from a local package or GitHub</h2>
+          </Card.Header>
+          <Card.Body className="flex flex-col gap-3">
+            <p className="m-0 text-sm text-muted-foreground">
+              Paste a local `.zip` path, a GitHub URL, or a controlled command such as
+              `npx skills add owner/repo -a codex`. The package is validated and staged before installation.
+            </p>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="min-w-0 flex-1 basis-80">
+                <Input
+                  value={externalSource}
+                  onChange={(event) => setExternalSource(event.target.value)}
+                  placeholder="/path/to/skill.zip or https://github.com/owner/repo"
+                  aria-label="Skill package or source"
+                />
+              </div>
+              <Button onClick={() => { void handleExternalPreview(); }} disabled={!externalSource.trim() || installing}>
+                Preview source
+              </Button>
+              <label className="inline-flex cursor-pointer items-center rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-muted">
+                Upload `.zip`
+                <input className="sr-only" type="file" accept=".zip,application/zip" onChange={(event) => { void handleExternalPackage(event); }} disabled={installing} />
+              </label>
+            </div>
+            {externalPreview && (
+              <div className={`${NOTICE_INFO} m-0`} role="dialog" aria-label="Skill installation preview">
+                <div className="min-w-0 flex-1">
+                  <strong>{externalPreview.name} · {externalPreview.version}</strong>
+                  <p className="m-0 mt-1">{externalPreview.description}</p>
+                  <p className="m-0 mt-1 text-xs">
+                    {externalPreview.source_kind} · {externalPreview.file_count} files · license {externalPreview.license_status}
+                    {externalPreview.resolved_commit ? ` · commit ${externalPreview.resolved_commit}` : ''}
+                  </p>
+                  <p className="m-0 mt-1 break-all text-xs">SHA-256: {externalPreview.content_hash}</p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <Button variant="secondary" onClick={() => { void cancelExternalInstall(externalPreview.operation_id); setExternalPreview(null); }}>
+                    Cancel
+                  </Button>
+                  <Button onClick={() => { void handleExternalConfirm(); }} disabled={installing}>
+                    Confirm install
+                  </Button>
+                </div>
+              </div>
+            )}
+          </Card.Body>
+        </Card>
 
         <Tabs.Content value="browse">
           <Stack gap={4}>

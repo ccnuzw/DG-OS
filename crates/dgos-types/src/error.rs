@@ -33,6 +33,10 @@ pub enum DgosError {
     #[error("Network response too large")]
     ModuleNetworkResponseTooLarge,
 
+    /// The page cancelled a module capability call (D113, `1004028`).
+    #[error("Module call cancelled")]
+    ModuleCallCancelled,
+
     /// A failure of the capability itself (Skills `1002xxx`, MCP `1003xxx`),
     /// keeping its own code (D048, D093). The message is the capability's
     /// fixed text, never request or response content.
@@ -66,6 +70,16 @@ pub enum DgosError {
 
     #[error("Too many failed sign-in attempts; try again later")]
     SignInThrottled { retry_after_seconds: u64 },
+
+    /// The database file could not be opened or migrated at startup (D098
+    /// item 9, D116). Nothing was repaired. `stage` is `open` or `migrate`;
+    /// `reason` is a bounded line without the path; `path` is the file.
+    #[error("The local database could not be opened")]
+    DatabaseUnavailable {
+        stage: String,
+        reason: String,
+        path: String,
+    },
 
     // LAN collaboration (1010xxx, FR-010). Host command `set_lan_port` only (D107).
     #[error("LAN port must be 1024 to 65535 and not a browser-blocked port")]
@@ -169,6 +183,7 @@ impl DgosError {
             DgosError::ModuleStorageQuotaExceeded => 1004025,
             DgosError::ModuleNetworkTargetRefused => 1004026,
             DgosError::ModuleNetworkResponseTooLarge => 1004027,
+            DgosError::ModuleCallCancelled => 1004028,
             DgosError::CapabilityFailed { code, .. } => *code,
             DgosError::UsernameTaken => 1008001,
             DgosError::PasswordRejected => 1008002,
@@ -177,6 +192,7 @@ impl DgosError {
             DgosError::SessionInvalid => 1008007,
             DgosError::AccountDeletionIncomplete => 1008009,
             DgosError::SignInThrottled { .. } => 1008011,
+            DgosError::DatabaseUnavailable { .. } => 1008012,
             DgosError::LanPortInvalid => 1010012,
             DgosError::ProviderNotFound(_) => 1001001,
             DgosError::InvalidApiKey => 1001002,
@@ -210,6 +226,11 @@ impl DgosError {
             DgosError::SignInThrottled {
                 retry_after_seconds,
             } => Some(serde_json::json!({ "retry_after_seconds": retry_after_seconds })),
+            DgosError::DatabaseUnavailable {
+                stage,
+                reason,
+                path,
+            } => Some(serde_json::json!({ "stage": stage, "reason": reason, "path": path })),
             _ => None,
         }
     }
@@ -292,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn account_codes_match_the_registry_and_only_throttling_carries_detail() {
+    fn account_codes_match_the_registry_and_only_throttling_and_unavailable_carry_detail() {
         let cases = [
             (DgosError::UsernameTaken, 1008001),
             (DgosError::PasswordRejected, 1008002),
@@ -314,5 +335,21 @@ mod tests {
             Some(serde_json::json!({ "retry_after_seconds": 42 }))
         );
         assert!(!throttled.to_string().contains("42"));
+        let unavailable = DgosError::DatabaseUnavailable {
+            stage: "migrate".into(),
+            reason: "Migration file is missing".into(),
+            path: "/data/dgos.db".into(),
+        };
+        assert_eq!(unavailable.error_code(), 1008012);
+        assert_eq!(
+            unavailable.detail(),
+            Some(serde_json::json!({
+                "stage": "migrate",
+                "reason": "Migration file is missing",
+                "path": "/data/dgos.db"
+            }))
+        );
+        // The message is fixed text; the reason and path travel only in `detail`.
+        assert!(!unavailable.to_string().contains("dgos.db"));
     }
 }

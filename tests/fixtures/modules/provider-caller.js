@@ -11,6 +11,19 @@ export default function createModule(host) {
         (error) => ({ ok: false, code: error && error.code }),
       );
   (globalThis.__dgosCallers ??= {})[host.moduleId] = call;
+  // D113: starts one call with an AbortSignal and hands back `abort` and the settled `promise`, so a harness
+  // can abort while the Provider still holds the request. `preAbort` aborts before the call is made.
+  (globalThis.__dgosCancelCallers ??= {})[host.moduleId] = (providerId, prompt, preAbort) => {
+    const controller = new AbortController();
+    if (preAbort) controller.abort();
+    const promise = host.providers
+      .call(providerId, 'fixture-chat', { messages: [{ role: 'user', content: prompt }], max_tokens: 16, stream: false }, { signal: controller.signal })
+      .then(
+        (response) => ({ ok: true, content: response.content }),
+        (error) => ({ ok: false, code: error && error.code }),
+      );
+    return { abort: () => controller.abort(), promise };
+  };
   function Component() {
     return React.createElement('div', { 'data-testid': 'provider-caller' }, 'provider-caller');
   }

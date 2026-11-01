@@ -519,6 +519,7 @@ export default function ProviderForm({
               <Input
                 id="base_url"
                 label={<>Base URL <span className="text-error-text">*</span></>}
+                inputMode="url"
                 value={formData.base_url}
                 onChange={(e) => handleChange('base_url', e.target.value)}
                 placeholder="https://your-service.example.com/v1"

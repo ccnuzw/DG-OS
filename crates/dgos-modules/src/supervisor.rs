@@ -755,7 +755,7 @@ mod tests {
             self.stop_attempts.fetch_add(1, Ordering::SeqCst);
             let hang = self
                 .hanging_stops
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
                     remaining.checked_sub(1)
                 })
                 .is_ok();
@@ -768,7 +768,7 @@ mod tests {
             }
             let scripted_failure = self
                 .failing_stops
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
                     remaining.checked_sub(1)
                 })
                 .is_ok();

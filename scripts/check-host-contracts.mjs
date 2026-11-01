@@ -63,6 +63,12 @@ const confirmationCommands = new Map([
 const recordCommands = new Map([
   ['report_module_crash', new Set(['app', 'window', 'attachment_id', 'route', 'call_id', 'source', 'error_name', 'stack'])],
 ]);
+// D113: cancel one in-flight call of a route. Same host-derived identity as the call commands (the
+// route binding, never a module id or user), an exact parameter list, and the router alone: no
+// dispatch service, no admission, no authorization, because a cancel runs and grants nothing.
+const cancelCommands = new Map([
+  ['cancel_module_call', new Set(['app', 'window', 'attachment_id', 'route', 'call_id'])],
+]);
 // D034: lifecycle commands may take a `module_id` selector and an
 // `operation_id`, but never identity, handles, versions, digests, paths or URLs.
 // D055: management commands. Lifecycle commands take a `module_id` selector and an `operation_id`;
@@ -95,6 +101,15 @@ const providerExactParams = new Map([
   ['create_provider', ['app', 'window', 'config', 'probe_model']],
   ['create_provider_with_models', ['app', 'window', 'config', 'models', 'probe_model']],
 ]);
+// FR-002 Batch B: source parsing and install confirmation. Identity is host
+// derived; the renderer can supply only the source text or opaque operation id.
+const skillExactParams = new Map([
+  ['parse_skill_source', ['window', 'input']],
+  ['preview_skill_install', ['window', 'input', 'state']],
+  ['preview_skill_package', ['window', 'bytes', 'state']],
+  ['confirm_skill_install', ['window', 'operation_id', 'state']],
+  ['cancel_skill_install', ['window', 'operation_id', 'state']],
+]);
 // FR-006 / interface contract §10.1: exact parameter lists of the chat commands. Each takes one typed
 // `input` (deny_unknown_fields) and reads managed state from the AppHandle; identity comes from
 // `host::context`, never from a parameter. Streaming commands take the caller's Channel (`on_event`).
@@ -120,12 +135,19 @@ for (const file of files) {
     assert.match(args, /window:\s*WebviewWindow/, `${name}: host window context is required`);
     if (file === 'module_host') {
       const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
-      const allowed = callCommands.get(name) ?? recordCommands.get(name) ?? (name.startsWith('module_call') ? null : bridgeAllowed);
+      const allowed = callCommands.get(name) ?? recordCommands.get(name) ?? cancelCommands.get(name) ?? (name.startsWith('module_call') ? null : bridgeAllowed);
       assert.ok(allowed, `${name}: module call commands must be registered in callCommands (no generic forwarding)`);
       for (const param of names) {
         assert.ok(allowed.has(param), `${name}: bridge command parameter \`${param}\` is not allowed`);
       }
       assert.match(body, /host::module_host_window\(\s*&window\s*\)/, `${name}: missing bridge window gate`);
+      if (cancelCommands.has(name)) {
+        assert.deepEqual([...names].sort(), [...allowed].sort(), `${name}: parameter list must be exactly ${[...allowed].join(', ')}`);
+        const gate = body.search(/host::module_host_window\(\s*&window\s*\)/);
+        const cancel = body.search(/\.cancel\(\s*&route,\s*&attachment_id,\s*&call_id\s*\)/);
+        assert.ok(gate >= 0 && cancel > gate, `${name}: the window gate must precede ModuleCallRouter::cancel`);
+        assert.doesNotMatch(body, /dispatch|ModuleCapabilityDispatchService|\.admit(?:_once)?\(|authorize|resolve_once|begin_request/i, `${name}: a cancel must not dispatch, admit or authorize`);
+      }
       if (callCommands.has(name)) {
         // Channel admission must come before the capability runs, and the capability must be the
         // dispatch service that authorizes on every call (D050).
@@ -235,6 +257,12 @@ for (const file of files) {
         if (exact.includes('input')) {
           assert.match(args, /input:\s*\w+Input/, `${name}: input must be a typed deny_unknown_fields struct`);
         }
+      }
+      if (file === 'skills' && skillExactParams.has(name)) {
+        const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
+        const expected = skillExactParams.get(name);
+        assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: parameter list must be exactly ${expected.join(', ')}`);
+        assert.match(body, /host::context\(\s*&window,\s*BuiltinCaller::Settings,\s*Capability::SkillsManage\s*\)/, `${name}: Skills Batch B commands use the Settings SkillsManage gate`);
       }
     }
     commands += 1;

@@ -1,7 +1,9 @@
 import { StrictMode } from 'react';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
+import { ToastViewport, clearToasts } from '@dgos/ui';
+import { getToastSnapshot } from '../src/ui/feedback/toastStore';
 import SkillsManagement from '../src/pages/SkillsManagement';
 import { useSkillsStore } from '../src/stores/skillsStore';
 
@@ -37,7 +39,7 @@ beforeEach(() => {
     return [];
   });
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); clearToasts(); vi.restoreAllMocks(); });
 
 it('AC17 shows a local official library independently of legacy content and filters sources', async () => {
   render(<StrictMode><SkillsManagement /></StrictMode>);
@@ -94,4 +96,30 @@ it('AC18 reports a broken content preview and does not show a stale success dial
   fireEvent.click(screen.getAllByRole('button', { name: 'Details' })[0]);
   await screen.findByText('Unable to load skill details: package hash mismatch');
   expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+// D111: a background load that fails shows an inline block and never a Toast or the unified error path.
+it('D111 shows registry, installed-list and update-check load failures inline and raises no Toast', async () => {
+  const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+  mockedInvoke.mockImplementation(async (command) => {
+    if (command === 'fetch_skills_registry') throw 'registry host unreachable';
+    if (command === 'list_installed_skills') throw 'installed list unreadable';
+    if (command === 'check_skill_updates') throw 'update check unreachable';
+    return [];
+  });
+  render(<><SkillsManagement /><ToastViewport /></>);
+  const installedAlert = await screen.findByText('Unable to load installed skills: installed list unreadable');
+  expect(installedAlert.closest('[role="alert"]')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Retry loading skills' })).toBeTruthy();
+  expect((await screen.findByText('Skills registry unavailable')).closest('[role="status"]')).toBeTruthy();
+  const state = useSkillsStore.getState();
+  expect(state.registryError).toBe('registry host unreachable');
+  expect(state.installedError).toBe('installed list unreadable');
+  // The update check only runs after a successful registry fetch, so it is exercised on its own as well.
+  await act(async () => { await expect(useSkillsStore.getState().checkUpdates()).rejects.toBe('update check unreachable'); });
+  expect((await screen.findByText('Unable to check skill updates: update check unreachable')).getAttribute('role')).toBe('alert');
+  expect(getToastSnapshot().visible).toHaveLength(0);
+  expect(getToastSnapshot().queued).toHaveLength(0);
+  expect(screen.queryAllByRole('alert').every(node => !node.hasAttribute('data-state'))).toBe(true);
+  expect(logged).not.toHaveBeenCalledWith('[dgos] error', expect.anything());
 });

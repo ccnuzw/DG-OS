@@ -109,6 +109,21 @@ export interface PreparedContent {
   body: string;
 }
 
+export interface SkillInstallPreview {
+  operation_id: string;
+  skill_id: string;
+  name: string;
+  description: string;
+  version: string;
+  content_hash: string;
+  source_kind: 'local_zip' | 'github' | string;
+  source_ref: string;
+  resolved_commit?: string;
+  license_status: 'present' | 'declared_only' | 'missing' | 'unknown';
+  file_count: number;
+  required_confirmation: boolean;
+}
+
 interface RegistrySnapshot {
   skills: SkillInfo[];
   registry_url: string;
@@ -153,6 +168,10 @@ interface SkillsState {
   getSkillDetail: (skillId: string) => Promise<void>;
   
   installSkill: (skillId: string) => Promise<void>;
+  previewExternalSource: (input: string) => Promise<SkillInstallPreview>;
+  previewExternalPackage: (bytes: number[]) => Promise<SkillInstallPreview>;
+  confirmExternalInstall: (operationId: string) => Promise<void>;
+  cancelExternalInstall: (operationId: string) => Promise<void>;
   uninstallSkill: (skillId: string) => Promise<void>;
   listInstalledSkills: () => Promise<void>;
   toggleSkill: (skillId: string, enabled: boolean) => Promise<void>;
@@ -258,6 +277,30 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
     } finally {
       set({ installing: false });
     }
+  },
+
+  previewExternalSource: async (input: string) => {
+    const preview = await invoke<SkillInstallPreview>('preview_skill_install', { input });
+    return preview;
+  },
+
+  previewExternalPackage: async (bytes: number[]) => {
+    const preview = await invoke<SkillInstallPreview>('preview_skill_package', { bytes });
+    return preview;
+  },
+
+  confirmExternalInstall: async (operationId: string) => {
+    set({ installing: true });
+    try {
+      await invoke('confirm_skill_install', { operationId });
+      await get().listInstalledSkills();
+    } finally {
+      set({ installing: false });
+    }
+  },
+
+  cancelExternalInstall: async (operationId: string) => {
+    await invoke('cancel_skill_install', { operationId });
   },
 
   uninstallSkill: async (skillId: string) => {

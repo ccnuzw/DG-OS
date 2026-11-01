@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "name": "DG-OS Spec-Driven Team",
+  "workflow": "docs/01-项目概览/智能体团队工作流.md",
+  "maxImplementationTasks": 2,
+  "maxReviewRounds": 2,
+  "roles": [
+    {
+      "id": "lead",
+      "name": "dgos-lead",
+      "kind": "omp",
+      "label": "DG-OS Team | 01 指挥",
+      "prompt": "tools/herdr-team/roles/lead.md",
+      "args": ["--no-title", "--session-dir", ".herdr-team/sessions/lead"],
+      "control": true,
+      "utilityLabel": "集成与团队命令"
+    },
+    {
+      "id": "spec",
+      "name": "dgos-spec",
+      "kind": "claude",
+      "label": "DG-OS Team | 02 规格架构",
+      "prompt": "tools/herdr-team/roles/spec.md",
+      "args": [],
+      "utilityLabel": "文档检查"
+    },
+    {
+      "id": "rust",
+      "name": "dgos-rust",
+      "kind": "codex",
+      "label": "DG-OS Team | 03 Rust宿主",
+      "prompt": "tools/herdr-team/roles/rust.md",
+      "args": ["--sandbox", "workspace-write", "--ask-for-approval", "on-request", "--no-alt-screen"],
+      "utilityLabel": "Rust定向测试"
+    },
+    {
+      "id": "ui",
+      "name": "dgos-ui",
+      "kind": "opencode",
+      "label": "DG-OS Team | 04 前端交互",
+      "prompt": "tools/herdr-team/roles/ui.md",
+      "args": [],
+      "utilityLabel": "前端定向测试"
+    },
+    {
+      "id": "review",
+      "name": "dgos-review",
+      "kind": "codex",
+      "label": "DG-OS Team | 05 独立验证",
+      "prompt": "tools/herdr-team/roles/review.md",
+      "args": ["--sandbox", "read-only", "--ask-for-approval", "on-request", "--no-alt-screen"],
+      "utilityLabel": "串行验证队列"
+    }
+  ]
+}

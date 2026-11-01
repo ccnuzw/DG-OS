@@ -6,6 +6,7 @@ import McpManagement from '../src/pages/McpManagement';
 import McpConnectionNotice from '../src/components/McpConnectionNotice';
 import { useMcpStore } from '../src/stores/mcpStore';
 import { Modal, ModalHost, ToastViewport, clearToasts } from '@dgos/ui';
+import { getToastSnapshot } from '../src/ui/feedback/toastStore';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 const mocked = vi.mocked(invoke);
@@ -449,4 +450,48 @@ it('toggles a server through its switch and reflects the host result', async () 
   fireEvent.click(toggle);
   await waitFor(() => expect(mocked).toHaveBeenCalledWith('toggle_mcp_server', { serverId: 'a', enabled: false }));
   await waitFor(() => expect(screen.getByRole('switch', { name: 'Enable Alpha' }).getAttribute('aria-checked')).toBe('false'));
+});
+
+// D111: a status poll that keeps failing is shown inline and never as a Toast.
+it('D111 keeps repeated status-poll failures inline: no Toast after 30 s of failing polls', async () => {
+  const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const handler = mocked.getMockImplementation()!;
+  let listCalls = 0;
+  mocked.mockImplementation((command, args) => {
+    if (command !== 'list_mcp_servers') return handler(command, args);
+    listCalls += 1;
+    return listCalls === 1 ? Promise.resolve(servers) : Promise.reject('MCP status service unreachable');
+  });
+  vi.useFakeTimers();
+  render(<MemoryRouter><McpManagement /><McpConnectionNotice /><ToastViewport /><ModalHost /></MemoryRouter>);
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(screen.getByText('Alpha')).toBeTruthy();
+  expect(screen.queryByRole('alert')).toBeNull();
+
+  // Three 10 s polls, each rejected.
+  await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+  expect(listCalls).toBeGreaterThanOrEqual(4);
+  expect(useMcpStore.getState().error).toBe('MCP status service unreachable');
+  const alerts = screen.getAllByRole('alert');
+  expect(alerts.map(node => node.textContent)).toEqual(['MCP status service unreachable']);
+  expect(alerts[0].hasAttribute('data-state')).toBe(false);
+  expect(getToastSnapshot().visible).toHaveLength(0);
+  expect(getToastSnapshot().queued).toHaveLength(0);
+
+  // More failing polls do not queue anything either, and the inline error stays a single block.
+  await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+  expect(getToastSnapshot().visible).toHaveLength(0);
+  expect(getToastSnapshot().queued).toHaveLength(0);
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
+  expect(logged).not.toHaveBeenCalledWith('[dgos] error', expect.anything());
+});
+
+// D112: URL fields use inputMode="url"; Input keeps its four types.
+it('D112 marks the MCP Server URL input inputmode="url" without giving it type="url"', async () => {
+  render(<McpManagement />);
+  await screen.findByText('Alpha');
+  await chooseTransport('HTTP endpoint');
+  const url = screen.getByLabelText(/^Server URL/) as HTMLInputElement;
+  expect(url.getAttribute('inputmode')).toBe('url');
+  expect(url.type).toBe('text');
 });

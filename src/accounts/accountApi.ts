@@ -160,3 +160,26 @@ function retryAfterSeconds(detail: unknown): number | null {
   const seconds = detail.retry_after_seconds;
   return typeof seconds === 'number' && Number.isFinite(seconds) ? seconds : null;
 }
+
+/** Startup could not open or migrate the database (`1008012`, D116). Nothing was repaired. */
+export interface DatabaseFailure {
+  stage: 'open' | 'migrate';
+  /** One bounded line from the host, without the path and without row data. */
+  reason: string;
+  /** The database file. */
+  path: string;
+}
+
+export const DATABASE_UNAVAILABLE = 1008012;
+
+/** The database failure carried by a `get_account_state` rejection, or `null` for any other error. */
+export function databaseFailure(error: unknown): DatabaseFailure | null {
+  if (!(error instanceof AccountCommandError) || error.code !== DATABASE_UNAVAILABLE) return null;
+  const detail = error.detail;
+  if (typeof detail !== 'object' || detail === null) return null;
+  const { stage, reason, path } = detail as Record<string, unknown>;
+  if ((stage !== 'open' && stage !== 'migrate') || typeof reason !== 'string' || typeof path !== 'string' || !path) {
+    return null;
+  }
+  return { stage, reason, path };
+}

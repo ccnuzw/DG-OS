@@ -27,8 +27,12 @@ use dgos_types::HostExecutionContext;
 use std::{
     collections::HashMap,
     fmt,
-    sync::{Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicBool, AtomicU8, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
 };
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 /// Maximum module calls in flight per runtime (D051). There is one capability
@@ -85,6 +89,119 @@ pub enum CallRejection {
     Busy,
 }
 
+const RUNNING: u8 = 0;
+const CANCEL_REQUESTED: u8 = 1;
+const SETTLED: u8 = 2;
+
+struct ControlInner {
+    state: AtomicU8,
+    started: AtomicBool,
+    token: CancellationToken,
+}
+
+/// Cancellation handle of one admitted call (D113). The router keeps one per
+/// in-flight `call_id` so `cancel` can reach the call; the dispatch layer
+/// holds a clone to race its work against the signal and to mark the point
+/// where the external effect starts.
+///
+/// Exactly one of two things happens to a call: it settles with its own
+/// outcome (`BoundModuleCall::finish` claims the settlement), or a cancel is
+/// accepted first and the call settles as cancelled. The two cannot both
+/// win, so `cancel` answering `true` always means the caller sees `1004028`.
+#[derive(Clone)]
+pub struct CallControl(Arc<ControlInner>);
+
+impl CallControl {
+    fn new() -> Self {
+        Self(Arc::new(ControlInner {
+            state: AtomicU8::new(RUNNING),
+            started: AtomicBool::new(false),
+            token: CancellationToken::new(),
+        }))
+    }
+
+    /// Accept a cancel. `true` only for the first cancel of a call that has
+    /// not settled.
+    fn request_cancel(&self) -> bool {
+        let accepted = self
+            .0
+            .state
+            .compare_exchange(
+                RUNNING,
+                CANCEL_REQUESTED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok();
+        if accepted {
+            self.0.token.cancel();
+        }
+        accepted
+    }
+
+    fn claim_settlement(&self) -> bool {
+        self.0
+            .state
+            .compare_exchange(RUNNING, SETTLED, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    /// Resolves once a cancel was accepted for this call.
+    pub async fn cancelled(&self) {
+        self.0.token.cancelled().await;
+    }
+
+    pub fn is_cancel_requested(&self) -> bool {
+        self.0.token.is_cancelled()
+    }
+
+    /// Mark that the external effect is about to start: from here a cancel
+    /// can only stop waiting, and the call settles as `Interrupted` because
+    /// the effect may already have happened. Call it immediately before the
+    /// effect, from inside the operation's own future.
+    pub fn mark_started(&self) {
+        self.0.started.store(true, Ordering::Release);
+    }
+
+    pub fn is_started(&self) -> bool {
+        self.0.started.load(Ordering::Acquire)
+    }
+}
+
+type RouteTable = Mutex<HashMap<String, Route>>;
+
+fn lock_routes(table: &RouteTable) -> MutexGuard<'_, HashMap<String, Route>> {
+    table
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Removes the call from its route's in-flight map when the call settles or
+/// is dropped, so the map never outlives the request.
+struct Registration {
+    routes: Arc<RouteTable>,
+    route: String,
+    call_id: String,
+    control: CallControl,
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        let mut routes = lock_routes(&self.routes);
+        if let Some(known) = routes.get_mut(&self.route) {
+            // A resent id evicted from the dedupe window may have replaced
+            // the entry; only remove our own.
+            if known
+                .in_flight
+                .get(&self.call_id)
+                .is_some_and(|control| Arc::ptr_eq(&control.0, &self.control.0))
+            {
+                known.in_flight.remove(&self.call_id);
+            }
+        }
+    }
+}
+
 /// One admitted call. It owns the runtime request, so dropping it unsettled
 /// counts as `Interrupted` (external result unknown) and never as success.
 pub struct BoundModuleCall {
@@ -92,6 +209,8 @@ pub struct BoundModuleCall {
     request: ModuleRequest,
     attachment_id: String,
     generation: u64,
+    control: CallControl,
+    registration: Option<Registration>,
 }
 
 impl BoundModuleCall {
@@ -118,8 +237,41 @@ impl BoundModuleCall {
         self.generation
     }
 
-    pub fn finish(self, outcome: ModuleRequestOutcome) {
+    /// A clone of the call's cancellation handle (D113).
+    pub fn control(&self) -> CallControl {
+        self.control.clone()
+    }
+
+    /// Settle with `outcome`, unless a cancel was accepted first. Returns
+    /// `true` when the call settled as given. On `false` the call settled as
+    /// cancelled (`Interrupted` if the effect had started) and the caller
+    /// must answer `1004028`, discarding whatever it computed.
+    pub fn finish(mut self, outcome: ModuleRequestOutcome) -> bool {
+        self.registration = None;
+        let honoured = self.control.claim_settlement();
+        let outcome = if honoured {
+            outcome
+        } else {
+            self.cancelled_outcome()
+        };
         self.request.finish(outcome);
+        honoured
+    }
+
+    /// Settle a call whose cancel was accepted: `Cancelled` when the effect
+    /// never started, `Interrupted` when it did (result unknown, D113).
+    pub fn finish_cancelled(mut self) {
+        self.registration = None;
+        let outcome = self.cancelled_outcome();
+        self.request.finish(outcome);
+    }
+
+    fn cancelled_outcome(&self) -> ModuleRequestOutcome {
+        if self.control.is_started() {
+            ModuleRequestOutcome::Interrupted
+        } else {
+            ModuleRequestOutcome::Cancelled
+        }
     }
 }
 
@@ -130,18 +282,22 @@ struct Route {
     /// Recently seen `call_id`s, oldest first (D054). Bounded; discarded with
     /// the route.
     seen: std::collections::VecDeque<String>,
+    /// Cancel handles of the calls still in flight on this route (D113).
+    /// Bounded by `MAX_IN_FLIGHT_CALLS`; an entry leaves when its call
+    /// settles or is dropped.
+    in_flight: HashMap<String, CallControl>,
 }
 
 pub struct ModuleCallRouter {
     loader: PageModuleLoader,
-    routes: Mutex<HashMap<String, Route>>,
+    routes: Arc<RouteTable>,
 }
 
 impl ModuleCallRouter {
     pub fn new(loader: PageModuleLoader) -> Self {
         Self {
             loader,
-            routes: Mutex::new(HashMap::new()),
+            routes: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -179,20 +335,20 @@ impl ModuleCallRouter {
                 attachment_id: attachment_id.clone(),
                 generation,
                 seen: std::collections::VecDeque::new(),
+                in_flight: HashMap::new(),
             },
         );
         Ok((ModuleCallRoute(route), attachment_id))
     }
 
-    /// Admit one call. `attachment_id` is what the transport derived from the
-    /// calling page, not a module claim; `route` is the only value the module
-    /// side supplies. Re-checks the live page instance and the runtime state
-    /// on every call. Does not authorize anything.
-    pub fn admit(
+    /// Resolve `route` for `attachment_id` to its runtime and the page
+    /// generation it was issued for, and check the page instance is still the
+    /// live one. A stale route is dropped. Does not look at the runtime state.
+    fn bound_runtime(
         &self,
         route: &str,
         attachment_id: &str,
-    ) -> Result<BoundModuleCall, CallRejection> {
+    ) -> Result<(ModuleRuntimeHandle, u64), CallRejection> {
         let (runtime, generation) = {
             let routes = self.routes();
             let known = routes
@@ -210,17 +366,56 @@ impl ModuleCallRouter {
             self.routes().remove(route);
             return Err(CallRejection::Stale);
         }
+        Ok((runtime, generation))
+    }
+
+    /// Admit one call. `attachment_id` is what the transport derived from the
+    /// calling page, not a module claim; `route` is the only value the module
+    /// side supplies. Re-checks the live page instance and the runtime state
+    /// on every call. Does not authorize anything. A call admitted this way
+    /// has no `call_id`, so `cancel` cannot reach it.
+    pub fn admit(
+        &self,
+        route: &str,
+        attachment_id: &str,
+    ) -> Result<BoundModuleCall, CallRejection> {
+        self.admit_inner(route, attachment_id, None)
+    }
+
+    fn admit_inner(
+        &self,
+        route: &str,
+        attachment_id: &str,
+        call_id: Option<&str>,
+    ) -> Result<BoundModuleCall, CallRejection> {
+        let (runtime, generation) = self.bound_runtime(route, attachment_id)?;
         let request = runtime
             .begin_request_limited(MAX_IN_FLIGHT_CALLS)
             .map_err(|error| match error {
                 ModuleRuntimeError::AtCapacity => CallRejection::Busy,
                 _ => CallRejection::NotReady,
             })?;
+        let control = CallControl::new();
+        let registration = call_id.and_then(|call_id| {
+            let mut routes = self.routes();
+            // The route may have been replaced since the binding check; the
+            // call then runs but cannot be cancelled.
+            let known = routes.get_mut(route)?;
+            known.in_flight.insert(call_id.to_owned(), control.clone());
+            Some(Registration {
+                routes: self.routes.clone(),
+                route: route.to_owned(),
+                call_id: call_id.to_owned(),
+                control: control.clone(),
+            })
+        });
         Ok(BoundModuleCall {
             runtime,
             request,
             attachment_id: attachment_id.to_owned(),
             generation,
+            control,
+            registration,
         })
     }
 
@@ -229,7 +424,8 @@ impl ModuleCallRouter {
     /// `fetch` is aborted by a navigation), and each delivery would otherwise
     /// be a separate external side effect. A repeated id on the same route is
     /// refused before a request exists; `call_id` merges nothing and is no
-    /// authority, only a duplicate filter.
+    /// authority, only a duplicate filter. The admitted call is registered
+    /// under its `call_id` so `cancel` can reach it while it is in flight.
     pub fn admit_once(
         &self,
         route: &str,
@@ -237,7 +433,33 @@ impl ModuleCallRouter {
         call_id: &str,
     ) -> Result<BoundModuleCall, CallRejection> {
         self.remember_call_id(route, attachment_id, call_id)?;
-        self.admit(route, attachment_id)
+        self.admit_inner(route, attachment_id, Some(call_id))
+    }
+
+    /// Cancel one in-flight call of `route` (D113). Identity is derived like
+    /// admission: the route must exist for this attachment and the page
+    /// instance must still be the live one. The runtime's state is not
+    /// required to be `ready`, so a draining runtime's page can still cancel.
+    /// `Ok(true)`: a cancel was delivered to a call in flight. `Ok(false)`:
+    /// `call_id` is not an in-flight call of this route (unknown, settled or
+    /// already cancelled), which also covers another route's id. Never records
+    /// `call_id` as seen, so a cancel cannot be used to pre-burn an id.
+    pub fn cancel(
+        &self,
+        route: &str,
+        attachment_id: &str,
+        call_id: &str,
+    ) -> Result<bool, CallRejection> {
+        if !valid_call_id(call_id) {
+            return Err(CallRejection::Duplicate);
+        }
+        self.bound_runtime(route, attachment_id)?;
+        let control = self
+            .routes()
+            .get(route)
+            .and_then(|known| known.in_flight.get(call_id))
+            .cloned();
+        Ok(control.is_some_and(|control| control.request_cancel()))
     }
 
     /// Resolve a route to its runtime for a host-side record (a crash report,
@@ -251,24 +473,8 @@ impl ModuleCallRouter {
         call_id: &str,
     ) -> Result<ModuleRuntimeHandle, CallRejection> {
         self.remember_call_id(route, attachment_id, call_id)?;
-        let (runtime, generation) = {
-            let routes = self.routes();
-            let known = routes
-                .get(route)
-                .filter(|known| known.attachment_id == attachment_id)
-                .ok_or(CallRejection::UnknownRoute)?;
-            (known.runtime.clone(), known.generation)
-        };
-        let live = self.loader.loaded_binding(runtime.runtime_id());
-        if live
-            .as_ref()
-            .map(|(id, generation)| (id.as_str(), *generation))
-            != Some((attachment_id, generation))
-        {
-            self.routes().remove(route);
-            return Err(CallRejection::Stale);
-        }
-        Ok(runtime)
+        self.bound_runtime(route, attachment_id)
+            .map(|(runtime, _)| runtime)
     }
 
     fn remember_call_id(
@@ -311,9 +517,7 @@ impl ModuleCallRouter {
     }
 
     fn routes(&self) -> MutexGuard<'_, HashMap<String, Route>> {
-        self.routes
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        lock_routes(&self.routes)
     }
 }
 
@@ -790,5 +994,314 @@ mod tests {
                 .err(),
             Some(CallRejection::Duplicate)
         );
+    }
+
+    fn invariant_holds(stats: crate::runtime::ModuleRequestStats) -> bool {
+        stats.admitted
+            == stats.in_flight as u64
+                + stats.succeeded
+                + stats.failed
+                + stats.denied
+                + stats.interrupted
+                + stats.cancelled
+    }
+
+    #[tokio::test]
+    async fn cancel_reaches_an_in_flight_call_once_and_the_call_id_stays_burned() {
+        let f = fixture();
+        let attachment = f.loader.attach("main").attachment_id;
+        let runtime = f.runtime("mod-a");
+        f.load(&runtime).await;
+        let route = f.router.issue(&runtime).unwrap();
+
+        let call = f
+            .router
+            .admit_once(route.as_str(), &attachment, "call-1")
+            .unwrap();
+        let control = call.control();
+        assert!(!control.is_cancel_requested());
+        assert_eq!(
+            f.router.cancel(route.as_str(), &attachment, "call-1"),
+            Ok(true)
+        );
+        assert!(control.is_cancel_requested());
+        // Cancelling again is idempotent and reports that nothing new happened.
+        assert_eq!(
+            f.router.cancel(route.as_str(), &attachment, "call-1"),
+            Ok(false)
+        );
+
+        // The call never started its effect: it settles as cancelled.
+        call.finish_cancelled();
+        let stats = runtime.request_stats();
+        assert_eq!(
+            (
+                stats.admitted,
+                stats.cancelled,
+                stats.interrupted,
+                stats.in_flight
+            ),
+            (1, 1, 0, 0)
+        );
+        assert!(invariant_holds(stats));
+
+        // No replay: the id stays in the dedupe window, a new id works.
+        assert_eq!(
+            f.router
+                .admit_once(route.as_str(), &attachment, "call-1")
+                .err(),
+            Some(CallRejection::Duplicate)
+        );
+        assert_eq!(runtime.request_stats().admitted, 1);
+        assert!(f
+            .router
+            .admit_once(route.as_str(), &attachment, "call-2")
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_cancel_never_records_its_call_id_so_it_cannot_pre_burn_an_id() {
+        let f = fixture();
+        let attachment = f.loader.attach("main").attachment_id;
+        let runtime = f.runtime("mod-a");
+        f.load(&runtime).await;
+        let route = f.router.issue(&runtime).unwrap();
+
+        assert_eq!(
+            f.router.cancel(route.as_str(), &attachment, "fresh"),
+            Ok(false)
+        );
+        let call = f
+            .router
+            .admit_once(route.as_str(), &attachment, "fresh")
+            .expect("a cancel for an unknown id must not burn it");
+        // The cancel that came before the call did not cancel it.
+        assert!(!call.control().is_cancel_requested());
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_settled_call_is_false_and_changes_nothing() {
+        let f = fixture();
+        let attachment = f.loader.attach("main").attachment_id;
+        let runtime = f.runtime("mod-a");
+        f.load(&runtime).await;
+        let route = f.router.issue(&runtime).unwrap();
+
+        let done = f
+            .router
+            .admit_once(route.as_str(), &attachment, "done")
+            .unwrap();
+        assert!(done.finish(ModuleRequestOutcome::Succeeded));
+        let dropped = f
+            .router
+            .admit_once(route.as_str(), &attachment, "dropped")
+            .unwrap();
+        drop(dropped);
+        let before = runtime.request_stats();
+
+        for id in ["done", "dropped"] {
+            assert_eq!(
+                f.router.cancel(route.as_str(), &attachment, id),
+                Ok(false),
+                "{id}"
+            );
+        }
+        assert_eq!(runtime.request_stats(), before);
+        assert_eq!(
+            (before.succeeded, before.interrupted, before.cancelled),
+            (1, 1, 0)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cancel_that_wins_the_race_for_the_settlement_overrides_the_computed_outcome() {
+        let f = fixture();
+        let attachment = f.loader.attach("main").attachment_id;
+        let runtime = f.runtime("mod-a");
+        f.load(&runtime).await;
+        let route = f.router.issue(&runtime).unwrap();
+
+        // Accepted before the call settled and before the effect started.
+        let early = f
+            .router
+            .admit_once(route.as_str(), &attachment, "early")
+            .unwrap();
+        assert_eq!(
+            f.router.cancel(route.as_str(), &attachment, "early"),
+            Ok(true)
+        );
+        assert!(!early.finish(ModuleRequestOutcome::Succeeded));
+
+        // Accepted after the effect started: the result is unknown.
+        let late = f
+            .router
+            .admit_once(route.as_str(), &attachment, "late")
+            .unwrap();
+        late.control().mark_started();
+        assert_eq!(
+            f.router.cancel(route.as_str(), &attachment, "late"),
+            Ok(true)
+        );
+        assert!(!late.finish(ModuleRequestOutcome::Succeeded));
+
+        let stats = runtime.request_stats();
+        assert_eq!(
+            (
+                stats.succeeded,
+                stats.cancelled,
+                stats.interrupted,
+                stats.in_flight
+            ),
+            (0, 1, 1, 0)
+        );
+        assert!(invariant_holds(stats));
+    }
+
+    #[tokio::test]
+    async fn only_the_page_that_owns_the_route_can_cancel_and_other_routes_ids_do_nothing() {
+        let f = fixture();
+        let attachment = f.loader.attach("main").attachment_id;
+        let (a, b) = (f.runtime("mod-a"), f.runtime("mod-b"));
+        f.load(&a).await;
+        f.load(&b).await;
+        let (route_a, route_b) = (f.router.issue(&a).unwrap(), f.router.issue(&b).unwrap());
+        let call_a = f
+            .router
+            .admit_once(route_a.as_str(), &attachment, "shared-id")
+            .unwrap();
+        let call_b = f
+            .router
+            .admit_once(route_b.as_str(), &attachment, "other")
+            .unwrap();
+
+        // Another attachment, an unknown route, a malformed id: all refused.
+        assert_eq!(
+            f.router
+                .cancel(route_a.as_str(), "another-attachment", "shared-id"),
+            Err(CallRejection::UnknownRoute)
+        );
+        assert_eq!(
+            f.router.cancel("not-a-route", &attachment, "shared-id"),
+            Err(CallRejection::UnknownRoute)
+        );
+        assert_eq!(
+            f.router.cancel(route_a.as_str(), &attachment, "has space"),
+            Err(CallRejection::Duplicate)
+        );
+        // Another route's call id is not an in-flight call of this route.
+        assert_eq!(
+            f.router.cancel(route_b.as_str(), &attachment, "shared-id"),
+            Ok(false)
+        );
+        assert_eq!(
+            f.router.cancel(route_a.as_str(), &attachment, "other"),
+            Ok(false)
+        );
+
+        // Every target call is untouched and settles on its own terms.
+        assert!(!call_a.control().is_cancel_requested());
+        assert!(!call_b.control().is_cancel_requested());
+        assert!(call_a.finish(ModuleRequestOutcome::Succeeded));
+        assert!(call_b.finish(ModuleRequestOutcome::Failed));
+        assert_eq!(
+            (a.request_stats().succeeded, b.request_stats().failed),
+            (1, 1)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cancel_after_the_page_reloaded_is_refused_and_the_call_keeps_its_own_outcome() {
+        let f = fixture();
+        let attachment = f.loader.attach("main").attachment_id;
+        let runtime = f.runtime("mod-a");
+        f.load(&runtime).await;
+        let route = f.router.issue(&runtime).unwrap();
+        let call = f
+            .router
+            .admit_once(route.as_str(), &attachment, "call-1")
+            .unwrap();
+
+        f.loader.page_started("main");
+        assert_eq!(
+            f.router.cancel(route.as_str(), &attachment, "call-1"),
+            Err(CallRejection::Stale)
+        );
+        // The new page instance has no route for it either.
+        let reattached = f.loader.attach("main").attachment_id;
+        assert_eq!(
+            f.router.cancel(route.as_str(), &reattached, "call-1"),
+            Err(CallRejection::UnknownRoute)
+        );
+        // A reload does not cancel (D050): the call is still in flight, uncancelled.
+        assert!(!call.control().is_cancel_requested());
+        assert_eq!(runtime.request_stats().in_flight, 1);
+        assert!(call.finish(ModuleRequestOutcome::Succeeded));
+        assert_eq!(runtime.request_stats().succeeded, 1);
+    }
+
+    #[tokio::test]
+    async fn a_draining_runtime_still_accepts_a_cancel_and_the_drain_completes() {
+        let f = fixture();
+        let attachment = f.loader.attach("main").attachment_id;
+        let runtime = f.runtime("mod-a");
+        f.load(&runtime).await;
+        let route = f.router.issue(&runtime).unwrap();
+        let call = f
+            .router
+            .admit_once(route.as_str(), &attachment, "call-1")
+            .unwrap();
+
+        runtime.begin_draining().unwrap();
+        assert_eq!(
+            f.router.admit(route.as_str(), &attachment).err(),
+            Some(CallRejection::NotReady),
+            "draining admits nothing new"
+        );
+        assert!(!runtime.wait_drained(Duration::from_millis(20)).await);
+
+        assert_eq!(
+            f.router.cancel(route.as_str(), &attachment, "call-1"),
+            Ok(true)
+        );
+        call.finish_cancelled();
+        assert!(runtime.wait_drained(Duration::from_secs(5)).await);
+        let stats = runtime.request_stats();
+        assert_eq!((stats.cancelled, stats.in_flight), (1, 0));
+        assert!(invariant_holds(stats));
+    }
+
+    #[tokio::test]
+    async fn in_flight_registrations_are_bounded_by_the_cap_and_leave_with_their_call() {
+        let f = fixture();
+        let attachment = f.loader.attach("main").attachment_id;
+        let runtime = f.runtime("mod-a");
+        f.load(&runtime).await;
+        let route = f.router.issue(&runtime).unwrap();
+        let in_flight = |f: &Fixture| {
+            f.router
+                .routes()
+                .get(route.as_str())
+                .map(|known| known.in_flight.len())
+                .unwrap()
+        };
+
+        let held: Vec<_> = (0..MAX_IN_FLIGHT_CALLS)
+            .map(|n| {
+                f.router
+                    .admit_once(route.as_str(), &attachment, &format!("id-{n}"))
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(in_flight(&f), MAX_IN_FLIGHT_CALLS);
+        // A refused call (Busy) registers nothing.
+        assert_eq!(
+            f.router
+                .admit_once(route.as_str(), &attachment, "over")
+                .err(),
+            Some(CallRejection::Busy)
+        );
+        assert_eq!(in_flight(&f), MAX_IN_FLIGHT_CALLS);
+        drop(held);
+        assert_eq!(in_flight(&f), 0);
     }
 }

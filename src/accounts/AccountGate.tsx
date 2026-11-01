@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Button, Loading, toast } from '@dgos/ui';
 import { AccountContext, type AccountContextValue } from './AccountContext';
-import { getAccountState, takeCleanupNotice, type AccountState } from './accountApi';
+import { databaseFailure, getAccountState, takeCleanupNotice, type AccountState, type DatabaseFailure } from './accountApi';
 import { AuthShell } from './AuthShell';
 import { SignInPage } from './SignInPage';
 import { WelcomePage } from './WelcomePage';
@@ -20,6 +20,9 @@ export default function AccountGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AccountState | null>(null);
   const [unsupported, setUnsupported] = useState(false);
   const [failed, setFailed] = useState(false);
+  // Startup could not open or migrate the database (1008012, D116). A retry cannot help: the host stopped
+  // before managing anything else, so this page stays until the user deals with the file and restarts.
+  const [database, setDatabase] = useState<DatabaseFailure | null>(null);
   const [attempt, setAttempt] = useState(0);
   // D087: not stored. A reload asks again.
   const [skipped, setSkipped] = useState(false);
@@ -42,8 +45,11 @@ export default function AccountGate({ children }: { children: ReactNode }) {
           });
         }
       },
-      () => {
-        if (!cancelled) setFailed(true);
+      (error: unknown) => {
+        if (cancelled) return;
+        const failure = databaseFailure(error);
+        if (failure) setDatabase(failure);
+        else setFailed(true);
       },
     );
     return () => {
@@ -63,6 +69,7 @@ export default function AccountGate({ children }: { children: ReactNode }) {
 
   const value = useMemo<AccountContextValue | null>(() => (state ? { state, refresh } : null), [state, refresh]);
 
+  if (database) return <DatabaseFailurePage failure={database} />;
   if (failed) {
     return (
       <AuthShell title="无法读取账户状态">
@@ -84,4 +91,29 @@ export default function AccountGate({ children }: { children: ReactNode }) {
   if (state.mode === 'no_accounts' && !skipped) return <WelcomePage onSkip={() => setSkipped(true)} />;
   if (state.mode === 'signed_out') return <SignInPage accounts={state.accounts} preselected={state.preselected} />;
   return <AccountContext.Provider value={value}>{children}</AccountContext.Provider>;
+}
+
+const STAGE_TEXT: Record<DatabaseFailure['stage'], string> = {
+  open: '打开数据库文件时失败',
+  migrate: '升级数据库结构时失败',
+};
+
+// FR-008 §5.2 / §10.3 (D098 item 9): show the error and the file location, repair nothing.
+function DatabaseFailurePage({ failure }: { failure: DatabaseFailure }) {
+  return (
+    <AuthShell title="无法打开本机数据库">
+      <p className="m-0 text-sm font-medium text-error-text">{STAGE_TEXT[failure.stage]}</p>
+      <div>
+        <p className="m-0 text-xs text-muted-foreground">原因</p>
+        <p className="m-0 text-sm text-foreground wrap-anywhere">{failure.reason}</p>
+      </div>
+      <div>
+        <p className="m-0 text-xs text-muted-foreground">数据库文件</p>
+        <code className="block select-text text-sm text-foreground wrap-anywhere">{failure.path}</code>
+      </div>
+      <p className="m-0 text-sm text-muted-foreground">
+        DGOS 没有修改这个文件，也不会自动修复。请先关闭应用，备份或移走该文件后再重新启动；移走后会以空数据库启动。
+      </p>
+    </AuthShell>
+  );
 }

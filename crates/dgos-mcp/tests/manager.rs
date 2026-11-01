@@ -1034,8 +1034,12 @@ async fn failed_refresh_preserves_entire_snapshot_and_live_session() {
     manager.disconnect("alice", &server.id).await.unwrap();
 }
 
+/// AC11: five calls from different callers (workbench, settings, module) are
+/// all in flight before the fixture answers, in reverse order; each caller
+/// gets its own result and its own audit row.
 #[tokio::test]
 async fn five_simultaneous_calls_complete_with_reverse_order_responses() {
+    use dgos_types::{BuiltinCaller, ExecutionProvenance};
     let (_, manager) = setup(true).await;
     let manager = Arc::new(manager);
     let server = manager
@@ -1043,20 +1047,35 @@ async fn five_simultaneous_calls_complete_with_reverse_order_responses() {
         .await
         .unwrap();
     manager.connect("alice", &server.id).await.unwrap();
+    let callers = [
+        BuiltinCaller::Workbench,
+        BuiltinCaller::Settings,
+        BuiltinCaller::Module,
+        BuiltinCaller::Workbench,
+        BuiltinCaller::Module,
+    ];
     let mut inputs = Vec::new();
-    for index in 0..5 {
+    for (index, caller) in callers.into_iter().enumerate() {
         let mut input = call(&server.id);
         input.arguments = json!({"text": format!("parallel-{index}")});
+        input.task_ref = Some(format!("task-{index}"));
         input.timeout_ms = Some(3000);
         input.confirmation_token = Some(manager.confirm_call("alice", &input).await.unwrap());
-        inputs.push(input);
+        let provenance = ExecutionProvenance {
+            caller,
+            request_id: format!("request-{index}"),
+        };
+        inputs.push((input, provenance));
     }
     let mut calls = tokio::task::JoinSet::new();
-    for input in inputs {
+    for (input, provenance) in inputs {
         let manager = manager.clone();
         calls.spawn(async move {
             let expected = input.arguments["text"].clone();
-            let response = manager.call_tool("alice", input).await.unwrap();
+            let response = manager
+                .call_tool_with_provenance("alice", input, &provenance)
+                .await
+                .unwrap();
             assert!(!response.is_error && !response.audit_warning);
             assert_eq!(response.content[0]["text"], expected);
         });
@@ -1071,6 +1090,22 @@ async fn five_simultaneous_calls_complete_with_reverse_order_responses() {
         .unwrap();
     assert_eq!(logs.len(), 5);
     assert!(logs.iter().all(|log| log.outcome == "success"));
+    let mut pairs: Vec<_> = logs
+        .iter()
+        .map(|log| (log.task_ref.clone().unwrap(), log.caller.clone().unwrap()))
+        .collect();
+    pairs.sort();
+    let expected: Vec<_> = callers
+        .iter()
+        .enumerate()
+        .map(|(index, caller)| {
+            (
+                format!("task-{index}"),
+                format!("{caller:?}").to_lowercase(),
+            )
+        })
+        .collect();
+    assert_eq!(pairs, expected);
     manager.disconnect("alice", &server.id).await.unwrap();
 }
 

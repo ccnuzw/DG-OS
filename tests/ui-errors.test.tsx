@@ -137,6 +137,112 @@ describe('error code mapping (AC10)', () => {
       expect(extractErrorCode(bad), String(bad)).toBeNull();
     }
   });
+
+  // D110: the 21 registry codes 1004xxx marked 使用中, with their text and severity.
+  const MODULE_CODES: ReadonlyArray<readonly [number, string, string, 'minor' | 'moderate' | 'severe']> = [
+    [1004001, '模块不存在', '请检查模块 ID 或刷新模块列表', 'moderate'],
+    [1004002, '模块已在运行', '无需重复启动', 'minor'],
+    [1004003, '模块加载失败', '模块清单或入口无效，可在模块管理查看崩溃记录', 'moderate'],
+    [1004004, '没有权限执行此操作', '请在模块管理确认权限后重试', 'moderate'],
+    [1004006, '模块版本冲突', '请更新到兼容版本', 'moderate'],
+    [1004007, '模块停止失败', '请稍后重试', 'moderate'],
+    [1004009, '模块已禁用', '请先在模块管理中启用', 'moderate'],
+    [1004013, '模块更新失败', '已保留当前版本，请稍后重试', 'moderate'],
+    [1004015, '模块包无效', '模块文件与清单不一致，请重新安装应用', 'moderate'],
+    [1004016, '模块未运行', '请先启动模块', 'minor'],
+    [1004017, '模块正在执行其他操作', '请等当前操作完成后重试', 'minor'],
+    [1004018, '操作记录不存在', '操作已过期或应用已重启，请刷新状态', 'minor'],
+    [1004019, '模块服务不可用', '启动恢复未成功，请重启应用或查看恢复日志', 'severe'],
+    [1004020, '模块服务内部错误', '请稍后重试，持续出现时查看日志', 'moderate'],
+    [1004021, '模块未通过准入', '该模块不在受信任清单中', 'moderate'],
+    [1004022, '模块与当前应用不兼容', '请安装兼容版本或升级应用', 'moderate'],
+    [1004023, '内置模块不能卸载', '可以改为禁用', 'minor'],
+    [1004024, '参数无效', '请检查输入后重试', 'moderate'],
+    [1004025, '模块存储空间已满', '存储超过 5 MiB，请删除不需要的数据', 'moderate'],
+    [1004026, '拒绝访问非本机地址', '模块只能访问本机服务', 'moderate'],
+    [1004027, '响应过大', '本机服务的响应超过 1 MiB', 'moderate'],
+  ];
+  const RESERVED_MODULE_CODES = [1004005, 1004008, 1004010, 1004011, 1004012, 1004014];
+
+  it('D110: the 21 module codes 1004xxx map to their registered text, advice and severity', () => {
+    const mapped = Object.keys(ERROR_MESSAGES)
+      .map(Number)
+      .filter((code) => code >= 1004000 && code < 1005000);
+    expect(mapped).toEqual(MODULE_CODES.map(([code]) => code));
+    for (const [code, message, description, severity] of MODULE_CODES) {
+      expect(lookupError(code), String(code)).toMatchObject({ message, description, severity });
+    }
+  });
+
+  it('D110: only 1004001 and 1004009 carry an action, to the module list', () => {
+    for (const [code] of MODULE_CODES) {
+      const action = lookupError(code)?.action;
+      if (code === 1004001 || code === 1004009) expect(action, String(code)).toEqual({ label: '查看模块列表', route: '/settings/modules' });
+      else expect(action, String(code)).toBeUndefined();
+    }
+  });
+
+  it('D110: the six reserved module codes are absent and take the generic fallback', () => {
+    render(<Surface />);
+    for (const code of RESERVED_MODULE_CODES) {
+      expect(lookupError(code), String(code)).toBeUndefined();
+      act(() => clearToasts());
+      act(() => handleError({ code, message: 'HOST: reserved' }));
+      expect(screen.getByRole('alert').textContent, String(code)).toContain(`操作失败（错误码 ${code}）`);
+    }
+  });
+
+  it('D110: 1004019 opens a Modal that waits for the user and shows no Toast', async () => {
+    vi.useFakeTimers();
+    render(<Surface />);
+    act(() => handleError({ code: 1004019, message: 'HOST: recovery table corrupt' }));
+    const dialog = screen.getByRole('dialog', { name: '模块服务不可用' });
+    expect(within(dialog).getByText('启动恢复未成功，请重启应用或查看恢复日志')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(document.body.textContent).not.toContain('HOST:');
+    act(() => void vi.advanceTimersByTime(60000));
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: '确定' }));
+    await act(async () => void vi.advanceTimersByTime(0));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('D110: minor module codes are 3 s toasts without the advice, moderate ones are 5 s toasts with it', () => {
+    vi.useFakeTimers();
+    render(<Surface />);
+    for (const [code, message, description, severity] of MODULE_CODES) {
+      if (severity === 'severe') continue;
+      act(() => {
+        Modal.closeAll();
+        clearToasts();
+      });
+      act(() => handleError({ code, message: 'HOST: nope' }));
+      const alert = screen.getByRole('alert');
+      expect(within(alert).getByText(message), `${code} message`).toBeTruthy();
+      if (severity === 'minor') expect(within(alert).queryByText(description), `${code} advice`).toBeNull();
+      else expect(within(alert).getByText(description), `${code} advice`).toBeTruthy();
+      expect(alert.textContent, `${code} host text`).not.toContain('HOST:');
+      expect(alert.textContent, `${code} fallback`).not.toContain('错误码');
+      const duration = severity === 'minor' ? 3000 : 5000;
+      act(() => void vi.advanceTimersByTime(duration - 1));
+      expect(screen.getByRole('alert').getAttribute('data-state'), `${code} before ${duration}`).toBe('open');
+      act(() => void vi.advanceTimersByTime(1));
+      expect(screen.getByRole('alert').getAttribute('data-state'), `${code} at ${duration}`).toBe('closing');
+    }
+  });
+
+  it('D110: the 1004001 and 1004009 action navigates to /settings/modules through handleError', () => {
+    const navigate = vi.fn();
+    render(<Surface />);
+    for (const code of [1004001, 1004009]) {
+      act(() => clearToasts());
+      act(() => handleError({ code }, { navigate, routeExists: (route) => route === '/settings/modules' }));
+      fireEvent.click(screen.getByRole('button', { name: '查看模块列表' }));
+    }
+    expect(navigate).toHaveBeenCalledTimes(2);
+    expect(navigate).toHaveBeenNthCalledWith(1, '/settings/modules');
+    expect(navigate).toHaveBeenNthCalledWith(2, '/settings/modules');
+  });
 });
 
 describe('fallback and severity routing (AC18)', () => {

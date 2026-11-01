@@ -7,6 +7,7 @@ pub mod module_crash_repository;
 pub mod module_permission_repository;
 pub mod module_storage_repository;
 pub mod provider_repository;
+pub mod skill_install_repository;
 pub mod usage_log_repository;
 pub mod user_data_repository;
 pub mod user_repository;
@@ -35,6 +36,7 @@ pub use module_storage_repository::{
     MAX_STORAGE_VALUE_BYTES,
 };
 pub use provider_repository::ProviderRepository;
+pub use skill_install_repository::{OperationPatch, SkillInstallOperation, SkillInstallRepository};
 pub use usage_log_repository::UsageLogRepository;
 pub use user_data_repository::{UserDataDomain, UserDataRepository, RETAINED_FOR_VAULT_RETRY};
 pub use user_repository::{

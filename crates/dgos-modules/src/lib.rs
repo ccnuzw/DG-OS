@@ -37,7 +37,8 @@ mod supervisor;
 pub use admission::{ModuleAdmission, PinnedModuleAdmission};
 pub use bundled::{ProvisionError, ProvisionReport};
 pub use call_channel::{
-    BoundModuleCall, CallRejection, ModuleCallRoute, ModuleCallRouter, MAX_IN_FLIGHT_CALLS,
+    BoundModuleCall, CallControl, CallRejection, ModuleCallRoute, ModuleCallRouter,
+    MAX_IN_FLIGHT_CALLS,
 };
 pub use compat::{Requires, HOST_API_VERSION, HOST_REACT_VERSION};
 pub use digest::package_integrity;

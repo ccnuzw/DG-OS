@@ -69,7 +69,12 @@ impl UserDataDomain {
             UserDataDomain::Workbench => &["workbench_tasks"],
             UserDataDomain::Mcp => &["mcp_usage_logs", "mcp_connection_logs", "mcp_servers"],
             UserDataDomain::Providers => &["provider_usage_logs", "usage_logs", "providers"],
-            UserDataDomain::Skills => &["skill_user_states", "skill_usage_logs", "skills"],
+            UserDataDomain::Skills => &[
+                "skill_user_states",
+                "skill_usage_logs",
+                "skills",
+                "skill_install_operations",
+            ],
             UserDataDomain::Modules => &[
                 "module_permissions",
                 "module_permission_audits",
@@ -224,6 +229,7 @@ fn statements(domain: UserDataDomain) -> &'static [&'static str] {
             "DELETE FROM skill_user_states WHERE user_id = ?1",
             "DELETE FROM skill_usage_logs WHERE user_id = ?1",
             "DELETE FROM skills WHERE user_id = ?1",
+            "DELETE FROM skill_install_operations WHERE user_id = ?1",
         ],
         UserDataDomain::Modules => &[
             "DELETE FROM module_permissions WHERE user_id = ?1",

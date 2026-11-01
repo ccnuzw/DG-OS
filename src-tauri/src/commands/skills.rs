@@ -1,7 +1,7 @@
 use crate::host::{self, Capability};
 use dgos_skills::{
-    DependencyStatus, RegistrySnapshot, Skill, SkillDetail, SkillInfo, SkillUpdate, SkillUsageLog,
-    SkillsManager,
+    DependencyStatus, InstalledSkill, RegistrySnapshot, Skill, SkillDetail, SkillInfo,
+    SkillInstallPreview, SkillSource, SkillUpdate, SkillUsageLog, SkillsManager,
 };
 use dgos_types::BuiltinCaller;
 use serde_json::Value as JsonValue;
@@ -51,6 +51,80 @@ pub async fn get_skill_detail(
     let manager = state.manager.read().await;
     manager
         .get_skill_detail(&skill_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Parse a URL, repository shorthand, local `.zip` path, or the supported
+/// `npx skills add ... -a codex` compatibility command. Parsing never invokes
+/// a process or performs network I/O.
+#[tauri::command]
+pub async fn parse_skill_source(
+    window: WebviewWindow,
+    input: String,
+) -> Result<SkillSource, String> {
+    let _context = host::context(&window, BuiltinCaller::Settings, Capability::SkillsManage)
+        .map_err(|e| e.to_string())?;
+    dgos_skills::parse_source(&input).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn preview_skill_install(
+    window: WebviewWindow,
+    input: String,
+    state: State<'_, SkillsState>,
+) -> Result<SkillInstallPreview, String> {
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::SkillsManage)
+        .map_err(|e| e.to_string())?;
+    let source = dgos_skills::parse_source(&input).map_err(|e| e.to_string())?;
+    let manager = state.manager.read().await;
+    manager
+        .preview_external_source(context.user_id(), source)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn preview_skill_package(
+    window: WebviewWindow,
+    bytes: Vec<u8>,
+    state: State<'_, SkillsState>,
+) -> Result<SkillInstallPreview, String> {
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::SkillsManage)
+        .map_err(|e| e.to_string())?;
+    let manager = state.manager.read().await;
+    manager
+        .preview_external_package(context.user_id(), &bytes)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn confirm_skill_install(
+    window: WebviewWindow,
+    operation_id: String,
+    state: State<'_, SkillsState>,
+) -> Result<InstalledSkill, String> {
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::SkillsManage)
+        .map_err(|e| e.to_string())?;
+    let manager = state.manager.read().await;
+    manager
+        .confirm_external_install(context.user_id(), &operation_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn cancel_skill_install(
+    window: WebviewWindow,
+    operation_id: String,
+    state: State<'_, SkillsState>,
+) -> Result<(), String> {
+    let context = host::context(&window, BuiltinCaller::Settings, Capability::SkillsManage)
+        .map_err(|e| e.to_string())?;
+    let manager = state.manager.read().await;
+    manager
+        .cancel_external_install(context.user_id(), &operation_id)
         .await
         .map_err(|e| e.to_string())
 }

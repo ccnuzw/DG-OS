@@ -125,6 +125,13 @@ describe('Vendor selection (AC16)', () => {
     expect(input('Base URL *').value).toBe('https://gateway.example/anthropic');
   });
 
+  it('D112 marks the Base URL input inputmode="url" without giving it type="url"', async () => {
+    mockHost();
+    await openNewForm();
+    expect(input('Base URL *').getAttribute('inputmode')).toBe('url');
+    expect(input('Base URL *').type).toBe('text');
+  });
+
   it('asks for the adapter of a multi-endpoint vendor and requires a base URL before Create', async () => {
     mockHost();
     await openNewForm();

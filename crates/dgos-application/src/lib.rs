@@ -373,31 +373,51 @@ impl ModuleCapabilityDispatchService {
     /// Layers 1–3 for a call the channel already admitted (layer 4): publisher
     /// identity, manifest declaration, persisted grant and enablement, read
     /// from the database on every call. A refusal settles the call `Denied`.
-    /// Adapters that need more than one phase (MCP confirmation, D093) use
-    /// this and settle the returned call themselves.
+    /// A cancel that arrives while authorization is pending ends the call
+    /// `Cancelled` with `1004028` and nothing has run (D113). Adapters that
+    /// need more than one phase (MCP confirmation, D093) use this and settle
+    /// the returned call themselves.
     pub async fn authorize_bound(
         &self,
         call: BoundModuleCall,
         permission: ModulePermission,
     ) -> DgosResult<(BoundModuleCall, CapabilityGrant)> {
-        match self
-            .capabilities
-            .authorize(call.context(), permission)
-            .await
-        {
-            Ok(grant) => Ok((call, grant)),
-            Err(error) => {
-                call.finish(ModuleRequestOutcome::Denied);
-                Err(error)
+        let control = call.control();
+        let authorized = tokio::select! {
+            biased;
+            _ = control.cancelled() => None,
+            result = self.capabilities.authorize(call.context(), permission) => Some(result),
+        };
+        match authorized {
+            None => {
+                call.finish_cancelled();
+                Err(DgosError::ModuleCallCancelled)
+            }
+            Some(Ok(grant)) => Ok((call, grant)),
+            Some(Err(error)) => {
+                if call.finish(ModuleRequestOutcome::Denied) {
+                    Err(error)
+                } else {
+                    Err(DgosError::ModuleCallCancelled)
+                }
             }
         }
     }
 
-    /// The common shape of a module capability call (D050, D093): authorize,
-    /// run `operation` under the host-owned `deadline`, settle exactly once.
-    /// An expired deadline settles `Interrupted` (the external result is
-    /// unknown, nothing is replayed) and answers `Timeout`; dropping this
-    /// future also settles `Interrupted`.
+    /// The common shape of a module capability call (D050, D093, D113):
+    /// authorize, run `operation` under the host-owned `deadline` racing the
+    /// page's cancel signal, settle exactly once. An expired deadline settles
+    /// `Interrupted` (the external result is unknown, nothing is replayed)
+    /// and answers `Timeout`; dropping this future also settles
+    /// `Interrupted`.
+    ///
+    /// The external effect "starts" when `operation` is first polled, right
+    /// after the cancel signal was checked. A cancel before that settles
+    /// `Cancelled` and `operation` never runs; after it, the operation future
+    /// is dropped, the call settles `Interrupted` and the effect is not
+    /// claimed to be undone. Both answer `1004028`. Setup work inside
+    /// `operation` before its real effect (a database read, a credential
+    /// lookup) counts as started, which errs towards "result unknown".
     pub async fn run_bound<T, F, Fut>(
         &self,
         call: BoundModuleCall,
@@ -410,20 +430,45 @@ impl ModuleCapabilityDispatchService {
         Fut: Future<Output = DgosResult<T>>,
     {
         let (call, grant) = self.authorize_bound(call, permission).await?;
-        match tokio::time::timeout(deadline, operation(grant)).await {
-            Ok(result) => {
-                call.finish(if result.is_ok() {
-                    ModuleRequestOutcome::Succeeded
-                } else {
-                    ModuleRequestOutcome::Failed
-                });
-                result
+        let control = call.control();
+        let started = control.clone();
+        let operation = async move {
+            started.mark_started();
+            operation(grant).await
+        };
+        tokio::select! {
+            biased;
+            _ = control.cancelled() => {
+                call.finish_cancelled();
+                Err(DgosError::ModuleCallCancelled)
             }
-            Err(_) => {
-                call.finish(ModuleRequestOutcome::Interrupted);
-                Err(DgosError::Timeout)
-            }
+            outcome = tokio::time::timeout(deadline, operation) => match outcome {
+                Ok(result) => settle_bound(call, result),
+                Err(_) => {
+                    if call.finish(ModuleRequestOutcome::Interrupted) {
+                        Err(DgosError::Timeout)
+                    } else {
+                        Err(DgosError::ModuleCallCancelled)
+                    }
+                }
+            },
         }
+    }
+}
+
+/// Settle a call with the outcome of `result`, unless a cancel won the race
+/// for the settlement: then the computed result is discarded and the page
+/// gets `1004028` (D113).
+pub(crate) fn settle_bound<T>(call: BoundModuleCall, result: DgosResult<T>) -> DgosResult<T> {
+    let outcome = if result.is_ok() {
+        ModuleRequestOutcome::Succeeded
+    } else {
+        ModuleRequestOutcome::Failed
+    };
+    if call.finish(outcome) {
+        result
+    } else {
+        Err(DgosError::ModuleCallCancelled)
     }
 }
 
@@ -981,6 +1026,7 @@ mod tests {
         };
         use dgos_providers::test_support::{seed_provider, MemoryCredentialVault};
         use dgos_types::{ChatMessage, HostSession, ProviderConfig};
+        use std::sync::atomic::{AtomicUsize, Ordering};
         use tempfile::TempDir;
         use tokio::sync::mpsc;
 
@@ -1552,6 +1598,309 @@ mod tests {
                 (1, 0, 0, 0)
             );
             assert_redacted("error", &format!("{result:?}"));
+        }
+
+        impl World {
+            /// A route for `handle` and one call admitted on it under `call_id`,
+            /// like the page command does.
+            fn admit_with_id(
+                &self,
+                handle: &ModuleRuntimeHandle,
+                call_id: &str,
+            ) -> (dgos_modules::ModuleCallRoute, dgos_modules::BoundModuleCall) {
+                let route = self.router.issue(handle).unwrap();
+                let call = self
+                    .router
+                    .admit_once(route.as_str(), &self.attachment_id, call_id)
+                    .unwrap();
+                (route, call)
+            }
+
+            /// A Provider that answers only after `delay`, counting arrivals.
+            async fn slow_provider(
+                &mut self,
+                delay: Duration,
+            ) -> (mockito::Mock, Arc<AtomicUsize>) {
+                let arrivals = Arc::new(AtomicUsize::new(0));
+                let seen = arrivals.clone();
+                let body = reply();
+                let mock = self
+                    .chat_mock(200, "")
+                    .with_chunked_body(move |writer| {
+                        seen.fetch_add(1, Ordering::SeqCst);
+                        std::thread::sleep(delay);
+                        std::io::Write::write_all(writer, body.as_bytes())
+                    })
+                    .expect(1)
+                    .create_async()
+                    .await;
+                (mock, arrivals)
+            }
+
+            async fn provider_call(
+                &self,
+                call: dgos_modules::BoundModuleCall,
+            ) -> DgosResult<ChatResponse> {
+                self.dispatch
+                    .call_provider_bound(
+                        call,
+                        &self.providers,
+                        &self.provider_id,
+                        "fixture-chat",
+                        chat(),
+                    )
+                    .await
+            }
+        }
+
+        fn invariant_holds(stats: dgos_modules::ModuleRequestStats) -> bool {
+            stats.admitted
+                == stats.in_flight as u64
+                    + stats.succeeded
+                    + stats.failed
+                    + stats.denied
+                    + stats.interrupted
+                    + stats.cancelled
+        }
+
+        async fn until_arrived(arrivals: &AtomicUsize) {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while arrivals.load(Ordering::SeqCst) == 0 {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .expect("the Provider request arrived");
+        }
+
+        #[tokio::test]
+        async fn a_cancel_before_dispatch_never_reaches_the_provider_and_settles_cancelled() {
+            let mut world = World::new(Pin::Exact).await;
+            world.grant().await;
+            let handle = world.start().await.unwrap();
+            let never = world
+                .chat_mock(200, &reply())
+                .expect(0)
+                .create_async()
+                .await;
+
+            let (route, call) = world.admit_with_id(&handle, "call-1");
+            assert_eq!(
+                world
+                    .router
+                    .cancel(route.as_str(), &world.attachment_id, "call-1"),
+                Ok(true)
+            );
+            let result = world.provider_call(call).await;
+            assert!(matches!(result, Err(DgosError::ModuleCallCancelled)));
+            assert_eq!(DgosError::ModuleCallCancelled.error_code(), 1004028);
+            never.assert_async().await;
+            never.remove_async().await;
+
+            let stats = handle.request_stats();
+            assert_eq!(
+                (
+                    stats.admitted,
+                    stats.cancelled,
+                    stats.interrupted,
+                    stats.denied,
+                    stats.in_flight
+                ),
+                (1, 1, 0, 0, 0)
+            );
+            assert!(invariant_holds(stats));
+
+            // No replay: the cancelled id is refused and the Provider stays untouched.
+            assert_eq!(
+                world
+                    .router
+                    .admit_once(route.as_str(), &world.attachment_id, "call-1")
+                    .err(),
+                Some(dgos_modules::CallRejection::Duplicate)
+            );
+            // A new call id is a new call.
+            let served = world
+                .chat_mock(200, &reply())
+                .expect(1)
+                .create_async()
+                .await;
+            let (_, retry) = world.admit_with_id(&handle, "call-2");
+            assert_eq!(
+                world.provider_call(retry).await.unwrap().content,
+                SECRET_REPLY
+            );
+            served.assert_async().await;
+            let stats = handle.request_stats();
+            assert_eq!(
+                (stats.admitted, stats.cancelled, stats.succeeded),
+                (2, 1, 1)
+            );
+            assert!(invariant_holds(stats));
+        }
+
+        #[tokio::test]
+        async fn a_cancel_after_dispatch_stops_waiting_and_settles_interrupted_once() {
+            let mut world = World::new(Pin::Exact).await;
+            world.grant().await;
+            let handle = world.start().await.unwrap();
+            let (slow, arrivals) = world.slow_provider(Duration::from_millis(1500)).await;
+
+            let (route, call) = world.admit_with_id(&handle, "call-1");
+            let (result, cancelled) = tokio::join!(world.provider_call(call), async {
+                until_arrived(&arrivals).await;
+                world
+                    .router
+                    .cancel(route.as_str(), &world.attachment_id, "call-1")
+            });
+            assert_eq!(cancelled, Ok(true));
+            assert!(matches!(result, Err(DgosError::ModuleCallCancelled)));
+            slow.assert_async().await;
+            assert_eq!(
+                arrivals.load(Ordering::SeqCst),
+                1,
+                "the Provider was called once"
+            );
+
+            let stats = handle.request_stats();
+            assert_eq!(
+                (
+                    stats.admitted,
+                    stats.interrupted,
+                    stats.cancelled,
+                    stats.succeeded,
+                    stats.in_flight
+                ),
+                (1, 1, 0, 0, 0)
+            );
+            assert!(invariant_holds(stats));
+
+            // Nothing is replayed: the id is burned and the cancel is now a no-op.
+            assert_eq!(
+                world
+                    .router
+                    .admit_once(route.as_str(), &world.attachment_id, "call-1")
+                    .err(),
+                Some(dgos_modules::CallRejection::Duplicate)
+            );
+            assert_eq!(
+                world
+                    .router
+                    .cancel(route.as_str(), &world.attachment_id, "call-1"),
+                Ok(false)
+            );
+            assert_eq!(arrivals.load(Ordering::SeqCst), 1);
+            assert_eq!(handle.request_stats(), stats);
+        }
+
+        #[tokio::test]
+        async fn cancelling_a_finished_call_is_false_and_leaves_its_outcome() {
+            let mut world = World::new(Pin::Exact).await;
+            world.grant().await;
+            let handle = world.start().await.unwrap();
+            let served = world
+                .chat_mock(200, &reply())
+                .expect(1)
+                .create_async()
+                .await;
+            let (route, call) = world.admit_with_id(&handle, "call-1");
+            assert_eq!(
+                world.provider_call(call).await.unwrap().content,
+                SECRET_REPLY
+            );
+            served.assert_async().await;
+            let before = handle.request_stats();
+
+            assert_eq!(
+                world
+                    .router
+                    .cancel(route.as_str(), &world.attachment_id, "call-1"),
+                Ok(false)
+            );
+            assert_eq!(handle.request_stats(), before);
+            assert_eq!(
+                (before.succeeded, before.cancelled, before.interrupted),
+                (1, 0, 0)
+            );
+        }
+
+        #[tokio::test]
+        async fn another_route_cannot_cancel_a_call_and_the_call_finishes_normally() {
+            let mut world = World::new(Pin::Exact).await;
+            world.grant().await;
+            let handle = world.start().await.unwrap();
+            let (slow, arrivals) = world.slow_provider(Duration::from_millis(600)).await;
+
+            let (route, call) = world.admit_with_id(&handle, "call-1");
+            let (result, attempts) = tokio::join!(world.provider_call(call), async {
+                until_arrived(&arrivals).await;
+                // A route that does not exist, and a foreign attachment, are refused;
+                // the call is still in flight and untouched.
+                [
+                    world
+                        .router
+                        .cancel("another-route", &world.attachment_id, "call-1"),
+                    world
+                        .router
+                        .cancel(route.as_str(), "another-page", "call-1"),
+                ]
+            });
+            assert_eq!(
+                attempts,
+                [
+                    Err(dgos_modules::CallRejection::UnknownRoute),
+                    Err(dgos_modules::CallRejection::UnknownRoute)
+                ]
+            );
+            assert_eq!(result.unwrap().content, SECRET_REPLY);
+            slow.assert_async().await;
+            let stats = handle.request_stats();
+            assert_eq!(
+                (stats.succeeded, stats.cancelled, stats.interrupted),
+                (1, 0, 0)
+            );
+        }
+
+        #[tokio::test]
+        async fn a_draining_runtime_accepts_a_cancel_and_the_stop_completes_after_it() {
+            let mut world = World::new(Pin::Exact).await;
+            world.grant().await;
+            let handle = world.start().await.unwrap();
+            let (slow, arrivals) = world.slow_provider(Duration::from_millis(1500)).await;
+
+            let (route, call) = world.admit_with_id(&handle, "call-1");
+            let (result, stopped, cancelled) = tokio::join!(
+                world.provider_call(call),
+                world.supervisor.stop(MODULE),
+                async {
+                    until_arrived(&arrivals).await;
+                    tokio::time::timeout(Duration::from_secs(10), async {
+                        while handle.state() != dgos_modules::ModuleRuntimeState::Draining {
+                            tokio::time::sleep(Duration::from_millis(5)).await;
+                        }
+                    })
+                    .await
+                    .expect("the runtime started draining");
+                    // Draining admits nothing new, but the page can still cancel.
+                    assert_eq!(
+                        world
+                            .router
+                            .admit(route.as_str(), &world.attachment_id)
+                            .err(),
+                        Some(dgos_modules::CallRejection::NotReady)
+                    );
+                    world
+                        .router
+                        .cancel(route.as_str(), &world.attachment_id, "call-1")
+                }
+            );
+            assert_eq!(cancelled, Ok(true));
+            assert!(matches!(result, Err(DgosError::ModuleCallCancelled)));
+            stopped.unwrap();
+            slow.assert_async().await;
+            assert_eq!(handle.state(), dgos_modules::ModuleRuntimeState::Stopped);
+            let stats = handle.request_stats();
+            assert_eq!((stats.interrupted, stats.in_flight), (1, 0));
+            assert!(invariant_holds(stats));
         }
     }
 }

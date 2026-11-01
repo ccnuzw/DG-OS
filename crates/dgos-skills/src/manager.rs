@@ -15,6 +15,7 @@ pub struct SkillsManager {
     registry_repo: RegistryRepository,
     pub(crate) content_repo: ContentRepository,
     http_client: Client,
+    pub(crate) install_coordinator: InstallCoordinator,
 }
 
 impl SkillsManager {
@@ -25,6 +26,7 @@ impl SkillsManager {
     }
 
     pub fn new(db: DatabaseConnection, skills_dir: PathBuf) -> Self {
+        let install_coordinator = InstallCoordinator::new(db.clone(), skills_dir.clone());
         Self {
             skills_dir,
             registry_url: String::new(),
@@ -32,7 +34,49 @@ impl SkillsManager {
             registry_repo: RegistryRepository::new(db.clone()),
             content_repo: ContentRepository::new(db),
             http_client: Client::new(),
+            install_coordinator,
         }
+    }
+
+    pub async fn preview_external_source(
+        &self,
+        user: &str,
+        source: SkillSource,
+    ) -> Result<SkillInstallPreview> {
+        self.install_coordinator.preview(user, source).await
+    }
+
+    pub async fn preview_external_package(
+        &self,
+        user: &str,
+        bytes: &[u8],
+    ) -> Result<SkillInstallPreview> {
+        if bytes.len() > MAX_EXTERNAL_ARCHIVE_BYTES {
+            return Err(SkillError::InvalidManifest(
+                "Skill archive exceeds 8 MiB".into(),
+            ));
+        }
+        let package = validate_external_zip(bytes)?;
+        let source_ref = format!("content:{}", package.content_hash);
+        self.install_coordinator
+            .preview_package(user, package, "local_zip".into(), source_ref, None)
+            .await
+    }
+
+    pub async fn confirm_external_install(
+        &self,
+        user: &str,
+        operation_id: &str,
+    ) -> Result<InstalledSkill> {
+        self.install_coordinator.confirm(user, operation_id).await
+    }
+
+    pub async fn cancel_external_install(&self, user: &str, operation_id: &str) -> Result<()> {
+        self.install_coordinator.cancel(user, operation_id).await
+    }
+
+    pub async fn recover_external_installs(&self) -> Result<usize> {
+        self.install_coordinator.recover_operations().await
     }
 
     pub async fn fetch_registry(&self) -> Result<RegistrySnapshot> {
