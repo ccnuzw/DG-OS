@@ -550,6 +550,49 @@ impl WorkbenchManager {
         self.close_tool_task(id, &session, None, None, None).await
     }
 
+    /// FR-008 session end (D087): cancel the user's text tasks and close the
+    /// user's tool tasks (their proposals are revoked), then wait (bounded)
+    /// for the text tasks to finish their audit. `false` if one is still
+    /// running when the wait ends; startup recovery finalizes it.
+    pub async fn cancel_user(&self, user: &str) -> bool {
+        for (owner, cancellation) in self.text_tasks.lock().await.values() {
+            if owner == user {
+                cancellation.cancel();
+            }
+        }
+        let sessions: Vec<_> = self
+            .tool_tasks
+            .lock()
+            .await
+            .iter()
+            .filter(|(_, session)| session.user == user)
+            .map(|(id, session)| (id.clone(), session.clone()))
+            .collect();
+        let mut closed = true;
+        for (id, session) in sessions {
+            *session.stop_reason.lock().await = Some("task_cancelled");
+            session.cancel.cancel();
+            closed &= self
+                .close_tool_task(&id, &session, None, None, None)
+                .await
+                .is_ok();
+        }
+        let drained = tokio::time::timeout(Duration::from_secs(10), async {
+            while self
+                .text_tasks
+                .lock()
+                .await
+                .values()
+                .any(|(owner, _)| owner == user)
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .is_ok();
+        closed && drained
+    }
+
     /// Revoke all proposals before releasing in-memory task material at exit.
     pub async fn shutdown(&self) -> Result<()> {
         self.stopping.cancel();

@@ -12,6 +12,7 @@ pub use appearance::{AppearancePatch, AppearancePreferences, Density, Theme};
 pub use error::{DgosError, DgosResult};
 pub use execution::{
     BuiltinCaller, ExecutionProvenance, ExecutionSource, HostExecutionContext, HostSession,
+    DEFAULT_USER_ID,
 };
 pub use model_catalog::{
     build_model, capability_hints, classify_model, recompute_models, valid_model_id, Hint,
@@ -21,6 +22,7 @@ pub use model_catalog::{
 pub use module_operation::{
     ModuleCrashView, ModuleOperationAccepted, ModuleOperationErrorKind, ModuleOperationFailure,
     ModuleOperationKind, ModuleOperationOutcome, ModuleOperationState, ModuleOperationView,
-    ModulePermissionView, ModuleRuntimeStatusState, ModuleRuntimeStatusView, ModuleSummaryView,
+    ModulePermissionAuditPageView, ModulePermissionAuditView, ModulePermissionView,
+    ModuleRuntimeStatusState, ModuleRuntimeStatusView, ModuleSummaryView,
 };
 pub use provider::*;

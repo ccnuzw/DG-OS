@@ -9,6 +9,7 @@ mod logging;
 mod module_host;
 mod provider_credentials;
 mod provider_streams;
+mod session;
 #[cfg(feature = "webview-smoke")]
 pub mod smoke;
 
@@ -81,10 +82,8 @@ pub fn run() {
                 )
                 .await
                 .expect("Failed to initialize provider manager");
-                manager
-                    .recover_credentials(host::LOCAL_USER)
-                    .await
-                    .expect("Failed to inspect provider credential migration state");
+                // Provider credential migration and outbox recovery run per account
+                // after account recovery, below.
 
                 let skills_manager = SkillsManager::new(db.clone(), skills_dir);
                 #[cfg(debug_assertions)]
@@ -104,15 +103,21 @@ pub fn run() {
                     manager: Arc::new(RwLock::new(skills_manager)),
                 };
 
+                // FR-008: the only source of the current user. Closed (`1008007`)
+                // until account recovery below settles it.
+                let resolver = session::SessionResolver::starting();
+                app_handle.manage(resolver.clone());
                 let mcp_manager = Arc::new(McpManager::with_policy_and_vault(
                     db.clone(),
-                    Arc::new(commands::DesktopMcpPolicy),
+                    Arc::new(commands::DesktopMcpPolicy(resolver.clone())),
                     Arc::new(commands::OsCredentialVault),
                 ));
                 mcp_manager
                     .recover_runtime_status()
                     .await
                     .expect("Failed to recover MCP runtime status");
+                // Nobody's servers auto-connect until the session is known.
+                mcp_manager.set_connection_scope(dgos_mcp::ConnectionScope::Nobody);
                 mcp_manager.clone().spawn_monitor();
                 let mcp_state = commands::McpState {
                     manager: mcp_manager,
@@ -210,8 +215,15 @@ pub fn run() {
                 module_operations
                     .spawn_lost_runtime_reporter(module_lost)
                     .expect("Failed to start the module runtime loss reporter");
+                // Prompts of a module's `mcp.call` go to the attachment of the
+                // call; a lost attachment ends its pending confirmations (D093).
+                let module_mcp_confirmations =
+                    Arc::new(dgos_application::ModuleMcpConfirmations::new(
+                        module_transport.clone(),
+                    ));
                 let module_host_bridge =
-                    module_host::ModuleHostBridge::new(module_loader, module_transport);
+                    module_host::ModuleHostBridge::new(module_loader, module_transport)
+                        .with_mcp_confirmations(module_mcp_confirmations.clone());
                 // Fail-closed (D034): a recovery failure does not abort the
                 // desktop app, but start/update stay refused until a later
                 // recovery succeeds. No module runtime is started here.
@@ -235,22 +247,7 @@ pub fn run() {
                     dgos_db::ModuleCrashRepository::new(db.clone()),
                     module_operations.clone(),
                 );
-                // D059: a module that already crashed too often inside the
-                // window is disabled before any auto-load can start it.
-                match module_crashes
-                    .enforce_on_startup(&dgos_types::HostSession::local_default())
-                    .await
-                {
-                    Ok(disabled) if disabled.is_empty() => {}
-                    Ok(disabled) => tracing::warn!(
-                        "Startup crash evaluation disabled {} module(s): {}",
-                        disabled.len(),
-                        disabled.join(", ")
-                    ),
-                    Err(error) => {
-                        tracing::error!("Startup crash evaluation failed: {error}")
-                    }
-                }
+                // D059's startup crash evaluation runs after account recovery, below.
                 app_handle.manage(dgos_application::ModuleManagementService::new(
                     module_permissions_repo,
                     module_operations.clone(),
@@ -265,6 +262,15 @@ pub fn run() {
                 app_handle.manage(capabilities::ModuleCapabilityDispatchService::new(
                     host_capabilities.clone(),
                 ));
+                app_handle.manage(dgos_application::ModuleStorageService::new(
+                    dgos_db::ModuleStorageRepository::new(db.clone()),
+                ));
+                app_handle.manage(module_mcp_confirmations.clone());
+                app_handle.manage(dgos_application::ModuleMcpService::new(
+                    module_mcp_confirmations,
+                    mcp_state.manager.clone(),
+                    db.clone(),
+                ));
                 app_handle.manage(module_router);
                 app_handle.manage(module_release);
                 app_handle.manage(module_operations);
@@ -276,9 +282,67 @@ pub fn run() {
                 app_handle.manage(manager);
                 app_handle.manage(skills_state);
                 app_handle.manage(dgos_db::AppearanceRepository::new(db.clone()));
+                let mcp_for_accounts = mcp_state.manager.clone();
                 app_handle.manage(mcp_state);
                 app_handle.manage(workbench);
                 app_handle.manage(chat);
+
+                // FR-008 startup (technical design `recover`): after chat and task
+                // recovery, before any command is served or module started. Finish
+                // interrupted account deletions, retry both credential outboxes,
+                // then settle the session (signed out after a restart when
+                // accounts exist; `no_accounts` runs as `default-user`).
+                let mut ports = dgos_application::AccountPorts::new(
+                    &db,
+                    Arc::new(session::HostSessionPort::new(
+                        resolver.clone(),
+                        mcp_for_accounts.clone(),
+                        app_handle.clone(),
+                    )),
+                );
+                ports.outboxes = vec![
+                    Arc::new(session::ProviderOutbox(app_handle.clone())),
+                    Arc::new(session::McpOutbox(mcp_for_accounts)),
+                ];
+                let accounts = dgos_application::AccountService::new(db.clone(), ports);
+                match accounts.recover().await {
+                    Ok(_) => {}
+                    // Fail closed: the resolver stays switching, every command
+                    // answers 1008007 until a restart recovers.
+                    Err(error) => tracing::error!(
+                        code = error.error_code(),
+                        "Account recovery failed; commands stay closed"
+                    ),
+                }
+                let users = accounts.known_user_ids().await.unwrap_or_default();
+                let providers = app_handle.state::<ProviderManager>();
+                for user in &users {
+                    if providers.recover_credentials(user).await.is_err() {
+                        tracing::warn!("Provider credential migration state could not be read");
+                    }
+                }
+                // D059: a module that already crashed too often inside the window
+                // is disabled before any auto-load (which waits for a page attach
+                // and a session) can start it. Module enablement is global, so
+                // every account's crash log counts.
+                let crashes = app_handle.state::<dgos_application::ModuleCrashService>();
+                for user in &users {
+                    match crashes
+                        .enforce_on_startup(&dgos_types::HostSession::for_user(user))
+                        .await
+                    {
+                        Ok(disabled) if disabled.is_empty() => {}
+                        Ok(disabled) => tracing::warn!(
+                            "Startup crash evaluation disabled {} module(s): {}",
+                            disabled.len(),
+                            disabled.join(", ")
+                        ),
+                        Err(error) => {
+                            tracing::error!("Startup crash evaluation failed: {error}")
+                        }
+                    }
+                }
+                app_handle.manage(accounts);
             });
 
             // Open dev tools in debug mode
@@ -376,6 +440,15 @@ pub fn run() {
             commands::set_appearance_preferences,
             // Module capability call (D051): typed, one command per capability
             commands::module_call_provider,
+            // Module capability calls (D093): typed, one command per capability
+            commands::module_prepare_skill,
+            commands::module_network_request,
+            commands::module_storage_get,
+            commands::module_storage_set,
+            commands::module_storage_delete,
+            commands::module_storage_list,
+            commands::module_call_mcp_tool,
+            commands::resolve_module_mcp_confirmation,
             // Module management (D055)
             commands::enable_module,
             commands::disable_module,
@@ -384,6 +457,14 @@ pub fn run() {
             commands::grant_module_permission,
             commands::revoke_module_permission,
             commands::list_module_crashes,
+            commands::list_module_permission_audits,
+            // Local accounts (FR-008, contract §9): window gate only
+            commands::get_account_state,
+            commands::create_account,
+            commands::sign_in,
+            commands::sign_out,
+            commands::change_password,
+            commands::delete_account,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

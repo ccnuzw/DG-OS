@@ -20,6 +20,53 @@ pub enum DgosError {
     #[error("{}", .0.message())]
     ModuleOperation(ModuleOperationErrorKind),
 
+    // Module capability call errors (D093); fixed messages that never echo input.
+    #[error("Invalid module capability input")]
+    ModuleCapabilityInputInvalid,
+
+    #[error("Module storage quota exceeded")]
+    ModuleStorageQuotaExceeded,
+
+    #[error("Network target refused")]
+    ModuleNetworkTargetRefused,
+
+    #[error("Network response too large")]
+    ModuleNetworkResponseTooLarge,
+
+    /// A failure of the capability itself (Skills `1002xxx`, MCP `1003xxx`),
+    /// keeping its own code (D048, D093). The message is the capability's
+    /// fixed text, never request or response content.
+    #[error("{message}")]
+    CapabilityFailed { code: u32, message: String },
+
+    // Local account errors (1008xxx, D087/D090). Fixed messages: never echo the
+    // username, password, hash or internal user id.
+    #[error("Username already exists")]
+    UsernameTaken,
+
+    #[error("Password must be 8 to 128 characters")]
+    PasswordRejected,
+
+    #[error(
+        "Username must be 1 to 32 characters without surrounding spaces or control characters"
+    )]
+    UsernameRejected,
+
+    #[error("Wrong username or password")]
+    SignInRejected,
+
+    /// Signed out, switching or deleting an account, or a mode that does not
+    /// allow the account operation (D090).
+    #[error("No valid session for this operation")]
+    SessionInvalid,
+
+    /// The account deletion stopped part way; startup recovery continues it.
+    #[error("Account deletion did not finish; it resumes on the next start")]
+    AccountDeletionIncomplete,
+
+    #[error("Too many failed sign-in attempts; try again later")]
+    SignInThrottled { retry_after_seconds: u64 },
+
     // Provider errors (1001xxx)
     #[error("Provider not found: {0}")]
     ProviderNotFound(String),
@@ -114,6 +161,18 @@ impl DgosError {
             DgosError::InvalidAppearancePatch => 1005002,
             DgosError::InvalidDensity => 1005006,
             DgosError::ModuleOperation(kind) => kind.code(),
+            DgosError::ModuleCapabilityInputInvalid => 1004024,
+            DgosError::ModuleStorageQuotaExceeded => 1004025,
+            DgosError::ModuleNetworkTargetRefused => 1004026,
+            DgosError::ModuleNetworkResponseTooLarge => 1004027,
+            DgosError::CapabilityFailed { code, .. } => *code,
+            DgosError::UsernameTaken => 1008001,
+            DgosError::PasswordRejected => 1008002,
+            DgosError::UsernameRejected => 1008003,
+            DgosError::SignInRejected => 1008005,
+            DgosError::SessionInvalid => 1008007,
+            DgosError::AccountDeletionIncomplete => 1008009,
+            DgosError::SignInThrottled { .. } => 1008011,
             DgosError::ProviderNotFound(_) => 1001001,
             DgosError::InvalidApiKey => 1001002,
             DgosError::CredentialUnavailable => 1001015,
@@ -136,6 +195,17 @@ impl DgosError {
             DgosError::ProviderQuotaExhausted => 1001024,
             DgosError::ProviderResponseInvalid => 1001025,
             _ => 1000000,
+        }
+    }
+
+    /// Structured detail for the IPC error envelope. Only fields that are safe
+    /// to show the renderer; never input values.
+    pub fn detail(&self) -> Option<serde_json::Value> {
+        match self {
+            DgosError::SignInThrottled {
+                retry_after_seconds,
+            } => Some(serde_json::json!({ "retry_after_seconds": retry_after_seconds })),
+            _ => None,
         }
     }
 }
@@ -214,5 +284,30 @@ mod tests {
         );
         // PermissionDenied keeps its historical wire code.
         assert_eq!(DgosError::PermissionDenied.error_code(), 1004004);
+    }
+
+    #[test]
+    fn account_codes_match_the_registry_and_only_throttling_carries_detail() {
+        let cases = [
+            (DgosError::UsernameTaken, 1008001),
+            (DgosError::PasswordRejected, 1008002),
+            (DgosError::UsernameRejected, 1008003),
+            (DgosError::SignInRejected, 1008005),
+            (DgosError::SessionInvalid, 1008007),
+            (DgosError::AccountDeletionIncomplete, 1008009),
+        ];
+        for (error, code) in cases {
+            assert_eq!(error.error_code(), code);
+            assert!(error.detail().is_none());
+        }
+        let throttled = DgosError::SignInThrottled {
+            retry_after_seconds: 42,
+        };
+        assert_eq!(throttled.error_code(), 1008011);
+        assert_eq!(
+            throttled.detail(),
+            Some(serde_json::json!({ "retry_after_seconds": 42 }))
+        );
+        assert!(!throttled.to_string().contains("42"));
     }
 }

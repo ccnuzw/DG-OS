@@ -852,6 +852,15 @@ impl ProviderManager {
         Ok(())
     }
 
+    /// Retry every listed vault removal whose reference no provider uses any
+    /// more. Returns how many entries are still listed afterwards; a failed
+    /// removal stays listed and is never reported as removed (D023, D087).
+    pub async fn drain_credential_cleanup(&self) -> DgosResult<usize> {
+        let _guard = self.credentials_lock.lock().await;
+        self.cleanup_unlocked().await;
+        Ok(self.provider_repo.pending_credential_cleanup().await?.len())
+    }
+
     async fn cleanup_unlocked(&self) {
         let entries = match self.provider_repo.pending_credential_cleanup().await {
             Ok(entries) => entries,

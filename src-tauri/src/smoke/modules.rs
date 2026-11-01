@@ -864,6 +864,7 @@ pub fn run_modules() {
     let scenario_world = Mutex::new(Some(world));
     let result = tauri::Builder::default()
         .manage(Pending::default())
+        .manage(crate::session::SessionResolver::no_accounts())
         .manage(LoadEvents(load_sender))
         .manage(manager)
         .manage(bridge)

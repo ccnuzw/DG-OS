@@ -541,6 +541,22 @@ impl ChatManager {
         entries.len()
     }
 
+    /// FR-008 session end (D087): stop every generation and tool turn of
+    /// `user` and wait (bounded) for their terminal transactions. `false`
+    /// means some were still running when the wait ended.
+    pub async fn cancel_user(&self, user: &str) -> bool {
+        let entries: Vec<_> = self
+            .registry()
+            .values()
+            .filter(|entry| entry.user == user)
+            .cloned()
+            .collect();
+        for entry in &entries {
+            entry.stop("task_cancelled");
+        }
+        self.wait_drained(Some(user)).await
+    }
+
     async fn wait_drained(&self, user: Option<&str>) -> bool {
         let wait = async {
             loop {

@@ -5,15 +5,34 @@
 //! managers independently. The services bind trusted execution context and
 //! leave resource ownership and provider invariants to their domain managers.
 
+pub mod accounts;
 mod module_crashes;
 mod module_management;
+mod module_mcp;
+mod module_network;
 mod module_operations;
+mod module_storage;
+pub use accounts::{
+    AccountMode, AccountPorts, AccountService, AccountState, AccountSummary, ChangePasswordInput,
+    CreateAccountInput, CredentialOutbox, DeleteAccountInput, DeleteAccountResult,
+    NoRemoteSessions, RecoveryReport, RemoteSessionRevoker, SessionPort, SessionState, SignInInput,
+    UserPurge,
+};
 pub use module_crashes::{
     sanitize_error_name, sanitize_stack, DisableRetryPolicy, ModuleCrashService,
     AUTO_DISABLE_CRASHES,
 };
 pub use module_management::ModuleManagementService;
+pub use module_mcp::{
+    McpConfirmationNotifier, McpConfirmationPrompt, McpConfirmationRequest, McpVerdict,
+    ModuleMcpConfirmations, ModuleMcpResult, ModuleMcpService, MCP_CALL_DEADLINE,
+};
+pub use module_network::{
+    execute_network_request, ModuleNetworkBody, ModuleNetworkBodyEncoding,
+    ModuleNetworkRequestInput, ModuleNetworkResponse, NETWORK_LOCAL_DEADLINE,
+};
 pub use module_operations::ModuleOperationManager;
+pub use module_storage::{ModuleStorageService, MODULE_STORAGE_DEADLINE};
 
 use dgos_db::{ModulePermission, ModulePermissionRepository};
 use dgos_modules::{BoundModuleCall, ModulePublisher, ModuleRequestOutcome, ModuleRuntimeHandle};
@@ -39,11 +58,23 @@ pub struct HostCapabilityService {
 
 #[derive(Clone, Debug)]
 pub struct CapabilityGrant {
+    pub user_id: String,
     pub module_id: String,
     pub version: String,
     pub integrity: String,
     pub permission: ModulePermission,
     pub request_id: String,
+}
+
+impl CapabilityGrant {
+    /// Usage-log attribution of a module call: `caller=module` plus the
+    /// host-generated `request_id`.
+    pub fn provenance(&self) -> ExecutionProvenance {
+        ExecutionProvenance {
+            caller: BuiltinCaller::Module,
+            request_id: self.request_id.clone(),
+        }
+    }
 }
 
 impl HostCapabilityService {
@@ -104,6 +135,7 @@ impl HostCapabilityService {
             return Err(DgosError::PermissionDenied);
         }
         Ok(CapabilityGrant {
+            user_id: context.user_id().to_owned(),
             module_id: module_id.to_owned(),
             version: version.to_owned(),
             integrity: integrity.to_owned(),
@@ -317,31 +349,68 @@ impl ModuleCapabilityDispatchService {
         request: ChatRequest,
         deadline: Duration,
     ) -> DgosResult<ChatResponse> {
-        let grant = match self
+        self.run_bound(
+            call,
+            ModulePermission::ProvidersCall,
+            deadline,
+            move |grant| async move {
+                let provenance = grant.provenance();
+                providers
+                    .call_provider_bound_with_provenance(
+                        provider_id,
+                        model_id,
+                        request,
+                        &grant.user_id,
+                        None,
+                        Some(&provenance),
+                    )
+                    .await
+            },
+        )
+        .await
+    }
+
+    /// Layers 1–3 for a call the channel already admitted (layer 4): publisher
+    /// identity, manifest declaration, persisted grant and enablement, read
+    /// from the database on every call. A refusal settles the call `Denied`.
+    /// Adapters that need more than one phase (MCP confirmation, D093) use
+    /// this and settle the returned call themselves.
+    pub async fn authorize_bound(
+        &self,
+        call: BoundModuleCall,
+        permission: ModulePermission,
+    ) -> DgosResult<(BoundModuleCall, CapabilityGrant)> {
+        match self
             .capabilities
-            .authorize(call.context(), ModulePermission::ProvidersCall)
+            .authorize(call.context(), permission)
             .await
         {
-            Ok(grant) => grant,
+            Ok(grant) => Ok((call, grant)),
             Err(error) => {
                 call.finish(ModuleRequestOutcome::Denied);
-                return Err(error);
+                Err(error)
             }
-        };
-        let user_id = call.context().user_id().to_owned();
-        let provenance = ExecutionProvenance {
-            caller: BuiltinCaller::Module,
-            request_id: grant.request_id,
-        };
-        let external = providers.call_provider_bound_with_provenance(
-            provider_id,
-            model_id,
-            request,
-            &user_id,
-            None,
-            Some(&provenance),
-        );
-        match tokio::time::timeout(deadline, external).await {
+        }
+    }
+
+    /// The common shape of a module capability call (D050, D093): authorize,
+    /// run `operation` under the host-owned `deadline`, settle exactly once.
+    /// An expired deadline settles `Interrupted` (the external result is
+    /// unknown, nothing is replayed) and answers `Timeout`; dropping this
+    /// future also settles `Interrupted`.
+    pub async fn run_bound<T, F, Fut>(
+        &self,
+        call: BoundModuleCall,
+        permission: ModulePermission,
+        deadline: Duration,
+        operation: F,
+    ) -> DgosResult<T>
+    where
+        F: FnOnce(CapabilityGrant) -> Fut,
+        Fut: Future<Output = DgosResult<T>>,
+    {
+        let (call, grant) = self.authorize_bound(call, permission).await?;
+        match tokio::time::timeout(deadline, operation(grant)).await {
             Ok(result) => {
                 call.finish(if result.is_ok() {
                     ModuleRequestOutcome::Succeeded

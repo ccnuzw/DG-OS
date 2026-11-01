@@ -1,18 +1,29 @@
 use serde::Serialize;
 
-/// The current desktop host session. Renderer payloads never construct this
-/// value; the local session is derived by the Tauri host until multi-user
-/// authentication is introduced.
+/// The user every host session ran as before local accounts (D023), and the
+/// id the first account takes over (D087).
+pub const DEFAULT_USER_ID: &str = "default-user";
+
+/// A host session. Renderer payloads never construct this value. In
+/// production only the host's session resolver (FR-008) and host-owned
+/// services that act for a user the host already derived call `for_user`;
+/// `scripts/check-host-contracts.mjs` rejects `local_default` outside tests.
 #[derive(Clone, Debug)]
 pub struct HostSession {
     user_id: String,
 }
 
 impl HostSession {
-    pub fn local_default() -> Self {
+    pub fn for_user(user_id: &str) -> Self {
         Self {
-            user_id: "default-user".into(),
+            user_id: user_id.into(),
         }
+    }
+
+    /// Test fixture: the pre-account identity. Production code resolves the
+    /// session instead.
+    pub fn local_default() -> Self {
+        Self::for_user(DEFAULT_USER_ID)
     }
 
     pub fn user_id(&self) -> &str {

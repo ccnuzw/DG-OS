@@ -1,8 +1,12 @@
+use crate::session::SessionResolver;
 use dgos_types::{BuiltinCaller, DgosError, HostExecutionContext, HostSession};
-use tauri::WebviewWindow;
+use std::sync::Arc;
+use tauri::{Manager, WebviewWindow};
 
-// Preserve the identity used by existing desktop data until FR-008 supplies sessions.
-pub const LOCAL_USER: &str = "default-user";
+/// The pre-account identity, for tests and smoke fixtures that seed data.
+/// Production commands resolve the user through `SessionResolver`.
+#[cfg(any(test, feature = "webview-smoke"))]
+pub const LOCAL_USER: &str = dgos_types::DEFAULT_USER_ID;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Capability {
@@ -21,17 +25,32 @@ pub enum Capability {
     Appearance,
 }
 
+/// Entry gate of the renderer commands: trusted main window, then the
+/// host-resolved session (`1008007` while signed out, switching or deleting;
+/// before caller/capability, D090), then caller/capability policy.
 pub fn context(
     window: &WebviewWindow,
     caller: BuiltinCaller,
     capability: Capability,
 ) -> Result<HostExecutionContext, DgosError> {
     let url = window.url().map_err(|_| DgosError::PermissionDenied)?;
-    let trusted = trusted_main_window(window.label(), &url, cfg!(debug_assertions));
-    if !trusted || !allows(caller, capability) {
+    if !trusted_main_window(window.label(), &url, cfg!(debug_assertions)) {
         return Err(DgosError::PermissionDenied);
     }
-    Ok(HostExecutionContext::for_builtin(LOCAL_USER, caller))
+    let session = resolved_session(window)?;
+    if !allows(caller, capability) {
+        return Err(DgosError::PermissionDenied);
+    }
+    Ok(HostExecutionContext::for_builtin(session.user_id(), caller))
+}
+
+/// The resolver's current session. A host without a resolver fails closed.
+fn resolved_session(window: &WebviewWindow) -> Result<HostSession, DgosError> {
+    window
+        .app_handle()
+        .try_state::<Arc<SessionResolver>>()
+        .ok_or(DgosError::SessionInvalid)?
+        .current()
 }
 
 /// Packaged app origins, plus the Vite dev server on port 1420 in debug
@@ -74,8 +93,7 @@ pub fn module_session(
     if !is_settings_route(&url) {
         return Err(DgosError::PermissionDenied);
     }
-    debug_assert_eq!(context.user_id(), LOCAL_USER);
-    Ok(HostSession::local_default())
+    Ok(HostSession::for_user(context.user_id()))
 }
 
 /// Entry gate for the module host bridge commands (D046). Window label and
@@ -90,6 +108,31 @@ pub fn module_host_window(window: &WebviewWindow) -> Result<(), DgosError> {
     } else {
         Err(DgosError::PermissionDenied)
     }
+}
+
+/// Entry gate of the account commands (D090, contract §9.1): the trusted
+/// `main` window only. No signed-in session, caller, capability or route
+/// check, because the sign-in page calls them; the account service decides
+/// by account mode, and password checks are the boundary.
+pub fn account_window(window: &WebviewWindow) -> Result<(), DgosError> {
+    let url = window.url().map_err(|_| DgosError::PermissionDenied)?;
+    if trusted_main_window(window.label(), &url, cfg!(debug_assertions)) {
+        Ok(())
+    } else {
+        Err(DgosError::PermissionDenied)
+    }
+}
+
+/// Entry gate for the user's answer to a module's MCP confirmation (D093).
+/// The dialog is mounted at the App root and the asking module outlives SPA
+/// navigation, so like `module_host_window` this checks only the `main`
+/// window and a trusted origin, never the route, caller or capability. The
+/// user is derived here, never taken from the renderer; the confirmation
+/// broker then requires the host-issued id to belong to that user. Not
+/// isolation: scripts sharing the page's realm can call it too (D050).
+pub fn module_confirmation_session(window: &WebviewWindow) -> Result<HostSession, DgosError> {
+    module_host_window(window)?;
+    resolved_session(window)
 }
 
 // Internal route policy, not a sandbox for code sharing the host's JavaScript realm.

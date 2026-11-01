@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 dgos-db = { path = "../dgos-db" }
+dgos-mcp = { path = "../dgos-mcp" }
 dgos-modules = { path = "../dgos-modules" }
 dgos-providers = { path = "../dgos-providers" }
 dgos-types = { path = "../dgos-types" }
@@ -13,6 +14,15 @@ tokio-util = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 tracing = { workspace = true }
+reqwest = { workspace = true }
+url = "2"
+base64 = "0.22"
+serde = { workspace = true }
+serde_json = { workspace = true }
+argon2 = { version = "0.5", features = ["std"] }
+zeroize = "1"
+async-trait = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }

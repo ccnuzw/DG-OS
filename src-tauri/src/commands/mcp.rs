@@ -1,4 +1,5 @@
-use crate::host::{self, Capability, LOCAL_USER};
+use crate::host::{self, Capability};
+use crate::session::SessionResolver;
 use async_trait::async_trait;
 use dgos_mcp::{
     CallMcpToolRequest, CallMcpToolResponse, CreateMcpServerRequest, CredentialScope,
@@ -275,12 +276,17 @@ pub async fn list_mcp_connection_logs(
         .map_err(|e| e.to_string())
 }
 
-pub struct DesktopMcpPolicy;
+/// Calls are allowed only for the user the session resolver currently
+/// serves (FR-008): a call bound to a user who signed out or was switched
+/// away from is refused.
+pub struct DesktopMcpPolicy(pub Arc<SessionResolver>);
 
 #[async_trait::async_trait]
 impl dgos_mcp::McpCallPolicy for DesktopMcpPolicy {
     async fn allows_call(&self, user_id: &str, _: &str, _: &str) -> bool {
-        user_id == LOCAL_USER
+        self.0
+            .current()
+            .is_ok_and(|session| session.user_id() == user_id)
     }
 }
 

@@ -314,7 +314,7 @@ impl ModuleCrashService {
         if !locked(&self.shared.disabling).insert(key.clone()) {
             return;
         }
-        let session = HostSession::local_default();
+        let session = HostSession::for_user(user_id);
         let first = self.operations.disable(&session, module_id);
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             locked(&self.shared.disabling).remove(&key);

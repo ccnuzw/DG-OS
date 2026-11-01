@@ -4,7 +4,18 @@ import { fileURLToPath } from 'node:url';
 import { checkReactVersions } from './react-version.mjs';
 
 // Static contract checks supplement compilation; they do not prove WebView isolation.
-const files = ['provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'modules', 'module_host', 'appearance'];
+const files = ['provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'modules', 'module_host', 'module_capabilities', 'appearance', 'accounts'];
+// FR-008 / interface contract §9.5: the six account commands. Exact parameter lists; no user id,
+// session token or account id. `get_account_state` and `sign_out` take only the Tauri context; the
+// rest take one typed `input`.
+const accountParams = new Map([
+  ['get_account_state', ['app', 'window']],
+  ['sign_out', ['app', 'window']],
+  ['create_account', ['app', 'window', 'input']],
+  ['sign_in', ['app', 'window', 'input']],
+  ['change_password', ['app', 'window', 'input']],
+  ['delete_account', ['app', 'window', 'input']],
+]);
 // D046: the module host bridge serves the page's own lifecycle. Its only
 // parameters are the Tauri context, the instruction channel, and the
 // host-issued attachment id, ticket and receipt. No identity, module,
@@ -17,6 +28,22 @@ const bridgeAllowed = new Set(['app', 'window', 'on_instruction', 'attachment_id
 // digest, path, URL, permission and token parameters are rejected by the allow-list itself.
 const callCommands = new Map([
   ['module_call_provider', new Set(['app', 'window', 'attachment_id', 'route', 'call_id', 'provider_id', 'model_id', 'request'])],
+]);
+// D093: the five non-Provider capabilities, one typed command each, in `module_capabilities.rs`.
+// Same exact allow-list rule; every one must admit through the channel before the dispatch service.
+const capabilityCommands = new Map([
+  ['module_storage_get', new Set(['app', 'window', 'attachment_id', 'route', 'call_id', 'key'])],
+  ['module_storage_set', new Set(['app', 'window', 'attachment_id', 'route', 'call_id', 'key', 'value'])],
+  ['module_storage_delete', new Set(['app', 'window', 'attachment_id', 'route', 'call_id', 'key'])],
+  ['module_storage_list', new Set(['app', 'window', 'attachment_id', 'route', 'call_id'])],
+  ['module_network_request', new Set(['app', 'window', 'attachment_id', 'route', 'call_id', 'request'])],
+  ['module_call_mcp_tool', new Set(['app', 'window', 'attachment_id', 'route', 'call_id', 'server_id', 'tool_name', 'arguments'])],
+  ['module_prepare_skill', new Set(['app', 'window', 'attachment_id', 'route', 'call_id', 'skill_id'])],
+]);
+// D093: the user's answer to a module-initiated MCP confirmation. Settings-route gate; the only
+// inputs are the host-issued confirmation id and the decision.
+const confirmationCommands = new Map([
+  ['resolve_module_mcp_confirmation', new Set(['app', 'window', 'confirmation_id', 'approved'])],
 ]);
 // D055: a page-reported crash. Same host-derived identity as the call commands: the runtime comes
 // from the route, never from a module id.
@@ -31,6 +58,9 @@ const recordCommands = new Map([
 const lifecycleParams = new Set(['app', 'window', 'module_id', 'operation_id']);
 const permissionCommands = new Set(['grant_module_permission', 'revoke_module_permission']);
 const permissionParams = new Set([...lifecycleParams, 'permission']);
+// D093: the permission audit query. Optional module selector plus an opaque cursor and page size;
+// the user comes from the host session.
+const auditParams = new Set(['app', 'window', 'module_id', 'before', 'limit']);
 // D065: appearance preferences. Exact allow-list: the Tauri context and, for the write, the patch
 // object. No user id, settings key or value parameter may appear, so the renderer can neither pick
 // a user nor reach any other setting.
@@ -97,6 +127,37 @@ for (const file of files) {
         const record = body.indexOf('ModuleCrashService');
         assert.ok(resolve >= 0 && record > resolve, `${name}: the route must be resolved before the crash service is used`);
       }
+    } else if (file === 'module_capabilities') {
+      const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
+      const allowed = capabilityCommands.get(name) ?? confirmationCommands.get(name);
+      assert.ok(allowed, `${name}: capability commands must be registered in capabilityCommands (no generic forwarding)`);
+      assert.deepEqual([...names].sort(), [...allowed].sort(), `${name}: parameter list must be exactly ${[...allowed].join(', ')}`);
+      if (capabilityCommands.has(name)) {
+        // `admit` is the window gate plus `ModuleCallRouter::admit_once` (checked below).
+        const admitted = body.search(/\badmit\(\s*&app,\s*&window,/);
+        const dispatch = body.indexOf('ModuleCapabilityDispatchService');
+        assert.ok(admitted >= 0 && dispatch > admitted, `${name}: channel admission must precede the dispatch service`);
+        assert.match(body, /\.(?:run_bound|authorize_bound)\(\s*call,/, `${name}: must authorize the admitted call on every call`);
+      } else {
+        // D093: the dialog and the asking module survive SPA navigation, so the answer is gated on the
+        // trusted main window on every route; the user is host-derived and the id is bound to it.
+        assert.match(body, /host::module_confirmation_session\(\s*&window\s*\)/, `${name}: missing confirmation window gate`);
+        assert.doesNotMatch(body, /host::module_session\(/, `${name}: the confirmation gate must not require the Settings route`);
+        assert.match(body, /\.resolve\(\s*session\.user_id\(\),\s*&confirmation_id,/, `${name}: the id must be resolved for the host-derived user`);
+      }
+    } else if (file === 'accounts') {
+      const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
+      const exact = accountParams.get(name);
+      assert.ok(exact, `${name}: account commands must be registered in accountParams`);
+      assert.deepEqual([...names].sort(), [...exact].sort(), `${name}: parameter list must be exactly ${exact.join(', ')}`);
+      if (exact.includes('input')) {
+        assert.match(args, /input:\s*\w+Input\b/, `${name}: input must be a typed *Input struct`);
+      }
+      // D090: the window gate first; never the session/caller gate, which the sign-in page cannot pass.
+      const gateAt = body.search(/host::account_window\(\s*&window\s*\)/);
+      assert.ok(gateAt >= 0, `${name}: missing host::account_window gate`);
+      assert.ok(gateAt < body.indexOf('accounts(&app)'), `${name}: the window gate must come before the account service`);
+      assert.doesNotMatch(body, /host::(?:context|module_session)\(/, `${name}: account commands do not use the session gate`);
     } else if (file === 'appearance') {
       const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
       const allowed = appearanceParams.get(name);
@@ -108,7 +169,11 @@ for (const file of files) {
       assert.match(body, /host::context\(\s*&window,/, `${name}: missing host entry gate`);
     } else if (file === 'modules') {
       const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
-      const allowed = permissionCommands.has(name) ? permissionParams : lifecycleParams;
+      const allowed = permissionCommands.has(name)
+        ? permissionParams
+        : name === 'list_module_permission_audits'
+          ? auditParams
+          : lifecycleParams;
       for (const param of names) {
         assert.ok(allowed.has(param), `${name}: module command parameter \`${param}\` is not allowed`);
       }
@@ -159,6 +224,41 @@ const gate = hostSource.match(/pub fn module_host_window\([^)]*\)[^{]*\{([\s\S]*
 assert.ok(gate, 'host.rs: module_host_window not found');
 assert.doesNotMatch(gate[1], /\bcontext\s*\(|BuiltinCaller|Capability|allows\s*\(|is_settings_route/, 'module_host_window must not depend on caller, capability or route policy');
 assert.match(gate[1], /trusted_main_window\(/, 'module_host_window must use the shared main-window/origin predicate');
+// D093: the MCP confirmation gate is the bridge window gate plus the host-derived session, with no route policy.
+const confirmationGate = hostSource.match(/pub fn module_confirmation_session\([^)]*\)[^{]*\{([\s\S]*?)\n\}/);
+assert.ok(confirmationGate, 'host.rs: module_confirmation_session not found');
+assert.match(confirmationGate[1], /module_host_window\(window\)\?/, 'module_confirmation_session must use the main-window/origin gate');
+assert.doesNotMatch(confirmationGate[1], /\bcontext\s*\(|BuiltinCaller|Capability|allows\s*\(|is_settings_route/, 'module_confirmation_session must not depend on caller, capability or route policy');
+// FR-008 / contract §9.5: the account gate is the main-window/origin predicate only.
+const accountGate = hostSource.match(/pub fn account_window\([^)]*\)[^{]*\{([\s\S]*?)\n\}/);
+assert.ok(accountGate, 'host.rs: account_window not found');
+assert.match(accountGate[1], /trusted_main_window\(/, 'account_window must use the shared main-window/origin predicate');
+assert.doesNotMatch(accountGate[1], /\bcontext\s*\(|BuiltinCaller|Capability|allows\s*\(|is_settings_route|resolved_session|SessionResolver/, 'account_window must not depend on session, caller, capability or route policy');
+// FR-008: identity comes only from the session resolver. `context` resolves it; the pre-account
+// constant exists only for tests and smoke fixtures.
+const contextGate = hostSource.match(/pub fn context\([^)]*\)[^{]*\{([\s\S]*?)\n\}/);
+assert.ok(contextGate, 'host.rs: context not found');
+assert.match(contextGate[1], /resolved_session\(window\)\?/, 'context must resolve the user through the session resolver');
+assert.doesNotMatch(contextGate[1], /LOCAL_USER|DEFAULT_USER_ID|local_default/, 'context must not return a fixed user');
+assert.match(hostSource, /#\[cfg\(any\(test, feature = "webview-smoke"\)\)\]\s*pub const LOCAL_USER/, 'LOCAL_USER must exist only for tests and smoke fixtures');
+// Production code never builds the pre-account session directly; only test modules may.
+const productionSources = [
+  ...['host', 'lib', 'session', 'module_host', 'capabilities'].map((name) => `../src-tauri/src/${name}.rs`),
+  ...[...files, 'mod'].map((name) => `../src-tauri/src/commands/${name}.rs`),
+  ...['lib', 'accounts', 'module_crashes', 'module_management', 'module_mcp', 'module_network', 'module_operations', 'module_storage']
+    .map((name) => `../crates/dgos-application/src/${name}.rs`),
+];
+for (const path of productionSources) {
+  const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+  const production = source.split(/\n#\[cfg\(test\)\]/)[0];
+  assert.doesNotMatch(production, /local_default\(/, `${path}: production code must resolve the session, not use HostSession::local_default()`);
+}
+// D093: the shared admission helper of the capability commands gates the window and admits once.
+const capabilitySource = readFileSync(new URL('../src-tauri/src/commands/module_capabilities.rs', import.meta.url), 'utf8');
+const admitHelper = capabilitySource.match(/\nfn admit\([\s\S]*?\n\}/);
+assert.ok(admitHelper, 'module_capabilities.rs: admit helper not found');
+assert.match(admitHelper[0], /host::module_host_window\(window\)\?/, 'admit must gate the window first');
+assert.match(admitHelper[0], /\.admit_once\(route, attachment_id, call_id\)/, 'admit must use ModuleCallRouter::admit_once');
 const registered = readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8')
   .match(/commands::\w+,/g) ?? [];
 assert.equal(commands, registered.length, 'all registered IPC handlers must be inspected');

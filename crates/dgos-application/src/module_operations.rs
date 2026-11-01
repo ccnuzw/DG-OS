@@ -257,6 +257,59 @@ impl ModuleOperationManager {
             .collect()
     }
 
+    /// FR-008 session end (D086, D087): stop every module runtime and wait
+    /// until each stop has settled, so no runtime bound to the ending
+    /// session keeps serving. A stop drains the runtime's in-flight calls
+    /// (the supervisor's bounded drain). A module whose own operation is
+    /// still running is retried until its queue accepts the stop, for at most
+    /// 60 seconds. Returns the module ids whose stop did not succeed.
+    pub async fn stop_all(&self, session: &HostSession) -> Vec<String> {
+        let published = self
+            .inner
+            .publisher
+            .published_modules(session.user_id())
+            .await
+            .unwrap_or_default();
+        let mut failed = Vec::new();
+        // The supervisor keeps a stopped runtime registered; only a runtime
+        // in another state still holds the ending session.
+        let running = |module_id: &str| {
+            self.inner
+                .supervisor
+                .runtime(module_id)
+                .is_some_and(|handle| handle.state() != ModuleRuntimeState::Stopped)
+                || self.inner.supervisor.pending_release_count(module_id) > 0
+        };
+        for module in published {
+            let module_id = module.module_id;
+            if !running(&module_id) && !self.inner.state().active.contains_key(&module_id) {
+                continue;
+            }
+            // Bounded: a stuck operation must not hold the account lock forever.
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+            let accepted = loop {
+                match self.stop(session, &module_id) {
+                    Err(ErrorKind::OperationInProgress)
+                        if tokio::time::Instant::now() < deadline =>
+                    {
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    }
+                    other => break other,
+                }
+            };
+            if let Ok(accepted) = accepted {
+                let _ = self.wait(&accepted.operation_id).await;
+            }
+            // A stop of a module whose queued operation ended without a
+            // runtime is refused as not running; what counts is the result.
+            if running(&module_id) {
+                tracing::warn!(module_id, "module runtime did not stop at session end");
+                failed.push(module_id);
+            }
+        }
+        failed
+    }
+
     /// `(module_id, version)` of every published, enabled module. The crash
     /// service evaluates these at startup (D059).
     pub async fn enabled_modules(
@@ -875,6 +928,45 @@ mod tests {
         assert_eq!(status.version.as_deref(), Some("1.0.0"));
         assert_eq!(status.in_flight, 0);
         assert!(status.active_operation_id.is_none() && status.runtime_id.is_some());
+    }
+
+    /// FR-008 session end (D086): every running runtime stops and the call
+    /// waits for the stops; modules that are not running are untouched; the
+    /// next session can start them again.
+    #[tokio::test]
+    async fn stop_all_stops_every_runtime_and_the_next_session_restarts_them() {
+        let fixture = Fixture::new(&[MODULE, OTHER]).await;
+        assert_eq!(
+            fixture.run_start(MODULE).await.state,
+            ModuleOperationState::Succeeded
+        );
+        assert!(fixture.manager.stop_all(&fixture.session).await.is_empty());
+        for module in [MODULE, OTHER] {
+            assert!(
+                fixture
+                    .manager
+                    .runtime_handle(module)
+                    .is_none_or(|handle| handle.state() == ModuleRuntimeState::Stopped),
+                "{module}"
+            );
+            assert!(matches!(
+                fixture.manager.runtime_status(module).unwrap().state,
+                ModuleRuntimeStatusState::Stopped | ModuleRuntimeStatusState::NotLoaded
+            ));
+        }
+        assert!(fixture.manager.stop_all(&fixture.session).await.is_empty());
+        let next = HostSession::for_user("next-user");
+        let accepted = fixture.manager.start(&next, MODULE).unwrap();
+        assert_eq!(
+            fixture.finish(&accepted.operation_id).await.state,
+            ModuleOperationState::Succeeded
+        );
+        let handle = fixture.manager.runtime_handle(MODULE).unwrap();
+        assert_eq!(
+            handle.context().user_id(),
+            "next-user",
+            "bound to the new session"
+        );
     }
 
     #[tokio::test]

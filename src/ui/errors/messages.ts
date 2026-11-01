@@ -102,6 +102,41 @@ export const ERROR_MESSAGES: Readonly<Record<number, ErrorMessage>> = Object.fre
     description: '请检查 Base URL 是否缺少 /v1，或填成了网页地址',
     severity: 'moderate',
   },
+  1008001: {
+    message: '用户名已存在',
+    description: '请换一个用户名',
+    severity: 'moderate',
+  },
+  1008002: {
+    message: '密码不符合规则',
+    description: '密码需为 8～128 个字符',
+    severity: 'moderate',
+  },
+  1008003: {
+    message: '用户名格式错误',
+    description: '用户名需为 1～32 个字符，首尾不能有空白，不能含控制字符',
+    severity: 'moderate',
+  },
+  1008005: {
+    message: '用户名或密码错误',
+    description: '请检查后重试',
+    severity: 'moderate',
+  },
+  1008007: {
+    message: '登录状态已失效',
+    description: '请重新登录',
+    severity: 'moderate',
+  },
+  1008009: {
+    message: '账户正在删除',
+    description: '删除将在应用重新启动后继续完成，完成前该账户无法登录',
+    severity: 'moderate',
+  },
+  1008011: {
+    message: '尝试次数过多',
+    description: '请稍等片刻后再试',
+    severity: 'moderate',
+  },
 });
 
 /** Own entries only: a code such as `0` must not reach `Object.prototype`. */

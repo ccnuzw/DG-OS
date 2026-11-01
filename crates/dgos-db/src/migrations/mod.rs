@@ -25,6 +25,8 @@ mod m20261029_000014_system_settings;
 mod m20261030_000015_model_kind_and_source;
 mod m20261030_000016_chat_sessions_and_messages;
 mod m20261031_000017_usage_reported;
+mod m20261101_000018_module_storage;
+mod m20261101_000019_local_accounts;
 
 pub struct Migrator;
 
@@ -57,6 +59,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20261030_000015_model_kind_and_source::Migration),
             Box::new(m20261030_000016_chat_sessions_and_messages::Migration),
             Box::new(m20261031_000017_usage_reported::Migration),
+            Box::new(m20261101_000018_module_storage::Migration),
+            Box::new(m20261101_000019_local_accounts::Migration),
         ]
     }
 }

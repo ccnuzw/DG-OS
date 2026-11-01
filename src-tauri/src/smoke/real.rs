@@ -577,7 +577,7 @@ async fn scenario(app: AppHandle, world: RealWorld, ready: bool) {
                 "history.pushState({{}},'',{path:?});\
                  window.dispatchEvent(new PopStateEvent('popstate',{{state:history.state}}));\
                  await new Promise(r=>setTimeout(r,200));\
-                 return {{path:location.pathname,shown:Array.from(document.querySelectorAll('a')).some(a=>a.textContent==='Module management')}}"
+                 return {{path:location.pathname,shown:!!document.querySelector('[role=\"tablist\"][aria-label=\"系统设置\"]')}}"
             ),
         )
         .await;
@@ -921,6 +921,7 @@ pub fn run_real() {
     let scenario_world = Mutex::new(Some(world));
     let result = tauri::Builder::default()
         .manage(Pending::default())
+        .manage(crate::session::SessionResolver::no_accounts())
         .manage(LoadEvents(load_sender))
         .manage(manager)
         .manage(bridge)

@@ -13,6 +13,7 @@ use dgos_db::{
         ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
         QuerySelect, Set, TransactionTrait,
     },
+    stage_mcp_credential_cleanup, McpCredentialCleanup, McpCredentialCleanupRepository,
 };
 use dgos_types::ExecutionProvenance;
 use reqwest::Client;
@@ -182,6 +183,7 @@ pub struct McpManager {
     monitor: Arc<StdMutex<Option<JoinHandle<()>>>>,
     shutdown_lock: Arc<Mutex<()>>,
     client: Client,
+    connection_scope: Arc<std::sync::RwLock<ConnectionScope>>,
 }
 
 struct Confirmation {
@@ -194,6 +196,15 @@ struct Confirmation {
 struct RetryState {
     attempts: u32,
     next_at: Instant,
+}
+
+/// See `McpManager::set_connection_scope`. `AllUsers` is the pre-account
+/// behaviour and the default.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ConnectionScope {
+    AllUsers,
+    User(String),
+    Nobody,
 }
 
 impl McpManager {
@@ -228,6 +239,7 @@ impl McpManager {
             runtime: Arc::new(RwLock::new(())),
             monitor: Arc::new(StdMutex::new(None)),
             shutdown_lock: Arc::new(Mutex::new(())),
+            connection_scope: Arc::new(std::sync::RwLock::new(ConnectionScope::AllUsers)),
             // Never redirect credentials or tool arguments to a second origin.
             client: Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
@@ -323,6 +335,9 @@ impl McpManager {
         for row in rows {
             if self.stopping.is_cancelled() {
                 break;
+            }
+            if !self.in_connection_scope(&row.user_id) {
+                continue;
             }
             let lifecycle = self.lifecycle_lock(&row.id).await;
             let Ok(_guard) = cancellable(&self.stopping, lifecycle.write()).await else {
@@ -548,6 +563,12 @@ impl McpManager {
         if self.sessions.read().await.contains_key(id) {
             self.disconnect_inner(user_id, id).await?;
         }
+        // The previous vault item is obsolete when the row stops naming it.
+        // It is listed in the outbox in the same transaction as the update,
+        // and removed afterwards; a failed removal stays listed (D090).
+        let obsolete = previous_scope.filter(|previous| {
+            credential_ref.as_deref() != Some(previous.reference.as_str()) || endpoint_changed
+        });
         let mut active: mcp_servers::ActiveModel = current.into();
         if let Some(name) = input.name {
             validate_name(&name)?;
@@ -567,13 +588,16 @@ impl McpManager {
         active.updated_at = Set(Utc::now().timestamp());
         self.manual_disconnects.write().await.remove(id);
         self.reconnects.write().await.remove(id);
-        let row = active.update(&self.db).await.map_err(map_db)?;
-        if let Some(previous) = previous_scope {
-            if row.credential_ref.as_deref() != Some(&previous.reference) || endpoint_changed {
-                if self.vault.remove(&previous).await.is_err() {
-                    tracing::warn!("MCP obsolete credential cleanup failed");
-                }
-            }
+        let tx = self.db.begin().await.map_err(map_db)?;
+        if let Some(previous) = &obsolete {
+            stage_mcp_credential_cleanup(&tx, &cleanup_entry(previous))
+                .await
+                .map_err(map_store)?;
+        }
+        let row = active.update(&tx).await.map_err(map_db)?;
+        tx.commit().await.map_err(map_db)?;
+        if let Some(previous) = obsolete {
+            self.retire_credential(&previous).await;
         }
         Ok(Self::server_from_model(row, 0))
     }
@@ -616,6 +640,20 @@ impl McpManager {
             .await?
             .ok_or(McpError::ServerNotFound)?;
         self.disconnect_inner(user_id, id).await?;
+        let scope = model
+            .credential_ref
+            .clone()
+            .map(|reference| Self::credential_scope(&model, reference))
+            .transpose()?;
+        // D090: the vault item is listed in the outbox in the same transaction
+        // as the soft delete; it leaves the outbox only once the vault removal
+        // succeeded, so a failed removal is retried instead of being lost.
+        let tx = self.db.begin().await.map_err(map_db)?;
+        if let Some(scope) = &scope {
+            stage_mcp_credential_cleanup(&tx, &cleanup_entry(scope))
+                .await
+                .map_err(map_store)?;
+        }
         let result = mcp_servers::Entity::update_many()
             .filter(mcp_servers::Column::Id.eq(id))
             .filter(mcp_servers::Column::UserId.eq(user_id))
@@ -623,21 +661,15 @@ impl McpManager {
                 mcp_servers::Column::DeletedAt,
                 dgos_db::sea_orm::sea_query::Expr::value(Utc::now().timestamp()),
             )
-            .exec(&self.db)
+            .exec(&tx)
             .await
             .map_err(map_db)?;
         if result.rows_affected == 0 {
             return Err(McpError::ServerNotFound);
         }
-        if let Some(reference) = model.credential_ref.clone() {
-            if self
-                .vault
-                .remove(&Self::credential_scope(&model, reference)?)
-                .await
-                .is_err()
-            {
-                tracing::warn!("MCP deleted server credential cleanup failed");
-            }
+        tx.commit().await.map_err(map_db)?;
+        if let Some(scope) = scope {
+            self.retire_credential(&scope).await;
         }
         Ok(())
     }
@@ -988,14 +1020,23 @@ impl McpManager {
         active.credential_ref = Set(Some(scope.reference.clone()));
         active.status = Set("configured".into());
         active.updated_at = Set(Utc::now().timestamp());
-        if let Err(error) = active.update(&self.db).await {
+        let stored = async {
+            let tx = self.db.begin().await.map_err(map_db)?;
+            if let Some(previous) = &previous {
+                stage_mcp_credential_cleanup(&tx, &cleanup_entry(previous))
+                    .await
+                    .map_err(map_store)?;
+            }
+            active.update(&tx).await.map_err(map_db)?;
+            tx.commit().await.map_err(map_db)
+        }
+        .await;
+        if let Err(error) = stored {
             let _ = self.vault.remove(&scope).await;
-            return Err(map_db(error));
+            return Err(error);
         }
         if let Some(previous) = previous {
-            if self.vault.remove(&previous).await.is_err() {
-                tracing::warn!("MCP obsolete credential cleanup failed");
-            }
+            self.retire_credential(&previous).await;
         }
         self.get_server(user_id, id)
             .await?
@@ -1039,6 +1080,113 @@ impl McpManager {
             endpoint: config.url,
             reference,
         })
+    }
+
+    /// Remove an obsolete vault item that is already listed in the outbox.
+    /// Success removes the outbox entry; a failure leaves it for the next
+    /// drain (D090) and is never reported as removed.
+    async fn retire_credential(&self, scope: &CredentialScope) {
+        let outbox = McpCredentialCleanupRepository::new(self.db.clone());
+        if self.vault.remove(scope).await.is_ok() {
+            if outbox.acknowledge(&scope.reference).await.is_err() {
+                tracing::warn!("MCP credential cleanup acknowledgement pending");
+            }
+        } else {
+            tracing::warn!("MCP credential cleanup pending; retried later");
+        }
+    }
+
+    /// Retry every listed vault removal whose reference no live server uses.
+    /// Returns how many entries are still listed afterwards. Idempotent.
+    pub async fn drain_credential_cleanup(&self) -> Result<usize> {
+        let outbox = McpCredentialCleanupRepository::new(self.db.clone());
+        let mut remaining = 0;
+        for entry in outbox.pending().await.map_err(map_store)? {
+            if outbox
+                .is_active(&entry.credential_ref)
+                .await
+                .map_err(map_store)?
+            {
+                remaining += 1;
+                continue;
+            }
+            let scope = CredentialScope {
+                user_id: entry.user_id,
+                server_id: entry.server_id,
+                endpoint: entry.endpoint,
+                reference: entry.credential_ref,
+            };
+            if self.vault.remove(&scope).await.is_ok()
+                && outbox.acknowledge(&scope.reference).await.is_ok()
+            {
+                continue;
+            }
+            remaining += 1;
+        }
+        if remaining > 0 {
+            tracing::warn!(remaining, "MCP credential cleanup pending");
+        }
+        Ok(remaining)
+    }
+
+    /// FR-008 session end (D090): cancel the user's in-flight calls and
+    /// pending confirmations and close every connection of the user, waiting
+    /// for each server's lifecycle lock so running calls have settled. Unlike
+    /// `disconnect` it does not mark servers as manually disconnected: they
+    /// auto-connect again when the user signs in again.
+    pub async fn disconnect_user(&self, user_id: &str) -> Result<usize> {
+        self.active_calls.cancel_user(user_id);
+        let rows = mcp_servers::Entity::find()
+            .filter(mcp_servers::Column::UserId.eq(user_id))
+            .all(&self.db)
+            .await
+            .map_err(map_db)?;
+        let mut closed = 0;
+        for row in rows {
+            let lifecycle = self.lifecycle_lock(&row.id).await;
+            let _guard = lifecycle.write().await;
+            self.revoke_confirmations(&row.id).await;
+            self.reconnects.write().await.remove(&row.id);
+            let session = self.sessions.write().await.remove(&row.id);
+            if let Some(session) = session {
+                session.close().await;
+                closed += 1;
+                let _ = self.set_status(&row.id, "configured", None).await;
+                self.record_connection_event(
+                    user_id,
+                    &row.id,
+                    "disconnected",
+                    "configured",
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+            }
+        }
+        Ok(closed)
+    }
+
+    /// Whose servers the background monitor may connect (FR-008): only the
+    /// signed-in user's, nobody's while signed out or switching. Explicit
+    /// connects come through host commands that already carry the user.
+    pub fn set_connection_scope(&self, scope: ConnectionScope) {
+        *self
+            .connection_scope
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = scope;
+    }
+
+    fn in_connection_scope(&self, user_id: &str) -> bool {
+        match &*self
+            .connection_scope
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        {
+            ConnectionScope::AllUsers => true,
+            ConnectionScope::User(user) => user == user_id,
+            ConnectionScope::Nobody => false,
+        }
     }
 
     pub async fn refresh_tools(&self, user_id: &str, id: &str) -> Result<Vec<McpTool>> {
@@ -1757,6 +1905,19 @@ fn map_db(error: dgos_db::sea_orm::DbErr) -> McpError {
     }
 }
 
+fn map_store(_: dgos_types::DgosError) -> McpError {
+    McpError::Database("MCP database operation failed".into())
+}
+
+fn cleanup_entry(scope: &CredentialScope) -> McpCredentialCleanup {
+    McpCredentialCleanup {
+        user_id: scope.user_id.clone(),
+        server_id: scope.server_id.clone(),
+        endpoint: scope.endpoint.clone(),
+        credential_ref: scope.reference.clone(),
+    }
+}
+
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
@@ -2015,6 +2176,123 @@ mod lifecycle_tests {
         let counts: Value =
             serde_json::from_str(response.content[0]["text"].as_str().unwrap()).unwrap();
         assert_eq!(counts["started"], 0);
+        manager.disconnect("alice", &id).await.unwrap();
+    }
+
+    /// A vault that records removals and fails them while `fail` is set.
+    #[derive(Default)]
+    struct FlakyVault {
+        fail: std::sync::atomic::AtomicBool,
+        removed: StdMutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl McpCredentialVault for FlakyVault {
+        async fn store(&self, _: &CredentialScope, _: SecretToken) -> Result<()> {
+            Ok(())
+        }
+        async fn load(&self, _: &CredentialScope) -> Result<SecretToken> {
+            Err(McpError::CredentialUnavailable)
+        }
+        async fn remove(&self, scope: &CredentialScope) -> Result<()> {
+            if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(McpError::CredentialUnavailable);
+            }
+            self.removed.lock().unwrap().push(scope.reference.clone());
+            Ok(())
+        }
+    }
+
+    async fn http_server(db: &DatabaseConnection, id: &str, user: &str, reference: &str) {
+        use dgos_db::sea_orm::ConnectionTrait;
+        db.execute_unprepared(&format!(
+            "INSERT INTO mcp_servers (id, user_id, name, transport, config_json, credential_ref, created_at, updated_at)
+             VALUES ('{id}', '{user}', '{id}', 'http', '{{\"url\":\"https://{id}.example/mcp\"}}', '{reference}', 1, 1)"
+        ))
+        .await
+        .unwrap();
+    }
+
+    /// D090: deleting a server whose vault item cannot be removed keeps the
+    /// item listed; the next drain removes it and only then clears the entry.
+    #[tokio::test]
+    async fn a_failed_credential_removal_on_delete_stays_listed_until_drained() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        dgos_db::migrations::Migrator::up(&db, None).await.unwrap();
+        let vault = Arc::new(FlakyVault::default());
+        let manager =
+            McpManager::with_policy_and_vault(db.clone(), Arc::new(DenyCalls), vault.clone());
+        http_server(&db, "srv", "alice", "ref-1").await;
+        vault.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+
+        manager.delete_server("alice", "srv").await.unwrap();
+        let outbox = McpCredentialCleanupRepository::new(db.clone());
+        let pending = outbox.pending().await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].endpoint, "https://srv.example/mcp");
+        assert_eq!(manager.drain_credential_cleanup().await.unwrap(), 1);
+
+        vault.fail.store(false, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(manager.drain_credential_cleanup().await.unwrap(), 0);
+        assert_eq!(*vault.removed.lock().unwrap(), ["ref-1"]);
+        assert!(outbox.pending().await.unwrap().is_empty());
+        assert_eq!(manager.drain_credential_cleanup().await.unwrap(), 0);
+    }
+
+    /// A successful removal leaves nothing listed; a reference a live server
+    /// still uses is never removed from the vault.
+    #[tokio::test]
+    async fn the_outbox_never_removes_a_credential_still_in_use() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        dgos_db::migrations::Migrator::up(&db, None).await.unwrap();
+        let vault = Arc::new(FlakyVault::default());
+        let manager =
+            McpManager::with_policy_and_vault(db.clone(), Arc::new(DenyCalls), vault.clone());
+        http_server(&db, "gone", "alice", "ref-gone").await;
+        http_server(&db, "live", "alice", "ref-live").await;
+        manager.delete_server("alice", "gone").await.unwrap();
+        let outbox = McpCredentialCleanupRepository::new(db.clone());
+        assert!(outbox.pending().await.unwrap().is_empty());
+        outbox
+            .stage(&McpCredentialCleanup {
+                user_id: "alice".into(),
+                server_id: "live".into(),
+                endpoint: "https://live.example/mcp".into(),
+                credential_ref: "ref-live".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(manager.drain_credential_cleanup().await.unwrap(), 1);
+        assert_eq!(*vault.removed.lock().unwrap(), ["ref-gone"]);
+    }
+
+    /// FR-008 session end: the user's connections close without a manual
+    /// disconnect mark, the monitor connects only the scoped user, and the
+    /// user's servers come back once the scope returns to them.
+    #[tokio::test]
+    async fn disconnect_user_closes_sessions_and_the_monitor_follows_the_scope() {
+        let (manager, id) = setup().await;
+        manager.monitor_tick().await;
+        assert!(manager.sessions.read().await.contains_key(&id));
+
+        manager.set_connection_scope(ConnectionScope::Nobody);
+        assert_eq!(manager.disconnect_user("alice").await.unwrap(), 1);
+        assert!(!manager.sessions.read().await.contains_key(&id));
+        assert!(!manager.manual_disconnects.read().await.contains(&id));
+        manager.monitor_tick().await;
+        assert!(!manager.sessions.read().await.contains_key(&id));
+
+        manager.set_connection_scope(ConnectionScope::User("bob".into()));
+        manager.monitor_tick().await;
+        assert!(
+            !manager.sessions.read().await.contains_key(&id),
+            "not bob's server"
+        );
+
+        manager.set_connection_scope(ConnectionScope::User("alice".into()));
+        manager.monitor_tick().await;
+        assert!(manager.sessions.read().await.contains_key(&id));
+        assert_eq!(manager.disconnect_user("bob").await.unwrap(), 0);
         manager.disconnect("alice", &id).await.unwrap();
     }
 }

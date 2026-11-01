@@ -1681,7 +1681,9 @@ pub fn run_chat() {
             let skills = dgos_skills::SkillsManager::new(db.clone(), skills_dir);
             let mcp = Arc::new(McpManager::with_policy_and_vault(
                 db.clone(),
-                Arc::new(commands::DesktopMcpPolicy),
+                Arc::new(commands::DesktopMcpPolicy(
+                    crate::session::SessionResolver::no_accounts(),
+                )),
                 Arc::new(RefusingMcpVault),
             ));
             let fixture = concat!(
@@ -1749,6 +1751,7 @@ pub fn run_chat() {
     };
     let result = tauri::Builder::default()
         .manage(Pending::default())
+        .manage(crate::session::SessionResolver::no_accounts())
         .manage(LoadEvents(load_sender))
         .manage(fixture)
         .manage(Port(port))

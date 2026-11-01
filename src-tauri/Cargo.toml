@@ -104,6 +104,12 @@ harness = false
 required-features = ["webview-smoke"]
 
 [[test]]
+name = "webview_smoke_accounts"
+path = "tests/webview_smoke_accounts.rs"
+harness = false
+required-features = ["webview-smoke"]
+
+[[test]]
 name = "webview_smoke_modules"
 path = "tests/webview_smoke_modules.rs"
 harness = false
@@ -118,6 +124,12 @@ required-features = ["webview-smoke"]
 [[test]]
 name = "webview_smoke_provider_stream"
 path = "tests/webview_smoke_provider_stream.rs"
+harness = false
+required-features = ["webview-smoke"]
+
+[[test]]
+name = "webview_smoke_capabilities"
+path = "tests/webview_smoke_capabilities.rs"
 harness = false
 required-features = ["webview-smoke"]
 

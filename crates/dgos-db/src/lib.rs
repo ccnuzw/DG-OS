@@ -15,6 +15,8 @@ mod mcp_tests;
 mod module_permission_tests;
 #[cfg(test)]
 mod provider_scope_tests;
+#[cfg(test)]
+mod user_scope_tests;
 mod workbench_tool_tests;
 
 /// Log targets that must never emit below `warn`. sea-orm records every executed statement, bound

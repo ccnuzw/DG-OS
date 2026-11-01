@@ -33,18 +33,22 @@ use tokio::sync::{broadcast, oneshot, watch};
 
 const WATCHDOG: Duration = Duration::from_secs(240);
 
+mod accounts;
 mod appearance;
 mod appearance_host;
 mod call;
+mod capabilities;
 mod chat;
 mod modules;
 mod provider_stream;
 mod real;
 mod ui;
 mod ui_keys;
+pub use accounts::run_accounts;
 pub use appearance::run_appearance;
 pub use appearance_host::run_appearance_host;
 pub use call::run_call;
+pub use capabilities::run_capabilities;
 pub use chat::run_chat;
 pub use modules::run_modules;
 pub use provider_stream::run_provider_stream;
@@ -871,6 +875,7 @@ pub fn run() {
     let hits_for_setup = hits.clone();
     let result = tauri::Builder::default()
         .manage(Pending::default())
+        .manage(crate::session::SessionResolver::no_accounts())
         .manage(LoadEvents(load_sender))
         .manage(manager)
         .on_page_load(|webview, payload| {

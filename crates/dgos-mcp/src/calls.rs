@@ -46,6 +46,19 @@ impl ActiveCalls {
         }
     }
 
+    /// Cancel every in-flight call of `user` (FR-008 session end).
+    pub fn cancel_user(&self, user: &str) -> usize {
+        let calls = self.0.lock().unwrap();
+        let mut cancelled = 0;
+        for (key, token) in calls.iter() {
+            if key.user_id == user {
+                token.cancel();
+                cancelled += 1;
+            }
+        }
+        cancelled
+    }
+
     fn key(user: &str, server: &str, call: &str) -> CallKey {
         CallKey {
             user_id: user.into(),

@@ -13,8 +13,8 @@ mod transport_tests;
 pub use credentials::{CredentialScope, McpCredentialVault, SecretToken};
 pub use error::{McpError, Result};
 pub use manager::{
-    CallMcpToolRequest, CallMcpToolResponse, CreateMcpServerRequest, HttpConfig, McpConnectionLog,
-    McpManager, McpServer, McpTool, McpUsageLog, StdioConfig, TransportKind,
+    CallMcpToolRequest, CallMcpToolResponse, ConnectionScope, CreateMcpServerRequest, HttpConfig,
+    McpConnectionLog, McpManager, McpServer, McpTool, McpUsageLog, StdioConfig, TransportKind,
     UpdateMcpServerRequest,
 };
 pub use policy::McpCallPolicy;

@@ -16,12 +16,13 @@ use crate::host;
 use crate::module_host::{
     AttachedDto, InstructionDto, ModuleHostBridge, ReceiptDto, ReportedDto, StartupLoad,
 };
+use crate::session::SessionResolver;
 use dgos_application::{
     ModuleCapabilityDispatchService, ModuleCrashService, ModuleOperationManager,
 };
 use dgos_modules::{CallRejection, ModuleCallRouter};
 use dgos_providers::ProviderManager;
-use dgos_types::{ChatRequest, ChatResponse, DgosError, HostSession};
+use dgos_types::{ChatRequest, ChatResponse, DgosError};
 use std::sync::Arc;
 use tauri::ipc::Channel;
 use tauri::{Manager, WebviewWindow};
@@ -39,12 +40,16 @@ pub async fn attach_module_host(
     let attachment_id = bridge.attach(on_instruction);
     // Startup load (D055): once the page can receive instructions, start every
     // published, enabled module. Only hosts that manage `StartupLoad` do this,
-    // so the lifecycle smoke targets keep their explicit starts.
-    if app.try_state::<StartupLoad>().is_some() {
+    // so the lifecycle smoke targets keep their explicit starts. FR-008: only
+    // with a session (`signed_in`, or `no_accounts` as `default-user`);
+    // signed out, nothing starts.
+    let session = app
+        .try_state::<Arc<SessionResolver>>()
+        .and_then(|resolver| resolver.current().ok());
+    if let (Some(_), Some(session)) = (app.try_state::<StartupLoad>(), session) {
         let manager = app.state::<ModuleOperationManager>().inner().clone();
         tauri::async_runtime::spawn(async move {
-            for (module_id, accepted) in manager.start_enabled(&HostSession::local_default()).await
-            {
+            for (module_id, accepted) in manager.start_enabled(&session).await {
                 if let Err(kind) = accepted {
                     tracing::warn!(
                         module_id,

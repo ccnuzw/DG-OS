@@ -498,6 +498,7 @@ pub fn run_provider_stream() {
 
     let result = tauri::Builder::default()
         .manage(Pending::default())
+        .manage(crate::session::SessionResolver::no_accounts())
         .manage(LoadEvents(load_sender))
         .manage(ProviderStreams::default())
         .manage(providers)

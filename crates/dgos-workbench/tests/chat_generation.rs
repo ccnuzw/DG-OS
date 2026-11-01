@@ -681,6 +681,36 @@ async fn destroying_the_window_cancels_only_its_generation() {
     assert_eq!(code, "task_cancelled");
 }
 
+/// FR-008 session end: ending a user's session stops that user's generation,
+/// waits for its terminal transaction, and leaves other users' work alone.
+#[tokio::test]
+async fn ending_a_users_session_cancels_and_waits_for_only_their_generation() {
+    let fx = fx().await;
+    let s = session(&fx, ALICE).await;
+    fx.up.script(vec![delta("partial"), Step::Hold]);
+    let sent = start(&fx, ALICE, send_input(&s.id, "q")).await.unwrap();
+    let sink = Collect::default();
+    let (_, (other, drained)) = tokio::join!(
+        fx.chat
+            .run_generation(&fx.providers, sent.job.unwrap(), &sink),
+        async {
+            until(|| sink.deltas() > 0).await;
+            let other = fx.chat.cancel_user(BOB).await;
+            assert!(
+                fx.chat.has_active_session(ALICE, &s.id),
+                "bob's end leaves alice running"
+            );
+            (other, fx.chat.cancel_user(ALICE).await)
+        }
+    );
+    assert!(other && drained);
+    assert!(!fx.chat.has_active_session(ALICE, &s.id));
+    let events = sink.take();
+    let (message, code, ..) = expect_error(terminal(&events));
+    assert_eq!(message.as_ref().unwrap().content, "partial");
+    assert_eq!(code, "task_cancelled");
+}
+
 #[tokio::test]
 async fn graceful_shutdown_ends_the_generation_as_process_interrupted() {
     let fx = fx().await;

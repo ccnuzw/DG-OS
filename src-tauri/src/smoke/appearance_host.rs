@@ -393,6 +393,7 @@ pub fn run_appearance_host() {
 
     let result = tauri::Builder::default()
         .manage(Pending::default())
+        .manage(crate::session::SessionResolver::no_accounts())
         .manage(LoadEvents(load_sender))
         .manage(AppearanceRepository::new(db))
         .manage(Fixture { dir, url, probe })

@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
+import AccountGate from "./accounts/AccountGate";
 import "./index.css";
 import { ErrorBoundary, ModalHost, ToastViewport, initAppearance } from "@dgos/ui";
 
@@ -12,7 +13,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <App />
+        <AccountGate>
+          <App />
+        </AccountGate>
       </BrowserRouter>
       <ToastViewport />
       <ModalHost />
