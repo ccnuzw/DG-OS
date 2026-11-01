@@ -1,0 +1,59 @@
+/*
+ * Stylesheet of the remote LAN SPA (separate Vite build, vite.lan.config.ts). It reuses the design tokens and the
+ * Tailwind mapping, but scans only the remote sources and the few @dgos/ui leaf components it imports, so the
+ * served bundle stays small. No Preflight: the reset below covers what the pages need.
+ */
+@layer theme, base, components, utilities;
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@source "./";
+@source "../../ui/components/Button.tsx";
+@source "../../ui/components/Spinner.tsx";
+@source "../../ui/lib";
+@import "../../ui/tokens/index.css";
+@import "../../ui/tailwind.css";
+
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    display: flex;
+    background-color: var(--color-bg-primary);
+    color: var(--color-text-primary);
+    font-family: var(--font-family-base);
+    font-size: var(--font-size-base);
+    line-height: var(--line-height-normal);
+  }
+
+  #root {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  ul {
+    list-style: none;
+  }
+
+  summary {
+    cursor: pointer;
+  }
+}

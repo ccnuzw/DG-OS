@@ -230,7 +230,15 @@ async function mainBuild(args) {
   console.log('\n== tauri build ==');
   const startedAt = Date.now();
   const tauri = join(repoRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'tauri.cmd' : 'tauri');
-  const code = await command(tauri, ['build', ...args]);
+  // FR-010: the remote SPA (`dist-lan/`, built by `npm run build`) ships as a resource. It is
+  // merged here, not in tauri.conf.json, because tauri-build copies resources on every cargo
+  // build and `dist-lan/` exists only after the frontend build.
+  const lanResource = JSON.stringify({
+    bundle: {
+      resources: { '../skills/': 'skills/', '../bundled-modules/': 'bundled-modules/', '../dist-lan/': 'dist-lan/' },
+    },
+  });
+  const code = await command(tauri, ['build', '--config', lanResource, ...args]);
   if (code !== 0) {
     console.error(`tauri build failed (exit ${code}); no artifact gate was run.`);
     printNotCovered(console.error);
