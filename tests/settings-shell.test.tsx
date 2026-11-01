@@ -3,8 +3,9 @@
 // jsdom with a mocked Tauri core and the real pages and stores. Proven here: /settings opens on an overview with no
 // tab selected and no extra host call; the seven tabs are in order and each opens its page and URL; a deep link opens
 // on its tab; arrow keys move focus without switching (manual activation) and Enter switches; Provider and Skills keep
-// their unsaved UI state across tab switches; a failed load can be retried (Skills, About); the LAN entry calls no
-// host command. NOT proven: layout, focus ring rendering, screen-reader output (real WebView smoke), and the Provider,
+// their unsaved UI state across tab switches; a failed load can be retried (Skills, About); the LAN entry opens the
+// LAN management page (its own behaviour is covered by tests/lan-settings.test.tsx). NOT proven: layout, focus ring
+// rendering, screen-reader output (real WebView smoke), and the Provider,
 // Skills, MCP and module pages' own behaviour, which their own test files cover.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -73,6 +74,17 @@ function respond(command: string): unknown {
       : [];
   }
   if (command === 'check_skill_updates') return [];
+  if (command === 'get_lan_status') {
+    return {
+      success: true,
+      data: {
+        enabled: false, state: 'stopped', address: null, preferred_port: 8635, port_fallback: false,
+        failure_code: null, session_count: 0, code_expires_at: null,
+      },
+    };
+  }
+  if (command === 'list_lan_devices') return { success: true, data: [] };
+  if (command === 'list_lan_audit_events') return { success: true, data: { items: [], next_cursor: null } };
   return null;
 }
 
@@ -243,17 +255,23 @@ describe('load failure and retry', () => {
   });
 });
 
-describe('LAN entry (B07-14)', () => {
-  it('says the capability is not enabled, shows no switch and calls no host command', async () => {
+describe('LAN entry (B07-14, AC15)', () => {
+  it('opens the LAN management page: reads the status through the LAN host commands and shows the switch', async () => {
     renderAt('/settings');
     await screen.findByRole('heading', { name: '系统设置' });
     const before = host.calls.length;
 
     select('局域网协同');
-    expect(await screen.findByText('局域网协同尚未启用')).toBeTruthy();
-    expect(screen.queryByRole('switch')).toBeNull();
-    expect(screen.queryByRole('checkbox')).toBeNull();
-    expect(host.calls.slice(before)).toEqual([]);
-    expect(host.calls.some(command => command.includes('lan'))).toBe(false);
+    expect(await screen.findByRole('heading', { name: '局域网协同' })).toBeTruthy();
+    expect(await screen.findByRole('switch', { name: '启用局域网协同' })).toBeTruthy();
+    expect(screen.getByText('仅在可信网络中使用：局域网连接未加密')).toBeTruthy();
+    expect(screen.queryByText('局域网协同尚未启用')).toBeNull();
+    expect(where()).toBe('/settings/lan');
+
+    const lanCalls = host.calls.slice(before).filter(command => command.includes('lan'));
+    expect(lanCalls).toContain('get_lan_status');
+    expect(lanCalls).toContain('list_lan_devices');
+    // The service is stopped, so no access code is requested.
+    expect(lanCalls).not.toContain('issue_lan_access_code');
   });
 });
