@@ -70,7 +70,7 @@ Provider 适配框架是 DGOS 的底层核心能力，负责屏蔽各个 AI 模�
 
 **不包含**（明确说明原因）：
 - ❌ 其他厂商适配器（Claude、通义千问等）→ V4 云端增强时实现（已由 D062 修订：Anthropic 协议与三方兼容服务接入前移到 V1，见 §2.4；V4 只保留官方 Provider、积分与计费）
-- ❌ 图片输入、提示缓存与缓存用量字段、Embeddings、音频、OpenAI Responses API、Batch → 路线图未分配（D062）；图片生成 → V2-FR-010（D102）
+- ❌ 提示缓存与缓存用量字段、Embeddings、音频、OpenAI Responses API、Batch → 路线图未分配（D062）；图片生成与图片输入 → V2-FR-010（D103、D106）
 - ❌ 自动切换到备用 Provider → 应用层自己决定策略
 - ❌ 自建连接池管理 → V1 简化实现：`ProviderManager` 创建时构建一个 `reqwest::Client` 并交给各适配器复用（共享其内置连接池），不做自建池化（技术设计“实现与规格的已知差异”第 8 项）
 - ❌ 流式输出断点续传 → 复杂度高，V2 考虑
