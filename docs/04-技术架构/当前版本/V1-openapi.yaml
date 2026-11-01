@@ -1,653 +1,690 @@
 openapi: 3.1.0
 info:
-  title: DGOS V1 API
+  title: DGOS V1 局域网协同 API
   description: |
-    DGOS V1.0 局域网协同 HTTP API 规范（FR-010 规划契约）。当前尚未实现 HTTP route 或 server；桌面端使用 Tauri commands，见 docs/04-技术架构/当前版本/V1-接口契约.md §4.0。
+    V1-FR-010 局域网协同的 HTTP 与 WebSocket 白名单（规划契约，D099，2026-11-01）。
+    **没有实现**：当前没有 HTTP 服务、路由或已注册的局域网主机命令。桌面端使用 Tauri commands，
+    见 docs/04-技术架构/当前版本/V1-接口契约.md。
 
-    本文 MCP `status` 枚举（connected/disconnected/error）是旧基线，与桌面当前状态 configured/connecting/ready/degraded/error/disconnecting（D021）不同；在 FR-010 设计时再统一对齐。
+    本文件是 HTTP 字段的唯一权威；公共语义（准入顺序、Cookie、撤销、WebSocket 帧与关闭码、主机命令）
+    见接口契约 §14，实现规则见 docs/03-功能规格/V1/03-系统功能/10-局域网协同-技术设计.md。
 
-    D016 修订提示（2026-10-27）：Skills 相关接口仍为旧 HTTP/CLI 基线，
-    不代表 V1-FR-002 DGOS 技能中心目标契约；新接口与迁移将在技术设计中统一修订。
-    本轮仅标明适用范围，不更改现有路径、字段或错误码。
-    
-    **认证方式**：本文的 Bearer Token (JWT)、`/auth/login`（用户名 + 密码）、`/auth/me` 与 `LoginResponse`
-    与 D053 冲突，已作废、不实现。当前口径：主机随机访问凭据换取有期限、可撤销的会话，
-    远程会话没有独立用户身份（D053）。访问凭据、Cookie 会话与有效期见 FR-010 §2.4（D088）。
+    **白名单**：只有下列路径。白名单之外的 `/api/` 路径返回 404，已登记路径的其他方法返回 405，
+    均为空包体；不映射任何 Tauri command（D039、D088）。
 
-    **基础 URL**：`http://{host}:3000/api/v1`（只绑定私网 IPv4 接口地址，D088）
+    **认证**：主机签发的单次访问凭据经 `POST /api/v1/lan/pair` 换取 Cookie `dgos_lan`
+    （`HttpOnly; SameSite=Strict; Path=/`，无 TLS 不设 `Secure`）。不使用 JWT、用户名/密码、
+    `Authorization: Bearer` 或浏览器存储（D053、D088）。远程会话没有独立用户身份。
 
-    **权限说明**：
-    - 远程设备只能使用、不能修改配置（D039）
-    - 所有接口需要认证
-    - 只开放逐项白名单，不映射 Tauri commands（D039）。本文路径是旧草图，不构成白名单；
-      其中模块、MCP 管理与任何配置类接口在 FR-010 §2.4 的禁止清单中。2026-10-31 收口只改本说明，
-      路径、字段与错误码待 FR-010 技术设计时统一重写。
-    
-    **错误处理**：
-    - 401: 未认证或 Token 过期
-    - 403: 权限不足
-    - 404: 资源不存在
-    - 500: 服务器错误
-  version: 1.0.0
-  contact:
-    name: DGOS Team
-    url: https://github.com/ccnuzw/DG-OS
+    **网络**：只绑定一个私网 IPv4 接口地址（10/8、172.16/12、192.168/16），不监听 `0.0.0.0`、
+    回环与 IPv6。`Host` 必须等于绑定的 `IP:端口`；`POST`、`DELETE` 与 WebSocket 升级要求同源
+    `Origin`。不返回任何 CORS 头（D088）。
+
+    **错误**：业务错误为 `LanError`，`code` 是 V1-错误码 的 7 位数字码，HTTP 状态取错误码表。
+    传输层错误（404、405、400 解码失败、413、415）为空包体。
+
+    **历史**：D099 之前的草图（Bearer JWT、`/auth/login`、`/auth/me`、Provider/Skills/MCP/模块/
+    对话的通用路径）已作废，原文归档在 docs/99-历史归档/V1-FR-010/2026-11-01-旧OpenAPI草图.yaml。
+  version: 1.0.0-planned
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
 
 servers:
-  - url: http://localhost:3000/api/v1
-    description: 本地开发环境
-  - url: http://192.168.1.100:3000/api/v1
-    description: 局域网主机
+  - url: http://{lanIp}:{port}
+    description: 主机绑定的私网 IPv4 地址与端口（默认从 3000 起，D088、D099）
+    variables:
+      lanIp:
+        default: 192.168.1.100
+        description: 只能是 10/8、172.16/12、192.168/16 中的接口地址
+      port:
+        default: '3000'
 
 tags:
-  - name: auth
-    description: 认证相关接口
-  - name: providers
-    description: Provider 管理和调用
-  - name: skills
-    description: Skills 管理和调用
-  - name: mcp
-    description: MCP 服务器和工具
-  - name: modules
-    description: 模块管理
-  - name: conversations
-    description: 对话历史
+  - name: spa
+    description: 远程 SPA 静态资源（无需会话）
+  - name: session
+    description: 配对、会话状态与登出
+  - name: targets
+    description: 只读目标列表
+  - name: chat
+    description: 远程聊天（只限本设备本次配对创建的会话）
+  - name: stream
+    description: WebSocket 流式接收
 
 security:
-  - bearerAuth: []
+  - lanSession: []
 
 paths:
-  /auth/login:
+  /:
+    get:
+      tags: [spa]
+      operationId: getLanSpa
+      summary: 远程 SPA 入口
+      description: 其他非 `/api/` 的 `GET` 路径同样返回 `index.html`（客户端路由）；`/assets/*` 返回打包的静态资源。
+      security: []
+      responses:
+        '200':
+          description: index.html
+          content:
+            text/html:
+              schema:
+                type: string
+        '403':
+          $ref: '#/components/responses/NotAllowed'
+
+  /api/v1/lan/pair:
     post:
-      tags: [auth]
-      summary: 用户登录
-      description: 使用用户名和密码登录，返回 JWT Token
-      operationId: login
+      tags: [session]
+      operationId: pairLanDevice
+      summary: 用访问凭据配对
+      description: |
+        凭据单次有效；成功后凭据作废并经 `Set-Cookie` 下发会话。带有效 Cookie 且来源 IP 与该会话相同的设备再次配对时，
+        旧会话以 `re_paired` 被替换，会话数不增加；凭据错误时旧会话保留（D102）。
+        限速：每来源 IP 每分钟 5 次、全局每分钟 20 次；已有 8 个会话时拒绝且不消耗凭据（上述重新配对除外）。没有幂等键。
       security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - username
-                - password
-              properties:
-                username:
-                  type: string
-                  example: admin
-                password:
-                  type: string
-                  format: password
-                  example: password123
+              $ref: '#/components/schemas/LanPairInput'
       responses:
         '200':
-          description: 登录成功
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  token:
-                    type: string
-                    description: JWT Token
-                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-                  user:
-                    $ref: '#/components/schemas/User'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
-  /auth/me:
-    get:
-      tags: [auth]
-      summary: 获取当前用户信息
-      operationId: getCurrentUser
-      responses:
-        '200':
-          description: 用户信息
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
-  /providers:
-    get:
-      tags: [providers]
-      summary: 获取 Provider 列表
-      operationId: listProviders
-      responses:
-        '200':
-          description: Provider 列表
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Provider'
-
-  /providers/{providerId}/models:
-    get:
-      tags: [providers]
-      summary: 获取 Provider 的模型列表
-      operationId: listModels
-      parameters:
-        - $ref: '#/components/parameters/ProviderId'
-      responses:
-        '200':
-          description: 模型列表
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Model'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /providers/{providerId}/call:
-    post:
-      tags: [providers]
-      summary: 调用 Provider（非流式）
-      operationId: callProvider
-      parameters:
-        - $ref: '#/components/parameters/ProviderId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ChatRequest'
-      responses:
-        '200':
-          description: AI 响应
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ChatResponse'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  /providers/{providerId}/stream:
-    post:
-      tags: [providers]
-      summary: 调用 Provider（流式）
-      operationId: streamProvider
-      parameters:
-        - $ref: '#/components/parameters/ProviderId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ChatRequest'
-      responses:
-        '200':
-          description: SSE 流式响应
-          content:
-            text/event-stream:
+          description: 配对成功
+          headers:
+            Set-Cookie:
+              description: '`dgos_lan=<令牌>; HttpOnly; SameSite=Strict; Path=/`'
               schema:
                 type: string
-                format: binary
-
-  /skills:
-    get:
-      tags: [skills]
-      summary: 获取已安装的 Skills 列表
-      operationId: listInstalledSkills
-      responses:
-        '200':
-          description: Skills 列表
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Skill'
+                $ref: '#/components/schemas/LanSessionStatus'
+        '401':
+          description: 1010004 访问凭据无效或已使用；1010005 访问凭据过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LanError'
+        '403':
+          $ref: '#/components/responses/NotAllowed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
-  /skills/{skillId}/call:
+  /api/v1/lan/session:
+    get:
+      tags: [session]
+      operationId: getLanSession
+      summary: 当前远程会话状态
+      responses:
+        '200':
+          description: 会话有效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LanSessionStatus'
+        '401':
+          $ref: '#/components/responses/SessionInvalid'
+        '403':
+          $ref: '#/components/responses/NotAllowed'
+
+  /api/v1/lan/logout:
     post:
-      tags: [skills]
-      summary: 调用 Skill
-      operationId: callSkill
-      parameters:
-        - $ref: '#/components/parameters/SkillId'
+      tags: [session]
+      operationId: logoutLanSession
+      summary: 登出
+      description: 有有效会话时撤销（原因 `logout`）；没有时同样返回 204。总是清除 Cookie。
+      security: []
+      responses:
+        '204':
+          description: 已登出
+          headers:
+            Set-Cookie:
+              description: '`dgos_lan=; Max-Age=0; Path=/`'
+              schema:
+                type: string
+        '403':
+          $ref: '#/components/responses/NotAllowed'
+
+  /api/v1/lan/targets:
+    get:
+      tags: [targets]
+      operationId: listLanTargets
+      summary: 只读目标列表
+      description: 已启用 Provider 的文本生成模型与已启用技能；不含 endpoint、credential_ref、配置、用量与连接状态。
+      responses:
+        '200':
+          description: 目标列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LanTargets'
+        '401':
+          $ref: '#/components/responses/SessionInvalid'
+        '403':
+          $ref: '#/components/responses/NotAllowed'
+
+  /api/v1/lan/chat/sessions:
+    post:
+      tags: [chat]
+      operationId: createLanChatSession
+      summary: 新建聊天会话
+      description: 目标在新建时固定，之后不能修改。每个远程会话最多创建 100 个聊天会话。
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                params:
-                  type: object
-                  additionalProperties: true
+              $ref: '#/components/schemas/LanCreateChatSessionInput'
+      responses:
+        '201':
+          description: 已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatSession'
+        '400':
+          $ref: '#/components/responses/ChatError'
+        '401':
+          $ref: '#/components/responses/SessionInvalid'
+        '403':
+          $ref: '#/components/responses/NotAllowed'
+        '409':
+          $ref: '#/components/responses/ChatError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    get:
+      tags: [chat]
+      operationId: listLanChatSessions
+      summary: 列出本设备本次配对创建的聊天会话
+      description: 不分页，按 `updated_at` 倒序。
       responses:
         '200':
-          description: Skill 执行结果
+          description: 会话列表
           content:
             application/json:
               schema:
                 type: object
+                additionalProperties: false
+                required: [items]
                 properties:
-                  result:
-                    type: object
-                    additionalProperties: true
-        '404':
-          $ref: '#/components/responses/NotFound'
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ChatSession'
+        '401':
+          $ref: '#/components/responses/SessionInvalid'
+        '403':
+          $ref: '#/components/responses/NotAllowed'
 
-  /mcp/servers:
+  /api/v1/lan/chat/sessions/{sessionId}/messages:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
     get:
-      tags: [mcp]
-      summary: 获取 MCP 服务器列表
-      operationId: listMCPServers
-      responses:
-        '200':
-          description: MCP 服务器列表
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/MCPServer'
-
-  /mcp/tools:
-    get:
-      tags: [mcp]
-      summary: 获取所有 MCP 工具列表
-      operationId: listMCPTools
+      tags: [chat]
+      operationId: listLanChatMessages
+      summary: 读取会话消息
+      description: 分页规则同桌面 `list_chat_messages`。集合外的会话返回 404 1006001。
       parameters:
-        - name: server_id
+        - name: before_seq
           in: query
-          description: 过滤特定服务器的工具
+          required: false
           schema:
-            type: string
-      responses:
-        '200':
-          description: MCP 工具列表
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/MCPTool'
-
-  /mcp/call:
-    post:
-      tags: [mcp]
-      summary: 调用 MCP 工具
-      operationId: callMCPTool
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - server_id
-                - tool_name
-              properties:
-                server_id:
-                  type: string
-                tool_name:
-                  type: string
-                params:
-                  type: object
-                  additionalProperties: true
-      responses:
-        '200':
-          description: 工具执行结果
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  result:
-                    type: object
-                    additionalProperties: true
-
-  /modules:
-    get:
-      tags: [modules]
-      summary: 获取已安装的模块列表
-      operationId: listModules
-      responses:
-        '200':
-          description: 模块列表
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Module'
-
-  /conversations:
-    get:
-      tags: [conversations]
-      summary: 获取对话历史列表
-      operationId: listConversations
-      parameters:
+            type: integer
+            minimum: 0
         - name: limit
           in: query
+          required: false
           schema:
             type: integer
-            default: 20
-        - name: offset
-          in: query
-          schema:
-            type: integer
-            default: 0
+            minimum: 1
+            maximum: 100
+            default: 50
       responses:
         '200':
-          description: 对话列表
+          description: 一页消息，按 seq 升序
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Conversation'
+                $ref: '#/components/schemas/ChatMessagePage'
+        '401':
+          $ref: '#/components/responses/SessionInvalid'
+        '403':
+          $ref: '#/components/responses/NotAllowed'
+        '404':
+          $ref: '#/components/responses/ChatError'
+    post:
+      tags: [chat]
+      operationId: sendLanChatMessage
+      summary: 发送消息
+      description: |
+        生成登记后返回；事件只经 `GET /api/v1/lan/stream` 推送。`client_request_id` 即任务 ID，
+        同键同内容返回原确认（`replayed = true`），同键不同内容 409 1006011。目标指纹变化返回 409 1006012
+        且不带 `detail`，须在主机上确认。不接受 `tools` 与 `accept_destination`。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LanSendInput'
+      responses:
+        '202':
+          description: 已受理
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendAck'
+        '400':
+          $ref: '#/components/responses/ChatError'
+        '401':
+          $ref: '#/components/responses/SessionInvalid'
+        '403':
+          $ref: '#/components/responses/NotAllowed'
+        '404':
+          $ref: '#/components/responses/ChatError'
+        '409':
+          $ref: '#/components/responses/ChatError'
+        '502':
+          $ref: '#/components/responses/ChatError'
 
-  /conversations/{conversationId}/messages:
-    get:
-      tags: [conversations]
-      summary: 获取对话消息列表
-      operationId: listMessages
-      parameters:
-        - name: conversationId
-          in: path
-          required: true
-          schema:
-            type: string
+  /api/v1/lan/chat/messages/{messageId}/regenerate:
+    parameters:
+      - name: messageId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [chat]
+      operationId: regenerateLanChatMessage
+      summary: 重新生成最后一条助手回复
+      description: 只对本设备本次配对创建的会话；其他情况统一 409 1006014。幂等规则同发送。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LanRegenerateInput'
       responses:
-        '200':
-          description: 消息列表
+        '202':
+          description: 已受理
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Message'
+                $ref: '#/components/schemas/SendAck'
+        '401':
+          $ref: '#/components/responses/SessionInvalid'
+        '403':
+          $ref: '#/components/responses/NotAllowed'
+        '409':
+          $ref: '#/components/responses/ChatError'
+
+  /api/v1/lan/chat/tasks/{taskId}/cancel:
+    parameters:
+      - name: taskId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [chat]
+      operationId: cancelLanChatTask
+      summary: 取消本设备发起的生成
+      description: 只取消本远程会话发起、尚未结束的任务；其他一律 `cancelled = false`，重复调用无副作用。
+      responses:
+        '200':
+          description: 结果
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [cancelled]
+                properties:
+                  cancelled:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/SessionInvalid'
+        '403':
+          $ref: '#/components/responses/NotAllowed'
+
+  /api/v1/lan/stream:
+    get:
+      tags: [stream]
+      operationId: openLanStream
+      summary: WebSocket 流式接收
+      description: |
+        WebSocket 升级。握手要求同源 `Origin` 与有效 Cookie。只有服务端到客户端的文本帧，
+        每帧为 `LanStreamFrame`；客户端发数据帧即以 1008 关闭。每个远程会话同时只有一条连接。
+        没有连接时的事件丢弃；断线不取消生成。关闭码：4401 会话已撤销或过期、4409 被新连接取代、
+        4413 发送队列满、1001 服务停止、1008 协议违规。ping 30 秒，无 pong 60 秒关闭。
+      responses:
+        '101':
+          description: 协议切换；之后的帧见 `LanStreamFrame`
+        '401':
+          $ref: '#/components/responses/SessionInvalid'
+        '403':
+          $ref: '#/components/responses/NotAllowed'
 
 components:
   securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
+    lanSession:
+      type: apiKey
+      in: cookie
+      name: dgos_lan
+      description: 256 位不透明令牌（base64url），服务端只存哈希；闲置 30 分钟、最长 12 小时。
 
   parameters:
-    ProviderId:
-      name: providerId
+    SessionId:
+      name: sessionId
       in: path
       required: true
       schema:
         type: string
-      description: Provider ID
+        format: uuid
 
-    SkillId:
-      name: skillId
-      in: path
-      required: true
-      schema:
-        type: string
-      description: Skill ID
+  responses:
+    NotAllowed:
+      description: 1010007 来源地址、Host 或 Origin 不被允许
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LanError'
+    SessionInvalid:
+      description: 1010006 远程会话不存在、已过期或已撤销；响应清除 Cookie
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LanError'
+    RateLimited:
+      description: 1010011 lan_rate_limited；`pair_ip`、`pair_global` 时带 `Retry-After` 头
+      headers:
+        Retry-After:
+          description: 秒数，仅 `pair_ip`、`pair_global`
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/LanError'
+              - type: object
+                properties:
+                  detail:
+                    $ref: '#/components/schemas/LanRateLimitDetail'
+    ChatError:
+      description: FR-006 的 1006xxx 或 Provider 的 1001xxx（原样透传），HTTP 状态取错误码表
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LanError'
 
   schemas:
-    User:
+    LanError:
       type: object
+      required: [code, message]
       properties:
-        id:
+        code:
+          type: integer
+          description: V1-错误码 的 7 位数字码
+          examples: [1010006]
+        message:
           type: string
-          format: uuid
-        username:
+          description: 固定文本，不回显入参
+        detail:
+          type: object
+          additionalProperties: true
+
+    LanRateLimitDetail:
+      type: object
+      additionalProperties: false
+      required: [scope]
+      properties:
+        scope:
+          type: string
+          enum: [pair_ip, pair_global, session_limit, chat_sessions]
+        retry_after_seconds:
+          type: integer
+          minimum: 1
+          description: 仅 pair_ip、pair_global
+
+    LanPairInput:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          type: string
+          maxLength: 64
+          description: 26 个 Crockford Base32 字符；'-' 与空白被忽略，大小写不敏感
+
+    LanSessionStatus:
+      type: object
+      additionalProperties: false
+      required: [short_id, device_label, created_at, expires_at, idle_expires_at]
+      properties:
+        short_id:
+          type: string
+          pattern: '^[0-9a-f]{8}$'
+        device_label:
           type: string
         created_at:
-          type: string
-          format: date-time
-
-    Provider:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        name:
-          type: string
-        provider_type:
-          type: string
-          enum: [openai_compatible, anthropic]  # D062：anthropic 为规划值，当前代码只支持 openai_compatible；HTTP 路由尚未注册
-        base_url:
-          type: string
-          format: uri
-        enabled:
-          type: boolean
-        sort_order:
           type: integer
-        created_at:
-          type: string
-          format: date-time
-
-    Model:
-      type: object
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-        provider_id:
-          type: string
-        capabilities:
-          type: array
-          items:
-            type: string
-            enum: [text_generation, image_generation, video_generation]
-        context_length:
+        expires_at:
           type: integer
-          nullable: true
-        is_available:
-          type: boolean
+          description: created_at + 12 小时
+        idle_expires_at:
+          type: integer
+          description: 最近一次准入 + 30 分钟
 
-    ChatRequest:
+    LanTargets:
       type: object
-      required:
-        - model_id
-        - messages
+      additionalProperties: false
+      required: [providers, skills]
       properties:
-        model_id:
-          type: string
-        messages:
+        providers:
           type: array
           items:
             type: object
-            required:
-              - role
-              - content
+            additionalProperties: false
+            required: [id, name, models]
             properties:
-              role:
+              id:
                 type: string
-                enum: [system, user, assistant]
-              content:
+              name:
                 type: string
-        temperature:
-          type: number
-          minimum: 0
-          maximum: 2
-          default: 1
-        max_tokens:
-          type: integer
-          nullable: true
-
-    ChatResponse:
-      type: object
-      properties:
-        id:
-          type: string
-        content:
-          type: string
-        model:
-          type: string
-        usage:
-          type: object
-          properties:
-            prompt_tokens:
-              type: integer
-            completion_tokens:
-              type: integer
-            total_tokens:
-              type: integer
-
-    Skill:
-      type: object
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-        version:
-          type: string
-        enabled:
-          type: boolean
-        call_type:
-          type: string
-          enum: [http, cli]
-        created_at:
-          type: string
-          format: date-time
-
-    MCPServer:
-      type: object
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-        transport:
-          type: string
-          enum: [stdio, http]
-        enabled:
-          type: boolean
-        status:
-          type: string
-          enum: [connected, disconnected, error]
-
-    MCPTool:
-      type: object
-      properties:
-        id:
-          type: string
-        server_id:
-          type: string
-        name:
-          type: string
-        description:
-          type: string
-        input_schema:
-          type: object
-
-    Module:
-      type: object
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-        version:
-          type: string
-        enabled:
-          type: boolean
-        permissions:
+              models:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [id, name]
+                  properties:
+                    id:
+                      type: string
+                    name:
+                      type: string
+        skills:
           type: array
           items:
-            type: string
+            type: object
+            additionalProperties: false
+            required: [id, name, version]
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              version:
+                type: string
 
-    Conversation:
+    LanCreateChatSessionInput:
       type: object
+      additionalProperties: false
+      required: [target]
+      properties:
+        target:
+          type: object
+          additionalProperties: false
+          required: [provider_id, model_id, skill_id, no_skill]
+          description: skill_id 与 no_skill 互斥
+          properties:
+            provider_id:
+              type: string
+            model_id:
+              type: string
+            skill_id:
+              type: [string, 'null']
+            no_skill:
+              type: boolean
+
+    LanSendInput:
+      type: object
+      additionalProperties: false
+      required: [content, client_request_id]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          description: 去首尾空白后非空，不超过 16384 UTF-8 字节
+        client_request_id:
+          type: string
+          format: uuid
+
+    LanRegenerateInput:
+      type: object
+      additionalProperties: false
+      required: [client_request_id]
+      properties:
+        client_request_id:
+          type: string
+          format: uuid
+
+    ChatSession:
+      type: object
+      description: 与接口契约 §10.1 的 ChatSession 相同
+      required: [id, title, title_source, provider_id, model_id, skill_id, skill_version_id, no_skill_confirmed, created_at, updated_at]
       properties:
         id:
           type: string
+          format: uuid
         title:
           type: string
+        title_source:
+          type: string
+          enum: [auto, user]
+        provider_id:
+          type: [string, 'null']
+        model_id:
+          type: [string, 'null']
+        skill_id:
+          type: [string, 'null']
+        skill_version_id:
+          type: [string, 'null']
+        no_skill_confirmed:
+          type: boolean
         created_at:
-          type: string
-          format: date-time
+          type: integer
         updated_at:
-          type: string
-          format: date-time
+          type: integer
 
-    Message:
+    ChatMessage:
       type: object
+      description: 与接口契约 §10.1 的 ChatMessage 相同
+      required: [id, session_id, seq, role, content, status, task_id, finish_reason, error_code, total_tokens, result_unknown, created_at, updated_at]
       properties:
         id:
           type: string
-        conversation_id:
+          format: uuid
+        session_id:
           type: string
+          format: uuid
+        seq:
+          type: integer
         role:
           type: string
           enum: [user, assistant]
         content:
           type: string
+        status:
+          type: string
+          enum: [generating, completed, interrupted, failed]
+        task_id:
+          type: [string, 'null']
+        finish_reason:
+          type: [string, 'null']
+        error_code:
+          type: [string, 'null']
+          description: 固定类别字符串，不是错误码
+        total_tokens:
+          type: [integer, 'null']
+          description: null 表示用量未知，界面不得显示 0
+        result_unknown:
+          type: boolean
         created_at:
-          type: string
-          format: date-time
+          type: integer
+        updated_at:
+          type: integer
 
-    Error:
+    ChatMessagePage:
       type: object
-      required:
-        - code
-        - message
+      required: [items, next_before_seq]
       properties:
-        code:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        next_before_seq:
+          type: [integer, 'null']
+
+    SendAck:
+      type: object
+      description: 与接口契约 §10.1 的 SendAck 相同
+      required: [task_id, user_message_id, assistant_message_id, dropped_turns, replayed]
+      properties:
+        task_id:
           type: string
-        message:
+          format: uuid
+        user_message_id:
           type: string
-        details:
-          type: object
-          additionalProperties: true
+          format: uuid
+        assistant_message_id:
+          type: string
+          format: uuid
+        dropped_turns:
+          type: integer
+        replayed:
+          type: boolean
 
-  responses:
-    Unauthorized:
-      description: 未认证或 Token 无效
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-          example:
-            code: unauthorized
-            message: Invalid or expired token
+    LanRevokeReason:
+      type: string
+      enum: [host_disconnect, host_disconnect_all, switch_off, app_exit, service_failed, network_changed, issuer_ended, ip_changed, idle_expired, absolute_expired, re_paired, logout]
 
-    Forbidden:
-      description: 权限不足
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-          example:
-            code: forbidden
-            message: Insufficient permissions
-
-    NotFound:
-      description: 资源不存在
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-          example:
-            code: not_found
-            message: Resource not found
-
-    InternalError:
-      description: 服务器内部错误
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-          example:
-            code: internal_error
-            message: An internal error occurred
+    LanStreamFrame:
+      description: WebSocket 文本帧（服务端到客户端）
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [type, event]
+          properties:
+            type:
+              const: chat
+            event:
+              type: object
+              description: 接口契约 §10.1 的 ChatStreamEvent（started、delta、reasoning_delta、done、error），不含 tool_proposal
+              required: [kind]
+              properties:
+                kind:
+                  type: string
+                  enum: [started, delta, reasoning_delta, done, error]
+        - type: object
+          additionalProperties: false
+          required: [type, reason]
+          properties:
+            type:
+              const: session_ended
+            reason:
+              $ref: '#/components/schemas/LanRevokeReason'
