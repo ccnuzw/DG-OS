@@ -98,6 +98,27 @@ describe('error code mapping (AC10)', () => {
     }
   });
 
+  it('the six Provider codes added by D098 are mapped, not the generic fallback, and are moderate (5 s Toast, no Modal)', () => {
+    vi.useFakeTimers();
+    render(<Surface />);
+    for (const code of [1001014, 1001017, 1001018, 1001021, 1001022, 1001024]) {
+      act(() => {
+        Modal.closeAll();
+        clearToasts();
+      });
+      expect(lookupError(code)?.severity, String(code)).toBe('moderate');
+      act(() => handleError({ code, message: 'HOST: upstream said no' }));
+      const alert = screen.getByRole('alert');
+      expect(alert.textContent, `${code} fallback`).not.toContain('错误码');
+      expect(alert.textContent, `${code} host text`).not.toContain('HOST:');
+      expect(screen.queryAllByRole('dialog', { hidden: true }).length, `${code} dialog`).toBe(0);
+      act(() => void vi.advanceTimersByTime(4999));
+      expect(screen.getByRole('alert').getAttribute('data-state'), `${code} before 5 s`).toBe('open');
+      act(() => void vi.advanceTimersByTime(1));
+      expect(screen.getByRole('alert').getAttribute('data-state'), `${code} at 5 s`).toBe('closing');
+    }
+  });
+
   it('the table is frozen and a mapped action only names a route that exists in the app', () => {
     expect(Object.isFrozen(ERROR_MESSAGES)).toBe(true);
     const appRoutes = ['/providers', '/skills', '/workbench', '/mcp', '/settings', '/settings/modules'];

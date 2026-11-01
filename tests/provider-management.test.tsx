@@ -378,6 +378,107 @@ describe('Provider list controls', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Delete Saved fixture' })).toBeNull());
     expect(screen.queryByRole('dialog')).toBeNull();
   });
+
+  describe('reordering with the move buttons (D098 item 5)', () => {
+    const rows = ['Alpha', 'Beta', 'Gamma'].map((name, index) => ({
+      ...providerFixture, id: `provider-${name.toLowerCase()}`, name, sort_order: index,
+    }));
+    const names = () => screen.getAllByRole('heading', { level: 3 }).map(node => node.textContent);
+    const button = (label: string) => screen.getByRole('button', { name: label }) as HTMLButtonElement;
+    const toasts = () => Array.from(document.querySelectorAll('[data-toast-type="error"]'));
+
+    it('sends the complete id list with the row swapped, then shows the host order', async () => {
+      let hostRows = rows;
+      mockedInvoke.mockImplementation(async (command, args) => {
+        if (command === 'list_providers') return { success: true, data: hostRows };
+        if (command === 'update_provider_order') {
+          // The mocked IPC receives the payload the store built; the test pins that shape.
+          const payload = args as { providerIds: string[] };
+          hostRows = payload.providerIds.map(id => rows.find(row => row.id === id)!);
+          return { success: true, data: null };
+        }
+        return { success: true, data: [] };
+      });
+      renderWithToasts();
+      await screen.findByRole('heading', { name: 'Alpha', level: 3 });
+      expect(names()).toEqual(['Alpha', 'Beta', 'Gamma']);
+
+      fireEvent.click(button('Move Beta up'));
+      await waitFor(() => expect(names()).toEqual(['Beta', 'Alpha', 'Gamma']));
+      expect(mockedInvoke).toHaveBeenCalledWith('update_provider_order', {
+        providerIds: ['provider-beta', 'provider-alpha', 'provider-gamma'],
+      });
+
+      fireEvent.click(button('Move Beta down'));
+      await waitFor(() => expect(names()).toEqual(['Alpha', 'Beta', 'Gamma']));
+      expect(mockedInvoke).toHaveBeenLastCalledWith('list_providers', {});
+      expect(mockedInvoke).toHaveBeenCalledWith('update_provider_order', {
+        providerIds: ['provider-alpha', 'provider-beta', 'provider-gamma'],
+      });
+      expect(screen.queryByLabelText('Name *')).toBeNull();
+      expect(toasts()).toHaveLength(0);
+    });
+
+    it('disables move up on the first row and move down on the last row', async () => {
+      mockedInvoke.mockImplementation(async command => (
+        command === 'list_providers' ? { success: true, data: rows } : { success: true, data: [] }
+      ));
+      renderWithToasts();
+      await screen.findByRole('heading', { name: 'Alpha', level: 3 });
+
+      expect(button('Move Alpha up').disabled).toBe(true);
+      expect(button('Move Alpha down').disabled).toBe(false);
+      expect(button('Move Beta up').disabled).toBe(false);
+      expect(button('Move Beta down').disabled).toBe(false);
+      expect(button('Move Gamma up').disabled).toBe(false);
+      expect(button('Move Gamma down').disabled).toBe(true);
+
+      fireEvent.click(button('Move Alpha up'));
+      fireEvent.click(button('Move Gamma down'));
+      expect(mockedInvoke).not.toHaveBeenCalledWith('update_provider_order', expect.anything());
+    });
+
+    it('disables every move button while a request is in flight', async () => {
+      let finish!: (value: unknown) => void;
+      mockedInvoke.mockImplementation(async command => {
+        if (command === 'list_providers') return { success: true, data: rows };
+        if (command === 'update_provider_order') return new Promise(resolve => { finish = resolve; });
+        return { success: true, data: [] };
+      });
+      renderWithToasts();
+      await screen.findByRole('heading', { name: 'Alpha', level: 3 });
+
+      fireEvent.click(button('Move Beta up'));
+      await waitFor(() => expect(button('Move Gamma up').disabled).toBe(true));
+      expect(button('Move Alpha down').disabled).toBe(true);
+      expect(button('Move Gamma up').disabled).toBe(true);
+      fireEvent.click(button('Move Gamma up'));
+      expect(mockedInvoke.mock.calls.filter(([command]) => command === 'update_provider_order')).toHaveLength(1);
+
+      await act(async () => { finish({ success: true, data: null }); });
+      await waitFor(() => expect(button('Move Gamma up').disabled).toBe(false));
+    });
+
+    it('keeps the host order and reports once when the host rejects the order', async () => {
+      mockedInvoke.mockImplementation(async command => {
+        if (command === 'list_providers') return { success: true, data: rows };
+        if (command === 'update_provider_order') return { success: false, error: { code: 1001003, message: HOST_MESSAGE } };
+        return { success: true, data: [] };
+      });
+      renderWithToasts();
+      await screen.findByRole('heading', { name: 'Alpha', level: 3 });
+
+      fireEvent.click(button('Move Beta up'));
+
+      expect(await screen.findByText('Provider 不可用')).toBeTruthy();
+      expect(toasts()).toHaveLength(1);
+      expect(toasts()[0].textContent).not.toContain(HOST_MESSAGE);
+      expect(names()).toEqual(['Alpha', 'Beta', 'Gamma']);
+      expect(useProviderStore.getState().providers.map(row => row.name)).toEqual(['Alpha', 'Beta', 'Gamma']);
+      expect(mockedInvoke.mock.calls.filter(([command]) => command === 'list_providers')).toHaveLength(1);
+      expect(button('Move Beta up').disabled).toBe(false);
+    });
+  });
 });
 
 async function chooseOption(selectName: string, optionName: string) {

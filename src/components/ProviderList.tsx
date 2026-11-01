@@ -11,6 +11,8 @@ interface ProviderListProps {
   onNewProvider: () => void;
   onToggleEnabled: (provider: Provider, enabled: boolean) => Promise<boolean>;
   togglingProviderId: string | null;
+  onMoveProvider: (provider: Provider, direction: -1 | 1) => void | Promise<boolean>;
+  reordering: boolean;
   onDelete: (provider: Provider) => void | Promise<void>;
   hasUnsavedChanges: boolean;
 }
@@ -23,6 +25,8 @@ export default function ProviderList({
   onNewProvider,
   onToggleEnabled,
   togglingProviderId,
+  onMoveProvider,
+  reordering,
   onDelete,
   hasUnsavedChanges,
 }: ProviderListProps) {
@@ -56,7 +60,8 @@ export default function ProviderList({
             <span>Add an AI service to get started.</span>
           </div>
         )}
-        {providers.map((provider) => {
+        {providers.map((provider, index) => {
+          const moveDisabled = reordering || togglingProviderId !== null;
           const selected = selectedProvider?.id === provider.id;
           return (
             <div
@@ -77,6 +82,59 @@ export default function ProviderList({
                     </span>
                   )}
                 </div>
+                <div className="flex shrink-0 items-center">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  title={`Move ${provider.name} up`}
+                  aria-label={`Move ${provider.name} up`}
+                  disabled={index === 0 || moveDisabled}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void onMoveProvider(provider, -1);
+                  }}
+                >
+                  <svg
+                    viewBox="0 0 20 20"
+                    aria-hidden="true"
+                    focusable="false"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="size-4"
+                  >
+                    <path d="m5 12 5-5 5 5" />
+                  </svg>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  title={`Move ${provider.name} down`}
+                  aria-label={`Move ${provider.name} down`}
+                  disabled={index === providers.length - 1 || moveDisabled}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void onMoveProvider(provider, 1);
+                  }}
+                >
+                  <svg
+                    viewBox="0 0 20 20"
+                    aria-hidden="true"
+                    focusable="false"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="size-4"
+                  >
+                    <path d="m5 8 5 5 5-5" />
+                  </svg>
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -102,6 +160,7 @@ export default function ProviderList({
                     <path d="M4 6h12M8 6V4h4v2m-6 0 .7 10h6.6L14 6M8.5 9v4m3-4v4" />
                   </svg>
                 </Button>
+                </div>
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -148,7 +207,7 @@ export default function ProviderList({
                   <Switch
                     aria-label={`${provider.enabled ? 'Disable' : 'Enable'} ${provider.name}`}
                     checked={provider.enabled}
-                    disabled={togglingProviderId !== null}
+                    disabled={togglingProviderId !== null || reordering}
                     onChange={(enabled) => void onToggleEnabled(provider, enabled)}
                   />
                 </div>

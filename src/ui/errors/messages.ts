@@ -3,8 +3,10 @@
 // Only codes that the registry (docs/04-技术架构/当前版本/V1-错误码.md) marks "使用中" and that the host returns as
 // a number over IPC are listed. Reserved and voided codes are deliberately absent, so they take the generic
 // fallback instead of a message nobody can trigger yet. Skills codes (1002xxx) are absent too: Skills commands
-// return `Result<_, String>`, not a numeric code (registry §3.2). MCP and module codes carry no status in the
-// registry. Add a code here only together with its registry status.
+// return `Result<_, String>`, not a numeric code (registry §3.2), and so do MCP commands. Module codes (1004xxx)
+// reach the frontend but their text and severity are undecided (FR-005 §13.2). Add a code here only together with
+// its registry status. The Provider codes 1001014, 1001017, 1001018, 1001021, 1001022 and 1001024 were added by D098;
+// their advice is the registry's 处理建议 column.
 //
 // Severity is a presentation decision made here, not by the host: `minor` is a 3 s toast, `moderate` a 5 s toast
 // with advice, `severe` a Modal that needs acknowledging (§8.3).
@@ -72,6 +74,11 @@ export const ERROR_MESSAGES: Readonly<Record<number, ErrorMessage>> = Object.fre
     description: '请刷新模型后重试',
     severity: 'minor',
   },
+  1001014: {
+    message: '上游服务器错误',
+    description: '请稍后重试，持续出现时请联系 Provider',
+    severity: 'moderate',
+  },
   1001015: {
     message: '系统凭据库不可用',
     description: '请解锁系统凭据库后重试',
@@ -80,6 +87,16 @@ export const ERROR_MESSAGES: Readonly<Record<number, ErrorMessage>> = Object.fre
   1001016: {
     message: '缺少 API Key',
     description: '更换地址或类型后需要重新填写 API Key',
+    severity: 'moderate',
+  },
+  1001017: {
+    message: 'Provider 拒绝了请求',
+    description: '请检查请求参数或模型设置',
+    severity: 'moderate',
+  },
+  1001018: {
+    message: '输入超出上下文长度',
+    description: '请缩短输入，或换用上下文更长的模型',
     severity: 'moderate',
   },
   1001019: {
@@ -92,9 +109,24 @@ export const ERROR_MESSAGES: Readonly<Record<number, ErrorMessage>> = Object.fre
     description: '该请求或配置不被此服务支持，请调整后重试',
     severity: 'moderate',
   },
+  1001021: {
+    message: '结构化输出无效',
+    description: '请检查 schema，或换用支持结构化输出的模型',
+    severity: 'moderate',
+  },
+  1001022: {
+    message: '不支持的 Provider 类型',
+    description: '请重新选择厂商和适配器',
+    severity: 'moderate',
+  },
   1001023: {
     message: '不允许使用明文 HTTP',
     description: '请改用 https，或在高级选项中确认明文传输',
+    severity: 'moderate',
+  },
+  1001024: {
+    message: 'Provider 额度已用尽',
+    description: '请充值或提高额度',
     severity: 'moderate',
   },
   1001025: {

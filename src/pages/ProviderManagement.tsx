@@ -22,6 +22,7 @@ export default function ProviderManagement() {
     createProvider,
     updateProvider,
     toggleProvider,
+    reorderProviders,
     migrateCredential,
     deleteProvider,
     fetchModels,
@@ -33,6 +34,7 @@ export default function ProviderManagement() {
   const [isCreatingProvider, setIsCreatingProvider] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [togglingProviderId, setTogglingProviderId] = useState<string | null>(null);
+  const [reordering, setReordering] = useState(false);
   const [migratingProviderId, setMigratingProviderId] = useState<string | null>(null);
   const selectionGeneration = useRef(0);
   const reportError = usePageError('ProviderManagement');
@@ -195,6 +197,29 @@ export default function ProviderManagement() {
     }
   };
 
+  const handleMoveProvider = async (provider: Provider, direction: -1 | 1) => {
+    if (reordering || togglingProviderId) return false;
+    const ids = useProviderStore.getState().providers.map(row => row.id);
+    const from = ids.indexOf(provider.id);
+    const to = from + direction;
+    if (from < 0 || to < 0 || to >= ids.length) return false;
+    [ids[from], ids[to]] = [ids[to], ids[from]];
+
+    setReordering(true);
+    try {
+      const success = await reorderProviders(ids);
+      if (success) {
+        const rows = useProviderStore.getState().providers;
+        setSelectedProvider(current => (current ? rows.find(row => row.id === current.id) ?? current : current));
+      } else {
+        reportFailure();
+      }
+      return success;
+    } finally {
+      setReordering(false);
+    }
+  };
+
   const handleDeleteProvider = async (provider: Provider) => {
     const success = await deleteProvider(provider.id);
     if (!success) reportFailure();
@@ -281,6 +306,8 @@ export default function ProviderManagement() {
           onNewProvider={handleNewProvider}
           onToggleEnabled={handleToggleEnabled}
           togglingProviderId={togglingProviderId}
+          onMoveProvider={handleMoveProvider}
+          reordering={reordering}
           onDelete={handleDeleteProvider}
           hasUnsavedChanges={hasUnsavedChanges}
         />

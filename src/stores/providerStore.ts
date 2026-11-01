@@ -136,6 +136,8 @@ interface ProviderStore {
   createProvider: (config: ProviderConfig, models?: Model[], probeModel?: string) => Promise<boolean>;
   updateProvider: (id: string, config: ProviderConfig) => Promise<boolean>;
   toggleProvider: (id: string, enabled: boolean) => Promise<boolean>;
+  /** Persists a complete ordered id list through `update_provider_order`, then adopts the host's list (no optimistic update). */
+  reorderProviders: (providerIds: string[]) => Promise<boolean>;
   migrateCredential: (providerId: string) => Promise<boolean>;
   deleteProvider: (id: string) => Promise<boolean>;
   testConnection: (config: ProviderConfig) => Promise<boolean>;
@@ -293,6 +295,49 @@ export const useProviderStore = create<ProviderStore>((set, get) => ({
       set({
         error: response.error?.message || 'Failed to update provider status',
         lastFailure: response.error ?? null,
+        loading: false,
+      });
+      return false;
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : 'Unknown error',
+        lastFailure: err,
+        loading: false,
+      });
+      return false;
+    }
+  },
+
+  reorderProviders: async (providerIds: string[]) => {
+    set({ loading: true, error: null, lastFailure: null });
+    try {
+      const reordered = await invoke<CommandResponse<null>>('update_provider_order', { providerIds });
+      if (!reordered.success) {
+        set({
+          error: reordered.error?.message || 'Failed to update provider order',
+          lastFailure: reordered.error ?? null,
+          loading: false,
+        });
+        return false;
+      }
+
+      // The host owns the order: read the list back instead of trusting the requested sequence.
+      const listed = await invoke<CommandResponse<Provider[]>>('list_providers', {});
+      if (listed.success && listed.data) {
+        const rows = listed.data;
+        set((state) => ({
+          providers: rows,
+          selectedProvider: state.selectedProvider
+            ? rows.find((row) => row.id === state.selectedProvider!.id) ?? state.selectedProvider
+            : null,
+          loading: false,
+        }));
+        return true;
+      }
+
+      set({
+        error: listed.error?.message || 'Failed to fetch providers',
+        lastFailure: listed.error ?? null,
         loading: false,
       });
       return false;
