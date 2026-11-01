@@ -300,6 +300,23 @@ describe('Module management list', () => {
     expect(screen.getByText(/code 1004013/)).toBeTruthy();
   });
 
+  it('AC11 updates a module from the Settings modules tab and shows the new version', async () => {
+    state.afterUpdate = () => {
+      state.modules[1].version = '1.1.0';
+    };
+    renderAt('/settings');
+    fireEvent.mouseDown(await screen.findByRole('tab', { name: '模块' }), { button: 0 });
+    await screen.findByRole('heading', { name: 'Beta' });
+    expect(card('dgos.beta').getByText('Version 1.0.0')).toBeTruthy();
+
+    fireEvent.click(card('dgos.beta').getByRole('button', { name: 'Update' }));
+
+    expect(await card('dgos.beta').findByText('Updated.')).toBeTruthy();
+    expect(await card('dgos.beta').findByText('Version 1.1.0')).toBeTruthy();
+    expect(lifecycleCommands()).toEqual(['update_module']);
+    expect(state.calls.find((call: Call) => call.command === 'update_module')?.args).toEqual({ moduleId: 'dgos.beta' });
+  });
+
   it('warns that an incompatible module needs a newer or older host', async () => {
     state.failures.start_module = { kind: 'module_incompatible', code: 1004022 };
     renderAt('/settings/modules');

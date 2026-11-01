@@ -116,10 +116,11 @@ return {
   boundary: !!document.querySelector('[data-error-kind]'),
   hasProvider: document.body.innerText.includes('Provider-with-an-extremely-long'),
   hasServer: document.body.innerText.includes('Remote server with a very long'),
-  // V1-FR-007 (D085): the About page reads the bundle version through Tauri's built-in `app` commands, and the
-  // LAN entry only states that the capability is not enabled.
+  // V1-FR-007 (D085): the About page reads the bundle version through Tauri's built-in `app` commands. The LAN entry
+  // is FR-010's management page; this smoke registers no LAN commands, so only its heading is checked here (AC15
+  // runs against the production LAN commands in `smoke:tauri:lan`).
   hasVersion: [...document.querySelectorAll('dd')].some((d) => d.textContent.trim() === '0.1.0'),
-  hasLanNotice: document.body.innerText.includes('局域网协同尚未启用'),
+  hasLanPage: [...document.querySelectorAll('h1')].some((h) => h.textContent.trim() === '局域网协同'),
 };
 "#;
 
@@ -264,8 +265,8 @@ async fn layout_matrix(app: &AppHandle, checks: &mut Checks, themes: &[&str], os
                 if route == "/settings/about" && m["hasVersion"] != true {
                     problems.push("About does not show the bundle version 0.1.0".into());
                 }
-                if route == "/settings/lan" && m["hasLanNotice"] != true {
-                    problems.push("LAN entry does not show the not-enabled notice".into());
+                if route == "/settings/lan" && m["hasLanPage"] != true {
+                    problems.push("LAN entry does not show the LAN management page".into());
                 }
                 if (route == "/no-such-route") != (m["boundary"] == true) {
                     problems.push(format!(

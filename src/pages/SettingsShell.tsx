@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState, type FocusEvent, type ReactNode } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { Tabs } from '@dgos/ui';
 import { ROUTES } from '../appRoutes';
@@ -36,6 +36,17 @@ const KEPT_ALIVE: Record<SectionKey, boolean> = {
 };
 
 const PANEL = 'min-h-0 flex-1 overflow-y-auto';
+
+// The tab bar scrolls sideways at high scales. A scroller clips at its padding box, and a non-visible overflow-x
+// makes overflow-y clip too, so the scroller is a wrapper whose padding holds the 2px ring and 2px offset of
+// FOCUS_RING (scales down to 75% stay >= 4px); the list keeps its own baseline that the triggers overlap (-mb-px).
+// focus() does not scroll a partly visible tab, so a focused tab is scrolled in explicitly; scroll-px keeps its
+// ring clear of the scroller's side edges.
+const TAB_SCROLLER = 'shrink-0 overflow-x-auto scroll-px-6 px-6 pt-2 pb-2';
+
+const revealFocusedTab = (event: FocusEvent<HTMLDivElement>) => {
+  if (event.target.getAttribute('role') === 'tab') event.target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+};
 
 // The router has already decoded the splat, so this agrees with the routes it matched. Only `modules` has a deeper
 // level (`modules/:moduleId`); any other path that is not exactly a section shows the overview, as before (D037 parity).
@@ -84,11 +95,13 @@ export default function SettingsShell() {
   return (
     <div className="flex h-full min-h-0 flex-col" data-settings-shell="">
       <Tabs value={active ?? ''} onValueChange={select} activationMode="manual" className="min-h-0 flex-1 gap-0">
-        <Tabs.List aria-label="系统设置" className="flex shrink-0 overflow-x-auto px-6 pt-2">
-          {SECTIONS.map(section => (
-            <Tabs.Trigger key={section.key} value={section.key} className="shrink-0">{section.label}</Tabs.Trigger>
-          ))}
-        </Tabs.List>
+        <div className={TAB_SCROLLER} data-settings-tab-scroller="">
+          <Tabs.List aria-label="系统设置" className="flex w-max min-w-full" onFocus={revealFocusedTab}>
+            {SECTIONS.map(section => (
+              <Tabs.Trigger key={section.key} value={section.key} className="shrink-0">{section.label}</Tabs.Trigger>
+            ))}
+          </Tabs.List>
+        </div>
         {active === null && <div className={PANEL}><Overview /></div>}
         {panel('providers', <ProviderManagement />)}
         {panel('skills', <SkillsManagement />)}

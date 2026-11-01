@@ -204,6 +204,9 @@ const focusInfo = () => {
 };
 const geo = (el) => { const r = el.getBoundingClientRect(); return { l: Math.round(r.left), t: Math.round(r.top), r: Math.round(r.right), b: Math.round(r.bottom), w: Math.round(r.width), h: Math.round(r.height), vw: root.clientWidth, vh: innerHeight, inside: r.left >= -0.5 && r.top >= -0.5 && r.right <= root.clientWidth + 0.5 && r.bottom <= innerHeight + 0.5 }; };
 const zOf = (el) => { let z = 0; for (let n = el; n && n !== document.documentElement; n = n.parentElement) { const v = parseInt(css(n, 'zIndex'), 10); if (!Number.isNaN(v)) z = Math.max(z, v); } return z; };
+// The focused element's ring box (border box grown by outline width + offset) against the padding box of every
+// ancestor that clips (any overflow other than visible). Returns the clipping ancestors and by how much they cut.
+const ringCuts = () => { const el = document.activeElement; const cs = getComputedStyle(el); const g = parseFloat(cs.outlineWidth) + parseFloat(cs.outlineOffset); const r = el.getBoundingClientRect(); const ring = { l: r.left - g, t: r.top - g, r: r.right + g, b: r.bottom + g }; const cuts = []; for (let n = el.parentElement; n; n = n.parentElement) { const s = getComputedStyle(n); if (s.overflowX === 'visible' && s.overflowY === 'visible') continue; const b = n.getBoundingClientRect(); const over = { l: b.left + parseFloat(s.borderLeftWidth) - ring.l, t: b.top + parseFloat(s.borderTopWidth) - ring.t, r: ring.r - (b.right - parseFloat(s.borderRightWidth)), b: ring.b - (b.bottom - parseFloat(s.borderBottomWidth)) }; const bad = Object.fromEntries(Object.entries(over).filter(([, v]) => v > 0.5).map(([k, v]) => [k, Math.round(v * 10) / 10])); if (Object.keys(bad).length) cuts.push({ cls: String(n.className).slice(0, 48), ...bad }); } return cuts; };
 "#;
 
 async fn js(app: &AppHandle, body: &str) -> Value {
@@ -963,6 +966,7 @@ pub(super) async fn run(app: &AppHandle, checks: &mut Checks) {
     set_appearance(app, "light", 100).await;
     error_boundary(app, checks).await;
     appearance_e2e(app, checks).await;
+    settings_tab_rings(app, checks).await;
     confirm_dialogs(app, checks).await;
 }
 
@@ -1257,6 +1261,71 @@ async fn ring_walk(app: &AppHandle, checks: &mut Checks, tag: &str) {
         n >= 9 && bad.is_empty(),
         bad.join(" | "),
     );
+}
+
+/// FR-007 FO-2: the Settings tab bar scrolls sideways, and a scroller clips its content at the padding box in both
+/// axes, which used to cut the bottom of every tab's focus ring. With physical keys (Tab into the bar, Home, then
+/// Right through all seven tabs) each focused tab must show a full ring: computed style as `ring_problem`, and no
+/// ancestor that clips cuts the ring box. 175% is where the bar overflows and the later tabs must scroll into view.
+async fn settings_tab_rings(app: &AppHandle, checks: &mut Checks) {
+    for density in [75, 100, 175] {
+        let tag = format!("Settings tabs @{density}%");
+        set_appearance(app, "light", density).await;
+        if !ready(app, "/settings/about").await {
+            checks.check(
+                &format!("{tag}: /settings/about loaded"),
+                false,
+                "page never loaded",
+            );
+            continue;
+        }
+        let in_bar = "document.activeElement.getAttribute('role') === 'tab' && !!document.activeElement.closest('[role=\"tablist\"][aria-label=\"系统设置\"]')";
+        if !tab_until(app, in_bar, 30, false).await {
+            checks.check(
+                &format!("{tag}: Tab reaches the Settings tab bar"),
+                false,
+                "no Settings tab focused",
+            );
+            continue;
+        }
+        key(app, Key::Home).await;
+        let (mut seen, mut bad) = (vec![], vec![]);
+        for step in 0..7 {
+            if step > 0 {
+                key(app, Key::Right).await;
+            }
+            let info = js(app, "return { ...focusInfo(), cuts: ringCuts() };").await;
+            let label = info["label"].as_str().unwrap_or("?").to_owned();
+            if let Some(p) = ring_problem(&info) {
+                bad.push(format!("{label}: {p}"));
+            } else if info["cuts"].as_array().is_none_or(|c| !c.is_empty()) {
+                bad.push(format!("{label}: clipped {}", info["cuts"]));
+            }
+            seen.push(label);
+        }
+        let want = [
+            "Provider",
+            "Skills",
+            "MCP",
+            "模块",
+            "外观",
+            "关于",
+            "局域网协同",
+        ];
+        checks.check(
+            &format!("{tag}: Home then Right visits the seven tabs in order"),
+            seen == want,
+            seen.join(" > "),
+        );
+        checks.check(
+            &format!(
+                "{tag}: every focused tab shows a full focus ring that no clipping ancestor cuts"
+            ),
+            bad.is_empty(),
+            bad.join(" | "),
+        );
+    }
+    set_appearance(app, "light", 100).await;
 }
 
 /// P7 hand-off questions that need the real WebView or the real host, answered by observation.

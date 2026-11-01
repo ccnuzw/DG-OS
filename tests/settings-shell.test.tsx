@@ -1,12 +1,13 @@
-// V1-FR-007 AC01, AC02, AC05, AC09, AC14 and B07-01, B07-14～B07-17 (D085): the Settings shell.
+// V1-FR-007 AC01～AC14 and B07-01, B07-14～B07-17 (D085, D109): the Settings shell.
 //
 // jsdom with a mocked Tauri core and the real pages and stores. Proven here: /settings opens on an overview with no
 // tab selected and no extra host call; the seven tabs are in order and each opens its page and URL; a deep link opens
 // on its tab; arrow keys move focus without switching (manual activation) and Enter switches; Provider and Skills keep
 // their unsaved UI state across tab switches; a failed load can be retried (Skills, About); the LAN entry opens the
-// LAN management page (its own behaviour is covered by tests/lan-settings.test.tsx). NOT proven: layout, focus ring
-// rendering, screen-reader output (real WebView smoke), and the Provider,
-// Skills, MCP and module pages' own behaviour, which their own test files cover.
+// LAN management page (its own behaviour is covered by tests/lan-settings.test.tsx). D109 route-level evidence: each
+// management AC (AC03, AC04, AC06, AC07, AC08) is driven from its Settings tab, not from the page rendered alone.
+// NOT proven: layout and focus ring rendering (WebView smoke `settings_tab_rings`), screen-reader output, and the
+// host behind the commands, which FR-001～FR-004 verify.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -17,8 +18,9 @@ import { useSkillsStore } from '../src/stores/skillsStore';
 
 const host = vi.hoisted(() => ({
   calls: [] as string[],
+  args: [] as Array<[string, Record<string, unknown> | undefined]>,
   failSkills: 0,
-  handler: null as null | ((command: string) => unknown),
+  handler: null as null | ((command: string, args?: Record<string, unknown>) => unknown),
 }));
 
 const app = vi.hoisted(() => ({ failVersion: 0, versionCalls: 0 }));
@@ -29,9 +31,10 @@ vi.mock('@tauri-apps/api/core', () => {
   }
   return {
     Channel,
-    invoke: async (command: string) => {
+    invoke: async (command: string, args?: Record<string, unknown>) => {
       host.calls.push(command);
-      if (host.handler) return host.handler(command);
+      host.args.push([command, args]);
+      if (host.handler) return host.handler(command, args);
       return null;
     },
   };
@@ -108,6 +111,7 @@ const select = (name: string) => fireEvent.mouseDown(tab(name), { button: 0 });
 
 beforeEach(() => {
   host.calls = [];
+  host.args = [];
   host.failSkills = 0;
   host.handler = respond;
   app.failVersion = 0;
@@ -273,5 +277,117 @@ describe('LAN entry (B07-14, AC15)', () => {
     expect(lanCalls).toContain('list_lan_devices');
     // The service is stopped, so no access code is requested.
     expect(lanCalls).not.toContain('issue_lan_access_code');
+  });
+});
+
+// D109: AC03, AC04, AC06, AC07 and AC08 are accepted at the Settings route. Each case enters through its tab, so the
+// shell, the kept-alive panel and the shared store are on the path; the host is a mock.
+describe('management inside Settings (D109)', () => {
+  const created = {
+    id: 'provider-new', name: 'Team gateway', provider_type: 'openai_compatible', base_url: 'https://gateway.example.invalid/v1',
+    enabled: true, sort_order: 0, created_at: '2026-11-01T00:00:00Z', updated_at: '2026-11-01T00:00:00Z',
+    credential_status: 'stored', config_revision: 0,
+  };
+  const argsOf = (command: string) => host.args.filter(([name]) => name === command).map(([, args]) => args);
+
+  async function openNewProviderForm() {
+    renderAt('/settings');
+    select('Provider');
+    fireEvent.click(await screen.findByRole('button', { name: '+ Create Provider' }));
+    fireEvent.change(screen.getByLabelText('Name *'), { target: { value: created.name } });
+    fireEvent.change(screen.getByLabelText('Base URL *'), { target: { value: created.base_url } });
+    fireEvent.change(screen.getByLabelText('API Key *'), { target: { value: 'synthetic-key' } });
+  }
+
+  it('AC03 adds a Provider from the Provider tab and lists it', async () => {
+    host.handler = command => (command === 'create_provider' ? { success: true, data: created } : respond(command));
+    await openNewProviderForm();
+
+    fireEvent.click(screen.getByRole('button', { name: /Create$/ }));
+
+    expect(await screen.findByText(created.name)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByLabelText('API Key *')).toBeNull());
+    expect(where()).toBe('/settings/providers');
+    const [request] = argsOf('create_provider');
+    expect(request).toEqual({ config: expect.objectContaining({ name: created.name, base_url: created.base_url, api_key: 'synthetic-key' }) });
+    expect(JSON.stringify(request)).not.toMatch(/user_?id/i);
+  });
+
+  it.each([
+    ['success', { success: true, data: true }, 'Connection successful'],
+    ['failure', { success: false, error: { code: 1001002, message: 'upstream said 401' } }, 'Invalid API key'],
+  ])('AC04 tests the connection from the Provider tab and shows the %s result', async (_, reply, text) => {
+    host.handler = command => (command === 'test_provider_connection' ? reply : respond(command));
+    await openNewProviderForm();
+
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/ }));
+
+    expect(await screen.findByText(text)).toBeTruthy();
+    expect(argsOf('test_provider_connection')).toEqual([{ config: expect.objectContaining({ base_url: created.base_url }) }]);
+    expect(host.calls).not.toContain('create_provider');
+  });
+
+  it('AC06 adds an official local skill to My Skills from the Skills tab; legacy entries stay read-only', async () => {
+    const legacy = { ...official, skill_id: 'old-calculator', name: 'Old Calculator', identity: 'legacy_registry', source_kind: 'legacy_registry' };
+    let installed: unknown[] = [];
+    host.handler = command => {
+      if (command === 'fetch_skills_registry') return { skills: [official, legacy], registry_url: 'bundled://official', offline: false, warning: null };
+      if (command === 'list_installed_skills') return installed;
+      if (command === 'check_dependencies') return { satisfied: true, missing: [] };
+      if (command === 'install_skill') {
+        const manifest = { id: official.skill_id, name: official.name, version: '1.0.0', category: 'writing', tags: [], call_type: 'content', dependencies: {} };
+        installed = [{ ...official, id: 'version-1', version: '1.0.0', installed_at: 1, manifest, call_type: 'content', enabled: true }];
+        return installed[0];
+      }
+      return respond(command);
+    };
+    renderAt('/settings');
+    select('Skills');
+    expect(await screen.findByText('Old Calculator')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Legacy: read-only' }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add to My Skills' }));
+
+    expect(await screen.findByText(/Skill added to My Skills/)).toBeTruthy();
+    expect(argsOf('install_skill')).toEqual([{ skillId: official.skill_id }]);
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Installed (1)' }), { button: 0 });
+    expect(screen.getByRole('switch', { name: 'Enable Summary' }).getAttribute('aria-checked')).toBe('true');
+    // Adding stores a local content version; nothing is executed, downloaded or configured.
+    expect(host.calls.filter(command => ['call_skill', 'update_skill', 'update_skill_config'].includes(command))).toEqual([]);
+    expect(where()).toBe('/settings/skills');
+  });
+
+  it('AC07 adds an MCP server from the MCP tab and lists it without connecting', async () => {
+    const server = { id: 'mcp-new', name: 'Local files', transport: 'stdio', enabled: false, status: 'configured' };
+    host.handler = command => (command === 'create_mcp_server' ? server : respond(command));
+    renderAt('/settings');
+    select('MCP');
+    await screen.findByRole('heading', { level: 1, name: 'MCP Management' });
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: server.name } });
+    fireEvent.change(screen.getByLabelText('Executable'), { target: { value: '/usr/local/bin/files-server' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save server' }));
+
+    expect(await screen.findByRole('button', { name: `Select ${server.name}` })).toBeTruthy();
+    expect(argsOf('create_mcp_server')).toEqual([{ request: { name: server.name, transport: 'stdio', stdio: { executable: '/usr/local/bin/files-server', args: [] } } }]);
+    expect(host.calls).not.toContain('connect_mcp_server');
+    expect(where()).toBe('/settings/mcp');
+  });
+
+  it('AC08 shows each MCP server\'s connection state as text and as a success or error colour from the MCP tab', async () => {
+    host.handler = command => (command === 'list_mcp_servers'
+      ? [
+          { id: 'up', name: 'Up server', transport: 'stdio', enabled: true, status: 'ready' },
+          { id: 'down', name: 'Down server', transport: 'http', enabled: true, status: 'error' },
+        ]
+      : respond(command));
+    renderAt('/settings');
+    select('MCP');
+
+    for (const [name, status, colour] of [['Up server', 'ready', 'bg-success'], ['Down server', 'error', 'bg-error']]) {
+      const row = await screen.findByRole('button', { name: `Select ${name}` });
+      expect(row.textContent).toContain(status);
+      expect(row.querySelector('[aria-hidden="true"]')?.classList.contains(colour)).toBe(true);
+    }
   });
 });
