@@ -2,8 +2,8 @@ openapi: 3.1.0
 info:
   title: DGOS V1 局域网协同 API
   description: |
-    V1-FR-010 局域网协同的 HTTP 与 WebSocket 白名单（规划契约，D099，2026-11-01）。
-    **没有实现**：当前没有 HTTP 服务、路由或已注册的局域网主机命令。桌面端使用 Tauri commands，
+    V1-FR-010 局域网协同的 HTTP 与 WebSocket 白名单（D099，2026-11-01；2026-11-01 已由 crates/dgos-lan 实现）。
+    实现状态与验证证据见 docs/02-产品与版本/当前版本/V1-实现状态.md。桌面端使用 Tauri commands，
     见 docs/04-技术架构/当前版本/V1-接口契约.md。
 
     本文件是 HTTP 字段的唯一权威；公共语义（准入顺序、Cookie、撤销、WebSocket 帧与关闭码、主机命令）
@@ -25,20 +25,20 @@ info:
 
     **历史**：D099 之前的草图（Bearer JWT、`/auth/login`、`/auth/me`、Provider/Skills/MCP/模块/
     对话的通用路径）已作废，原文归档在 docs/99-历史归档/V1-FR-010/2026-11-01-旧OpenAPI草图.yaml。
-  version: 1.0.0-planned
+  version: 1.0.0
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
 
 servers:
   - url: http://{lanIp}:{port}
-    description: 主机绑定的私网 IPv4 地址与端口（默认从 3000 起，D088、D099）
+    description: 主机绑定的私网 IPv4 地址与端口（首选端口默认 8635，被占用时临时回退到其后 19 个端口，D088、D107）
     variables:
       lanIp:
         default: 192.168.1.100
         description: 只能是 10/8、172.16/12、192.168/16 中的接口地址
       port:
-        default: '3000'
+        default: '8635'
 
 tags:
   - name: spa
@@ -80,8 +80,9 @@ paths:
       summary: 用访问凭据配对
       description: |
         凭据单次有效；成功后凭据作废并经 `Set-Cookie` 下发会话。带有效 Cookie 且来源 IP 与该会话相同的设备再次配对时，
-        旧会话以 `re_paired` 被替换，会话数不增加；凭据错误时旧会话保留（D101）。
-        限速：每来源 IP 每分钟 5 次、全局每分钟 20 次；已有 8 个会话时拒绝且不消耗凭据（上述重新配对除外）。没有幂等键。
+        旧会话以 `re_paired` 被替换，会话数不增加；凭据错误时旧会话保留（D101）。带有效 Cookie 但来源 IP 不同时，
+        先以 `ip_changed` 撤销该旧会话，再按普通配对处理；凭据错误时旧会话也已撤销（D105）。
+        限速：每来源 IP 每分钟 5 次、全局每分钟 20 次；已有 8 个会话时拒绝且不消耗凭据（同 IP 的重新配对除外）。没有幂等键。
       security: []
       requestBody:
         required: true
@@ -661,7 +662,7 @@ components:
 
     LanRevokeReason:
       type: string
-      enum: [host_disconnect, host_disconnect_all, switch_off, app_exit, service_failed, network_changed, issuer_ended, ip_changed, idle_expired, absolute_expired, re_paired, logout]
+      enum: [host_disconnect, host_disconnect_all, switch_off, app_exit, service_failed, network_changed, port_changed, issuer_ended, ip_changed, idle_expired, absolute_expired, re_paired, logout]
 
     LanStreamFrame:
       description: WebSocket 文本帧（服务端到客户端）
