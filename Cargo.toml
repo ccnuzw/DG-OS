@@ -8,6 +8,7 @@ members = [
     "crates/dgos-mcp",
     "crates/dgos-modules",
     "crates/dgos-application",
+    "crates/dgos-lan",
 ]
 resolver = "2"
 

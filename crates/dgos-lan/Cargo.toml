@@ -1,0 +1,38 @@
+[package]
+name = "dgos-lan"
+version = "0.1.0"
+edition = "2021"
+description = "V1-FR-010 LAN collaboration: private-IPv4 HTTP/WebSocket service, pairing, sessions and the remote chat whitelist"
+
+[dependencies]
+dgos-db = { path = "../dgos-db" }
+dgos-types = { path = "../dgos-types" }
+dgos-workbench = { path = "../dgos-workbench" }
+dgos-providers = { path = "../dgos-providers" }
+dgos-skills = { path = "../dgos-skills" }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "ws", "tokio"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "http1", "service"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+futures = "0.3"
+socket2 = "0.6"
+if-addrs = "0.15"
+getrandom = "0.3"
+base64 = "0.22"
+subtle = "2.6"
+
+[dev-dependencies]
+dgos-providers = { path = "../dgos-providers", features = ["test-support"] }
+tempfile = "3"
+tokio-tungstenite = "0.29"
+reqwest = { workspace = true }

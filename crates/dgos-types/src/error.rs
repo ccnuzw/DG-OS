@@ -67,6 +67,10 @@ pub enum DgosError {
     #[error("Too many failed sign-in attempts; try again later")]
     SignInThrottled { retry_after_seconds: u64 },
 
+    // LAN collaboration (1010xxx, FR-010). Host command `set_lan_port` only (D107).
+    #[error("LAN port must be 1024 to 65535 and not a browser-blocked port")]
+    LanPortInvalid,
+
     // Provider errors (1001xxx)
     #[error("Provider not found: {0}")]
     ProviderNotFound(String),
@@ -173,6 +177,7 @@ impl DgosError {
             DgosError::SessionInvalid => 1008007,
             DgosError::AccountDeletionIncomplete => 1008009,
             DgosError::SignInThrottled { .. } => 1008011,
+            DgosError::LanPortInvalid => 1010012,
             DgosError::ProviderNotFound(_) => 1001001,
             DgosError::InvalidApiKey => 1001002,
             DgosError::CredentialUnavailable => 1001015,

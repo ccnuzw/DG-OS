@@ -624,6 +624,25 @@ impl ChatManager {
         Ok(ChatSessionPage { items, next_cursor })
     }
 
+    /// One of the user's sessions. Foreign and unknown ids are both `SessionNotFound`.
+    pub async fn get_session(&self, user: &str, session_id: &str) -> Result<ChatSession> {
+        Ok(self.repo.get_session(user, session_id).await?)
+    }
+
+    /// The session a message of the user belongs to; `None` for foreign or unknown ids.
+    pub async fn session_of_message(&self, user: &str, message_id: &str) -> Result<Option<String>> {
+        match self.repo.get_message(user, message_id).await {
+            Ok(message) => Ok(Some(message.session_id)),
+            Err(ChatStoreError::MessageNotFound) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// The session a task id of the user already belongs to (a replayed request).
+    pub async fn session_of_task(&self, user: &str, task_id: &str) -> Result<Option<String>> {
+        Ok(self.repo.session_of_task(user, task_id).await?)
+    }
+
     pub async fn rename_session(
         &self,
         user: &str,
