@@ -10,6 +10,8 @@ mod appearance_tests;
 #[cfg(test)]
 mod chat_tests;
 #[cfg(test)]
+mod lan_audit_tests;
+#[cfg(test)]
 mod mcp_tests;
 #[cfg(test)]
 mod module_permission_tests;

@@ -79,6 +79,8 @@ fn seed(user: &str, n: u32) -> String {
           VALUES ('crash-{n}', '{user}', 'mod-1', '1.0.0', 'rt', 'runtime', 'E', '', 1);
         INSERT INTO system_settings (user_id, setting_key, setting_value, updated_at)
           VALUES ('{user}', 'appearance.theme', '\"dark\"', 1);
+        INSERT INTO lan_audit_events (id, first_at, last_at, event, reason, user_id)
+          VALUES ('lan-{n}', 1, 1, 'session_revoked', 'logout', '{user}');
         "
     )
 }
@@ -88,6 +90,8 @@ const GLOBAL: &str = "
       VALUES ('mod-1', 'mod-1', 'M', '1.0.0', '{}', 'aaaa', 1, 1);
     INSERT INTO skill_versions (id, skill_id, version, content_hash, install_path, verification_status, file_manifest, installed_at, metadata)
       VALUES ('ver-1', 'skill-1', '1', 'h', '/x', 'verified', '[]', 1, '{}');
+    INSERT INTO lan_audit_events (id, first_at, last_at, event, reason, peer_ip)
+      VALUES ('lan-anon', 1, 1, 'request_rejected', 'host_mismatch', '192.168.1.9');
 ";
 
 /// Rows of `user` in every user-scoped table plus the child tables.
@@ -183,6 +187,15 @@ async fn purging_a_user_removes_only_that_users_rows_and_is_idempotent() {
     // Global rows stay.
     assert_eq!(count(&db, "SELECT COUNT(*) FROM modules").await, 1);
     assert_eq!(count(&db, "SELECT COUNT(*) FROM skill_versions").await, 1);
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM lan_audit_events WHERE user_id IS NULL"
+        )
+        .await,
+        1,
+        "unauthenticated LAN audit rows are not any user's data"
+    );
     // A resumed deletion repeats every purge harmlessly.
     for domain in UserDataDomain::ORDER {
         assert_eq!(data.purge(domain, "alice").await.unwrap(), 0);

@@ -1,5 +1,6 @@
 pub mod appearance_repository;
 pub mod chat_repository;
+pub mod lan_audit_repository;
 pub mod mcp_credential_cleanup_repository;
 pub mod model_repository;
 pub mod module_crash_repository;
@@ -15,6 +16,10 @@ pub use chat_repository::{
     auto_title, like_pattern, result_is_unknown, snippet, BeginGeneration, Begun, ChatMessage,
     ChatRepository, ChatSession, ChatStoreError, ChatTarget, FinalizeGeneration, Finalized,
     History, HistoryRow, PinnedSkill, SearchHit, DEFAULT_TITLE,
+};
+pub use lan_audit_repository::{
+    LanAuditEvent, LanAuditKind, LanAuditPage, LanAuditRecord, LanAuditRepository,
+    LAN_AUDIT_MERGE_SECS, MAX_LAN_AUDIT_ROWS,
 };
 pub use mcp_credential_cleanup_repository::{
     stage_mcp_credential_cleanup, McpCredentialCleanup, McpCredentialCleanupRepository,

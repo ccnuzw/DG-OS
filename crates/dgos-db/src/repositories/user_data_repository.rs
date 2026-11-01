@@ -23,6 +23,8 @@ pub enum UserDataDomain {
     Skills,
     Modules,
     Settings,
+    /// FR-010 audit rows bound to the user; NULL rows (no session yet) stay.
+    Lan,
 }
 
 /// Tables that keep `user_id` rows after the account row is gone on purpose:
@@ -34,7 +36,7 @@ pub const RETAINED_FOR_VAULT_RETRY: [&str; 2] =
 impl UserDataDomain {
     /// Purge order (technical design `finish_delete`): chat before the task
     /// audit it points at, child rows before their parents.
-    pub const ORDER: [UserDataDomain; 7] = [
+    pub const ORDER: [UserDataDomain; 8] = [
         UserDataDomain::Chat,
         UserDataDomain::Workbench,
         UserDataDomain::Mcp,
@@ -42,6 +44,7 @@ impl UserDataDomain {
         UserDataDomain::Skills,
         UserDataDomain::Modules,
         UserDataDomain::Settings,
+        UserDataDomain::Lan,
     ];
 
     pub fn name(self) -> &'static str {
@@ -53,6 +56,7 @@ impl UserDataDomain {
             UserDataDomain::Skills => "skills",
             UserDataDomain::Modules => "modules",
             UserDataDomain::Settings => "settings",
+            UserDataDomain::Lan => "lan",
         }
     }
 
@@ -73,6 +77,7 @@ impl UserDataDomain {
                 "module_crash_logs",
             ],
             UserDataDomain::Settings => &["system_settings"],
+            UserDataDomain::Lan => &["lan_audit_events"],
         }
     }
 }
@@ -227,6 +232,7 @@ fn statements(domain: UserDataDomain) -> &'static [&'static str] {
             "DELETE FROM module_crash_logs WHERE user_id = ?1",
         ],
         UserDataDomain::Settings => &["DELETE FROM system_settings WHERE user_id = ?1"],
+        UserDataDomain::Lan => &["DELETE FROM lan_audit_events WHERE user_id = ?1"],
     }
 }
 
