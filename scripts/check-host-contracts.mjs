@@ -4,7 +4,20 @@ import { fileURLToPath } from 'node:url';
 import { checkReactVersions } from './react-version.mjs';
 
 // Static contract checks supplement compilation; they do not prove WebView isolation.
-const files = ['provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'modules', 'module_host', 'module_capabilities', 'appearance', 'accounts'];
+const files = ['provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'modules', 'module_host', 'module_capabilities', 'appearance', 'accounts', 'lan'];
+// FR-010 / interface contract §14.8: the eight LAN host commands. Exact parameter lists; no user
+// id, caller, session token or access code. Every one enters through the Settings caller with
+// `Capability::LanManage`, which `allows` grants to Settings only.
+const lanParams = new Map([
+  ['get_lan_status', ['app', 'window']],
+  ['set_lan_enabled', ['app', 'window', 'enabled']],
+  ['set_lan_port', ['app', 'window', 'port']],
+  ['issue_lan_access_code', ['app', 'window']],
+  ['list_lan_devices', ['app', 'window']],
+  ['disconnect_lan_device', ['app', 'window', 'session_id']],
+  ['disconnect_all_lan_devices', ['app', 'window']],
+  ['list_lan_audit_events', ['app', 'window', 'input']],
+]);
 // FR-008 / interface contract §9.5: the six account commands. Exact parameter lists; no user id,
 // session token or account id. `get_account_state` and `sign_out` take only the Tauri context; the
 // rest take one typed `input`.
@@ -158,6 +171,17 @@ for (const file of files) {
       assert.ok(gateAt >= 0, `${name}: missing host::account_window gate`);
       assert.ok(gateAt < body.indexOf('accounts(&app)'), `${name}: the window gate must come before the account service`);
       assert.doesNotMatch(body, /host::(?:context|module_session)\(/, `${name}: account commands do not use the session gate`);
+    } else if (file === 'lan') {
+      const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
+      const exact = lanParams.get(name);
+      assert.ok(exact, `${name}: LAN commands must be registered in lanParams`);
+      assert.deepEqual([...names].sort(), [...exact].sort(), `${name}: parameter list must be exactly ${exact.join(', ')}`);
+      const gateAt = body.search(/host::context\(\s*&window,\s*BuiltinCaller::Settings,\s*Capability::LanManage\s*\)/);
+      assert.ok(gateAt >= 0, `${name}: LAN commands use the Settings caller and LanManage`);
+      assert.ok(gateAt < body.indexOf('lan(&app)'), `${name}: the gate must come before the LAN service`);
+      if (exact.includes('input')) {
+        assert.match(args, /input:\s*\w+Input\b/, `${name}: input must be a typed *Input struct`);
+      }
     } else if (file === 'appearance') {
       const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
       const allowed = appearanceParams.get(name);
@@ -253,6 +277,49 @@ for (const path of productionSources) {
   const production = source.split(/\n#\[cfg\(test\)\]/)[0];
   assert.doesNotMatch(production, /local_default\(/, `${path}: production code must resolve the session, not use HostSession::local_default()`);
 }
+// FR-010 / contract §14.8: `LanManage` is granted to the Settings caller only.
+const allowsBody = hostSource.match(/fn allows\([^)]*\)[^{]*\{([\s\S]*?)\n\}/);
+assert.ok(allowsBody, 'host.rs: allows not found');
+const workbenchArm = allowsBody[1].match(/BuiltinCaller::Workbench => matches!\(([\s\S]*?)\),/);
+assert.ok(workbenchArm && !/LanManage/.test(workbenchArm[1]), 'LanManage must not be granted to the Workbench caller');
+assert.match(allowsBody[1], /BuiltinCaller::Module => false/, 'module contexts get no host capability');
+// FR-010 / contract §14.4, §14.9: the LAN routes are exactly the whitelist; route code reaches chat
+// only through `ChatBackend` and never names an account, module, MCP or management service; there
+// is no "command name + JSON" forwarding.
+const lanSource = (name) => readFileSync(new URL(`../crates/dgos-lan/src/${name}.rs`, import.meta.url), 'utf8');
+const lanRouteCode = ['http', 'ws', 'core', 'server', 'service'].map((name) => [name, lanSource(name)]);
+for (const [name, source] of lanRouteCode) {
+  assert.doesNotMatch(
+    source,
+    /\b(?:AccountService|SessionPort|dgos_application|dgos_mcp|McpManager|dgos_modules|Module\w*(?:Service|Manager)|ProviderManager|SkillsManager|tauri::|invoke|generate_handler)\b/,
+    `dgos-lan/${name}.rs: LAN route code must not reference account, module, MCP or management services`,
+  );
+  assert.doesNotMatch(source, /accept_destination:\s*Some|tools:\s*vec!\[\s*\S/, `dgos-lan/${name}.rs: remote chat never accepts a destination or selects tools`);
+}
+const routes = [...lanSource('http').matchAll(/\.route\(\s*"([^"]+)",([\s\S]*?)(?=\n\s*\.(?:route|fallback)\()/g)]
+  .map(([, path, methods]) => `${[...methods.matchAll(/\b(get|post|put|delete|patch)\(/g)].map((m) => m[1].toUpperCase()).sort().join('|')} ${path}`)
+  .sort();
+assert.deepEqual(routes, [
+  'GET /api/v1/lan/session',
+  'GET /api/v1/lan/stream',
+  'GET /api/v1/lan/targets',
+  'GET|POST /api/v1/lan/chat/sessions',
+  'GET|POST /api/v1/lan/chat/sessions/{session_id}/messages',
+  'POST /api/v1/lan/chat/messages/{message_id}/regenerate',
+  'POST /api/v1/lan/chat/tasks/{task_id}/cancel',
+  'POST /api/v1/lan/logout',
+  'POST /api/v1/lan/pair',
+].sort(), 'dgos-lan/http.rs: LAN routes must be exactly the D099 whitelist');
+assert.doesNotMatch(lanSource('http'), /access-control-|CorsLayer|ACCESS_CONTROL/i, 'dgos-lan/http.rs: no CORS headers');
+// The chat adapter uses Provider/Skills managers only through their list/read methods.
+const chatPort = lanSource('chat_port');
+const managerCalls = [...chatPort.matchAll(/\b(?:providers|skills)\b(?:\(\))?\s*\.\s*(\w+)\(/g)].map((m) => m[1]);
+for (const call of managerCalls) {
+  assert.ok(['list_providers', 'list_models', 'list_installed_skills', 'read'].includes(call), `dgos-lan/chat_port.rs: manager call \`${call}\` is not a read`);
+}
+assert.doesNotMatch(chatPort, /\b(?:dgos_mcp|McpManager|send_with_mcp|run_tool_turn|update_target|rename_session|delete_session|toggle|install|create_provider|update_provider|delete_provider)\b/, 'dgos-lan/chat_port.rs: no MCP, tool turns or mutations');
+const lanManifest = readFileSync(new URL('../crates/dgos-lan/Cargo.toml', import.meta.url), 'utf8').split('[dev-dependencies]')[0];
+assert.doesNotMatch(lanManifest, /dgos-(?:application|mcp|modules)\b/, 'dgos-lan must not depend on the account, MCP or module crates');
 // D093: the shared admission helper of the capability commands gates the window and admits once.
 const capabilitySource = readFileSync(new URL('../src-tauri/src/commands/module_capabilities.rs', import.meta.url), 'utf8');
 const admitHelper = capabilitySource.match(/\nfn admit\([\s\S]*?\n\}/);

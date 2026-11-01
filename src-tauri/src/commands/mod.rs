@@ -1,6 +1,7 @@
 mod accounts;
 mod appearance;
 mod chat;
+mod lan;
 mod mcp;
 mod module_capabilities;
 mod module_host;
@@ -12,6 +13,7 @@ mod workbench;
 pub use accounts::*;
 pub use appearance::*;
 pub use chat::*;
+pub use lan::*;
 pub use mcp::*;
 pub use module_capabilities::*;
 pub use module_host::*;

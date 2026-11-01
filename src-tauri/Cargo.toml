@@ -27,6 +27,7 @@ dgos-workbench = { path = "../crates/dgos-workbench" }
 dgos-mcp = { path = "../crates/dgos-mcp" }
 dgos-modules = { path = "../crates/dgos-modules" }
 dgos-application = { path = "../crates/dgos-application" }
+dgos-lan = { path = "../crates/dgos-lan" }
 
 # Tauri
 tauri = { workspace = true }
@@ -139,5 +140,11 @@ tempfile = "3.8"
 [[test]]
 name = "webview_smoke_chat"
 path = "tests/webview_smoke_chat.rs"
+harness = false
+required-features = ["webview-smoke"]
+
+[[test]]
+name = "webview_smoke_lan"
+path = "tests/webview_smoke_lan.rs"
 harness = false
 required-features = ["webview-smoke"]

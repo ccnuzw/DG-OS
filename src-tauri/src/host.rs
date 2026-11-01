@@ -23,6 +23,8 @@ pub enum Capability {
     ModulesRead,
     ModulesManage,
     Appearance,
+    /// FR-010 host LAN management (contract §14.8). Settings caller only.
+    LanManage,
 }
 
 /// Entry gate of the renderer commands: trusted main window, then the
@@ -179,6 +181,13 @@ mod tests {
             assert!(!allows(BuiltinCaller::Module, capability));
         }
         assert_eq!(HostSession::local_default().user_id(), LOCAL_USER);
+    }
+
+    #[test]
+    fn only_the_settings_caller_may_manage_the_lan_service() {
+        assert!(allows(BuiltinCaller::Settings, Capability::LanManage));
+        assert!(!allows(BuiltinCaller::Workbench, Capability::LanManage));
+        assert!(!allows(BuiltinCaller::Module, Capability::LanManage));
     }
 
     fn url(value: &str) -> tauri::Url {

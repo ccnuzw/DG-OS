@@ -5,6 +5,7 @@ mod capabilities;
 mod commands;
 mod host;
 mod instance_lock;
+mod lan;
 mod logging;
 mod module_host;
 mod provider_credentials;
@@ -292,6 +293,11 @@ pub fn run() {
                 // interrupted account deletions, retry both credential outboxes,
                 // then settle the session (signed out after a restart when
                 // accounts exist; `no_accounts` runs as `default-user`).
+                // FR-010: the LAN service. Its revoker replaces FR-008's
+                // `NoRemoteSessions`; it starts after account recovery so the
+                // resolver is settled.
+                let lan_service = lan::build(&app_handle, &db, resolver.clone());
+                app_handle.manage(lan_service.clone());
                 let mut ports = dgos_application::AccountPorts::new(
                     &db,
                     Arc::new(session::HostSessionPort::new(
@@ -300,6 +306,7 @@ pub fn run() {
                         app_handle.clone(),
                     )),
                 );
+                ports.remote = Arc::new(lan::LanSessionRevoker(lan_service.clone()));
                 ports.outboxes = vec![
                     Arc::new(session::ProviderOutbox(app_handle.clone())),
                     Arc::new(session::McpOutbox(mcp_for_accounts)),
@@ -343,6 +350,11 @@ pub fn run() {
                     }
                 }
                 app_handle.manage(accounts);
+                // D039: on by default; a start failure is only shown in Settings.
+                let status = lan_service.on_app_start().await;
+                if status.failure_code.is_some() {
+                    tracing::warn!(code = status.failure_code, "LAN service did not start");
+                }
             });
 
             // Open dev tools in debug mode
@@ -465,6 +477,15 @@ pub fn run() {
             commands::sign_out,
             commands::change_password,
             commands::delete_account,
+            // LAN collaboration host commands (FR-010, contract §14.8): Settings caller only
+            commands::get_lan_status,
+            commands::set_lan_enabled,
+            commands::set_lan_port,
+            commands::issue_lan_access_code,
+            commands::list_lan_devices,
+            commands::disconnect_lan_device,
+            commands::disconnect_all_lan_devices,
+            commands::list_lan_audit_events,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -473,10 +494,16 @@ pub fn run() {
                 let mcp = app.state::<commands::McpState>().manager.clone();
                 let workbench = app.state::<dgos_workbench::WorkbenchManager>().inner().clone();
                 let chat = app.state::<dgos_workbench::ChatManager>().inner().clone();
+                let lan = app.state::<Arc<dgos_lan::LanService>>().inner().clone();
                 let result = tauri::async_runtime::block_on(async move {
                     tokio::time::timeout(
                         std::time::Duration::from_secs(5),
-                        async move { tokio::join!(workbench.shutdown(), mcp.shutdown(), chat.shutdown()) },
+                        async move {
+                            // B10-30: remote sessions end first, so no remote request starts work
+                            // while the rest shuts down.
+                            lan.shutdown().await;
+                            tokio::join!(workbench.shutdown(), mcp.shutdown(), chat.shutdown())
+                        },
                     ).await
                 });
                 match result {
