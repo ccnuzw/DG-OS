@@ -6,7 +6,7 @@ domain: 底层能力
 spec_status: Ready
 risk: 高风险
 track: Skills 能力
-updated: 2026-10-29
+updated: 2026-11-01
 ---
 # V1-FR-002：DGOS 技能中心
 
@@ -69,7 +69,7 @@ V1 分两个交付批次，均属于同一功能；先完成 A，再完成 B，�
 | A：官方本地库 | 随应用提供官方核心包；统一分类、搜索和详情；用户启用/禁用；AI 工作台选择并使用；版本与使用记录 | 全新安装、无缓存、无网络也能浏览官方内容；至少 2 类、每类至少 1 个可验收技能；至少 1 个在工作台完成真实任务 |
 | B：第三方扩展 | 来源适配接口；至少 1 个真实预置来源的搜索、内容获取、安装、更新与来源追踪；缓存及失败隔离 | 对真实来源完成安装使用闭环；mock 或外站链接跳转不能替代真实集成验收 |
 
-首批官方内容建议约 10–20 个，但不是已冻结数量或已存在清单。实际名单、许可、资源大小与逐项测试由后续内容发布清单确认。skills.sh 是已验证可访问的首个候选，不把未验证的网站列为“已支持”。
+首批官方内容建议约 10–20 个，但不是已冻结数量。当前随应用发布的是 6 个官方包（清单见[内容包与发布规范 §7](../../../04-技术架构/当前版本/V1-Skills内容包与发布规范.md)，目录文件 `skills/catalog.v1.json`），仅表示内容已提供且完整性可校验；许可、资源大小与逐项质量测试仍由后续内容发布清单确认。skills.sh 是已验证可访问的首个候选，不把未验证的网站列为“已支持”。
 
 ### 2.5 V1 不做
 
@@ -365,15 +365,15 @@ Then 可追溯用户、场景与版本，仅记录安全摘要，无凭据和默
 
 | AC | 验收重点 | 测试层级 | 目标资产 | 目标命令 | 证据状态 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- |
-| AC16 | 打开中心 | 包资源+集成 | `crates/dgos-skills/tests/bundled_catalog.rs` | `cargo test -p dgos-skills --test bundled_catalog` | 未创建 | 批次 A |
-| AC17 | 分类、标签、来源及场景筛选 | 前端 | `tests/skills-center.test.tsx` | `npm test -- tests/skills-center.test.tsx -t AC17` | 未创建 | 批次 A |
-| AC18 | 查看详情 | 前端 | `tests/skills-center.test.tsx` | `npm test -- tests/skills-center.test.tsx -t AC18` | 未创建 | 批次 A |
-| AC19 | 导入官方内容 | 后端+文件系统 | `crates/dgos-skills/tests/bundled_catalog.rs` | `cargo test -p dgos-skills --test bundled_catalog` | 未创建 | 批次 A |
-| AC20 | 切换启用及应用/会话选择 | 后端+前端 | `tests/skills-bindings.test.tsx` | `npm test -- tests/skills-bindings.test.tsx -t AC20` | 未创建 | 批次 A |
-| AC21 | 在 AI 工作台发起任务 | 真实集成 | `tests/skills-workbench.test.tsx` | `npm test -- tests/skills-workbench.test.tsx -t AC21` | 未创建 | 批次 A |
-| AC22 | 准备任务 | 后端+集成 | `crates/dgos-skills/tests/context_prepare.rs` | `cargo test -p dgos-skills --test context_prepare` | 未创建 | 批次 A |
-| AC23 | 安装、加载并尝试工具调用 | 安全+集成 | `crates/dgos-skills/tests/skill_security.rs` | `cargo test -p dgos-skills --test skill_security` | 未创建 | 批次 A |
-| AC24 | 访问绑定、记录和管理入口 | 权限+集成 | `crates/dgos-skills/tests/skill_permissions.rs` | `cargo test -p dgos-skills --test skill_permissions` | 未创建 | 批次 A |
+| AC16 | 打开中心 | 包资源+集成 | `crates/dgos-skills/tests/bundled_catalog.rs` | `cargo test -p dgos-skills --test bundled_catalog` | 已创建 | 批次 A；文件已有用例 `ac16_offline_initialization_search_and_safe_preview`，运行结果见实现状态 |
+| AC17 | 分类、标签、来源及场景筛选 | 前端 | `tests/skills-center.test.tsx` | `npm test -- tests/skills-center.test.tsx -t AC17` | 已创建 | 批次 A；文件已有用例 “AC17 shows a local official library …”（Vitest IPC mock） |
+| AC18 | 查看详情 | 前端 | `tests/skills-center.test.tsx` | `npm test -- tests/skills-center.test.tsx -t AC18` | 已创建 | 批次 A；文件已有两个 AC18 用例（Vitest IPC mock） |
+| AC19 | 导入官方内容 | 后端+文件系统 | `crates/dgos-skills/tests/bundled_catalog.rs` | `cargo test -p dgos-skills --test bundled_catalog` | 已创建 | 批次 A；文件已有用例 `ac19_initialization_preserves_disabled_user_state_and_user_isolation` |
+| AC20 | 切换启用及应用/会话选择 | 后端+前端 | `tests/skills-bindings.test.tsx` | `npm test -- tests/skills-bindings.test.tsx -t AC20` | 未创建 | 批次 A；目标文件不存在。局部用例分散在 `tests/skills-center.test.tsx`（AC20 添加与禁用）、`tests/skills-workbench.test.tsx`（AC20 只发送显式选择的技能）和 `crates/dgos-workbench/tests/task_flow.rs::ac20_selected_version_is_bound_and_never_elevated_to_system` |
+| AC21 | 在 AI 工作台发起任务 | 真实集成 | `tests/skills-workbench.test.tsx` | `npm test -- tests/skills-workbench.test.tsx -t AC21` | 已创建 | 批次 A；该文件的 AC21 用例是 Vitest IPC mock，不是真实集成；后端局部资产 `crates/dgos-workbench/tests/task_flow.rs`（`ac21_*`），真实模型运行记录见[工作台技能消费设计 §4](../../../04-技术架构/当前版本/V1-工作台技能消费设计.md) |
+| AC22 | 准备任务 | 后端+集成 | `crates/dgos-skills/tests/context_prepare.rs` | `cargo test -p dgos-skills --test context_prepare` | 未创建 | 批次 A；目标文件不存在。局部用例：`crates/dgos-workbench/tests/task_flow.rs::ac22_*`（禁用、缺失、篡改、预算、显式无技能）与 `tests/skills-workbench.test.tsx` 的 AC22 用例 |
+| AC23 | 安装、加载并尝试工具调用 | 安全+集成 | `crates/dgos-skills/tests/skill_security.rs` | `cargo test -p dgos-skills --test skill_security` | 未创建 | 批次 A；目标文件不存在。局部用例：`crates/dgos-skills/tests/bundled_catalog.rs::ac23_*`（篡改快照、路径穿越、符号链接、超限资源），不覆盖恶意指令下的工具调用 |
+| AC24 | 访问绑定、记录和管理入口 | 权限+集成 | `crates/dgos-skills/tests/skill_permissions.rs` | `cargo test -p dgos-skills --test skill_permissions` | 未创建 | 批次 A；目标文件不存在。局部用例：`bundled_catalog.rs::ac19_initialization_preserves_disabled_user_state_and_user_isolation`、`task_flow.rs::ac24_*`；远程只读用户未覆盖 |
 | AC25 | 合并目录 | 后端 | `crates/dgos-skills/tests/source_identity.rs` | `cargo test -p dgos-skills --test source_identity` | 未创建 | 批次 B |
 | AC26 | 搜索、查看、安装并在工作台使用 | 外部真实集成 | `tests/skills-source-live.test.tsx` | `DGOS_SKILLS_LIVE=1 npm test -- tests/skills-source-live.test.tsx -t AC26` | 未创建 | 批次 B |
 | AC27 | 请求不支持列表或更新 | 适配器契约 | `crates/dgos-skills/tests/source_capabilities.rs` | `cargo test -p dgos-skills --test source_capabilities` | 未创建 | 批次 B |
@@ -384,14 +384,14 @@ Then 可追溯用户、场景与版本，仅记录安全摘要，无凭据和默
 | AC32 | 用户确认更新或更新失败 | 后端+集成 | `crates/dgos-skills/tests/package_update.rs` | `cargo test -p dgos-skills --test package_update` | 未创建 | 批次 B |
 | AC33 | 禁用或卸载 | 后端+文件系统 | `crates/dgos-skills/tests/package_remove.rs` | `cargo test -p dgos-skills --test package_remove` | 未创建 | 批次 B |
 | AC34 | 上游更新或官方打包 | 后端+发布检查 | `crates/dgos-skills/tests/provenance.rs` | `cargo test -p dgos-skills --test provenance` | 未创建 | 批次 B |
-| AC35 | 查看使用记录 | 后端+日志检查 | `crates/dgos-skills/tests/skill_usage.rs` | `cargo test -p dgos-skills --test skill_usage` | 未创建 | 批次 A |
+| AC35 | 查看使用记录 | 后端+日志检查 | `crates/dgos-skills/tests/skill_usage.rs` | `cargo test -p dgos-skills --test skill_usage` | 未创建 | 批次 A；目标文件不存在。局部用例：`bundled_catalog.rs::content_preparation_records_host_provenance_without_content_payload`、`task_flow.rs::ac35_provider_failure_has_a_task_id_and_redacted_error_not_success` |
 
 
 AC21/AC26 的 mock 用例可用于日常回归，但发布证据必须另有真实模型/来源运行记录；没有凭据时标为未执行，不能用 skip 或返回静态答案代替。新增目标测试整体证据见第 9 节。
 
 ## 7. 分支设计与测试映射
 
-以下是行为分支设计，不是已实现代码。物理存储、事务恢复及 API 细节仍需技术设计。
+以下是行为分支设计。物理存储与桌面命令见[内容包与发布规范](../../../04-技术架构/当前版本/V1-Skills内容包与发布规范.md)，工作台消费见[工作台技能消费设计](../../../04-技术架构/当前版本/V1-工作台技能消费设计.md)；第三方安装的事务恢复与 API 细节仍需技术设计。
 
 ```text
 打开中心：
@@ -470,3 +470,4 @@ AC21/AC26 的 mock 用例可用于日常回归，但发布证据必须另有真�
 | 2026-10-27 | 新增官方内容包技术设计、增量模型、离线 Manager 与技能中心基础界面；关联局部测试证据，未宣称整体验收 | D017、第 9 节 |
 | 2026-10-27 | 功能名称改为 DGOS 技能中心；官方内置优先、SKILL.md 主模型、来源适配、场景绑定、版本与权限边界；新增 AC16–AC35、B02-17–B02-26 | 用户确认方案、D016 |
 | 2026-10-27 | 归档旧 HTTP/CLI 规格，保留旧 AC/分支/错误码身份；本轮未改实现 | 第 6.1 节历史追溯 |
+| 2026-11-01 | 文档与代码核对：§2.4 补充当前已发布 6 个官方包的指向；§6.2 中目标文件已存在的 AC16～AC19、AC21 证据状态由“未创建”改为“已创建”，目标文件不存在的行保持“未创建”并在备注列出局部用例；§7 导语去掉“不是已实现代码”的过时表述。未改动 AC 原文与编号 | 代码核对 |

@@ -64,17 +64,18 @@ React MCP 管理页 / AI Workbench
 
 ### 3.1 Rust 模块职责
 
-已落地的 `crates/dgos-mcp` 模块职责如下：
+`crates/dgos-mcp` 的实际模块如下。第 3 节图中的 ConfigStore、ConnectionPool、Policy/Audit 是逻辑职责，不对应独立文件：配置校验、连接状态机、监控重连和审计写入都在 `manager`，持久化经 `dgos-db` 实体。
 
 | 模块 | 职责 |
 | --- | --- |
-| `config` | 解析和校验 Server 配置；拒绝 shell 字符串、非法 URL、明文 secret |
+| `manager` | `McpManager`：名称与配置校验、多用户/多 Server 目录、连接状态机与握手、30 秒监控与有界重连、全局调用并发上限 8、工具缓存与快照替换、确认令牌、调用编排、使用/连接审计写入 |
 | `protocol` | MCP initialize、`tools/list`、`tools/call` 请求/响应 DTO；保留未知字段以兼容协议扩展 |
-| `transport` | `StdioTransport` 与 `HttpTransport`；统一读写、超时、取消和关闭语义 |
-| `connection` | 单 Server 连接状态机、握手、心跳/断线通知和重连退避 |
-| `manager` | 多用户/多 Server 目录、连接池、并发上限、工具缓存与调用编排 |
-| `policy` | 用户/应用/模块权限、工具 allow/deny、高风险确认和网络边界 |
-| `audit` | 写入脱敏使用记录与连接事件；禁止保存完整参数和结果 |
+| `transport` | `StdioSession` 与 `HttpSession`（Streamable HTTP）；可执行文件和 HTTP URL 校验（`validate_executable`、`validate_http_url`）；统一读写、超时、取消和关闭语义 |
+| `legacy_sse` | `LegacySseSession`：初始化返回 400/404/405 时的 legacy SSE GET/POST 双通道，限同源 |
+| `calls` | `ActiveCalls`：按 `(宿主用户, Server, call_id)` 登记在途调用的取消 token |
+| `credentials` | `McpCredentialVault`、`CredentialScope`、`SecretToken`：凭据引用作用域与 secret 包装 |
+| `policy` | `McpCallPolicy`：宿主注入的 `mcp.call` 决策，默认 `DenyCalls` |
+| `error` | `McpError` 与稳定错误码/类别映射 |
 
 `McpManager` 不持有数据库事务跨越网络请求。配置和状态先读库，网络调用完成后以短事务写回状态/日志。
 
@@ -99,11 +100,11 @@ Ready/Degraded -> Disconnecting -> Configured
 - `Error`：配置、认证、协议或启动失败；等待用户修复或手动重试。
 - `Disconnecting`：取消读写任务并等待子进程/HTTP stream 关闭。
 
-关键分支 ID 沿用功能主文档第 7.3 节的 B03-01–B03-15（stdio、initialize、HTTP、工具发现、工具调用、连接检查、请求超时、结果解析、JSON-RPC、监控、ping、断开、重连、连接尝试、耗尽），不得将同一 ID 重新赋予配置校验或权限拒绝等其他含义。具体测试证据见功能文档第 10 节。
+关键分支 ID 沿用功能主文档第 7.3 节的 B03-01–B03-15（stdio、initialize、HTTP、工具发现、工具调用、连接检查、请求超时、结果解析、JSON-RPC、监控、ping、心跳超时、触发重连、重新连接、重连失败），不得将同一 ID 重新赋予配置校验或权限拒绝等其他含义。具体测试证据见功能文档第 10 节。
 
 ## 4. 数据模型与迁移边界
 
-MCP 主表、连接事件和工作台工具引用分别由 m008、m009、m010 增量迁移管理。具体列类型和约束只在 [V1 数据模型](V1-数据模型.md) 维护；本节是逻辑摘要，不是可直接执行的 SQL。
+MCP 主表、连接事件和工作台工具引用分别由 m008、m009、m010 增量迁移管理；使用记录的来源列由 `m20261028_000007_mcp_usage_provenance` 追加，凭据清理 outbox `mcp_credential_cleanup` 由 `m20261101_000019_local_accounts` 创建（D090）。具体列类型和约束只在 [V1 数据模型](V1-数据模型.md) 维护；本节是逻辑摘要，不是可直接执行的 SQL。
 
 ### 4.1 `mcp_servers`
 
@@ -152,12 +153,14 @@ Workbench 的未完成工具任务在正常退出时撤销提案、释放正文�
 | `get_mcp_server_config` | 获取非敏感配置用于编辑 | Server 不存在、用户越权 |
 | `create_mcp_server` | 校验并保存配置，不自动连接 | 非法命令/URL、重复名称、凭据引用无效 |
 | `update_mcp_server` | 更新配置；连接中变更先断开再应用 | 活动任务占用、配置非法 |
+| `toggle_mcp_server` | 启用/禁用；禁用时先等待在途调用并断开，启用时清除手动断开与重连记录 | Server 不存在、用户越权 |
 | `delete_mcp_server` | 软删除并释放连接 | 活动工具调用、服务器不存在 |
 | `connect_mcp_server` | 启动/连接、initialize、tools/list | 启动失败、超时、协议错误、认证失败 |
 | `disconnect_mcp_server` | 取消请求并关闭连接 | 关闭超时仍需最终标记状态 |
 | `refresh_mcp_tools` | 重新发现并原子替换工具快照 | 连接不可用、工具响应非法 |
 | `list_mcp_tools` | 读取最近成功的工具快照 | Server 不存在 |
-| `call_mcp_tool` | 经 policy/schema/超时检查后调用工具 | 无权限、工具不存在、超时、工具返回错误 |
+| `confirm_mcp_tool` | 用户在管理页审阅确切参数后签发一次性确认令牌（内存保存 120 秒），绑定用户、Server、工具、参数、call_id、task_ref 与 schema hash | 无权限、Server 已禁用或未连接、工具不存在 |
+| `call_mcp_tool` | 经 policy/schema/超时检查并消费确认令牌后调用工具 | 无权限、无有效确认、工具不存在、超时、工具返回错误 |
 | `cancel_mcp_tool` | 当前用户对指定 Server/call_id 请求取消；不等待在途调用锁 | 返回 false 表示当前无对应在途调用，不宣称外部已回滚 |
 | `list_mcp_usage_logs` | 查询脱敏使用记录 | 用户越权 |
 | `list_mcp_connection_logs` | 查询脱敏连接事件和重试次数 | 用户越权 |
@@ -180,6 +183,8 @@ Workbench 的未完成工具任务在正常退出时撤销提案、释放正文�
 Workbench 后续只消费 `list_mcp_tools` 返回的已启用、已授权工具描述；模型提出工具调用时由宿主调用 `call_mcp_tool`，而不是让模型直接访问 MCP 连接。第一阶段不自动选择 Server，用户必须显式选择或接受应用默认绑定。
 
 D022 细化：当前桌面消费路径必须显式选择，不使用隐式应用默认绑定；固定工具 schema hash，逐次显示参数并由用户批准。Workbench 使用 Manager 的 schema-pinned/cancellable 入口，调用前在快照锁内比较确切 schema；批准只引用宿主提案 ID，不接受模型或 renderer 替换参数。MCP 工具调用 DTO 和管理页面手动调用仍保持兼容，工具引用新增于 m010，不扩充任务状态枚举。
+
+模块发起的调用（D093）不走上述 Workbench 提案：运行中的模块经 `module_call_mcp_tool` 进入，由宿主对每次调用弹出确认框，批准后宿主自行铸造并消费同一种一次性令牌（`crates/dgos-application/src/module_mcp.rs`），模块拿不到令牌。该路径的语义见 [V1-FR-004 §7.8](../../03-功能规格/V1/01-底层能力/04-模块系统与热更新.md#78-生产准入能力调用通道模块管理与崩溃处理d051d055)。
 
 ### 6.3 连接恢复通知与明文传输确认
 
@@ -224,7 +229,7 @@ AC01–AC15 的编号、Given/When/Then 与逐项测试资产只在 [功能主�
 ## 11. 实现约束与待补边界（2026-10-27）
 
 - stdio 按 MCP 标准使用 newline-delimited JSON；独立 reader 按 request id 分发，超时移除 pending 请求，子进程随连接释放而关闭。不采用 LSP 的 Content-Length 帧。
-- `McpManager::new` 默认拒绝调用；宿主通过 `McpCallPolicy` 注入 `mcp.call` 决策。Tauri MCP 命令只接受可信 main 本地页面，身份由宿主固定为 `default-user`，不接受 renderer 选择用户；这不是 FR-008/009 的完整多用户授权实现。
+- `McpManager::new` 默认拒绝调用（`DenyCalls`）；桌面宿主用 `with_policy_and_vault` 注入 `DesktopMcpPolicy`，仅当宿主当前会话的用户与调用用户一致时放行（`src-tauri/src/commands/mcp.rs`）。Tauri MCP 命令只接受可信 main 本地页面，用户由宿主 `SessionResolver` 派生（无账户时为 `default-user`，见 FR-008），不接受 renderer 选择用户；模块权限（FR-004/009）另在 Host Capability API 检查，不由本策略代替。
 - 工具描述不作为可信只读声明，当前所有工具均按未知副作用处理；确认令牌在内存中保存 120 秒、一次性消费，并绑定用户、Server、工具、参数、任务与 schema hash。工具面板先审阅精确 JSON，再显式确认调用，发送过程中锁定参数并防重复提交；模型不得调用确认入口。
 - HTTP URL 必须结构化解析，拒绝 URL userinfo、fragment、伪 localhost 域名和自动重定向。Streamable HTTP 按事件增量读取，不等待 SSE EOF；session header 与协商后的 `MCP-Protocol-Version` 复用。对初始化返回 400/404/405 的兼容 Server，适配器执行 legacy SSE endpoint 发现，并以 GET 长连接接收事件、POST 双通道发送 JSON-RPC；endpoint 必须保持配置 URL 的 origin。
 - initialize 只接受实现已知的协议版本（当前 `2024-11-05`、`2025-03-26`、`2025-06-18`），并记录 Server capabilities/serverInfo。Server 主动 `ping` 自动响应；其他主动请求显式返回 `-32601`，不会因为 Server 描述而获得宿主权限。

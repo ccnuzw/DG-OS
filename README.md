@@ -12,13 +12,14 @@
 
 | 能力 | 说明 | 当前情况 |
 | --- | --- | --- |
-| 🔌 Provider 适配 | 统一接口调用 OpenAI 兼容模型，凭据存入系统钥匙串 | 已实现核心切片 |
+| 🔌 Provider 适配 | 统一接口调用 OpenAI 兼容与 Anthropic 协议模型，凭据存入系统钥匙串 | 已实现核心切片 |
 | 🛠️ 技能中心 | 随应用发布的官方 `SKILL.md` 内容包，工作台按固定版本使用 | 官方本地库已实现；第三方来源未开始 |
 | 🧰 MCP 管理 | stdio / Streamable HTTP 连接、工具发现、逐次确认调用 | 已实现快速迭代版 |
-| 🤖 AI 工作台 | 单任务调用模型，可选一个技能和 MCP 工具 | 单任务切片；多轮对话、流式聊天未实现 |
-| 🔥 模块热更新 | 受信任的本地模块包动态加载与热更新 | 仅有包发布、授权等前置切片；运行时未开始 |
-| 🎨 统一设计系统 | 所有模块复用统一主题与组件 | 未开始 |
-| 👥 本地多用户 / 🌐 局域网协同 | 本地用户登录；局域网 HTTP 访问 | 未开始（当前固定使用宿主派生的本地用户） |
+| 🤖 AI 工作台 | 多轮聊天（流式生成、历史、Markdown），可选技能与 MCP 工具 | 本地验证（D080）；真实上游只对一个第三方网关验证过 |
+| 🔥 模块热更新 | 受信任的本地模块包动态加载与热更新 | 本地验证（macOS，D056）；跨平台、签名与公证延后到发布阶段 |
+| 🎨 统一设计系统 | 所有模块复用统一主题与组件 | 开发中；VoiceOver 人工清单未执行 |
+| 👥 本地多用户 | 本地账户登录、切换与按用户数据隔离 | 本地验证（D087、D090） |
+| 🌐 局域网协同 | 局域网内浏览器访问主机 | 规划中；没有 HTTP 服务代码，设置页只有“尚未启用”占位 |
 | 📦 强制模块化 | 按领域拆分 crate，限制单文件行数 | 持续约束 |
 
 ---
@@ -28,7 +29,7 @@
 ### 环境要求
 
 - **Rust**：1.90+（当前 Tauri 2.12 依赖要求）
-- **Node.js**：22.22+ 或 24.15+（Vitest 5 / jsdom 30 的引擎要求）
+- **Node.js**：22.22.2+、24.15.0+ 或 26+（jsdom 30 的引擎要求）
 - **npm**：随 Node.js 安装
 - **操作系统**：macOS（V1 首发平台）；Windows 在 V1 发布门禁后补齐，Linux 计划 V2
 
@@ -48,7 +49,7 @@ npm run tauri:dev
 
 ```bash
 npm test                         # 前端测试（Vitest）
-npm run build                    # 技能包校验 + 样式检查（design:check）+ TypeScript + Vite 构建
+npm run build                    # 依赖版本检查 + 技能包校验 + 样式检查（design:check）+ TypeScript + Vite 构建
 npm run design:check             # 样式合规（ESLint + Stylelint + 存量清单，D068）
 npm run contracts:check          # 桌面 IPC 宿主契约静态检查
 cargo test --offline --workspace # Rust 测试
@@ -85,9 +86,9 @@ cargo test --offline --workspace # Rust 测试
 | **后端** | Rust workspace（`src-tauri` + `crates/dgos-*`）、SeaORM 1.1、tokio、reqwest | 局域网 HTTP 服务（FR-010） |
 | **前端** | React 19、TypeScript 6、Vite 8、Zustand、React Router 6 | - |
 | **数据库** | SQLite（单文件 `dgos.db`） | - |
-| **测试** | Rust 内置测试、Vitest 5 + Testing Library | E2E 框架 |
-| **模块系统** | 本地模块包发布器（`dgos-modules`，前置切片） | 受信任包的 Module Federation 加载（FR-004） |
-| **设计系统** | - | 自研统一组件库（FR-005） |
+| **测试** | Rust 内置测试、Vitest 5 + Testing Library、macOS 真实 WebView 冒烟（`npm run smoke:tauri*`） | E2E 框架 |
+| **模块系统** | 本地模块包发布器与页面加载（`dgos-modules`、`src/modules/`，Blob URL 动态 `import()`，D042） | Module Federation 加载 adapter（未引入） |
+| **设计系统** | Shadcn/ui 组件源码 + Radix + Tailwind 4（`src/ui/`，别名 `@dgos/ui`，D066） | - |
 
 详见 [技术栈选型](docs/04-技术架构/技术栈选型.md)。
 

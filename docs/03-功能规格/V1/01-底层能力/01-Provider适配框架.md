@@ -6,13 +6,13 @@ domain: 底层能力
 spec_status: Ready
 risk: 高风险
 track: Provider 能力
-updated: 2026-10-30
+updated: 2026-11-01
 ---
 # V1-FR-001：Provider 适配框架
 
-> 三方兼容协议扩展（2026-10-29 起，草案）：V1 支持用户接入自备的三方服务，只要兼容 OpenAI Chat Completions 或 Anthropic Messages 即可（D062）。用户选择厂商（首批 OpenAI、Anthropic、自定义）并确定适配器、填写 base_url 和 API Key，拉取模型列表，宿主自动分类，保存后即可调用；模型在哪些应用场景使用、如何限定，留给后续的场景绑定设计，不在本文范围。既有 OpenAI 兼容实现的缺口一并补齐（§2.4.7）。协议适配层方案见 [ADR-0003](../../../06-决策记录/ADR/0003-Provider协议适配层与规范化消息模型.md)（Proposed），口径登记为 D063。D062、D063 已写入冻结决策，由助手按用户授权选定，评审结果待定。扩展内容集中在 §2.4、§3.5～§3.7、§4.3、AC15～AC37、§6.3、§8.1 和[技术设计](01-Provider适配框架-技术设计.md)。AC01～AC14 原文与编号不变，按原口径收口，不被扩展范围阻塞。
+> 三方兼容协议扩展（2026-10-29 起）：V1 支持用户接入自备的三方服务，只要兼容 OpenAI Chat Completions 或 Anthropic Messages 即可（D062）。用户选择厂商（首批 OpenAI、Anthropic、自定义）并确定适配器、填写 base_url 和 API Key，拉取模型列表，宿主自动分类，保存后即可调用；模型在哪些应用场景使用、如何限定，留给后续的场景绑定设计，不在本文范围。既有 OpenAI 兼容实现的缺口一并补齐（§2.4.7）。协议适配层方案见 [ADR-0003](../../../06-决策记录/ADR/0003-Provider协议适配层与规范化消息模型.md)（Accepted，D098），口径登记为 D063。D062、D063 已写入冻结决策，由助手按用户授权选定；ADR-0003 已按 D098 第 7 项改为 Accepted，不再有“评审结果待定”。扩展内容集中在 §2.4、§3.5～§3.7、§4.3、AC15～AC37、§6.3、§8.1 和[技术设计](01-Provider适配框架-技术设计.md)。AC01～AC14 原文与编号不变，按原口径收口，不被扩展范围阻塞。
 >
-> 实现与证据状态（2026-10-30 更新）：扩展的后端（两个协议适配器、厂商表与兼容画像、模型分类、手动模型、流式命令）、Tauri 命令和前端表单都已有代码与本地测试。**自动化测试的证据都来自 mock、本地回环替身和 Vitest IPC mock；没有对 OpenAI、Anthropic 官方服务发出过请求。** 另有一次用户手工对一个第三方网关（`网关 A`，一个 `openai_compatible`、一个 `anthropic`）执行的真实调用：模型列表、同步、流式共 6 步通过，详见 V1 实现状态“补充：对真实三方网关的手工执行”。§2.4.6 中标为“推断”的值里，通用画像的双鉴权头和版本头 `2023-06-01` 在这一个网关上被接受（不能区分哪个头起作用，其他网关未验证）；第二次手工执行（含探测）里，不传 `max_tokens` 的请求被接受（默认 4096 被接受，未测截断）；通用画像的低档推理请求在 Kiro 的 `claude-sonnet-5-5` 上被拒绝（1001017，原因未确认），思考预算 2048/8192/16384 在该网关上不可用。各 AC 的证据状态与未覆盖范围见 §5.1 的表格；实现与本文不一致之处见技术设计“实现与规格的已知差异”。标题和备注中的“草案”指评审未完成，§2.4.6 的默认值是助手的选择，评审时可以改。
+> 实现与证据状态（2026-10-30 更新）：扩展的后端（两个协议适配器、厂商表与兼容画像、模型分类、手动模型、流式命令）、Tauri 命令和前端表单都已有代码与本地测试。**自动化测试的证据都来自 mock、本地回环替身和 Vitest IPC mock；没有对 OpenAI、Anthropic 官方服务发出过请求。** 另有一次用户手工对一个第三方网关（`网关 A`，一个 `openai_compatible`、一个 `anthropic`）执行的真实调用：模型列表、同步、流式共 6 步通过，详见 V1 实现状态“补充：对真实三方网关的手工执行”。§2.4.6 中标为“推断”的值里，通用画像的双鉴权头和版本头 `2023-06-01` 在这一个网关上被接受（不能区分哪个头起作用，其他网关未验证）；第二次手工执行（含探测）里，不传 `max_tokens` 的请求被接受（默认 4096 被接受，未测截断）；通用画像的低档推理请求在 Kiro 的 `claude-sonnet-5-5` 上被拒绝（1001017，原因未确认），思考预算 2048/8192/16384 在该网关上不可用。各 AC 的证据状态与未覆盖范围见 §5.1 的表格；实现与本文不一致之处见技术设计“实现与规格的已知差异”。ADR-0003 接受（D098）不改变 §2.4.6 的默认值：标为“推断”的数值仍是推断，没有因此变为已校准；其余标题和备注里仍带“草案”的地方（如 §3.5、§4.3、§6.3、§8.1）指该处细节尚未逐项确认。
 >
 > D023 桌面补充基线（2026-10-28）：宿主派生用户身份，Provider DTO 不携带 secret，凭据保存到 OS vault，历史明文字段通过可重试迁移清空。当前字段与迁移规则见 [接口契约 §4.0](../../../04-技术架构/当前版本/V1-接口契约.md#40-当前桌面实施契约d023)、[数据模型 §4.2](../../../04-技术架构/当前版本/V1-数据模型.md#42-provider-管理)；本文早期 AES/SQLCipher 表草图不再作为当前凭据实施依据。前置工作包与证据见 [FR-004 前置收口设计](../../../04-技术架构/当前版本/V1-FR004前置收口设计.md)，不改变既有 AC 编号。§6 中带 `user_id` 的命令草案及 `stream_provider` 均为早期草案；当前已注册命令见 `src-tauri/src/lib.rs`、`src-tauri/src/commands/provider_commands.rs` 和接口契约 §4.0。
 
@@ -61,25 +61,25 @@ Provider 适配框架是 DGOS 的底层核心能力，负责屏蔽各个 AI 模�
 - ✅ 模型列表获取与缓存（永久缓存，手动刷新）
 - ✅ 模型分类标签（内置维护：text-generation、image-generation、video-generation、audio-generation）
 - ✅ 同步调用接口
-- ✅ 流式调用接口（SSE）
+- ✅ 流式调用接口（SSE）：`call_provider_stream`、`cancel_provider_stream` 是宿主 API，没有独立页面；AC06 由 FR-006 的流式聊天与 `webview_smoke_provider_stream` 满足（D098）
 - ✅ 使用记录保存
-- ✅ 多 Provider 排序机制（用户拖拽）
+- ✅ 多 Provider 排序机制（用户通过 Provider 列表的上移/下移按钮调整，调用 `update_provider_order`；拖拽交互按 D098 第 5 项留给 D097 的改版）
 - ✅ Provider 启用/禁用开关
 - ✅ 并发调用支持（不排队）
 - ✅ 可配置重试策略（应用层配置）
 
 **不包含**（明确说明原因）：
 - ❌ 其他厂商适配器（Claude、通义千问等）→ V4 云端增强时实现（已由 D062 修订：Anthropic 协议与三方兼容服务接入前移到 V1，见 §2.4；V4 只保留官方 Provider、积分与计费）
-- ❌ 图片输入、提示缓存与缓存用量字段、Embeddings、图片生成、音频、OpenAI Responses API、Batch → 路线图未分配（D062）
+- ❌ 图片输入、提示缓存与缓存用量字段、Embeddings、音频、OpenAI Responses API、Batch → 路线图未分配（D062）；图片生成 → V2-FR-010（D102）
 - ❌ 自动切换到备用 Provider → 应用层自己决定策略
-- ❌ 连接池管理 → V1 简化实现，直接调用
+- ❌ 自建连接池管理 → V1 简化实现：`ProviderManager` 创建时构建一个 `reqwest::Client` 并交给各适配器复用（共享其内置连接池），不做自建池化（技术设计“实现与规格的已知差异”第 8 项）
 - ❌ 流式输出断点续传 → 复杂度高，V2 考虑
 - ❌ Provider 健康检查 → V2 监控功能
 - ❌ 请求排队机制 → 不需要，允许并发
 
-### 2.4 三方兼容协议扩展（草案）
+### 2.4 三方兼容协议扩展
 
-来源：D062（用户选定的范围）、D063（协议适配层口径，草案）、[ADR-0003](../../../06-决策记录/ADR/0003-Provider协议适配层与规范化消息模型.md)。实现方式见[技术设计](01-Provider适配框架-技术设计.md)。
+来源：D062（用户选定的范围）、D063（协议适配层口径）、[ADR-0003](../../../06-决策记录/ADR/0003-Provider协议适配层与规范化消息模型.md)（Accepted，D098）。实现方式见[技术设计](01-Provider适配框架-技术设计.md)。
 
 #### 2.4.1 范围
 
@@ -190,7 +190,7 @@ Provider 适配框架是 DGOS 的底层核心能力，负责屏蔽各个 AI 模�
 
 #### 2.4.7 既有 OpenAI 兼容实现的补齐
 
-下表是 2026-10-29 阅读代码发现的缺口，没有用测试复现。它们对三方兼容服务影响最大，一并在本功能内补齐；状态与证据只回写到 [V1 实现状态](../../../02-产品与版本/当前版本/V1-实现状态.md)。
+下表是 2026-10-29 阅读代码发现的缺口，没有用测试复现。“缺口”“影响”两列描述的是当时的代码状态，不是当前状态；各缺口的处理结果以 [V1 实现状态](../../../02-产品与版本/当前版本/V1-实现状态.md)为准。它们对三方兼容服务影响最大，一并在本功能内补齐；状态与证据只回写到该文件。
 
 | # | 缺口（代码位置） | 影响 | 处理 |
 | --- | --- | --- | --- |
@@ -298,7 +298,7 @@ Provider 适配框架是 DGOS 的底层核心能力，负责屏蔽各个 AI 模�
   ↓
 看到所有已配置的 Provider 列表
   ↓
-拖拽某个 Provider 调整顺序
+点击某个 Provider 的上移或下移按钮调整顺序（D098 第 5 项：拖拽交互留给 D097 的改版）
   ↓
 系统保存新的排序
   ↓
@@ -352,6 +352,8 @@ Provider 适配框架是 DGOS 的底层核心能力，负责屏蔽各个 AI 模�
 ## 4. 数据模型
 
 ### 4.1 涉及的数据表
+
+以下三段 SQL 是早期草图，物理结构以 `crates/dgos-db/src/migrations/` 为准。与当前实现的差异：`api_key` 不再保存密钥明文，密钥保存在 OS vault，SQLite 只存引用（D023）；`user_id` 由宿主会话派生；`models` 表追加的列见 §4.3。
 
 **providers 表**（核心）：
 ```sql
@@ -756,7 +758,7 @@ Then 依次得到 `invalid_api_key`、`provider_permission_denied`、`provider_r
 | AC08 | 并发调用支持 | 后端 API + 并发测试 | `crates/dgos-providers/tests/concurrent_call_tests.rs` | `cargo test --offline -p dgos-providers --test concurrent_call_tests` | 本地通过 | 2 项（`openai_compatible`、`anthropic`，各一项）：本地 TCP 替身把每个请求扣在一个 5 方屏障上，第五个到达后才一起应答；5 个并发 `call` 经同一个适配器用 `join_all` 发起，外面套 10 秒总超时，全部成功，替身观察到的同时在途请求峰值恰好为 5，结束后回到 0——如果适配器排队，第五个请求永远到不了屏障，用例会超时失败。覆盖单个适配器实例上的并发，不覆盖 100+ 并发（§5.2 边界条件）和数据库使用记录的并发写入 |
 | AC09 | 可配置重试策略 | 后端逻辑 | `crates/dgos-providers/tests/retry_delays.rs`；`crates/dgos-providers/src/retry.rs::test_retry_success_after_failures` | `cargo test --offline -p dgos-providers --test retry_delays`；`cargo test --offline -p dgos-providers test_retry_success_after_failures` | 本地通过 | 策略层 2 项用 tokio 虚拟时间（`start_paused`，不真实等待）和每次尝试的 `tokio::time::Instant`：`retry_count=3` 共 4 次尝试，相邻尝试的间隔恰好是 1 s、2 s、4 s，最终 1001008（与规格一致，没有差异）；另一项证明间隔到 `max_delay_ms` 后不再增长（3000 ms 上限下为 1、2、3、3、3 s）。适配器层 2 项（`openai_compatible`、`anthropic`，本地 TCP 替身返回 500）用真实时间的缩小版（基准 100 ms，总计不到 1 秒）：共 4 次请求，三个间隔分别不短于 100/200/400 ms 且各自超出下限不到 500 ms，最终 1001008。**限制**：适配器层没有用虚拟时间，因为暂停的时钟与真实套接字同时使用时，时钟可能在响应还在途中时被推进（这是推断，没有试验）。它的下限能拒绝固定 100 ms 的等待，但上界容差（超出下限不到 500 ms）比相邻档位的间隔还宽，所以固定约 400 ms 的等待同样能通过，也就是说它不能证明“倍增”，只证明接线（重试次数、等待不短于各档下限）。精确的 1 s/2 s/4 s 只在策略层有证据；适配器层没有做变异验证 |
 | AC10 | 重试失败后返回错误 | 后端逻辑 | `crates/dgos-providers/src/retry.rs::test_retry_exhausted` | `cargo test --offline -p dgos-providers test_retry_exhausted` | 已创建 | 已有自动化资产 |
-| AC11 | 多 Provider 排序 | 后端 API + 前端集成 | `crates/dgos-db/src/provider_scope_tests.rs::scoped_provider_crud_and_transactional_order_preserve_normal_lifecycle` | `cargo test --offline -p dgos-db scoped_provider_crud_and_transactional_order_preserve_normal_lifecycle` | 已创建 | 已有自动化资产（覆盖事务排序，不覆盖拖拽 UI） |
+| AC11 | 多 Provider 排序 | 后端 API + 前端集成 | `crates/dgos-db/src/provider_scope_tests.rs::scoped_provider_crud_and_transactional_order_preserve_normal_lifecycle`；`tests/provider-management.test.tsx`（“reordering with the move buttons (D098 item 5)”4 项） | `cargo test --offline -p dgos-db scoped_provider_crud_and_transactional_order_preserve_normal_lifecycle`；`npm test -- --run tests/provider-management.test.tsx` | 本地通过 | 按 D098 第 5 项，调整排序由上移/下移按钮实现（AC 原文“拖拽”不改，按“调整排序”理解，键盘可达）。证据只有 jsdom（Vitest IPC mock）：上移/下移发出的 `update_provider_order` 参数是完整有序 id 列表，首行上移与末行下移禁用，请求中全部移动按钮禁用，宿主拒绝时列表保持宿主顺序且只报错一次；本轮没有运行后端 `cargo test`（事务排序仍是“已创建”），也没有真实 WebView 验证。`update_provider_order` 命令已注册（`src-tauri/src/lib.rs`） |
 | AC12 | Provider 启用/禁用 | 后端 API | `tests/providers.test.tsx::uses the dedicated toggle command and updates both provider collections` | `npm test -- --run tests/providers.test.tsx` | 已创建 | 已有自动化资产（Vitest IPC mock） |
 | AC13 | 手动刷新模型列表 | 后端 API + 数据库 | `crates/dgos-providers/src/credential_tests.rs::normal_model_refresh_advances_snapshot_and_bound_call_uses_saved_revision` | `cargo test --offline -p dgos-providers normal_model_refresh_advances_snapshot_and_bound_call_uses_saved_revision` | 已创建 | 已有自动化资产（mock HTTP） |
 | AC14 | 使用记录保存 | 后端 API + 数据库 | `crates/dgos-providers/src/credential_tests.rs::normal_model_refresh_advances_snapshot_and_bound_call_uses_saved_revision` | `cargo test --offline -p dgos-providers normal_model_refresh_advances_snapshot_and_bound_call_uses_saved_revision` | 已创建 | 已有自动化资产（mock HTTP，检查记录查询及调用 provenance） |
@@ -1207,7 +1209,7 @@ impl ProviderAdapter for OpenAIAdapter {
 
 以下编号已登记到 [V1 错误码](../../../04-技术架构/当前版本/V1-错误码.md)（D063），并在 `crates/dgos-types/src/error.rs::error_code()` 中映射；非测试代码现在发出全部这些编号（1001021 由 `crates/dgos-providers/src/structured.rs` 发出，两个适配器的非流式调用经它校验）。AC 用名称引用。已作废的 1001010、1001011、1001013 不复用。
 
-| 拟分配 | 错误信息 | 场景 | HTTP 状态码 |
+| 错误码 | 错误信息 | 场景 | HTTP 状态码 |
 | --- | --- | --- | --- |
 | 1001014 | upstream_server_error | 已有预留码改为使用中：上游 5xx 或 529，未配置重试 | 502 |
 | 1001017 | provider_request_rejected | 上游以 400、409、413 或 422 拒绝请求参数 | 400 |
@@ -1265,7 +1267,7 @@ impl ProviderAdapter for OpenAIAdapter {
 cargo test --offline -p dgos-providers --lib
 ```
 
-**状态**：🔴 未开始
+**状态**：本节不记录执行结果，实际运行结果见 V1 实现状态。
 
 **目标覆盖**：Provider trait、模型分类、凭据边界及重试策略；具体自动化资产见 §5.1。
 
@@ -1277,7 +1279,7 @@ cargo test --offline -p dgos-providers --lib
 cargo test --offline -p dgos-db provider_scope_tests
 ```
 
-**状态**：🔴 未开始
+**状态**：本节不记录执行结果，实际运行结果见 V1 实现状态。
 
 **目标覆盖**：Provider/模型持久化与刷新；其余 AC 的现有资产及缺口见 §5.1。
 
@@ -1289,7 +1291,7 @@ cargo test --offline -p dgos-db provider_scope_tests
 npm test -- --run tests/providers.test.tsx tests/provider-management.test.tsx
 ```
 
-**状态**：🔴 未开始
+**状态**：本节不记录执行结果，实际运行结果见 V1 实现状态。
 
 **目标覆盖**：Provider 管理页面和 store 的现有 Vitest 覆盖；具体资产见 §5.1。
 
@@ -1297,7 +1299,7 @@ npm test -- --run tests/providers.test.tsx tests/provider-management.test.tsx
 
 #### 2026-10-26 E2E 测试
 
-**资产状态**：V1-E2E-01 为规划资产（未建立）；当前项目没有 E2E 测试框架，暂无可执行命令。
+**资产状态**：V1-E2E-01 为规划资产（未建立）；项目已有其他功能的 WebView 冒烟目标（`src-tauri/tests/webview_smoke*.rs`），但没有覆盖本场景的目标，`src-tauri` 中也没有引用 V1-E2E-01 的资产，暂无可执行命令。
 
 **状态**：🔴 未开始
 
@@ -1462,7 +1464,7 @@ FUNCTION stream_provider(provider_id, model_id, request) -> Result<Stream>:
 - `B01-12～B01-17` 已被[归档的旧 AC 追踪表](../../../99-历史归档/V1-追踪矩阵/2026-10-28-旧AC追踪表.md)占用，跳过不用。
 - 本节流式流程：原 `B02-01～B02-08` → `B01-18～B01-25`（按原顺序一一对应）。
 - §7.2/§7.3 适配器：原 `B01-01～B01-10` → `B01-26～B01-35`（按原顺序一一对应）。
-- 下一个可用编号原为 `B01-36`。2026-10-29 三方兼容协议扩展在[技术设计](01-Provider适配框架-技术设计.md)中分配了 `B01-36～B01-71`，下一个可用编号为 `B01-72`。代码、测试中没有引用这些分支 ID。
+- 下一个可用编号原为 `B01-36`。2026-10-29 三方兼容协议扩展在[技术设计](01-Provider适配框架-技术设计.md)中分配了 `B01-36～B01-71`，下一个可用编号为 `B01-72`。`crates/dgos-providers/src/` 的部分源码注释和 `tests/stream_call_tests.rs` 引用了这些分支 ID；分支到测试的映射以技术设计“分支到测试追踪”为准。
 
 | 分支编号 | 分支描述 | AC 映射 | E2E 映射 | NFR 映射 | 风险级别 |
 |---------|---------|---------|---------|---------|---------|
@@ -1513,7 +1515,7 @@ FUNCTION stream_provider(provider_id, model_id, request) -> Result<Stream>:
 
 **数据检查**：
 - [ ] 使用记录正确保存到数据库（包含 tokens、latency）
-- [ ] API Key 加密存储验证通过（bcrypt 或 AES）
+- [ ] API Key 保存到 OS vault、SQLite 只存引用的验证通过（D023）
 - [ ] 模型列表缓存正确（首次同步、手动刷新）
 
 **文档检查**：
@@ -1549,7 +1551,7 @@ FUNCTION stream_provider(provider_id, model_id, request) -> Result<Stream>:
 
 | 依赖功能 | 状态 | 影响 |
 | --- | --- | --- |
-| 本地用户管理（V1-FR-008） | 非前置（D023） | 当前使用宿主派生的 `default-user`；完整多用户隔离随 FR-008 验收 |
+| 本地用户管理（V1-FR-008） | 非前置（D023） | 用户由宿主会话派生（无账户时为 `default-user`，有账户时为已登录账户，见[接口契约](../../../04-技术架构/当前版本/V1-接口契约.md)）；多用户隔离的验收随 FR-008 |
 | SQLite 数据库 | 迁移依赖 | Provider 相关表由 migration 建立，应用启动时自动迁移 |
 
 ## 12. 实现状态
@@ -1566,6 +1568,8 @@ FUNCTION stream_provider(provider_id, model_id, request) -> Result<Stream>:
 | 2026-10-29 | 厂商改为端点列表并新增“自定义”厂商（用户确认“先选厂商、再选兼容适配器”）：`ProviderVendor` 增加 `endpoints`，校验改为“该厂商有对应端点”，旧数据按主机推断厂商，官方画像按端点的官方主机生效；首批为 OpenAI、Anthropic、自定义，建议第一个扩展 DeepSeek（待真实验证）；§2.4.6 第 13～15 项、AC15、AC16、接口 §6.3 同步 | Kiro |
 | 2026-10-29 | 用户澄清“厂商”就是选择适配器，要求保留厂商选择并先提供 OpenAI、Anthropic 两个：恢复厂商表（`vendor_id` 记入 `config`，缺省由 `provider_type` 推断），选厂商即选适配器并预填 base_url，官方画像只在官方主机生效；新增只读命令 `list_provider_vendors`；AC16 含义扩展为厂商选择、画像匹配与高级选项校验；§2.4.7 新增缺口 15 | Kiro |
 | 2026-10-30 | 扩展收口（第三部分）：Tauri 命令 `list_provider_vendors`、`add_manual_model`、`remove_manual_model`、`call_provider_stream`、`cancel_provider_stream` 已注册，四个命令接收 `probeModel`；前端表单改为从宿主读取厂商、高级选项、连接测试诊断、探测模型和手动模型（界面语言沿用现有组件的英文）；遗留收尾：`structured_output_invalid` 的使用记录写上游真实 token、推理内容不进日志的断言、连接超时用例改为确定性、补 AC08 与 AC09 的测试。文首说明、§6.3、§8.1 与 AC08、AC09、AC16、AC17、AC24、AC26、AC31～AC33、AC37 的证据列按真实结果改写；实现与规格的差异（`top_p`/`top_k`、`max_tokens` 兜底 4096、`json_object` 未实现、工具调用结束原因矛盾返回 1000000）写入技术设计“实现与规格的已知差异”，不改冻结决策。没有对任何真实 Provider 发出请求（未设置 `DGOS_SMOKE_*` 环境变量），§2.4.6 的四个推断值未校准 | Kiro |
+| 2026-11-01 | 文档与代码核对：§2.3 连接池口径改为共享 `reqwest::Client`；§2.4.7 说明缺口表是 2026-10-29 的快照；§4.1 注明 SQL 为早期草图；AC11 备注补充前端未调用 `update_provider_order`；§8.1 表头“拟分配”改为“错误码”；§10.1 去掉与实现状态矛盾的“未开始”；§10.2 订正“代码、测试中没有引用分支 ID”；§10.3 API Key 检查项改为 D023 的 OS vault；§11.3 用户来源改为宿主会话 | Kiro |
+| 2026-11-01 | 按 D098 第 5、7 项：Provider 列表增加上移/下移按钮并调用 `update_provider_order`（AC11 备注与 §2.3、§3.4 注明拖拽留给 D097 改版，AC 原文不改）；§2.3 注明 `call_provider_stream`、`cancel_provider_stream` 是宿主 API、无独立页面，AC06 由 FR-006 流式聊天与 `webview_smoke_provider_stream` 满足；文首与 §2.4 标题去掉“草案”“评审结果待定”（ADR-0003 已 Accepted，§2.4 锚点改为 `#24-三方兼容协议扩展`），§2.4.6 的“推断”标记保留 | Kiro |
 
 ---
 

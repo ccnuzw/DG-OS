@@ -6,7 +6,7 @@ domain: 底层能力
 spec_status: Ready
 risk: 高风险
 track: MCP 能力
-updated: 2026-10-29
+updated: 2026-11-01
 ---
 # V1-FR-003：MCP 管理系统
 
@@ -301,6 +301,7 @@ Then 成功替换，失败保留旧快照
 - 调用：confirm → call、独立 cancel；确认绑定确切参数、call_id、task_ref 与联合 schema hash，120 秒一次性消费。
 - 审计：按当前用户/Server 查询脱敏 usage/connection logs；默认 50、上限 100 条。
 - Workbench 结构化提案与批准命令见接口契约 §10.0 和 D022；前端批准只提交提案 ID，不能替换参数。
+- 模块发起的调用：运行中的模块经 `host.mcp.callTool` 调用 `module_call_mcp_tool`（D093，见 [V1-FR-004 §6.1](04-模块系统与热更新.md#61-transport-与-host-api-暴露策略) 与 §7.8），宿主先过模块权限四层，再对每次调用弹出宿主确认框（不是模块 UI），批准后由宿主铸造并消费一次性确认令牌；模块拿不到令牌，确认与调用总期限 120 秒。该路径不是 Workbench 提案，也不使用本节的 `confirm_mcp_tool`。
 
 ### 6.2 HTTP API（局域网）
 
@@ -521,7 +522,7 @@ npm test -- --run tests/mcp-management.test.tsx
 
 | 依赖功能 | 状态 | 影响 |
 | --- | --- | --- |
-| 本地用户管理（V1-FR-008） | 完整多用户门禁依赖 | 当前仅可信桌面单用户，不等同多用户授权验收 |
+| 本地用户管理（V1-FR-008） | 身份依赖 | MCP 命令的用户由宿主会话派生（`src-tauri/src/host.rs`、`session.rs`），不接受 renderer 的 user_id；FR-008 的状态与证据只在实现状态维护 |
 | SQLite 数据库 | 迁移依赖 | MCP m008/m009 与 Workbench m010，证据见第 10 节 |
 | Provider 框架（V1-FR-001） | 消费桥接依赖 | D022 使用 Provider 结构化 tools/tool_calls；证据见第 10 节 |
 
@@ -537,6 +538,7 @@ npm test -- --run tests/mcp-management.test.tsx
 | 2026-10-27 | 按 D021 完成首轮 MCP Rust/DB/Tauri/UI 落地；fake stdio/HTTP、并发、安全和前端测试通过，真实 Server/E2E 与凭据 provider 待完成 | Codex |
 | 2026-10-27 | 补齐 OS 凭据接入、编辑和双步工具确认 UI、m009 连接事件、同会话刷新、5 并发及心跳恢复测试；证据和剩余差距见第 10 节与实现状态 | Codex |
 | 2026-10-27 | 补齐按用户/Server/call_id 取消、专用 stdio writer、拒绝/超时/取消审计、启动 pending 中断恢复和取消 UI；不把取消声称为外部回滚 | Codex |
+| 2026-11-01 | 按代码事实核对：§6.1 补模块发起的 `mcp.call` 路径（D093）；§11.3 用户依赖改为宿主会话派生；AC 原文、编号与证据状态未改 | Kiro |
 
 ---
 
