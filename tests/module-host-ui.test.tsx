@@ -163,7 +163,7 @@ describe('host.ui injection and shape', () => {
     const a = probeHost('probe-a');
     const b = probeHost('probe-b');
 
-    expect(Object.keys(a).sort()).toEqual(['React', 'apiVersion', 'moduleId', 'providers', 'ui', 'version']);
+    expect(Object.keys(a).sort()).toEqual(['React', 'apiVersion', 'mcp', 'moduleId', 'network', 'providers', 'skills', 'storage', 'ui', 'version']);
     expect(a.apiVersion).toBe(1);
     expect(Object.isFrozen(a)).toBe(true);
     expect(a.ui).toBe(ui);

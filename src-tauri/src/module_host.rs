@@ -53,6 +53,19 @@ pub enum InstructionDto {
     /// Routing key for `host.providers.call` (D051). Not a ticket: it has no
     /// receipt and carries no identity, permission or capability.
     Route { runtime_id: String, route: String },
+    /// Host-owned per-call confirmation of a module's `mcp.call` (D093). Shown
+    /// by the host page outside the module boundary; never handed to module
+    /// code. Not a ticket: it has no receipt. The answer goes through
+    /// `resolve_module_mcp_confirmation`.
+    ConfirmMcp {
+        confirmation_id: String,
+        module_name: String,
+        server_id: String,
+        tool_name: String,
+        arguments: serde_json::Value,
+    },
+    /// The confirmation was answered, expired or abandoned: the dialog goes away.
+    ConfirmMcpClosed { confirmation_id: String },
 }
 
 impl From<PageInstruction> for InstructionDto {
@@ -219,6 +232,41 @@ impl ChannelTransport {
     }
 }
 
+/// Confirmation prompts of a module's `mcp.call` (D093) go to exactly the
+/// attachment that made the call, over its own channel. Arguments are part of
+/// the instruction but are never logged.
+impl dgos_application::McpConfirmationNotifier for ChannelTransport {
+    fn open(
+        &self,
+        attachment_id: &str,
+        prompt: dgos_application::McpConfirmationPrompt<'_>,
+    ) -> Result<(), ()> {
+        let channels = self.channels();
+        let channel = channels.get(attachment_id).ok_or(())?;
+        channel
+            .send(InstructionDto::ConfirmMcp {
+                confirmation_id: prompt.confirmation_id.to_owned(),
+                module_name: prompt.module_name.to_owned(),
+                server_id: prompt.server_id.to_owned(),
+                tool_name: prompt.tool_name.to_owned(),
+                arguments: prompt.arguments.clone(),
+            })
+            .map_err(|_| {
+                tracing::warn!("module MCP confirmation could not be delivered");
+            })
+    }
+
+    fn close(&self, attachment_id: &str, confirmation_id: &str) {
+        let channels = self.channels();
+        if let Some(channel) = channels.get(attachment_id) {
+            // Best effort: a page that is gone has nothing to close.
+            let _ = channel.send(InstructionDto::ConfirmMcpClosed {
+                confirmation_id: confirmation_id.to_owned(),
+            });
+        }
+    }
+}
+
 /// Gives each runtime that becomes `ready` its call route (D051). Best
 /// effort: a runtime without a route simply cannot call the host, and its
 /// state is unaffected.
@@ -284,11 +332,33 @@ impl ModuleReadyObserver for RoutePublisher {
 pub struct ModuleHostBridge {
     loader: PageModuleLoader,
     transport: Arc<ChannelTransport>,
+    /// Pending `mcp.call` confirmations end as lost with their attachment.
+    mcp_confirmations: Option<Arc<dgos_application::ModuleMcpConfirmations>>,
 }
 
 impl ModuleHostBridge {
     pub fn new(loader: PageModuleLoader, transport: Arc<ChannelTransport>) -> Self {
-        Self { loader, transport }
+        Self {
+            loader,
+            transport,
+            mcp_confirmations: None,
+        }
+    }
+
+    pub fn with_mcp_confirmations(
+        mut self,
+        confirmations: Arc<dgos_application::ModuleMcpConfirmations>,
+    ) -> Self {
+        self.mcp_confirmations = Some(confirmations);
+        self
+    }
+
+    fn attachments_lost<'a>(&self, attachments: impl IntoIterator<Item = &'a str>) {
+        if let Some(confirmations) = &self.mcp_confirmations {
+            for attachment_id in attachments {
+                confirmations.attachment_lost(attachment_id);
+            }
+        }
     }
 
     /// Register a new page attachment. The channel map stays locked while
@@ -299,6 +369,7 @@ impl ModuleHostBridge {
         let attachment = self.loader.attach(MODULE_WINDOW);
         if let Some(superseded) = &attachment.superseded {
             channels.remove(superseded);
+            self.attachments_lost([superseded.as_str()]);
         }
         channels.insert(attachment.attachment_id.clone(), channel);
         attachment.attachment_id
@@ -335,9 +406,17 @@ impl ModuleHostBridge {
 
     /// Drop channels of attachments the loader no longer considers current.
     fn prune(&self) {
-        self.transport
-            .channels()
-            .retain(|attachment_id, _| self.loader.is_current(attachment_id));
+        let mut channels = self.transport.channels();
+        let gone: Vec<String> = channels
+            .keys()
+            .filter(|attachment_id| !self.loader.is_current(attachment_id))
+            .cloned()
+            .collect();
+        for attachment_id in &gone {
+            channels.remove(attachment_id);
+        }
+        drop(channels);
+        self.attachments_lost(gone.iter().map(String::as_str));
     }
 
     #[cfg(any(test, feature = "webview-smoke"))]
@@ -578,5 +657,96 @@ mod tests {
             bridge.report(&id, "t1", ReceiptDto::Loaded),
             ReceiptDisposition::Applied
         );
+    }
+
+    #[test]
+    fn mcp_confirmation_instructions_use_the_wire_shape_the_page_expects() {
+        let open = InstructionDto::ConfirmMcp {
+            confirmation_id: "c1".into(),
+            module_name: "Example".into(),
+            server_id: "s1".into(),
+            tool_name: "echo".into(),
+            arguments: json!({"text": "x"}),
+        };
+        assert_eq!(
+            serde_json::to_value(open).unwrap(),
+            json!({
+                "kind": "confirmMcp", "confirmationId": "c1", "moduleName": "Example",
+                "serverId": "s1", "toolName": "echo", "arguments": {"text": "x"}
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(InstructionDto::ConfirmMcpClosed {
+                confirmation_id: "c1".into()
+            })
+            .unwrap(),
+            json!({"kind": "confirmMcpClosed", "confirmationId": "c1"})
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_confirmations_reach_only_the_asking_attachment_and_die_with_it() {
+        use dgos_application::{McpConfirmationRequest, McpVerdict, ModuleMcpConfirmations};
+        use std::time::Duration;
+
+        let transport = Arc::new(ChannelTransport::default());
+        let (loader, _lost) = PageModuleLoader::new(transport.clone(), PageLoaderConfig::default());
+        let broker = Arc::new(ModuleMcpConfirmations::new(transport.clone()));
+        let bridge =
+            ModuleHostBridge::new(loader, transport.clone()).with_mcp_confirmations(broker.clone());
+        let (channel, sink) = capture();
+        let attachment = bridge.attach(channel);
+        let arguments = json!({"text": "exact"});
+        let request = || McpConfirmationRequest {
+            user_id: "alice",
+            attachment_id: &attachment,
+            module_name: "Example",
+            server_id: "s1",
+            tool_name: "echo",
+            arguments: &arguments,
+        };
+
+        // Answered: the page gets the prompt, then the close.
+        let asking = broker.ask(request(), Duration::from_secs(5));
+        let answering = async {
+            let id = loop {
+                if let Some(prompt) = sink.lock().unwrap().first().cloned() {
+                    break prompt["confirmationId"].as_str().unwrap().to_owned();
+                }
+                tokio::task::yield_now().await;
+            };
+            broker.resolve("alice", &id, true).unwrap();
+        };
+        let (verdict, ()) = tokio::join!(asking, answering);
+        assert_eq!(verdict, McpVerdict::Approved);
+        {
+            let seen = sink.lock().unwrap();
+            assert_eq!(seen.len(), 2);
+            assert_eq!(seen[0]["kind"], "confirmMcp");
+            assert_eq!(seen[0]["arguments"], arguments);
+            assert_eq!(seen[1]["kind"], "confirmMcpClosed");
+            assert_eq!(seen[1]["confirmationId"], seen[0]["confirmationId"]);
+        }
+
+        // A prompt for an attachment without a channel is refused at once.
+        let ghost = McpConfirmationRequest {
+            attachment_id: "no-such-attachment",
+            ..request()
+        };
+        assert_eq!(
+            broker.ask(ghost, Duration::from_secs(5)).await,
+            McpVerdict::Lost
+        );
+
+        // A reload while the prompt is open ends the call as lost.
+        let asking = broker.ask(request(), Duration::from_secs(5));
+        let reloading = async {
+            while sink.lock().unwrap().len() < 3 {
+                tokio::task::yield_now().await;
+            }
+            bridge.page_started(MODULE_WINDOW);
+        };
+        let (verdict, ()) = tokio::join!(asking, reloading);
+        assert_eq!(verdict, McpVerdict::Lost);
     }
 }

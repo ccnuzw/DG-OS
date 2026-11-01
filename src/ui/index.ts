@@ -1,5 +1,6 @@
 // `@dgos/ui` (D066). Phase 1 exports the appearance kernel; Phase 4 adds the controls and display components;
-// Phase 5 adds Modal, Tooltip, Toast, the status icons, error mapping and ErrorPage. `host.ui` is Phase 6.
+// Phase 5 adds Modal, Tooltip, Toast, the status icons, error mapping and ErrorPage. Phase 6 injects a subset of
+// these into modules as `host.ui` (src/modules/moduleHostUi.ts).
 export { cn } from './lib/cn';
 export { Button } from './components/Button';
 export type { ButtonProps, ButtonSize, ButtonVariant } from './components/Button';

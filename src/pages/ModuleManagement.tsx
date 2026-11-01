@@ -5,10 +5,13 @@ import {
   ModuleApiError,
   grantModulePermission,
   listModuleCrashes,
+  listModulePermissionAudits,
   listModules,
+  reloadModule,
   revokeModulePermission,
   runOperations,
   type ModuleCrashRecord,
+  type ModulePermissionAuditEntry,
   type ModuleSummary,
 } from '../modules/moduleApi';
 import { usePageError } from '../pageError';
@@ -133,9 +136,113 @@ function EnableConfirm({ module, busy, onConfirm, onCancel }: {
   );
 }
 
+interface GrantFailure {
+  permission: string;
+  error: ModuleApiError;
+}
+
 interface ActionNotice {
   error?: ModuleApiError;
   info?: string;
+  /** Confirmed permissions the host refused while enabling; the module was not started. */
+  failures?: GrantFailure[];
+}
+
+/** What an update changed in the declared permissions (D093, D086). */
+interface PermissionDiff {
+  added: string[];
+  /** Permissions that were granted and are no longer declared; the host withdrew those grants. */
+  withdrawn: string[];
+}
+
+interface AuditLogState {
+  entries: ModulePermissionAuditEntry[];
+  nextBefore: string | null;
+}
+
+function UpdateDiff({ module, diff, busy, onGrant, onDismiss }: {
+  module: ModuleSummary;
+  diff: PermissionDiff;
+  busy: boolean;
+  onGrant: (permission: string) => void;
+  onDismiss: () => void;
+}) {
+  // A new permission stops being listed as soon as it is granted. The page's module list may still be the
+  // pre-update one for a moment, so only a granted entry hides it; a missing entry does not.
+  const added = diff.added.filter(
+    (permission) => !module.permissions.some((entry) => entry.permission === permission && entry.granted),
+  );
+  if (added.length === 0 && diff.withdrawn.length === 0) return null;
+  return (
+    <NoticeBox tone="warning" role="status">
+      <strong>Permissions changed in this update.</strong>
+      {added.length > 0 && (
+        <>
+          <p className="m-0 mt-2">Newly declared, not granted yet:</p>
+          <ul className="m-0 list-none p-0">
+            {added.map((permission) => (
+              <li key={permission} className="flex flex-wrap items-center gap-2 py-1">
+                <code className="font-mono wrap-anywhere">{permission}</code>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  aria-label={`Grant new permission ${permission} for ${module.name}`}
+                  disabled={busy}
+                  onClick={() => onGrant(permission)}
+                >
+                  Grant
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {diff.withdrawn.length > 0 && (
+        <>
+          <p className="m-0 mt-2">No longer declared, so your grant was withdrawn:</p>
+          <ul className="m-0 list-disc pl-6">
+            {diff.withdrawn.map((permission) => (
+              <li key={permission}>
+                <code className="font-mono wrap-anywhere">{permission}</code>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <div className="mt-2">
+        <Button variant="ghost" size="sm" onClick={onDismiss}>Dismiss</Button>
+      </div>
+    </NoticeBox>
+  );
+}
+
+function PermissionAuditList({ log, busy, onLoadOlder }: {
+  log: AuditLogState;
+  busy: boolean;
+  onLoadOlder: () => void;
+}) {
+  return (
+    <div aria-label="Permission log" role="region">
+      {log.entries.length === 0 ? (
+        <p className="my-2 text-sm text-muted-foreground">No permission activity recorded.</p>
+      ) : (
+        <ul className="m-0 list-none p-0">
+          {log.entries.map((entry, index) => {
+            const at = new Date(entry.created_at * 1000);
+            return (
+              <li key={index} className="border-t border-border py-2 text-sm first:border-t-0 wrap-anywhere">
+                <code className="font-mono">{entry.permission}</code> · <strong>{entry.action}</strong> ·{' '}
+                <time dateTime={at.toISOString()}>{at.toLocaleString()}</time>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {log.nextBefore !== null && (
+        <Button variant="secondary" size="sm" disabled={busy} onClick={onLoadOlder}>Load older</Button>
+      )}
+    </div>
+  );
 }
 
 type Pending = { kind: 'enable' | 'uninstall'; moduleId: string } | null;
@@ -149,6 +256,9 @@ export default function ModuleManagement() {
   const [notices, setNotices] = useState<Record<string, ActionNotice>>({});
   const [pending, setPending] = useState<Pending>(null);
   const [crashLog, setCrashLog] = useState<{ moduleId: string; crashes: ModuleCrashRecord[] } | null>(null);
+  const [diffs, setDiffs] = useState<Record<string, PermissionDiff>>({});
+  const [auditLogs, setAuditLogs] = useState<Record<string, AuditLogState>>({});
+  const [auditBusy, setAuditBusy] = useState(false);
   const mounted = useRef(true);
   const reportError = usePageError('ModuleManagement');
   // `refresh` runs on mount and after every action; keeping the reporter in a ref keeps it out of its dependencies.
@@ -184,14 +294,20 @@ export default function ModuleManagement() {
     setNotices((current) => ({ ...current, [moduleId]: notice }));
   }
 
-  // Runs one user action: the task resolves to a success message or throws. The list is refreshed afterwards either way.
-  async function act(moduleId: string, task: () => Promise<string>) {
+  function setDiff(moduleId: string, diff: PermissionDiff | null) {
+    setDiffs(({ [moduleId]: _old, ...rest }) => (diff === null ? rest : { ...rest, [moduleId]: diff }));
+  }
+
+  // Runs one user action: the task resolves to a success message (or a ready-made notice) or throws. The list is
+  // refreshed afterwards either way.
+  async function act(moduleId: string, task: () => Promise<string | ActionNotice>) {
     setBusy(true);
     setPending(null);
     setNotice(moduleId, {});
     let notice: ActionNotice;
     try {
-      notice = { info: await task() };
+      const result = await task();
+      notice = typeof result === 'string' ? { info: result } : result;
     } catch (error) {
       notice = { error: toApiError(error) };
       reportError(error);
@@ -202,21 +318,49 @@ export default function ModuleManagement() {
   }
 
   // A disabled module cannot be granted anything (the host refuses it), so the order is: enable,
-  // grant what the user just confirmed, then start. Nothing runs before the grants are in place.
+  // grant what the user just confirmed, then start. The steps are separate host commands and not one
+  // transaction (D093): every confirmed grant is attempted, a failed one never stops the others, and
+  // the module is started only when all of them succeeded. Grants that did succeed stay in place.
   const enable = (module: ModuleSummary) =>
     act(module.module_id, async () => {
       await runOperations(['enable_module'], module.module_id);
+      const failures: GrantFailure[] = [];
       for (const entry of module.permissions) {
-        if (!entry.granted) await grantModulePermission(module.module_id, entry.permission);
+        if (entry.granted) continue;
+        try {
+          await grantModulePermission(module.module_id, entry.permission);
+        } catch (error) {
+          failures.push({ permission: entry.permission, error: toApiError(error) });
+          reportError(error);
+        }
       }
+      if (failures.length > 0) return { failures };
       await runOperations(['start_module'], module.module_id);
       return 'Enabled and started.';
     });
 
+  // D093: the page remembers what the module declared and had granted before the update, then compares it
+  // with the refreshed list. There is no preview before the update. `updated` and `updated_pending_release`
+  // both mean the new manifest is in effect, so both get the diff; pending release only changes the message.
   const update = (module: ModuleSummary) =>
     act(module.module_id, async () => {
+      setDiff(module.module_id, null);
+      const before = new Map(module.permissions.map((entry) => [entry.permission, entry.granted]));
       const view = await runOperations(['update_module'], module.module_id);
       if (view.outcome === 'unchanged') return 'Already up to date.';
+      try {
+        const current = (await listModules()).find((entry) => entry.module_id === module.module_id);
+        if (current !== undefined) {
+          const declared = new Set(current.permissions.map((entry) => entry.permission));
+          const diff: PermissionDiff = {
+            added: current.permissions.filter((entry) => !before.has(entry.permission)).map((entry) => entry.permission),
+            withdrawn: [...before].filter(([permission, granted]) => granted && !declared.has(permission)).map(([permission]) => permission),
+          };
+          if (diff.added.length > 0 || diff.withdrawn.length > 0) setDiff(module.module_id, diff);
+        }
+      } catch {
+        // The update itself succeeded; the refresh that follows reports a failed list.
+      }
       if (view.outcome === 'updated_pending_release') return 'Updated. The new version takes over once the old one is released.';
       return 'Updated.';
     });
@@ -239,6 +383,34 @@ export default function ModuleManagement() {
       if (mounted.current) setNotice(moduleId, { error: toApiError(error) });
       reportError(error);
     }
+  }
+
+  async function loadAudit(moduleId: string, before: string | null) {
+    setAuditBusy(true);
+    try {
+      const page = await listModulePermissionAudits(moduleId, before);
+      if (!mounted.current) return;
+      setAuditLogs((current) => ({
+        ...current,
+        [moduleId]: {
+          entries: before === null ? page.entries : [...(current[moduleId]?.entries ?? []), ...page.entries],
+          nextBefore: page.next_before,
+        },
+      }));
+    } catch (error) {
+      if (mounted.current) setNotice(moduleId, { error: toApiError(error) });
+      reportError(error);
+    } finally {
+      if (mounted.current) setAuditBusy(false);
+    }
+  }
+
+  async function toggleAuditLog(moduleId: string) {
+    if (auditLogs[moduleId] !== undefined) {
+      setAuditLogs(({ [moduleId]: _closed, ...rest }) => rest);
+      return;
+    }
+    await loadAudit(moduleId, null);
   }
 
   return (
@@ -324,12 +496,57 @@ export default function ModuleManagement() {
                   {notice.info !== undefined && (
                     <NoticeBox tone="success" role="status">{notice.info}</NoticeBox>
                   )}
+                  {notice.failures !== undefined && notice.failures.length > 0 && (
+                    <NoticeBox tone="warning" role="alert">
+                      <strong>
+                        Enabled, but not started: {notice.failures.length} permission
+                        {notice.failures.length === 1 ? ' was' : 's were'} not granted.
+                      </strong>
+                      <ul className="m-0 mt-2 list-disc pl-6">
+                        {notice.failures.map((failure) => (
+                          <li key={failure.permission}>
+                            <code className="font-mono wrap-anywhere">{failure.permission}</code>: {failure.error.message}
+                            {failure.error.code !== 0 && <span> (code {failure.error.code})</span>}
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="m-0 mt-2">
+                        Grant the remaining permissions with their Grant buttons, then press Reload to start the
+                        module.
+                      </p>
+                    </NoticeBox>
+                  )}
+                  {diffs[module.module_id] !== undefined && (
+                    <UpdateDiff
+                      module={module}
+                      diff={diffs[module.module_id]}
+                      busy={busy}
+                      onGrant={(permission) =>
+                        act(module.module_id, async () => {
+                          await grantModulePermission(module.module_id, permission);
+                          return `Granted ${permission}.`;
+                        })
+                      }
+                      onDismiss={() => setDiff(module.module_id, null)}
+                    />
+                  )}
 
                   <Stack direction="horizontal" gap={2} className="my-3 flex-wrap">
                     {module.enabled ? (
                       <>
                         <Button variant="secondary" disabled={busy} onClick={() => runSteps(module, ['disable_module'], 'Disabled.')}>Disable</Button>
-                        <Button variant="secondary" disabled={busy} onClick={() => runSteps(module, ['stop_module', 'start_module'], 'Reloaded.')}>Reload</Button>
+                        <Button
+                          variant="secondary"
+                          disabled={busy}
+                          onClick={() =>
+                            act(module.module_id, async () => {
+                              await reloadModule(module.module_id);
+                              return 'Reloaded.';
+                            })
+                          }
+                        >
+                          Reload
+                        </Button>
                       </>
                     ) : (
                       <Button variant="primary" disabled={busy} onClick={() => setPending({ kind: 'enable', moduleId: module.module_id })}>Enable</Button>
@@ -339,6 +556,7 @@ export default function ModuleManagement() {
                       <Button variant="danger" disabled={busy} onClick={() => setPending({ kind: 'uninstall', moduleId: module.module_id })}>Uninstall</Button>
                     )}
                     <Button variant="ghost" onClick={() => toggleCrashLog(module.module_id)}>Crash log</Button>
+                    <Button variant="ghost" onClick={() => toggleAuditLog(module.module_id)}>Permission log</Button>
                   </Stack>
 
                   {confirming === 'enable' && (
@@ -355,6 +573,13 @@ export default function ModuleManagement() {
                   )}
 
                   {crashLog?.moduleId === module.module_id && <CrashLogList crashes={crashLog.crashes} />}
+                  {auditLogs[module.module_id] !== undefined && (
+                    <PermissionAuditList
+                      log={auditLogs[module.module_id]}
+                      busy={auditBusy}
+                      onLoadOlder={() => loadAudit(module.module_id, auditLogs[module.module_id].nextBefore)}
+                    />
+                  )}
                 </Card.Body>
               </Card>
             </article>

@@ -83,6 +83,7 @@ export type ModuleLifecycleCommand =
 
 export const CODE_MODULE_INCOMPATIBLE = 1004022;
 export const CODE_UPDATE_FAILED = 1004013;
+export const CODE_NOT_RUNNING = 1004016;
 
 export const OPERATION_POLL_INTERVAL_MS = 300;
 export const OPERATION_TIMEOUT_MS = 30_000;
@@ -142,6 +143,30 @@ export const revokeModulePermission = (moduleId: string, permission: string): Pr
 export const listModuleCrashes = (moduleId: string): Promise<ModuleCrashRecord[]> =>
   call('list_module_crashes', { moduleId });
 
+export interface ModulePermissionAuditEntry {
+  module_id: string;
+  permission: string;
+  action: string;
+  created_at: number;
+}
+
+export interface ModulePermissionAuditPage {
+  entries: ModulePermissionAuditEntry[];
+  /** Opaque cursor for the next older page, or null when there is none. */
+  next_before: string | null;
+}
+
+export const listModulePermissionAudits = (
+  moduleId: string,
+  before: string | null = null,
+  limit?: number,
+): Promise<ModulePermissionAuditPage> =>
+  call('list_module_permission_audits', {
+    moduleId,
+    ...(before !== null ? { before } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+  });
+
 // Submits a lifecycle command, then polls the operation until it reaches a terminal state.
 // A `failed` operation is returned, not thrown: use `operationError` or `runOperations` for that.
 export async function runOperation(command: ModuleLifecycleCommand, moduleId: string): Promise<ModuleOperationView> {
@@ -188,4 +213,13 @@ export async function runOperations(
   }
   if (view === null) throw new ModuleApiError(0, 'No operation was run');
   return view;
+}
+
+// Reload = stop, then start. A module that has no runtime yet (never started, or enabled after a partial
+// enable) answers `stop` with `not_running`; that is the state Reload is about to fix, so it is not an error here.
+export async function reloadModule(moduleId: string): Promise<ModuleOperationView> {
+  const stopped = await runOperation('stop_module', moduleId);
+  const stopError = operationError(stopped);
+  if (stopError !== null && stopError.code !== CODE_NOT_RUNNING && stopError.kind !== 'not_running') throw stopError;
+  return runOperations(['start_module'], moduleId);
 }

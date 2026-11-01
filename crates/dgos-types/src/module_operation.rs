@@ -223,6 +223,24 @@ pub struct ModuleSummaryView {
     pub recent_crashes: u32,
 }
 
+/// One permission audit row for the management page. It never carries a
+/// request id, resource id or user id (D093).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ModulePermissionAuditView {
+    pub module_id: String,
+    pub permission: String,
+    pub action: String,
+    pub created_at: i64,
+}
+
+/// A page of audit rows, newest first. `next_before` is an opaque cursor for
+/// the next older page, or `null` when there is none.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ModulePermissionAuditPageView {
+    pub entries: Vec<ModulePermissionAuditView>,
+    pub next_before: Option<String>,
+}
+
 /// A recorded post-mount crash (D055). Stack frames are host-sanitized:
 /// frame lines only, no message text, no URLs or paths.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

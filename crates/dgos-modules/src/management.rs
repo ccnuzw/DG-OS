@@ -6,7 +6,7 @@
 
 use crate::{db_error, ModulePackageError, ModulePublisher};
 use dgos_db::{
-    entities::{module_permissions, module_versions, modules},
+    entities::{module_permissions, module_storage, module_versions, modules},
     sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set, TransactionTrait},
 };
 use std::fs;
@@ -119,6 +119,11 @@ impl ModulePublisher {
         let tx = self.db.begin().await.map_err(db_error)?;
         module_permissions::Entity::delete_many()
             .filter(module_permissions::Column::ModuleId.eq(module_id))
+            .exec(&tx)
+            .await
+            .map_err(db_error)?;
+        module_storage::Entity::delete_many()
+            .filter(module_storage::Column::ModuleId.eq(module_id))
             .exec(&tx)
             .await
             .map_err(db_error)?;
@@ -242,6 +247,56 @@ mod tests {
             publisher.uninstall("mod-a").await,
             Err(ManagementError::NotPublished)
         ));
+    }
+
+    #[tokio::test]
+    async fn ac12_uninstall_removes_the_modules_storage_but_keeps_permission_audits() {
+        use dgos_db::{entities::module_permission_audits, ModuleStorageRepository};
+        let (_store, publisher) = published(false).await;
+        publisher
+            .permissions
+            .grant(
+                "default-user",
+                "mod-a",
+                dgos_db::ModulePermission::ProvidersCall,
+            )
+            .await
+            .unwrap();
+        let storage = ModuleStorageRepository::new(publisher.db.clone());
+        for user in ["default-user", "someone-else"] {
+            storage
+                .set(user, "mod-a", "k", &serde_json::json!({"v": 1}))
+                .await
+                .unwrap();
+            storage
+                .set(user, "mod-other", "k", &serde_json::json!({"v": 2}))
+                .await
+                .unwrap();
+        }
+        let audits_before = module_permission_audits::Entity::find()
+            .all(&publisher.db)
+            .await
+            .unwrap()
+            .len();
+        assert!(audits_before > 0);
+
+        publisher.uninstall("mod-a").await.unwrap();
+
+        for user in ["default-user", "someone-else"] {
+            assert_eq!(storage.get(user, "mod-a", "k").await.unwrap(), None);
+            assert!(storage.list(user, "mod-a").await.unwrap().is_empty());
+            // Another module's storage is untouched.
+            assert_eq!(
+                storage.get(user, "mod-other", "k").await.unwrap(),
+                Some(serde_json::json!({"v": 2}))
+            );
+        }
+        let audits_after = module_permission_audits::Entity::find()
+            .all(&publisher.db)
+            .await
+            .unwrap()
+            .len();
+        assert_eq!(audits_after, audits_before, "permission audits are kept");
     }
 
     #[tokio::test]

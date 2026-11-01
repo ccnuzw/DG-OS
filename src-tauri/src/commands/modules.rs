@@ -12,7 +12,7 @@ use crate::host::{self, Capability};
 use dgos_application::{ModuleCrashService, ModuleManagementService, ModuleOperationManager};
 use dgos_types::{
     DgosError, ModuleCrashView, ModuleOperationAccepted, ModuleOperationErrorKind,
-    ModuleOperationView, ModuleRuntimeStatusView, ModuleSummaryView,
+    ModuleOperationView, ModulePermissionAuditPageView, ModuleRuntimeStatusView, ModuleSummaryView,
 };
 use tauri::{Manager, WebviewWindow};
 
@@ -193,4 +193,27 @@ pub async fn list_module_crashes(
     };
     let service = app.state::<ModuleCrashService>();
     CommandResponse::from(service.list(&session, &module_id).await)
+}
+
+/// One page of the session user's permission audit, newest first. `before` is
+/// the opaque cursor returned as `next_before`; rows carry no request or
+/// resource ids.
+#[tauri::command]
+pub async fn list_module_permission_audits(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    module_id: Option<String>,
+    before: Option<String>,
+    limit: Option<u32>,
+) -> CommandResponse<ModulePermissionAuditPageView> {
+    let session = match host::module_session(&window, Capability::ModulesRead) {
+        Ok(session) => session,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    let service = app.state::<ModuleManagementService>();
+    CommandResponse::from(
+        service
+            .list_audits(&session, module_id.as_deref(), before.as_deref(), limit)
+            .await,
+    )
 }

@@ -6,6 +6,7 @@ pub mod models;
 pub mod module_crash_logs;
 pub mod module_permission_audits;
 pub mod module_permissions;
+pub mod module_storage;
 pub mod module_update_events;
 pub mod module_versions;
 pub mod modules;
@@ -30,6 +31,7 @@ pub mod prelude {
     pub use super::module_crash_logs::Entity as ModuleCrashLogs;
     pub use super::module_permission_audits::Entity as ModulePermissionAudits;
     pub use super::module_permissions::Entity as ModulePermissions;
+    pub use super::module_storage::Entity as ModuleStorage;
     pub use super::module_update_events::Entity as ModuleUpdateEvents;
     pub use super::module_versions::Entity as ModuleVersions;
     pub use super::modules::Entity as Modules;

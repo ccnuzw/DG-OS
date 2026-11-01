@@ -16,11 +16,18 @@ const state = vi.hoisted(() => ({
   failures: {} as Record<string, { kind: string; code: number }>,
   commandErrors: {} as Record<string, { code: number; message: string }>,
   operations: new Map<string, Record<string, unknown>>(),
+  grantFailures: {} as Record<string, { code: number; message: string }>,
+  audits: [] as Array<Record<string, unknown>>,
+  auditPageSize: 2,
+  afterUpdate: null as null | (() => void),
+  updateOutcome: 'updated',
 }));
 
 // A controllable stand-in for the runtime host singleton: the tests push instances in and out.
 const fakeHost = vi.hoisted(() => {
   let snapshot: readonly unknown[] = [];
+  // A stable empty snapshot: `useSyncExternalStore` requires the same reference while nothing changed.
+  const NO_CONFIRMATIONS: readonly unknown[] = [];
   const listeners = new Set<() => void>();
   return {
     subscribe: (listener: () => void) => {
@@ -31,6 +38,10 @@ const fakeHost = vi.hoisted(() => {
     },
     getSnapshot: () => snapshot,
     ensureAttached: async () => null,
+    // The host-owned MCP confirmation dialog (D093) is mounted next to the module slots; none is pending here.
+    subscribeMcpConfirmations: () => () => {},
+    getMcpConfirmations: () => NO_CONFIRMATIONS,
+    resolveMcpConfirmation: async () => {},
     set(next: readonly unknown[]) {
       snapshot = next;
       listeners.forEach((listener) => listener());
@@ -107,12 +118,17 @@ function installInvoke() {
     if (command === 'grant_module_permission' || command === 'revoke_module_permission') {
       const failure = state.commandErrors[command];
       if (failure) return fail(failure.code, failure.message);
+      const permissionFailure = state.grantFailures[params?.permission as string];
+      if (command === 'grant_module_permission' && permissionFailure) {
+        return fail(permissionFailure.code, permissionFailure.message);
+      }
       const module = state.modules.find((entry) => entry.module_id === params?.moduleId);
       const entry = module?.permissions.find((item: { permission: string }) => item.permission === params?.permission);
       if (entry) entry.granted = command === 'grant_module_permission';
       return ok(module);
     }
     if (LIFECYCLE.includes(command)) {
+      if (command === 'update_module' && !state.failures[command] && !state.commandErrors[command]) state.afterUpdate?.();
       const commandError = state.commandErrors[command];
       if (commandError) return fail(commandError.code, commandError.message);
       const kind = command.replace('_module', '');
@@ -123,7 +139,7 @@ function installInvoke() {
         module_id: params?.moduleId,
         kind,
         state: failure ? 'failed' : 'succeeded',
-        outcome: failure ? null : OUTCOMES[kind],
+        outcome: failure ? null : kind === 'update' ? state.updateOutcome : OUTCOMES[kind],
         failure: failure ? { ...failure, retryable: false } : null,
         submitted_at: 1,
         finished_at: 2,
@@ -135,6 +151,14 @@ function installInvoke() {
         if (kind === 'uninstall') state.modules = state.modules.filter((entry) => entry.module_id !== params?.moduleId);
       }
       return ok({ operation_id: operationId });
+    }
+    if (command === 'list_module_permission_audits') {
+      const commandError = state.commandErrors[command];
+      if (commandError) return fail(commandError.code, commandError.message);
+      // The cursor is opaque to the page; the fake encodes the start index.
+      const start = params?.before === undefined ? 0 : Number(params.before);
+      const end = Math.min(start + state.auditPageSize, state.audits.length);
+      return ok({ entries: state.audits.slice(start, end), next_before: end < state.audits.length ? String(end) : null });
     }
     if (command === 'get_module_operation') return ok(state.operations.get(params?.operationId as string));
     return ok(null);
@@ -163,6 +187,11 @@ beforeEach(() => {
   state.failures = {};
   state.commandErrors = {};
   state.operations = new Map();
+  state.grantFailures = {};
+  state.audits = [];
+  state.auditPageSize = 2;
+  state.afterUpdate = null;
+  state.updateOutcome = 'updated';
   state.modules = [
     makeModule({
       module_id: 'dgos.alpha',
@@ -207,10 +236,13 @@ describe('Module management list', () => {
     expect(beta.getByText(/Recent crashes: 2/)).toBeTruthy();
   });
 
-  it('is reachable from the sidebar and from the Settings page', async () => {
+  it('is reachable from the sidebar and from the Modules tab of the Settings shell', async () => {
     renderAt('/settings');
 
-    expect(await screen.findByRole('link', { name: 'Module management' })).toBeTruthy();
+    fireEvent.mouseDown(await screen.findByRole('tab', { name: '模块' }), { button: 0 });
+    expect(await screen.findByRole('heading', { name: 'Module management' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('link', { name: 'Home' }));
     fireEvent.click(screen.getByRole('link', { name: 'Modules' }));
     expect(await screen.findByRole('heading', { name: 'Module management' })).toBeTruthy();
   });
@@ -340,6 +372,185 @@ describe('Module management list', () => {
     expect(screen.getByText(/· render ·/)).toBeTruthy();
     expect(state.calls.find((call: Call) => call.command === 'list_module_crashes')?.args).toEqual({ moduleId: 'dgos.beta' });
   });
+
+  it('does not start the module when a grant fails, still attempts the other grants, and names the failure', async () => {
+    state.modules[0].permissions = [
+      { permission: 'providers.call', granted: false },
+      { permission: 'mcp.call', granted: false },
+      { permission: 'storage.read', granted: true },
+    ];
+    state.grantFailures['providers.call'] = { code: 1004004, message: 'Denied by the host' };
+    renderAt('/settings/modules');
+    await screen.findByRole('heading', { name: 'Alpha' });
+
+    fireEvent.click(card('dgos.alpha').getByRole('button', { name: 'Enable' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Enable Alpha' }));
+    fireEvent.click(dialog.getByRole('checkbox'));
+    fireEvent.click(dialog.getByRole('button', { name: 'Confirm enable' }));
+
+    const alert = within(await card('dgos.alpha').findByRole('alert'));
+    expect(alert.getByText('providers.call')).toBeTruthy();
+    expect(alert.getByText(/Denied by the host/)).toBeTruthy();
+    expect(alert.getByText(/code 1004004/)).toBeTruthy();
+    expect(alert.getByText(/Grant the remaining permissions with their Grant buttons/)).toBeTruthy();
+
+    const sequence = state.calls
+      .filter((call: Call) => call.command === 'grant_module_permission' || LIFECYCLE.includes(call.command))
+      .map((call: Call) => (call.command === 'grant_module_permission' ? `grant:${call.args?.permission}` : call.command));
+    expect(sequence).toEqual(['enable_module', 'grant:providers.call', 'grant:mcp.call']);
+    expect(lifecycleCommands()).not.toContain('start_module');
+    // The grant that worked stays; the failed one can be retried with its own button.
+    expect(card('dgos.alpha').getByRole('button', { name: 'Revoke mcp.call for Alpha' })).toBeTruthy();
+
+    delete state.grantFailures['providers.call'];
+    fireEvent.click(card('dgos.alpha').getByRole('button', { name: 'Grant providers.call for Alpha' }));
+    expect(await card('dgos.alpha').findByRole('button', { name: 'Revoke providers.call for Alpha' })).toBeTruthy();
+  });
+
+  it('starts the module with Reload after the failed grant is retried, even though stop finds no runtime', async () => {
+    state.modules[0].permissions = [
+      { permission: 'providers.call', granted: false },
+      { permission: 'mcp.call', granted: false },
+    ];
+    state.grantFailures['providers.call'] = { code: 1004004, message: 'Denied by the host' };
+    // The module was never started, so the host answers stop with not_running (1004016).
+    state.failures.stop_module = { kind: 'not_running', code: 1004016 };
+    renderAt('/settings/modules');
+    await screen.findByRole('heading', { name: 'Alpha' });
+
+    fireEvent.click(card('dgos.alpha').getByRole('button', { name: 'Enable' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Enable Alpha' }));
+    fireEvent.click(dialog.getByRole('checkbox'));
+    fireEvent.click(dialog.getByRole('button', { name: 'Confirm enable' }));
+
+    const alert = within(await card('dgos.alpha').findByRole('alert'));
+    expect(alert.getByText(/then press Reload to start the module/)).toBeTruthy();
+    expect(alert.queryByText(/disabled and/)).toBeNull();
+    expect(lifecycleCommands()).toEqual(['enable_module']);
+
+    delete state.grantFailures['providers.call'];
+    fireEvent.click(card('dgos.alpha').getByRole('button', { name: 'Grant providers.call for Alpha' }));
+    expect(await card('dgos.alpha').findByRole('button', { name: 'Revoke providers.call for Alpha' })).toBeTruthy();
+    expect(lifecycleCommands()).toEqual(['enable_module']);
+
+    fireEvent.click(card('dgos.alpha').getByRole('button', { name: 'Reload' }));
+    expect(await screen.findByText('Reloaded.')).toBeTruthy();
+    expect(lifecycleCommands()).toEqual(['enable_module', 'stop_module', 'start_module']);
+  });
+
+  it('still reports a stop failure other than not_running and does not start', async () => {
+    state.failures.stop_module = { kind: 'unload_failed', code: 1004007 };
+    renderAt('/settings/modules');
+    await screen.findByRole('heading', { name: 'Beta' });
+
+    fireEvent.click(card('dgos.beta').getByRole('button', { name: 'Reload' }));
+
+    expect(await screen.findByText(/code 1004007/)).toBeTruthy();
+    expect(lifecycleCommands()).toEqual(['stop_module']);
+  });
+
+  it('leaves the module disabled when the enable confirmation is cancelled', async () => {
+    renderAt('/settings/modules');
+    await screen.findByRole('heading', { name: 'Alpha' });
+
+    fireEvent.click(card('dgos.alpha').getByRole('button', { name: 'Enable' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Enable Alpha' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByRole('dialog', { name: 'Enable Alpha' })).toBeNull();
+    expect(card('dgos.alpha').getByText('Disabled')).toBeTruthy();
+    expect(card('dgos.alpha').getByRole('button', { name: 'Enable' })).toBeTruthy();
+    expect(state.calls.filter((call: Call) => call.command === 'grant_module_permission' || LIFECYCLE.includes(call.command))).toEqual([]);
+  });
+
+  it.each([
+    ['updated', 'Updated.'],
+    ['updated_pending_release', 'Updated. The new version takes over once the old one is released.'],
+  ])('lists newly declared and withdrawn permissions after an update (%s), with a Grant action for the new one', async (outcome, message) => {
+    state.updateOutcome = outcome;
+    state.modules[1].permissions = [
+      { permission: 'providers.call', granted: true },
+      { permission: 'storage.write', granted: true },
+    ];
+    state.afterUpdate = () => {
+      state.modules[1].permissions = [
+        { permission: 'providers.call', granted: true },
+        { permission: 'mcp.call', granted: false },
+      ];
+    };
+    renderAt('/settings/modules');
+    await screen.findByRole('heading', { name: 'Beta' });
+
+    fireEvent.click(card('dgos.beta').getByRole('button', { name: 'Update' }));
+
+    expect(await card('dgos.beta').findByText('Permissions changed in this update.')).toBeTruthy();
+    expect(await card('dgos.beta').findByText(message)).toBeTruthy();
+    expect(card('dgos.beta').getByText(/Newly declared, not granted yet/)).toBeTruthy();
+    expect(card('dgos.beta').getByText(/your grant was withdrawn/)).toBeTruthy();
+    // storage.write is gone from the permission list, so the only place it appears is the withdrawn list.
+    expect(card('dgos.beta').getAllByText('storage.write')).toHaveLength(1);
+
+    fireEvent.click(card('dgos.beta').getByRole('button', { name: 'Grant new permission mcp.call for Beta' }));
+    await waitFor(() => expect(card('dgos.beta').getByRole('button', { name: 'Revoke mcp.call for Beta' })).toBeTruthy());
+    expect(card('dgos.beta').queryByText(/Newly declared, not granted yet/)).toBeNull();
+    expect(card('dgos.beta').getByText(/your grant was withdrawn/)).toBeTruthy();
+  });
+
+  it('shows no permission change notice when an update leaves the declared permissions as they were', async () => {
+    renderAt('/settings/modules');
+    await screen.findByRole('heading', { name: 'Beta' });
+
+    fireEvent.click(card('dgos.beta').getByRole('button', { name: 'Update' }));
+
+    expect(await screen.findByText('Updated.')).toBeTruthy();
+    expect(screen.queryByText('Permissions changed in this update.')).toBeNull();
+  });
+
+  it('shows the permission log newest first and pages older entries with the host cursor', async () => {
+    state.audits = [
+      { module_id: 'dgos.beta', permission: 'providers.call', action: 'revoked', created_at: 1_700_000_300 },
+      { module_id: 'dgos.beta', permission: 'providers.call', action: 'granted', created_at: 1_700_000_200 },
+      { module_id: 'dgos.beta', permission: 'storage.read', action: 'denied', created_at: 1_700_000_100 },
+    ];
+    renderAt('/settings/modules');
+    await screen.findByRole('heading', { name: 'Beta' });
+
+    fireEvent.click(card('dgos.beta').getByRole('button', { name: 'Permission log' }));
+
+    const region = within(await screen.findByRole('region', { name: 'Permission log' }));
+    let items = region.getAllByRole('listitem');
+    expect(items).toHaveLength(2);
+    expect(items[0].textContent).toContain('revoked');
+    expect(items[1].textContent).toContain('granted');
+
+    fireEvent.click(region.getByRole('button', { name: 'Load older' }));
+    await waitFor(() => expect(region.getAllByRole('listitem')).toHaveLength(3));
+    items = region.getAllByRole('listitem');
+    expect(items[2].textContent).toContain('storage.read');
+    expect(items[2].textContent).toContain('denied');
+    expect(region.queryByRole('button', { name: 'Load older' })).toBeNull();
+
+    const audits = state.calls.filter((call: Call) => call.command === 'list_module_permission_audits');
+    expect(audits.map((call: Call) => call.args)).toEqual([{ moduleId: 'dgos.beta' }, { moduleId: 'dgos.beta', before: '2' }]);
+
+    fireEvent.click(card('dgos.beta').getByRole('button', { name: 'Permission log' }));
+    expect(screen.queryByRole('region', { name: 'Permission log' })).toBeNull();
+  });
+
+  it('shows an empty permission log and reports a failed permission log request like other notices', async () => {
+    renderAt('/settings/modules');
+    await screen.findByRole('heading', { name: 'Beta' });
+
+    fireEvent.click(card('dgos.beta').getByRole('button', { name: 'Permission log' }));
+    expect(await screen.findByText('No permission activity recorded.')).toBeTruthy();
+    fireEvent.click(card('dgos.beta').getByRole('button', { name: 'Permission log' }));
+
+    state.commandErrors.list_module_permission_audits = { code: 1004024, message: 'Invalid cursor' };
+    fireEvent.click(card('dgos.beta').getByRole('button', { name: 'Permission log' }));
+    expect(await screen.findByText('Invalid cursor')).toBeTruthy();
+    expect(screen.getByText(/code 1004024/)).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Permission log' })).toBeNull();
+  });
 });
 
 describe('Module panel', () => {
@@ -415,7 +626,7 @@ describe('Module panel', () => {
 describe('Sidebar module entries', () => {
   it('adds a link for a ready instance and removes it after unload', async () => {
     renderAt('/settings');
-    await screen.findByText('Settings Page');
+    await screen.findByRole('tablist', { name: '系统设置' });
     expect(screen.queryByRole('link', { name: 'dgos.beta' })).toBeNull();
 
     act(() => fakeHost.set([instanceFor('dgos.beta', false)]));

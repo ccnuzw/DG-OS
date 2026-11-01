@@ -40,7 +40,37 @@ export interface RouteInstruction {
   route: string;
 }
 
-export type HostInstruction = LoadInstruction | UnloadInstruction | RouteInstruction;
+// Host-owned per-call confirmation of a module's `mcp.call` (D093). Shown by the host dialog outside the module
+// boundary; no ticket, no receipt. The answer goes through `resolve_module_mcp_confirmation`.
+export interface McpConfirmInstruction {
+  kind: 'confirmMcp';
+  confirmationId: string;
+  moduleName: string;
+  serverId: string;
+  toolName: string;
+  arguments: unknown;
+}
+
+// The confirmation was answered, expired or abandoned: the dialog goes away.
+export interface McpConfirmClosedInstruction {
+  kind: 'confirmMcpClosed';
+  confirmationId: string;
+}
+
+export type HostInstruction =
+  | LoadInstruction
+  | UnloadInstruction
+  | RouteInstruction
+  | McpConfirmInstruction
+  | McpConfirmClosedInstruction;
+
+export interface PendingMcpConfirmation {
+  readonly confirmationId: string;
+  readonly moduleName: string;
+  readonly serverId: string;
+  readonly toolName: string;
+  readonly arguments: unknown;
+}
 
 export interface ProviderChatRequest {
   messages: Array<{ role: string; content: string }>;
@@ -127,6 +157,25 @@ interface ModuleInstance extends Omit<ModuleInstanceView, 'crashed'> {
   crashed: boolean;
 }
 
+/** `host.network.request` input (D093): loopback HTTP(S) only, decided by the host. */
+export interface ModuleNetworkRequest {
+  url: string;
+  method?: 'GET' | 'POST';
+  headers?: Partial<Record<'content-type' | 'accept', string>>;
+  body?: string;
+}
+
+export interface ModuleNetworkResponse {
+  status: number;
+  content_type: string | null;
+  body: { encoding: 'text' | 'base64'; data: string };
+}
+
+export interface ModuleStorageEntry {
+  key: string;
+  size_bytes: number;
+}
+
 interface ModuleHostApi {
   readonly React: typeof React;
   readonly apiVersion: 1;
@@ -134,6 +183,22 @@ interface ModuleHostApi {
   readonly version: string;
   readonly providers: Readonly<{
     call: (providerId: string, modelId: string, request: ProviderChatRequest) => Promise<ProviderChatResponse>;
+  }>;
+  // D093: the other five capabilities, added alongside the existing fields; `apiVersion` stays 1.
+  readonly storage: Readonly<{
+    get: (key: string) => Promise<unknown>;
+    set: (key: string, value: unknown) => Promise<void>;
+    delete: (key: string) => Promise<void>;
+    list: () => Promise<ModuleStorageEntry[]>;
+  }>;
+  readonly network: Readonly<{
+    request: (request: ModuleNetworkRequest) => Promise<ModuleNetworkResponse>;
+  }>;
+  readonly mcp: Readonly<{
+    callTool: (serverId: string, toolName: string, args: Record<string, unknown>) => Promise<unknown>;
+  }>;
+  readonly skills: Readonly<{
+    prepare: (skillId: string) => Promise<unknown>;
   }>;
   // D067: added alongside the existing fields; `apiVersion` stays 1.
   readonly ui: ModuleHostUi;
@@ -233,6 +298,8 @@ export class ModuleRuntimeHost {
   private readonly routes = new Map<string, string>();
   private readonly listeners = new Set<() => void>();
   private snapshot: readonly ModuleInstanceView[] = [];
+  private mcpConfirmations: readonly PendingMcpConfirmation[] = [];
+  private readonly mcpListeners = new Set<() => void>();
 
   constructor(deps: ModuleRuntimeHostDeps = {}) {
     this.invoke = deps.invoke ?? tauriInvoke;
@@ -258,6 +325,63 @@ export class ModuleRuntimeHost {
   };
 
   getSnapshot = (): readonly ModuleInstanceView[] => this.snapshot;
+
+  // Pending `mcp.call` confirmations (D093). Host-side state only: it is not part of the instance snapshot
+  // and not reachable through the `host` object a module receives. The host dialog reads it.
+  subscribeMcpConfirmations = (listener: () => void): (() => void) => {
+    this.mcpListeners.add(listener);
+    return () => {
+      this.mcpListeners.delete(listener);
+    };
+  };
+
+  getMcpConfirmations = (): readonly PendingMcpConfirmation[] => this.mcpConfirmations;
+
+  // The user's answer. The entry leaves the list first, so a second click cannot send a second answer; the
+  // host answers `PermissionDenied` for an id that is already resolved or expired, which is only logged.
+  // Never rejects.
+  async resolveMcpConfirmation(confirmationId: string, approved: boolean): Promise<void> {
+    if (!this.removeMcpConfirmation(confirmationId)) return;
+    try {
+      const result = await this.invoke<CommandResult<unknown>>('resolve_module_mcp_confirmation', {
+        confirmationId,
+        approved,
+      });
+      if (!result || !result.success) console.warn('module host: MCP confirmation answer was not accepted');
+    } catch {
+      console.warn('module host: MCP confirmation answer failed');
+    }
+  }
+
+  private openMcpConfirmation(instruction: McpConfirmInstruction): void {
+    const { confirmationId, moduleName, serverId, toolName } = instruction;
+    if (
+      typeof confirmationId !== 'string' ||
+      typeof moduleName !== 'string' ||
+      typeof serverId !== 'string' ||
+      typeof toolName !== 'string' ||
+      this.mcpConfirmations.some((pending) => pending.confirmationId === confirmationId)
+    ) {
+      return;
+    }
+    this.mcpConfirmations = [
+      ...this.mcpConfirmations,
+      Object.freeze({ confirmationId, moduleName, serverId, toolName, arguments: instruction.arguments }),
+    ];
+    this.emitMcp();
+  }
+
+  private removeMcpConfirmation(confirmationId: string): boolean {
+    const next = this.mcpConfirmations.filter((pending) => pending.confirmationId !== confirmationId);
+    if (next.length === this.mcpConfirmations.length) return false;
+    this.mcpConfirmations = next;
+    this.emitMcp();
+    return true;
+  }
+
+  private emitMcp(): void {
+    for (const listener of [...this.mcpListeners]) listener();
+  }
 
   // Idempotent and single-flight: concurrent and repeated calls share one attach. A failed attach
   // is forgotten so a later call retries. Never rejects.
@@ -297,6 +421,14 @@ export class ModuleRuntimeHost {
   }
 
   private async handleInstruction(instruction: HostInstruction): Promise<void> {
+    if (instruction.kind === 'confirmMcp') {
+      this.openMcpConfirmation(instruction);
+      return;
+    }
+    if (instruction.kind === 'confirmMcpClosed') {
+      if (typeof instruction.confirmationId === 'string') this.removeMcpConfirmation(instruction.confirmationId);
+      return;
+    }
     if (instruction.kind === 'route') {
       if (typeof instruction.runtimeId === 'string' && typeof instruction.route === 'string') {
         this.routes.set(instruction.runtimeId, instruction.route);
@@ -485,14 +617,9 @@ export class ModuleRuntimeHost {
     }
   }
 
-  // The only fields sent are the host-issued attachment and route plus the call's own business
-  // fields. Never a module id, runtime id, user, version, digest, path or permission (D051).
-  private async callProvider(
-    runtimeId: string,
-    providerId: string,
-    modelId: string,
-    request: ProviderChatRequest,
-  ): Promise<ProviderChatResponse> {
+  // The only fields sent are the host-issued attachment and route, a fresh `callId`, and the call's own
+  // business fields. Never a module id, runtime id, user, version, digest, path or permission (D051, D093).
+  private async callCapability<T>(runtimeId: string, command: string, fields: Record<string, unknown>): Promise<T> {
     const route = this.routes.get(runtimeId);
     const attachmentId = this.attachment === null ? null : await this.attachment;
     if (route === undefined || attachmentId === null) {
@@ -501,18 +628,26 @@ export class ModuleRuntimeHost {
     // One id per page call; a transport-level resend of the same call carries the same id, which
     // the host uses to drop the duplicate (D054). It merges nothing and grants nothing.
     const callId = newCallId();
-    const result = await this.invoke<CommandResult<ProviderChatResponse>>('module_call_provider', {
-      attachmentId,
-      route,
-      callId,
+    const result = await this.invoke<CommandResult<T>>(command, { ...fields, attachmentId, route, callId });
+    if (!result || !result.success) {
+      throw new HostCallError(result?.error?.code ?? 1000000, result?.error?.message ?? 'Host call failed');
+    }
+    return result.data as T;
+  }
+
+  private async callProvider(
+    runtimeId: string,
+    providerId: string,
+    modelId: string,
+    request: ProviderChatRequest,
+  ): Promise<ProviderChatResponse> {
+    const response = await this.callCapability<ProviderChatResponse | undefined>(runtimeId, 'module_call_provider', {
       providerId,
       modelId,
       request,
     });
-    if (!result || !result.success || !result.data) {
-      throw new HostCallError(result?.error?.code ?? 1000000, result?.error?.message ?? 'Host call failed');
-    }
-    return result.data;
+    if (!response) throw new HostCallError(1000000, 'Host call failed');
+    return response;
   }
 
   private readContract(namespace: unknown, runtimeId: string, moduleId: string, version: string): ModuleLifecycle | null {
@@ -529,6 +664,27 @@ export class ModuleRuntimeHost {
       providers: Object.freeze({
         call: (providerId: string, modelId: string, request: ProviderChatRequest) =>
           this.callProvider(runtimeId, providerId, modelId, request),
+      }),
+      storage: Object.freeze({
+        get: (key: string) => this.callCapability<unknown>(runtimeId, 'module_storage_get', { key }),
+        set: async (key: string, value: unknown) => {
+          await this.callCapability<unknown>(runtimeId, 'module_storage_set', { key, value });
+        },
+        delete: async (key: string) => {
+          await this.callCapability<unknown>(runtimeId, 'module_storage_delete', { key });
+        },
+        list: () => this.callCapability<ModuleStorageEntry[]>(runtimeId, 'module_storage_list', {}),
+      }),
+      network: Object.freeze({
+        request: (request: ModuleNetworkRequest) =>
+          this.callCapability<ModuleNetworkResponse>(runtimeId, 'module_network_request', { request }),
+      }),
+      mcp: Object.freeze({
+        callTool: (serverId: string, toolName: string, args: Record<string, unknown>) =>
+          this.callCapability<unknown>(runtimeId, 'module_call_mcp_tool', { serverId, toolName, arguments: args }),
+      }),
+      skills: Object.freeze({
+        prepare: (skillId: string) => this.callCapability<unknown>(runtimeId, 'module_prepare_skill', { skillId }),
       }),
       ui: moduleHostUi,
     });

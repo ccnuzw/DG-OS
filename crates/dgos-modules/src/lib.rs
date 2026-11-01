@@ -441,6 +441,12 @@ impl ModulePublisher {
         model.entry_url = Set(snapshot.entry_url.clone());
         model.updated_at = Set(chrono::Utc::now().timestamp());
         model.update(&tx).await.map_err(db_error)?;
+        // D086 applies to rollback as well: the restored manifest is the one
+        // in force, so grants it does not declare are withdrawn.
+        self.permissions
+            .revoke_undeclared_in(&tx, &snapshot.module_id, &snapshot.manifest)
+            .await
+            .map_err(|error| ModulePackageError::Database(error.to_string()))?;
         insert_update_event(
             &tx,
             operation_id,
@@ -754,6 +760,12 @@ impl ModulePublisher {
                 model.manifest = Set(package.manifest.clone());
                 model.updated_at = Set(chrono::Utc::now().timestamp());
                 model.update(&tx).await.map_err(db_error)?;
+                // D086: grants of permissions the new manifest dropped are
+                // withdrawn in the same transaction as the manifest switch.
+                self.permissions
+                    .revoke_undeclared_in(&tx, &package.module_id, &package.manifest)
+                    .await
+                    .map_err(|error| ModulePackageError::Database(error.to_string()))?;
             }
             module_update_events::ActiveModel {
                 id: Set(Uuid::new_v4().to_string()),
@@ -2000,6 +2012,75 @@ mod tests {
                 .unwrap()
                 .is_enabled
         );
+    }
+
+    /// Stage and commit `module-1@<version>` declaring `permissions`.
+    async fn publish_declaring(publisher: &ModulePublisher, version: &str, permissions: &[&str]) {
+        let source = tempdir().unwrap();
+        fs::write(
+            source.path().join("entry.js"),
+            format!("export default '{version}';"),
+        )
+        .unwrap();
+        let mut manifest = example_manifest(version);
+        manifest["permissions"] = serde_json::json!(permissions);
+        seal_manifest(source.path(), &manifest);
+        publisher
+            .commit(publisher.stage(source.path()).unwrap())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_update_that_drops_a_permission_withdraws_it_and_redeclaring_needs_a_new_grant() {
+        let (publisher, _store, db) = published(&["providers.call", "mcp.call"]).await;
+        let grants = publisher.permissions();
+        for user in ["user-a", "user-b"] {
+            grants
+                .grant(user, "module-1", "providers.call")
+                .await
+                .unwrap();
+            grants.grant(user, "module-1", "mcp.call").await.unwrap();
+        }
+        let revoked_audits = || async {
+            dgos_db::entities::module_permission_audits::Entity::find()
+                .filter(dgos_db::entities::module_permission_audits::Column::Action.eq("revoked"))
+                .all(&db)
+                .await
+                .unwrap()
+        };
+
+        publish_declaring(&publisher, "1.1.0", &["providers.call"]).await;
+        for user in ["user-a", "user-b"] {
+            assert!(grants
+                .check(user, "module-1", "providers.call")
+                .await
+                .unwrap());
+            assert!(!grants.check(user, "module-1", "mcp.call").await.unwrap());
+        }
+        let audits = revoked_audits().await;
+        assert_eq!(audits.len(), 2);
+        assert!(audits.iter().all(|audit| audit.permission == "mcp.call"));
+
+        // Declaring it again does not bring the old grant back.
+        publish_declaring(&publisher, "1.2.0", &["providers.call", "mcp.call"]).await;
+        assert!(!grants
+            .check("user-a", "module-1", "mcp.call")
+            .await
+            .unwrap());
+        assert_eq!(revoked_audits().await.len(), 2);
+        grants
+            .grant("user-a", "module-1", "mcp.call")
+            .await
+            .unwrap();
+        assert!(grants
+            .check("user-a", "module-1", "mcp.call")
+            .await
+            .unwrap());
+        assert!(!grants
+            .check("user-b", "module-1", "mcp.call")
+            .await
+            .unwrap());
     }
 
     #[tokio::test]
