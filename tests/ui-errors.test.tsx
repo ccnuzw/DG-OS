@@ -343,7 +343,7 @@ describe('ErrorPage (AC19)', () => {
           <App />
         </MemoryRouter>,
       );
-      await waitFor(() => expect(document.querySelector('.app-content')?.textContent).toContain('Settings Page'));
+      expect(await screen.findByRole('heading', { name: '系统设置' })).toBeTruthy();
       expect(screen.queryByText('404 页面不存在')).toBeNull();
     });
   });

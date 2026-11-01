@@ -121,10 +121,10 @@ describe('SPA navigation', () => {
 
     fireEvent.click(navLink('Settings'));
 
-    await screen.findByText('Settings Page');
+    await screen.findByRole('tablist', { name: '系统设置' });
     expect(pushState).toHaveBeenCalledWith(expect.anything(), '', '/settings');
     expect(window.location.pathname).toBe('/settings');
-    expect(screen.getByRole('link', { name: 'Module management' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '模块' })).toBeTruthy();
     expect(Reflect.get(window, '__spaMarker')).toBe('alive');
     Reflect.deleteProperty(window, '__spaMarker');
   });
@@ -134,11 +134,11 @@ describe('SPA navigation', () => {
     fireEvent.click(navLink('Providers'));
     await screen.findByText('Providers Page');
     fireEvent.click(navLink('Settings'));
-    await screen.findByText('Settings Page');
+    await screen.findByRole('tablist', { name: '系统设置' });
     fireEvent.click(navLink('Workbench'));
     await screen.findByText('Workbench Page');
     fireEvent.click(navLink('Settings'));
-    await screen.findByText('Settings Page');
+    await screen.findByRole('tablist', { name: '系统设置' });
 
     expect(bridge.attachCalls).toBe(1);
     expect(bridge.channels).toHaveLength(1);
@@ -147,7 +147,7 @@ describe('SPA navigation', () => {
   it('keeps a loaded module alive across route changes and re-attaches the same container', async () => {
     renderApp();
     fireEvent.click(navLink('Settings'));
-    await screen.findByText('Settings Page');
+    await screen.findByRole('tablist', { name: '系统设置' });
     await waitFor(() => expect(bridge.channels).toHaveLength(1));
     const channel = bridge.channels[0];
 
@@ -207,8 +207,7 @@ describe('Settings route parity with the Rust gate (D037)', () => {
 
       renderApp();
 
-      expect(screen.queryByText('Settings Page') !== null).toBe(expected);
-      expect(screen.queryByRole('link', { name: 'Module management' }) !== null).toBe(expected);
+      expect(screen.queryByRole('tablist', { name: '系统设置' }) !== null).toBe(expected);
     },
   );
 

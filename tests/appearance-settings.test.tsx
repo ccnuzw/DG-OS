@@ -83,15 +83,16 @@ afterEach(() => {
 });
 
 describe('route and entry', () => {
-  it('is reached from the Settings home link', async () => {
+  it('is reached from the Appearance tab of the Settings shell', async () => {
     await initAppearance();
     render(
       <MemoryRouter initialEntries={['/settings']}>
         <App />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole('link', { name: 'Appearance' }));
+    fireEvent.mouseDown(screen.getByRole('tab', { name: '外观' }), { button: 0 });
     expect(await screen.findByRole('heading', { name: '外观设置' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '外观' }).getAttribute('aria-selected')).toBe('true');
   });
 });
 

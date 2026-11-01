@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Routes, Route, Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Routes, Route, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import ProviderManagement from "./pages/ProviderManagement";
 import SkillsManagement from "./pages/SkillsManagement";
@@ -7,48 +7,21 @@ import Workbench from "./pages/Workbench";
 import McpManagement from "./pages/McpManagement";
 import McpConnectionNotice from "./components/McpConnectionNotice";
 import ModuleHostBootstrap from "./modules/ModuleHostBootstrap";
-import ModuleManagement from "./pages/ModuleManagement";
-import ModulePanel from "./pages/ModulePanel";
-import AppearanceSettings from "./pages/AppearanceSettings";
+import SettingsShell from "./pages/SettingsShell";
 import { useModuleInstances } from "./modules/ModuleSlots";
 import { Button, ErrorPage, Input, cn } from "@dgos/ui";
 import { isHostSettingsPath } from "./modules/hostRoutes";
 import { ROUTES } from "./appRoutes";
 import { usePageError } from "./pageError";
+import AccountSettings from "./pages/AccountSettings";
+import AccountMenu from "./accounts/AccountMenu";
 
 // Router matching decodes the path, so `/%73ettings` reaches this route. The raw location path is
 // what the Rust gate sees (D037), so the page guards on it and never shows Settings where Rust denies.
-function SettingsHome() {
-  return (
-    <div className="flex flex-col items-start gap-3 p-6">
-      <div className="text-lg font-semibold">Settings Page</div>
-      <Link
-        to="/settings/modules"
-        className="text-primary underline focus-visible:outline-2 focus-visible:outline-focus-ring"
-      >
-        Module management
-      </Link>
-      <Link
-        to={ROUTES.appearance}
-        className="text-primary underline focus-visible:outline-2 focus-visible:outline-focus-ring"
-      >
-        Appearance
-      </Link>
-    </div>
-  );
-}
-
 function SettingsPage() {
   const { pathname } = useLocation();
   if (!isHostSettingsPath(pathname)) return <div className="p-6">Not found</div>;
-  return (
-    <Routes>
-      <Route path="modules" element={<ModuleManagement />} />
-      <Route path="appearance" element={<AppearanceSettings />} />
-      <Route path="modules/:moduleId" element={<ModulePanel />} />
-      <Route path="*" element={<SettingsHome />} />
-    </Routes>
-  );
+  return <SettingsShell />;
 }
 
 // One entry per module that currently has a live instance; it disappears when the instance unloads (D055).
@@ -132,6 +105,7 @@ function App() {
         <NavItem to={ROUTES.settings} end>Settings</NavItem>
         <NavItem to={ROUTES.modules} end>Modules</NavItem>
         <ModuleNavLinks />
+        <AccountMenu />
       </nav>
 
       <McpConnectionNotice />
@@ -143,6 +117,7 @@ function App() {
           <Route path={ROUTES.skills} element={<SkillsManagement />} />
           <Route path={ROUTES.workbench} element={<Workbench />} />
           <Route path={ROUTES.mcp} element={<McpManagement />} />
+          <Route path={ROUTES.account} element={<AccountSettings />} />
           <Route path="/settings/*" caseSensitive element={<SettingsPage />} />
           <Route path="*" element={<NotFoundRoute />} />
         </Routes>

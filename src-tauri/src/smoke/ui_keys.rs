@@ -400,9 +400,10 @@ async fn open_gallery(app: &AppHandle) -> bool {
 async fn gallery_controls(app: &AppHandle, checks: &mut Checks) {
     // Tabs
     let t = "const t = document.activeElement; return { role: t.getAttribute('role'), sel: t.getAttribute('aria-selected'), label: lbl(t) };";
+    // D085: the Settings shell's own tablist comes first on this page; the gallery's Tabs are inside the module.
     if tab_until(
         app,
-        "document.activeElement.getAttribute('role') === 'tab'",
+        "document.activeElement.getAttribute('role') === 'tab' && !!document.activeElement.closest('[data-module-id=\"p8-gallery\"]')",
         40,
         false,
     )
@@ -1070,7 +1071,8 @@ async fn appearance_e2e(app: &AppHandle, checks: &mut Checks) {
         return;
     }
 
-    let link = "const a = [...document.querySelectorAll('a')].find((x) => x.textContent.trim() === 'Appearance'); if (!a) return false; a.focus(); return document.activeElement === a;";
+    // D085: the Settings shell's tabs activate manually, so Enter on the focused 外观 tab opens the page.
+    let link = "const a = [...document.querySelectorAll('[role=\"tablist\"][aria-label=\"系统设置\"] [role=\"tab\"]')].find((x) => x.textContent.trim() === '外观'); if (!a) return false; a.focus(); return document.activeElement === a;";
     let focused = js(app, link).await == true;
     if focused {
         key(app, Key::Enter).await;
@@ -1082,7 +1084,7 @@ async fn appearance_e2e(app: &AppHandle, checks: &mut Checks) {
     .await
         == true;
     checks.check(
-        "E2E-05: Enter on the Appearance link on /settings opens /settings/appearance",
+        "E2E-05: Enter on the 外观 tab on /settings opens /settings/appearance",
         focused && opened,
         format!("focused={focused} opened={opened}"),
     );
