@@ -2,7 +2,7 @@
 title: "01 Provider适配框架 - 技术设计"
 version: V1
 feature_id: V1-FR-001
-updated: 2026-11-01
+updated: 2026-11-02
 ---
 # 01 Provider适配框架 - 技术设计
 
@@ -31,6 +31,17 @@ updated: 2026-11-01
 | 默认开启思考的兼容厂商（如 DeepSeek）在工具循环中要求回传 `reasoning_content`，现有 `ToolMessage` 不保存该字段 | 高 | 按上一轮响应里实际出现的推理字段名原样回传（B01-51），`ToolMessage.reasoning` 保存原值；按厂商文档，现有 `openai_compatible` 工具循环可能已在第二轮被拒，未用真实调用复现 | ADR-0003 |
 | 三方服务偏离协议（用户自填 base_url，范围无法穷举） | 高 | 通用画像只发标准字段、响应宽容读取；已知差异写成内置画像（B01-44）；按服务做真实 smoke | ADR-0003 |
 | 推理内容进入持久化或日志 | 中 | `ToolMessage.reasoning` 不序列化给 renderer，不写库；审计只记类别 | D023 |
+
+### OS 凭据适配补充（D117，2026-11-02）
+
+Provider 的 OS vault 仍由宿主持有，`dgos-providers` 不接触平台 API。宿主的
+`os_credentials` 适配器统一 Provider 与 MCP 的 keyring 调用：debug 构建使用独立的
+开发 service namespace，release 构建保持生产 namespace；原生调用在 blocking worker
+中串行执行，单次最多等待 10 秒。`keyring::Error::NoEntry` 只表示 opaque reference
+没有对应条目，Provider 映射为 `credential_required`（1001016）；平台拒绝、锁定、超时
+或 worker 失败仍映射为 `provider_credential_unavailable`（1001015）。日志只记录操作名和
+错误类别，不记录 account、credential reference、API Key 或 token。旧 debug 条目不自动
+删除，用户重新保存凭据后写入当前开发 namespace。
 
 ## 单元契约
 
@@ -630,6 +641,12 @@ OpenAI 是否以 `context_length_exceeded` 表示上下文超长，在可访问�
 3. `json_object`：改规格，标注 V1 未实现。需要它的厂商（候选表里的 DeepSeek、智谱、硅基流动）加入时再做。
 4. 结束原因与内容矛盾：保持 1000000，不改成 1001025。1001025 的含义是“响应不是预期的 JSON、超限或收到 3xx”，这里是合法 JSON 但内容自相矛盾，语义不同；改码还会影响工作台任务错误码和 `tool_flow` 里只断言前缀 `provider_` 的用例。代价是这类上游异常在任务里显示为 `provider_1000000`，和宿主内部错误分不开；以后需要区分时另行登记新码。
 
+## 验收复核（2026-11-02）
+
+FR-001 按既有本地自动化、macOS WKWebView 流式命令 smoke，以及网关 A 的两次用户手工真实调用记录，阶段状态可记为“本地验证”；该结论由实现状态文档维护。网关 A 是同一个第三方网关，NextGpt 与 Kiro 不代表 OpenAI/Anthropic 官方服务，也不能代表第二个独立网关。真实调用未留存自动化日志，且不覆盖跨平台和完整 Provider 管理界面。
+
+发布阶段仍需按第 3 节风险逐项验证：官方 OpenAI 与 Anthropic、第二个独立真实网关、真实 WebView 的 Provider 管理/排序及窗口销毁取消、SYN 无响应场景、Windows/Linux 与发布包 OS 凭据。工作台前端流式 Provider 界面尚未实现；`top_p`/`top_k`、4096 默认值、`json_object` 等已知差异仍按上文记录，不能因阶段状态变化视为已解决。ADR-0003 维持 Accepted，不因验收复核重开或改写决策。
+
 
 ## 变更记录
 
@@ -643,3 +660,4 @@ OpenAI 是否以 `context_length_exceeded` 表示上下文超长，在可访问�
 | 2026-10-30 | 已知差异第 8 项处理：`ProviderManager` 复用一个 HTTP 客户端（`transport::http_client`、`Transport::with_client`、两个适配器的 `with_client`），新增 `tests/shared_client.rs` | - |
 | 2026-11-01 | 文档与代码核对：单元契约 `list_vendors` 的返回类型改为实际的 `ProviderVendor`（`crates/dgos-providers/src/vendor.rs`）；“已知差异”导语区分第 5～7 项（事实记录）与第 8 项（已处理）。未改动分支编号与冻结决策 | - |
 | 2026-11-01 | 按 D098 第 7 项：文首去掉“草案”“评审结果待定”（ADR-0003 已 Accepted），来源行指向主规格 §2.4 的新锚点 `#24-三方兼容协议扩展`；§2.4.6 中标为“推断”的数值仍是推断，不因接受而变为已校准 | D098 |
+| 2026-11-02 | 增加 FR-001 验收复核与证据边界：网关 A 的两次手工调用仅支持单一第三方网关本地验证，不升格为官方服务或发布验收；列明发布阶段缺口，ADR-0003 保持 Accepted | - |

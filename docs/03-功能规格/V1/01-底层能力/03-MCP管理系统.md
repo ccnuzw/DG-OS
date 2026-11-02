@@ -472,6 +472,12 @@ npm test -- --run tests/mcp-management.test.tsx
 
 **证据边界**：第 10.4 节官方兼容 smoke、第 10.5 节 mock/fixture 与本节原生验证分别记录，不互相升格为完整跨平台 E2E。
 
+**W4 macOS 真实 WebView smoke（2026-11-02）**：新增 `src-tauri/src/smoke/mcp.rs` 与 `src-tauri/tests/webview_smoke_mcp.rs`。用单独临时 SQLite 和测试凭据 vault，在可见 WKWebView 中实际加载已构建的前端页面，并经生产 MCP Tauri 命令管理两个独立 Server：官方 `@modelcontextprotocol/server-filesystem@2026.8.31` stdio Server，以及官方 MCP SDK `1.32.2` 提供的 Streamable HTTP echo 测试 Server。`cargo check --offline -p dgos --features mcp-smoke --test webview_smoke_mcp` 通过；使用第 10.1 节 arm64 linker 环境、下列外部依赖路径运行 `cargo test --offline -p dgos --features mcp-smoke --test webview_smoke_mcp -- --nocapture`，最终 6/6 通过：页面加载、两个 Server 同时呈现、filesystem 工具精确参数确认及真实文件列表结果、HTTP echo 工具调用、重连耗尽后 `/workbench` 恢复失败提示、脱敏使用记录。恢复失败场景从已连通的官方 filesystem Server 转换到本机拒绝连接的回环地址，并通过仅 smoke feature 的监控 tick hook 确定性触发；生产重试间隔未缩短。所有配置仅存在于该 smoke 临时数据库，Node/官方 Server 是测试外部依赖，不随 DG-OS 应用打包或默认写入用户配置。
+
+验证时环境变量为 `DGOS_OFFICIAL_NODE=/Users/apple/.local/bin/node`、`DGOS_OFFICIAL_FILESYSTEM_SERVER=/tmp/dgos-mcp-official/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js`、`DGOS_OFFICIAL_MCP_SDK_PREFIX=/tmp/dgos-mcp-official`；`npm run build`、`npm test -- --run tests/mcp-management.test.tsx`（26/26）亦通过。该证据为 macOS 可见 WKWebView/debug smoke，不单独替代发布 `.app` 管理验收。真实 Provider tools CLI 链路见前述 2026-10-28 记录；两者尚未在同一真实桌面任务里串接。Windows/Linux OS 凭据、签名/安装、真实 WebView 内取消/未知结果/最终审计失败与跨平台运行均未由本 smoke 覆盖。
+
+**W4 macOS release `.app` 管理核对（2026-11-02）**：以 arm64 linker 环境构建隔离 unsigned `DGOS MCP W4 Acceptance.app`（`target/release/bundle/macos/`，16.29 MiB，identifier `com.dgos.mcpw4`）。通过真实发布 bundle 的 `tauri://localhost` 页面进入 MCP 管理，保存并连接官方 filesystem stdio Server，发现工具并完成 `list_directory` 双步确认调用，结果 `[FILE] acceptance.txt`，usage record #1；随后保存并连接官方 SDK Streamable HTTP echo Server，发现 `echo`，完成精确参数 `{"text":"DGOS-W4-RELEASE-ECHO"}` 的双步确认调用，回传同一文本，usage record #2。该核对使用 `/tmp/dgos-mcp-release-data` 和隔离应用标识；退出后应用已关闭。Node Server 仍是外部测试依赖，未打进 `.app`。证明 macOS unsigned release 构建中的 MCP 管理、配置、连接、确认及调用界面可用；不证明签名、公证、安装升级或跨平台运行，也不把两个外部 Server 声称为随包内置。该 `.app` 由 `npm run tauri -- build --bundles app --config '{"productName":"DGOS MCP W4 Acceptance","identifier":"com.dgos.mcpw4"}'` 构建，首个未设置 arm64 linker 环境变量的尝试因环境 `xcrun` 架构不匹配失败，添加本节 arm64 linker 环境变量后通过；未运行完整 `release:build` artifact gate。
+
 **macOS release 资源/退出核对（2026-10-28）**：使用隔离标识 `com.dgos.mcp-release-acceptance` 构建 `DGOS MCP Release Acceptance.app`（release、unsigned、12.81 MiB）。原生页面成功加载并浏览 6 个 bundled Skills，证明 `resource_dir()/skills` 路径可用；通过 `super+q` 退出后以进程检查确认无残留。该包未签名、未安装，不能证明签名分发、安装升级或跨平台运行时。
 
 ### 10.4 官方兼容性 smoke
@@ -546,6 +552,7 @@ npm test -- --run tests/mcp-management.test.tsx
 | 2026-10-27 | 补齐按用户/Server/call_id 取消、专用 stdio writer、拒绝/超时/取消审计、启动 pending 中断恢复和取消 UI；不把取消声称为外部回滚 | Codex |
 | 2026-11-01 | 按代码事实核对：§6.1 补模块发起的 `mcp.call` 路径（D093）；§11.3 用户依赖改为宿主会话派生；AC 原文、编号与证据状态未改 | Kiro |
 | 2026-11-01 | AC07、AC10、AC11 改为“本地通过”：新增成功心跳测试，加强重试耗尽与多调用方并发配对断言，两处变异验证；AC 原文与编号不变 | Kiro |
+| 2026-11-02 | 增加 W4 macOS 真实 WebView smoke 6/6，并核对 unsigned release `.app` 中双官方 Server 配置/连接/确认/调用；跨平台凭据与签名安装仍未验证 | Codex |
 
 ---
 
