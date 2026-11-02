@@ -1,6 +1,7 @@
 # 排除的目录
 docs-old/
 .codebuddy/
+/UICK/
 
 # macOS
 .DS_Store
