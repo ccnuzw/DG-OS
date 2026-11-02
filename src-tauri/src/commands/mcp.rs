@@ -1,5 +1,5 @@
 use crate::host::{self, Capability};
-use crate::os_credentials::{self, CredentialStoreFailure};
+use crate::os_credentials::{self, CredentialStoreFailure, MCP_SERVICE};
 use crate::session::SessionResolver;
 use async_trait::async_trait;
 use dgos_mcp::{
@@ -23,7 +23,7 @@ impl McpCredentialVault for OsCredentialVault {
     async fn store(&self, scope: &CredentialScope, token: SecretToken) -> dgos_mcp::Result<()> {
         let account = scope.account();
         os_credentials::run("mcp.store", move || {
-            let entry = keyring::Entry::new("com.dgos.app.mcp", &account).map_err(|error| error)?;
+            let entry = keyring::Entry::new(MCP_SERVICE, &account).map_err(|error| error)?;
             entry.set_password(token.expose())
         })
         .await
@@ -34,7 +34,7 @@ impl McpCredentialVault for OsCredentialVault {
     async fn load(&self, scope: &CredentialScope) -> dgos_mcp::Result<SecretToken> {
         let account = scope.account();
         let value = os_credentials::run("mcp.load", move || {
-            keyring::Entry::new("com.dgos.app.mcp", &account)
+            keyring::Entry::new(MCP_SERVICE, &account)
                 .map_err(|error| error)?
                 .get_password()
                 .map_err(|error| error)
@@ -50,7 +50,7 @@ impl McpCredentialVault for OsCredentialVault {
     async fn remove(&self, scope: &CredentialScope) -> dgos_mcp::Result<()> {
         let account = scope.account();
         os_credentials::run("mcp.remove", move || {
-            let entry = keyring::Entry::new("com.dgos.app.mcp", &account).map_err(|error| error)?;
+            let entry = keyring::Entry::new(MCP_SERVICE, &account).map_err(|error| error)?;
             match entry.delete_credential() {
                 Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
                 Err(error) => Err(error),

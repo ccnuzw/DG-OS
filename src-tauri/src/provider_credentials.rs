@@ -1,4 +1,4 @@
-use crate::os_credentials::{self, CredentialStoreFailure};
+use crate::os_credentials::{self, CredentialStoreFailure, PROVIDER_SERVICE};
 use async_trait::async_trait;
 use dgos_providers::{ProviderCredentialScope, ProviderCredentialVault, SecretValue};
 use dgos_types::{DgosError, DgosResult};
@@ -10,8 +10,7 @@ impl ProviderCredentialVault for OsProviderCredentialVault {
     async fn store(&self, scope: &ProviderCredentialScope, secret: SecretValue) -> DgosResult<()> {
         let account = scope.account();
         os_credentials::run("provider.store", move || {
-            let entry =
-                keyring::Entry::new("com.dgos.app.providers", &account).map_err(|error| error)?;
+            let entry = keyring::Entry::new(PROVIDER_SERVICE, &account).map_err(|error| error)?;
             entry.set_password(secret.expose())
         })
         .await
@@ -25,7 +24,7 @@ impl ProviderCredentialVault for OsProviderCredentialVault {
     async fn load(&self, scope: &ProviderCredentialScope) -> DgosResult<SecretValue> {
         let account = scope.account();
         let value = os_credentials::run("provider.load", move || {
-            let value = keyring::Entry::new("com.dgos.app.providers", &account)
+            let value = keyring::Entry::new(PROVIDER_SERVICE, &account)
                 .map_err(|error| error)?
                 .get_password()
                 .map_err(|error| error)?;
@@ -44,8 +43,7 @@ impl ProviderCredentialVault for OsProviderCredentialVault {
     async fn remove(&self, scope: &ProviderCredentialScope) -> DgosResult<()> {
         let account = scope.account();
         os_credentials::run("provider.remove", move || {
-            let entry =
-                keyring::Entry::new("com.dgos.app.providers", &account).map_err(|error| error)?;
+            let entry = keyring::Entry::new(PROVIDER_SERVICE, &account).map_err(|error| error)?;
             match entry.delete_credential() {
                 Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
                 Err(error) => Err(error),
@@ -63,13 +61,6 @@ mod tests {
     #[tokio::test]
     #[ignore = "explicit opt-in: creates and removes one isolated OS credential"]
     async fn provider_os_vault_normal_lifecycle() {
-        // A running desktop instance may have an interactive Keychain Access
-        // prompt open for an older development signature. Do not run this
-        // destructive OS integration test concurrently with the app process.
-        assert!(
-            std::env::var("DGOS_TEST_PROVIDER_OS_VAULT_ALLOW_CONCURRENT").as_deref() == Ok("1"),
-            "run this test only after closing DG-OS and any Keychain Access prompt"
-        );
         assert_eq!(
             std::env::var("DGOS_TEST_PROVIDER_OS_VAULT").as_deref(),
             Ok("1")
