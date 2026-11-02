@@ -1,5 +1,6 @@
 import { extractErrorCode } from '@dgos/ui';
 import { invoke } from '@tauri-apps/api/core';
+import { t } from '../i18n';
 
 // V1-FR-008 local accounts: typed wrappers for the six host commands. The host decides who is signed in; no
 // command takes a user id, token or account id, and the renderer keeps none (D087). A failed command rejects with
@@ -93,16 +94,16 @@ const PASSWORD_MAX = 128;
 
 export function usernameProblem(username: string): string | undefined {
   const length = [...username].length;
-  return length >= 1 && length <= USERNAME_MAX ? undefined : '用户名需为 1～32 个字符';
+  return length >= 1 && length <= USERNAME_MAX ? undefined : t('account.usernameLength');
 }
 
 export function passwordProblem(password: string): string | undefined {
   const length = [...password].length;
-  return length >= PASSWORD_MIN && length <= PASSWORD_MAX ? undefined : '密码需为 8～128 个字符';
+  return length >= PASSWORD_MIN && length <= PASSWORD_MAX ? undefined : t('account.passwordLength');
 }
 
 export function confirmProblem(password: string, confirm: string): string | undefined {
-  return password === confirm ? undefined : '两次输入的密码不一致';
+  return password === confirm ? undefined : t('account.passwordMismatch');
 }
 
 /** Inline text for the account error codes a form can show next to its fields; `undefined` for any other error. */
@@ -110,22 +111,22 @@ export function accountErrorText(error: unknown): string | undefined {
   if (!(error instanceof AccountCommandError)) return undefined;
   switch (error.code) {
     case 1008001:
-      return '用户名已存在';
+      return t('errors.usernameExists');
     case 1008002:
-      return '密码需为 8～128 个字符';
+      return t('account.passwordLength');
     case 1008003:
-      return '用户名需为 1～32 个字符，且首尾不能有空白、不能含控制字符';
+      return t('account.usernameInvalid');
     case 1008005:
-      return '用户名或密码错误';
+      return t('account.invalidCredentials');
     case 1008007:
-      return '登录状态已失效，请重新登录';
+      return t('account.sessionExpired');
     case 1008009:
-      return '该账户正在删除，将在应用重新启动后继续完成';
+      return t('account.deleting');
     case 1008011: {
       const seconds = retryAfterSeconds(error.detail);
       return seconds !== null
-        ? `尝试次数过多，请 ${Math.max(1, Math.ceil(seconds))} 秒后再试`
-        : '尝试次数过多，请稍后再试';
+        ? t('account.rateLimitSeconds', { seconds: Math.max(1, Math.ceil(seconds)) })
+        : t('account.rateLimit');
     }
     default:
       return undefined;

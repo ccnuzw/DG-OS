@@ -15,12 +15,14 @@ import { ROUTES } from "./appRoutes";
 import { usePageError } from "./pageError";
 import AccountSettings from "./pages/AccountSettings";
 import AccountMenu from "./accounts/AccountMenu";
+import { useLocale } from './i18n';
 
 // Router matching decodes the path, so `/%73ettings` reaches this route. The raw location path is
 // what the Rust gate sees (D037), so the page guards on it and never shows Settings where Rust denies.
 function SettingsPage() {
+  const { t } = useLocale();
   const { pathname } = useLocation();
-  if (!isHostSettingsPath(pathname)) return <div className="p-6">Not found</div>;
+  if (!isHostSettingsPath(pathname)) return <div className="p-6">{t('system.notFound')}</div>;
   return <SettingsShell />;
 }
 
@@ -63,6 +65,7 @@ export function NotFoundRoute() {
 }
 
 function Home() {
+  const { t } = useLocale();
   const [greetMsg, setGreetMsg] = useState("");
   const [name, setName] = useState("");
   const reportError = usePageError("Home");
@@ -76,16 +79,16 @@ function Home() {
   }
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
-      <h1 className="text-4xl font-semibold">Welcome to DG-OS</h1>
-      <p className="text-muted-foreground">A local-first AI application development framework</p>
+      <h1 className="text-4xl font-semibold">{t('home.title')}</h1>
+      <p className="text-muted-foreground">{t('home.subtitle')}</p>
       <div className="flex flex-wrap items-end justify-center gap-2">
         <Input
           id="greet-input"
-          aria-label="Name"
+          aria-label={t('home.name')}
           onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
+          placeholder={t('home.placeholder')}
         />
-        <Button onClick={() => void greet()}>Greet</Button>
+        <Button onClick={() => void greet()}>{t('home.greet')}</Button>
       </div>
       <p className="text-muted-foreground">{greetMsg}</p>
     </div>
@@ -93,24 +96,25 @@ function Home() {
 }
 
 function App() {
+  const { t } = useLocale();
   return (
     <div className="flex h-screen w-full flex-col">
       <ModuleHostBootstrap />
       <nav className="flex flex-wrap gap-2 border-b border-border bg-muted px-6 py-3">
-        <NavItem to={ROUTES.home} end>Home</NavItem>
-        <NavItem to={ROUTES.providers}>Providers</NavItem>
-        <NavItem to={ROUTES.skills}>Skills</NavItem>
-        <NavItem to={ROUTES.workbench}>Workbench</NavItem>
-        <NavItem to={ROUTES.mcp}>MCP</NavItem>
-        <NavItem to={ROUTES.settings} end>Settings</NavItem>
-        <NavItem to={ROUTES.modules} end>Modules</NavItem>
+        <NavItem to={ROUTES.home} end>{t('nav.home')}</NavItem>
+        <NavItem to={ROUTES.providers}>{t('nav.providers')}</NavItem>
+        <NavItem to={ROUTES.skills}>{t('nav.skills')}</NavItem>
+        <NavItem to={ROUTES.workbench}>{t('nav.workbench')}</NavItem>
+        <NavItem to={ROUTES.mcp}>{t('nav.mcp')}</NavItem>
+        <NavItem to={ROUTES.settings} end>{t('nav.settings')}</NavItem>
+        <NavItem to={ROUTES.modules} end>{t('nav.modules')}</NavItem>
         <ModuleNavLinks />
         <AccountMenu />
       </nav>
 
       <McpConnectionNotice />
 
-      <div className="app-content min-h-0 flex-1 overflow-hidden">
+      <div className="app-content min-h-0 flex-1 overflow-visible">
         <Routes>
           <Route path={ROUTES.home} element={<Home />} />
           <Route path={ROUTES.providers} element={<ProviderManagement />} />

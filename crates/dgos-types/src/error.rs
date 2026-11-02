@@ -16,6 +16,9 @@ pub enum DgosError {
     #[error("Invalid appearance preferences patch")]
     InvalidAppearancePatch,
 
+    #[error("Invalid language preference")]
+    InvalidLanguagePreference,
+
     // Module lifecycle errors (1004xxx); the message is a fixed string.
     #[error("{}", .0.message())]
     ModuleOperation(ModuleOperationErrorKind),
@@ -177,6 +180,7 @@ impl DgosError {
             DgosError::PermissionDenied => 1004004,
             DgosError::ThemeNotFound => 1005001,
             DgosError::InvalidAppearancePatch => 1005002,
+            DgosError::InvalidLanguagePreference => 1005002,
             DgosError::InvalidDensity => 1005006,
             DgosError::ModuleOperation(kind) => kind.code(),
             DgosError::ModuleCapabilityInputInvalid => 1004024,

@@ -1,3 +1,4 @@
+import { setLocaleForTesting } from '../src/i18n/runtime';
 import { StrictMode } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -21,6 +22,7 @@ const detail = { ...official, format: 'skill_md', entry: 'SKILL.md', manifest, c
 } };
 let installed: unknown[] = [];
 beforeEach(() => {
+  setLocaleForTesting('en-US');
   installed = [];
   useSkillsStore.setState(initial, true);
   mockedInvoke.mockImplementation(async (command, args) => {
@@ -79,7 +81,7 @@ it('AC20 adds an official skill and disables it without uninstalling bundled fil
   fireEvent.click(add);
   await screen.findByText(/Skill added to My Skills/);
   fireEvent.mouseDown(screen.getByRole('tab', { name: 'Installed (1)' }), { button: 0 });
-  const toggle = screen.getByRole('switch', { name: 'Enable Summary' });
+  const toggle = screen.getByRole('switch', { name: 'Disable Summary' });
   expect(toggle.getAttribute('aria-checked')).toBe('true');
   fireEvent.click(toggle);
   await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith('toggle_skill', { skillId: official.skill_id, enabled: false }));

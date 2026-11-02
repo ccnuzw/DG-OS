@@ -10,6 +10,8 @@ import { flushSync } from 'react-dom';
 import { createRoot, type Root } from 'react-dom/client';
 import { Channel, invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { moduleHostUi, type ModuleHostUi } from './moduleHostUi';
+import { createModuleI18n, type HostI18n } from './moduleHostI18n';
+import { useLocale } from '../i18n';
 
 export type LoadFailureStage = 'import' | 'contract' | 'render' | 'hook' | 'timeout' | 'cancelled';
 
@@ -155,6 +157,7 @@ type LifecycleHook = (typeof LIFECYCLE_HOOKS)[number];
 
 interface ModuleLifecycle {
   Component: React.ComponentType;
+  disposeI18n: () => void;
   onLoad?: () => unknown;
   onUnload?: () => unknown;
   onBeforeUpdate?: () => unknown;
@@ -226,6 +229,7 @@ interface ModuleHostApi {
   }>;
   // D067: added alongside the existing fields; `apiVersion` stays 1.
   readonly ui: ModuleHostUi;
+  readonly i18n: Readonly<HostI18n>;
 }
 
 function newCallId(): string {
@@ -290,10 +294,15 @@ class ModuleBoundary extends React.Component<BoundaryProps, { failed: boolean }>
 
   render(): React.ReactNode {
     if (this.state.failed) {
-      return React.createElement('div', { role: 'alert', 'data-module-error': '' }, 'This module failed to render.');
+      return React.createElement(ModuleRenderFailure);
     }
     return this.props.children;
   }
+}
+
+function ModuleRenderFailure() {
+  const { t } = useLocale();
+  return React.createElement('div', { role: 'alert', 'data-module-error': '' }, t('module.renderFailure'));
 }
 
 // Layout effects run synchronously inside flushSync, so "mounted" is known when flushSync returns.
@@ -508,8 +517,10 @@ export class ModuleRuntimeHost {
     };
 
     let instance: ModuleInstance | null = null;
+    let lifecycle: ModuleLifecycle | null = null;
     const failed = (stage: LoadFailureStage): Receipt => {
       if (instance !== null) this.dispose(instance);
+      else lifecycle?.disposeI18n();
       return { kind: 'loadFailed', stage };
     };
 
@@ -530,7 +541,7 @@ export class ModuleRuntimeHost {
       if (importFailed) return failed('import');
 
       stage = 'contract';
-      const lifecycle = this.readContract(namespace, runtimeId, moduleId, version);
+      lifecycle = this.readContract(namespace, runtimeId, moduleId, version);
       if (lifecycle === null) return failed('contract');
 
       stage = 'render';
@@ -568,7 +579,7 @@ export class ModuleRuntimeHost {
                   status.mounted = true;
                 },
               }),
-              React.createElement(lifecycle.Component),
+              React.createElement(created.lifecycle.Component),
             ),
           );
         });
@@ -726,6 +737,8 @@ export class ModuleRuntimeHost {
       console.error('module contract: default export is not a function');
       return null;
     }
+    const i18n = createModuleI18n();
+    const invalid = (): null => { i18n.dispose(); return null; };
     const host: ModuleHostApi = Object.freeze({
       React,
       apiVersion: 1 as const,
@@ -765,22 +778,23 @@ export class ModuleRuntimeHost {
           this.callCapability<unknown>(runtimeId, 'module_prepare_skill', { skillId }, options),
       }),
       ui: moduleHostUi,
+      i18n: i18n.api,
     });
     let produced: unknown;
     try {
       produced = (factory as (host: ModuleHostApi) => unknown)(host);
     } catch (error) {
       console.error('module contract: factory threw', error);
-      return null;
+      return invalid();
     }
     if (typeof produced !== 'object' || produced === null) {
       console.error('module contract: factory did not return an object');
-      return null;
+      return invalid();
     }
     const Component: unknown = Reflect.get(produced, 'Component');
     if (typeof Component !== 'function') {
       console.error('module contract: Component is not a function or class component');
-      return null;
+      return invalid();
     }
     const hooks: Partial<Record<LifecycleHook, (...args: unknown[]) => unknown>> = {};
     for (const name of LIFECYCLE_HOOKS) {
@@ -788,11 +802,11 @@ export class ModuleRuntimeHost {
       if (hook === undefined) continue;
       if (typeof hook !== 'function') {
         console.error('module contract: lifecycle hooks must be functions when present');
-        return null;
+        return invalid();
       }
       hooks[name] = (...args) => Reflect.apply(hook, produced, args) as unknown;
     }
-    return { Component: Component as React.ComponentType, ...hooks };
+    return { Component: Component as React.ComponentType, disposeI18n: i18n.dispose, ...hooks };
   }
 
   // Races the hook against a timer so a promise that never settles cannot hang the host.
@@ -828,6 +842,7 @@ export class ModuleRuntimeHost {
   private dispose(instance: ModuleInstance): void {
     if (instance.disposed) return;
     instance.disposed = true;
+    instance.lifecycle.disposeI18n();
     if (this.instances.get(instance.runtimeId) === instance) this.instances.delete(instance.runtimeId);
     this.routes.delete(instance.runtimeId);
     this.hide(instance);

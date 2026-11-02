@@ -42,6 +42,7 @@ pub fn run() {
                 // Create directory if it doesn't exist
                 std::fs::create_dir_all(&app_dir).expect("Failed to create app data directory");
 
+
                 // One process per data directory (D077): recovery below assumes nobody else is
                 // generating. Exit before touching the database if another instance holds it.
                 match instance_lock::InstanceLock::acquire(&app_dir) {
@@ -299,6 +300,7 @@ pub fn run() {
                 app_handle.manage(manager);
                 app_handle.manage(skills_state);
                 app_handle.manage(dgos_db::AppearanceRepository::new(db.clone()));
+                app_handle.manage(dgos_db::HostSettingsRepository::new(db.clone()));
                 let mcp_for_accounts = mcp_state.manager.clone();
                 app_handle.manage(mcp_state);
                 app_handle.manage(workbench);
@@ -468,9 +470,12 @@ pub fn run() {
             commands::attach_module_host,
             commands::report_module_host,
             commands::report_module_crash,
-            // Appearance preferences (D065): typed, no generic settings access
-            commands::get_appearance_preferences,
-            commands::set_appearance_preferences,
+             // Appearance preferences (D065): typed, no generic settings access
+             commands::get_appearance_preferences,
+             commands::set_appearance_preferences,
+             // Host language preference (D118): available before account sign-in
+             commands::get_language_preferences,
+             commands::set_language_preferences,
             // Module capability call (D051): typed, one command per capability
             commands::module_call_provider,
             commands::cancel_module_call,

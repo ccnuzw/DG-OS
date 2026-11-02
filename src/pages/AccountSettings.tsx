@@ -14,12 +14,14 @@ import { InlineError } from '../accounts/AuthShell';
 import { CreateAccountForm } from '../accounts/CreateAccountForm';
 import { reloadApp } from '../accounts/reload';
 import { usePageError } from '../pageError';
+import { t, useLocale, useLocale as usePageLocale } from '../i18n';
 
 // V1-FR-008 account page. Which user is signed in is the host's knowledge; this page sends passwords only and
 // never a user id or token. Changing the password and deleting the account end the session on the host, so both
 // finish with a full reload (the gate then shows the sign-in page).
 
 function ChangePasswordCard() {
+  usePageLocale();
   const reportError = usePageError('AccountSettings');
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -32,7 +34,7 @@ function ChangePasswordCard() {
     event.preventDefault();
     if (busy) return;
     const problems = {
-      current: current === '' ? '请输入当前密码' : undefined,
+      current: current === '' ? t('account.currentPasswordRequired') : undefined,
       next: passwordProblem(next),
       confirm: confirmProblem(next, confirm),
     };
@@ -44,7 +46,7 @@ function ChangePasswordCard() {
       await changePassword(current, next);
     } catch (error) {
       setBusy(false);
-      if (error instanceof AccountCommandError && error.code === 1008005) setFormError('当前密码错误');
+      if (error instanceof AccountCommandError && error.code === 1008005) setFormError(t('account.currentPasswordWrong'));
       else {
         const text = accountErrorText(error);
         if (text) setFormError(text);
@@ -58,14 +60,14 @@ function ChangePasswordCard() {
   return (
     <Card>
       <Card.Header>
-        <h2 className="m-0 text-base font-semibold">修改密码</h2>
+        <h2 className="m-0 text-base font-semibold">{t('account.changePassword')}</h2>
       </Card.Header>
       <Card.Body>
         <form onSubmit={submit} noValidate>
           <Stack gap={4}>
-            <p className="m-0 text-muted-foreground">修改成功后会退出登录，请用新密码重新登录。</p>
+            <p className="m-0 text-muted-foreground">{t('account.changePasswordHelp')}</p>
             <Input
-              label="当前密码"
+              label={t('account.currentPassword')}
               type="password"
               autoComplete="current-password"
               value={current}
@@ -73,7 +75,7 @@ function ChangePasswordCard() {
               onChange={(event) => setCurrent(event.target.value)}
             />
             <Input
-              label="新密码"
+              label={t('account.newPassword')}
               type="password"
               autoComplete="new-password"
               value={next}
@@ -81,7 +83,7 @@ function ChangePasswordCard() {
               onChange={(event) => setNext(event.target.value)}
             />
             <Input
-              label="确认新密码"
+              label={t('account.confirmNewPassword')}
               type="password"
               autoComplete="new-password"
               value={confirm}
@@ -91,7 +93,7 @@ function ChangePasswordCard() {
             {formError ? <InlineError>{formError}</InlineError> : null}
             <div>
               <Button type="submit" loading={busy}>
-                修改密码
+                {t('account.changePassword')}
               </Button>
             </div>
           </Stack>
@@ -102,6 +104,7 @@ function ChangePasswordCard() {
 }
 
 function DeleteAccountDialog({ onClose, onSessionInvalid }: { onClose: () => void; onSessionInvalid: () => void }) {
+  const { t } = useLocale();
   const reportError = usePageError('AccountSettings');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string>();
@@ -111,7 +114,7 @@ function DeleteAccountDialog({ onClose, onSessionInvalid }: { onClose: () => voi
     event?.preventDefault();
     if (busy) return;
     if (password === '') {
-      setError('请输入密码以确认删除');
+      setError(t('account.confirmDeletePassword'));
       return;
     }
     setBusy(true);
@@ -138,16 +141,16 @@ function DeleteAccountDialog({ onClose, onSessionInvalid }: { onClose: () => voi
       onOpenChange={(open) => {
         if (!open && !busy) onClose();
       }}
-      title="删除账户？"
+      title={t('account.deleteTitle')}
       icon="warning"
-      description="此账户的全部数据将被永久删除，且无法恢复。"
+      description={t('account.deleteDescription')}
       footer={
         <>
           <Button variant="secondary" disabled={busy} onClick={onClose}>
-            取消
+            {t('account.cancel')}
           </Button>
           <Button variant="danger" loading={busy} onClick={() => void submit()}>
-            确认删除
+            {t('account.confirmDelete')}
           </Button>
         </>
       }
@@ -155,7 +158,7 @@ function DeleteAccountDialog({ onClose, onSessionInvalid }: { onClose: () => voi
       <form onSubmit={submit} noValidate>
         <Stack gap={3}>
           <Input
-            label="当前密码"
+            label={t('account.currentPassword')}
             type="password"
             autoComplete="current-password"
             value={password}
@@ -169,6 +172,8 @@ function DeleteAccountDialog({ onClose, onSessionInvalid }: { onClose: () => voi
 }
 
 export default function AccountSettings() {
+  const { t } = useLocale();
+  usePageLocale();
   const account = useAccount();
   const reportError = usePageError('AccountSettings');
   const [deleting, setDeleting] = useState(false);
@@ -176,8 +181,8 @@ export default function AccountSettings() {
   if (!account) {
     return (
       <div className="mx-auto flex max-w-2xl flex-col gap-6 p-6">
-        <h1 className="m-0 text-2xl font-semibold text-foreground">账户</h1>
-        <p className="m-0 text-sm text-muted-foreground">账户功能当前不可用。</p>
+        <h1 className="m-0 text-2xl font-semibold text-foreground">{t('account.title')}</h1>
+        <p className="m-0 text-sm text-muted-foreground">{t('account.unavailable')}</p>
       </div>
     );
   }
@@ -187,17 +192,17 @@ export default function AccountSettings() {
     return (
       <div className="h-full overflow-y-auto">
         <div className="mx-auto flex max-w-2xl flex-col gap-6 p-6">
-          <h1 className="m-0 text-2xl font-semibold text-foreground">账户</h1>
+          <h1 className="m-0 text-2xl font-semibold text-foreground">{t('account.title')}</h1>
           <Card>
             <Card.Header>
-              <h2 className="m-0 text-base font-semibold">创建第一个账户</h2>
+              <h2 className="m-0 text-base font-semibold">{t('account.first')}</h2>
             </Card.Header>
             <Card.Body>
               <Stack gap={4}>
                 <p className="m-0 text-muted-foreground">
-                  创建账户会为 DGOS 增加密码保护。这台设备上已有的本地数据将归入你创建的第一个账户。
+                  {t('account.firstHelp')}
                 </p>
-                <CreateAccountForm submitLabel="创建账户" onCreated={reloadApp} />
+                <CreateAccountForm submitLabel={t('account.create')} onCreated={reloadApp} />
               </Stack>
             </Card.Body>
           </Card>
@@ -210,26 +215,26 @@ export default function AccountSettings() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-2xl flex-col gap-6 p-6">
-        <h1 className="m-0 text-2xl font-semibold text-foreground">账户</h1>
+        <h1 className="m-0 text-2xl font-semibold text-foreground">{t('account.title')}</h1>
         <Card>
           <Card.Header>
-            <h2 className="m-0 text-base font-semibold">当前账户</h2>
+            <h2 className="m-0 text-base font-semibold">{t('account.current')}</h2>
           </Card.Header>
           <Card.Body>
             <p className="m-0">
-              当前登录：<strong>{state.current.username}</strong>
+              {t('account.signedInAs')}<strong>{state.current.username}</strong>
             </p>
           </Card.Body>
         </Card>
         <Card>
           <Card.Header>
-            <h2 className="m-0 text-base font-semibold">新建账户</h2>
+            <h2 className="m-0 text-base font-semibold">{t('account.addAnother')}</h2>
           </Card.Header>
           <Card.Body>
             <CreateAccountForm
-              submitLabel="新建账户"
+              submitLabel={t('account.create')}
               onCreated={() => {
-                toast.success('账户已创建');
+                toast.success(t('account.created'));
                 refresh().catch(reportError);
               }}
             />
@@ -238,14 +243,14 @@ export default function AccountSettings() {
         <ChangePasswordCard />
         <Card>
           <Card.Header>
-            <h2 className="m-0 text-base font-semibold text-error-text">删除账户</h2>
+            <h2 className="m-0 text-base font-semibold text-error-text">{t('account.deleteAccount')}</h2>
           </Card.Header>
           <Card.Body>
             <Stack gap={4}>
-              <p className="m-0 text-muted-foreground">删除后，此账户的全部数据将被永久删除，且无法恢复。</p>
+              <p className="m-0 text-muted-foreground">{t('account.deleteHelp')}</p>
               <div>
                 <Button variant="danger" onClick={() => setDeleting(true)}>
-                  删除账户
+                  {t('account.deleteAccount')}
                 </Button>
               </div>
             </Stack>

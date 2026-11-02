@@ -1,3 +1,4 @@
+import { setLocaleForTesting } from '../src/i18n/runtime';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
@@ -29,6 +30,7 @@ const servers = [
   { id: 'b', name: 'Beta', transport: 'http', enabled: false, status: 'configured', credential_ref: 'opaque-ref' },
 ];
 beforeEach(() => {
+  setLocaleForTesting('en-US');
   useMcpStore.setState(initial, true);
   vi.spyOn(HTMLDialogElement.prototype, 'showModal').mockImplementation(function (this: HTMLDialogElement) { this.open = true; });
   vi.spyOn(HTMLDialogElement.prototype, 'close').mockImplementation(function (this: HTMLDialogElement) { this.open = false; });
@@ -294,7 +296,7 @@ it('routes a failed server action through the unified error toast and keeps the 
   failing('disconnect_mcp_server', { code: 1000000 });
   renderWithFeedback();
   fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }));
-  expect(await screen.findByText('操作失败')).toBeTruthy();
+  expect(await screen.findByText('Operation failed')).toBeTruthy();
   expect(screen.getByText('MCP operation failed. Please retry.')).toBeTruthy();
   expect(useMcpStore.getState().error).toBe('MCP operation failed. Please retry.');
 });
@@ -306,7 +308,7 @@ it('opens the blocking error dialog for a severe host error from deleting a serv
   await screen.findByText('Alpha');
   fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0]);
   fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete MCP server?' })).getByRole('button', { name: 'Delete' }));
-  const dialog = await screen.findByRole('dialog', { name: '系统凭据库不可用' });
+  const dialog = await screen.findByRole('dialog', { name: 'OS credential store unavailable' });
   expect(dialog).toBeTruthy();
   expect(screen.queryByRole('dialog', { name: 'Delete MCP server?' })).toBeNull();
   expect(useMcpStore.getState().servers.map(server => server.id)).toContain('a');
@@ -408,7 +410,7 @@ it('reports a failed token removal once and closes the dialog', async () => {
   await select('Beta');
   fireEvent.click(screen.getByRole('button', { name: 'Remove token' }));
   fireEvent.click(within(await screen.findByRole('dialog', { name: 'Remove token?' })).getByRole('button', { name: 'Remove' }));
-  expect(await screen.findAllByText('操作失败')).toHaveLength(1);
+  expect(await screen.findAllByText('Operation failed')).toHaveLength(1);
   expect(screen.queryByRole('dialog', { name: 'Remove token?' })).toBeNull();
 });
 
@@ -422,7 +424,7 @@ it('reports a rejected tool confirmation once and keeps the inline dialog error'
   fireEvent.click(within(dialog).getByRole('button', { name: 'Review tool call', exact: true }));
   fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm and call tool' }));
   await within(dialog).findByText('MCP operation failed. Please retry.');
-  expect(await screen.findAllByText('操作失败')).toHaveLength(1);
+  expect(await screen.findAllByText('Operation failed')).toHaveLength(1);
   expect(mocked.mock.calls.some(([name]) => name === 'call_mcp_tool')).toBe(false);
 });
 
@@ -435,7 +437,7 @@ it('does not raise a host error toast for argument validation that never reached
   fireEvent.change(screen.getByLabelText(/^Arguments/), { target: { value: '["--root",' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save server' }));
   expect((await screen.findByRole('alert')).textContent).toBe('Arguments must be a JSON array of strings.');
-  expect(screen.queryByText('操作失败')).toBeNull();
+  expect(screen.queryByText('Operation failed')).toBeNull();
   expect(console.error).not.toHaveBeenCalled();
 });
 

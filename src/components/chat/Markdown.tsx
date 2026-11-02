@@ -1,3 +1,4 @@
+import { t, useLocale as usePageLocale } from '../../i18n';
 import { Component, Fragment, useMemo, useState, type ReactNode } from 'react';
 import { Lexer, type Token, type Tokens } from 'marked';
 import { common, createLowlight } from 'lowlight';
@@ -43,6 +44,7 @@ function httpsTarget(href: string): string | null {
 }
 
 function LinkButton({ url, children }: { url: string; children: ReactNode }) {
+  usePageLocale();
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -52,10 +54,10 @@ function LinkButton({ url, children }: { url: string; children: ReactNode }) {
       <Modal
         open={open}
         onOpenChange={setOpen}
-        title="打开外部链接？"
+        title={t('chat.openExternal')}
         icon="warning"
-        description={<span>将使用系统浏览器打开此地址，请确认来源可信：<span className="mt-2 block font-mono text-xs wrap-anywhere">{url}</span></span>}
-        confirmText="打开"
+        description={<span>{t('chat.externalHelp')}<span className="mt-2 block font-mono text-xs wrap-anywhere">{url}</span></span>}
+        confirmText={t('chat.open')}
         onConfirm={() => openUrl(url)}
       />
     </>
@@ -95,19 +97,20 @@ function highlight(lang: string | undefined, text: string): ReactNode[] | null {
 }
 
 function CodeBlock({ lang, text }: { lang?: string; text: string }) {
+  usePageLocale();
   const [state, copy] = useCopyFeedback();
   const label = lang?.trim().split(/\s+/)[0] ?? '';
   const highlighted = useMemo(() => highlight(label, text), [label, text]);
   return (
     <div className="my-2 overflow-hidden rounded-md border border-border bg-secondary">
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-1 text-xs text-muted-foreground">
-        <span className="min-w-0 wrap-anywhere">{label || '代码'}</span>
+        <span className="min-w-0 wrap-anywhere">{label || t('chat.code')}</span>
         <span className="flex items-center gap-2">
           <span role="status" className={cn('text-xs', state === 'failed' ? 'text-error-text' : 'text-success-text')}>{COPY_TEXT[state]}</span>
-          <Button size="sm" variant="ghost" onClick={() => copy(text)}>复制代码</Button>
+          <Button size="sm" variant="ghost" onClick={() => copy(text)}>{t('chat.copyCode')}</Button>
         </span>
       </div>
-      <pre tabIndex={0} aria-label={label ? `${label} 代码` : '代码'} className={cn('chat-code m-0 overflow-x-auto p-3 font-mono text-xs leading-relaxed', FOCUS)}>
+      <pre tabIndex={0} aria-label={label ? t('chat.codeLabel', { language: label }) : t('chat.code')} className={cn('chat-code m-0 overflow-x-auto p-3 font-mono text-xs leading-relaxed', FOCUS)}>
         <code>{highlighted ?? text}</code>
       </pre>
     </div>
@@ -155,7 +158,7 @@ function renderInline(tokens: readonly Token[] | undefined): ReactNode[] {
         return <br key={index} />;
       case 'checkbox': {
         const checkbox = token as Tokens.Checkbox;
-        return <input key={index} type="checkbox" disabled checked={checkbox.checked} readOnly aria-label="任务状态" className="mr-1 align-middle" />;
+        return <input key={index} type="checkbox" disabled checked={checkbox.checked} readOnly aria-label={t('chat.taskStatus')} className="mr-1 align-middle" />;
       }
       case 'link': {
         const link = token as Tokens.Link;
@@ -166,7 +169,7 @@ function renderInline(tokens: readonly Token[] | undefined): ReactNode[] {
       }
       case 'image': {
         const image = token as Tokens.Image;
-        return <span key={index}>[图片：{image.text || '无说明'}] {image.href}</span>;
+        return <span key={index}>{t('chat.image')}{image.text || t('chat.noAlt')}] {image.href}</span>;
       }
       case 'html':
         return <span key={index}>{token.raw}</span>;
@@ -237,10 +240,12 @@ function renderBlocks(tokens: readonly Token[]): ReactNode[] {
 }
 
 function PlainText({ source }: { source: string }) {
+  usePageLocale();
   return <pre className="m-0 whitespace-pre-wrap font-sans text-sm wrap-anywhere">{source}</pre>;
 }
 
 function MarkdownBody({ source }: { source: string }) {
+  usePageLocale();
   const tokens = useMemo(() => Lexer.lex(source), [source]);
   return <div className="text-sm leading-relaxed">{renderBlocks(tokens)}</div>;
 }
@@ -266,5 +271,6 @@ class MarkdownBoundary extends Component<BoundaryProps, BoundaryState> {
 }
 
 export default function Markdown({ source }: { source: string }) {
+  usePageLocale();
   return <MarkdownBoundary source={source}><MarkdownBody source={source} /></MarkdownBoundary>;
 }

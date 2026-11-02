@@ -13,9 +13,10 @@ import { chatReducer, findGenerating, initialChatState, lastAssistant } from './
 import { TEXTAREA } from './classes';
 import { uuidV4 } from './ids';
 import { MessageItem } from './MessageItem';
-import { HOST_STOPPED_TEXT, REPLACED_TEXT, chatErrorText, sessionEndedText } from './messages';
+import { hostStoppedText, replacedText, chatErrorText, sessionEndedText } from './messages';
 import { NewSessionForm } from './NewSessionForm';
 import { LanStream, type SocketLike, type StreamEnd, type StreamStatus } from './stream';
+import { getRemoteLocale, t } from './i18n';
 
 export interface ChatViewProps {
   api: LanApi;
@@ -47,11 +48,11 @@ function defaultSocket(url: string): SocketLike {
 }
 
 function formatTime(seconds: number): string {
-  return new Date(seconds * 1000).toLocaleString('zh-CN', { hour12: false });
+  return new Intl.DateTimeFormat(getRemoteLocale(), { dateStyle: 'medium', timeStyle: 'short' }).format(seconds * 1000);
 }
 
 function sessionLabel(session: ChatSession): string {
-  return session.title || '新会话';
+  return session.title || t('remote.newSession');
 }
 
 export function ChatView({ api, session, streamUrl, createSocket = defaultSocket, onSessionEnded, onLogout }: ChatViewProps) {
@@ -304,33 +305,33 @@ export function ChatView({ api, session, streamUrl, createSocket = defaultSocket
   const connected = streamStatus === 'open';
   const canSend = connected && !streamEnd && !generating && !sending && !!activeId;
   const olderCursor = activeId ? state.nextBefore[activeId] : null;
-  const title = panel === 'list' ? '会话' : panel === 'new' ? '新建会话' : activeSession ? sessionLabel(activeSession) : '聊天';
+  const title = panel === 'list' ? t('remote.sessionList') : panel === 'new' ? t('remote.newSession') : activeSession ? sessionLabel(activeSession) : t('remote.chat');
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col overflow-hidden">
       <header className="flex items-center gap-2 border-b border-border px-3 py-2">
         <Button variant="ghost" size="sm" onClick={() => setPanel(panel === 'list' ? 'chat' : 'list')}>
-          {panel === 'chat' ? '会话列表' : '返回'}
+          {panel === 'chat' ? t('remote.sessionListButton') : t('remote.back')}
         </Button>
         <h1 className="min-w-0 flex-1 truncate text-center text-lg font-semibold">{title}</h1>
         <Button variant="ghost" size="sm" onClick={() => setPanel('new')}>
-          新建
+          {t('remote.new')}
         </Button>
         <Button variant="ghost" size="sm" onClick={onLogout}>
-          退出
+          {t('remote.logout')}
         </Button>
       </header>
 
       {streamEnd ? (
         <div role="status" className="flex items-center justify-between gap-2 bg-warning-bg px-3 py-2 text-warning-text">
-          <span>{streamEnd.kind === 'replaced' ? REPLACED_TEXT : HOST_STOPPED_TEXT}</span>
+          <span>{streamEnd.kind === 'replaced' ? replacedText() : hostStoppedText()}</span>
           <Button size="sm" variant="secondary" onClick={reconnect}>
-            重新连接
+            {t('remote.reconnect')}
           </Button>
         </div>
       ) : streamStatus === 'reconnecting' ? (
         <div role="status" className="bg-warning-bg px-3 py-2 text-warning-text">
-          连接已断开，正在重新连接…
+          {t('remote.reconnecting')}
         </div>
       ) : null}
 
@@ -353,8 +354,8 @@ export function ChatView({ api, session, streamUrl, createSocket = defaultSocket
       ) : null}
 
       {panel === 'list' ? (
-        <ul className="flex-1 overflow-y-auto" aria-label="会话列表">
-          {state.sessions.length === 0 ? <li className="p-4 text-muted-foreground">还没有会话，点击“新建”开始。</li> : null}
+        <ul className="flex-1 overflow-y-auto" aria-label={t('remote.sessionListButton')}>
+          {state.sessions.length === 0 ? <li className="p-4 text-muted-foreground">{t('remote.noSessions')}</li> : null}
           {state.sessions.map((item) => (
             <li key={item.id}>
               <button
@@ -378,15 +379,15 @@ export function ChatView({ api, session, streamUrl, createSocket = defaultSocket
       {panel === 'chat' ? (
         <>
           <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-3 py-4">
-            {!activeId ? <p className="text-muted-foreground">选择或新建一个会话开始聊天。</p> : null}
+            {!activeId ? <p className="text-muted-foreground">{t('remote.selectSession')}</p> : null}
             {olderCursor !== null && olderCursor !== undefined ? (
               <div className="mb-4 flex justify-center">
                 <Button size="sm" variant="secondary" loading={loadingMore} onClick={() => void loadEarlier()}>
-                  加载更早
+                  {t('remote.loadEarlier')}
                 </Button>
               </div>
             ) : null}
-            <ul className="flex flex-col gap-4" role="log" aria-label="消息">
+            <ul className="flex flex-col gap-4" role="log" aria-label={t('remote.messages')}>
               {messages.map((message) => (
                 <MessageItem
                   key={message.id}
@@ -407,14 +408,14 @@ export function ChatView({ api, session, streamUrl, createSocket = defaultSocket
               <textarea
                 className={TEXTAREA}
                 rows={2}
-                aria-label="消息内容"
+                aria-label={t('remote.messageLabel')}
                 value={draft}
                 onChange={(event) => onDraftChange(event.target.value)}
                 onKeyDown={onKeyDown}
-                placeholder={connected ? '输入消息，Ctrl/⌘+Enter 发送' : '正在连接…'}
+                placeholder={connected ? t('remote.messagePlaceholder') : t('remote.connecting')}
               />
               <Button type="submit" size="lg" loading={sending} disabled={!canSend || !draft.trim()}>
-                发送
+                {t('remote.send')}
               </Button>
             </form>
           ) : null}

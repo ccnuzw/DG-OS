@@ -10,6 +10,7 @@ import ModulePanel from './ModulePanel';
 import AppearanceSettings from './AppearanceSettings';
 import AboutSettings from './AboutSettings';
 import LanSettings from './LanSettings';
+import { useLocale } from '../i18n';
 
 // V1-FR-007 §7.1 (D085): the Settings shell. The selected tab comes from the URL, so a deep link opens on its tab
 // and the tab follows back/forward. Tabs activate manually: arrow keys only move focus, Enter/Space or a click
@@ -21,14 +22,10 @@ import LanSettings from './LanSettings';
 
 type SectionKey = 'providers' | 'skills' | 'mcp' | 'modules' | 'appearance' | 'about' | 'lan';
 
-const SECTIONS: ReadonlyArray<{ key: SectionKey; label: string; route: string }> = [
-  { key: 'providers', label: 'Provider', route: ROUTES.settingsProviders },
-  { key: 'skills', label: 'Skills', route: ROUTES.settingsSkills },
-  { key: 'mcp', label: 'MCP', route: ROUTES.settingsMcp },
-  { key: 'modules', label: '模块', route: ROUTES.modules },
-  { key: 'appearance', label: '外观', route: ROUTES.appearance },
-  { key: 'about', label: '关于', route: ROUTES.about },
-  { key: 'lan', label: '局域网协同', route: ROUTES.lan },
+const SECTION_ROUTES: ReadonlyArray<{ key: SectionKey; route: string }> = [
+  { key: 'providers', route: ROUTES.settingsProviders }, { key: 'skills', route: ROUTES.settingsSkills },
+  { key: 'mcp', route: ROUTES.settingsMcp }, { key: 'modules', route: ROUTES.modules },
+  { key: 'appearance', route: ROUTES.appearance }, { key: 'about', route: ROUTES.about }, { key: 'lan', route: ROUTES.lan },
 ];
 
 const KEPT_ALIVE: Record<SectionKey, boolean> = {
@@ -52,24 +49,27 @@ const revealFocusedTab = (event: FocusEvent<HTMLDivElement>) => {
 // level (`modules/:moduleId`); any other path that is not exactly a section shows the overview, as before (D037 parity).
 function sectionOf(splat: string): SectionKey | null {
   const parts = splat.split('/').filter(Boolean);
-  const section = SECTIONS.find(entry => entry.key === parts[0]);
+  const section = SECTION_ROUTES.find(entry => entry.key === parts[0]);
   if (!section) return null;
   if (parts.length === 1 || (section.key === 'modules' && parts.length === 2)) return section.key;
   return null;
 }
 
 function Overview() {
+  const { t } = useLocale();
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-3 p-6 text-foreground">
-      <h1 className="m-0 text-2xl font-semibold text-foreground">系统设置</h1>
+      <h1 className="m-0 text-2xl font-semibold text-foreground">{t('settings.title')}</h1>
       <p className="m-0 text-sm text-muted-foreground">
-        在上方选择一个分类：Provider、Skills、MCP、模块、外观、关于或局域网协同。
+        {t('settings.choose')}
       </p>
     </div>
   );
 }
 
 export default function SettingsShell() {
+  const { t } = useLocale();
+  const sections = SECTION_ROUTES.map(entry => ({ ...entry, label: entry.key === 'modules' ? t('settings.modules') : entry.key === 'appearance' ? t('settings.appearance') : entry.key === 'about' ? t('settings.about') : entry.key === 'lan' ? t('settings.lan') : entry.key === 'providers' ? t('nav.providers') : entry.key === 'skills' ? t('nav.skills') : t('nav.mcp') }));
   const { '*': splat = '' } = useParams();
   const navigate = useNavigate();
   const active = sectionOf(splat);
@@ -77,7 +77,7 @@ export default function SettingsShell() {
   if (active && KEPT_ALIVE[active] && !visited.has(active)) setVisited(new Set([...visited, active]));
 
   const select = (value: string) => {
-    const section = SECTIONS.find(entry => entry.key === value);
+    const section = sections.find(entry => entry.key === value);
     if (section) navigate(section.route);
   };
 
@@ -96,8 +96,8 @@ export default function SettingsShell() {
     <div className="flex h-full min-h-0 flex-col" data-settings-shell="">
       <Tabs value={active ?? ''} onValueChange={select} activationMode="manual" className="min-h-0 flex-1 gap-0">
         <div className={TAB_SCROLLER} data-settings-tab-scroller="">
-          <Tabs.List aria-label="系统设置" className="flex w-max min-w-full" onFocus={revealFocusedTab}>
-            {SECTIONS.map(section => (
+          <Tabs.List aria-label={t('settings.aria')} className="flex w-max min-w-full" onFocus={revealFocusedTab}>
+            {sections.map(section => (
               <Tabs.Trigger key={section.key} value={section.key} className="shrink-0">{section.label}</Tabs.Trigger>
             ))}
           </Tabs.List>

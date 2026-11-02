@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { checkReactVersions } from './react-version.mjs';
 
 // Static contract checks supplement compilation; they do not prove WebView isolation.
-const files = ['provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'modules', 'module_host', 'module_capabilities', 'appearance', 'accounts', 'lan'];
+const files = ['provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'modules', 'module_host', 'module_capabilities', 'appearance', 'accounts', 'lan', 'locale'];
 // FR-010 / interface contract §14.8: the eight LAN host commands. Exact parameter lists; no user
 // id, caller, session token or access code. Every one enters through the Settings caller with
 // `Capability::LanManage`, which `allows` grants to Settings only.
@@ -86,6 +86,12 @@ const auditParams = new Set(['app', 'window', 'module_id', 'before', 'limit']);
 const appearanceParams = new Map([
   ['get_appearance_preferences', new Set(['app', 'window'])],
   ['set_appearance_preferences', new Set(['app', 'window', 'patch'])],
+]);
+// D118: host-level language preference. It is available before account sign-in,
+// so it uses the trusted main-window gate rather than a user-session gate.
+const localeParams = new Map([
+  ['get_language_preferences', new Set(['app', 'window'])],
+  ['set_language_preferences', new Set(['app', 'window', 'language'])],
 ]);
 // FR-001 §6.3: exact parameter lists of the provider commands added or extended by the third-party
 // compatible protocol extension. `probe_model` is an optional model name for services without a
@@ -213,6 +219,12 @@ for (const file of files) {
       }
       assert.equal(names.length, allowed.size, `${name}: every allowed parameter must be present`);
       assert.match(body, /host::context\(\s*&window,/, `${name}: missing host entry gate`);
+    } else if (file === 'locale') {
+      const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
+      const allowed = localeParams.get(name);
+      assert.ok(allowed, `${name}: locale commands must be registered in localeParams`);
+      assert.deepEqual([...names].sort(), [...allowed].sort(), `${name}: parameter list must be exactly ${[...allowed].join(', ')}`);
+      assert.match(body, /host::account_window\(\s*&window\s*\)/, `${name}: missing host account-window gate`);
     } else if (file === 'modules') {
       const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
       const allowed = permissionCommands.has(name)
@@ -328,6 +340,7 @@ const routes = [...lanSource('http').matchAll(/\.route\(\s*"([^"]+)",([\s\S]*?)(
   .map(([, path, methods]) => `${[...methods.matchAll(/\b(get|post|put|delete|patch)\(/g)].map((m) => m[1].toUpperCase()).sort().join('|')} ${path}`)
   .sort();
 assert.deepEqual(routes, [
+  'GET /api/v1/lan/bootstrap',
   'GET /api/v1/lan/session',
   'GET /api/v1/lan/stream',
   'GET /api/v1/lan/targets',

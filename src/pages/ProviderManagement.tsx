@@ -1,3 +1,4 @@
+import { useLocale as usePageLocale } from '../i18n';
 import { useEffect, useRef, useState } from 'react';
 import { useProviderStore } from '../stores/providerStore';
 import ProviderList from '../components/ProviderList';
@@ -5,10 +6,13 @@ import ProviderForm from '../components/ProviderForm';
 import type { Provider, ProviderConfig, Model } from '../stores/providerStore';
 import { Button, Modal, Stack } from '@dgos/ui';
 import { usePageError } from '../pageError';
+import { useLocale } from '../i18n';
 
 const EMPTY_MODELS: Model[] = [];
 
 export default function ProviderManagement() {
+  usePageLocale();
+  const { t } = useLocale();
   const {
     providers,
     models,
@@ -94,7 +98,7 @@ export default function ProviderManagement() {
       };
       const handle = Modal.confirm({
         ...options,
-        cancelText: 'Cancel',
+        cancelText: t('module.cancel'),
         onConfirm: async () => finish((await action()) !== false),
         onCancel: () => finish(false),
       });
@@ -163,7 +167,7 @@ export default function ProviderManagement() {
     const target = selectedProvider;
     let deleted = false;
     await confirmAction(
-      { title: 'Delete Provider?', content: `Are you sure you want to delete "${target.name}"? This action cannot be undone.`, confirmText: 'Delete', confirmVariant: 'danger' },
+      { title: t('detail.deleteProvider'), content: `Are you sure you want to delete "${target.name}"? This action cannot be undone.`, confirmText: t('providerForm.delete'), confirmVariant: 'danger' },
       async () => {
         const success = await deleteProvider(target.id);
         if (success) {
@@ -243,9 +247,9 @@ export default function ProviderManagement() {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-background text-foreground">
       <header className="shrink-0 border-b border-border px-6 py-6">
-        <p className="m-0 text-xs font-semibold uppercase text-primary">Connections</p>
-        <h1 className="m-0 mt-1 text-3xl font-semibold text-foreground">Provider Management</h1>
-        <p className="m-0 mt-2 text-sm text-muted-foreground">Manage the AI services available to your workspace.</p>
+        <p className="m-0 text-xs font-semibold uppercase text-primary">{t('provider.kicker')}</p>
+        <h1 className="m-0 mt-1 text-3xl font-semibold text-foreground">{t('provider.title')}</h1>
+        <p className="m-0 mt-2 text-sm text-muted-foreground">{t('provider.subtitle')}</p>
       </header>
 
       {error && (
@@ -254,7 +258,7 @@ export default function ProviderManagement() {
           role="alert"
         >
           <span className="min-w-0 wrap-anywhere">{error}</span>
-          <Button variant="ghost" size="sm" iconOnly onClick={clearError} aria-label="Dismiss error">
+           <Button variant="ghost" size="sm" iconOnly onClick={clearError} aria-label={t('provider.dismiss')}>
             ×
           </Button>
         </div>
@@ -265,18 +269,17 @@ export default function ProviderManagement() {
           <section
             className="flex flex-wrap items-center gap-3 rounded-lg border border-warning bg-warning-bg p-3 text-warning-text"
             key={provider.id}
-            aria-label={`Credential migration for ${provider.name}`}
+            aria-label={t('provider.migrationAria', { name: provider.name })}
           >
             <p className="m-0 min-w-0 flex-1 basis-80 wrap-anywhere text-sm">
-              {provider.name}: credential migration is pending. Unlock your OS credential store, then retry. Requests remain unavailable until migration succeeds.
-            </p>
+              {provider.name}{t('detail.migration')}</p>
             <Button
               variant="secondary"
               loading={migratingProviderId === provider.id}
               disabled={loading || migratingProviderId !== null}
               onClick={() => void handleMigrateCredential(provider)}
             >
-              {migratingProviderId === provider.id ? 'Migrating credential...' : `Retry credential migration for ${provider.name}`}
+              {migratingProviderId === provider.id ? t('provider.migrating') : t('provider.retryMigration', { name: provider.name })}
             </Button>
           </section>
         ))}
@@ -284,18 +287,17 @@ export default function ProviderManagement() {
           <section
             className="flex flex-wrap items-center gap-3 rounded-lg border border-warning bg-warning-bg p-3 text-warning-text"
             key={provider.id}
-            aria-label={`Missing credential for ${provider.name}`}
+            aria-label={t('provider.missingAria', { name: provider.name })}
           >
             <p className="m-0 min-w-0 flex-1 basis-80 wrap-anywhere text-sm">
-              {provider.name}: no credential is saved. Select this provider and save a new API key.
-            </p>
+              {provider.name}{t('detail.noCredential')}</p>
             <Button variant="secondary" onClick={() => handleSelectProvider(provider)}>
-              Configure credential for {provider.name}
+              {t('detail.configureCredential')}{provider.name}
             </Button>
           </section>
         ))}
       </div>
-      {migratingProviderId && <p role="status" className="mx-6 mt-4 mb-0 text-sm text-muted-foreground">Waiting for the OS credential store...</p>}
+      {migratingProviderId && <p role="status" className="mx-6 mt-4 mb-0 text-sm text-muted-foreground">{t('detail.waitingVault')}</p>}
 
       <div className="flex min-h-0 flex-1 flex-wrap content-start items-start">
         <ProviderList
@@ -314,19 +316,19 @@ export default function ProviderManagement() {
 
         <div className="min-w-0 grow basis-120 p-6">
           <Stack gap={4}>
-            {modelsLoading && <p role="status" className="m-0 text-sm text-muted-foreground">Loading saved models...</p>}
+             {modelsLoading && <p role="status" className="m-0 text-sm text-muted-foreground">{t('provider.loadingModels')}</p>}
             {providers.length === 0 && !isCreatingProvider ? (
               <div className="flex max-w-150 flex-col items-center gap-3 px-6 py-12 text-center">
-                <h2 className="m-0 text-xl font-semibold text-foreground">No Providers Yet</h2>
-                <p className="m-0 text-sm text-muted-foreground">Create your first provider to get started with AI model integration</p>
-                <Button onClick={handleNewProvider}>+ Create Provider</Button>
+                <h2 className="m-0 text-xl font-semibold text-foreground">{t('provider.emptyTitle')}</h2>
+                <p className="m-0 text-sm text-muted-foreground">{t('provider.emptyText')}</p>
+                <Button onClick={handleNewProvider}>+ {t('provider.create')}</Button>
               </div>
             ) : selectedProvider === null && !isCreatingProvider ? (
               <div className="flex max-w-150 flex-col items-center gap-3 px-6 py-12 text-center">
                 <span aria-hidden="true" className="text-3xl text-muted-foreground">←</span>
-                <h2 className="m-0 text-xl font-semibold text-foreground">Select a provider</h2>
-                <p className="m-0 text-sm text-muted-foreground">Choose a provider from the list to view or edit its configuration.</p>
-                <Button onClick={handleNewProvider}>+ New Provider</Button>
+                <h2 className="m-0 text-xl font-semibold text-foreground">{t('provider.selectTitle')}</h2>
+                <p className="m-0 text-sm text-muted-foreground">{t('provider.selectText')}</p>
+                <Button onClick={handleNewProvider}>+ {t('provider.new')}</Button>
               </div>
             ) : (
               <ProviderForm

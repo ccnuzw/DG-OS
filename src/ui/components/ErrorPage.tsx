@@ -2,6 +2,7 @@ import { Component } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { Button } from './Button';
 import { StatusIcon } from './StatusIcon';
+import { t, useLocale } from '../../i18n';
 
 // Whole-page error state (FR-005 §8.1.4, B05-36, AC19). It knows nothing about the router: the caller passes what
 // the buttons do. It never shows an error's message or stack, only fixed text.
@@ -31,7 +32,8 @@ export interface ErrorPageProps {
 }
 
 export function ErrorPage({ kind = 'not-found', onHome, onRetry }: ErrorPageProps) {
-  const copy = COPY[kind];
+  useLocale();
+  const copy = kind === 'not-found' ? { ...COPY[kind], title: t('system.notFound'), message: t('system.notFoundHelp') } : { ...COPY[kind], title: t('system.error'), message: t('system.errorHelp') };
   return (
     <section
       data-error-kind={kind}
@@ -43,10 +45,10 @@ export function ErrorPage({ kind = 'not-found', onHome, onRetry }: ErrorPageProp
       <div className="flex gap-2">
         {onRetry ? (
           <Button variant="secondary" onClick={onRetry}>
-            重试
+            {t('system.retry')}
           </Button>
         ) : null}
-        {onHome ? <Button onClick={onHome}>返回首页</Button> : null}
+        {onHome ? <Button onClick={onHome}>{t('system.home')}</Button> : null}
       </div>
     </section>
   );

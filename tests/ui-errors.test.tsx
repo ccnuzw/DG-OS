@@ -299,7 +299,7 @@ describe('fallback and severity routing (AC18)', () => {
     render(<Surface />);
     act(() => handleError({ code: 1001015, message: 'keyring: secret service said no' }));
     const dialog = screen.getByRole('dialog', { name: '系统凭据库不可用' });
-    expect(within(dialog).getByText('请解锁系统凭据库后重试')).toBeTruthy();
+    expect(within(dialog).getByText('请解锁系统凭据库；如果是开发版升级后首次使用，请重新保存 API Key 或令牌后重试')).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
     expect(document.body.textContent).not.toContain('keyring');
     act(() => void vi.advanceTimersByTime(60000));
@@ -451,7 +451,7 @@ describe('ErrorPage (AC19)', () => {
         </MemoryRouter>,
       );
       fireEvent.click(await screen.findByRole('button', { name: '返回首页' }));
-      expect(await screen.findByText('Welcome to DG-OS')).toBeTruthy();
+      expect(await screen.findByText('DG-OS 首页')).toBeTruthy();
     });
 
     it('known routes are not caught by the fallback', async () => {
@@ -460,7 +460,7 @@ describe('ErrorPage (AC19)', () => {
           <App />
         </MemoryRouter>
       );
-      expect(await screen.findByText('Welcome to DG-OS')).toBeTruthy();
+      expect(await screen.findByText('DG-OS 首页')).toBeTruthy();
       expect(screen.queryByText('404 页面不存在')).toBeNull();
     });
 

@@ -51,6 +51,7 @@ struct AppState {
     origin: Arc<str>,
     csp: Arc<str>,
     spa: Option<SpaFiles>,
+    locale: Arc<dyn crate::locale::LocaleSource>,
 }
 
 fn empty(status: StatusCode) -> Response {
@@ -522,6 +523,32 @@ async fn fallback(State(app): State<AppState>, request: Request) -> Response {
 
 /// The whitelist router for one bound address.
 pub fn router(core: Arc<LanCore>, bound: SocketAddrV4, spa: Option<SpaFiles>) -> Router {
+    router_with_locale(
+        core,
+        bound,
+        spa,
+        Arc::new(crate::locale::DefaultLocaleSource),
+    )
+}
+
+async fn bootstrap(State(app): State<AppState>) -> Response {
+    match tokio::time::timeout(Duration::from_secs(3), app.locale.bootstrap()).await {
+        Ok(Ok(value)) => Json(value).into_response(),
+        _ => lan_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            1000000,
+            "locale_bootstrap_unavailable",
+            None,
+        ),
+    }
+}
+
+pub fn router_with_locale(
+    core: Arc<LanCore>,
+    bound: SocketAddrV4,
+    spa: Option<SpaFiles>,
+    locale: Arc<dyn crate::locale::LocaleSource>,
+) -> Router {
     let host = bound.to_string();
     let app = AppState {
         core,
@@ -534,8 +561,10 @@ pub fn router(core: Arc<LanCore>, bound: SocketAddrV4, spa: Option<SpaFiles>) ->
         .into(),
         host: host.into(),
         spa,
+        locale,
     };
     Router::new()
+        .route("/api/v1/lan/bootstrap", get(bootstrap))
         .route("/api/v1/lan/pair", post(pair))
         .route("/api/v1/lan/session", get(session))
         .route("/api/v1/lan/logout", post(logout))

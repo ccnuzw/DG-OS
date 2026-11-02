@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { create } from 'zustand';
 import { Channel, invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { extractErrorCode, lookupError } from '@dgos/ui';
@@ -83,46 +84,30 @@ export class ChatCommandError extends Error {
   }
 }
 
-const CHAT_ERRORS: Readonly<Record<number, string>> = Object.freeze({
-  1006001: '会话不存在或已被删除。',
-  1006002: '消息不存在。',
-  1006005: '创建会话失败，请稍后重试。',
-  1006006: '删除会话失败，请稍后重试。',
-  1006007: '内容无效：消息不能为空且不能超过 16 KiB，会话标题需为 1 到 80 个字符。',
-  1006008: '上下文过长，请新建会话后再试。',
-  1006009: '还没有可用的 Provider，请先到 Provider 页面完成配置。',
-  1006010: '已有生成正在进行，请先停止当前生成。',
-  1006011: '请求标识冲突，请重新发送。',
-  1006012: 'Provider 的目标地址已变化，确认后才能发送。',
-  1006013: '会话固定的技能不可用，请重新选择技能或明确选择无技能。',
-  1006014: '只能重新生成会话中最后一条助手回复。',
-  1006015: '请先为会话选择 Provider 和模型。',
-  1006016: '搜索词无效：去掉首尾空白后需为 1 到 128 个字符。',
-  1006017: '工具确认已失效、已过期或与当前提案不符，请重新发送并重新选择工具。',
-});
+const CHAT_ERROR_CODES = new Set([1006001, 1006002, 1006005, 1006006, 1006007, 1006008, 1006009, 1006010, 1006011, 1006012, 1006013, 1006014, 1006015, 1006016, 1006017]);
 
 /** Fixed Chinese text for a chat error. The host's own message text is never rendered. */
 export function chatErrorText(error: unknown): string {
   const code = error instanceof ChatCommandError ? error.code : extractErrorCode(error);
-  if (code === null) return '操作失败，请稍后重试。';
-  if (Object.prototype.hasOwnProperty.call(CHAT_ERRORS, code)) return CHAT_ERRORS[code];
+  if (code === null) return t('chat.operationFailed');
+  if (CHAT_ERROR_CODES.has(code)) return t(`chat.error${code}`);
   const info = lookupError(code);
   if (info) return info.description ? `${info.message}：${info.description}` : info.message;
-  return `操作失败（错误码 ${code}）`;
+  return t('chat.operationCode', { code });
 }
 
 /** Text for the `error_code` category of a terminal error event (D074). */
 export function generationErrorText(errorCode: string, providerCode: number | null): string {
-  if (errorCode === 'task_cancelled') return '已停止生成。';
-  if (errorCode === 'process_interrupted') return '生成因应用退出或重启而中断。';
-  if (errorCode === 'generation_limit') return '回复达到宿主的时长或大小上限，已在此处中断。';
-  if (errorCode === 'empty_response') return '模型返回了空回复。';
+  if (errorCode === 'task_cancelled') return t('chat.stopped');
+  if (errorCode === 'process_interrupted') return t('chat.processInterrupted');
+  if (errorCode === 'generation_limit') return t('chat.generationLimit');
+  if (errorCode === 'empty_response') return t('chat.emptyResponse');
   if (providerCode !== null) {
     const info = lookupError(providerCode);
-    return info ? info.message : `模型服务返回错误（错误码 ${providerCode}）`;
+    return info ? info.message : t('chat.providerCode', { code: providerCode });
   }
-  if (errorCode === 'provider_timeout') return '请求超时。';
-  return '生成未完成。';
+  if (errorCode === 'provider_timeout') return t('chat.timeout');
+  return t('chat.incomplete');
 }
 
 export interface ChatChannel { onmessage: (event: ChatStreamEvent) => void }
@@ -357,9 +342,9 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
       if (error) {
         const base = generationErrorText(error.error_code, error.provider_code);
         notice = error.regeneration_discarded
-          ? { tone: 'warning', text: `重新生成未完成，已保留原回复。${base}` }
+          ? { tone: 'warning', text: t('chat.regenerationKept', { message: base }) }
           : { tone: error.error_code === 'task_cancelled' ? 'info' : 'error', text: base };
-        if (error.result_unknown) notice = { tone: notice.tone === 'info' ? 'warning' : notice.tone, text: `${notice.text}结果未知，上游可能已计费。` };
+        if (error.result_unknown) notice = { tone: notice.tone === 'info' ? 'warning' : notice.tone, text: `${notice.text}${t('chat.unknownResult')}` };
       }
       let reload = false;
       set(state => {
@@ -689,15 +674,15 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
         const session = get().activeSession;
         if (!session || get().activeStale || get().generation || run) return 'rejected';
         if (!content.trim()) {
-          set({ actionError: '消息不能为空。', actionCode: null });
+          set({ actionError: t('chat.emptyMessage'), actionCode: null });
           return 'rejected';
         }
         if (utf8Bytes(content) > MAX_MESSAGE_BYTES) {
-          set({ actionError: '消息超过 16 KiB 上限，请缩短后再发送。', actionCode: null });
+          set({ actionError: t('chat.tooLong'), actionCode: null });
           return 'rejected';
         }
         if (tools.length > MAX_TOOLS) {
-          set({ actionError: '每次发送最多选择 8 个工具。', actionCode: null });
+          set({ actionError: t('chat.toolLimit'), actionCode: null });
           return 'rejected';
         }
         // Dropping the newest side of the window means local order may be stale: re-anchor on the latest page first.

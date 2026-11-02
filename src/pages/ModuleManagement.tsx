@@ -1,3 +1,4 @@
+import { t, useLocale as usePageLocale } from '../i18n';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, Checkbox, Loading, Stack, StatusIcon, cn } from '@dgos/ui';
@@ -15,6 +16,7 @@ import {
   type ModuleSummary,
 } from '../modules/moduleApi';
 import { usePageError } from '../pageError';
+import { formatDateTime } from '../i18n';
 
 // Failures are shown twice on purpose: inline (`ErrorNotice`, with the host's own message and code, which stays next
 // to the module it belongs to) and through the unified Toast. Module errors are 1004xxx codes with no entry in
@@ -50,6 +52,7 @@ export function NoticeBox({
   className?: string;
   children: ReactNode;
 }) {
+  usePageLocale();
   const { box, icon } = NOTICE_TONE[tone];
   return (
     <div role={role} className={cn('my-2 flex items-start gap-2 rounded-md border p-3 text-sm', box, className)}>
@@ -60,17 +63,19 @@ export function NoticeBox({
 }
 
 export function ErrorNotice({ error }: { error: ModuleApiError }) {
+  usePageLocale();
   return (
     <NoticeBox tone={error.incompatible ? 'warning' : 'error'} role="alert">
-      {error.incompatible && <strong>This module needs a newer or older host version. </strong>}
+      {error.incompatible && <strong>{t('module.errorIncompatible')}</strong>}
       <span>{error.message}</span>
-      {error.code !== 0 && <span> (code {error.code})</span>}
+      {error.code !== 0 && <span> {t('detail.code')}{error.code})</span>}
     </NoticeBox>
   );
 }
 
 export function CrashLogList({ crashes }: { crashes: ModuleCrashRecord[] }) {
-  if (crashes.length === 0) return <p className="my-2 text-sm text-muted-foreground">No crashes recorded.</p>;
+  usePageLocale();
+  if (crashes.length === 0) return <p className="my-2 text-sm text-muted-foreground">{t('module.noCrashes')}</p>;
   return (
     <ul className="m-0 list-none p-0">
       {crashes.map((crash) => {
@@ -78,8 +83,8 @@ export function CrashLogList({ crashes }: { crashes: ModuleCrashRecord[] }) {
         return (
           <li key={crash.crash_id} className="border-t border-border py-2 text-sm first:border-t-0">
             <div className="wrap-anywhere">
-              <time dateTime={at.toISOString()}>{at.toLocaleString()}</time> · {crash.source} · <strong>{crash.error_name}</strong>{' '}
-              (version {crash.module_version})
+              <time dateTime={at.toISOString()}>{formatDateTime(at)}</time> · {crash.source} · <strong>{crash.error_name}</strong>{' '}
+              {t('detail.versionParen')}{crash.module_version})
             </div>
             <pre className="m-0 mt-2 overflow-x-auto rounded-md bg-secondary p-2 font-mono text-xs text-secondary-foreground">
               {crash.stack}
@@ -92,6 +97,7 @@ export function CrashLogList({ crashes }: { crashes: ModuleCrashRecord[] }) {
 }
 
 function ConfirmPanel({ label, children }: { label: string; children: ReactNode }) {
+  usePageLocale();
   return (
     <section role="dialog" aria-label={label} className="my-3 rounded-lg border border-border bg-muted p-4 text-sm text-foreground">
       <Stack gap={3}>{children}</Stack>
@@ -105,19 +111,20 @@ function EnableConfirm({ module, busy, onConfirm, onCancel }: {
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  usePageLocale();
   const [confirmed, setConfirmed] = useState(false);
   return (
-    <ConfirmPanel label={`Enable ${module.name}`}>
+    <ConfirmPanel label={t('module.enableAria', { name: module.name })}>
       {module.permissions.length === 0 ? (
-        <p className="m-0">{module.name} declares no permissions.</p>
+        <p className="m-0">{module.name} {t('detail.noPermissions')}</p>
       ) : (
         <>
-          <p className="m-0">{module.name} requests these permissions:</p>
+          <p className="m-0">{module.name} {t('detail.requestsPermissions')}</p>
           <ul className="m-0 list-disc pl-6">
             {module.permissions.map((entry) => (
               <li key={entry.permission}>
                 <code className="font-mono wrap-anywhere">{entry.permission}</code>
-                {entry.granted ? ' (already granted)' : ''}
+                {entry.granted ? t('module.alreadyGranted') : ''}
               </li>
             ))}
           </ul>
@@ -126,11 +133,11 @@ function EnableConfirm({ module, busy, onConfirm, onCancel }: {
       <Checkbox
         checked={confirmed}
         onChange={setConfirmed}
-        label={`I have reviewed these permissions and want to enable ${module.name}`}
+        label={t('module.reviewPermissions', { name: module.name })}
       />
       <Stack direction="horizontal" gap={2} className="flex-wrap">
-        <Button variant="primary" disabled={!confirmed || busy} onClick={onConfirm}>Confirm enable</Button>
-        <Button variant="secondary" disabled={busy} onClick={onCancel}>Cancel</Button>
+        <Button variant="primary" disabled={!confirmed || busy} onClick={onConfirm}>{t('module.confirmEnable')}</Button>
+        <Button variant="secondary" disabled={busy} onClick={onCancel}>{t('module.cancel')}</Button>
       </Stack>
     </ConfirmPanel>
   );
@@ -167,6 +174,7 @@ function UpdateDiff({ module, diff, busy, onGrant, onDismiss }: {
   onGrant: (permission: string) => void;
   onDismiss: () => void;
 }) {
+  usePageLocale();
   // A new permission stops being listed as soon as it is granted. The page's module list may still be the
   // pre-update one for a moment, so only a granted entry hides it; a missing entry does not.
   const added = diff.added.filter(
@@ -175,10 +183,10 @@ function UpdateDiff({ module, diff, busy, onGrant, onDismiss }: {
   if (added.length === 0 && diff.withdrawn.length === 0) return null;
   return (
     <NoticeBox tone="warning" role="status">
-      <strong>Permissions changed in this update.</strong>
+      <strong>{t('module.changedPermissions')}</strong>
       {added.length > 0 && (
         <>
-          <p className="m-0 mt-2">Newly declared, not granted yet:</p>
+          <p className="m-0 mt-2">{t('module.newPermissions')}</p>
           <ul className="m-0 list-none p-0">
             {added.map((permission) => (
               <li key={permission} className="flex flex-wrap items-center gap-2 py-1">
@@ -186,12 +194,11 @@ function UpdateDiff({ module, diff, busy, onGrant, onDismiss }: {
                 <Button
                   variant="secondary"
                   size="sm"
-                  aria-label={`Grant new permission ${permission} for ${module.name}`}
+                  aria-label={t('module.grantNewAria', { permission, name: module.name })}
                   disabled={busy}
                   onClick={() => onGrant(permission)}
                 >
-                  Grant
-                </Button>
+                  {t('module.grant')}</Button>
               </li>
             ))}
           </ul>
@@ -199,7 +206,7 @@ function UpdateDiff({ module, diff, busy, onGrant, onDismiss }: {
       )}
       {diff.withdrawn.length > 0 && (
         <>
-          <p className="m-0 mt-2">No longer declared, so your grant was withdrawn:</p>
+          <p className="m-0 mt-2">{t('module.noLongerDeclared')}</p>
           <ul className="m-0 list-disc pl-6">
             {diff.withdrawn.map((permission) => (
               <li key={permission}>
@@ -210,7 +217,7 @@ function UpdateDiff({ module, diff, busy, onGrant, onDismiss }: {
         </>
       )}
       <div className="mt-2">
-        <Button variant="ghost" size="sm" onClick={onDismiss}>Dismiss</Button>
+        <Button variant="ghost" size="sm" onClick={onDismiss}>{t('module.dismiss')}</Button>
       </div>
     </NoticeBox>
   );
@@ -221,10 +228,11 @@ function PermissionAuditList({ log, busy, onLoadOlder }: {
   busy: boolean;
   onLoadOlder: () => void;
 }) {
+  usePageLocale();
   return (
-    <div aria-label="Permission log" role="region">
+    <div aria-label={t('module.permissionLogButton')} role="region">
       {log.entries.length === 0 ? (
-        <p className="my-2 text-sm text-muted-foreground">No permission activity recorded.</p>
+        <p className="my-2 text-sm text-muted-foreground">{t('module.noPermissionActivity')}</p>
       ) : (
         <ul className="m-0 list-none p-0">
           {log.entries.map((entry, index) => {
@@ -232,14 +240,14 @@ function PermissionAuditList({ log, busy, onLoadOlder }: {
             return (
               <li key={index} className="border-t border-border py-2 text-sm first:border-t-0 wrap-anywhere">
                 <code className="font-mono">{entry.permission}</code> · <strong>{entry.action}</strong> ·{' '}
-                <time dateTime={at.toISOString()}>{at.toLocaleString()}</time>
+                <time dateTime={at.toISOString()}>{formatDateTime(at)}</time>
               </li>
             );
           })}
         </ul>
       )}
       {log.nextBefore !== null && (
-        <Button variant="secondary" size="sm" disabled={busy} onClick={onLoadOlder}>Load older</Button>
+        <Button variant="secondary" size="sm" disabled={busy} onClick={onLoadOlder}>{t('module.loadOlder')}</Button>
       )}
     </div>
   );
@@ -250,6 +258,7 @@ type Pending = { kind: 'enable' | 'uninstall'; moduleId: string } | null;
 const BADGE_CLASS = 'rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground';
 
 export default function ModuleManagement() {
+  usePageLocale();
   const [modules, setModules] = useState<ModuleSummary[] | null>(null);
   const [loadError, setLoadError] = useState<ModuleApiError | null>(null);
   const [busy, setBusy] = useState(false);
@@ -336,7 +345,7 @@ export default function ModuleManagement() {
       }
       if (failures.length > 0) return { failures };
       await runOperations(['start_module'], module.module_id);
-      return 'Enabled and started.';
+      return t('module.enabledStarted');
     });
 
   // D093: the page remembers what the module declared and had granted before the update, then compares it
@@ -347,7 +356,7 @@ export default function ModuleManagement() {
       setDiff(module.module_id, null);
       const before = new Map(module.permissions.map((entry) => [entry.permission, entry.granted]));
       const view = await runOperations(['update_module'], module.module_id);
-      if (view.outcome === 'unchanged') return 'Already up to date.';
+      if (view.outcome === 'unchanged') return t('module.upToDate');
       try {
         const current = (await listModules()).find((entry) => entry.module_id === module.module_id);
         if (current !== undefined) {
@@ -361,8 +370,8 @@ export default function ModuleManagement() {
       } catch {
         // The update itself succeeded; the refresh that follows reports a failed list.
       }
-      if (view.outcome === 'updated_pending_release') return 'Updated. The new version takes over once the old one is released.';
-      return 'Updated.';
+      if (view.outcome === 'updated_pending_release') return t('module.updatedPending');
+      return t('module.updated');
     });
 
   const runSteps = (module: ModuleSummary, steps: Parameters<typeof runOperations>[0], done: string) =>
@@ -416,16 +425,15 @@ export default function ModuleManagement() {
   return (
     <div className="mx-auto min-w-0 max-w-240 p-8 text-foreground">
       <header className="mb-4">
-        <h1 className="m-0 mb-2 text-2xl font-semibold text-foreground">Module management</h1>
+        <h1 className="m-0 mb-2 text-2xl font-semibold text-foreground">{t('module.title')}</h1>
         <p className="m-0 mb-2 text-sm text-muted-foreground">
-          Enable, update and remove modules, and decide which permissions they get.
-        </p>
-        <Link to="/settings" className={cn('text-sm', MODULE_LINK_CLASS)}>Back to Settings</Link>
+          {t('module.subtitle')}</p>
+        <Link to="/settings" className={cn('text-sm', MODULE_LINK_CLASS)}>{t('module.backSettings')}</Link>
       </header>
 
       {loadError !== null && <ErrorNotice error={loadError} />}
-      {modules === null && loadError === null && <Loading label="Loading modules…" />}
-      {modules?.length === 0 && <p className="text-sm text-muted-foreground">No modules are installed.</p>}
+      {modules === null && loadError === null && <Loading label={t('module.loading')} />}
+      {modules?.length === 0 && <p className="text-sm text-muted-foreground">{t('module.none')}</p>}
 
       <Stack gap={4}>
         {modules?.map((module) => {
@@ -437,55 +445,53 @@ export default function ModuleManagement() {
                 <Card.Header>
                   <Stack direction="horizontal" gap={2} className="flex-wrap items-center">
                     <h2 className="m-0 mr-2 min-w-0 text-xl font-semibold wrap-anywhere">{module.name}</h2>
-                    <span className={BADGE_CLASS}>Version {module.version}</span>
-                    {module.official && <span className="rounded-full bg-info-bg px-2 py-0.5 text-xs text-info-text">Official</span>}
-                    <span className={BADGE_CLASS}>{module.enabled ? 'Enabled' : 'Disabled'}</span>
-                    <span className={BADGE_CLASS}>Runtime: {module.runtime.state}</span>
+                    <span className={BADGE_CLASS}>{t('module.version')} {module.version}</span>
+                    {module.official && <span className="rounded-full bg-info-bg px-2 py-0.5 text-xs text-info-text">{t('module.official')}</span>}
+                    <span className={BADGE_CLASS}>{module.enabled ? t('providerForm.enabled') : t('module.disabled')}</span>
+                    <span className={BADGE_CLASS}>{t('detail.runtime')}{module.runtime.state}</span>
                   </Stack>
                 </Card.Header>
                 <Card.Body>
                   <p className="m-0 mb-2 text-muted-foreground wrap-anywhere">
-                    {module.module_id} · Recent crashes: {module.recent_crashes}
+                     {module.module_id} {t('detail.recentCrashes')} {module.recent_crashes}
                   </p>
 
                   {module.permissions.length === 0 ? (
-                    <p className="m-0 my-2">No permissions declared.</p>
+                    <p className="m-0 my-2">{t('module.noPermissions')}</p>
                   ) : (
                     <ul className="m-0 my-2 list-none p-0">
                       {module.permissions.map((entry) => (
                         <li key={entry.permission} className="flex flex-wrap items-center gap-2 py-1">
                           <code className="min-w-0 font-mono wrap-anywhere">{entry.permission}</code>{' '}
-                          <span>{entry.granted ? 'Granted' : 'Not granted'}</span>{' '}
+                          <span>{entry.granted ? t('module.granted') : t('module.notGranted')}</span>{' '}
                           {entry.granted ? (
                             <Button
                               variant="secondary"
                               size="sm"
-                              aria-label={`Revoke ${entry.permission} for ${module.name}`}
+                              aria-label={t('module.revokeAria', { permission: entry.permission, name: module.name })}
                               disabled={busy}
                               onClick={() =>
                                 act(module.module_id, async () => {
                                   await revokeModulePermission(module.module_id, entry.permission);
-                                  return `Revoked ${entry.permission}.`;
+                                  return t('module.revokedNotice', { permission: entry.permission });
                                 })
                               }
                             >
-                              Revoke
-                            </Button>
+                              {t('module.revoke')}</Button>
                           ) : (
                             <Button
                               variant="secondary"
                               size="sm"
-                              aria-label={`Grant ${entry.permission} for ${module.name}`}
+                              aria-label={t('module.grantAria', { permission: entry.permission, name: module.name })}
                               disabled={busy}
                               onClick={() =>
                                 act(module.module_id, async () => {
                                   await grantModulePermission(module.module_id, entry.permission);
-                                  return `Granted ${entry.permission}.`;
+                                  return t('module.grantedNotice', { permission: entry.permission });
                                 })
                               }
                             >
-                              Grant
-                            </Button>
+                              {t('module.grant')}</Button>
                           )}
                         </li>
                       ))}
@@ -499,21 +505,17 @@ export default function ModuleManagement() {
                   {notice.failures !== undefined && notice.failures.length > 0 && (
                     <NoticeBox tone="warning" role="alert">
                       <strong>
-                        Enabled, but not started: {notice.failures.length} permission
-                        {notice.failures.length === 1 ? ' was' : 's were'} not granted.
-                      </strong>
+                        {t('module.enableFailed', { count: notice.failures.length })}</strong>
                       <ul className="m-0 mt-2 list-disc pl-6">
                         {notice.failures.map((failure) => (
                           <li key={failure.permission}>
                             <code className="font-mono wrap-anywhere">{failure.permission}</code>: {failure.error.message}
-                            {failure.error.code !== 0 && <span> (code {failure.error.code})</span>}
+                            {failure.error.code !== 0 && <span> {t('detail.code')}{failure.error.code})</span>}
                           </li>
                         ))}
                       </ul>
                       <p className="m-0 mt-2">
-                        Grant the remaining permissions with their Grant buttons, then press Reload to start the
-                        module.
-                      </p>
+                        {t('module.grantRemaining')}</p>
                     </NoticeBox>
                   )}
                   {diffs[module.module_id] !== undefined && (
@@ -524,7 +526,7 @@ export default function ModuleManagement() {
                       onGrant={(permission) =>
                         act(module.module_id, async () => {
                           await grantModulePermission(module.module_id, permission);
-                          return `Granted ${permission}.`;
+                          return t('module.grantedNotice', { permission });
                         })
                       }
                       onDismiss={() => setDiff(module.module_id, null)}
@@ -534,40 +536,39 @@ export default function ModuleManagement() {
                   <Stack direction="horizontal" gap={2} className="my-3 flex-wrap">
                     {module.enabled ? (
                       <>
-                        <Button variant="secondary" disabled={busy} onClick={() => runSteps(module, ['disable_module'], 'Disabled.')}>Disable</Button>
+                        <Button variant="secondary" disabled={busy} onClick={() => runSteps(module, ['disable_module'], t('module.disabledNotice'))}>{t('module.disable')}</Button>
                         <Button
                           variant="secondary"
                           disabled={busy}
                           onClick={() =>
                             act(module.module_id, async () => {
                               await reloadModule(module.module_id);
-                              return 'Reloaded.';
+                              return t('module.reloaded');
                             })
                           }
                         >
-                          Reload
-                        </Button>
+                          {t('module.reload')}</Button>
                       </>
                     ) : (
-                      <Button variant="primary" disabled={busy} onClick={() => setPending({ kind: 'enable', moduleId: module.module_id })}>Enable</Button>
+                      <Button variant="primary" disabled={busy} onClick={() => setPending({ kind: 'enable', moduleId: module.module_id })}>{t('module.enableButton')}</Button>
                     )}
-                    <Button variant="secondary" disabled={busy} onClick={() => update(module)}>Update</Button>
+                    <Button variant="secondary" disabled={busy} onClick={() => update(module)}>{t('module.update')}</Button>
                     {!module.official && (
-                      <Button variant="danger" disabled={busy} onClick={() => setPending({ kind: 'uninstall', moduleId: module.module_id })}>Uninstall</Button>
+                      <Button variant="danger" disabled={busy} onClick={() => setPending({ kind: 'uninstall', moduleId: module.module_id })}>{t('module.uninstall')}</Button>
                     )}
-                    <Button variant="ghost" onClick={() => toggleCrashLog(module.module_id)}>Crash log</Button>
-                    <Button variant="ghost" onClick={() => toggleAuditLog(module.module_id)}>Permission log</Button>
+                    <Button variant="ghost" onClick={() => toggleCrashLog(module.module_id)}>{t('module.crashLog')}</Button>
+                    <Button variant="ghost" onClick={() => toggleAuditLog(module.module_id)}>{t('module.permissionLogButton')}</Button>
                   </Stack>
 
                   {confirming === 'enable' && (
                     <EnableConfirm module={module} busy={busy} onConfirm={() => enable(module)} onCancel={() => setPending(null)} />
                   )}
                   {confirming === 'uninstall' && (
-                    <ConfirmPanel label={`Uninstall ${module.name}`}>
-                      <p className="m-0">Uninstall {module.name}? The module is stopped and removed.</p>
+                    <ConfirmPanel label={t('module.uninstallLabel', { id: module.name })}>
+                      <p className="m-0">{t('module.uninstall')}{module.name}{t('detail.uninstallSuffix')}</p>
                       <Stack direction="horizontal" gap={2} className="flex-wrap">
-                        <Button variant="danger" disabled={busy} onClick={() => runSteps(module, ['uninstall_module'], 'Uninstalled.')}>Confirm uninstall</Button>
-                        <Button variant="secondary" disabled={busy} onClick={() => setPending(null)}>Cancel</Button>
+                        <Button variant="danger" disabled={busy} onClick={() => runSteps(module, ['uninstall_module'], t('module.uninstalled'))}>{t('module.confirmUninstall')}</Button>
+                        <Button variant="secondary" disabled={busy} onClick={() => setPending(null)}>{t('module.cancel')}</Button>
                       </Stack>
                     </ConfirmPanel>
                   )}

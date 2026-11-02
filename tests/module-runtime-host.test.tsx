@@ -10,6 +10,7 @@ import {
   type UnloadInstruction,
 } from '../src/modules/moduleRuntimeHost';
 import { evaluateFixtureSource, hooksControl, moduleProbe, readFixture, resetModuleProbe } from './helpers/moduleFixtures';
+import { resetLocaleForTesting, setLocaleForTesting } from '../src/i18n/runtime';
 
 // The real import(blobUrl) cannot run in jsdom/Node. `importModule` is replaced by a double that
 // evaluates the fixture source (see evaluateFixtureSource); the real path is covered by the WebView smoke.
@@ -164,10 +165,12 @@ async function attachedHarness(attachScript: AttachStep[] = []) {
 
 beforeEach(() => {
   resetModuleProbe();
+  resetLocaleForTesting();
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 });
 afterEach(() => {
+  resetLocaleForTesting();
   vi.restoreAllMocks();
 });
 
@@ -595,7 +598,7 @@ describe('post-mount crash reporting', () => {
     expect(after.container).toBe(before.container);
     expect(h.host.getSnapshot()).toHaveLength(1);
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(after.container.querySelector('[role="alert"]')?.textContent).toBe('This module failed to render.');
+    expect(after.container.querySelector('[role="alert"]')?.textContent).toBe('此模块渲染失败。');
 
     await settle();
     expect(h.crashReports).toHaveLength(1);
@@ -670,6 +673,18 @@ describe('post-mount crash reporting', () => {
 });
 
 describe('shared React (D055)', () => {
+  it('exposes a read-only host.i18n locale and updates subscribers', async () => {
+    const h = await attachedHarness();
+    h.send(loadInstruction('i18n.js'));
+    await h.waitForReceipts(1);
+    const container = h.containers[0];
+    expect(container.querySelector('[data-testid="module-locale"]')?.textContent).toBe('zh-CN');
+    setLocaleForTesting('en-US');
+    await settle();
+    expect(container.querySelector('[data-testid="module-locale"]')?.textContent).toBe('en-US');
+    expect(Object.prototype.hasOwnProperty.call((h as unknown as { host: unknown }).host, 'setLocale')).toBe(false);
+  });
+
   it("hands the module the host's own React object", async () => {
     const h = await attachedHarness();
     h.send(loadInstruction('hooks-react-identity.js'));

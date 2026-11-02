@@ -10,6 +10,7 @@ import {
   type AccountState,
 } from './accountApi';
 import { InlineError } from './AuthShell';
+import { t, useLocale } from '../i18n';
 
 interface FieldErrors {
   username?: string;
@@ -26,6 +27,7 @@ export function CreateAccountForm({
   submitLabel: string;
   onCreated: (state: AccountState) => void;
 }) {
+  useLocale();
   const reportError = usePageError('CreateAccountForm');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -68,14 +70,14 @@ export function CreateAccountForm({
     <form onSubmit={submit} noValidate>
       <Stack gap={4}>
         <Input
-          label="用户名"
+          label={t('account.username')}
           autoComplete="username"
           value={username}
           error={errors.username}
           onChange={(event) => setUsername(event.target.value)}
         />
         <Input
-          label="密码"
+          label={t('account.passwordLabel')}
           type="password"
           autoComplete="new-password"
           value={password}
@@ -83,7 +85,7 @@ export function CreateAccountForm({
           onChange={(event) => setPassword(event.target.value)}
         />
         <Input
-          label="确认密码"
+          label={t('account.confirmPassword')}
           type="password"
           autoComplete="new-password"
           value={confirm}

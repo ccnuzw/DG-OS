@@ -11,6 +11,7 @@ import {
 } from '../feedback/modalStore';
 import { Button, type ButtonVariant } from './Button';
 import { StatusIcon } from './StatusIcon';
+import { t, useLocale } from '../../i18n';
 
 // Modal on the Radix Dialog primitive (D066). What the primitive provides and this file relies on (verified in
 // jsdom by tests/ui-overlays.test.tsx): `role="dialog"` named by the title, siblings hidden from assistive
@@ -55,6 +56,7 @@ export interface ModalProps {
 }
 
 function ModalView(props: ModalProps) {
+  useLocale();
   const {
     open,
     onOpenChange,
@@ -64,7 +66,7 @@ function ModalView(props: ModalProps) {
     icon,
     children,
     confirmText,
-    cancelText = '取消',
+    cancelText = t('system.close'),
     confirmVariant = 'primary',
     onConfirm,
     onCancel,
@@ -117,7 +119,7 @@ function ModalView(props: ModalProps) {
   const defaultFooter =
     kind === 'alert' ? (
       <Button loading={pending} onClick={handleConfirm}>
-        {confirmText ?? '确定'}
+        {confirmText ?? t('system.confirm')}
       </Button>
     ) : (
       <>
@@ -125,7 +127,7 @@ function ModalView(props: ModalProps) {
           {cancelText}
         </Button>
         <Button variant={confirmVariant} loading={pending} onClick={handleConfirm}>
-          {confirmText ?? '确定'}
+          {confirmText ?? t('system.confirm')}
         </Button>
       </>
     );
@@ -171,7 +173,7 @@ function ModalView(props: ModalProps) {
               variant="ghost"
               size="sm"
               iconOnly
-              aria-label="关闭"
+              aria-label={t('system.closeDialog')}
               disabled={pending}
               className="absolute right-3 top-3"
             >

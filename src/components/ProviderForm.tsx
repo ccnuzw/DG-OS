@@ -1,9 +1,11 @@
+import { t, useLocale as usePageLocale } from '../i18n';
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Button, Card, Checkbox, Input, Select, Stack, cn, extractErrorCode } from '@dgos/ui';
 import { usePageError } from '../pageError';
 import { MODEL_KINDS, resolveVendorId, useProviderStore } from '../stores/providerStore';
 import type { ProviderConfig, ProviderVendor, Model, Provider } from '../stores/providerStore';
+import { useLocale, formatNumber } from '../i18n';
 
 interface ProviderFormProps {
   provider: Provider | null;  // null = 新建模式
@@ -21,25 +23,23 @@ const CODE_REQUEST_NOT_SUPPORTED = 1001020;
 
 // Actionable text for the error codes a connection test can return (V1-FR-001 §8). Other codes show the host message.
 const DIAGNOSTIC_HINTS: Readonly<Record<number, string>> = {
-  1001002: 'Invalid API key',
-  1001019: 'The key lacks permission, or the region is restricted',
-  1001025:
-    'The response was not the expected JSON. Check that the base URL is not missing /v1 and is not a web page address, and note redirects are not followed - enter the final address',
-  1001023:
-    'Plain HTTP is not allowed for this address. Use https://, or enable Allow plain HTTP under Advanced options',
+  1001002: 'providerForm.invalidApiKey',
+  1001019: 'providerForm.permissionRegion',
+  1001025: 'providerForm.invalidJsonEndpoint',
+  1001023: 'providerForm.httpNotAllowed',
 };
 
-const NO_MODEL_LIST_HINT = 'This service has no model list endpoint. Enter a model name below to test with it.';
+const NO_MODEL_LIST_HINT = 'providerForm.noModelList';
 
 const AUTH_STYLE_OPTIONS = [
-  { value: 'default', label: 'Default' },
+  { value: 'default', label: 'provider.default' },
   { value: 'bearer', label: 'Bearer' },
   { value: 'x-api-key', label: 'x-api-key' },
-  { value: 'both', label: 'Both' },
+  { value: 'both', label: 'provider.both' },
 ] as const;
 
 const KIND_OPTIONS = [
-  { value: 'auto', label: 'Auto' },
+  { value: 'auto', label: 'provider.auto' },
   ...MODEL_KINDS.map((kind) => ({ value: kind, label: kind })),
 ];
 
@@ -115,6 +115,8 @@ export default function ProviderForm({
   loading = false,
   onModelsRefreshed,
 }: ProviderFormProps) {
+  usePageLocale();
+  const { locale } = useLocale();
   const isEditMode = !!provider;
   const isNewMode = !provider;
   const reportError = usePageError('ProviderManagement');
@@ -303,7 +305,7 @@ export default function ProviderForm({
         // 新建模式：必须有 API Key
         if (!formData.api_key) {
           setTestResult('error');
-          setTestMessage('Please enter an API Key');
+          setTestMessage(t('providerForm.enterApiKey'));
           setTesting(false);
           return;
         }
@@ -316,7 +318,7 @@ export default function ProviderForm({
       if (generation !== operationGeneration.current) return;
       if (response.success && response.data) {
         setTestResult('success');
-        setTestMessage('Connection successful');
+        setTestMessage(t('providerForm.success'));
       } else {
         const hostMessage = response.error?.message || 'Connection failed';
         const code = response.error?.code;
@@ -324,10 +326,10 @@ export default function ProviderForm({
         if (code === CODE_REQUEST_NOT_SUPPORTED && !probe) {
           // Ask for a model name once; with one already entered the host message is the answer.
           setNeedsProbe(true);
-          setTestMessage(NO_MODEL_LIST_HINT);
+          setTestMessage(t(NO_MODEL_LIST_HINT));
           setTestDetail(hostMessage);
         } else if (code !== undefined && DIAGNOSTIC_HINTS[code]) {
-          setTestMessage(DIAGNOSTIC_HINTS[code]);
+          setTestMessage(t(DIAGNOSTIC_HINTS[code]));
           setTestDetail(hostMessage);
         } else {
           setTestMessage(hostMessage);
@@ -337,7 +339,7 @@ export default function ProviderForm({
     } catch (err) {
       if (generation !== operationGeneration.current) return;
       setTestResult('error');
-      setTestMessage(err instanceof Error ? err.message : 'Unknown error');
+      setTestMessage(err instanceof Error ? err.message : t('providerForm.unknownError'));
       reportError(err);
     } finally {
       if (generation === operationGeneration.current) setTesting(false);
@@ -391,7 +393,7 @@ export default function ProviderForm({
       }
     } catch (err) {
       if (generation !== operationGeneration.current) return;
-      setModelsError(err instanceof Error ? err.message : 'Unknown error');
+      setModelsError(err instanceof Error ? err.message : t('providerForm.unknownError'));
       reportError(err);
     } finally {
       if (generation === operationGeneration.current) setFetchingModels(false);
@@ -411,7 +413,7 @@ export default function ProviderForm({
       if (extractErrorCode(useProviderStore.getState().lastFailure) === CODE_REQUEST_NOT_SUPPORTED) {
         setNeedsProbe(true);
         setTestResult('error');
-        setTestMessage(NO_MODEL_LIST_HINT);
+        setTestMessage(t(NO_MODEL_LIST_HINT));
         setTestDetail('');
       }
     }
@@ -461,27 +463,27 @@ export default function ProviderForm({
       {/* 标题 */}
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-4">
         <h2 className="m-0 min-w-0 wrap-anywhere text-2xl font-semibold text-foreground">
-          {isNewMode ? 'New Provider' : provider.name}
+          {isNewMode ? t('providerForm.new') : provider.name}
         </h2>
         {isEditMode && (
-          <span className="font-mono text-xs text-muted-foreground">ID: {provider.id.slice(0, 8)}...</span>
+          <span className="font-mono text-xs text-muted-foreground">{t('detail.id')}{provider.id.slice(0, 8)}...</span>
         )}
       </header>
 
       {/* 配置区 */}
       <Card>
         <Card.Header>
-          <h3 className="m-0 text-base font-semibold">Configuration</h3>
+          <h3 className="m-0 text-base font-semibold">{t('providerForm.configuration')}</h3>
         </Card.Header>
         <Card.Body>
           <Stack gap={4}>
             <Stack gap={1}>
               <Input
                 id="name"
-                label={<>Name <span className="text-error-text">*</span></>}
+                label={<>{t('detail.name')}{' '}<span className="text-error-text">*</span></>}
                 value={formData.name}
                 onChange={(e) => handleChange('name', e.target.value)}
-                placeholder="My Provider"
+                placeholder={t('detail.myProvider')}
                 disabled={loading || saving}
               />
             </Stack>
@@ -489,15 +491,15 @@ export default function ProviderForm({
             <Stack gap={1}>
               <Select
                 id="vendor"
-                label="Vendor"
+                label={t('providerForm.vendor')}
                 value={vendorId}
                 onChange={handleVendorChange}
                 options={vendorOptions}
-                placeholder="Select a vendor"
+                placeholder={t('providerForm.chooseVendor')}
                 disabled={loading || saving}
               />
               {vendorsStatus === 'error' && vendors.length === 0 && (
-                <p className="m-0 text-xs text-warning-text">The vendor list could not be loaded.</p>
+                <p className="m-0 text-xs text-warning-text">{t('providerForm.vendorUnavailable')}</p>
               )}
             </Stack>
 
@@ -505,31 +507,30 @@ export default function ProviderForm({
               <Stack gap={1}>
                 <Select
                   id="provider_type"
-                  label="Provider Type"
+                  label={t('providerForm.type')}
                   value={formData.provider_type}
                   onChange={handleEndpointChange}
                   options={endpoints.map((row) => ({ value: row.provider_type, label: row.display_name }))}
                   disabled={loading || saving}
                 />
-                <p className="m-0 text-xs text-muted-foreground">The API protocol this service speaks</p>
+                <p className="m-0 text-xs text-muted-foreground">{t('providerForm.protocol')}</p>
               </Stack>
             )}
 
             <Stack gap={1}>
               <Input
                 id="base_url"
-                label={<>Base URL <span className="text-error-text">*</span></>}
+                label={<>{t('providerForm.baseUrl')}{' '}<span className="text-error-text">*</span></>}
                 inputMode="url"
                 value={formData.base_url}
                 onChange={(e) => handleChange('base_url', e.target.value)}
-                placeholder="https://your-service.example.com/v1"
+                placeholder={t('providerForm.baseUrlExample')}
                 disabled={loading || saving}
               />
-              <p className="m-0 text-xs text-muted-foreground">The base URL for the API endpoint</p>
+              <p className="m-0 text-xs text-muted-foreground">{t('providerForm.baseUrlHelp')}</p>
               {isLocalCleartext(formData.base_url) && (
                 <p role="note" className="m-0 text-xs text-muted-foreground">
-                  This address uses http:// on this machine or a private network. Traffic to it is not encrypted, which is usual for a local service.
-                </p>
+                  {t('providerForm.localHttp')}</p>
               )}
             </Stack>
 
@@ -537,33 +538,32 @@ export default function ProviderForm({
               <Input
                 id="api_key"
                 type="password"
-                label={<>API Key <span className="text-error-text">*</span></>}
+                label={<>{t('providerForm.apiKey')}{' '}<span className="text-error-text">*</span></>}
                 value={formData.api_key}
                 onChange={(e) => handleChange('api_key', e.target.value)}
-                placeholder={isEditMode ? 'Leave empty to keep current' : 'sk-...'}
+                placeholder={isEditMode ? t('providerForm.keepKey') : 'sk-...'}
                 disabled={loading || saving}
               />
               {isEditMode ? (
-                <p className="m-0 text-xs text-muted-foreground">Leave empty only when keeping the same endpoint and provider type. Changes require a new API key.</p>
+                <p className="m-0 text-xs text-muted-foreground">{t('providerForm.editKeyHelp')}</p>
               ) : (
-                <p className="m-0 text-xs text-muted-foreground">Your API key is stored in your OS credential store, not in the configuration database.</p>
+                <p className="m-0 text-xs text-muted-foreground">{t('providerForm.keyStorage')}</p>
               )}
               {needsNewKey && (
                 <p role="status" className="m-0 text-sm text-warning-text">
-                  Enter a new API key before testing or saving the changed endpoint. Save changes before refreshing cached models.
-                </p>
+                  {t('providerForm.newKeyRequired')}</p>
               )}
             </Stack>
 
             <Stack gap={1}>
               <Checkbox
                 id="enabled"
-                label="Enabled"
+                label={t('providerForm.enabled')}
                 checked={formData.enabled}
                 onChange={(checked) => handleChange('enabled', checked)}
                 disabled={loading || saving}
               />
-              <p className="m-0 text-xs text-muted-foreground">Disabled providers cannot be used for API calls</p>
+              <p className="m-0 text-xs text-muted-foreground">{t('providerForm.disabledCalls')}</p>
             </Stack>
 
             <Stack gap={3}>
@@ -576,34 +576,32 @@ export default function ProviderForm({
                   onClick={() => setAdvancedOpen((open) => !open)}
                 >
                   <span aria-hidden="true">{advancedOpen ? '▾' : '▸'}</span>
-                  Advanced options
-                </Button>
+                  {t('providerForm.advanced')}</Button>
               </div>
               {advancedOpen && (
                 <div id="provider-advanced-options" className="flex flex-col gap-4 rounded-md border border-border p-3">
                   <Stack gap={1}>
                     <Select
                       id="auth_style"
-                      label="Auth header style"
+                      label={t('providerForm.authStyle')}
                       value={authStyle}
                       onChange={(value) => setConfigKey('auth_style', value === 'default' ? undefined : value)}
-                      options={AUTH_STYLE_OPTIONS}
+                      options={AUTH_STYLE_OPTIONS.map(option => ({ ...option, label: option.label.startsWith('provider.') ? t(option.label) : option.value === 'bearer' ? t('providerForm.authBearer') : t('providerForm.authApiKey') }))}
                       disabled={loading || saving}
                     />
-                    <p className="m-0 text-xs text-muted-foreground">How the API key is sent. Leave on Default unless the service requires a specific header.</p>
+                    <p className="m-0 text-xs text-muted-foreground">{t('providerForm.authStyleHelp')}</p>
                   </Stack>
                   <Stack gap={1}>
                     <Checkbox
                       id="allow_insecure_http"
-                      label="Allow plain HTTP"
+                      label={t('providerForm.allowHttp')}
                       checked={allowInsecureHttp}
                       onChange={(checked) => setConfigKey('allow_insecure_http', checked ? true : undefined)}
                       disabled={loading || saving}
                     />
                     {allowInsecureHttp && (
                       <p role="note" className="m-0 rounded-md bg-warning-bg p-2 text-sm text-warning-text">
-                        Plain HTTP sends your API key and prompts unencrypted. Anyone on the network path can read them. Enable this only for a service you trust on a network you control.
-                      </p>
+                        {t('providerForm.httpWarning')}</p>
                     )}
                   </Stack>
                 </div>
@@ -616,7 +614,7 @@ export default function ProviderForm({
       {/* 操作区 */}
       <Card>
         <Card.Header>
-          <h3 className="m-0 text-base font-semibold">Actions</h3>
+          <h3 className="m-0 text-base font-semibold">{t('providerForm.actions')}</h3>
         </Card.Header>
         <Card.Body>
           <Stack gap={3}>
@@ -624,15 +622,14 @@ export default function ProviderForm({
               <Stack gap={1}>
                 <Input
                   id="probe_model"
-                  label="Model name"
+                  label={t('providerForm.modelName')}
                   value={probeModel}
                   onChange={(e) => setProbeModel(e.target.value)}
-                  placeholder="e.g. a model your service offers"
+                  placeholder={t('providerForm.probePlaceholder')}
                   disabled={saving}
                 />
                 <p className="m-0 text-xs text-muted-foreground">
-                  Testing sends one small request to this model, which consumes a few tokens.
-                </p>
+                  {t('providerForm.testOneSmallRequest')}</p>
               </Stack>
             )}
 
@@ -643,7 +640,7 @@ export default function ProviderForm({
                 loading={testing}
                 disabled={saving || needsNewKey || !formData.base_url || (!isEditMode && !formData.api_key)}
               >
-                {testing ? 'Testing...' : '🔌 Test Connection'}
+                {testing ? t('providerForm.testing') : t('providerForm.testConnection')}
               </Button>
 
               <Button
@@ -652,7 +649,7 @@ export default function ProviderForm({
                 loading={fetchingModels}
                 disabled={saving || endpointChanged || (isEditMode && !!formData.api_key) || (!isEditMode && !formData.api_key)}
               >
-                {fetchingModels ? 'Fetching...' : '📥 Refresh Models'}
+                {fetchingModels ? t('providerForm.fetching') : t('providerForm.refreshModels')}
               </Button>
             </div>
 
@@ -681,7 +678,7 @@ export default function ProviderForm({
       {(models.length > 0 || isEditMode) && (
         <Card>
           <Card.Header>
-            <h3 className="m-0 text-base font-semibold">Models ({models.length})</h3>
+            <h3 className="m-0 text-base font-semibold">{t('detail.models')}{models.length})</h3>
           </Card.Header>
           <Card.Body>
             <Stack gap={3}>
@@ -698,18 +695,18 @@ export default function ProviderForm({
                         {model.model_type === 'chat' ? 'text-generation' : model.model_type}
                       </span>
                       {model.source === 'manual' && (
-                        <span className="rounded-sm bg-warning-bg px-2 py-1 text-xs text-warning-text">manual</span>
+                        <span className="rounded-sm bg-warning-bg px-2 py-1 text-xs text-warning-text">{t('detail.manual')}</span>
                       )}
                       {model.supports_streaming && (
-                        <span className="rounded-sm bg-info-bg px-2 py-1 text-xs text-info-text">Streaming</span>
+                        <span className="rounded-sm bg-info-bg px-2 py-1 text-xs text-info-text">{t('providerForm.streaming')}</span>
                       )}
                       {model.supports_vision && (
-                        <span className="rounded-sm bg-info-bg px-2 py-1 text-xs text-info-text">Vision</span>
+                        <span className="rounded-sm bg-info-bg px-2 py-1 text-xs text-info-text">{t('providerForm.vision')}</span>
                       )}
                     </div>
                     {model.context_window && (
                       <div className="text-xs text-muted-foreground">
-                        Context: {model.context_window.toLocaleString()} tokens
+                        {t('provider.context', { count: formatNumber(model.context_window, locale) })}
                       </div>
                     )}
                     {isEditMode && model.source === 'manual' && (
@@ -717,13 +714,12 @@ export default function ProviderForm({
                         <Button
                           variant="ghost"
                           size="sm"
-                          aria-label={`Remove ${model.model_id}`}
+                          aria-label={t('providerForm.removeModel', { id: model.model_id })}
                           loading={manualBusy === model.model_id}
                           disabled={manualBusy !== null}
                           onClick={() => void handleRemoveManualModel(model)}
                         >
-                          Remove
-                        </Button>
+                          {t('providerForm.remove')}</Button>
                       </div>
                     )}
                   </div>
@@ -734,20 +730,20 @@ export default function ProviderForm({
                   <div className="min-w-0 grow basis-60">
                     <Input
                       id="manual_model_id"
-                      label="Model ID"
+                      label={t('providerForm.modelId')}
                       value={manualModelId}
                       onChange={(e) => setManualModelId(e.target.value)}
-                      placeholder="model-id"
+                      placeholder={t('providerForm.modelIdExample')}
                       disabled={saving}
                     />
                   </div>
                   <div className="w-56 max-w-full">
                     <Select
                       id="manual_model_kind"
-                      label="Kind"
+                      label={t('providerForm.kind')}
                       value={manualKind}
                       onChange={setManualKind}
-                      options={KIND_OPTIONS}
+                      options={KIND_OPTIONS.map(option => ({ ...option, label: option.value === 'auto' ? t('provider.auto') : option.label }))}
                       disabled={saving}
                     />
                   </div>
@@ -757,19 +753,16 @@ export default function ProviderForm({
                     loading={manualBusy === 'add'}
                     disabled={saving || manualBusy !== null || !manualModelId.trim()}
                   >
-                    Add model
-                  </Button>
+                    {t('providerForm.addModel')}</Button>
                 </div>
               )}
               {isNewMode && (
                 <p className="m-0 text-xs text-muted-foreground">
-                  These models will be saved when you create the provider
-                </p>
+                  {t('providerForm.modelsSavedOnCreate')}</p>
               )}
               {isEditMode && (
                 <p className="m-0 text-xs text-muted-foreground">
-                  Models were updated in the database
-                </p>
+                  {t('providerForm.modelsUpdated')}</p>
               )}
             </Stack>
           </Card.Body>
@@ -780,8 +773,7 @@ export default function ProviderForm({
       <footer className="flex flex-wrap items-center gap-3 border-t border-border pt-6">
         {isEditMode && onDelete && (
           <Button variant="danger" onClick={handleDelete} disabled={saving}>
-            🗑️ Delete
-          </Button>
+            {t('detail.delete')}</Button>
         )}
         <Button
           className="ml-auto"
@@ -789,7 +781,7 @@ export default function ProviderForm({
           loading={saving}
           disabled={loading || needsNewKey || !formData.name || !formData.base_url || (!isEditMode && !formData.api_key)}
         >
-          {saving ? 'Saving...' : isNewMode ? '💾 Create' : '💾 Save Changes'}
+          {saving ? t('providerForm.saving') : isNewMode ? `💾 ${t('providerForm.create')}` : `💾 ${t('providerForm.saveChanges')}`}
         </Button>
       </footer>
     </div>

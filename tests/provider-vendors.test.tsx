@@ -1,3 +1,4 @@
+import { setLocaleForTesting } from '../src/i18n/runtime';
 // V1-FR-001 AC16 (frontend part): the vendor table comes from the host, never from the renderer. The mock holds a
 // made-up vendor ("Acme Cloud") that no source file knows, so a hard-coded list cannot satisfy these tests.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -54,6 +55,7 @@ function mockHost(providers: unknown[] = [], extra: (command: string, args: unkn
 }
 
 beforeEach(() => {
+  setLocaleForTesting('en-US');
   useProviderStore.setState(initialState, true);
 });
 

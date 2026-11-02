@@ -1,7 +1,9 @@
+import { useLocale as usePageLocale } from '../i18n';
 import { useState } from 'react';
 import { Button, Loading, Modal, Stack, Switch, cn } from '@dgos/ui';
 import { resolveVendorId } from '../stores/providerStore';
 import type { Provider, ProviderVendor } from '../stores/providerStore';
+import { useLocale } from '../i18n';
 
 interface ProviderListProps {
   providers: Provider[];
@@ -30,6 +32,8 @@ export default function ProviderList({
   onDelete,
   hasUnsavedChanges,
 }: ProviderListProps) {
+  usePageLocale();
+  const { t } = useLocale();
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
   const handleConfirmDelete = async () => {
@@ -41,12 +45,12 @@ export default function ProviderList({
     <aside className="flex min-w-0 max-w-full shrink-0 basis-80 flex-col gap-4 p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="m-0 text-xs font-semibold uppercase text-muted-foreground">Configured services</p>
-          <h2 className="m-0 text-lg font-semibold text-foreground">Providers</h2>
+           <p className="m-0 text-xs font-semibold uppercase text-muted-foreground">{t('provider.kicker')}</p>
+           <h2 className="m-0 text-lg font-semibold text-foreground">{t('nav.providers')}</h2>
         </div>
         <span
           className="inline-flex min-w-8 items-center justify-center rounded-full bg-secondary px-2 py-1 text-sm font-semibold text-foreground"
-          aria-label={`${providers.length} providers`}
+          aria-label={t('provider.count', { count: providers.length })}
         >
           {providers.length}
         </span>
@@ -56,8 +60,8 @@ export default function ProviderList({
         {providers.length === 0 && (
           <div className="flex flex-col items-center gap-1 rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
             <span aria-hidden="true" className="text-xl font-semibold text-foreground">+</span>
-            <strong className="text-foreground">No providers yet</strong>
-            <span>Add an AI service to get started.</span>
+             <strong className="text-foreground">{t('provider.emptyTitle')}</strong>
+             <span>{t('provider.emptyText')}</span>
           </div>
         )}
         {providers.map((provider, index) => {
@@ -77,7 +81,7 @@ export default function ProviderList({
                 <div className="flex min-w-0 items-center gap-2">
                   <h3 className="m-0 min-w-0 wrap-anywhere text-base font-semibold">{provider.name}</h3>
                   {selected && hasUnsavedChanges && (
-                    <span role="img" aria-label="Unsaved changes" title="Unsaved changes" className="text-error-text">
+                    <span role="img" aria-label={t('detail.unsaved')} title={t('detail.unsaved')} className="text-error-text">
                       ●
                     </span>
                   )}
@@ -87,8 +91,8 @@ export default function ProviderList({
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  title={`Move ${provider.name} up`}
-                  aria-label={`Move ${provider.name} up`}
+                  title={t('provider.moveUp', { name: provider.name })}
+                  aria-label={t('provider.moveUp', { name: provider.name })}
                   disabled={index === 0 || moveDisabled}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -113,8 +117,8 @@ export default function ProviderList({
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  title={`Move ${provider.name} down`}
-                  aria-label={`Move ${provider.name} down`}
+                  title={t('provider.moveDown', { name: provider.name })}
+                  aria-label={t('provider.moveDown', { name: provider.name })}
                   disabled={index === providers.length - 1 || moveDisabled}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -139,8 +143,8 @@ export default function ProviderList({
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  title={`Delete ${provider.name}`}
-                  aria-label={`Delete ${provider.name}`}
+                  title={t('provider.deleteName', { name: provider.name })}
+                  aria-label={t('provider.deleteName', { name: provider.name })}
                   onClick={(e) => {
                     e.stopPropagation();
                     setDeleteConfirm(provider.id);
@@ -185,27 +189,27 @@ export default function ProviderList({
                     provider.enabled ? 'bg-success-bg text-success-text' : 'bg-secondary text-secondary-foreground',
                   )}
                 >
-                  {provider.enabled ? 'Enabled' : 'Disabled'}
+                   {provider.enabled ? t('common.enabled') : t('common.disabled')}
                 </span>
               </div>
 
               <div className="flex items-center justify-between gap-3">
                 <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="text-sm font-semibold">{provider.enabled ? 'Available' : 'Paused'}</span>
+                  <span className="text-sm font-semibold">{provider.enabled ? t('provider.available') : t('provider.paused')}</span>
                   <span className="wrap-anywhere text-xs text-muted-foreground">
                     {!provider.enabled
-                      ? 'Excluded from requests'
+                      ? t('provider.excluded')
                       : provider.credential_status === 'migration_required'
-                        ? 'Credential migration pending'
+                        ? t('provider.migrationPending')
                         : provider.credential_status === 'missing'
-                          ? 'Add a credential'
-                          : 'Configured for requests'}
+                          ? t('provider.addCredential')
+                          : t('provider.configured')}
                   </span>
                 </div>
                 <div className="flex shrink-0 items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                  {togglingProviderId === provider.id && <Loading size="sm" aria-label={`Updating ${provider.name}`} />}
+                  {togglingProviderId === provider.id && <Loading size="sm" aria-label={t('provider.updating', { name: provider.name })} />}
                   <Switch
-                    aria-label={`${provider.enabled ? 'Disable' : 'Enable'} ${provider.name}`}
+                    aria-label={`${provider.enabled ? t('module.disable') : t('module.enableButton')} ${provider.name}`}
                     checked={provider.enabled}
                     disabled={togglingProviderId !== null || reordering}
                     onChange={(enabled) => void onToggleEnabled(provider, enabled)}
@@ -218,7 +222,7 @@ export default function ProviderList({
       </Stack>
 
       <Button size="lg" onClick={onNewProvider} className="w-full">
-        + New Provider
+         + {t('provider.new')}
       </Button>
 
       <Modal
@@ -226,10 +230,10 @@ export default function ProviderList({
         onOpenChange={(open) => {
           if (!open) setDeleteConfirm(null);
         }}
-        title="Delete Provider?"
-        description="Are you sure you want to delete this provider? This action cannot be undone."
-        confirmText="Delete"
-        cancelText="Cancel"
+        title={t('detail.deleteProvider')}
+        description={t('provider.deleteConfirm')}
+        confirmText={t('providerForm.delete')}
+        cancelText={t('module.cancel')}
         confirmVariant="danger"
         onConfirm={handleConfirmDelete}
       />

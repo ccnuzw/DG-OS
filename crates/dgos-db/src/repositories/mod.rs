@@ -40,5 +40,5 @@ pub use skill_install_repository::{OperationPatch, SkillInstallOperation, SkillI
 pub use usage_log_repository::UsageLogRepository;
 pub use user_data_repository::{UserDataDomain, UserDataRepository, RETAINED_FOR_VAULT_RETRY};
 pub use user_repository::{
-    HostSettingsRepository, NewUser, UserRecord, UserRepository, LAST_SIGN_IN_USER,
+    HostSettingsRepository, NewUser, UserRecord, UserRepository, LAST_SIGN_IN_USER, UI_LANGUAGE_KEY,
 };
