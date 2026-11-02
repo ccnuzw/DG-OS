@@ -69,6 +69,8 @@ keyring = { version = "3.6", features = ["sync-secret-service", "crypto-rust"] }
 # default; it embeds ../dist and drives a hidden WKWebView/WebView2 window.
 # Run: npm run smoke:tauri
 webview-smoke = ["tauri/custom-protocol", "dep:sha2", "dgos-providers/test-support", "dep:objc2"]
+mcp-smoke = ["webview-smoke", "dgos-mcp/webview-smoke"]
+provider-smoke = ["webview-smoke"]
 
 [dependencies.sha2]
 workspace = true
@@ -148,3 +150,15 @@ name = "webview_smoke_lan"
 path = "tests/webview_smoke_lan.rs"
 harness = false
 required-features = ["webview-smoke"]
+
+[[test]]
+name = "webview_smoke_mcp"
+path = "tests/webview_smoke_mcp.rs"
+harness = false
+required-features = ["mcp-smoke"]
+
+[[test]]
+name = "webview_smoke_providers"
+path = "tests/webview_smoke_providers.rs"
+harness = false
+required-features = ["provider-smoke"]

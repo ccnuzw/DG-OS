@@ -3,6 +3,9 @@ name = "dgos-mcp"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+webview-smoke = []
+
 [dependencies]
 dgos-db = { path = "../dgos-db" }
 dgos-types = { path = "../dgos-types" }

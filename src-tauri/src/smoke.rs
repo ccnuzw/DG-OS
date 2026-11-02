@@ -40,8 +40,12 @@ mod call;
 mod capabilities;
 mod chat;
 mod lan;
+#[cfg(feature = "mcp-smoke")]
+mod mcp;
 mod modules;
 mod provider_stream;
+#[cfg(feature = "provider-smoke")]
+mod providers;
 mod real;
 mod ui;
 mod ui_keys;
@@ -52,8 +56,12 @@ pub use call::run_call;
 pub use capabilities::run_capabilities;
 pub use chat::run_chat;
 pub use lan::run_lan;
+#[cfg(feature = "mcp-smoke")]
+pub use mcp::run_mcp;
 pub use modules::run_modules;
 pub use provider_stream::run_provider_stream;
+#[cfg(feature = "provider-smoke")]
+pub use providers::run_providers;
 pub use real::run_real;
 pub use ui::run_ui;
 const STEP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -105,7 +113,7 @@ impl ModuleLoader for SmokeLoader {
     ) -> Result<(), ModuleLoadError> {
         let scripted = self
             .failing_stops
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
             .is_ok();
         if scripted {
             return Err(ModuleLoadError::Rejected("scripted stop failure".into()));

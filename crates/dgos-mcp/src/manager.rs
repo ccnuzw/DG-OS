@@ -442,6 +442,23 @@ impl McpManager {
         }
     }
 
+    /// Run one monitor cycle without waiting for the production 30-second tick.
+    ///
+    /// This is only compiled into the desktop WebView acceptance harness. It
+    /// keeps the recovery evidence deterministic without shortening the
+    /// production interval or adding a renderer-facing command.
+    #[cfg(feature = "webview-smoke")]
+    pub async fn monitor_once_for_smoke(&self) {
+        self.monitor_tick().await;
+    }
+
+    #[cfg(feature = "webview-smoke")]
+    pub async fn make_reconnect_due_for_smoke(&self, server_id: &str) {
+        if let Some(retry) = self.reconnects.write().await.get_mut(server_id) {
+            retry.next_at = Instant::now();
+        }
+    }
+
     pub async fn recover_runtime_status(&self) -> Result<()> {
         mcp_servers::Entity::update_many()
             .filter(mcp_servers::Column::DeletedAt.is_null())
