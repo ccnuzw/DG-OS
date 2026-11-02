@@ -120,6 +120,37 @@ pub async fn module_call_provider(
     CommandResponse::from(result)
 }
 
+/// Cancel one in-flight module capability call (D113). Identity is derived
+/// like admission: `route` must exist for the calling page's `attachment_id`
+/// and the page instance must still be the live one; the module, user and
+/// runtime come from the route binding and no caller claim is accepted. Any
+/// rejection is `1004004` without a reason. Answers `true` when a cancel was
+/// delivered to a call in flight on that route, `false` when `call_id` is not
+/// one (unknown, settled, already cancelled, or another route's). It needs no
+/// `ready` runtime, so a draining runtime's page can still cancel. It runs no
+/// dispatch, authorizes nothing, and never records `call_id` as used.
+#[tauri::command]
+pub async fn cancel_module_call(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    attachment_id: String,
+    route: String,
+    call_id: String,
+) -> CommandResponse<bool> {
+    if let Err(error) = host::module_host_window(&window) {
+        return CommandResponse::from(Err(error));
+    }
+    let router = app.state::<Arc<ModuleCallRouter>>();
+    CommandResponse::from(
+        router
+            .cancel(&route, &attachment_id, &call_id)
+            .map_err(|rejection| {
+                tracing::debug!(?rejection, "module call cancel was not accepted");
+                DgosError::PermissionDenied
+            }),
+    )
+}
+
 #[derive(serde::Serialize)]
 pub struct CrashRecorded {
     pub recorded: bool,

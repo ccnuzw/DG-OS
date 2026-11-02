@@ -12,6 +12,7 @@ pub mod module_versions;
 pub mod modules;
 pub mod providers;
 pub mod skill_catalog;
+pub mod skill_install_operations;
 pub mod skill_registry_cache;
 pub mod skill_usage_logs;
 pub mod skill_user_states;
@@ -37,6 +38,7 @@ pub mod prelude {
     pub use super::modules::Entity as Modules;
     pub use super::providers::Entity as Providers;
     pub use super::skill_catalog::Entity as SkillCatalog;
+    pub use super::skill_install_operations::Entity as SkillInstallOperations;
     pub use super::skill_registry_cache::Entity as SkillRegistryCache;
     pub use super::skill_usage_logs::Entity as SkillUsageLogs;
     pub use super::skill_versions::Entity as SkillVersions;

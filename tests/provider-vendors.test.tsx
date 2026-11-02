@@ -1,3 +1,4 @@
+import { setLocaleForTesting } from '../src/i18n/runtime';
 // V1-FR-001 AC16 (frontend part): the vendor table comes from the host, never from the renderer. The mock holds a
 // made-up vendor ("Acme Cloud") that no source file knows, so a hard-coded list cannot satisfy these tests.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -54,6 +55,7 @@ function mockHost(providers: unknown[] = [], extra: (command: string, args: unkn
 }
 
 beforeEach(() => {
+  setLocaleForTesting('en-US');
   useProviderStore.setState(initialState, true);
 });
 
@@ -123,6 +125,13 @@ describe('Vendor selection (AC16)', () => {
 
     fireEvent.change(input('Base URL *'), { target: { value: 'https://gateway.example/anthropic' } });
     expect(input('Base URL *').value).toBe('https://gateway.example/anthropic');
+  });
+
+  it('D112 marks the Base URL input inputmode="url" without giving it type="url"', async () => {
+    mockHost();
+    await openNewForm();
+    expect(input('Base URL *').getAttribute('inputmode')).toBe('url');
+    expect(input('Base URL *').type).toBe('text');
   });
 
   it('asks for the adapter of a multi-endpoint vendor and requires a base URL before Create', async () => {

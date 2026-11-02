@@ -47,10 +47,13 @@ pub enum ModuleRequestOutcome {
     /// The request was dropped before it settled. An external side effect
     /// may already have happened, so the result is unknown and not replayed.
     Interrupted,
+    /// The page cancelled the call before its external effect started
+    /// (authorization, MCP confirmation); the operation never ran (D113).
+    Cancelled,
 }
 
 /// Counters for one runtime instance. Invariant:
-/// `admitted == in_flight + succeeded + failed + denied + interrupted`.
+/// `admitted == in_flight + succeeded + failed + denied + interrupted + cancelled`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ModuleRequestStats {
     pub admitted: u64,
@@ -60,6 +63,7 @@ pub struct ModuleRequestStats {
     pub failed: u64,
     pub denied: u64,
     pub interrupted: u64,
+    pub cancelled: u64,
 }
 
 struct RuntimeInner {
@@ -290,6 +294,7 @@ impl ModuleRequest {
             ModuleRequestOutcome::Failed => inner.stats.failed += 1,
             ModuleRequestOutcome::Denied => inner.stats.denied += 1,
             ModuleRequestOutcome::Interrupted => inner.stats.interrupted += 1,
+            ModuleRequestOutcome::Cancelled => inner.stats.cancelled += 1,
         }
         shared.in_flight.send_replace(inner.stats.in_flight);
     }
@@ -375,6 +380,7 @@ mod tests {
                 failed: 0,
                 denied: 0,
                 interrupted: 0,
+                cancelled: 0,
             }
         );
     }

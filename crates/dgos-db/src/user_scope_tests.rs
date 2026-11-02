@@ -67,6 +67,13 @@ fn seed(user: &str, n: u32) -> String {
           VALUES ('legacy-{n}', 'skill-1', 's', '1', '/x', 'cli', '{{}}', 1, 1, '{user}');
         INSERT INTO skill_user_states (user_id, skill_id, version_id, enabled, created_at)
           VALUES ('{user}', 'skill-1', 'ver-1', 1, 1);
+        INSERT INTO skill_install_operations (
+          operation_id, user_id, idempotency_key, source_kind, source_ref,
+          state, metadata, created_at, updated_at
+        ) VALUES (
+          'skill-op-{n}', '{user}', 'idem-{n}', 'local_zip', 'snapshot.zip',
+          'previewed', '{{}}', 1, 1
+        );
         INSERT INTO skill_usage_logs (id, skill_id, user_id, input_params, success, latency_ms, created_at)
           VALUES ('sul-{n}', 'skill-1', '{user}', '{{}}', 1, 1, 1);
         INSERT INTO module_permissions (id, user_id, module_id, permission, granted)

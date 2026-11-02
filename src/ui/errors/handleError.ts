@@ -5,6 +5,7 @@
 import { modalApi } from '../feedback/modalStore';
 import { toast } from '../feedback/toastStore';
 import { lookupError } from './messages';
+import { getLocale } from '../../i18n/runtime';
 
 export interface HandleErrorOptions {
   /** Where the error happened, for the log line (a screen or command name, never user input). */
@@ -35,7 +36,7 @@ export function handleError(error: unknown, options: HandleErrorOptions = {}): v
 
   // B05-28: an unregistered code (or none at all) gets the generic text and moderate treatment.
   if (!info) {
-    toast.error(code === null ? '操作失败' : `操作失败（错误码 ${code}）`, { duration: DURATION.moderate });
+    toast.error(getLocale() === 'zh-CN' ? (code === null ? '操作失败' : `操作失败（错误码 ${code}）`) : (code === null ? 'Operation failed' : `Operation failed (${code})`), { duration: DURATION.moderate });
     return;
   }
 

@@ -789,7 +789,7 @@ mod tests {
         ) -> Result<(), ModuleLoadError> {
             let scripted = self
                 .failing_stops
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
                     remaining.checked_sub(1)
                 })
                 .is_ok();

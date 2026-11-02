@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/lan/remote/App';
 import { mountLanApp } from '../src/lan/remote/boot';
+import { setRemoteLocale } from '../src/lan/remote/i18n';
 
 // Remote LAN SPA (V1-FR-010): fetch and WebSocket are replaced by fakes; nothing touches a network.
 
@@ -68,6 +69,7 @@ let order: string[];
 
 function defaultRoutes(): Record<string, Handler> {
   return {
+    [`GET ${BASE}/bootstrap`]: () => json({ locale: 'zh-CN', catalog_version: 'v1' }),
     [`GET ${BASE}/session`]: () => json(SESSION_STATUS),
     [`POST ${BASE}/pair`]: () => json(SESSION_STATUS),
     [`POST ${BASE}/logout`]: () => new Response(null, { status: 204 }),
@@ -141,6 +143,7 @@ async function typeAndSend(text: string) {
 }
 
 beforeEach(() => {
+  setRemoteLocale('zh-CN');
   calls = [];
   order = [];
   routes = defaultRoutes();
@@ -195,7 +198,8 @@ describe('pairing from the URL fragment', () => {
     expect(order[0]).toBe('replaceState');
     expect(location.hash).toBe('');
     expect(location.pathname + location.search).toBe('/?x=1');
-    expect(order[1]).toBe(`fetch POST ${BASE}/pair`);
+    expect(order).toContain(`fetch GET ${BASE}/bootstrap`);
+    expect(order).toContain(`fetch POST ${BASE}/pair`);
     expect(callsTo('POST', `${BASE}/pair`)).toHaveLength(1);
     expect(callsTo('POST', `${BASE}/pair`)[0].body).toEqual({ code: CODE.toLowerCase().toUpperCase() });
     expect(callsTo('GET', `${BASE}/session`)).toHaveLength(0);

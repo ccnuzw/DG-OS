@@ -15,6 +15,7 @@ import App from '../src/App';
 import AccountGate from '../src/accounts/AccountGate';
 import { takeCleanupNotice, type AccountState } from '../src/accounts/accountApi';
 import { reloadApp } from '../src/accounts/reload';
+import { resetLocaleForTesting, setLocaleForTesting } from '../src/i18n/runtime';
 
 const host = vi.hoisted(() => ({
   calls: [] as Array<[string, unknown]>,
@@ -72,7 +73,7 @@ const typeInto = (label: string | RegExp, value: string, scope: HTMLElement = do
   fireEvent.change(within(scope).getByLabelText(label), { target: { value } });
 const press = (name: string, scope: HTMLElement = document.body) =>
   fireEvent.click(within(scope).getByRole('button', { name }));
-const appVisible = () => screen.findByText('Welcome to DG-OS');
+const appVisible = () => screen.findByText('DG-OS 首页');
 
 const FORBIDDEN: Record<string, true> = { user_id: true, userid: true, token: true, session: true, account_id: true, accountid: true };
 function forbiddenKeys(value: unknown, found: string[] = []): string[] {
@@ -87,6 +88,7 @@ function forbiddenKeys(value: unknown, found: string[] = []): string[] {
 }
 
 beforeEach(() => {
+  setLocaleForTesting('zh-CN');
   host.calls = [];
   host.state = signedIn;
   host.replies = {};
@@ -103,6 +105,7 @@ afterEach(() => {
   act(() => clearToasts());
   cleanup();
   vi.restoreAllMocks();
+  resetLocaleForTesting();
 });
 
 describe('gate', () => {
@@ -110,7 +113,7 @@ describe('gate', () => {
     reply('get_account_state', fail(1000000), ok(signedIn));
     renderApp();
     expect(await screen.findByRole('heading', { name: '无法读取账户状态' })).toBeTruthy();
-    expect(screen.queryByText('Welcome to DG-OS')).toBeNull();
+    expect(screen.queryByText('DG-OS 首页')).toBeNull();
     press('重试');
     await appVisible();
     expect(callsOf('get_account_state')).toHaveLength(2);
@@ -128,7 +131,37 @@ describe('gate', () => {
     host.rejections.get_account_state = 'Command sign_in not found';
     renderApp();
     expect(await screen.findByRole('heading', { name: '无法读取账户状态' })).toBeTruthy();
-    expect(screen.queryByText('Welcome to DG-OS')).toBeNull();
+    expect(screen.queryByText('DG-OS 首页')).toBeNull();
+  });
+
+  it('a database that could not be opened shows the reason and the file location, and offers no retry', async () => {
+    const path = '/Users/someone/Library/Application Support/com.dgos.app/dgos.db';
+    reply('get_account_state', fail(1008012, { stage: 'open', reason: 'Execution Error: file is not a database', path }));
+    renderApp();
+    expect(await screen.findByRole('heading', { name: '无法打开本机数据库' })).toBeTruthy();
+    expect(screen.getByText('打开数据库文件时失败')).toBeTruthy();
+    expect(screen.getByText('Execution Error: file is not a database')).toBeTruthy();
+    expect(screen.getByText(path)).toBeTruthy();
+    expect(screen.getByText(/没有修改这个文件/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '重试' })).toBeNull();
+    expect(screen.queryByText('DG-OS 首页')).toBeNull();
+    expect(callsOf('get_account_state')).toHaveLength(1);
+  });
+
+  it('a failed migration is named as such', async () => {
+    reply('get_account_state', fail(1008012, { stage: 'migrate', reason: 'Custom Error: Migration file is missing', path: '/d/dgos.db' }));
+    renderApp();
+    expect(await screen.findByText('升级数据库结构时失败')).toBeTruthy();
+    expect(screen.getByText('Custom Error: Migration file is missing')).toBeTruthy();
+    expect(screen.getByText('/d/dgos.db')).toBeTruthy();
+  });
+
+  it('1008012 without a usable detail falls back to the retry panel', async () => {
+    reply('get_account_state', fail(1008012, { stage: 'open' }), ok(signedIn));
+    renderApp();
+    expect(await screen.findByRole('heading', { name: '无法读取账户状态' })).toBeTruthy();
+    press('重试');
+    await appVisible();
   });
 });
 
@@ -136,8 +169,8 @@ describe('first launch (no_accounts)', () => {
   it('shows the welcome page, blocks a confirmation mismatch, then creates the account and reloads', async () => {
     host.state = noAccounts;
     renderApp();
-    expect(await screen.findByRole('heading', { name: '欢迎使用 DGOS' })).toBeTruthy();
-    expect(screen.queryByText('Welcome to DG-OS')).toBeNull();
+    expect(await screen.findByRole('heading', { name: '欢迎使用 DG-OS' })).toBeTruthy();
+    expect(screen.queryByText('DG-OS 首页')).toBeNull();
 
     typeInto('用户名', 'alice');
     typeInto('密码', 'password1');
@@ -157,7 +190,7 @@ describe('first launch (no_accounts)', () => {
   it('checks lengths before calling the host', async () => {
     host.state = noAccounts;
     renderApp();
-    await screen.findByRole('heading', { name: '欢迎使用 DGOS' });
+    await screen.findByRole('heading', { name: '欢迎使用 DG-OS' });
     typeInto('密码', 'short');
     typeInto('确认密码', 'short');
     press('创建账户');
@@ -169,10 +202,10 @@ describe('first launch (no_accounts)', () => {
   it('"暂不创建，继续使用" renders the app for this page load and offers 创建账户 in the nav', async () => {
     host.state = noAccounts;
     renderApp();
-    await screen.findByRole('heading', { name: '欢迎使用 DGOS' });
+    await screen.findByRole('heading', { name: '欢迎使用 DG-OS' });
     press('暂不创建，继续使用');
     await appVisible();
-    expect(screen.queryByRole('heading', { name: '欢迎使用 DGOS' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: '欢迎使用 DG-OS' })).toBeNull();
     expect(within(screen.getByRole('navigation')).getByRole('link', { name: '创建账户' })).toBeTruthy();
     expect(callsOf('create_account')).toHaveLength(0);
   });
@@ -180,7 +213,7 @@ describe('first launch (no_accounts)', () => {
   it('the account page offers the first-account form while skipped; creating reloads', async () => {
     host.state = noAccounts;
     renderApp('/account');
-    await screen.findByRole('heading', { name: '欢迎使用 DGOS' });
+    await screen.findByRole('heading', { name: '欢迎使用 DG-OS' });
     press('暂不创建，继续使用');
     expect(await screen.findByRole('heading', { name: '创建第一个账户' })).toBeTruthy();
 
@@ -204,7 +237,7 @@ describe('signed out', () => {
     expect(screen.getByRole('radio', { name: 'bob' }).getAttribute('aria-checked')).toBe('true');
     expect(screen.getByRole('radio', { name: 'alice' }).getAttribute('aria-checked')).toBe('false');
     expect(screen.queryByText(/创建|新建|注册/)).toBeNull();
-    expect(screen.queryByText('Welcome to DG-OS')).toBeNull();
+    expect(screen.queryByText('DG-OS 首页')).toBeNull();
   });
 
   it('shows the wrong-password text, the throttle seconds and the deletion notice without reloading', async () => {
@@ -260,7 +293,7 @@ describe('signed in: nav menu', () => {
     press('切换', dialog);
     expect(await within(dialog).findByText('用户名或密码错误')).toBeTruthy();
     expect(reloadApp).not.toHaveBeenCalled();
-    expect(screen.getByText('Welcome to DG-OS')).toBeTruthy();
+    expect(screen.getByText('DG-OS 首页')).toBeTruthy();
     expect(within(nav).getByText('alice')).toBeTruthy();
 
     reply('sign_in', ok({ ...signedIn, current: bob }));
@@ -288,7 +321,7 @@ describe('signed in: account page', () => {
     typeInto('用户名', 'carol');
     typeInto('密码', 'password1');
     typeInto('确认密码', 'password1');
-    press('新建账户');
+    press('创建账户');
     expect(await screen.findByText('账户已创建')).toBeTruthy();
     expect(reloadApp).not.toHaveBeenCalled();
     expect(callsOf('create_account')).toEqual([['create_account', { input: { username: 'carol', password: 'password1' } }]]);

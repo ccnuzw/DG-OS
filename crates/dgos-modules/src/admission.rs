@@ -67,7 +67,7 @@ impl ModuleAdmission for PinnedModuleAdmission {
 pub(crate) const BUILTIN_PINS: &[(&str, &str, &str)] = &[(
     "provider-console",
     "1.0.0",
-    "v2:3a0f95214403dc3ffd05905188345a2a506b813840cdd3348f23c383ffa6a457",
+    "v2:278d137aa113f188bfb33bab68f9bba09df4177d115281bf0e659bde0af05bd6",
 )];
 
 #[cfg(test)]

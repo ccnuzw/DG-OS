@@ -1,3 +1,4 @@
+import { t, useLocale as usePageLocale } from '../../i18n';
 import type { ReactNode } from 'react';
 import { Button, StatusIcon, cn } from '@dgos/ui';
 
@@ -18,11 +19,12 @@ export interface ChatNoticeProps {
 
 /** Inline notice. Errors use role="alert"; warnings and information use role="status" so they are announced politely. */
 export function ChatNotice({ tone, children, onDismiss, className }: ChatNoticeProps) {
+  usePageLocale();
   return (
     <div role={tone === 'error' ? 'alert' : 'status'} className={cn('flex items-start gap-2 rounded-md border-l-4 p-3 text-sm', TONE[tone], className)}>
       <StatusIcon name={tone === 'info' ? 'info' : tone === 'error' ? 'error' : 'warning'} className="mt-0.5" />
       <p className="m-0 min-w-0 grow wrap-anywhere">{children}</p>
-      {onDismiss ? <Button size="sm" variant="ghost" onClick={onDismiss}>知道了</Button> : null}
+      {onDismiss ? <Button size="sm" variant="ghost" onClick={onDismiss}>{t('chat.acknowledge')}</Button> : null}
     </div>
   );
 }

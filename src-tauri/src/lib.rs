@@ -8,13 +8,13 @@ mod instance_lock;
 mod lan;
 mod logging;
 mod module_host;
+mod os_credentials;
 mod provider_credentials;
 mod provider_streams;
 mod session;
 #[cfg(feature = "webview-smoke")]
 pub mod smoke;
 
-use dgos_db::sea_orm_migration::MigratorTrait;
 use dgos_mcp::McpManager;
 use dgos_providers::ProviderManager;
 use dgos_skills::SkillsManager;
@@ -42,6 +42,7 @@ pub fn run() {
                 // Create directory if it doesn't exist
                 std::fs::create_dir_all(&app_dir).expect("Failed to create app data directory");
 
+
                 // One process per data directory (D077): recovery below assumes nobody else is
                 // generating. Exit before touching the database if another instance holds it.
                 match instance_lock::InstanceLock::acquire(&app_dir) {
@@ -60,7 +61,7 @@ pub fn run() {
 
                 // Database path
                 let db_path = app_dir.join("dgos.db");
-                let database_url = format!("sqlite://{}?mode=rwc", db_path.display());
+                let database_url = dgos_db::startup::database_url(&db_path);
 
                 tracing::info!("Database URL: {}", database_url);
 
@@ -68,14 +69,27 @@ pub fn run() {
                 let skills_dir = app_dir.join("skills");
                 std::fs::create_dir_all(&skills_dir).expect("Failed to create skills directory");
 
-                let db = dgos_db::establish_connection(&database_url)
-                    .await
-                    .expect("Failed to connect to database");
-
-                // Run migrations before registering bundled catalog rows.
-                dgos_db::migrations::Migrator::up(&db, None)
-                    .await
-                    .expect("Failed to run database migrations");
+                // Open and migrate before registering bundled catalog rows. A failure is shown
+                // with the file location and nothing is repaired (FR-008 §10.3, D098 item 9,
+                // D116): no other state is managed, so every command except the account gate
+                // answers as unavailable, and the window shows the failure page.
+                let db = match dgos_db::startup::open_database(&db_path).await {
+                    Ok(db) => db,
+                    Err(failure) => {
+                        tracing::error!(
+                            stage = failure.stage.as_str(),
+                            reason = %failure.reason,
+                            path = %db_path.display(),
+                            "The local database could not be opened; nothing was repaired"
+                        );
+                        app_handle.manage(commands::DatabaseUnavailable {
+                            stage: failure.stage.as_str(),
+                            reason: failure.reason,
+                            path: db_path.display().to_string(),
+                        });
+                        return;
+                    }
+                };
 
                 let manager = ProviderManager::with_vault(
                     &database_url,
@@ -87,6 +101,9 @@ pub fn run() {
                 // after account recovery, below.
 
                 let skills_manager = SkillsManager::new(db.clone(), skills_dir);
+                if let Err(error) = skills_manager.recover_external_installs().await {
+                    tracing::warn!(error = %error, "Skill install recovery did not complete");
+                }
                 #[cfg(debug_assertions)]
                 let bundled_dir =
                     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../skills");
@@ -283,6 +300,7 @@ pub fn run() {
                 app_handle.manage(manager);
                 app_handle.manage(skills_state);
                 app_handle.manage(dgos_db::AppearanceRepository::new(db.clone()));
+                app_handle.manage(dgos_db::HostSettingsRepository::new(db.clone()));
                 let mcp_for_accounts = mcp_state.manager.clone();
                 app_handle.manage(mcp_state);
                 app_handle.manage(workbench);
@@ -391,6 +409,11 @@ pub fn run() {
             commands::fetch_skills_registry,
             commands::search_skills,
             commands::get_skill_detail,
+            commands::parse_skill_source,
+            commands::preview_skill_install,
+            commands::preview_skill_package,
+            commands::confirm_skill_install,
+            commands::cancel_skill_install,
             commands::install_skill,
             commands::uninstall_skill,
             commands::list_installed_skills,
@@ -447,11 +470,15 @@ pub fn run() {
             commands::attach_module_host,
             commands::report_module_host,
             commands::report_module_crash,
-            // Appearance preferences (D065): typed, no generic settings access
-            commands::get_appearance_preferences,
-            commands::set_appearance_preferences,
+             // Appearance preferences (D065): typed, no generic settings access
+             commands::get_appearance_preferences,
+             commands::set_appearance_preferences,
+             // Host language preference (D118): available before account sign-in
+             commands::get_language_preferences,
+             commands::set_language_preferences,
             // Module capability call (D051): typed, one command per capability
             commands::module_call_provider,
+            commands::cancel_module_call,
             // Module capability calls (D093): typed, one command per capability
             commands::module_prepare_skill,
             commands::module_network_request,
@@ -491,10 +518,19 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { .. } = event {
-                let mcp = app.state::<commands::McpState>().manager.clone();
-                let workbench = app.state::<dgos_workbench::WorkbenchManager>().inner().clone();
-                let chat = app.state::<dgos_workbench::ChatManager>().inner().clone();
-                let lan = app.state::<Arc<dgos_lan::LanService>>().inner().clone();
+                // Absent when startup stopped at a database failure: nothing to shut down.
+                let (Some(mcp), Some(workbench), Some(chat), Some(lan)) = (
+                    app.try_state::<commands::McpState>(),
+                    app.try_state::<dgos_workbench::WorkbenchManager>(),
+                    app.try_state::<dgos_workbench::ChatManager>(),
+                    app.try_state::<Arc<dgos_lan::LanService>>(),
+                ) else {
+                    return;
+                };
+                let mcp = mcp.manager.clone();
+                let workbench = workbench.inner().clone();
+                let chat = chat.inner().clone();
+                let lan = lan.inner().clone();
                 let result = tauri::async_runtime::block_on(async move {
                     tokio::time::timeout(
                         std::time::Duration::from_secs(5),

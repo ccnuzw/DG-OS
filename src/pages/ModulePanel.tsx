@@ -1,3 +1,4 @@
+import { t, useLocale as usePageLocale } from '../i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Button, Stack } from '@dgos/ui';
@@ -14,6 +15,7 @@ import { usePageError } from '../pageError';
 import { CrashLogList, ErrorNotice, MODULE_LINK_CLASS, NoticeBox, toApiError } from './ModuleManagement';
 
 export default function ModulePanel() {
+  usePageLocale();
   const { moduleId = '' } = useParams();
   const navigate = useNavigate();
   const reportError = usePageError('ModulePanel');
@@ -96,39 +98,38 @@ export default function ModulePanel() {
     <div className="mx-auto min-w-0 max-w-240 p-8 text-foreground">
       <h1 className="m-0 mb-2 text-2xl font-semibold text-foreground wrap-anywhere">{summary?.name ?? moduleId}</h1>
       <p className="m-0 mb-4 text-sm">
-        <Link to="/settings/modules" className={MODULE_LINK_CLASS}>Back to module management</Link>
+        <Link to="/settings/modules" className={MODULE_LINK_CLASS}>{t('module.backManagement')}</Link>
       </p>
 
       {showCrashed && (
         <NoticeBox tone="error" role="alert" className="my-4 items-center">
           <Stack direction="horizontal" gap={3} className="flex-wrap items-center">
-            <strong>Module {moduleId} crashed</strong>
-            <Button variant="secondary" size="sm" disabled={busy} onClick={viewDetails}>View details</Button>
-            <Button variant="secondary" size="sm" disabled={busy} onClick={reload}>Reload module</Button>
-            <Button variant="danger" size="sm" disabled={busy || !canUninstall} onClick={() => setConfirmUninstall(true)}>Uninstall</Button>
+            <strong>{t('module.moduleCrashed', { id: moduleId })}</strong>
+            <Button variant="secondary" size="sm" disabled={busy} onClick={viewDetails}>{t('module.viewDetails')}</Button>
+            <Button variant="secondary" size="sm" disabled={busy} onClick={reload}>{t('module.reloadModule')}</Button>
+            <Button variant="danger" size="sm" disabled={busy || !canUninstall} onClick={() => setConfirmUninstall(true)}>{t('module.uninstall')}</Button>
           </Stack>
         </NoticeBox>
       )}
       {faulty && (
         <NoticeBox tone="warning" role="alert">
-          This module may be faulty; it was disabled. Consider uninstalling it.
-        </NoticeBox>
+          {t('module.faulty')}</NoticeBox>
       )}
       {error !== null && <ErrorNotice error={error} />}
       {confirmUninstall && (
-        <section role="dialog" aria-label={`Uninstall ${moduleId}`} className="my-3 rounded-lg border border-border bg-muted p-4 text-sm text-foreground">
+        <section role="dialog" aria-label={t('module.uninstallLabel', { id: moduleId })} className="my-3 rounded-lg border border-border bg-muted p-4 text-sm text-foreground">
           <Stack gap={3}>
-            <p className="m-0">Uninstall {summary?.name ?? moduleId}? The module is stopped and removed.</p>
+            <p className="m-0">{t('module.uninstallConfirm', { name: summary?.name ?? moduleId })}</p>
             <Stack direction="horizontal" gap={2} className="flex-wrap">
-              <Button variant="danger" disabled={busy} onClick={uninstall}>Confirm uninstall</Button>
-              <Button variant="secondary" disabled={busy} onClick={() => setConfirmUninstall(false)}>Cancel</Button>
+              <Button variant="danger" disabled={busy} onClick={uninstall}>{t('module.confirmUninstall')}</Button>
+              <Button variant="secondary" disabled={busy} onClick={() => setConfirmUninstall(false)}>{t('module.cancel')}</Button>
             </Stack>
           </Stack>
         </section>
       )}
       {crashes !== null && <CrashLogList crashes={crashes} />}
 
-      {instance === null ? <p className="text-sm text-muted-foreground">This module is not running</p> : <ModuleSlot instance={instance} />}
+      {instance === null ? <p className="text-sm text-muted-foreground">{t('module.notRunning')}</p> : <ModuleSlot instance={instance} />}
     </div>
   );
 }

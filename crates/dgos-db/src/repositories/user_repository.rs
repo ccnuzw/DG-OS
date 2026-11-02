@@ -288,6 +288,8 @@ pub struct HostSettingsRepository {
     db: DatabaseConnection,
 }
 
+pub const UI_LANGUAGE_KEY: &str = "ui.language";
+
 impl HostSettingsRepository {
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
@@ -318,6 +320,19 @@ impl HostSettingsRepository {
             .await
             .map(|_| ())
             .map_err(db_error)
+    }
+
+    pub async fn get_language(&self) -> DgosResult<Option<dgos_types::LanguagePreference>> {
+        let raw = self.get(UI_LANGUAGE_KEY).await?;
+        Ok(raw.and_then(|value| dgos_types::LanguagePreference::parse(&value)))
+    }
+
+    pub async fn set_language(
+        &self,
+        value: dgos_types::LanguagePreference,
+        now: i64,
+    ) -> DgosResult<()> {
+        self.set(UI_LANGUAGE_KEY, value.as_str(), now).await
     }
 }
 

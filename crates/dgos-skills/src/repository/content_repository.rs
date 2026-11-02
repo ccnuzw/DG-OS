@@ -204,7 +204,14 @@ impl ContentRepository {
                 .await
                 .map_err(db_error)?
                 .ok_or_else(|| SkillError::SkillNotFound(row.version_id.clone()))?;
-            let meta: ContentSkillMetadata = serde_json::from_value(version.metadata)?;
+            let mut metadata = version.metadata;
+            if let Some(object) = metadata.as_object_mut() {
+                // Batch B provenance and file manifests are version-record
+                // fields; the strict content DTO intentionally rejects them.
+                object.remove("provenance");
+                object.remove("file_manifest");
+            }
+            let meta: ContentSkillMetadata = serde_json::from_value(metadata)?;
             result.push(crate::Skill {
                 id: row.version_id,
                 skill_id: row.skill_id,

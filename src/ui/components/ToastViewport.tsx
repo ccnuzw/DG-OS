@@ -13,6 +13,7 @@ import {
 } from '../feedback/toastStore';
 import { Button } from './Button';
 import { StatusIcon } from './StatusIcon';
+import { t, useLocale } from '../../i18n';
 
 // Colours come in pairs (D069): the text token for the tinted background, the plain semantic colour for the
 // border and icon (non-text, >= 3:1). Classes are complete literals so Tailwind's scanner emits them.
@@ -109,7 +110,7 @@ function ToastCard({ item }: { item: ToastItem }) {
       </div>
       <button
         type="button"
-        aria-label="关闭通知"
+        aria-label={t('system.close')}
         onClick={close}
         className={cn('-m-1 inline-flex size-7 shrink-0 items-center justify-center rounded-md hover:opacity-hover', FOCUS_RING)}
       >
@@ -129,11 +130,12 @@ function ToastCard({ item }: { item: ToastItem }) {
  * after it. Being a root-level fixed element also puts its `z-toast` layer in the root stacking context (§4.8).
  */
 export function ToastViewport() {
+  useLocale();
   const { visible } = useSyncExternalStore(subscribeToasts, getToastSnapshot, getToastSnapshot);
   if (visible.length === 0) return null;
   return createPortal(
     <section
-      aria-label="通知"
+       aria-label={t('system.notifications')}
       className="pointer-events-none fixed right-5 top-20 z-toast flex flex-col gap-2"
     >
       {visible.map((item) => (

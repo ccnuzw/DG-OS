@@ -7,6 +7,7 @@ import { useAccount } from './AccountContext';
 import { AccountCommandError, accountErrorText, signIn, signOut, type AccountSummary } from './accountApi';
 import { InlineError } from './AuthShell';
 import { reloadApp } from './reload';
+import { useLocale } from '../i18n';
 
 const LINK_CLASS = ({ isActive }: { isActive: boolean }) =>
   cn(
@@ -27,6 +28,7 @@ function SwitchUserDialog({
   onClose: () => void;
   onSessionInvalid: () => void;
 }) {
+  const { t } = useLocale();
   const reportError = usePageError('AccountMenu');
   const others = accounts.filter((account) => account.username !== current);
   const [selected, setSelected] = useState(others[0]?.username ?? '');
@@ -38,7 +40,7 @@ function SwitchUserDialog({
     event?.preventDefault();
     if (busy || selected === '') return;
     if (password === '') {
-      setError('请输入密码');
+      setError(t('auth.enterPassword'));
       return;
     }
     setBusy(true);
@@ -63,33 +65,33 @@ function SwitchUserDialog({
       onOpenChange={(open) => {
         if (!open && !busy) onClose();
       }}
-      title="切换用户"
+      title={t('account.switch')}
       footer={
         <>
           <Button variant="secondary" disabled={busy} onClick={onClose}>
-            取消
+            {t('account.cancel')}
           </Button>
           {others.length > 0 ? (
             <Button loading={busy} onClick={() => void submit()}>
-              切换
+              {t('account.switchConfirm')}
             </Button>
           ) : null}
         </>
       }
     >
       {others.length === 0 ? (
-        <p className="m-0 text-sm text-muted-foreground">没有其他账户可切换。可在“账户”页新建账户。</p>
+        <p className="m-0 text-sm text-muted-foreground">{t('account.switchUnavailable')}</p>
       ) : (
         <form onSubmit={submit} noValidate>
           <Stack gap={4}>
             <RadioGroup
-              label="切换到"
+              label={t('account.select')}
               options={others.map((account) => ({ value: account.username, label: account.username }))}
               value={selected}
               onChange={setSelected}
             />
             <Input
-              label="密码"
+              label={t('account.password')}
               type="password"
               autoComplete="current-password"
               value={password}
@@ -105,6 +107,7 @@ function SwitchUserDialog({
 
 // Nav widget. Renders nothing when the app runs without AccountGate.
 export default function AccountMenu() {
+  const { t } = useLocale();
   const account = useAccount();
   const reportError = usePageError('AccountMenu');
   const [switching, setSwitching] = useState(false);
@@ -117,7 +120,7 @@ export default function AccountMenu() {
     return (
       <div className="ml-auto flex items-center gap-2">
         <NavLink to={ROUTES.account} className={LINK_CLASS}>
-          创建账户
+           {t('account.create')}
         </NavLink>
       </div>
     );
@@ -141,13 +144,13 @@ export default function AccountMenu() {
     <div className="ml-auto flex items-center gap-2">
       <span className="text-sm text-muted-foreground">{state.current.username}</span>
       <NavLink to={ROUTES.account} className={LINK_CLASS}>
-        账户
+         {t('account.title')}
       </NavLink>
       <Button variant="ghost" size="sm" onClick={() => setSwitching(true)}>
-        切换用户
+         {t('account.switch')}
       </Button>
       <Button variant="ghost" size="sm" loading={busy} onClick={() => void leave()}>
-        注销
+         {t('account.signOut')}
       </Button>
       {switching ? (
         <SwitchUserDialog

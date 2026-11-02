@@ -81,3 +81,9 @@ impl SkillError {
 }
 
 pub type Result<T, E = SkillError> = std::result::Result<T, E>;
+
+impl From<dgos_types::DgosError> for SkillError {
+    fn from(error: dgos_types::DgosError) -> Self {
+        Self::DatabaseError(error.to_string())
+    }
+}

@@ -1,4 +1,5 @@
 use crate::host::{self, Capability};
+use crate::os_credentials::{self, CredentialStoreFailure, MCP_SERVICE};
 use crate::session::SessionResolver;
 use async_trait::async_trait;
 use dgos_mcp::{
@@ -21,42 +22,42 @@ pub struct OsCredentialVault;
 impl McpCredentialVault for OsCredentialVault {
     async fn store(&self, scope: &CredentialScope, token: SecretToken) -> dgos_mcp::Result<()> {
         let account = scope.account();
-        tokio::task::spawn_blocking(move || {
-            keyring::Entry::new("com.dgos.app.mcp", &account)
-                .map_err(|_| McpError::CredentialUnavailable)?
-                .set_password(token.expose())
-                .map_err(|_| McpError::CredentialUnavailable)
+        os_credentials::run("mcp.store", move || {
+            let entry = keyring::Entry::new(MCP_SERVICE, &account).map_err(|error| error)?;
+            entry.set_password(token.expose())
         })
         .await
-        .map_err(|_| McpError::CredentialUnavailable)??;
+        .map_err(|_| McpError::CredentialUnavailable)?;
         Ok(())
     }
 
     async fn load(&self, scope: &CredentialScope) -> dgos_mcp::Result<SecretToken> {
         let account = scope.account();
-        let value = tokio::task::spawn_blocking(move || {
-            keyring::Entry::new("com.dgos.app.mcp", &account)
-                .map_err(|_| McpError::CredentialUnavailable)?
+        let value = os_credentials::run("mcp.load", move || {
+            keyring::Entry::new(MCP_SERVICE, &account)
+                .map_err(|error| error)?
                 .get_password()
-                .map_err(|_| McpError::CredentialUnavailable)
+                .map_err(|error| error)
         })
         .await
-        .map_err(|_| McpError::CredentialUnavailable)??;
+        .map_err(|failure| match failure {
+            CredentialStoreFailure::Missing => McpError::CredentialUnavailable,
+            CredentialStoreFailure::Unavailable => McpError::CredentialUnavailable,
+        })?;
         SecretToken::new(value)
     }
 
     async fn remove(&self, scope: &CredentialScope) -> dgos_mcp::Result<()> {
         let account = scope.account();
-        tokio::task::spawn_blocking(move || {
-            let entry = keyring::Entry::new("com.dgos.app.mcp", &account)
-                .map_err(|_| McpError::CredentialUnavailable)?;
+        os_credentials::run("mcp.remove", move || {
+            let entry = keyring::Entry::new(MCP_SERVICE, &account).map_err(|error| error)?;
             match entry.delete_credential() {
                 Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-                Err(_) => Err(McpError::CredentialUnavailable),
+                Err(error) => Err(error),
             }
         })
         .await
-        .map_err(|_| McpError::CredentialUnavailable)??;
+        .map_err(|_| McpError::CredentialUnavailable)?;
         Ok(())
     }
 }

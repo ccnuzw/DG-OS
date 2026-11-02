@@ -1,6 +1,7 @@
 # 排除的目录
 docs-old/
 .codebuddy/
+/UICK/
 
 # macOS
 .DS_Store
@@ -28,6 +29,10 @@ Cargo.lock
 # Tauri
 src-tauri/target/
 src-tauri/WixTools/
+
+# Local Herdr topology, isolated worktrees and temporary task handoffs
+.herdr-team/
+.vitest/
 
 # IDE
 .vscode/

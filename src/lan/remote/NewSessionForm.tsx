@@ -3,6 +3,7 @@ import { Button } from '@dgos/ui/components/Button';
 import type { ChatSession, LanApi, LanTargets } from './api';
 import { SELECT } from './classes';
 import { chatErrorText } from './messages';
+import { useRemoteLocale } from './i18n';
 
 export interface NewSessionFormProps {
   api: LanApi;
@@ -11,6 +12,7 @@ export interface NewSessionFormProps {
 
 /** Picks provider, model and skill. The target is fixed once the session exists: there is no way to change it. */
 export function NewSessionForm({ api, onCreated }: NewSessionFormProps) {
+  const { t } = useRemoteLocale();
   const [targets, setTargets] = useState<LanTargets | null>(null);
   const [providerId, setProviderId] = useState('');
   const [modelId, setModelId] = useState('');
@@ -71,11 +73,11 @@ export function NewSessionForm({ api, onCreated }: NewSessionFormProps) {
     <form className="flex flex-col gap-4 p-4" onSubmit={(event) => void submit(event)}>
       {targets && providers.length === 0 ? (
         <p role="status" className="text-muted-foreground">
-          主机上没有可用的模型，请先在主机上启用 Provider。
+          {t('remote.noModel')}
         </p>
       ) : null}
       <label className="flex flex-col gap-1 text-sm font-medium">
-        Provider
+        {t('remote.provider')}
         <select
           className={SELECT}
           value={providerId}
@@ -90,7 +92,7 @@ export function NewSessionForm({ api, onCreated }: NewSessionFormProps) {
         </select>
       </label>
       <label className="flex flex-col gap-1 text-sm font-medium">
-        模型
+        {t('remote.model')}
         <select
           className={SELECT}
           value={modelId}
@@ -105,9 +107,9 @@ export function NewSessionForm({ api, onCreated }: NewSessionFormProps) {
         </select>
       </label>
       <label className="flex flex-col gap-1 text-sm font-medium">
-        技能
+        {t('remote.skill')}
         <select className={SELECT} value={skillId} onChange={(event) => setSkillId(event.target.value)} disabled={!targets || busy}>
-          <option value="">不使用技能</option>
+          <option value="">{t('remote.noSkill')}</option>
           {(targets?.skills ?? []).map((s) => (
             <option key={s.id} value={s.id}>
               {s.name} ({s.version})
@@ -115,14 +117,14 @@ export function NewSessionForm({ api, onCreated }: NewSessionFormProps) {
           ))}
         </select>
       </label>
-      <p className="text-sm text-muted-foreground">创建后不能更改 Provider、模型和技能。</p>
+      <p className="text-sm text-muted-foreground">{t('remote.fixedTarget')}</p>
       {error ? (
         <p role="alert" className="text-sm text-error-text">
           {error}
         </p>
       ) : null}
       <Button type="submit" size="lg" loading={busy} disabled={!provider || !modelId}>
-        开始聊天
+        {t('remote.startChat')}
       </Button>
     </form>
   );

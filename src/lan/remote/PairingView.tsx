@@ -4,6 +4,7 @@ import type { LanApi, LanSessionStatus } from './api';
 import { TEXT_INPUT } from './classes';
 import { ACCESS_CODE_LENGTH, normalizeAccessCode } from './ids';
 import { pairErrorText } from './messages';
+import { useRemoteLocale } from './i18n';
 
 export interface PairingViewProps {
   api: LanApi;
@@ -17,6 +18,7 @@ export interface PairingViewProps {
 }
 
 export function PairingView({ api, initialCode = '', autoSubmit = false, notice, onPaired }: PairingViewProps) {
+  const { t } = useRemoteLocale();
   const [value, setValue] = useState(initialCode);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -25,7 +27,7 @@ export function PairingView({ api, initialCode = '', autoSubmit = false, notice,
   async function submit(raw: string) {
     const code = normalizeAccessCode(raw);
     if (code.length !== ACCESS_CODE_LENGTH) {
-      setError(`访问凭据应为 ${ACCESS_CODE_LENGTH} 位字符`);
+      setError(t('remote.codeLength', { count: ACCESS_CODE_LENGTH }));
       return;
     }
     setBusy(true);
@@ -53,8 +55,8 @@ export function PairingView({ api, initialCode = '', autoSubmit = false, notice,
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center gap-6 p-6">
       <header className="flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold">连接到 DG-OS</h1>
-        <p className="text-muted-foreground">在主机的“设置 → 局域网协同”中生成访问凭据，输入后即可在本设备上聊天。</p>
+        <h1 className="text-2xl font-semibold">{t('remote.connectTitle')}</h1>
+        <p className="text-muted-foreground">{t('remote.connectHelp')}</p>
       </header>
       {notice ? (
         <p role="status" className="rounded-md bg-warning-bg px-3 py-2 text-warning-text">
@@ -64,7 +66,7 @@ export function PairingView({ api, initialCode = '', autoSubmit = false, notice,
       <form className="flex flex-col gap-4" onSubmit={onSubmit}>
         <div className="flex flex-col gap-1">
           <label htmlFor="lan-access-code" className="text-sm font-medium">
-            访问凭据
+            {t('remote.accessCode')}
           </label>
           <input
             id="lan-access-code"
@@ -76,7 +78,7 @@ export function PairingView({ api, initialCode = '', autoSubmit = false, notice,
             autoCorrect="off"
             spellCheck={false}
             inputMode="text"
-            placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XX"
+            placeholder={t('remote.accessCodePlaceholder')}
             disabled={busy}
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? 'lan-access-code-error' : undefined}
@@ -88,7 +90,7 @@ export function PairingView({ api, initialCode = '', autoSubmit = false, notice,
           ) : null}
         </div>
         <Button type="submit" size="lg" loading={busy}>
-          连接
+          {t('remote.connect')}
         </Button>
       </form>
     </main>

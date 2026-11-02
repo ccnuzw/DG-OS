@@ -10,6 +10,8 @@ import { flushSync } from 'react-dom';
 import { createRoot, type Root } from 'react-dom/client';
 import { Channel, invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { moduleHostUi, type ModuleHostUi } from './moduleHostUi';
+import { createModuleI18n, type HostI18n } from './moduleHostI18n';
+import { useLocale } from '../i18n';
 
 export type LoadFailureStage = 'import' | 'contract' | 'render' | 'hook' | 'timeout' | 'cancelled';
 
@@ -94,6 +96,19 @@ export class HostCallError extends Error {
   }
 }
 
+/** Error code of a capability call the page cancelled (D113, `module_call_cancelled`). */
+export const MODULE_CALL_CANCELLED_CODE = 1004028;
+
+/**
+ * Optional last argument of every `host.<capability>.<method>` (D113). Aborting `signal` asks the host
+ * to cancel that call; the promise then rejects with a `HostCallError` of code 1004028. A signal that is
+ * already aborted rejects the same way without sending the call. Cancelling before the external effect
+ * started means it never ran; afterwards the host only stops waiting and the result stays unknown.
+ */
+export interface HostCallOptions {
+  signal?: AbortSignal;
+}
+
 export type Receipt =
   | { kind: 'loaded' }
   | { kind: 'loadFailed'; stage: LoadFailureStage }
@@ -142,6 +157,7 @@ type LifecycleHook = (typeof LIFECYCLE_HOOKS)[number];
 
 interface ModuleLifecycle {
   Component: React.ComponentType;
+  disposeI18n: () => void;
   onLoad?: () => unknown;
   onUnload?: () => unknown;
   onBeforeUpdate?: () => unknown;
@@ -182,26 +198,38 @@ interface ModuleHostApi {
   readonly moduleId: string;
   readonly version: string;
   readonly providers: Readonly<{
-    call: (providerId: string, modelId: string, request: ProviderChatRequest) => Promise<ProviderChatResponse>;
+    call: (
+      providerId: string,
+      modelId: string,
+      request: ProviderChatRequest,
+      options?: HostCallOptions,
+    ) => Promise<ProviderChatResponse>;
   }>;
   // D093: the other five capabilities, added alongside the existing fields; `apiVersion` stays 1.
+  // D113: each method takes an optional trailing `{ signal }`.
   readonly storage: Readonly<{
-    get: (key: string) => Promise<unknown>;
-    set: (key: string, value: unknown) => Promise<void>;
-    delete: (key: string) => Promise<void>;
-    list: () => Promise<ModuleStorageEntry[]>;
+    get: (key: string, options?: HostCallOptions) => Promise<unknown>;
+    set: (key: string, value: unknown, options?: HostCallOptions) => Promise<void>;
+    delete: (key: string, options?: HostCallOptions) => Promise<void>;
+    list: (options?: HostCallOptions) => Promise<ModuleStorageEntry[]>;
   }>;
   readonly network: Readonly<{
-    request: (request: ModuleNetworkRequest) => Promise<ModuleNetworkResponse>;
+    request: (request: ModuleNetworkRequest, options?: HostCallOptions) => Promise<ModuleNetworkResponse>;
   }>;
   readonly mcp: Readonly<{
-    callTool: (serverId: string, toolName: string, args: Record<string, unknown>) => Promise<unknown>;
+    callTool: (
+      serverId: string,
+      toolName: string,
+      args: Record<string, unknown>,
+      options?: HostCallOptions,
+    ) => Promise<unknown>;
   }>;
   readonly skills: Readonly<{
-    prepare: (skillId: string) => Promise<unknown>;
+    prepare: (skillId: string, options?: HostCallOptions) => Promise<unknown>;
   }>;
   // D067: added alongside the existing fields; `apiVersion` stays 1.
   readonly ui: ModuleHostUi;
+  readonly i18n: Readonly<HostI18n>;
 }
 
 function newCallId(): string {
@@ -215,6 +243,10 @@ const MAX_CRASH_STACK_BYTES = 8 * 1024;
 // Total attempts of one crash report and the wait before the second one; doubles after that.
 const CRASH_REPORT_ATTEMPTS = 3;
 const CRASH_REPORT_BACKOFF_MS = 250;
+// A cancel can overtake its own call on the way to the host (two IPC requests); `false` while the call is
+// still pending is then retried a few times.
+const CANCEL_ATTEMPTS = 5;
+const CANCEL_RETRY_MS = 25;
 
 // Cuts at a character boundary, so the result never exceeds `maxBytes` of UTF-8.
 function truncateUtf8(text: string, maxBytes: number): string {
@@ -262,10 +294,15 @@ class ModuleBoundary extends React.Component<BoundaryProps, { failed: boolean }>
 
   render(): React.ReactNode {
     if (this.state.failed) {
-      return React.createElement('div', { role: 'alert', 'data-module-error': '' }, 'This module failed to render.');
+      return React.createElement(ModuleRenderFailure);
     }
     return this.props.children;
   }
+}
+
+function ModuleRenderFailure() {
+  const { t } = useLocale();
+  return React.createElement('div', { role: 'alert', 'data-module-error': '' }, t('module.renderFailure'));
 }
 
 // Layout effects run synchronously inside flushSync, so "mounted" is known when flushSync returns.
@@ -480,8 +517,10 @@ export class ModuleRuntimeHost {
     };
 
     let instance: ModuleInstance | null = null;
+    let lifecycle: ModuleLifecycle | null = null;
     const failed = (stage: LoadFailureStage): Receipt => {
       if (instance !== null) this.dispose(instance);
+      else lifecycle?.disposeI18n();
       return { kind: 'loadFailed', stage };
     };
 
@@ -502,7 +541,7 @@ export class ModuleRuntimeHost {
       if (importFailed) return failed('import');
 
       stage = 'contract';
-      const lifecycle = this.readContract(namespace, runtimeId, moduleId, version);
+      lifecycle = this.readContract(namespace, runtimeId, moduleId, version);
       if (lifecycle === null) return failed('contract');
 
       stage = 'render';
@@ -540,7 +579,7 @@ export class ModuleRuntimeHost {
                   status.mounted = true;
                 },
               }),
-              React.createElement(lifecycle.Component),
+              React.createElement(created.lifecycle.Component),
             ),
           );
         });
@@ -619,20 +658,60 @@ export class ModuleRuntimeHost {
 
   // The only fields sent are the host-issued attachment and route, a fresh `callId`, and the call's own
   // business fields. Never a module id, runtime id, user, version, digest, path or permission (D051, D093).
-  private async callCapability<T>(runtimeId: string, command: string, fields: Record<string, unknown>): Promise<T> {
+  // `options.signal` (D113): already aborted -> nothing is sent and the call rejects with 1004028; aborted
+  // while pending -> `cancel_module_call` for this call's id, and the call's own response (1004028) settles it.
+  private async callCapability<T>(
+    runtimeId: string,
+    command: string,
+    fields: Record<string, unknown>,
+    options?: HostCallOptions,
+  ): Promise<T> {
+    const signal = options?.signal;
+    if (signal?.aborted) throw new HostCallError(MODULE_CALL_CANCELLED_CODE, 'Module call cancelled');
     const route = this.routes.get(runtimeId);
     const attachmentId = this.attachment === null ? null : await this.attachment;
     if (route === undefined || attachmentId === null) {
       throw new HostCallError(1004004, 'Host permission denied');
     }
+    if (signal?.aborted) throw new HostCallError(MODULE_CALL_CANCELLED_CODE, 'Module call cancelled');
     // One id per page call; a transport-level resend of the same call carries the same id, which
     // the host uses to drop the duplicate (D054). It merges nothing and grants nothing.
     const callId = newCallId();
-    const result = await this.invoke<CommandResult<T>>(command, { ...fields, attachmentId, route, callId });
-    if (!result || !result.success) {
-      throw new HostCallError(result?.error?.code ?? 1000000, result?.error?.message ?? 'Host call failed');
+    const stopWatching = signal === undefined ? undefined : this.watchAbort(signal, attachmentId, route, callId);
+    try {
+      const result = await this.invoke<CommandResult<T>>(command, { ...fields, attachmentId, route, callId });
+      if (!result || !result.success) {
+        throw new HostCallError(result?.error?.code ?? 1000000, result?.error?.message ?? 'Host call failed');
+      }
+      return result.data as T;
+    } finally {
+      stopWatching?.();
     }
-    return result.data as T;
+  }
+
+  // Sends `cancel_module_call` for one call when `signal` aborts. Never throws; a failed or refused cancel
+  // leaves the call to settle on its own. The returned function stops watching once the call has settled.
+  private watchAbort(signal: AbortSignal, attachmentId: string, route: string, callId: string): () => void {
+    let done = false;
+    let timer: unknown;
+    const attempt = async (n: number): Promise<void> => {
+      if (done) return;
+      let result: CommandResult<boolean> | undefined;
+      try {
+        result = await this.invoke<CommandResult<boolean>>('cancel_module_call', { attachmentId, route, callId });
+      } catch {
+        return;
+      }
+      if (done || result?.success !== true || result.data !== false) return;
+      if (n + 1 < CANCEL_ATTEMPTS) timer = this.setTimer(() => void attempt(n + 1), CANCEL_RETRY_MS);
+    };
+    const onAbort = (): void => void attempt(0);
+    signal.addEventListener('abort', onAbort, { once: true });
+    return () => {
+      done = true;
+      signal.removeEventListener('abort', onAbort);
+      if (timer !== undefined) this.clearTimer(timer);
+    };
   }
 
   private async callProvider(
@@ -640,12 +719,14 @@ export class ModuleRuntimeHost {
     providerId: string,
     modelId: string,
     request: ProviderChatRequest,
+    options?: HostCallOptions,
   ): Promise<ProviderChatResponse> {
-    const response = await this.callCapability<ProviderChatResponse | undefined>(runtimeId, 'module_call_provider', {
-      providerId,
-      modelId,
-      request,
-    });
+    const response = await this.callCapability<ProviderChatResponse | undefined>(
+      runtimeId,
+      'module_call_provider',
+      { providerId, modelId, request },
+      options,
+    );
     if (!response) throw new HostCallError(1000000, 'Host call failed');
     return response;
   }
@@ -656,53 +737,64 @@ export class ModuleRuntimeHost {
       console.error('module contract: default export is not a function');
       return null;
     }
+    const i18n = createModuleI18n();
+    const invalid = (): null => { i18n.dispose(); return null; };
     const host: ModuleHostApi = Object.freeze({
       React,
       apiVersion: 1 as const,
       moduleId,
       version,
       providers: Object.freeze({
-        call: (providerId: string, modelId: string, request: ProviderChatRequest) =>
-          this.callProvider(runtimeId, providerId, modelId, request),
+        call: (providerId: string, modelId: string, request: ProviderChatRequest, options?: HostCallOptions) =>
+          this.callProvider(runtimeId, providerId, modelId, request, options),
       }),
       storage: Object.freeze({
-        get: (key: string) => this.callCapability<unknown>(runtimeId, 'module_storage_get', { key }),
-        set: async (key: string, value: unknown) => {
-          await this.callCapability<unknown>(runtimeId, 'module_storage_set', { key, value });
+        get: (key: string, options?: HostCallOptions) =>
+          this.callCapability<unknown>(runtimeId, 'module_storage_get', { key }, options),
+        set: async (key: string, value: unknown, options?: HostCallOptions) => {
+          await this.callCapability<unknown>(runtimeId, 'module_storage_set', { key, value }, options);
         },
-        delete: async (key: string) => {
-          await this.callCapability<unknown>(runtimeId, 'module_storage_delete', { key });
+        delete: async (key: string, options?: HostCallOptions) => {
+          await this.callCapability<unknown>(runtimeId, 'module_storage_delete', { key }, options);
         },
-        list: () => this.callCapability<ModuleStorageEntry[]>(runtimeId, 'module_storage_list', {}),
+        list: (options?: HostCallOptions) =>
+          this.callCapability<ModuleStorageEntry[]>(runtimeId, 'module_storage_list', {}, options),
       }),
       network: Object.freeze({
-        request: (request: ModuleNetworkRequest) =>
-          this.callCapability<ModuleNetworkResponse>(runtimeId, 'module_network_request', { request }),
+        request: (request: ModuleNetworkRequest, options?: HostCallOptions) =>
+          this.callCapability<ModuleNetworkResponse>(runtimeId, 'module_network_request', { request }, options),
       }),
       mcp: Object.freeze({
-        callTool: (serverId: string, toolName: string, args: Record<string, unknown>) =>
-          this.callCapability<unknown>(runtimeId, 'module_call_mcp_tool', { serverId, toolName, arguments: args }),
+        callTool: (serverId: string, toolName: string, args: Record<string, unknown>, options?: HostCallOptions) =>
+          this.callCapability<unknown>(
+            runtimeId,
+            'module_call_mcp_tool',
+            { serverId, toolName, arguments: args },
+            options,
+          ),
       }),
       skills: Object.freeze({
-        prepare: (skillId: string) => this.callCapability<unknown>(runtimeId, 'module_prepare_skill', { skillId }),
+        prepare: (skillId: string, options?: HostCallOptions) =>
+          this.callCapability<unknown>(runtimeId, 'module_prepare_skill', { skillId }, options),
       }),
       ui: moduleHostUi,
+      i18n: i18n.api,
     });
     let produced: unknown;
     try {
       produced = (factory as (host: ModuleHostApi) => unknown)(host);
     } catch (error) {
       console.error('module contract: factory threw', error);
-      return null;
+      return invalid();
     }
     if (typeof produced !== 'object' || produced === null) {
       console.error('module contract: factory did not return an object');
-      return null;
+      return invalid();
     }
     const Component: unknown = Reflect.get(produced, 'Component');
     if (typeof Component !== 'function') {
       console.error('module contract: Component is not a function or class component');
-      return null;
+      return invalid();
     }
     const hooks: Partial<Record<LifecycleHook, (...args: unknown[]) => unknown>> = {};
     for (const name of LIFECYCLE_HOOKS) {
@@ -710,11 +802,11 @@ export class ModuleRuntimeHost {
       if (hook === undefined) continue;
       if (typeof hook !== 'function') {
         console.error('module contract: lifecycle hooks must be functions when present');
-        return null;
+        return invalid();
       }
       hooks[name] = (...args) => Reflect.apply(hook, produced, args) as unknown;
     }
-    return { Component: Component as React.ComponentType, ...hooks };
+    return { Component: Component as React.ComponentType, disposeI18n: i18n.dispose, ...hooks };
   }
 
   // Races the hook against a timer so a promise that never settles cannot hang the host.
@@ -750,6 +842,7 @@ export class ModuleRuntimeHost {
   private dispose(instance: ModuleInstance): void {
     if (instance.disposed) return;
     instance.disposed = true;
+    instance.lifecycle.disposeI18n();
     if (this.instances.get(instance.runtimeId) === instance) this.instances.delete(instance.runtimeId);
     this.routes.delete(instance.runtimeId);
     this.hide(instance);

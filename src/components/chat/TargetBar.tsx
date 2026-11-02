@@ -1,3 +1,4 @@
+import { t, useLocale as usePageLocale } from '../../i18n';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Select, cn } from '@dgos/ui';
@@ -18,6 +19,7 @@ const skillValue = (session: ChatSession): string =>
   session.skill_id ?? (session.no_skill_confirmed ? NO_SKILL : UNSET);
 
 export default function TargetBar({ session }: { session: ChatSession }) {
+  usePageLocale();
   const updateTarget = useChatStore(state => state.updateTarget);
   const generating = useChatStore(state => state.generation !== null);
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -34,7 +36,7 @@ export default function TargetBar({ session }: { session: ChatSession }) {
     let active = true;
     Promise.all([fetchProviders(), fetchSkills()])
       .then(([p, s]) => { if (active) { setProviders(p); setSkills(s); } })
-      .catch(() => { if (active) setStatus({ tone: 'error', text: '无法加载 Provider 或技能列表。' }); })
+      .catch(() => { if (active) setStatus({ tone: 'error', text: t('chat.targetsFailed') }); })
       .finally(() => { if (active) setLoaded(true); });
     return () => { active = false; };
   }, []);
@@ -52,7 +54,7 @@ export default function TargetBar({ session }: { session: ChatSession }) {
     if (providerId === UNSET) return;
     fetchModels(providerId)
       .then(list => { if (active) setModels(list); })
-      .catch(() => { if (active) setStatus({ tone: 'error', text: '无法加载模型列表，请检查 Provider 配置。' }); });
+      .catch(() => { if (active) setStatus({ tone: 'error', text: t('chat.modelsFailed') }); });
     return () => { active = false; };
   }, [providerId]);
 
@@ -70,39 +72,39 @@ export default function TargetBar({ session }: { session: ChatSession }) {
       no_skill: skill === NO_SKILL,
     });
     setSaving(false);
-    setStatus(error ? { tone: 'error', text: error } : { tone: 'ok', text: '目标已更新，之后的发送将使用新目标。' });
+    setStatus(error ? { tone: 'error', text: error } : { tone: 'ok', text: t('chat.targetUpdated') });
   };
 
-  const providerOptions = [{ value: UNSET, label: '选择 Provider' }, ...providers.map(p => ({ value: p.id, label: p.name }))];
-  const modelOptions = [{ value: UNSET, label: '选择模型' }, ...models.map(m => ({ value: m.model_id, label: m.model_name }))];
+  const providerOptions = [{ value: UNSET, label: t('chat.selectProvider') }, ...providers.map(p => ({ value: p.id, label: p.name }))];
+  const modelOptions = [{ value: UNSET, label: t('chat.selectModel') }, ...models.map(m => ({ value: m.model_id, label: m.model_name }))];
   const skillOptions = [
-    { value: UNSET, label: '未选择技能' },
-    { value: NO_SKILL, label: '明确不使用技能' },
+    { value: UNSET, label: t('chat.noSkillSelected') },
+    { value: NO_SKILL, label: t('chat.explicitNoSkill') },
     ...skills.map(s => ({ value: s.skill_id, label: `${s.name} — v${s.version}` })),
   ];
   const locked = generating || saving;
 
   return (
-    <section aria-label="会话目标" className="flex flex-col gap-2 rounded-md border border-border bg-muted p-3">
+    <section aria-label={t('chat.target')} className="flex flex-col gap-2 rounded-md border border-border bg-muted p-3">
       {loaded && !providers.length ? (
-        <p className="m-0 text-sm text-muted-foreground">还没有可用的 Provider。请先到 <Link to="/providers" className={LINK}>Provider 页面</Link> 添加、启用并保存凭据。</p>
+        <p className="m-0 text-sm text-muted-foreground">{t('chat.noProviderBefore')}<Link to="/providers" className={LINK}>{t('chat.providerPage')}</Link> {t('chat.noProviderAfter')}</p>
       ) : null}
       <div className="flex flex-wrap items-end gap-3">
         <div className="min-w-0 grow basis-40">
-          <Select label="Provider" options={providerOptions} value={providerId} disabled={locked} className="overflow-hidden"
+          <Select label={t('chat.provider')} options={providerOptions} value={providerId} disabled={locked} className="overflow-hidden"
             onChange={value => { setProviderId(value); setModelId(UNSET); setStatus(null); }} />
         </div>
         <div className="min-w-0 grow basis-40">
-          <Select label="模型" options={modelOptions} value={modelId} disabled={locked || providerId === UNSET} className="overflow-hidden"
+          <Select label={t('chat.model')} options={modelOptions} value={modelId} disabled={locked || providerId === UNSET} className="overflow-hidden"
             onChange={value => { setModelId(value); setStatus(null); }} />
         </div>
         <div className="min-w-0 grow basis-40">
-          <Select id={SKILL_SELECT_ID} label="技能" options={skillOptions} value={skill} disabled={locked} className="overflow-hidden"
+          <Select id={SKILL_SELECT_ID} label={t('chat.skill')} options={skillOptions} value={skill} disabled={locked} className="overflow-hidden"
             onChange={value => { setSkill(value); setStatus(null); }} />
         </div>
-        <Button variant="secondary" disabled={locked || !ready || !dirty} loading={saving} onClick={() => void apply()}>应用目标</Button>
+        <Button variant="secondary" disabled={locked || !ready || !dirty} loading={saving} onClick={() => void apply()}>{t('chat.applyTarget')}</Button>
       </div>
-      <p className="m-0 text-xs text-muted-foreground">目标只影响之后的发送；技能版本在会话内固定，生成过程中不能修改。</p>
+      <p className="m-0 text-xs text-muted-foreground">{t('chat.targetHelp')}</p>
       {status ? <p role={status.tone === 'error' ? 'alert' : 'status'} className={cn('m-0 text-xs', status.tone === 'error' ? 'text-error-text' : 'text-success-text')}>{status.text}</p> : null}
     </section>
   );

@@ -17,6 +17,7 @@ pub mod chat_port;
 pub mod code;
 pub mod core;
 pub mod http;
+pub mod locale;
 pub mod net;
 pub mod server;
 pub mod service;

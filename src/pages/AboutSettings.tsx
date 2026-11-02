@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import { Button, Card, Loading } from '@dgos/ui';
 import { usePageError } from '../pageError';
+import { t, useLocale as usePageLocale } from '../i18n';
 
 // V1-FR-007 §2.3 item 7 (D085). Only information the app already has: the name and version from the bundle
 // configuration and the Tauri runtime version, read through Tauri's built-in `app` commands (granted by
@@ -17,6 +18,7 @@ interface AboutInfo {
 type Load = { state: 'loading' } | { state: 'ready'; info: AboutInfo } | { state: 'failed' };
 
 export default function AboutSettings() {
+  usePageLocale();
   const reportError = usePageError('AboutSettings');
   const report = useRef(reportError);
   report.current = reportError;
@@ -45,33 +47,33 @@ export default function AboutSettings() {
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 p-6 text-foreground">
-      <h1 className="m-0 text-2xl font-semibold text-foreground">关于</h1>
+      <h1 className="m-0 text-2xl font-semibold text-foreground">{t('about.title')}</h1>
       <Card>
         <Card.Header>
-          <h2 className="m-0 text-base font-semibold">版本</h2>
+          <h2 className="m-0 text-base font-semibold">{t('about.version')}</h2>
         </Card.Header>
         <Card.Body>
-          {load.state === 'loading' && <Loading label="正在读取版本信息…" />}
+          {load.state === 'loading' && <Loading label={t('about.loading')} />}
           {load.state === 'failed' && (
             <div role="alert" className="flex flex-wrap items-center justify-between gap-3 text-error-text">
-              <p className="m-0">无法读取版本信息。</p>
-              <Button variant="secondary" onClick={() => void read()}>重试</Button>
+              <p className="m-0">{t('about.readFailed')}</p>
+              <Button variant="secondary" onClick={() => void read()}>{t('system.retry')}</Button>
             </div>
           )}
           {load.state === 'ready' && (
             <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-2">
-              <dt className="text-muted-foreground">应用</dt>
+              <dt className="text-muted-foreground">{t('about.app')}</dt>
               <dd className="m-0 wrap-anywhere">{load.info.name}</dd>
-              <dt className="text-muted-foreground">版本</dt>
+              <dt className="text-muted-foreground">{t('about.version')}</dt>
               <dd className="m-0 wrap-anywhere">{load.info.version}</dd>
-              <dt className="text-muted-foreground">Tauri 运行时</dt>
+              <dt className="text-muted-foreground">{t('about.runtime')}</dt>
               <dd className="m-0 wrap-anywhere">{load.info.tauriVersion}</dd>
             </dl>
           )}
         </Card.Body>
       </Card>
       <p className="m-0 text-sm text-muted-foreground">
-        系统信息（操作系统与架构）、许可证信息和检查更新在本版本暂不提供。
+         {t('about.unavailable')}
       </p>
     </div>
   );

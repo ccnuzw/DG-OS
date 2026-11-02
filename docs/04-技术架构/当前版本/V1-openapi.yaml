@@ -56,6 +56,31 @@ security:
   - lanSession: []
 
 paths:
+  /api/v1/lan/bootstrap:
+    get:
+      tags: [spa]
+      operationId: getLanBootstrap
+      summary: 读取主机解析语言和资源版本（FR-016、D118）
+      description: 配对前可读，仍经过私网、Host 和 Origin 准入。不返回偏好、用户或凭据；重载远程页面时重新获取。
+      security: []
+      responses:
+        '200':
+          description: 当前解析语言
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [locale, catalog_version]
+                properties:
+                  locale:
+                    type: string
+                    enum: [zh-CN, en-US]
+                  catalog_version:
+                    type: string
+                    const: v1
+        '503':
+          description: 主机语言暂不可读，远程页面继续使用中文后备文案，不展示内部详情
   /:
     get:
       tags: [spa]

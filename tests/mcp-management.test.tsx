@@ -1,3 +1,4 @@
+import { setLocaleForTesting } from '../src/i18n/runtime';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
@@ -6,6 +7,7 @@ import McpManagement from '../src/pages/McpManagement';
 import McpConnectionNotice from '../src/components/McpConnectionNotice';
 import { useMcpStore } from '../src/stores/mcpStore';
 import { Modal, ModalHost, ToastViewport, clearToasts } from '@dgos/ui';
+import { getToastSnapshot } from '../src/ui/feedback/toastStore';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 const mocked = vi.mocked(invoke);
@@ -28,6 +30,7 @@ const servers = [
   { id: 'b', name: 'Beta', transport: 'http', enabled: false, status: 'configured', credential_ref: 'opaque-ref' },
 ];
 beforeEach(() => {
+  setLocaleForTesting('en-US');
   useMcpStore.setState(initial, true);
   vi.spyOn(HTMLDialogElement.prototype, 'showModal').mockImplementation(function (this: HTMLDialogElement) { this.open = true; });
   vi.spyOn(HTMLDialogElement.prototype, 'close').mockImplementation(function (this: HTMLDialogElement) { this.open = false; });
@@ -293,7 +296,7 @@ it('routes a failed server action through the unified error toast and keeps the 
   failing('disconnect_mcp_server', { code: 1000000 });
   renderWithFeedback();
   fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }));
-  expect(await screen.findByText('操作失败')).toBeTruthy();
+  expect(await screen.findByText('Operation failed')).toBeTruthy();
   expect(screen.getByText('MCP operation failed. Please retry.')).toBeTruthy();
   expect(useMcpStore.getState().error).toBe('MCP operation failed. Please retry.');
 });
@@ -305,7 +308,7 @@ it('opens the blocking error dialog for a severe host error from deleting a serv
   await screen.findByText('Alpha');
   fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0]);
   fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete MCP server?' })).getByRole('button', { name: 'Delete' }));
-  const dialog = await screen.findByRole('dialog', { name: '系统凭据库不可用' });
+  const dialog = await screen.findByRole('dialog', { name: 'OS credential store unavailable' });
   expect(dialog).toBeTruthy();
   expect(screen.queryByRole('dialog', { name: 'Delete MCP server?' })).toBeNull();
   expect(useMcpStore.getState().servers.map(server => server.id)).toContain('a');
@@ -407,7 +410,7 @@ it('reports a failed token removal once and closes the dialog', async () => {
   await select('Beta');
   fireEvent.click(screen.getByRole('button', { name: 'Remove token' }));
   fireEvent.click(within(await screen.findByRole('dialog', { name: 'Remove token?' })).getByRole('button', { name: 'Remove' }));
-  expect(await screen.findAllByText('操作失败')).toHaveLength(1);
+  expect(await screen.findAllByText('Operation failed')).toHaveLength(1);
   expect(screen.queryByRole('dialog', { name: 'Remove token?' })).toBeNull();
 });
 
@@ -421,7 +424,7 @@ it('reports a rejected tool confirmation once and keeps the inline dialog error'
   fireEvent.click(within(dialog).getByRole('button', { name: 'Review tool call', exact: true }));
   fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm and call tool' }));
   await within(dialog).findByText('MCP operation failed. Please retry.');
-  expect(await screen.findAllByText('操作失败')).toHaveLength(1);
+  expect(await screen.findAllByText('Operation failed')).toHaveLength(1);
   expect(mocked.mock.calls.some(([name]) => name === 'call_mcp_tool')).toBe(false);
 });
 
@@ -434,7 +437,7 @@ it('does not raise a host error toast for argument validation that never reached
   fireEvent.change(screen.getByLabelText(/^Arguments/), { target: { value: '["--root",' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save server' }));
   expect((await screen.findByRole('alert')).textContent).toBe('Arguments must be a JSON array of strings.');
-  expect(screen.queryByText('操作失败')).toBeNull();
+  expect(screen.queryByText('Operation failed')).toBeNull();
   expect(console.error).not.toHaveBeenCalled();
 });
 
@@ -449,4 +452,48 @@ it('toggles a server through its switch and reflects the host result', async () 
   fireEvent.click(toggle);
   await waitFor(() => expect(mocked).toHaveBeenCalledWith('toggle_mcp_server', { serverId: 'a', enabled: false }));
   await waitFor(() => expect(screen.getByRole('switch', { name: 'Enable Alpha' }).getAttribute('aria-checked')).toBe('false'));
+});
+
+// D111: a status poll that keeps failing is shown inline and never as a Toast.
+it('D111 keeps repeated status-poll failures inline: no Toast after 30 s of failing polls', async () => {
+  const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const handler = mocked.getMockImplementation()!;
+  let listCalls = 0;
+  mocked.mockImplementation((command, args) => {
+    if (command !== 'list_mcp_servers') return handler(command, args);
+    listCalls += 1;
+    return listCalls === 1 ? Promise.resolve(servers) : Promise.reject('MCP status service unreachable');
+  });
+  vi.useFakeTimers();
+  render(<MemoryRouter><McpManagement /><McpConnectionNotice /><ToastViewport /><ModalHost /></MemoryRouter>);
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(screen.getByText('Alpha')).toBeTruthy();
+  expect(screen.queryByRole('alert')).toBeNull();
+
+  // Three 10 s polls, each rejected.
+  await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+  expect(listCalls).toBeGreaterThanOrEqual(4);
+  expect(useMcpStore.getState().error).toBe('MCP status service unreachable');
+  const alerts = screen.getAllByRole('alert');
+  expect(alerts.map(node => node.textContent)).toEqual(['MCP status service unreachable']);
+  expect(alerts[0].hasAttribute('data-state')).toBe(false);
+  expect(getToastSnapshot().visible).toHaveLength(0);
+  expect(getToastSnapshot().queued).toHaveLength(0);
+
+  // More failing polls do not queue anything either, and the inline error stays a single block.
+  await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+  expect(getToastSnapshot().visible).toHaveLength(0);
+  expect(getToastSnapshot().queued).toHaveLength(0);
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
+  expect(logged).not.toHaveBeenCalledWith('[dgos] error', expect.anything());
+});
+
+// D112: URL fields use inputMode="url"; Input keeps its four types.
+it('D112 marks the MCP Server URL input inputmode="url" without giving it type="url"', async () => {
+  render(<McpManagement />);
+  await screen.findByText('Alpha');
+  await chooseTransport('HTTP endpoint');
+  const url = screen.getByLabelText(/^Server URL/) as HTMLInputElement;
+  expect(url.getAttribute('inputmode')).toBe('url');
+  expect(url.type).toBe('text');
 });

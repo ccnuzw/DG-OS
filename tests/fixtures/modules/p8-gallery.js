@@ -54,6 +54,12 @@ export default function createModule(host) {
       h(ui.Button, { id: 'g-open', onClick: () => ui.Modal.confirm({ title: 'Gallery dialog', content: h(DialogBody), confirmText: 'OK', cancelText: 'Cancel' }) }, 'Open dialog'),
       h(ui.Button, { id: 'g-toast', variant: 'secondary', onClick: () => ui.toast.error('Gallery error toast: ' + LONG) }, 'Raise error toast'),
       h(ui.Button, { id: 'g-open-prose', variant: 'secondary', onClick: () => ui.Modal.confirm({ title: 'Prose dialog', content: h('p', { id: 'g-prose-long' }, 'Ordinary words only. '.repeat(40)), confirmText: 'OK', cancelText: 'Cancel' }) }, 'Open prose dialog'),
+      // AC24 focus-ring targets, appended last so the earlier tab sequences in ui_keys.rs keep their order.
+      h(ui.Button, { id: 'g-ghost', variant: 'ghost' }, 'Ghost button'),
+      h(ui.Button, { id: 'g-link', variant: 'link' }, 'Link button'),
+      h(ui.Input, { id: 'g-input-error', label: 'Gallery input with error', value: '', onChange: () => {}, error: 'This field is required' }),
+      h(ui.Checkbox, { checked: true, onChange: () => {}, label: 'Gallery checkbox checked' }),
+      h(ui.Button, { id: 'g-toast-long', variant: 'secondary', onClick: () => ui.toast.error('Focus-ring toast: ' + LONG, { duration: 60000 }) }, 'Raise long error toast'),
     );
   }
   return { Component };

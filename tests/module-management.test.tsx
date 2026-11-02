@@ -1,3 +1,4 @@
+import { setLocaleForTesting } from '../src/i18n/runtime';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
@@ -182,6 +183,7 @@ function card(moduleId: string) {
 }
 
 beforeEach(() => {
+  setLocaleForTesting('en-US');
   state.calls = [];
   state.crashes = [];
   state.failures = {};
@@ -239,7 +241,7 @@ describe('Module management list', () => {
   it('is reachable from the sidebar and from the Modules tab of the Settings shell', async () => {
     renderAt('/settings');
 
-    fireEvent.mouseDown(await screen.findByRole('tab', { name: '模块' }), { button: 0 });
+    fireEvent.mouseDown(await screen.findByRole('tab', { name: 'Modules' }), { button: 0 });
     expect(await screen.findByRole('heading', { name: 'Module management' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('link', { name: 'Home' }));
@@ -305,7 +307,7 @@ describe('Module management list', () => {
       state.modules[1].version = '1.1.0';
     };
     renderAt('/settings');
-    fireEvent.mouseDown(await screen.findByRole('tab', { name: '模块' }), { button: 0 });
+    fireEvent.mouseDown(await screen.findByRole('tab', { name: 'Modules' }), { button: 0 });
     await screen.findByRole('heading', { name: 'Beta' });
     expect(card('dgos.beta').getByText('Version 1.0.0')).toBeTruthy();
 
@@ -328,7 +330,7 @@ describe('Module management list', () => {
     expect(screen.getByText(/code 1004022/)).toBeTruthy();
   });
 
-  it('reports a failed action inline next to its module and once as a Toast that carries only the code', async () => {
+  it('reports a failed action inline next to its module and once as a Toast with the registered text, never the host message', async () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     state.failures.update_module = { kind: 'update_failed', code: 1004013 };
     renderAt('/settings/modules');
@@ -340,8 +342,10 @@ describe('Module management list', () => {
     const inline = await card('dgos.beta').findByRole('alert');
     expect(within(inline).getByText('Update failed, the previous version was restored')).toBeTruthy();
     expect(within(inline).getByText(/code 1004013/)).toBeTruthy();
-    // 1004xxx has no registry entry (FR-005 §13.2): the Toast is the generic text with the code, never the host message.
-    expect(await screen.findAllByText('操作失败（错误码 1004013）')).toHaveLength(1);
+    // 1004013 is registered (D110): the Toast shows the registered message and advice, never the host message.
+    expect(await screen.findAllByText('Operation failed')).toHaveLength(1);
+    expect(screen.getByText('Please try again later. Check the logs if the problem persists')).toBeTruthy();
+    expect(screen.queryByText('操作失败（错误码 1004013）')).toBeNull();
     expect(logged).toHaveBeenCalledWith('[dgos] error', { code: 1004013, where: 'ModuleManagement' });
     logged.mockRestore();
   });
@@ -643,7 +647,7 @@ describe('Module panel', () => {
 describe('Sidebar module entries', () => {
   it('adds a link for a ready instance and removes it after unload', async () => {
     renderAt('/settings');
-    await screen.findByRole('tablist', { name: '系统设置' });
+    await screen.findByRole('tablist', { name: 'Settings' });
     expect(screen.queryByRole('link', { name: 'dgos.beta' })).toBeNull();
 
     act(() => fakeHost.set([instanceFor('dgos.beta', false)]));

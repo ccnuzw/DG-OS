@@ -1,5 +1,6 @@
 use crate::{
-    content_package::{load_bundled_catalog, validate_package},
+    content_hash,
+    content_package::{load_bundled_catalog, safe_child, validate_package},
     ContentPreview, ContentSkillMetadata, Result, SkillDetail, SkillError, SkillUsageLog,
     SkillsManager,
 };
@@ -34,6 +35,27 @@ fn content_directory(root: &Path, relative: &str) -> Result<PathBuf> {
         }
     }
     Ok(current)
+}
+
+async fn secure_snapshot_child(root: &Path, relative: &str) -> Result<PathBuf> {
+    let path = safe_child(root, relative)?;
+    let mut current = root.to_path_buf();
+    for component in Path::new(relative).components() {
+        let std::path::Component::Normal(part) = component else {
+            return Err(SkillError::InvalidManifest("unsafe snapshot path".into()));
+        };
+        current.push(part);
+        if tokio::fs::symlink_metadata(&current)
+            .await
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return Err(SkillError::InvalidManifest(
+                "snapshot path contains a symlink".into(),
+            ));
+        }
+    }
+    Ok(path)
 }
 
 impl SkillsManager {
@@ -93,27 +115,71 @@ impl SkillsManager {
         version: &str,
     ) -> Result<(ContentSkillMetadata, ContentPreview)> {
         let row = self.content_repo.get_version(id, version).await?;
-        let path = PathBuf::from(row.install_path);
+        let path = if row.is_bundled {
+            PathBuf::from(row.install_path.clone())
+        } else {
+            safe_child(&self.skills_dir, &row.install_path)?
+        };
         // Read from the validated immutable snapshot, never from an upstream
         // repository, legacy install_path or user-supplied resource path.
-        let expected = crate::content_package::safe_child(
-            &self.skills_dir,
-            &format!("bundled/{id}/{version}"),
-        )?;
-        if path != expected {
-            return Err(SkillError::InvalidManifest(
-                "content outside snapshot root".into(),
-            ));
+        if row.is_bundled {
+            let expected = safe_child(&self.skills_dir, &format!("bundled/{id}/{version}"))?;
+            if path != expected {
+                return Err(SkillError::InvalidManifest(
+                    "content outside snapshot root".into(),
+                ));
+            }
         }
-        let validated = validate_package(&path, &row.content_hash)?;
-        let meta = validated.metadata;
+        let (meta, body, license_text) = if row.is_bundled {
+            let validated = validate_package(&path, &row.content_hash)?;
+            (validated.metadata, validated.body, validated.license_text)
+        } else {
+            let root_metadata = tokio::fs::symlink_metadata(&path).await?;
+            if !root_metadata.is_dir() || root_metadata.file_type().is_symlink() {
+                return Err(SkillError::InvalidManifest(
+                    "unsafe external snapshot root".into(),
+                ));
+            }
+            let mut metadata = row.metadata.clone();
+            if let Some(object) = metadata.as_object_mut() {
+                // Provenance and the file manifest belong to the immutable
+                // version record, not to the strict content-package DTO.
+                object.remove("provenance");
+                object.remove("file_manifest");
+            }
+            let meta: ContentSkillMetadata = serde_json::from_value(metadata)?;
+            let manifest = row.file_manifest.as_object().ok_or_else(|| {
+                SkillError::InvalidManifest("external file manifest is invalid".into())
+            })?;
+            let mut files = std::collections::BTreeMap::new();
+            for relative in manifest.keys() {
+                let file = secure_snapshot_child(&path, relative).await?;
+                let bytes = tokio::fs::read(file).await?;
+                files.insert(relative.clone(), bytes);
+            }
+            let (actual_hash, _) = content_hash(&files);
+            if actual_hash != row.content_hash {
+                return Err(SkillError::InvalidManifest(
+                    "external Skill snapshot hash mismatch".into(),
+                ));
+            }
+            let body = files.get("SKILL.md").ok_or_else(|| {
+                SkillError::InvalidManifest("external Skill is missing SKILL.md".into())
+            })?;
+            let body = String::from_utf8(body.clone()).map_err(|_| {
+                SkillError::InvalidManifest("external SKILL.md is not UTF-8".into())
+            })?;
+            let license_text = files
+                .get("LICENSE")
+                .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+                .unwrap_or_default();
+            (meta, body, license_text)
+        };
         if meta.id != id || meta.version != version {
             return Err(SkillError::InvalidManifest(
                 "snapshot identity mismatch".into(),
             ));
         }
-        let body = validated.body;
-        let license_text = validated.license_text;
         Ok((
             meta.clone(),
             ContentPreview {

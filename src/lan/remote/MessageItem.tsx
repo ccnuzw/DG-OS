@@ -3,6 +3,7 @@ import { cn } from '@dgos/ui/lib/cn';
 import type { ChatMessage } from './api';
 import { displayContent, type FailureInfo, type LiveText } from './chatState';
 import { failedMessageText } from './messages';
+import { useRemoteLocale } from './i18n';
 
 export interface MessageItemProps {
   message: ChatMessage;
@@ -15,6 +16,7 @@ export interface MessageItemProps {
 
 /** One chat message. Content is rendered as plain text (pre-wrap): never as HTML or markdown. */
 export function MessageItem({ message, live, failure, canRegenerate, onRegenerate, onCancel }: MessageItemProps) {
+  const { locale, t } = useRemoteLocale();
   const mine = message.role === 'user';
   const generating = message.status === 'generating';
   const content = displayContent(message, live);
@@ -32,18 +34,18 @@ export function MessageItem({ message, live, failure, canRegenerate, onRegenerat
       >
         {generating && live?.reasoning ? (
           <details className="mb-2 text-sm text-muted-foreground">
-            <summary>思考过程</summary>
+            <summary>{t('remote.thinking')}</summary>
             <p className="whitespace-pre-wrap break-words">{live.reasoning}</p>
           </details>
         ) : null}
         {content ? <p className="whitespace-pre-wrap break-words">{content}</p> : null}
-        {generating && !content ? <p className="text-muted-foreground">正在思考…</p> : null}
+        {generating && !content ? <p className="text-muted-foreground">{t('remote.thinkingEllipsis')}</p> : null}
       </div>
       <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-        {generating ? <span>生成中…</span> : null}
+        {generating ? <span>{t('remote.generating')}</span> : null}
         {generating && taskId ? (
           <Button size="sm" variant="secondary" onClick={() => onCancel(taskId)}>
-            停止生成
+            {t('remote.stopGenerating')}
           </Button>
         ) : null}
         {message.status === 'interrupted' || message.status === 'failed' ? (
@@ -51,11 +53,11 @@ export function MessageItem({ message, live, failure, canRegenerate, onRegenerat
             {failedMessageText(message.status, failure?.errorCode ?? message.error_code, failure?.providerCode ?? null)}
           </span>
         ) : null}
-        {unknownResult && !generating ? <span>结果未知，上游可能已产生用量</span> : null}
-        {tokens !== null ? <span>{tokens} tokens</span> : null}
+        {unknownResult && !generating ? <span>{t('remote.unknownResult')}</span> : null}
+        {tokens !== null ? <span>{new Intl.NumberFormat(locale).format(tokens)} {locale === 'zh-CN' ? 'tokens' : 'tokens'}</span> : null}
         {canRegenerate ? (
           <Button size="sm" variant="ghost" onClick={() => onRegenerate(message)}>
-            重新生成
+            {t('remote.regenerate')}
           </Button>
         ) : null}
       </div>

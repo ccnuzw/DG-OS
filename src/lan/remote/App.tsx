@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@dgos/ui/components/Button';
 import { LanApiError, LanNetworkError, createLanApi, type LanSessionStatus } from './api';
 import { ChatView } from './ChatView';
-import { NETWORK_ERROR_TEXT, SESSION_LOST_TEXT, pairErrorText } from './messages';
+import { networkErrorText, sessionLostText, pairErrorText } from './messages';
 import { PairingView } from './PairingView';
+import { useRemoteLocale } from './i18n';
 
 export interface AppProps {
   /** Code taken from the URL fragment before rendering; the fragment is already gone from the address bar. */
@@ -17,6 +18,7 @@ type View =
   | { kind: 'chat'; session: LanSessionStatus };
 
 export function App({ initialCode = null }: AppProps) {
+  const { t } = useRemoteLocale();
   const [view, setView] = useState<View>(
     initialCode === null ? { kind: 'boot' } : { kind: 'pairing', autoSubmit: true, code: initialCode },
   );
@@ -26,7 +28,7 @@ export function App({ initialCode = null }: AppProps) {
   // Any 401 with code 1010006 from a chat request lands here.
   const onLost = useRef<() => void>(() => {});
   useEffect(() => {
-    onLost.current = () => setView((current) => (current.kind === 'chat' ? { kind: 'pairing', notice: SESSION_LOST_TEXT } : current));
+    onLost.current = () => setView((current) => (current.kind === 'chat' ? { kind: 'pairing', notice: sessionLostText() } : current));
   });
   const api = useMemo(() => createLanApi(() => onLost.current()), []);
 
@@ -56,21 +58,21 @@ export function App({ initialCode = null }: AppProps) {
   if (view.kind === 'boot') {
     return (
       <main className="flex flex-1 items-center justify-center p-6 text-muted-foreground" role="status">
-        正在连接…
+        {t('remote.connecting')}
       </main>
     );
   }
   if (view.kind === 'offline') {
     return (
       <main className="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center gap-4 p-6">
-        <p role="alert">{NETWORK_ERROR_TEXT}</p>
+        <p role="alert">{networkErrorText()}</p>
         <Button
           onClick={() => {
             setView({ kind: 'boot' });
             setAttempt((n) => n + 1);
           }}
         >
-          重试
+          {t('remote.retry')}
         </Button>
       </main>
     );

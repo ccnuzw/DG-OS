@@ -770,6 +770,175 @@ async fn scenario(app: AppHandle, world: CallWorld, bridge_ready: bool) {
     )
     .await;
 
+    // -- Cancellation (D113) -------------------------------------------------------
+    let hook = eval(
+        &app,
+        MAIN,
+        "if (!window.__cancelTrace) { window.__cancelTrace = [];\
+         const internals = window.__TAURI_INTERNALS__; const real = internals.invoke.bind(internals);\
+         internals.invoke = (cmd, args, ...rest) => { if (cmd === 'module_call_provider' || cmd === 'cancel_module_call') window.__cancelTrace.push({cmd, callId: args && args.callId}); return real(cmd, args, ...rest); }; }\
+         return true;",
+    )
+    .await;
+    let before = world.routes.request_stats(&runtime).unwrap_or_default();
+    let hits_before = hits();
+    let started = eval(
+        &app,
+        MAIN,
+        &format!("globalThis.__cancelRun = globalThis.__dgosCancelCallers['call-module']({provider:?}, 'HANG', false); return true;"),
+    )
+    .await;
+    let reached = wait_until(
+        || hits() > hits_before,
+        "the cancellable call reaches the Provider",
+    )
+    .await;
+    let reply = eval(
+        &app,
+        MAIN,
+        "const run = globalThis.__cancelRun; const t = performance.now(); run.abort();\
+         const out = await run.promise;\
+         return {out, ms: performance.now() - t, trace: window.__cancelTrace};",
+    )
+    .await;
+    let o = Outcome::parse(&reply["value"]["out"]);
+    let ms = reply["value"]["ms"].as_f64().unwrap_or(f64::MAX);
+    let trace = reply["value"]["trace"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let sent: Vec<_> = trace
+        .iter()
+        .filter(|t| t["cmd"] == "module_call_provider")
+        .collect();
+    let cancels: Vec<_> = trace
+        .iter()
+        .filter(|t| t["cmd"] == "cancel_module_call")
+        .collect();
+    let call_id = sent
+        .first()
+        .and_then(|t| t["callId"].as_str())
+        .unwrap_or("")
+        .to_owned();
+    checks.check(
+        "the page's AbortSignal sends one cancel_module_call for the in-flight call's own callId",
+        hook["ok"] == true
+            && started["ok"] == true
+            && reached.is_ok()
+            && sent.len() == 1
+            && cancels.len() == 1
+            && !call_id.is_empty()
+            && cancels[0]["callId"] == call_id.as_str(),
+        format!("{hook} {started} {reached:?} {trace:?}"),
+    );
+    checks.check(
+        "the aborted call rejects with 1004028 at the cancel's pace, not at the host deadline",
+        !o.ok && o.code == Some(1004028) && ms < 900.0,
+        format!("{o:?} {ms}ms"),
+    );
+    let after = world.routes.request_stats(&runtime).unwrap_or_default();
+    checks.check(
+        "the call was already dispatched: the Provider saw exactly one request and the host settled it Interrupted (not Cancelled)",
+        hits() == hits_before + 1
+            && after.interrupted == before.interrupted + 1
+            && after.cancelled == before.cancelled
+            && after.admitted == before.admitted + 1
+            && after.in_flight == 0,
+        format!("hits+={} before={before:?} after={after:?}", hits() - hits_before),
+    );
+    let (ok, code, _) = replay(
+        &app,
+        &attachment,
+        &route,
+        &provider,
+        "resend after cancel",
+        json!({"callId": call_id}),
+    )
+    .await;
+    let resent = world.routes.request_stats(&runtime).unwrap_or_default();
+    checks.check(
+        "resending the cancelled call's id is refused with 1004004: no admission, the Provider is untouched",
+        !ok && code == Some(DENIED) && hits() == hits_before + 1 && resent == after,
+        format!("{ok} {code:?} hits+={} {resent:?}", hits() - hits_before),
+    );
+    let forged_attachment = ipc(
+        &app,
+        MAIN,
+        "cancel_module_call",
+        json!({"attachmentId": "forged-attachment", "route": route, "callId": call_id}),
+    )
+    .await;
+    let forged_route = ipc(
+        &app,
+        MAIN,
+        "cancel_module_call",
+        json!({"attachmentId": attachment, "route": "forged-route", "callId": call_id}),
+    )
+    .await;
+    checks.check(
+        "a cancel with a forged attachment or an unknown route is refused with 1004004",
+        !forged_attachment.success()
+            && forged_attachment.code() == Some(DENIED)
+            && !forged_route.success()
+            && forged_route.code() == Some(DENIED),
+        format!(
+            "{} {}",
+            forged_attachment.describe(),
+            forged_route.describe()
+        ),
+    );
+    let settled_id = ipc(
+        &app,
+        MAIN,
+        "cancel_module_call",
+        json!({"attachmentId": attachment, "route": route, "callId": call_id}),
+    )
+    .await;
+    let unknown_id = ipc(
+        &app,
+        MAIN,
+        "cancel_module_call",
+        json!({"attachmentId": attachment, "route": route, "callId": "never-issued"}),
+    )
+    .await;
+    checks.check(
+        "cancelling an already settled or an unknown call id on the real route answers false and changes nothing",
+        settled_id.success()
+            && settled_id.data() == &json!(false)
+            && unknown_id.success()
+            && unknown_id.data() == &json!(false)
+            && world.routes.request_stats(&runtime).unwrap_or_default() == after,
+        format!("{} {}", settled_id.describe(), unknown_id.describe()),
+    );
+    let hits_mid = hits();
+    let reply = eval(
+        &app,
+        MAIN,
+        &format!(
+            "const sent = () => window.__cancelTrace.filter((t) => t.cmd === 'module_call_provider').length;\
+             const n = sent(); const run = globalThis.__dgosCancelCallers['call-module']({provider:?}, 'never sent', true);\
+             return {{out: await run.promise, sent: sent() - n}};"
+        ),
+    )
+    .await;
+    let o = Outcome::parse(&reply["value"]["out"]);
+    checks.check(
+        "an already aborted signal rejects with 1004028 without sending the call at all",
+        !o.ok && o.code == Some(1004028) && reply["value"]["sent"] == 0 && hits() == hits_mid,
+        format!("{o:?} {reply}"),
+    );
+    let _ = wait_until(
+        || stats.in_flight.load(Ordering::SeqCst) == 0,
+        "provider drain after cancel",
+    )
+    .await;
+    let o = module_call(&app, GRANTED, &provider, "after cancel").await;
+    checks.check(
+        "a new call id works after a cancel: the same runtime serves it",
+        o.ok && o.content == SECRET_REPLY && hits() == hits_mid + 1,
+        format!("{o:?} hits+={}", hits() - hits_mid),
+    );
+
     // -- Stopped runtime and replaced runtime -------------------------------------
     let stopped = run_op(&app, "stop_module", GRANTED).await;
     let hits_before = hits();
@@ -1094,6 +1263,7 @@ pub fn run_call() {
             commands::attach_module_host,
             commands::report_module_host,
             commands::module_call_provider,
+            commands::cancel_module_call,
             super::smoke_report,
         ])
         .run(context);

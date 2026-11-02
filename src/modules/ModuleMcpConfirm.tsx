@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { Button, Modal } from '@dgos/ui';
 import { moduleRuntimeHost, type ModuleRuntimeHost } from './moduleRuntimeHost';
+import { useLocale } from '../i18n';
 
 // Host-owned confirmation of a module's `mcp.call` (D093). Rendered by the host page at the application root,
 // outside every module container; the pending list lives in the runtime host and is not part of the `host`
@@ -18,6 +19,7 @@ function formatArguments(value: unknown): string {
 }
 
 export default function ModuleMcpConfirm({ host = moduleRuntimeHost }: { host?: ModuleRuntimeHost }) {
+  const { t } = useLocale();
   const pending = useSyncExternalStore(host.subscribeMcpConfirmations, host.getMcpConfirmations);
   const current = pending[0];
   if (current === undefined) return null;
@@ -30,11 +32,11 @@ export default function ModuleMcpConfirm({ host = moduleRuntimeHost }: { host?: 
       open
       kind="confirm"
       icon="warning"
-      title="模块请求调用 MCP 工具"
+      title={t('module.mcpTitle')}
       description={
         <>
-          模块「{current.moduleName}」请求调用 MCP 服务 {current.serverId} 的工具 {current.toolName}。批准后将使用下面的参数调用一次。
-          {pending.length > 1 ? `（另有 ${pending.length - 1} 个请求等待确认）` : null}
+          {t('module.mcpDescription', { name: current.moduleName, server: current.serverId, tool: current.toolName })}
+          {pending.length > 1 ? t('module.mcpQueued', { count: pending.length - 1 }) : null}
         </>
       }
       onOpenChange={(next) => {
@@ -44,14 +46,14 @@ export default function ModuleMcpConfirm({ host = moduleRuntimeHost }: { host?: 
       footer={
         <>
           <Button variant="secondary" onClick={() => answer(false)}>
-            拒绝
+            {t('module.mcpReject')}
           </Button>
-          <Button onClick={() => answer(true)}>批准</Button>
+          <Button onClick={() => answer(true)}>{t('module.mcpApprove')}</Button>
         </>
       }
     >
       <pre
-        aria-label="调用参数"
+        aria-label={t('module.mcpArgs')}
         className="max-h-60 overflow-auto whitespace-pre-wrap rounded-md border border-input bg-muted p-3 text-xs"
       >
         {formatArguments(current.arguments)}

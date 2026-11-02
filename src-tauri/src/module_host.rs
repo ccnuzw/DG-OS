@@ -278,6 +278,10 @@ pub struct RoutePublisher {
     /// production builds, where a route is never readable outside the page.
     #[cfg(any(test, feature = "webview-smoke"))]
     issued: Mutex<Vec<(String, String, String)>>,
+    /// Handles of the runtimes that were given a route. Smoke-only: lets the
+    /// harness read the request counters that no command exposes.
+    #[cfg(any(test, feature = "webview-smoke"))]
+    handles: Mutex<Vec<ModuleRuntimeHandle>>,
 }
 
 impl RoutePublisher {
@@ -287,6 +291,8 @@ impl RoutePublisher {
             transport,
             #[cfg(any(test, feature = "webview-smoke"))]
             issued: Mutex::default(),
+            #[cfg(any(test, feature = "webview-smoke"))]
+            handles: Mutex::default(),
         }
     }
 
@@ -298,12 +304,29 @@ impl RoutePublisher {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
     }
+
+    /// Request counters of the runtime `runtime_id`, if it was routed.
+    #[cfg(any(test, feature = "webview-smoke"))]
+    #[cfg_attr(not(feature = "webview-smoke"), allow(dead_code))]
+    pub fn request_stats(&self, runtime_id: &str) -> Option<dgos_modules::ModuleRequestStats> {
+        self.handles
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .find(|handle| handle.runtime_id() == runtime_id)
+            .map(ModuleRuntimeHandle::request_stats)
+    }
 }
 
 impl ModuleReadyObserver for RoutePublisher {
     fn runtime_ready(&self, runtime: &ModuleRuntimeHandle) {
         match self.router.issue_with_attachment(runtime) {
             Ok((route, attachment_id)) => {
+                #[cfg(any(test, feature = "webview-smoke"))]
+                self.handles
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push(runtime.clone());
                 #[cfg(any(test, feature = "webview-smoke"))]
                 self.issued
                     .lock()

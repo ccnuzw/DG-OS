@@ -45,6 +45,27 @@ fn accounts(app: &tauri::AppHandle) -> Result<AccountService, DgosError> {
         .ok_or(DgosError::SessionInvalid)
 }
 
+/// Managed instead of every other state when startup could not open or
+/// migrate the database (FR-008 §10.3, D098 item 9, D116). `reason` has no
+/// path and no row data; `path` is the database file the user has to look at.
+pub struct DatabaseUnavailable {
+    pub stage: &'static str,
+    pub reason: String,
+    pub path: String,
+}
+
+impl DatabaseUnavailable {
+    fn error(&self) -> DgosError {
+        DgosError::DatabaseUnavailable {
+            stage: self.stage.to_owned(),
+            reason: self.reason.clone(),
+            path: self.path.clone(),
+        }
+    }
+}
+
+/// The account gate reads this first; a database failure is reported here so
+/// the window can show it. The other account commands stay `1008007`.
 #[tauri::command]
 pub async fn get_account_state(
     app: tauri::AppHandle,
@@ -52,6 +73,9 @@ pub async fn get_account_state(
 ) -> CommandResponse<AccountState> {
     if let Err(error) = host::account_window(&window) {
         return respond(Err(error));
+    }
+    if let Some(failure) = app.try_state::<DatabaseUnavailable>() {
+        return respond(Err(failure.error()));
     }
     respond(async { accounts(&app)?.state().await }.await)
 }
@@ -131,5 +155,26 @@ mod tests {
         let rejected = serde_json::to_value(respond::<()>(Err(DgosError::SignInRejected))).unwrap();
         assert_eq!(rejected["error"]["code"], 1008005);
         assert!(rejected["error"].get("detail").is_none());
+    }
+
+    #[test]
+    fn a_database_failure_reaches_the_renderer_with_stage_reason_and_path_only_in_detail() {
+        let failure = DatabaseUnavailable {
+            stage: "migrate",
+            reason: "Custom Error: Migration file is missing".into(),
+            path: "/data/dgos.db".into(),
+        };
+        let response = serde_json::to_value(respond::<()>(Err(failure.error()))).unwrap();
+        assert_eq!(response["error"]["code"], 1008012);
+        assert_eq!(response["error"]["detail"]["stage"], "migrate");
+        assert_eq!(
+            response["error"]["detail"]["reason"],
+            "Custom Error: Migration file is missing"
+        );
+        assert_eq!(response["error"]["detail"]["path"], "/data/dgos.db");
+        assert!(!response["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("dgos.db"));
     }
 }

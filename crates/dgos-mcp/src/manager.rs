@@ -442,6 +442,23 @@ impl McpManager {
         }
     }
 
+    /// Run one monitor cycle without waiting for the production 30-second tick.
+    ///
+    /// This is only compiled into the desktop WebView acceptance harness. It
+    /// keeps the recovery evidence deterministic without shortening the
+    /// production interval or adding a renderer-facing command.
+    #[cfg(feature = "webview-smoke")]
+    pub async fn monitor_once_for_smoke(&self) {
+        self.monitor_tick().await;
+    }
+
+    #[cfg(feature = "webview-smoke")]
+    pub async fn make_reconnect_due_for_smoke(&self, server_id: &str) {
+        if let Some(retry) = self.reconnects.write().await.get_mut(server_id) {
+            retry.next_at = Instant::now();
+        }
+    }
+
     pub async fn recover_runtime_status(&self) -> Result<()> {
         mcp_servers::Entity::update_many()
             .filter(mcp_servers::Column::DeletedAt.is_null())
@@ -2023,6 +2040,42 @@ mod lifecycle_tests {
         let next = manager.reconnects.read().await[&id].next_at;
         manager.monitor_tick().await;
         assert_eq!(manager.reconnects.read().await[&id].next_at, next);
+        // AC10: exhaustion is final. Even once the backoff has passed, no fourth
+        // attempt starts; the Server stays `error` and the user is told once.
+        let failed_connects = |logs: &[McpConnectionLog]| {
+            logs.iter()
+                .filter(|log| log.event == "connect_failed")
+                .count()
+        };
+        let before = manager
+            .list_connection_logs("alice", Some(&id), None)
+            .await
+            .unwrap();
+        manager
+            .reconnects
+            .write()
+            .await
+            .get_mut(&id)
+            .unwrap()
+            .next_at = Instant::now();
+        manager.monitor_tick().await;
+        let after = manager
+            .list_connection_logs("alice", Some(&id), None)
+            .await
+            .unwrap();
+        assert_eq!(failed_connects(&after), failed_connects(&before));
+        assert_eq!(failed_connects(&after), 3);
+        assert_eq!(manager.reconnects.read().await[&id].attempts, 3);
+        assert!(!manager.sessions.read().await.contains_key(&id));
+        let exhausted: Vec<_> = after
+            .iter()
+            .filter(|log| log.event == "reconnect_exhausted")
+            .collect();
+        assert_eq!(exhausted.len(), 1);
+        assert_eq!(exhausted[0].reconnect_attempt, Some(3));
+        let server = &manager.list_servers("alice").await.unwrap()[0];
+        assert_eq!(server.status, "error");
+        assert!(server.reconnect_exhausted);
         let mut active: mcp_servers::ActiveModel = manager
             .get_model("alice", &id)
             .await
@@ -2049,6 +2102,53 @@ mod lifecycle_tests {
         let server = manager.get_server("alice", &id).await.unwrap().unwrap();
         assert_eq!(server.status, "configured");
         assert!(server.last_error_class.is_none());
+    }
+
+    /// AC07: on a healthy Server every monitor tick sends one ping and keeps
+    /// the same session; nothing is disconnected or reconnected.
+    #[tokio::test]
+    async fn successful_heartbeat_keeps_the_same_ready_session() {
+        struct Allow;
+        #[async_trait::async_trait]
+        impl McpCallPolicy for Allow {
+            async fn allows_call(&self, _: &str, _: &str, _: &str) -> bool {
+                true
+            }
+        }
+        let (original, id) = setup_mode("ping-count").await;
+        let manager = McpManager::with_policy(original.db.clone(), Arc::new(Allow));
+        manager.connect("alice", &id).await.unwrap();
+        let session = manager.sessions.read().await[&id].clone();
+        for _ in 0..3 {
+            manager.monitor_tick().await;
+        }
+        let current = manager.sessions.read().await[&id].clone();
+        assert!(Arc::ptr_eq(&session, &current));
+        let server = manager.get_server("alice", &id).await.unwrap().unwrap();
+        assert_eq!(server.status, "ready");
+        assert!(server.last_error_class.is_none());
+        assert!(!manager.reconnects.read().await.contains_key(&id));
+        let events: Vec<_> = manager
+            .list_connection_logs("alice", Some(&id), None)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|log| log.event)
+            .collect();
+        assert_eq!(events, ["connected"]);
+        let mut probe = CallMcpToolRequest {
+            server_id: id.clone(),
+            tool_name: "echo".into(),
+            arguments: json!({"text":"pings"}),
+            call_id: None,
+            task_ref: None,
+            timeout_ms: None,
+            confirmation_token: None,
+        };
+        probe.confirmation_token = Some(manager.confirm_call("alice", &probe).await.unwrap());
+        let response = manager.call_tool("alice", probe).await.unwrap();
+        assert_eq!(response.content[0]["text"], "3");
+        manager.disconnect("alice", &id).await.unwrap();
     }
 
     #[tokio::test]

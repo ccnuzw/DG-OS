@@ -1,0 +1,23 @@
+{
+  "taskId": "REPLACE-WITH-UNIQUE-TASK-ID",
+  "title": "REPLACE-WITH-ONE-VERIFIABLE-OUTCOME",
+  "risk": "L1",
+  "owner": "rust",
+  "baseSha": "REPLACE-WITH-FULL-COMMIT-SHA",
+  "featureIds": [],
+  "acceptanceIds": [],
+  "technicalTask": "REPLACE-WITH-INTERNAL-TASK-OR-REMOVE",
+  "specRefs": [],
+  "decisionRefs": [],
+  "allowedPaths": ["REPLACE-WITH-REPO-RELATIVE-PATH"],
+  "nonGoals": ["REPLACE-WITH-EXCLUSIONS"],
+  "dependsOn": [],
+  "verification": [
+    { "command": "REPLACE-WITH-TARGETED-COMMAND", "level": "unit", "covers": [], "notCovered": [] }
+  ],
+  "stopConditions": ["Specification or authority conflict", "Permission/auth dialog", "Out-of-scope change"],
+  "timeboxMinutes": 45,
+  "maxReviewRounds": 2,
+  "humanApproval": "not-requested",
+  "resources": []
+}

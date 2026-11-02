@@ -10,6 +10,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { MemoryRouter } from 'react-router-dom';
 import { ToastViewport, clearToasts, disposeAppearance, initAppearance } from '@dgos/ui';
 import App from '../src/App';
+import { resetLocaleForTesting, setLocaleForTesting } from '../src/i18n/runtime';
 
 type Prefs = { theme: string; density: number };
 
@@ -65,6 +66,7 @@ const radio = (name: string) => screen.getByRole('radio', { name }) as HTMLButto
 const checked = (name: string) => radio(name).getAttribute('aria-checked') === 'true';
 
 beforeEach(() => {
+  setLocaleForTesting('zh-CN');
   host.stored = { theme: 'light', density: 100 };
   host.sets = [];
   host.failNext = 0;
@@ -80,6 +82,7 @@ afterEach(() => {
   root.removeAttribute('data-theme');
   root.removeAttribute('data-density');
   vi.restoreAllMocks();
+  resetLocaleForTesting();
 });
 
 describe('route and entry', () => {
@@ -97,15 +100,16 @@ describe('route and entry', () => {
 });
 
 describe('initial state', () => {
-  it('shows the host values and offers only theme and interface scale', async () => {
+  it('shows the host values and offers theme, interface scale, and language', async () => {
     host.stored = { theme: 'auto', density: 150 };
     await openPage();
     expect(checked('跟随系统')).toBe(true);
     expect(checked('150%')).toBe(true);
-    expect(screen.getAllByRole('radiogroup').map((group) => group.getAttribute('aria-labelledby') !== null)).toEqual([true, true]);
+    expect(screen.getAllByRole('radiogroup').map((group) => group.getAttribute('aria-labelledby') !== null)).toEqual([true, true, true]);
     expect(screen.getByText('主题')).toBeTruthy();
     expect(screen.getByText('界面缩放')).toBeTruthy();
-    expect(screen.getAllByRole('radio')).toHaveLength(3 + 5);
+    expect(screen.getByText('语言')).toBeTruthy();
+    expect(screen.getAllByRole('radio')).toHaveLength(3 + 5 + 3);
     expect(screen.queryByText(/字体|紧凑/)).toBeNull();
     expect(root.hasAttribute('data-font-size')).toBe(false);
   });

@@ -82,6 +82,7 @@ pub struct LanConfig {
     /// Session and code expiry sweep (B10-61).
     pub sweep: Duration,
     pub spa: Option<SpaFiles>,
+    pub locale: Arc<dyn crate::locale::LocaleSource>,
 }
 
 impl Default for LanConfig {
@@ -90,6 +91,7 @@ impl Default for LanConfig {
             network_check: Duration::from_secs(10),
             sweep: Duration::from_secs(60),
             spa: None,
+            locale: Arc::new(crate::locale::DefaultLocaleSource),
         }
     }
 }
@@ -233,7 +235,12 @@ impl LanService {
         let generation = life.generation;
         let addr = SocketAddrV4::new(ip, port);
         let shutdown = CancellationToken::new();
-        let router = crate::http::router(self.core.clone(), addr, self.config.spa.clone());
+        let router = crate::http::router_with_locale(
+            self.core.clone(),
+            addr,
+            self.config.spa.clone(),
+            self.config.locale.clone(),
+        );
         self.core.set_accepting(true);
         let me = self.me.clone();
         let token = shutdown.clone();

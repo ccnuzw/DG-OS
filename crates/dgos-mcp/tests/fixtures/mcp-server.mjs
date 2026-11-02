@@ -10,6 +10,7 @@ const clientReplies = new Map();
 let pendingInitialize;
 let activePressure = 0;
 let maxPressure = 0;
+let pings = 0;
 const reply = (id, result) => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id, result })}\n`);
 const tool = (name) => ({
   name, description: 'Untrusted external tool',
@@ -48,6 +49,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     if (mode === 'missing-server-info') delete result.serverInfo;
     reply(request.id, result);
   } else if (request.method === 'ping') {
+    pings += 1;
     if (mode === 'ping-silent') return;
     if (mode === 'ping-error') {
       process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: request.id, error: { code: -32603, message: 'fixture ping failure' } })}\n`);
@@ -73,6 +75,10 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     if (mode === 'bad-output-schema' || (mode === 'output-invalid-refresh' && listRound > 1)) definition.outputSchema = { type: 'impossible' };
     reply(request.id, { tools: [definition], ...((!second || mode === 'pagination-cycle') ? { nextCursor: 'page2' } : {}) });
   } else if (request.method === 'tools/call') {
+    if (mode === 'ping-count') {
+      reply(request.id, { content: [{ type: 'text', text: String(pings) }], isError: false });
+      return;
+    }
     if (mode === 'cancellation-observable' && request.params.arguments.text === 'fixture-counts') {
       reply(request.id, { content: [{ type: 'text', text: JSON.stringify({ started: startedCalls, cancellations: cancellations.size }) }], isError: false });
       return;

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { t } from '../../i18n';
 
 // Copy to the system clipboard (D077): navigator.clipboard.writeText first, document.execCommand('copy') as the
 // fallback. The caller must show the outcome; a failure is never silent.
@@ -40,8 +41,8 @@ export type CopyState = 'idle' | 'copied' | 'failed';
 export const COPY_FEEDBACK_MS = 2500;
 export const COPY_TEXT: Readonly<Record<CopyState, string>> = {
   idle: '',
-  copied: '已复制',
-  failed: '复制失败，请手动选择文本复制',
+  get copied() { return t('chat.copied'); },
+  get failed() { return t('chat.copyFailed'); },
 };
 
 /** Copy with visible, announced feedback that resets after a short time. */

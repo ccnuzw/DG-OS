@@ -11,6 +11,7 @@ import { ToastViewport, clearToasts, disposeAppearance, initAppearance, updateAp
 import App from '../src/App';
 import { routeExists } from '../src/appRoutes';
 import { usePageError } from '../src/pageError';
+import { resetLocaleForTesting, setLocaleForTesting } from '../src/i18n/runtime';
 
 const host = vi.hoisted(() => ({
   handler: async (_command: string, _args?: unknown): Promise<unknown> => null,
@@ -27,6 +28,7 @@ vi.mock('@tauri-apps/api/core', () => {
 });
 
 beforeEach(() => {
+  setLocaleForTesting('zh-CN');
   host.handler = async (command) => (command === 'list_mcp_servers' ? [] : null);
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
@@ -38,6 +40,7 @@ afterEach(() => {
   document.documentElement.removeAttribute('data-theme');
   document.documentElement.removeAttribute('data-density');
   vi.restoreAllMocks();
+  resetLocaleForTesting();
 });
 
 describe('navigation', () => {
@@ -51,7 +54,7 @@ describe('navigation', () => {
       .getAllByRole('link')
       .filter((link) => link.getAttribute('aria-current') === 'page')
       .map((link) => link.textContent);
-    expect(current).toEqual(['Settings']);
+    expect(current).toEqual(['设置']);
   });
 
   it('marks Home on / and nothing on an unknown path', () => {
@@ -60,7 +63,7 @@ describe('navigation', () => {
         <App />
       </MemoryRouter>,
     );
-    expect(screen.getByRole('link', { name: 'Home' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('link', { name: '首页' }).getAttribute('aria-current')).toBe('page');
     unmount();
 
     render(
@@ -85,7 +88,7 @@ describe('Home greet failure', () => {
         <ToastViewport />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Greet' }));
+    fireEvent.click(screen.getByRole('button', { name: '问候' }));
     expect(await screen.findByText('API Key 无效')).toBeTruthy();
     expect(document.body.textContent).not.toContain('sk-live-123');
     expect(console.error).toHaveBeenCalledWith('[dgos] error', { code: 1001002, where: 'Home' });

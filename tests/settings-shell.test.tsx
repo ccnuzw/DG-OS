@@ -15,6 +15,7 @@ import { Modal, ToastViewport, clearToasts } from '@dgos/ui';
 import App from '../src/App';
 import { useProviderStore } from '../src/stores/providerStore';
 import { useSkillsStore } from '../src/stores/skillsStore';
+import { setLocaleForTesting } from '../src/i18n/runtime';
 
 const host = vi.hoisted(() => ({
   calls: [] as string[],
@@ -110,6 +111,7 @@ const where = () => screen.getByTestId('where').textContent;
 const select = (name: string) => fireEvent.mouseDown(tab(name), { button: 0 });
 
 beforeEach(() => {
+  setLocaleForTesting('zh-CN');
   host.calls = [];
   host.args = [];
   host.failSkills = 0;
@@ -131,7 +133,7 @@ afterEach(() => {
 describe('default entry (B07-15)', () => {
   it('opens on an overview with no tab selected and makes no host call of its own', async () => {
     renderAt('/');
-    await screen.findByText('Welcome to DG-OS');
+    await screen.findByText('DG-OS 首页');
     const shellOnly = new Set(host.calls);
     cleanup();
     host.calls = [];
@@ -152,10 +154,10 @@ describe('default entry (B07-15)', () => {
 
 describe('tab navigation (B07-01)', () => {
   it.each([
-    ['Provider', '/settings/providers', 'Provider Management'],
-    ['Skills', '/settings/skills', 'DGOS Skills Center'],
-    ['MCP', '/settings/mcp', 'MCP Management'],
-    ['模块', '/settings/modules', 'Module management'],
+    ['Provider', '/settings/providers', 'Provider 管理'],
+    ['Skills', '/settings/skills', 'DGOS Skills 中心'],
+    ['MCP', '/settings/mcp', 'MCP 管理'],
+    ['模块', '/settings/modules', '模块管理'],
     ['外观', '/settings/appearance', '外观设置'],
     ['关于', '/settings/about', '关于'],
     ['局域网协同', '/settings/lan', '局域网协同'],
@@ -168,8 +170,8 @@ describe('tab navigation (B07-01)', () => {
   });
 
   it.each([
-    ['/settings/providers', 'Provider', 'Provider Management'],
-    ['/settings/modules', '模块', 'Module management'],
+    ['/settings/providers', 'Provider', 'Provider 管理'],
+    ['/settings/modules', '模块', '模块管理'],
     ['/settings/modules/dgos.beta', '模块', 'dgos.beta'],
     ['/settings/appearance', '外观', '外观设置'],
     ['/settings/lan', '局域网协同', '局域网协同'],
@@ -181,7 +183,7 @@ describe('tab navigation (B07-01)', () => {
 
   it('moves focus with the arrow keys without switching, and switches on Enter', async () => {
     renderAt('/settings/providers');
-    await screen.findByRole('heading', { level: 1, name: 'Provider Management' });
+    await screen.findByRole('heading', { level: 1, name: 'Provider 管理' });
     act(() => tab('Provider').focus());
 
     fireEvent.keyDown(tab('Provider'), { key: 'ArrowRight' });
@@ -204,27 +206,27 @@ describe('tab navigation (B07-01)', () => {
 describe('local UI state across tabs (B07-16)', () => {
   it('keeps an unsaved Provider form when switching to another tab and back', async () => {
     renderAt('/settings/providers');
-    fireEvent.click(await screen.findByRole('button', { name: '+ Create Provider' }));
-    fireEvent.change(screen.getByLabelText('Name *'), { target: { value: 'Unsaved draft' } });
+    fireEvent.click(await screen.findByRole('button', { name: '+ 创建 Provider' }));
+    fireEvent.change(screen.getByLabelText('名称 *'), { target: { value: 'Unsaved draft' } });
 
     select('关于');
     await screen.findByRole('heading', { level: 1, name: '关于' });
-    expect(screen.queryByRole('heading', { level: 1, name: 'Provider Management' })).toBeNull();
+    expect(screen.queryByRole('heading', { level: 1, name: 'Provider 管理' })).toBeNull();
 
     select('Provider');
-    expect((screen.getByLabelText('Name *') as HTMLInputElement).value).toBe('Unsaved draft');
+    expect((screen.getByLabelText('名称 *') as HTMLInputElement).value).toBe('Unsaved draft');
     expect(host.calls.filter(command => command === 'list_providers')).toHaveLength(1);
   });
 
   it('keeps the Skills search text and does not reload the library', async () => {
     renderAt('/settings/skills');
-    const search = await screen.findByPlaceholderText(/Search/i);
+    const search = await screen.findByPlaceholderText(/搜索/i);
     fireEvent.change(search, { target: { value: 'summary' } });
 
     select('MCP');
-    await screen.findByRole('heading', { level: 1, name: 'MCP Management' });
+    await screen.findByRole('heading', { level: 1, name: 'MCP 管理' });
     select('Skills');
-    expect((screen.getByPlaceholderText(/Search/i) as HTMLInputElement).value).toBe('summary');
+    expect((screen.getByPlaceholderText(/搜索/i) as HTMLInputElement).value).toBe('summary');
     expect(host.calls.filter(command => command === 'fetch_skills_registry')).toHaveLength(1);
   });
 });
@@ -233,9 +235,9 @@ describe('load failure and retry', () => {
   it('Skills inside Settings keeps its own error and retry', async () => {
     host.failSkills = 2;
     renderAt('/settings/skills');
-    fireEvent.click(await screen.findByRole('button', { name: 'Retry loading skills' }));
+    fireEvent.click(await screen.findByRole('button', { name: '重试加载 Skills' }));
     expect(await screen.findByText('Summary')).toBeTruthy();
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry loading skills' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: '重试加载 Skills' })).toBeNull());
   });
 
   it('About shows the versions (AC14)', async () => {
@@ -293,9 +295,9 @@ describe('management inside Settings (D109)', () => {
   async function openNewProviderForm() {
     renderAt('/settings');
     select('Provider');
-    fireEvent.click(await screen.findByRole('button', { name: '+ Create Provider' }));
-    fireEvent.change(screen.getByLabelText('Name *'), { target: { value: created.name } });
-    fireEvent.change(screen.getByLabelText('Base URL *'), { target: { value: created.base_url } });
+    fireEvent.click(await screen.findByRole('button', { name: '+ 创建 Provider' }));
+    fireEvent.change(screen.getByLabelText('名称 *'), { target: { value: created.name } });
+    fireEvent.change(screen.getByLabelText('基础 URL *'), { target: { value: created.base_url } });
     fireEvent.change(screen.getByLabelText('API Key *'), { target: { value: 'synthetic-key' } });
   }
 
@@ -303,7 +305,7 @@ describe('management inside Settings (D109)', () => {
     host.handler = command => (command === 'create_provider' ? { success: true, data: created } : respond(command));
     await openNewProviderForm();
 
-    fireEvent.click(screen.getByRole('button', { name: /Create$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /创建$/ }));
 
     expect(await screen.findByText(created.name)).toBeTruthy();
     await waitFor(() => expect(screen.queryByLabelText('API Key *')).toBeNull());
@@ -314,13 +316,13 @@ describe('management inside Settings (D109)', () => {
   });
 
   it.each([
-    ['success', { success: true, data: true }, 'Connection successful'],
-    ['failure', { success: false, error: { code: 1001002, message: 'upstream said 401' } }, 'Invalid API key'],
+    ['success', { success: true, data: true }, '连接成功'],
+    ['failure', { success: false, error: { code: 1001002, message: 'upstream said 401' } }, '请检查 API Key 和 Provider 权限。'],
   ])('AC04 tests the connection from the Provider tab and shows the %s result', async (_, reply, text) => {
     host.handler = command => (command === 'test_provider_connection' ? reply : respond(command));
     await openNewProviderForm();
 
-    fireEvent.click(screen.getByRole('button', { name: /Test Connection/ }));
+    fireEvent.click(screen.getByRole('button', { name: /测试连接/ }));
 
     expect(await screen.findByText(text)).toBeTruthy();
     expect(argsOf('test_provider_connection')).toEqual([{ config: expect.objectContaining({ base_url: created.base_url }) }]);
@@ -344,14 +346,14 @@ describe('management inside Settings (D109)', () => {
     renderAt('/settings');
     select('Skills');
     expect(await screen.findByText('Old Calculator')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Legacy: read-only' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: '旧格式：只读' }) as HTMLButtonElement).disabled).toBe(true);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Add to My Skills' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加到我的 Skills' }));
 
-    expect(await screen.findByText(/Skill added to My Skills/)).toBeTruthy();
+    expect(await screen.findByText(/Skill 已添加到我的 Skills/)).toBeTruthy();
     expect(argsOf('install_skill')).toEqual([{ skillId: official.skill_id }]);
-    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Installed (1)' }), { button: 0 });
-    expect(screen.getByRole('switch', { name: 'Enable Summary' }).getAttribute('aria-checked')).toBe('true');
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /已安装（1/ }), { button: 0 });
+    expect(screen.getByRole('switch', { name: '禁用 Summary' }).getAttribute('aria-checked')).toBe('true');
     // Adding stores a local content version; nothing is executed, downloaded or configured.
     expect(host.calls.filter(command => ['call_skill', 'update_skill', 'update_skill_config'].includes(command))).toEqual([]);
     expect(where()).toBe('/settings/skills');
@@ -362,13 +364,13 @@ describe('management inside Settings (D109)', () => {
     host.handler = command => (command === 'create_mcp_server' ? server : respond(command));
     renderAt('/settings');
     select('MCP');
-    await screen.findByRole('heading', { level: 1, name: 'MCP Management' });
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: server.name } });
-    fireEvent.change(screen.getByLabelText('Executable'), { target: { value: '/usr/local/bin/files-server' } });
+    await screen.findByRole('heading', { level: 1, name: 'MCP 管理' });
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: server.name } });
+    fireEvent.change(screen.getByLabelText('可执行文件'), { target: { value: '/usr/local/bin/files-server' } });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save server' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存 Server' }));
 
-    expect(await screen.findByRole('button', { name: `Select ${server.name}` })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: `选择 ${server.name}` })).toBeTruthy();
     expect(argsOf('create_mcp_server')).toEqual([{ request: { name: server.name, transport: 'stdio', stdio: { executable: '/usr/local/bin/files-server', args: [] } } }]);
     expect(host.calls).not.toContain('connect_mcp_server');
     expect(where()).toBe('/settings/mcp');
@@ -385,7 +387,7 @@ describe('management inside Settings (D109)', () => {
     select('MCP');
 
     for (const [name, status, colour] of [['Up server', 'ready', 'bg-success'], ['Down server', 'error', 'bg-error']]) {
-      const row = await screen.findByRole('button', { name: `Select ${name}` });
+      const row = await screen.findByRole('button', { name: `选择 ${name}` });
       expect(row.textContent).toContain(status);
       expect(row.querySelector('[aria-hidden="true"]')?.classList.contains(colour)).toBe(true);
     }

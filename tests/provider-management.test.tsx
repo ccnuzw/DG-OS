@@ -1,3 +1,4 @@
+import { setLocaleForTesting } from '../src/i18n/runtime';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
@@ -11,6 +12,7 @@ const mockedInvoke = vi.mocked(invoke);
 const initialState = useProviderStore.getState();
 
 beforeEach(() => {
+  setLocaleForTesting('en-US');
   useProviderStore.setState(initialState, true);
   mockedInvoke.mockImplementation(async (command) => {
     if (command === 'list_providers') {
@@ -46,7 +48,7 @@ describe('Provider creation entry points', () => {
   it('opens the new provider form from the empty state', async () => {
     render(<ProviderManagement />);
 
-    expect(await screen.findByText('No Providers Yet')).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'No Providers Yet' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '+ Create Provider' }));
 
     expect(await screen.findByRole('heading', { name: 'New Provider' })).toBeTruthy();
@@ -166,7 +168,7 @@ describe('Provider failure reporting', () => {
     fireEvent.change(screen.getByLabelText('API Key *'), { target: { value: 'synthetic-key' } });
     fireEvent.click(screen.getByRole('button', { name: /Test Connection/ }));
 
-    expect(await screen.findByText('API Key 无效')).toBeTruthy();
+    expect(await screen.findByText('Invalid API key')).toBeTruthy();
     expect(document.body.textContent).toContain(HOST_MESSAGE); // inline result is kept
     expect(document.querySelector('[data-toast-type]')?.textContent).not.toContain(HOST_MESSAGE);
     expect(document.querySelectorAll('[data-toast-type]')).toHaveLength(1);
@@ -183,7 +185,7 @@ describe('Provider failure reporting', () => {
     fireEvent.click(screen.getByRole('button', { name: /Refresh Models/ }));
 
     await waitFor(() => expect(document.querySelectorAll('[data-toast-type="error"]')).toHaveLength(1));
-    expect(document.querySelector('[data-toast-type="error"]')?.textContent).toContain('操作失败');
+    expect(document.querySelector('[data-toast-type="error"]')?.textContent).toContain('Operation failed');
     expect(document.querySelector('[data-toast-type="error"]')?.textContent).not.toContain(HOST_MESSAGE);
     expect(logged).toHaveBeenCalledWith('[dgos] error', { code: null, where: 'ProviderManagement' });
   });
@@ -197,7 +199,7 @@ describe('Provider failure reporting', () => {
     await openSavedProvider();
     fireEvent.click(screen.getByRole('button', { name: /Refresh Models/ }));
 
-    const dialog = await screen.findByRole('dialog', { name: '系统凭据库不可用' });
+    const dialog = await screen.findByRole('dialog', { name: 'OS credential store unavailable' });
     expect(within(dialog).queryByText(HOST_MESSAGE)).toBeNull();
   });
 });
@@ -217,7 +219,7 @@ describe('Provider store failures reach the unified error handling', () => {
     renderWithToasts();
     fireEvent.click(await screen.findByRole('switch', { name: 'Disable Saved fixture' }));
 
-    expect(await screen.findByText('Provider 不可用')).toBeTruthy();
+    expect(await screen.findByText('Provider unavailable')).toBeTruthy();
     expect(toasts()).toHaveLength(1);
     expect(toasts()[0].textContent).not.toContain(HOST_MESSAGE);
     const inline = screen.getAllByRole('alert').filter(node => !node.closest('[data-toast-type]'));
@@ -229,9 +231,9 @@ describe('Provider store failures reach the unified error handling', () => {
     failWith('toggle_provider', { code: 1001003, message: HOST_MESSAGE });
     renderWithToasts();
     fireEvent.click(await screen.findByRole('switch', { name: 'Disable Saved fixture' }));
-    await screen.findByText('Provider 不可用');
+    await screen.findByText('Provider unavailable');
     // Rendered without a Router: no navigation button, even though 1001003 has an action in the registry.
-    expect(screen.queryByRole('button', { name: '查看 Provider 列表' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'View Providers' })).toBeNull();
   });
 
   it('delete: a rejected command is reported once with the generic text and no code', async () => {
@@ -242,7 +244,7 @@ describe('Provider store failures reach the unified error handling', () => {
     fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete Provider?' })).getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => expect(toasts()).toHaveLength(1));
-    expect(toasts()[0].textContent).toContain('操作失败');
+    expect(toasts()[0].textContent).toContain('Operation failed');
     expect(toasts()[0].textContent).not.toContain(HOST_MESSAGE);
     expect(logged).toHaveBeenCalledWith('[dgos] error', { code: null, where: 'ProviderManagement' });
   });
@@ -253,7 +255,7 @@ describe('Provider store failures reach the unified error handling', () => {
     fireEvent.change(screen.getByLabelText('Name *'), { target: { value: 'Renamed' } });
     fireEvent.click(screen.getByRole('button', { name: /Save Changes/ }));
 
-    expect(await screen.findByText('API Key 无效')).toBeTruthy();
+    expect(await screen.findByText('Invalid API key')).toBeTruthy();
     expect((screen.getByLabelText('Name *') as HTMLInputElement).value).toBe('Renamed');
   });
 
@@ -267,7 +269,7 @@ describe('Provider store failures reach the unified error handling', () => {
     renderWithToasts();
     fireEvent.click(await screen.findByRole('button', { name: 'Retry credential migration for Saved fixture' }));
 
-    const dialog = await screen.findByRole('dialog', { name: '系统凭据库不可用' });
+    const dialog = await screen.findByRole('dialog', { name: 'OS credential store unavailable' });
     expect(within(dialog).queryByText(HOST_MESSAGE)).toBeNull();
   });
 
@@ -284,7 +286,7 @@ describe('Provider store failures reach the unified error handling', () => {
     });
     renderWithToasts();
     fireEvent.click(await screen.findByRole('switch', { name: 'Disable Saved fixture' }));
-    await screen.findByText('Provider 不可用');
+    await screen.findByText('Provider unavailable');
     act(() => clearToasts());
 
     fail = false;
@@ -300,7 +302,7 @@ describe('Provider store failures reach the unified error handling', () => {
     });
     renderWithToasts();
 
-    const dialog = await screen.findByRole('dialog', { name: '系统凭据库不可用' });
+    const dialog = await screen.findByRole('dialog', { name: 'OS credential store unavailable' });
     expect(within(dialog).queryByText(HOST_MESSAGE)).toBeNull();
   });
 
@@ -315,7 +317,7 @@ describe('Provider store failures reach the unified error handling', () => {
     fireEvent.click(await screen.findByRole('heading', { name: 'Saved fixture', level: 3 }));
 
     await waitFor(() => expect(toasts()).toHaveLength(1));
-    expect(toasts()[0].textContent).toContain('操作失败');
+    expect(toasts()[0].textContent).toContain('Operation failed');
     expect(toasts()[0].textContent).not.toContain(HOST_MESSAGE);
     expect(logged).toHaveBeenCalledWith('[dgos] error', { code: null, where: 'ProviderManagement' });
   });
@@ -470,7 +472,7 @@ describe('Provider list controls', () => {
 
       fireEvent.click(button('Move Beta up'));
 
-      expect(await screen.findByText('Provider 不可用')).toBeTruthy();
+      expect(await screen.findByText('Provider unavailable')).toBeTruthy();
       expect(toasts()).toHaveLength(1);
       expect(toasts()[0].textContent).not.toContain(HOST_MESSAGE);
       expect(names()).toEqual(['Alpha', 'Beta', 'Gamma']);
@@ -492,7 +494,7 @@ async function chooseOption(selectName: string, optionName: string) {
 
 describe('Connection test diagnostics (AC37)', () => {
   it.each([
-    [1001002, 'Invalid API key'],
+    [1001002, 'Check the API key and Provider permissions.'],
     [1001019, 'The key lacks permission, or the region is restricted'],
     [1001025, 'The response was not the expected JSON. Check that the base URL is not missing /v1 and is not a web page address, and note redirects are not followed - enter the final address'],
     [1001023, 'Plain HTTP is not allowed for this address. Use https://, or enable Allow plain HTTP under Advanced options'],
@@ -720,7 +722,7 @@ describe('Manual models (AC17)', () => {
     fireEvent.change(await screen.findByLabelText('Model ID'), { target: { value: 'bad id' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add model' }));
 
-    expect(await screen.findByText('请求不受支持')).toBeTruthy();
+    expect(await screen.findByText('Operation failed')).toBeTruthy();
     expect(document.body.textContent).not.toContain(HOST_MESSAGE);
     expect((screen.getByLabelText('Model ID') as HTMLInputElement).value).toBe('bad id');
   });

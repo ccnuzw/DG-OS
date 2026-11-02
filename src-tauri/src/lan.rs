@@ -25,6 +25,21 @@ use tokio::sync::RwLock;
 
 struct TauriChatHost(tauri::AppHandle);
 
+struct HostLocaleSource(HostSettingsRepository);
+
+#[async_trait::async_trait]
+impl dgos_lan::locale::LocaleSource for HostLocaleSource {
+    async fn bootstrap(&self) -> Result<dgos_lan::locale::LocaleBootstrap, ()> {
+        let preferences = crate::commands::locale::read(&self.0)
+            .await
+            .map_err(|_| ())?;
+        Ok(dgos_lan::locale::LocaleBootstrap {
+            locale: preferences.locale,
+            catalog_version: preferences.catalog_version,
+        })
+    }
+}
+
 impl ChatHost for TauriChatHost {
     fn chat(&self) -> ChatManager {
         self.0.state::<ChatManager>().inner().clone()
@@ -93,6 +108,7 @@ pub fn build(
         Some(LanAuditRepository::new(db.clone())),
         LanConfig {
             spa: spa_files(app),
+            locale: Arc::new(HostLocaleSource(HostSettingsRepository::new(db.clone()))),
             ..LanConfig::default()
         },
     )

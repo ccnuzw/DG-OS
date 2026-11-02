@@ -690,6 +690,17 @@ async fn only_whitelisted_routes_exist_and_errors_have_no_cors() {
 }
 
 #[tokio::test]
+async fn locale_bootstrap_is_public_but_returns_only_locale_metadata() {
+    let env = env().await;
+    let reply = env.get("/api/v1/lan/bootstrap").send().await;
+    assert_eq!(reply.status, 200);
+    assert_eq!(reply.body["locale"], "zh-CN");
+    assert_eq!(reply.body["catalog_version"], "v1");
+    assert!(reply.body.get("preference").is_none());
+    assert!(reply.body.get("user_id").is_none());
+}
+
+#[tokio::test]
 async fn transport_errors_are_empty_400_413_415() {
     let env = env().await;
     let pair = |body: Vec<u8>, kind: &str| env.call("POST", "/api/v1/lan/pair").raw(kind, body);

@@ -166,6 +166,7 @@ fn fx(preferred: Option<u16>, enabled: Option<&str>) -> Fx {
             network_check: Duration::from_millis(30),
             sweep: Duration::from_millis(30),
             spa: None,
+            locale: Arc::new(dgos_lan::locale::DefaultLocaleSource),
         },
     );
     Fx {

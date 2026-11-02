@@ -1,3 +1,4 @@
+import { setLocaleForTesting } from '../src/i18n/runtime';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +14,7 @@ const record = { task: { id: 'task-1', status: 'succeeded', provider_id: 'p1', m
   skills: [{ skill_id: 'summary', version_id: 'summary@1.0.0', content_hash: 'a'.repeat(64) }] };
 
 beforeEach(() => {
+  setLocaleForTesting('en-US');
   mocked.mockImplementation(async command => {
     if (command === 'list_providers') return { success: true, data: [{ id: 'p1', name: 'My AI', enabled: true, credential_status: 'stored' }] };
     if (command === 'list_models') return { success: true, data: [{ id: 'm1', model_id: 'chat1', provider_id: 'p1', model_name: 'Chat One', model_type: 'chat' }] };
@@ -26,7 +28,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); clearToasts(); vi.restoreAllMocks(); });
 const show = () => {
   const view = render(<MemoryRouter><Workbench /></MemoryRouter>);
-  fireEvent.mouseDown(screen.getByRole('tab', { name: '单任务' }), { button: 0 });
+  fireEvent.mouseDown(screen.getByRole('tab', { name: 'Single task' }), { button: 0 });
   return view;
 };
 async function open(name: string) {
@@ -101,7 +103,7 @@ it('AC21 regression prevents duplicate sends while a request is running', async 
   const button = screen.getByRole('button', { name: 'Run with selected skill' });
   fireEvent.click(button);
   fireEvent.click(button);
-  expect(screen.getByRole('button', { name: 'Running task...' }).hasAttribute('disabled')).toBe(true);
+   expect(screen.getByRole('button', { name: /Running task/ }).hasAttribute('disabled')).toBe(true);
   expect(mocked.mock.calls.filter(([name]) => name === 'run_workbench_task')).toHaveLength(1);
   resolve({ record, content: 'Finished once.' });
   await screen.findByText('Finished once.');
@@ -269,7 +271,7 @@ describe('failure reporting through the unified handler', () => {
       ? Promise.resolve({ success: false, error: { code: 1001002, message: 'raw host detail' } }) : handler(command, args));
     show();
     expect((await screen.findByRole('alert')).textContent).toContain('Unable to load workbench: raw host detail');
-    await waitFor(() => expect(getToastSnapshot().visible.map(item => item.message)).toEqual(['API Key 无效']));
+    await waitFor(() => expect(getToastSnapshot().visible.map(item => item.message)).toEqual(['Invalid API key']));
     expect(JSON.stringify(getToastSnapshot())).not.toContain('raw host detail');
   });
 
@@ -282,7 +284,7 @@ describe('failure reporting through the unified handler', () => {
     await choose('Skill for this task', /^Summary/);
     fireEvent.click(screen.getByRole('button', { name: 'Run with selected skill' }));
     expect((await screen.findByRole('alert')).textContent).toMatch(/Task not completed: upstream timeout.*No fallback request was sent/);
-    expect(getToastSnapshot().visible.map(item => item.message)).toEqual(['请求超时']);
+     expect(getToastSnapshot().visible.map(item => item.message)).toEqual(['Request timed out']);
   });
 
   it('a cancellation the host cannot confirm reports its error', async () => {
@@ -300,7 +302,7 @@ describe('failure reporting through the unified handler', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Run with selected skill' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel task' }));
     expect((await screen.findByRole('alert')).textContent).toMatch(/Cancellation not confirmed: cancel timeout/);
-    expect(getToastSnapshot().visible.map(item => item.message)).toEqual(['请求超时']);
+     expect(getToastSnapshot().visible.map(item => item.message)).toEqual(['Request timed out']);
     resolve({ record, content: null });
   });
 });

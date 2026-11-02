@@ -1,7 +1,9 @@
+import { t, useLocale as usePageLocale } from '../i18n';
 import React, { useEffect, useState } from 'react';
 import { Button, Card, Input, Loading, Modal, Stack, Switch, Tabs } from '@dgos/ui';
 import { usePageError } from '../pageError';
-import { useSkillsStore } from '../stores/skillsStore';
+import { SkillInstallPreview, useSkillsStore } from '../stores/skillsStore';
+import { formatDate } from '../i18n';
 import './SkillsManagement.css';
 
 const NOTICE = 'flex flex-wrap items-start justify-between gap-4 rounded-lg border p-4 text-sm wrap-anywhere';
@@ -19,6 +21,7 @@ const IDENTITY_CHIP: Record<string, string> = {
 };
 
 const SkillsManagement: React.FC = () => {
+  usePageLocale();
   const {
     registrySkills,
     selectedSkill,
@@ -38,6 +41,10 @@ const SkillsManagement: React.FC = () => {
     installSkill,
     toggleSkill,
     checkDependencies,
+    previewExternalSource,
+    previewExternalPackage,
+    confirmExternalInstall,
+    cancelExternalInstall,
   } = useSkillsStore();
   const reportError = usePageError('SkillsManagement');
 
@@ -48,6 +55,8 @@ const SkillsManagement: React.FC = () => {
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [externalSource, setExternalSource] = useState('');
+  const [externalPreview, setExternalPreview] = useState<SkillInstallPreview | null>(null);
 
   // Desktop-only placeholder; derive from a trusted session before remote use.
 
@@ -62,7 +71,7 @@ const SkillsManagement: React.FC = () => {
       // Search the local cache, including when the registry is offline.
       await searchSkills(searchQuery.trim());
     } catch (error) {
-      setActionError(`Search failed: ${error}`);
+      setActionError(t('skills.searchFailed', { error: String(error) }));
       reportError(error);
     }
   };
@@ -73,7 +82,7 @@ const SkillsManagement: React.FC = () => {
       await getSkillDetail(skillId);
       setDetailModalOpen(true);
     } catch (error) {
-      setActionError(`Unable to load skill details: ${error}`);
+      setActionError(t('skills.detailFailed', { error: String(error) }));
       reportError(error);
     }
   };
@@ -92,14 +101,14 @@ const SkillsManagement: React.FC = () => {
       // Check dependencies first
       const depStatus = await checkDependencies(skillId);
       if (!depStatus.satisfied) {
-        setActionError(`Missing dependencies: ${depStatus.missing.join(', ')}`);
+        setActionError(t('skills.missingDependencies', { items: depStatus.missing.join(', ') }));
         return;
       }
 
       await installSkill(skillId);
-      setActionNotice('Skill added to My Skills. Select it explicitly in the AI Workbench to use it for a task.');
+      setActionNotice(t('skills.added'));
     } catch (error) {
-      setActionError(`Unable to add skill: ${error}`);
+      setActionError(t('skills.addFailed', { error: String(error) }));
       reportError(error);
     }
   };
@@ -109,7 +118,47 @@ const SkillsManagement: React.FC = () => {
     try {
       await toggleSkill(skillId, enabled);
     } catch (error) {
-      setActionError(`Toggle failed: ${error}`);
+      setActionError(t('skills.toggleFailed', { error: String(error) }));
+      reportError(error);
+    }
+  };
+
+  const handleExternalPreview = async () => {
+    setActionError(null);
+    setActionNotice(null);
+    try {
+      setExternalPreview(await previewExternalSource(externalSource.trim()));
+    } catch (error) {
+      setActionError(t('skills.sourceFailed', { error: String(error) }));
+      reportError(error);
+    }
+  };
+
+  const handleExternalPackage = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setActionError(null);
+    setActionNotice(null);
+    try {
+      const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+      setExternalPreview(await previewExternalPackage(bytes));
+    } catch (error) {
+      setActionError(t('skills.packageFailed', { error: String(error) }));
+      reportError(error);
+    }
+  };
+
+  const handleExternalConfirm = async () => {
+    if (!externalPreview) return;
+    setActionError(null);
+    try {
+      await confirmExternalInstall(externalPreview.operation_id);
+      setActionNotice(t('skills.installedSuccess', { name: externalPreview.name }));
+      setExternalPreview(null);
+      setExternalSource('');
+    } catch (error) {
+      setActionError(t('skills.installSourceFailed', { error: String(error) }));
       reportError(error);
     }
   };
@@ -124,30 +173,30 @@ const SkillsManagement: React.FC = () => {
   };
 
   const identityLabel = (identity: string) => ({
-    dgos_official: 'DGOS Official',
-    dgos_curated: 'DGOS Curated',
-    third_party: 'Third-party',
-    legacy_registry: 'Legacy format',
+    dgos_official: t('skills.identity.official'),
+    dgos_curated: t('skills.identity.curated'),
+    third_party: t('skills.identity.thirdParty'),
+    legacy_registry: t('skills.identity.legacy'),
   }[identity] || identity);
 
   return (
     <div className="mx-auto flex h-full max-w-350 flex-col gap-4 overflow-y-auto p-6 text-foreground">
       <header>
-        <h1 className="m-0 text-2xl font-semibold text-foreground">DGOS Skills Center</h1>
-        <p className="m-0 mt-1 text-sm text-muted-foreground">Local instructions and resources, organized for your work.</p>
+        <h1 className="m-0 text-2xl font-semibold text-foreground">{t('skills.title')}</h1>
+        <p className="m-0 mt-1 text-sm text-muted-foreground">{t('skills.subtitle')}</p>
       </header>
 
       <Tabs value={view} onValueChange={(next) => setView(next as 'browse' | 'installed')}>
-        <Tabs.List aria-label="Skills views" className="flex-wrap">
-          <Tabs.Trigger value="browse">Browse Skills</Tabs.Trigger>
-          <Tabs.Trigger value="installed">Installed ({installedSkills.length})</Tabs.Trigger>
+        <Tabs.List aria-label={t('skills.views')} className="flex-wrap">
+          <Tabs.Trigger value="browse">{t('skills.browse')}</Tabs.Trigger>
+          <Tabs.Trigger value="installed">{t('skills.installedCount', { count: installedSkills.length })}</Tabs.Trigger>
         </Tabs.List>
 
         {registryUrl === 'bundled://official' && (
           <div className={NOTICE_INFO} role="status">
             <div className="min-w-0 flex-1">
-              <strong>Official library is available locally</strong>
-              <p className="m-0 mt-2">No registry connection required. Third-party sources are not yet connected. Skills provide instructions, not executable scripts.</p>
+              <strong>{t('skills.officialLocal')}</strong>
+              <p className="m-0 mt-2">{t('skills.officialInfo')}</p>
             </div>
           </div>
         )}
@@ -155,40 +204,82 @@ const SkillsManagement: React.FC = () => {
         {(registryOffline || registryError) && (
           <div className={NOTICE_WARNING} role="status">
             <div className="min-w-0 flex-1 basis-60">
-              <strong>{registryOffline && registryCachedCount > 0 ? 'Offline mode' : 'Skills registry unavailable'}</strong>
+              <strong>{registryOffline && registryCachedCount > 0 ? t('skills.offline') : t('skills.unavailable')}</strong>
               <p className="m-0 mt-2">
-                The registry service could not be reached. Its address or service may be unavailable;
-                this does not necessarily mean your device is offline.
-              </p>
+                {t('skills.registryUnavailable')}</p>
               <p className="m-0 mt-2">{registryCachedCount > 0
-                ? 'Showing cached skills. Installed skills remain available.'
-                : 'No registry has been cached yet. Online browsing requires an available registry service. You can still manage installed skills.'}</p>
+                ? t('skills.showingCached')
+                : t('skills.noRegistryCache')}</p>
               {registryError && (
                 <details className="mt-2">
-                  <summary className="cursor-pointer">Technical details</summary>
-                  {registryUrl && <p className="m-0 mt-2">Registry: {registryUrl}</p>}
+                  <summary className="cursor-pointer">{t('skills.technicalDetails')}</summary>
+                  {registryUrl && <p className="m-0 mt-2">{t('detail.registry')}{registryUrl}</p>}
                   <p className="m-0 mt-2">{registryError}</p>
                 </details>
               )}
             </div>
             <Button variant="secondary" onClick={handleRetry} disabled={loading}>
-              {loading ? 'Retrying...' : 'Retry connection'}
+              {loading ? t('skills.retrying') : t('skills.retryConnection')}
             </Button>
           </div>
         )}
         {actionError && <p className={`${NOTICE_ERROR} m-0`} role="alert">{actionError}</p>}
         {installedError && (
           <div className={NOTICE_ERROR} role="alert">
-            <p className="m-0 min-w-0 flex-1 basis-60">Unable to load installed skills: {installedError}</p>
-            <Button variant="secondary" onClick={() => { void initialize(); }} disabled={installedLoading}>Retry loading skills</Button>
+            <p className="m-0 min-w-0 flex-1 basis-60">{t('detail.installedError')}{installedError}</p>
+            <Button variant="secondary" onClick={() => { void initialize(); }} disabled={installedLoading}>{t('skills.retryInstalled')}</Button>
           </div>
         )}
-        {updatesError && <p className={`${NOTICE_ERROR} m-0`} role="alert">Unable to check skill updates: {updatesError}</p>}
+        {updatesError && <p className={`${NOTICE_ERROR} m-0`} role="alert">{t('detail.updateError')}{updatesError}</p>}
+
+        <Card>
+          <Card.Header>
+            <h2 className="m-0 text-base font-semibold">{t('skills.installSourceTitle')}</h2>
+          </Card.Header>
+          <Card.Body className="flex flex-col gap-3">
+            <p className="m-0 text-sm text-muted-foreground">
+              {t('detail.sourceHelp')}</p>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="min-w-0 flex-1 basis-80">
+                <Input
+                  value={externalSource}
+                  onChange={(event) => setExternalSource(event.target.value)}
+                  placeholder={t('skills.sourcePlaceholder')}
+                  aria-label={t('skills.sourceLabel')}
+                />
+              </div>
+              <Button onClick={() => { void handleExternalPreview(); }} disabled={!externalSource.trim() || installing}>
+                {t('skills.previewSource')}</Button>
+              <label className="inline-flex cursor-pointer items-center rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-muted">
+                {t('detail.upload')}<input className="sr-only" type="file" accept=".zip,application/zip" onChange={(event) => { void handleExternalPackage(event); }} disabled={installing} />
+              </label>
+            </div>
+            {externalPreview && (
+              <div className={`${NOTICE_INFO} m-0`} role="dialog" aria-label={t('skills.previewLabel')}>
+                <div className="min-w-0 flex-1">
+                  <strong>{externalPreview.name} · {externalPreview.version}</strong>
+                  <p className="m-0 mt-1">{externalPreview.description}</p>
+                  <p className="m-0 mt-1 text-xs">
+                    {externalPreview.source_kind} · {externalPreview.file_count} {t('detail.fileLicense')}{externalPreview.license_status}
+                    {externalPreview.resolved_commit ? ` · commit ${externalPreview.resolved_commit}` : ''}
+                  </p>
+                  <p className="m-0 mt-1 break-all text-xs">{t('common.sha256')} {externalPreview.content_hash}</p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <Button variant="secondary" onClick={() => { void cancelExternalInstall(externalPreview.operation_id); setExternalPreview(null); }}>
+                    {t('module.cancel')}</Button>
+                  <Button onClick={() => { void handleExternalConfirm(); }} disabled={installing}>
+                    {t('skills.confirmInstall')}</Button>
+                </div>
+              </div>
+            )}
+          </Card.Body>
+        </Card>
 
         <Tabs.Content value="browse">
           <Stack gap={4}>
-            <div role="group" aria-label="Content source" className="flex flex-wrap gap-2">
-              {([['all', 'All content'], ['official', 'DGOS Official'], ['legacy', 'Legacy archive']] as const).map(([value, label]) => (
+            <div role="group" aria-label={t('skills.contentSource')} className="flex flex-wrap gap-2">
+              {([['all', t('skills.allContent')], ['official', t('skills.identity.official')], ['legacy', t('skills.legacyArchive')]] as const).map(([value, label]) => (
                 <Button
                   key={value}
                   size="sm"
@@ -205,40 +296,40 @@ const SkillsManagement: React.FC = () => {
               <div className="min-w-0 flex-1 basis-60">
                 <Input
                   type="text"
-                  placeholder="Search skills..."
+                  placeholder={t('skills.searchPlaceholder')}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  aria-label="Search skills"
+                  aria-label={t('skills.searchLabel')}
                   onKeyDown={(e) => { if (e.key === 'Enter' && !loading) void handleSearch(); }}
                 />
               </div>
               <Button onClick={handleSearch} disabled={loading}>
-                {loading ? 'Searching...' : 'Search'}
+                {loading ? t('skills.searching') : t('skills.search')}
               </Button>
             </Stack>
 
-            <div role="group" aria-label="Category" className="flex flex-wrap gap-2">
+            <div role="group" aria-label={t('skills.category')} className="flex flex-wrap gap-2">
               {categories.map(cat => (
                 <Button
-                  key={cat}
+                  key={cat === 'all' ? t('skills.all') : cat}
                   size="sm"
                   variant={selectedCategory === cat ? 'primary' : 'secondary'}
                   aria-pressed={selectedCategory === cat}
                   onClick={() => setSelectedCategory(cat)}
                 >
-                  {cat}
+                  {cat === 'all' ? t('skills.all') : cat}
                 </Button>
               ))}
             </div>
 
-            {loading && <Loading label="Loading skills..." />}
+            {loading && <Loading label={t('skills.loading')} />}
             {!loading && filteredSkills.length === 0 && (
               <div className="rounded-lg border border-dashed border-border p-8 text-center">
                 <p className="m-0 text-sm text-muted-foreground">{registryOffline || registryError
                   ? registryCachedCount > 0
-                    ? 'No cached skills match your filters.'
-                    : 'No skills are available to browse until the registry service is reachable.'
-                  : 'No skills found.'}</p>
+                    ? t('skills.noCachedMatch')
+                    : t('skills.noBrowseUntilOnline')
+                  : t('skills.noSkillsFound')}</p>
               </div>
             )}
             <div className="skills-grid" aria-busy={loading}>
@@ -250,9 +341,9 @@ const SkillsManagement: React.FC = () => {
                   </Card.Header>
                   <Card.Body className="flex flex-1 flex-col gap-3 wrap-anywhere">
                     <p className="m-0 text-muted-foreground">{skill.description}</p>
-                    {skill.identity === 'dgos_official' && <p className="m-0 text-xs text-muted-foreground">Bundled content · {skill.license_spdx || 'License not declared'}</p>}
+                    {skill.identity === 'dgos_official' && <p className="m-0 text-xs text-muted-foreground">{t('detail.bundled')}{skill.license_spdx || 'License not declared'}</p>}
                     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      <span>v{skill.latest_version}</span>
+                      <span>{t('common.versionPrefix')}{skill.latest_version}</span>
                       <span>{skill.author}</span>
                       <span className={IDENTITY_CHIP[skill.identity || 'legacy_registry'] ?? CHIP_NEUTRAL}>{identityLabel(skill.identity || 'legacy_registry')}</span>
                     </div>
@@ -264,16 +355,15 @@ const SkillsManagement: React.FC = () => {
                   </Card.Body>
                   <Card.Footer className="flex-wrap justify-start">
                     <Button variant="secondary" onClick={() => handleViewDetail(skill.skill_id)}>
-                      Details
-                    </Button>
+                      {t('skills.details')}</Button>
                     {isInstalled(skill.skill_id) ? (
-                      <Button variant="secondary" disabled>Installed</Button>
+                      <Button variant="secondary" disabled>{t('skills.installedAt')}</Button>
                     ) : (
                       <Button
                         onClick={() => handleInstall(skill.skill_id)}
                         disabled={installing || skill.identity !== 'dgos_official'}
                       >
-                        {skill.identity !== 'dgos_official' ? 'Legacy: read-only' : installing ? 'Adding...' : 'Add to My Skills'}
+                        {skill.identity !== 'dgos_official' ? t('skills.legacyReadOnly') : installing ? t('skills.adding') : t('skills.addToMySkills')}
                       </Button>
                     )}
                   </Card.Footer>
@@ -285,11 +375,11 @@ const SkillsManagement: React.FC = () => {
 
         <Tabs.Content value="installed">
           <Stack gap={4}>
-            {installedLoading && <Loading label="Loading installed skills..." />}
+            {installedLoading && <Loading label={t('skills.loadingInstalled')} />}
             {installedSkills.length === 0 && !installedLoading && !installedError ? (
               <div className="flex flex-col items-center gap-4 rounded-lg border border-dashed border-border p-8 text-center">
-                <p className="m-0 text-sm text-muted-foreground">No skills installed yet.</p>
-                <Button onClick={() => setView('browse')}>Browse Skills</Button>
+                <p className="m-0 text-sm text-muted-foreground">{t('skills.noInstalled')}</p>
+                <Button onClick={() => setView('browse')}>{t('skills.browse')}</Button>
               </div>
             ) : (
               <Stack gap={3}>
@@ -302,27 +392,27 @@ const SkillsManagement: React.FC = () => {
                           <span className={CHIP_NEUTRAL}>
                             {skill.call_type === 'content' ? 'SKILL.md' : skill.call_type.toUpperCase()}
                           </span>
-                          <span className={CHIP_NEUTRAL}>v{skill.version}</span>
+                          <span className={CHIP_NEUTRAL}>{t('common.versionPrefix')}{skill.version}</span>
                         </div>
                         <p className="m-0 text-muted-foreground">{skill.description}</p>
                         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                          <span>Installed: {new Date(skill.installed_at * 1000).toLocaleDateString()}</span>
-                          <span>Category: {skill.manifest.category}</span>
+                           <span>{t('detail.installed')}{formatDate(skill.installed_at * 1000)}</span>
+                          <span>{t('detail.category')}{skill.manifest.category}</span>
                         </div>
                       </div>
 
                       <div className="flex flex-wrap items-center gap-4">
                         <div className="inline-flex items-center gap-2">
                           <Switch
-                            aria-label={`Enable ${skill.name}`}
+                            aria-label={t(skill.enabled ? 'skills.disableSkill' : 'skills.enableSkill', { name: skill.name })}
                             checked={skill.enabled}
                             disabled={skill.call_type !== 'content' && !skill.enabled}
                             onChange={(checked) => { void handleToggle(skill.skill_id, checked); }}
                           />
-                          <span className="text-sm text-foreground">{skill.enabled ? 'Enabled' : 'Disabled'}</span>
+                          <span className="text-sm text-foreground">{skill.enabled ? t('providerForm.enabled') : t('module.disabled')}</span>
                         </div>
-                        {skill.call_type === 'content' && <Button variant="secondary" onClick={() => handleViewDetail(skill.skill_id)}>View latest content</Button>}
-                        {skill.call_type !== 'content' && <span className="text-xs text-muted-foreground">Legacy: execution unavailable</span>}
+                        {skill.call_type === 'content' && <Button variant="secondary" onClick={() => handleViewDetail(skill.skill_id)}>{t('skills.viewLatest')}</Button>}
+                        {skill.call_type !== 'content' && <span className="text-xs text-muted-foreground">{t('skills.legacyExecutionUnavailable')}</span>}
                       </div>
                     </Card.Body>
                   </Card>
@@ -341,7 +431,7 @@ const SkillsManagement: React.FC = () => {
           title={selectedSkill.name}
           description={selectedSkill.description}
           footer={isInstalled(selectedSkill.skill_id) ? (
-            <Button variant="secondary" disabled>Already Installed</Button>
+            <Button variant="secondary" disabled>{t('skills.alreadyInstalled')}</Button>
           ) : (
             <Button
               disabled={installing || selectedSkill.format !== 'skill_md'}
@@ -350,31 +440,31 @@ const SkillsManagement: React.FC = () => {
                 setDetailModalOpen(false);
               }}
             >
-              {selectedSkill.format === 'skill_md' ? 'Add to My Skills' : 'Legacy: read-only'}
+              {selectedSkill.format === 'skill_md' ? t('skills.addToMySkills') : t('skills.legacyReadOnly')}
             </Button>
           )}
         >
           <div className="flex min-w-0 flex-col gap-4 text-sm wrap-anywhere">
             {installedSkills.some(skill => skill.skill_id === selectedSkill.skill_id && skill.version !== selectedSkill.latest_version) && (
-              <p className={`${NOTICE_WARNING} m-0`}>This preview shows the latest catalog version. Your selected version remains unchanged.</p>
+              <p className={`${NOTICE_WARNING} m-0`}>{t('skills.latestPreviewWarning')}</p>
             )}
 
             <section className="flex flex-col gap-2">
-              <h3 className="m-0 text-base font-semibold">Information</h3>
+              <h3 className="m-0 text-base font-semibold">{t('skills.information')}</h3>
               <div className="skills-detail-grid">
-                <div><strong>Version:</strong> {selectedSkill.latest_version}</div>
-                <div><strong>Author:</strong> {selectedSkill.author}</div>
-                <div><strong>Category:</strong> {selectedSkill.category}</div>
-                <div><strong>Content:</strong> {selectedSkill.format === 'skill_md' ? 'SKILL.md package' : 'Legacy manifest'}</div>
-                <div><strong>License:</strong> {selectedSkill.license_spdx || 'Not declared'}</div>
-                <div><strong>Source:</strong> {selectedSkill.source_kind || 'Legacy registry'}</div>
-                <div><strong>Compatible apps:</strong> {selectedSkill.compatible_apps?.join(', ') || 'Not specified'}</div>
-                {selectedSkill.format !== 'skill_md' && <div><strong>Call Type:</strong> {selectedSkill.manifest.call_type}</div>}
+                <div><strong>{t('detail.version')}</strong> {selectedSkill.latest_version}</div>
+                <div><strong>{t('detail.author')}</strong> {selectedSkill.author}</div>
+                <div><strong>{t('detail.category')}</strong> {selectedSkill.category}</div>
+                <div><strong>{t('detail.content')}</strong> {selectedSkill.format === 'skill_md' ? t('skills.skillPackage') : t('skills.legacyManifest')}</div>
+                <div><strong>{t('detail.license')}</strong> {selectedSkill.license_spdx || 'Not declared'}</div>
+                <div><strong>{t('detail.source')}</strong> {selectedSkill.source_kind || 'Legacy registry'}</div>
+                <div><strong>{t('detail.compatibleApps')}</strong> {selectedSkill.compatible_apps?.join(', ') || 'Not specified'}</div>
+                {selectedSkill.format !== 'skill_md' && <div><strong>{t('detail.callType')}</strong> {selectedSkill.manifest.call_type}</div>}
               </div>
             </section>
 
             <section className="flex flex-col gap-2">
-              <h3 className="m-0 text-base font-semibold">Tags</h3>
+              <h3 className="m-0 text-base font-semibold">{t('skills.tags')}</h3>
               <div className="flex flex-wrap gap-1">
                 {selectedSkill.tags.map(tag => (
                   <span key={tag} className={CHIP_NEUTRAL}>{tag}</span>
@@ -384,13 +474,13 @@ const SkillsManagement: React.FC = () => {
 
             {selectedSkill.format === 'skill_md' && selectedSkill.content && (
               <section className="flex flex-col gap-2">
-                <h3 className="m-0 text-base font-semibold">SKILL.md content</h3>
-                <p className="m-0 text-xs text-muted-foreground">Content hash: {selectedSkill.content.content_hash}</p>
+                <h3 className="m-0 text-base font-semibold">{t('skills.skillContent')}</h3>
+                <p className="m-0 text-xs text-muted-foreground">{t('detail.contentHash')}{selectedSkill.content.content_hash}</p>
                 <pre className="m-0 max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs">{selectedSkill.content.body}</pre>
-                <p className="m-0">Verification: {selectedSkill.content.verification.status} (package integrity is not task-quality verification).</p>
-                <p className="m-0">Revision: {selectedSkill.content.source_revision || 'Not specified'}</p>
+                <p className="m-0">{t('detail.verification')}{selectedSkill.content.verification.status} {t('skills.integrityNote')}</p>
+                <p className="m-0">{t('detail.revision')}{selectedSkill.content.source_revision || 'Not specified'}</p>
                 <details>
-                  <summary className="cursor-pointer">License text</summary>
+                  <summary className="cursor-pointer">{t('skills.licenseText')}</summary>
                   <pre className="m-0 mt-2 max-h-60 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs">{selectedSkill.content.license_text}</pre>
                 </details>
               </section>
@@ -398,16 +488,16 @@ const SkillsManagement: React.FC = () => {
 
             {selectedSkill.manifest.dependencies && (
               <section className="flex flex-col gap-2">
-                <h3 className="m-0 text-base font-semibold">Dependencies</h3>
+                <h3 className="m-0 text-base font-semibold">{t('skills.dependencies')}</h3>
                 <ul className="m-0 list-disc pl-5">
                   {selectedSkill.manifest.dependencies.python && (
-                    <li>Python {selectedSkill.manifest.dependencies.python}</li>
+                    <li>{t('skills.runtime.python')}{selectedSkill.manifest.dependencies.python}</li>
                   )}
                   {selectedSkill.manifest.dependencies.node && (
-                    <li>Node.js {selectedSkill.manifest.dependencies.node}</li>
+                    <li>{t('skills.runtime.node')}{selectedSkill.manifest.dependencies.node}</li>
                   )}
                   {selectedSkill.manifest.dependencies.packages && (
-                    <li>Packages: {selectedSkill.manifest.dependencies.packages.join(', ')}</li>
+                    <li>{t('detail.packages')}{selectedSkill.manifest.dependencies.packages.join(', ')}</li>
                   )}
                 </ul>
               </section>

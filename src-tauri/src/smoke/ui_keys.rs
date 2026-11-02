@@ -967,6 +967,7 @@ pub(super) async fn run(app: &AppHandle, checks: &mut Checks) {
     error_boundary(app, checks).await;
     appearance_e2e(app, checks).await;
     settings_tab_rings(app, checks).await;
+    focus_ring_targets(app, checks).await;
     confirm_dialogs(app, checks).await;
 }
 
@@ -1324,6 +1325,93 @@ async fn settings_tab_rings(app: &AppHandle, checks: &mut Checks) {
             bad.is_empty(),
             bad.join(" | "),
         );
+    }
+    set_appearance(app, "light", 100).await;
+}
+
+/// Tab to the control `pred` describes (within `max` presses), then require what `settings_tab_rings` requires of a
+/// tab: the computed style of `ring_problem` (`:focus-visible`, solid, >= 2px, outline colour equal to the computed
+/// `--color-focus-ring`, >= 3:1) and no ancestor with `overflow` other than `visible` cutting the ring box (border box
+/// grown by outline width + offset). Returns the problem, or `None` when the ring is whole.
+async fn ring_target(app: &AppHandle, name: &str, pred: &str, max: usize) -> Option<String> {
+    if !tab_until(app, pred, max, false).await {
+        return Some(format!("{name}: not reached by Tab"));
+    }
+    let info = js(app, "return { ...focusInfo(), cuts: ringCuts() };").await;
+    if let Some(p) = ring_problem(&info) {
+        return Some(format!("{name}: {p}"));
+    }
+    if info["cuts"].as_array().is_none_or(|c| !c.is_empty()) {
+        return Some(format!("{name}: clipped {}", info["cuts"]));
+    }
+    None
+}
+
+/// AC24 on the real renderer, for the cases the earlier walks did not reach: the Button `ghost` and `link` variants,
+/// an `Input` in its error state (`aria-invalid`), a checked `Checkbox`, and the Toast close button reached by Tab.
+/// Each is focused by synthetic Tab presses from the gallery (`p8-gallery.js`, appended after the prose-dialog
+/// opener) and checked with `ring_target`, in three theme/scale cells. The `Checkbox` has no error state in its API
+/// (FR-005 §7.2.4), so its checked state stands in for it. Not proven: a visual look at the ring (computed style and
+/// geometry only), physical keys, any platform other than macOS WKWebView.
+async fn focus_ring_targets(app: &AppHandle, checks: &mut Checks) {
+    let ghost = "document.activeElement.id === 'g-ghost'";
+    let link = "document.activeElement.id === 'g-link'";
+    let input = "document.activeElement.id === 'g-input-error' && document.activeElement.getAttribute('aria-invalid') === 'true'";
+    let checkbox = "document.activeElement.getAttribute('role') === 'checkbox' && document.activeElement.getAttribute('aria-checked') === 'true'";
+    let trigger = "document.activeElement.id === 'g-toast-long'";
+    let close = "document.activeElement.getAttribute('aria-label') === '关闭通知' && !!document.activeElement.closest('[data-toast-type=\"error\"]')";
+    for (theme, density) in [("light", 100u32), ("light", 175), ("dark", 100)] {
+        let tag = format!("Focus ring targets {theme}/{density}%");
+        set_appearance(app, theme, density).await;
+        if !open_gallery(app).await {
+            checks.check(&format!("{tag}: gallery loaded"), false, "no gallery");
+            continue;
+        }
+        js(
+            app,
+            "document.getElementById('g-open-prose').focus(); return true;",
+        )
+        .await;
+        for (name, pred) in [
+            ("Button ghost", ghost),
+            ("Button link", link),
+            ("Input error state", input),
+            ("Checkbox checked", checkbox),
+        ] {
+            let problem = ring_target(app, name, pred, 4).await;
+            checks.check(
+                &format!("{tag}: {name} shows a full focus ring that no clipping ancestor cuts"),
+                problem.is_none(),
+                problem.unwrap_or_default(),
+            );
+        }
+        // Toast close button: raise a long-lived error Toast with a real Enter, then Tab to its close button.
+        let problem = if !tab_until(app, trigger, 4, false).await {
+            Some("Toast trigger not reached by Tab".to_owned())
+        } else {
+            key(app, Key::Enter).await;
+            let shown = js(app, "return !!(await until(() => [...document.querySelectorAll('[data-toast-type=\"error\"]')].find((t) => t.textContent.includes('Focus-ring toast')), 4000));").await == true;
+            if shown {
+                ring_target(app, "Toast close button", close, 12).await
+            } else {
+                Some("the error Toast never appeared".to_owned())
+            }
+        };
+        checks.check(
+            &format!("{tag}: Tab reaches the Toast close button, which shows a full focus ring that no clipping ancestor cuts"),
+            problem.is_none(),
+            problem.unwrap_or_default(),
+        );
+        // The close button works from the keyboard and the Toast leaves.
+        if truthy(app, close).await {
+            key(app, Key::Enter).await;
+            let gone = js(app, "return !!(await until(() => !document.querySelector('[data-toast-type=\"error\"]'), 3000));").await == true;
+            checks.check(
+                &format!("{tag}: Enter on the focused Toast close button dismisses the Toast"),
+                gone,
+                "Toast still shown",
+            );
+        }
     }
     set_appearance(app, "light", 100).await;
 }
