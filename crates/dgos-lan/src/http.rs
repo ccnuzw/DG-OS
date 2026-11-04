@@ -392,7 +392,8 @@ async fn create_chat(
     let target = ChatTargetInput {
         provider_id: Some(input.target.provider_id),
         model_id: Some(input.target.model_id),
-        skill_id: input.target.skill_id,
+        skill_ids: input.target.skill_id.into_iter().collect(),
+        generation: Default::default(),
         no_skill: input.target.no_skill,
     };
     match app.core.create_chat(&guard, target).await {

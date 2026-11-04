@@ -1,3 +1,6 @@
+#[path = "cli_launch_tests.rs"]
+mod cli_launch_tests;
+
 use crate::{test_support::MemoryCredentialVault, ProviderManager};
 use dgos_db::{
     migrations::Migrator,
@@ -109,6 +112,89 @@ async fn normal_create_rotate_endpoint_and_delete_use_vault_references() {
 }
 
 #[tokio::test]
+async fn provider_delete_after_usage_removes_consumer_access_with_account_boundary() {
+    let (_dir, url, db) = database().await;
+    let vault = Arc::new(MemoryCredentialVault::default());
+    let mut server = mockito::Server::new_async().await;
+    let provider = crate::test_support::seed_provider(
+        db.clone(),
+        &vault,
+        config(&server.url(), "synthetic-delete"),
+        "local",
+    )
+    .await
+    .unwrap();
+    let other = crate::test_support::seed_provider(
+        db.clone(),
+        &vault,
+        config(&server.url(), "synthetic-other-account"),
+        "other",
+    )
+    .await
+    .unwrap();
+    let manager = ProviderManager::with_vault(&url, vault.clone()).await.unwrap();
+    let models = server
+        .mock("GET", "/models")
+        .match_header("authorization", "Bearer synthetic-delete")
+        .with_status(200)
+        .with_body(r#"{"data":[{"id":"fixture-chat"}]}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    manager.refresh_models(&provider.id, "local").await.unwrap();
+    let call = server
+        .mock("POST", "/chat/completions")
+        .match_header("authorization", "Bearer synthetic-delete")
+        .with_status(200)
+        .with_body(r#"{"choices":[{"message":{"content":"Completed"}}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let request = dgos_types::ChatRequest {
+        messages: vec![dgos_types::ChatMessage {
+            role: "user".into(),
+            content: "Synthetic deletion regression".into(),
+            images: Vec::new(),
+        }],
+        max_tokens: Some(32),
+        ..Default::default()
+    };
+    let response = manager.call_provider(&provider.id, "fixture-chat", request.clone(), "local")
+        .await
+        .unwrap();
+    assert_eq!(response.content, "Completed");
+    let usage = manager.list_usage_logs("local", None).await.unwrap();
+    assert_eq!(usage.len(), 1);
+    assert_eq!(usage[0].provider_id, provider.id);
+    assert_eq!(usage[0].total_tokens, 3);
+    assert!(matches!(
+        manager.delete_provider(&provider.id, "other").await,
+        Err(dgos_types::DgosError::ProviderNotFound(_))
+    ));
+    assert_eq!(vault.entry_count().await, 2);
+    assert_eq!(manager.list_models(&provider.id, "local").await.unwrap().len(), 1);
+    assert_eq!(manager.list_usage_logs("local", None).await.unwrap().len(), 1);
+
+    manager.delete_provider(&provider.id, "local").await.unwrap();
+    assert!(manager.get_provider(&provider.id, "local").await.unwrap().is_none());
+    assert!(manager.list_providers("local").await.unwrap().is_empty());
+    assert!(manager.list_usage_logs("local", None).await.unwrap().is_empty());
+    assert!(matches!(
+        manager.list_models(&provider.id, "local").await,
+        Err(dgos_types::DgosError::ProviderNotFound(_))
+    ));
+    assert!(matches!(
+        manager.call_provider(&provider.id, "fixture-chat", request, "local").await,
+        Err(dgos_types::DgosError::ProviderNotFound(_))
+    ));
+    assert_eq!(manager.list_providers("other").await.unwrap()[0].id, other.id);
+    assert_eq!(vault.entry_count().await, 1);
+    assert!(ProviderRepository::new(db).pending_credential_cleanup().await.unwrap().is_empty());
+    models.assert_async().await;
+    call.assert_async().await;
+}
+
+#[tokio::test]
 async fn normal_metadata_edit_preserves_binding_and_saved_connection_uses_vault() {
     let (_dir, url, db) = database().await;
     let vault = Arc::new(MemoryCredentialVault::default());
@@ -177,6 +263,7 @@ async fn normal_model_refresh_advances_snapshot_and_bound_call_uses_saved_revisi
         messages: vec![dgos_types::ChatMessage {
             role: "user".into(),
             content: "Synthetic lifecycle".into(),
+            images: Vec::new(),
         }],
         temperature: None,
         max_tokens: Some(32),
@@ -244,6 +331,7 @@ async fn normal_model_refresh_advances_snapshot_and_bound_call_uses_saved_revisi
                 messages: vec![dgos_types::ChatMessage {
                     role: "user".into(),
                     content: "Audit sink fixture".into(),
+                    images: Vec::new(),
                 }],
                 temperature: None,
                 max_tokens: Some(32),
@@ -290,6 +378,7 @@ async fn streaming_call_rejects_a_stale_provider_revision_before_dispatch() {
         messages: vec![dgos_types::ChatMessage {
             role: "user".into(),
             content: "stream fixture".into(),
+            images: Vec::new(),
         }],
         temperature: None,
         max_tokens: Some(16),
@@ -470,6 +559,7 @@ fn user_request() -> dgos_types::ChatRequest {
         messages: vec![dgos_types::ChatMessage {
             role: "user".into(),
             content: "synthetic".into(),
+            images: Vec::new(),
         }],
         temperature: None,
         max_tokens: Some(16),
@@ -1126,6 +1216,7 @@ fn chat(max_tokens: Option<u32>, stream: bool) -> dgos_types::ChatRequest {
         messages: vec![dgos_types::ChatMessage {
             role: "user".into(),
             content: "round two".into(),
+            images: Vec::new(),
         }],
         temperature: None,
         max_tokens,

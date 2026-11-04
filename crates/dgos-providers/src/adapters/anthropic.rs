@@ -361,6 +361,7 @@ struct Msg<'a> {
     tool_call_id: Option<&'a str>,
     tool_calls: &'a [ToolCall],
     reasoning: Option<&'a MessageReasoning>,
+    images: &'a [dgos_types::ImageInput],
 }
 
 struct Turn {
@@ -370,6 +371,19 @@ struct Turn {
 
 fn text_block(text: &str) -> Value {
     json!({"type": "text", "text": text})
+}
+
+/// One image block: base64 source with the validated MIME type.
+fn image_block(image: &dgos_types::ImageInput) -> Value {
+    use base64::Engine as _;
+    json!({
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": image.mime,
+            "data": base64::engine::general_purpose::STANDARD.encode(&image.data)
+        }
+    })
 }
 
 fn is_tool_result(block: &Value) -> bool {
@@ -398,7 +412,9 @@ fn build_turns(messages: Vec<Msg<'_>>) -> DgosResult<(Vec<String>, Vec<Turn>)> {
                     .content
                     .filter(|text| !text.is_empty())
                     .ok_or(DgosError::RequestNotSupported)?;
-                ("user", vec![text_block(text)])
+                let mut blocks: Vec<Value> = message.images.iter().map(image_block).collect();
+                blocks.push(text_block(text));
+                ("user", blocks)
             }
             "assistant" => ("assistant", assistant_blocks(&message)?),
             "tool" => {
@@ -511,26 +527,12 @@ fn chat_body(
                 tool_call_id: None,
                 tool_calls: &[],
                 reasoning: None,
+                images: &message.images,
             })
             .collect(),
     )?;
     let max_tokens = request.max_tokens.unwrap_or(ANTHROPIC_DEFAULT_MAX_TOKENS);
     let mut output_config = Map::new();
-    let mut thinking = None;
-    if let Some(reasoning) = &request.reasoning {
-        let params = profile.reasoning_params(reasoning)?;
-        match &params {
-            ReasoningParams::AnthropicAdaptive { effort } => {
-                output_config.insert("effort".into(), json!(effort));
-            }
-            // The budget has to leave room for the answer (§5.2).
-            ReasoningParams::AnthropicBudget { budget } if *budget >= max_tokens => {
-                return Err(DgosError::RequestNotSupported)
-            }
-            _ => {}
-        }
-        thinking = params.anthropic_thinking();
-    }
     if let Some(format) = &request.response_format {
         match profile.structured {
             StructuredOutput::AnthropicNative => {
@@ -546,28 +548,12 @@ fn chat_body(
         }
     }
     let mut body = finish_body(profile, model_id, max_tokens, system, turns, stream);
-    if let Some(temperature) = request.temperature {
-        // Widening f32 to f64 would print 0.7 as 0.699999988...; use the shortest f32 form.
-        if let Some(number) = format!("{temperature}")
-            .parse::<f64>()
-            .ok()
-            .and_then(serde_json::Number::from_f64)
-        {
-            body.insert("temperature".into(), Value::Number(number));
-        }
-    }
-    // Without a reasoning request nothing is sent: 5.x models think adaptively by default and
-    // some reject an explicit `disabled`.
-    if let Some(thinking) = thinking {
-        body.insert("thinking".into(), thinking);
-    }
-    if !output_config.is_empty() {
-        body.insert("output_config".into(), Value::Object(output_config));
-    }
+    apply_generation(profile, &mut body, &mut output_config, max_tokens, request.temperature, request.reasoning.as_ref())?;
     Ok(Value::Object(body))
 }
 
 fn tool_body(profile: &Profile, model_id: &str, request: &ToolChatRequest) -> DgosResult<Value> {
+    profile.check_sampling(request.temperature, request.reasoning.as_ref())?;
     let (system, turns) = build_turns(
         request
             .messages
@@ -578,10 +564,12 @@ fn tool_body(profile: &Profile, model_id: &str, request: &ToolChatRequest) -> Dg
                 tool_call_id: message.tool_call_id.as_deref(),
                 tool_calls: &message.tool_calls,
                 reasoning: message.reasoning.as_ref(),
+                images: &message.images,
             })
             .collect(),
     )?;
     let mut body = finish_body(profile, model_id, request.max_tokens, system, turns, false);
+    apply_generation(profile, &mut body, &mut Map::new(), request.max_tokens, request.temperature, request.reasoning.as_ref())?;
     body.insert(
         "tools".into(),
         Value::Array(
@@ -606,6 +594,24 @@ fn tool_body(profile: &Profile, model_id: &str, request: &ToolChatRequest) -> Dg
         );
     }
     Ok(Value::Object(body))
+}
+
+fn apply_generation(profile: &Profile, body: &mut Map<String, Value>, output_config: &mut Map<String, Value>, max_tokens: u32, temperature: Option<f32>, reasoning: Option<&dgos_types::ReasoningConfig>) -> DgosResult<()> {
+    if let Some(temperature) = temperature {
+        let number = format!("{temperature}").parse::<f64>().ok().and_then(serde_json::Number::from_f64).ok_or(DgosError::RequestNotSupported)?;
+        body.insert("temperature".into(), Value::Number(number));
+    }
+    if let Some(reasoning) = reasoning {
+        let params = profile.reasoning_params(reasoning)?;
+        match &params {
+            ReasoningParams::AnthropicAdaptive { effort } => { output_config.insert("effort".into(), json!(effort)); }
+            ReasoningParams::AnthropicBudget { budget } if *budget >= max_tokens => return Err(DgosError::RequestNotSupported),
+            _ => {}
+        }
+        if let Some(thinking) = params.anthropic_thinking() { body.insert("thinking".into(), thinking); }
+    }
+    if !output_config.is_empty() { body.insert("output_config".into(), Value::Object(std::mem::take(output_config))); }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -747,6 +753,7 @@ fn parse_tool_response(bytes: &[u8]) -> DgosResult<ToolChatResponse> {
             tool_call_id: None,
             tool_calls: parsed.calls,
             reasoning,
+            images: Vec::new(),
         },
         usage: parse_usage(value.get("usage")).0,
         audit_warning: false,
@@ -923,6 +930,7 @@ mod tests {
         ChatMessage {
             role: role.into(),
             content: content.into(),
+            images: Vec::new(),
         }
     }
 
@@ -1054,18 +1062,16 @@ mod tests {
     }
 
     fn tool_request(messages: Vec<ToolMessage>) -> ToolChatRequest {
-        ToolChatRequest {
-            messages,
-            tools: vec![ToolDefinition {
-                kind: "function".into(),
-                function: ToolFunction {
-                    name: "dgos_tool_0".into(),
-                    description: "d".into(),
-                    parameters: json!({"type": "object"}),
-                },
-            }],
-            max_tokens: 512,
-        }
+        ToolChatRequest { temperature: None, reasoning: None, messages,
+        tools: vec![ToolDefinition {
+            kind: "function".into(),
+            function: ToolFunction {
+                name: "dgos_tool_0".into(),
+                description: "d".into(),
+                parameters: json!({"type": "object"}),
+            },
+        }],
+        max_tokens: 512, }
     }
 
     fn tm(role: &str, content: Option<&str>) -> ToolMessage {
@@ -1075,6 +1081,7 @@ mod tests {
             tool_call_id: None,
             tool_calls: vec![],
             reasoning: None,
+            images: Vec::new(),
         }
     }
 

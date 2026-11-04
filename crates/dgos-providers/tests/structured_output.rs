@@ -235,6 +235,7 @@ async fn official_anthropic_keeps_existing_system_text_untouched() {
         ChatMessage {
             role: "system".into(),
             content: "Be terse.".into(),
+            images: Vec::new(),
         },
     );
     adapter.call("m", request).await.unwrap();
@@ -275,6 +276,7 @@ async fn generic_anthropic_puts_the_schema_and_json_in_the_system_string() {
         ChatMessage {
             role: "system".into(),
             content: "Be terse.".into(),
+            images: Vec::new(),
         },
     );
     adapter.call("m", request).await.unwrap();

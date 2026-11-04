@@ -113,7 +113,7 @@ impl ModelSource {
     }
 }
 
-/// Display-only capability hint. The host never blocks a request because of it.
+/// Catalog capability hint. D133 requires explicit vision support before dispatching images.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Hint {

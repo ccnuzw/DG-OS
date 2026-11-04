@@ -24,6 +24,7 @@ pub(super) struct ToolPlan {
     pub(super) messages: Vec<WireMessage>,
     pub(super) tools: Vec<SelectedTool>,
     pub(super) window: Option<i32>,
+    pub(super) generation: dgos_types::GenerationParameters,
 }
 
 /// A running tool turn, parked between a proposal and the user's decision.
@@ -35,6 +36,7 @@ pub(super) struct ToolTurn {
     session: ToolSession,
     sink: Arc<dyn ChatSink>,
     _guard: ReleaseGuard,
+    permit: Mutex<Option<dgos_db::ActivityPermit>>,
 }
 
 #[derive(Deserialize)]
@@ -83,6 +85,7 @@ impl ChatManager {
             plan,
             active,
             _guard,
+            _permit,
             ..
         } = job;
         let Some(plan) = plan else {
@@ -127,9 +130,10 @@ impl ChatManager {
                 tool_call_id: None,
                 tool_calls: vec![],
                 reasoning: None,
+                images: message.images,
             })
             .collect();
-        let context = ToolContext::new(record, messages, plan.tools, plan.window);
+        let context = ToolContext::new(record, messages, plan.tools, plan.window, plan.generation);
         let turn = Arc::new(ToolTurn {
             user: user.clone(),
             task_id: task_id.clone(),
@@ -138,6 +142,7 @@ impl ChatManager {
             active,
             sink,
             _guard,
+            permit: Mutex::new(Some(_permit)),
         });
         self.tool_turns
             .lock()
@@ -311,6 +316,8 @@ impl ChatManager {
             &*turn.sink,
         )
         .await;
+        // Timers can retain the turn after completion; release admission at the terminal write.
+        turn.permit.lock().unwrap_or_else(|e| e.into_inner()).take();
         // Wakes the watcher and the timers so they exit.
         turn.active.token.cancel();
     }

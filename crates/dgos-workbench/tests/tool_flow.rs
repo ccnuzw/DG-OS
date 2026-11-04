@@ -227,14 +227,10 @@ async fn setup_provider(url: &str, mode: &str, provider_type: &str) -> Fixture {
         db,
         mcp,
         tool,
-        input: TaskInput {
-            provider_id: provider.id,
-            model_id: "chat".into(),
-            prompt: "private task input".into(),
-            skill_id: None,
-            allow_without_skill: true,
-            client_task_id: None,
-        },
+        input: TaskInput { provider_id: provider.id,
+        model_id: "chat".into(),
+        prompt: "private task input".into(), skill_ids: vec![], generation: Default::default(), allow_without_skill: true,
+        client_task_id: None, },
         _dir: dir,
     }
 }
@@ -1095,7 +1091,9 @@ async fn anthropic_approved_tool_round_keeps_tool_use_then_tool_result_and_pins_
         )),
     )
     .await;
-    let f = setup_provider(&server.url(), "normal", "anthropic").await;
+    let mut f = setup_provider(&server.url(), "normal", "anthropic").await;
+    f.input.generation.max_tokens = Some(2048);
+    f.input.generation.reasoning = Some(dgos_types::ReasoningConfig { effort: None, budget_tokens: Some(1024) });
     let updates = drive(&f, true).await;
     assert_eq!(updates.len(), 3);
     assert_eq!(updates[1].phase, "awaiting_confirmation");
@@ -1118,7 +1116,11 @@ async fn anthropic_approved_tool_round_keeps_tool_use_then_tool_result_and_pins_
         first["tools"][0]["input_schema"]["required"],
         json!(["text"])
     );
-    assert_anthropic_followup(&first, &second, &content, "synthetic-anthropic-flow");
+    assert_eq!(first["thinking"]["type"], "enabled");
+    assert_eq!(first["thinking"]["budget_tokens"], 1024);
+    assert_eq!(first["max_tokens"], 2048);
+    for key in ["thinking", "output_config", "max_tokens"] { assert_eq!(first[key], second[key]); }
+    assert_eq!(second["messages"].as_array().unwrap().last().unwrap()["content"][0]["tool_use_id"], "toolu_01A");
     rounds.assert().await;
     f.stop().await;
 }

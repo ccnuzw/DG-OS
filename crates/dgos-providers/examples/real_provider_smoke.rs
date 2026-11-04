@@ -73,6 +73,7 @@ fn request(stream: bool) -> ChatRequest {
         messages: vec![ChatMessage {
             role: "user".into(),
             content: "Reply with the single word: ok".into(),
+            images: Vec::new(),
         }],
         max_tokens: Some(64),
         stream: Some(stream),
@@ -166,6 +167,7 @@ async fn probe_reasoning_and_structured(service: &Service) {
     let user = |text: &str| ChatMessage {
         role: "user".into(),
         content: text.into(),
+        images: Vec::new(),
     };
     let reasoning = ChatRequest {
         messages: vec![user("What is 17 * 23? Answer with the number only.")],
@@ -239,6 +241,7 @@ fn tool_message(role: &str, content: Option<String>, tool_call_id: Option<String
         tool_call_id,
         tool_calls: vec![],
         reasoning: None,
+        images: Vec::new(),
     }
 }
 
@@ -250,6 +253,7 @@ async fn probe_workbench_shape(service: &Service) {
     let message = |role: &str, content: &str| ChatMessage {
         role: role.into(),
         content: content.into(),
+        images: Vec::new(),
     };
     let shaped = ChatRequest {
         messages: vec![
@@ -278,11 +282,9 @@ async fn probe_workbench_shape(service: &Service) {
 /// message that asked for it. This is the conversion the workbench tool loop depends on.
 async fn probe_tool_round_trip(service: &Service) {
     let name = service.name;
-    let request = |messages: &[ToolMessage]| ToolChatRequest {
-        messages: messages.to_vec(),
-        tools: weather_tools(),
-        max_tokens: 256,
-    };
+    let request = |messages: &[ToolMessage]| ToolChatRequest { temperature: None, reasoning: None, messages: messages.to_vec(),
+    tools: weather_tools(),
+    max_tokens: 256, };
     let mut messages = vec![tool_message(
         "user",
         Some("What is the weather in Paris? Use the tool.".into()),
@@ -325,15 +327,13 @@ async fn probe_tool_round_trip(service: &Service) {
 
 async fn probe_tools_and_bare(service: &Service) {
     let name = service.name;
-    let tools = ToolChatRequest {
-        messages: vec![tool_message(
-            "user",
-            Some("What is the weather in Paris? Use the tool.".into()),
-            None,
-        )],
-        tools: weather_tools(),
-        max_tokens: 256,
-    };
+    let tools = ToolChatRequest { temperature: None, reasoning: None, messages: vec![tool_message(
+        "user",
+        Some("What is the weather in Paris? Use the tool.".into()),
+        None,
+    )],
+    tools: weather_tools(),
+    max_tokens: 256, };
     match service.adapter.call_tools(&service.model, tools).await {
         Ok(reply) => {
             let calls = &reply.message.tool_calls;

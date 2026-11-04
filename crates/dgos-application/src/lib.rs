@@ -12,6 +12,8 @@ mod module_mcp;
 mod module_network;
 mod module_operations;
 mod module_storage;
+pub mod storage;
+pub use storage::{StorageService, StorageError, CleanupPreview, CleanupResult, CategoryOverview, CategoryStatus, CleanupStatus};
 pub use accounts::{
     AccountMode, AccountPorts, AccountService, AccountState, AccountSummary, ChangePasswordInput,
     CreateAccountInput, CredentialOutbox, DeleteAccountInput, DeleteAccountResult,
@@ -24,8 +26,9 @@ pub use module_crashes::{
 };
 pub use module_management::ModuleManagementService;
 pub use module_mcp::{
-    McpConfirmationNotifier, McpConfirmationPrompt, McpConfirmationRequest, McpVerdict,
-    ModuleMcpConfirmations, ModuleMcpResult, ModuleMcpService, MCP_CALL_DEADLINE,
+    McpConfirmationDeliveryError, McpConfirmationNotifier, McpConfirmationPrompt,
+    McpConfirmationRequest, McpVerdict, ModuleMcpConfirmations, ModuleMcpResult,
+    ModuleMcpService, MCP_CALL_DEADLINE,
 };
 pub use module_network::{
     execute_network_request, ModuleNetworkBody, ModuleNetworkBodyEncoding,
@@ -1046,6 +1049,7 @@ mod tests {
                 messages: vec![ChatMessage {
                     role: "user".into(),
                     content: SECRET_PROMPT.into(),
+                    images: Vec::new(),
                 }],
                 temperature: None,
                 max_tokens: Some(32),
@@ -1964,6 +1968,7 @@ mod provider_stream_service {
             messages: vec![ChatMessage {
                 role: "user".into(),
                 content: "hello".into(),
+                images: Vec::new(),
             }],
             max_tokens: Some(16),
             stream: Some(true),

@@ -16,6 +16,13 @@ pub enum DgosError {
     #[error("Invalid appearance preferences patch")]
     InvalidAppearancePatch,
 
+    #[error("Appearance revision conflict")]
+    AppearanceRevisionConflict,
+    #[error("Appearance recovery is no longer valid")]
+    AppearanceRecoveryInvalid,
+    #[error("Appearance schema is not supported")]
+    AppearanceSchemaUnsupported,
+
     #[error("Invalid language preference")]
     InvalidLanguagePreference,
 
@@ -182,6 +189,9 @@ impl DgosError {
             DgosError::InvalidAppearancePatch => 1005002,
             DgosError::InvalidLanguagePreference => 1005002,
             DgosError::InvalidDensity => 1005006,
+            DgosError::AppearanceRevisionConflict => 1005007,
+            DgosError::AppearanceRecoveryInvalid => 1005008,
+            DgosError::AppearanceSchemaUnsupported => 1005009,
             DgosError::ModuleOperation(kind) => kind.code(),
             DgosError::ModuleCapabilityInputInvalid => 1004024,
             DgosError::ModuleStorageQuotaExceeded => 1004025,

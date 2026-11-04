@@ -1,5 +1,18 @@
+pub mod maintenance_gate;
+pub use maintenance_gate::{ActivityPermit, MaintenanceBusy, MaintenanceGate, MaintenanceLease};
+pub mod cli_repository;
+pub use cli_repository::{CliRepository, CliPaths, CliSave, CliSnapshot};
 pub mod appearance_repository;
 pub mod chat_repository;
+pub mod asset_repository;
+pub use asset_repository::{AssetRepository, AssetRef, DRAFT_LEASE_ID};
+pub mod storage_repository;
+pub use storage_repository::{StorageRepository, StorageCategory};
+pub mod desktop_repository;
+pub use desktop_repository::{DesktopRepository, DesktopSave, DesktopSnapshot, DesktopValues};
+pub mod development_repository;
+pub use development_repository::{DevelopmentRepository, DevelopmentTask, DevelopmentWorkspace, Project, ProjectOperation, Selection, StoredAgentSession, StoredRun};
+pub use development_repository::{StoredCapabilityRevision, StoredSessionCapabilities};
 pub mod lan_audit_repository;
 pub mod mcp_credential_cleanup_repository;
 pub mod model_repository;

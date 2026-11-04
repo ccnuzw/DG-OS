@@ -519,12 +519,7 @@ impl Env {
     // ---- sessions and turns --------------------------------------------------------------
 
     async fn new_session(&mut self, step: &str, skill: Option<&str>) -> Option<String> {
-        let target = ChatTargetInput {
-            provider_id: Some(self.provider_id.clone()),
-            model_id: Some(self.model.clone()),
-            skill_id: skill.map(str::to_owned),
-            no_skill: skill.is_none(),
-        };
+        let target = ChatTargetInput { provider_id: Some(self.provider_id.clone()), model_id: Some(self.model.clone()), skill_ids: skill.map(str::to_owned).into_iter().collect(), generation: Default::default(), no_skill: skill.is_none() };
         match self
             .chat
             .create_session(
@@ -562,6 +557,7 @@ impl Env {
                     client_request_id: uuid::Uuid::new_v4().to_string(),
                     accept_destination: None,
                     tools: vec![],
+                    asset_ids: vec![],
                 },
             )
             .await
@@ -663,13 +659,9 @@ impl Env {
                 &self.providers,
                 &self.skills,
                 USER,
-                UpdateChatSessionTargetInput {
-                    session_id: session.clone(),
-                    provider_id: Some(self.provider_id.clone()),
-                    model_id: Some(self.model.clone()),
-                    skill_id: None,
-                    no_skill: true,
-                },
+                UpdateChatSessionTargetInput { session_id: session.clone(),
+                provider_id: Some(self.provider_id.clone()),
+                model_id: Some(self.model.clone()), skill_ids: vec![], generation: Default::default(), no_skill: true, },
             )
             .await;
         self.check(
@@ -922,12 +914,8 @@ impl Env {
             self.info("5 unknown_model", "could not register the probe model");
             return;
         }
-        let target = ChatTargetInput {
-            provider_id: Some(self.provider_id.clone()),
-            model_id: Some(UNKNOWN_MODEL.into()),
-            skill_id: None,
-            no_skill: true,
-        };
+        let target = ChatTargetInput { provider_id: Some(self.provider_id.clone()),
+        model_id: Some(UNKNOWN_MODEL.into()), skill_ids: vec![], generation: Default::default(), no_skill: true, };
         let session = match self
             .chat
             .create_session(
@@ -1895,7 +1883,7 @@ async fn run_service(svc: Svc, temp_root: &Path) -> usize {
         key: svc.key.clone(),
         model: svc.model.clone(),
         db_path,
-        chat: ChatManager::new(db.clone()),
+        chat: ChatManager::new(db.clone(), dgos_db::MaintenanceGate::new()),
         skills: SkillsManager::new(db.clone(), root.join("skills")),
         root,
         db,

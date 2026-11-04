@@ -5,40 +5,40 @@ use dgos_types::{
 use serde_json::json;
 
 fn request() -> ToolChatRequest {
-    ToolChatRequest {
-        messages: vec![
-            ToolMessage {
-                role: "assistant".into(),
-                content: None,
-                tool_call_id: None,
-                tool_calls: vec![ToolCall {
-                    id: "call_1".into(),
-                    kind: "function".into(),
-                    function: ToolFunctionCall {
-                        name: "dgos_tool_0".into(),
-                        arguments: "{}".into(),
-                    },
-                }],
-                reasoning: None,
-            },
-            ToolMessage {
-                role: "tool".into(),
-                content: Some("untrusted result".into()),
-                tool_call_id: Some("call_1".into()),
-                tool_calls: vec![],
-                reasoning: None,
-            },
-        ],
-        tools: vec![ToolDefinition {
-            kind: "function".into(),
-            function: ToolFunction {
-                name: "dgos_tool_0".into(),
-                description: "Selected tool".into(),
-                parameters: json!({"type":"object"}),
-            },
-        }],
-        max_tokens: 1024,
-    }
+    ToolChatRequest { temperature: None, reasoning: None, messages: vec![
+        ToolMessage {
+            role: "assistant".into(),
+            content: None,
+            tool_call_id: None,
+            tool_calls: vec![ToolCall {
+                id: "call_1".into(),
+                kind: "function".into(),
+                function: ToolFunctionCall {
+                    name: "dgos_tool_0".into(),
+                    arguments: "{}".into(),
+                },
+            }],
+            reasoning: None,
+            images: Vec::new(),
+        },
+        ToolMessage {
+            role: "tool".into(),
+            content: Some("untrusted result".into()),
+            tool_call_id: Some("call_1".into()),
+            tool_calls: vec![],
+            reasoning: None,
+            images: Vec::new(),
+        },
+    ],
+    tools: vec![ToolDefinition {
+        kind: "function".into(),
+        function: ToolFunction {
+            name: "dgos_tool_0".into(),
+            description: "Selected tool".into(),
+            parameters: json!({"type":"object"}),
+        },
+    }],
+    max_tokens: 1024, }
 }
 
 #[tokio::test]

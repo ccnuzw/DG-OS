@@ -34,11 +34,32 @@ pub struct Model {
     pub capabilities: crate::model_catalog::ModelCapabilities,
 }
 
-/// Chat message
+/// One image sent with a message. Bytes come from a host-validated controlled asset; the MIME type
+/// is one of the accepted image types. The Debug output shows only the size.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ImageInput {
+    pub mime: String,
+    pub data: Vec<u8>,
+}
+
+impl std::fmt::Debug for ImageInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImageInput")
+            .field("mime", &self.mime)
+            .field("bytes", &self.data.len())
+            .finish()
+    }
+}
+
+/// Chat message. `images` is empty for text-only messages; adapters send them as multimodal parts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    /// Never serialized by default: adapters build the multimodal wire parts explicitly, so bytes
+    /// cannot leak into a request body or log by accident.
+    #[serde(skip)]
+    pub images: Vec<ImageInput>,
 }
 
 /// Reasoning request (FR-001 §6.3). The effort string goes to the upstream as written; the host
@@ -184,6 +205,9 @@ pub struct ToolMessage {
     /// or a request log. Adapters send it back to the upstream explicitly.
     #[serde(skip)]
     pub reasoning: Option<MessageReasoning>,
+    /// Image parts of a user message, same contract as `ChatMessage::images`: never serialized.
+    #[serde(skip)]
+    pub images: Vec<ImageInput>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -191,6 +215,10 @@ pub struct ToolChatRequest {
     pub messages: Vec<ToolMessage>,
     pub tools: Vec<ToolDefinition>,
     pub max_tokens: u32,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub reasoning: Option<ReasoningConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -75,14 +75,7 @@ async fn setup(base_url: &str) -> Fixture {
         providers: ProviderManager::with_vault(&url, vault).await.unwrap(),
         db,
         skills,
-        input: TaskInput {
-            provider_id: provider.id,
-            model_id: "test-chat".into(),
-            prompt: PROMPT.into(),
-            skill_id: Some(SKILL.into()),
-            allow_without_skill: false,
-            client_task_id: None,
-        },
+        input: TaskInput { provider_id: provider.id, model_id: "test-chat".into(), prompt: PROMPT.into(), skill_ids: Some(SKILL.into()).into_iter().collect(), generation: Default::default(), allow_without_skill: false, client_task_id: None },
         _dir: dir,
     }
 }
@@ -165,7 +158,7 @@ async fn ac22_budget_and_explicit_no_skill_are_enforced_without_truncation() {
         .await
         .is_err());
     f.input.prompt = PROMPT.into();
-    f.input.skill_id = None;
+    f.input.skill_ids.clear();
     assert!(f
         .workbench
         .prepare(&f.skills, &f.input, "alice", None)
@@ -267,7 +260,7 @@ async fn ac21_35_http_mock_runs_exact_selected_context_and_saves_only_safe_audit
         skill_audit.request_id.as_deref(),
         Some(result.record.task.id.as_str())
     );
-    assert_eq!(skill_audit.success, true);
+    assert!(skill_audit.success);
     assert_eq!(
         skill_audit.input_params,
         serde_json::json!({"operation": "prepare_content_skill"})
@@ -423,4 +416,27 @@ async fn provider_log_alignment_preserves_and_reads_historical_usage_rows() {
         .unwrap()
         .unwrap();
     assert_eq!(source.try_get::<i64>("", "n").unwrap(), 1);
+}
+
+#[tokio::test]
+async fn ordered_skills_and_generation_reach_provider_without_instruction_in_audit() {
+    use dgos_db::sea_orm::{ConnectionTrait, DbBackend, Statement};
+    let mut server = mockito::Server::new_async().await;
+    let mut f = setup(&server.url()).await;
+    let second = "dgos.official.writing.rewrite";
+    f.skills.install_skill(second, "alice").await.unwrap();
+    f.input.skill_ids = vec![second.into(), SKILL.into()];
+    f.input.generation = dgos_types::GenerationParameters { temperature: Some(0.4), max_tokens: Some(4096), reasoning: Some(dgos_types::ReasoningConfig { effort: Some("high".into()), budget_tokens: None }), instruction: "PRIVATE-GUIDANCE-7429".into() };
+    let http = server.mock("POST", "/chat/completions").match_body(mockito::Matcher::PartialJson(serde_json::json!({"temperature":0.4,"max_tokens":4096,"reasoning_effort":"high"}))).with_status(200).with_body(r#"{"choices":[{"message":{"content":"accepted"}}],"usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10}}"#).expect(1).create_async().await;
+    let result = f.workbench.run(&f.skills, &f.providers, f.input.clone(), "alice").await.unwrap();
+    http.assert_async().await;
+    assert_eq!(result.content.as_deref(), Some("accepted"));
+    let history = f.workbench.list("alice").await.unwrap();
+    assert_eq!(history[0].skills.iter().map(|s| s.skill_id.as_str()).collect::<Vec<_>>(), vec![second, SKILL]);
+    let row = f.db.query_one(Statement::from_string(DbBackend::Sqlite, "SELECT generation_parameters FROM workbench_tasks".to_owned())).await.unwrap().unwrap();
+    let audit: String = row.try_get_by_index(0).unwrap();
+    assert!(!audit.contains("PRIVATE-GUIDANCE-7429"));
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&audit).unwrap()["max_tokens"], 4096);
+    f.input.skill_ids.push(SKILL.into());
+    assert!(f.workbench.prepare(&f.skills, &f.input, "alice", None).await.is_err());
 }

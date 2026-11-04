@@ -168,19 +168,15 @@ async fn chat_content_and_upstream_error_text_never_reach_the_log() {
         .unwrap();
     let providers = ProviderManager::with_vault(&url, vault).await.unwrap();
     let skills = SkillsManager::new(db.clone(), dir.path().join("skills"));
-    let chat = ChatManager::new(db.clone());
+    let chat = ChatManager::new(db.clone(), dgos_db::MaintenanceGate::new());
     let session = chat
         .create_session(
             &providers,
             &skills,
             "alice",
             CreateChatSessionInput {
-                target: Some(ChatTargetInput {
-                    provider_id: Some(provider.id.clone()),
-                    model_id: Some("chat".into()),
-                    skill_id: None,
-                    no_skill: true,
-                }),
+                target: Some(ChatTargetInput { provider_id: Some(provider.id.clone()),
+                model_id: Some("chat".into()), skill_ids: vec![], generation: Default::default(), no_skill: true, }),
             },
         )
         .await
@@ -209,6 +205,7 @@ async fn chat_content_and_upstream_error_text_never_reach_the_log() {
                     client_request_id: uuid::Uuid::new_v4().to_string(),
                     accept_destination: None,
                     tools: vec![],
+                    asset_ids: vec![],
                 },
             )
             .await

@@ -273,7 +273,7 @@ pub async fn env_with_spa(spa: Option<SpaFiles>) -> Env {
         .await
         .unwrap();
     let host = Arc::new(TestChatHost {
-        chat: ChatManager::new(db.clone()),
+        chat: ChatManager::new(db.clone(), dgos_db::MaintenanceGate::new()),
         providers,
         skills: Arc::new(RwLock::new(SkillsManager::new(
             db.clone(),

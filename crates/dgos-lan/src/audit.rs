@@ -2,7 +2,8 @@
 //! changes its outcome: events go through a bounded queue to one writer task;
 //! a full queue or a failed write is only a `tracing::warn!` with the event kind.
 
-use dgos_db::{LanAuditRecord, LanAuditRepository};
+use dgos_db::{LanAuditRecord, LanAuditRepository, MaintenanceGate};
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 pub trait AuditSink: Send + Sync + 'static {
@@ -17,15 +18,24 @@ pub struct DbAuditSink {
 }
 
 impl DbAuditSink {
-    /// Must be called inside a Tokio runtime.
-    pub fn spawn(repository: LanAuditRepository) -> Self {
+    /// Must be called inside a Tokio runtime. The writer holds one `ActivityPermit` per
+    /// record, so an idle sink holds nothing. While VACUUM runs, the writer waits for the
+    /// lease to end instead of dropping the record.
+    pub fn spawn_with_maintenance(repository: LanAuditRepository, gate: MaintenanceGate) -> Self {
         let (tx, mut rx) = mpsc::channel::<LanAuditRecord>(QUEUE);
         tokio::spawn(async move {
             while let Some(record) = rx.recv().await {
                 let kind = record.event.as_str();
+                let permit = loop {
+                    match gate.admit() {
+                        Ok(permit) => break permit,
+                        Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
+                    }
+                };
                 if repository.append(record).await.is_err() {
                     tracing::warn!(event = kind, "LAN audit write failed");
                 }
+                drop(permit);
             }
         });
         Self { tx }

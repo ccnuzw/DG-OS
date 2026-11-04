@@ -9,6 +9,8 @@ pub mod startup;
 #[cfg(test)]
 mod appearance_tests;
 #[cfg(test)]
+mod desktop_tests;
+#[cfg(test)]
 mod chat_tests;
 #[cfg(test)]
 mod lan_audit_tests;

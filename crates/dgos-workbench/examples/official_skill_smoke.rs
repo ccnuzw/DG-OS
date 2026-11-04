@@ -70,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let providers = ProviderManager::with_vault(&url, vault).await?;
     let workbench = WorkbenchManager::new(db);
     let outcome = workbench.run(&skills, &providers, TaskInput {
-        provider_id: provider.id, model_id, skill_id: Some(skill_id.into()), allow_without_skill: false, client_task_id: None,
+        provider_id: provider.id, model_id, skill_ids: vec![skill_id.into()], generation: Default::default(), allow_without_skill: false, client_task_id: None,
         prompt: "请用中文总结以下材料，区分已确认事项和待确认事项。材料：团队会议决定周五发布第一版；负责人为林。预算尚未批准。不要补充材料外的信息。".into(),
     }, "smoke-user").await.map_err(std::io::Error::other)?;
     if outcome.record.task.status != "succeeded" {

@@ -24,6 +24,7 @@ fn msg(role: &str, content: &str) -> ChatMessage {
     ChatMessage {
         role: role.into(),
         content: content.into(),
+        images: Vec::new(),
     }
 }
 
@@ -114,6 +115,7 @@ fn tool_message(
         tool_call_id: tool_call_id.map(str::to_owned),
         tool_calls,
         reasoning,
+        images: Vec::new(),
     }
 }
 
@@ -129,18 +131,16 @@ fn call_of(id: &str, name: &str, arguments: &str) -> ToolCall {
 }
 
 fn tool_request(messages: Vec<ToolMessage>) -> ToolChatRequest {
-    ToolChatRequest {
-        messages,
-        tools: vec![ToolDefinition {
-            kind: "function".into(),
-            function: ToolFunction {
-                name: "read_file".into(),
-                description: "Selected tool".into(),
-                parameters: json!({"type": "object", "properties": {"path": {"type": "string"}}}),
-            },
-        }],
-        max_tokens: 256,
-    }
+    ToolChatRequest { temperature: None, reasoning: None, messages,
+    tools: vec![ToolDefinition {
+        kind: "function".into(),
+        function: ToolFunction {
+            name: "read_file".into(),
+            description: "Selected tool".into(),
+            parameters: json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+        },
+    }],
+    max_tokens: 256, }
 }
 
 fn user_tool_message(text: &str) -> ToolMessage {

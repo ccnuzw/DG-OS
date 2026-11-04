@@ -5,6 +5,8 @@ use common::*;
 use dgos_providers::ProviderAdapter;
 use dgos_types::DgosError;
 
+type OpenAiDiagnosticCase<'a> = (u16, &'a [(&'a str, &'a str)], &'a str, u32);
+type AnthropicDiagnosticCase<'a> = (u16, &'a [(&'a str, &'a str)], String, u32);
 #[tokio::test]
 async fn invalid_api_key_is_reported_for_a_401_model_list() {
     let mut server = mockito::Server::new_async().await;
@@ -30,7 +32,7 @@ async fn invalid_api_key_is_reported_for_a_401_model_list() {
 
 #[tokio::test]
 async fn connection_diagnostics_map_each_failure_to_its_registered_code() {
-    let cases: [(u16, &[(&str, &str)], &str, u32); 5] = [
+    let cases: [OpenAiDiagnosticCase<'_>; 5] = [
         (403, &[], "", 1001019),
         (
             200,
@@ -154,7 +156,7 @@ async fn anthropic_invalid_api_key_is_reported_for_a_401_model_list_and_is_final
 
 #[tokio::test]
 async fn anthropic_connection_diagnostics_map_each_model_list_failure_to_its_code() {
-    let cases: [(u16, &[(&str, &str)], String, u32); 7] = [
+    let cases: [AnthropicDiagnosticCase<'_>; 7] = [
         (403, &[], upstream_error("permission_error"), 1001019),
         (
             200,

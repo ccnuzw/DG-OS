@@ -982,7 +982,7 @@ impl LanCore {
         if target.provider_id.is_none() || target.model_id.is_none() {
             return Err(ChatError::ProviderNotSelected.into());
         }
-        if target.skill_id.is_some() == target.no_skill {
+        if !target.skill_ids.is_empty() == target.no_skill {
             return Err(if target.no_skill {
                 ChatError::InvalidMessageContent
             } else {
@@ -1085,6 +1085,7 @@ impl LanCore {
                     client_request_id,
                     accept_destination: None,
                     tools: Vec::new(),
+                    asset_ids: Vec::new(),
                 },
             )
             .await?;

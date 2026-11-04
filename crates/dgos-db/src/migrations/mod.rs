@@ -29,6 +29,13 @@ mod m20261101_000018_module_storage;
 mod m20261101_000019_local_accounts;
 mod m20261101_000020_lan_audit_events;
 mod m20261102_000021_skill_install_operations;
+mod m20261104_000022_generation_snapshots;
+mod m20261104_000023_chat_assets;
+mod m20261104_000024_asset_leases;
+mod m20261104_000026_project_tasks;
+mod m20261104_000027_executions_review;
+mod m20261104_000028_development_runtime;
+mod m20261104_000029_project_capabilities;
 
 pub struct Migrator;
 
@@ -65,6 +72,13 @@ impl MigratorTrait for Migrator {
             Box::new(m20261101_000019_local_accounts::Migration),
             Box::new(m20261101_000020_lan_audit_events::Migration),
             Box::new(m20261102_000021_skill_install_operations::Migration),
+            Box::new(m20261104_000022_generation_snapshots::Migration),
+            Box::new(m20261104_000023_chat_assets::Migration),
+            Box::new(m20261104_000024_asset_leases::Migration),
+            Box::new(m20261104_000026_project_tasks::Migration),
+            Box::new(m20261104_000027_executions_review::Migration),
+            Box::new(m20261104_000028_development_runtime::Migration),
+            Box::new(m20261104_000029_project_capabilities::Migration),
         ]
     }
 }

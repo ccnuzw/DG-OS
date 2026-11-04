@@ -128,7 +128,7 @@ fn victim_sid(k: usize) -> String {
 }
 
 fn content(lay: &Layout, s: usize, m: usize) -> String {
-    let mid = if (s * 31 + m) % 100 == 0 {
+    let mid = if (s * 31 + m).is_multiple_of(100) {
         " midfreq"
     } else {
         ""
@@ -397,7 +397,7 @@ async fn run(lay: Layout) {
     }
     let seed_ms = ms(seeding);
     let db = establish_connection(&url).await.unwrap();
-    let chat = ChatManager::new(db.clone());
+    let chat = ChatManager::new(db.clone(), dgos_db::MaintenanceGate::new());
     let repo = ChatRepository::new(db.clone());
     let journal = pragma_text(&db, "journal_mode").await;
     let busy = pragma_text(&db, "busy_timeout").await;
@@ -726,21 +726,18 @@ async fn run(lay: Layout) {
     let last_assistant = format!("m0-{}", lay.big - 1);
     let last_seq = lay.big as i64;
     let fresh_task = "00000000-0000-4000-8000-0000000fffff".to_owned();
-    let probe = BeginGeneration {
-        user: ALICE,
-        session_id: &big,
-        task_id: &fresh_task,
-        user_message_id: "",
-        assistant_message_id: "",
-        user_content: None,
-        regenerate_of: Some(&last_assistant),
-        provider_id: "",
-        model_id: "",
-        provider_config_revision: None,
-        endpoint_fingerprint: "",
-        skill: None,
-        tools: &[],
-    };
+    let probe = BeginGeneration { user: ALICE,
+    session_id: &big,
+    task_id: &fresh_task,
+    user_message_id: "",
+    assistant_message_id: "",
+    user_content: None,
+    assets: &[],
+    regenerate_of: Some(&last_assistant),
+    provider_id: "",
+    model_id: "",
+    provider_config_revision: None,
+    endpoint_fingerprint: "", skills: &[], generation: &dgos_types::GenerationParameters::default(), tools: &[], };
     let missed = bench!(
         rows,
         "regen: session_of_task (miss)",
@@ -841,21 +838,18 @@ async fn run(lay: Layout) {
             let task = format!("regen-task-{k}");
             let new_id = format!("regen-msg-{k}");
             let started = Instant::now();
-            repo.begin_generation(&BeginGeneration {
-                user: ALICE,
-                session_id: &regen_sid,
-                task_id: &task,
-                user_message_id: "",
-                assistant_message_id: &new_id,
-                user_content: None,
-                regenerate_of: Some(&last_id),
-                provider_id: "p",
-                model_id: "m",
-                provider_config_revision: Some(1),
-                endpoint_fingerprint: "fp-bench",
-                skill: None,
-                tools: &[],
-            })
+            repo.begin_generation(&BeginGeneration { user: ALICE,
+            session_id: &regen_sid,
+            task_id: &task,
+            user_message_id: "",
+            assistant_message_id: &new_id,
+            user_content: None,
+            assets: &[],
+            regenerate_of: Some(&last_id),
+            provider_id: "p",
+            model_id: "m",
+            provider_config_revision: Some(1),
+            endpoint_fingerprint: "fp-bench", skills: &[], generation: &dgos_types::GenerationParameters::default(), tools: &[], })
             .await
             .unwrap();
             let begin = ms(started);

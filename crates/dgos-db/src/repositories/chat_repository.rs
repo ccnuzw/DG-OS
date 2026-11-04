@@ -8,7 +8,7 @@
 //! through the transaction handle, never `self.db`, or the call deadlocks.
 
 use sea_orm::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub const DEFAULT_TITLE: &str = "新会话";
@@ -49,6 +49,7 @@ pub enum ChatStoreError {
     NotRegenerable,
     InvalidCursor,
     InvalidTitle,
+    AssetNotFound,
     Db(String),
 }
 
@@ -70,21 +71,18 @@ impl From<DbErr> for ChatStoreError {
 
 type Result<T, E = ChatStoreError> = std::result::Result<T, E>;
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ChatSession {
     pub id: String,
     pub title: String,
     pub title_source: String,
     pub provider_id: Option<String>,
     pub model_id: Option<String>,
-    pub skill_id: Option<String>,
-    pub skill_version_id: Option<String>,
+    pub skills: Vec<PinnedSkill>,
+    pub generation: dgos_types::GenerationParameters,
     pub no_skill_confirmed: bool,
     pub created_at: i64,
     pub updated_at: i64,
-    /// Used to revalidate the pinned skill on every send; never sent to the renderer.
-    #[serde(skip)]
-    pub skill_content_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -105,20 +103,20 @@ pub struct ChatMessage {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PinnedSkill {
     pub skill_id: String,
     pub version_id: String,
     pub content_hash: String,
 }
 
-/// Session target. `skill` and `no_skill` are mutually exclusive; neither clears the pin and the
-/// "no skill" confirmation, so the next send is blocked until the user chooses.
+/// Ordered pinned references; an empty set requires explicit no-skill confirmation.
 #[derive(Debug, Clone, Default)]
 pub struct ChatTarget {
     pub provider_id: Option<String>,
     pub model_id: Option<String>,
-    pub skill: Option<PinnedSkill>,
+    pub skills: Vec<PinnedSkill>,
+    pub generation: dgos_types::GenerationParameters,
     pub no_skill: bool,
 }
 
@@ -143,9 +141,12 @@ pub struct BeginGeneration<'a> {
     pub model_id: &'a str,
     pub provider_config_revision: Option<i64>,
     pub endpoint_fingerprint: &'a str,
-    pub skill: Option<&'a PinnedSkill>,
+    pub skills: &'a [PinnedSkill],
+    pub generation: &'a dgos_types::GenerationParameters,
     /// (server_id, tool_name, schema_hash)
     pub tools: &'a [(String, String, String)],
+    /// Controlled asset ids attached to the user message of a send. Empty for a regeneration.
+    pub assets: &'a [String],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,6 +184,7 @@ pub enum Finalized {
 
 #[derive(Debug, Clone)]
 pub struct HistoryRow {
+    pub id: String,
     pub seq: i64,
     pub role: String,
     pub content: String,
@@ -283,17 +285,16 @@ fn session_from_row(row: &QueryResult) -> Result<ChatSession> {
         title_source: row.try_get("", "title_source")?,
         provider_id: get("provider_id")?,
         model_id: get("model_id")?,
-        skill_id: get("skill_id")?,
-        skill_version_id: get("skill_version_id")?,
-        skill_content_hash: get("skill_content_hash")?,
+        skills: serde_json::from_str(&row.try_get::<String>("", "skill_refs")?).map_err(|_| ChatStoreError::Db("invalid skill snapshot".into()))?,
+        generation: serde_json::from_str(&row.try_get::<String>("", "generation_parameters")?).map_err(|_| ChatStoreError::Db("invalid generation snapshot".into()))?,
         no_skill_confirmed: row.try_get::<i64>("", "no_skill_confirmed")? != 0,
         created_at: row.try_get("", "created_at")?,
         updated_at: row.try_get("", "updated_at")?,
     })
 }
 
-const SESSION_COLUMNS: &str = "id, title, title_source, provider_id, model_id, skill_id, \
-    skill_version_id, skill_content_hash, no_skill_confirmed, created_at, updated_at";
+const SESSION_COLUMNS: &str = "id, title, title_source, provider_id, model_id, skill_refs, \
+    generation_parameters, no_skill_confirmed, created_at, updated_at";
 
 const MESSAGE_SELECT: &str = "SELECT m.id, m.session_id, m.seq, m.role, m.content, m.status, \
     m.task_id, m.finish_reason, m.error_code, m.created_at, m.updated_at, \
@@ -387,18 +388,17 @@ impl ChatRepository {
         self.db
             .execute(stmt(
                 "INSERT INTO chat_sessions (id, user_id, title, title_source, provider_id, model_id, \
-                 skill_id, skill_version_id, skill_content_hash, no_skill_confirmed, created_at, updated_at) \
-                 VALUES (?, ?, ?, 'auto', ?, ?, ?, ?, ?, ?, ?, ?)",
+                 skill_refs, generation_parameters, no_skill_confirmed, created_at, updated_at) \
+                 VALUES (?, ?, ?, 'auto', ?, ?, ?, ?, ?, ?, ?)",
                 vec![
                     id.clone().into(),
                     user.into(),
                     DEFAULT_TITLE.into(),
                     target.provider_id.clone().into(),
                     target.model_id.clone().into(),
-                    target.skill.as_ref().map(|s| s.skill_id.clone()).into(),
-                    target.skill.as_ref().map(|s| s.version_id.clone()).into(),
-                    target.skill.as_ref().map(|s| s.content_hash.clone()).into(),
-                    i64::from(target.no_skill && target.skill.is_none()).into(),
+                    serde_json::to_string(&target.skills).map_err(|_| ChatStoreError::Db("invalid skill snapshot".into()))?.into(),
+                    serde_json::to_string(&target.generation).map_err(|_| ChatStoreError::Db("invalid generation snapshot".into()))?.into(),
+                    i64::from(target.no_skill && target.skills.is_empty()).into(),
                     created.into(),
                     created.into(),
                 ],
@@ -484,16 +484,15 @@ impl ChatRepository {
             return Err(ChatStoreError::GenerationInProgress);
         }
         tx.execute(stmt(
-            "UPDATE chat_sessions SET provider_id = ?, model_id = ?, skill_id = ?, \
-             skill_version_id = ?, skill_content_hash = ?, no_skill_confirmed = ?, updated_at = ? \
+            "UPDATE chat_sessions SET provider_id = ?, model_id = ?, skill_refs = ?, \
+             generation_parameters = ?, no_skill_confirmed = ?, updated_at = ? \
              WHERE id = ? AND user_id = ?",
             vec![
                 target.provider_id.clone().into(),
                 target.model_id.clone().into(),
-                target.skill.as_ref().map(|s| s.skill_id.clone()).into(),
-                target.skill.as_ref().map(|s| s.version_id.clone()).into(),
-                target.skill.as_ref().map(|s| s.content_hash.clone()).into(),
-                i64::from(target.no_skill && target.skill.is_none()).into(),
+                serde_json::to_string(&target.skills).map_err(|_| ChatStoreError::Db("invalid skill snapshot".into()))?.into(),
+                serde_json::to_string(&target.generation).map_err(|_| ChatStoreError::Db("invalid generation snapshot".into()))?.into(),
+                i64::from(target.no_skill && target.skills.is_empty()).into(),
                 now().into(),
                 id.into(),
                 user.into(),
@@ -558,6 +557,9 @@ impl ChatRepository {
             vec![user.into()],
         ))
         .await?;
+        tx.execute(stmt("DELETE FROM chat_message_assets WHERE user_id = ?", vec![user.into()])).await?;
+        tx.execute(stmt("DELETE FROM asset_leases WHERE user_id = ?", vec![user.into()])).await?;
+        tx.execute(stmt("DELETE FROM chat_assets WHERE user_id = ?", vec![user.into()])).await?;
         let deleted = tx
             .execute(stmt(
                 "DELETE FROM chat_sessions WHERE user_id = ?",
@@ -743,8 +745,8 @@ impl ChatRepository {
         let rows = self
             .db
             .query_all(stmt(
-                "SELECT seq, role, content FROM ( \
-                   SELECT seq, role, content, \
+                "SELECT id, seq, role, content FROM ( \
+                   SELECT id, seq, role, content, \
                      SUM(LENGTH(CAST(content AS BLOB))) OVER (ORDER BY seq DESC) AS running, \
                      LENGTH(CAST(content AS BLOB)) AS own \
                    FROM chat_messages \
@@ -763,6 +765,7 @@ impl ChatRepository {
             .iter()
             .map(|row| {
                 Ok(HistoryRow {
+                    id: row.try_get("", "id")?,
                     seq: row.try_get("", "seq")?,
                     role: row.try_get("", "role")?,
                     content: row.try_get("", "content")?,
@@ -888,15 +891,17 @@ impl ChatRepository {
             ],
         ))
         .await?;
-        if let Some(skill) = p.skill {
+        tx.execute(stmt("UPDATE workbench_tasks SET generation_parameters=? WHERE id=? AND user_id=?", vec![p.generation.audit_json().to_string().into(),p.task_id.into(),p.user.into()])).await?;
+        for (position, skill) in p.skills.iter().enumerate() {
             tx.execute(stmt(
-                "INSERT INTO workbench_task_skills (task_id, version_id, skill_id, content_hash) \
-                 VALUES (?, ?, ?, ?)",
+                "INSERT INTO workbench_task_skills (task_id, version_id, skill_id, content_hash, position) \
+                 VALUES (?, ?, ?, ?, ?)",
                 vec![
                     p.task_id.into(),
                     skill.version_id.clone().into(),
                     skill.skill_id.clone().into(),
                     skill.content_hash.clone().into(),
+                    (position as i64).into(),
                 ],
             ))
             .await?;
@@ -954,6 +959,29 @@ impl ChatRepository {
             ))
             .await?;
         }
+            for (position, asset) in p.assets.iter().enumerate() {
+                let linked = tx
+                    .execute(stmt(
+                        "INSERT INTO chat_message_assets (message_id, user_id, asset_id, position) \
+                         SELECT ?, ?, id, ? FROM chat_assets WHERE id = ? AND user_id = ?",
+                        vec![
+                            user_message_id.clone().into(),
+                            p.user.into(),
+                            (position as i64).into(),
+                            asset.clone().into(),
+                            p.user.into(),
+                        ],
+                    ))
+                    .await?;
+                if linked.rows_affected() != 1 {
+                    return Err(ChatStoreError::AssetNotFound);
+                }
+                tx.execute(stmt(
+                    "DELETE FROM asset_leases WHERE user_id = ? AND asset_id = ?",
+                    vec![p.user.into(), asset.clone().into()],
+                ))
+                .await?;
+            }
         seq += 1;
         tx.execute(stmt(
             "INSERT INTO chat_messages (id, session_id, user_id, seq, role, content, status, \
@@ -1149,11 +1177,19 @@ async fn replay(tx: &impl ConnectionTrait, p: &BeginGeneration<'_>) -> Result<Op
     }
     let assistant = assistant.ok_or(ChatStoreError::RequestConflict)?;
     match (p.user_content, user_message) {
-        (Some(content), Some((id, stored))) if stored == content => Ok(Some(Begun {
-            user_message_id: id,
-            assistant_message_id: assistant,
-            replayed: true,
-        })),
+        (Some(content), Some((id, stored))) if stored == content => {
+            let rows = tx.query_all(stmt(
+                "SELECT asset_id FROM chat_message_assets WHERE user_id = ? AND message_id = ? ORDER BY position",
+                vec![p.user.into(), id.clone().into()],
+            )).await?;
+            let assets = rows.iter().map(|row| row.try_get::<String>("", "asset_id")).collect::<std::result::Result<Vec<_>, _>>()?;
+            if assets != p.assets { return Err(ChatStoreError::RequestConflict); }
+            Ok(Some(Begun {
+                user_message_id: id,
+                assistant_message_id: assistant,
+                replayed: true,
+            }))
+        }
         (None, None) => {
             let prior = tx
                 .query_one(stmt(

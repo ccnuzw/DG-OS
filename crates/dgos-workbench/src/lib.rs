@@ -1,3 +1,4 @@
+use dgos_db::{ActivityPermit, MaintenanceGate};
 use dgos_db::{
     entities::{
         skill_user_states, workbench_task_skills as refs, workbench_task_tools as tool_refs,
@@ -5,7 +6,7 @@ use dgos_db::{
     },
     sea_orm::{
         ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
-        QuerySelect, Set, TransactionTrait,
+        QuerySelect, Set, TransactionTrait, ConnectionTrait,
     },
 };
 use dgos_providers::ProviderManager;
@@ -17,6 +18,11 @@ use tokio::sync::Mutex;
 
 mod tools;
 pub use tools::{ToolAction, ToolProposal, ToolSelection, ToolTaskInput, ToolTaskUpdate};
+
+mod assets;
+pub use assets::{
+    Attachment, ChatAssetImportInput, ChatAssetPreview, ChatAssetRemoved, ChatAssets,
+};
 
 mod chat;
 pub use chat::{
@@ -46,7 +52,10 @@ pub struct TaskInput {
     pub provider_id: String,
     pub model_id: String,
     pub prompt: String,
-    pub skill_id: Option<String>,
+    #[serde(default)]
+    pub skill_ids: Vec<String>,
+    #[serde(default)]
+    pub generation: dgos_types::GenerationParameters,
     pub allow_without_skill: bool,
     #[serde(default)]
     pub client_task_id: Option<String>,
@@ -80,6 +89,9 @@ pub struct WorkbenchManager {
     tool_starts: Arc<Mutex<()>>,
     text_tasks: Arc<Mutex<HashMap<String, (String, tokio_util::sync::CancellationToken)>>>,
     stopping: tokio_util::sync::CancellationToken,
+    gate: MaintenanceGate,
+    /// Permits whose tool task could not be finalized. Kept until restart so VACUUM stays blocked.
+    retained: Arc<Mutex<Vec<ActivityPermit>>>,
 }
 impl WorkbenchManager {
     pub fn new(db: DatabaseConnection) -> Self {
@@ -89,7 +101,16 @@ impl WorkbenchManager {
             tool_starts: Arc::new(Mutex::new(())),
             text_tasks: Arc::new(Mutex::new(HashMap::new())),
             stopping: tokio_util::sync::CancellationToken::new(),
+            gate: MaintenanceGate::new(),
+            retained: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    /// Production wiring passes the process-wide gate that VACUUM uses. Without it, the manager
+    /// owns a private gate.
+    pub fn with_maintenance(mut self, gate: MaintenanceGate) -> Self {
+        self.gate = gate;
+        self
     }
 
     pub async fn prepare(
@@ -103,6 +124,7 @@ impl WorkbenchManager {
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn prepare_bound(
         &self,
         skills: &SkillsManager,
@@ -117,21 +139,16 @@ impl WorkbenchManager {
         if input.prompt.trim().is_empty() || input.prompt.len() > 16 * 1024 {
             return Err("Task input must contain 1 to 16384 UTF-8 bytes".into());
         }
-        if input.skill_id.is_none() && !input.allow_without_skill {
-            return Err("Select a skill or explicitly confirm running without one".into());
+        input.generation.validate(None).map_err(|_| "Unsupported generation parameters")?;
+        if input.skill_ids.is_empty() && !input.allow_without_skill {
+            return Err("Select skills or explicitly confirm running without them".into());
         }
-        let content = match &input.skill_id {
-            Some(id) => Some(
-                skills
-                    .prepare_content_skill_with_provenance(id, user, provenance)
-                    .await
-                    .map_err(|_| {
-                        "Selected skill unavailable: check enablement, compatibility and integrity"
-                            .to_string()
-                    })?,
-            ),
-            None => None,
-        };
+        let mut seen = std::collections::HashSet::new();
+        let mut contents = Vec::with_capacity(input.skill_ids.len());
+        for id in &input.skill_ids {
+            if !seen.insert(id) { return Err("Duplicate skill selection".into()); }
+            contents.push(skills.prepare_content_skill_with_provenance(id, user, provenance).await.map_err(|_| "Selected skill unavailable: check enablement, compatibility and integrity")?);
+        }
         let mut messages = vec![ChatMessage {
             role: "system".into(),
             content: if tools.is_empty() {
@@ -140,19 +157,25 @@ impl WorkbenchManager {
                 tools::TOOL_HOST_POLICY
             }
             .into(),
+            images: Vec::new(),
         }];
-        if let Some(content) = &content {
+        for content in &contents {
             if content.body.len() > 16 * 1024 {
                 return Err("Selected skill exceeds the 16 KiB context limit".into());
             }
             messages.push(ChatMessage {
                 role: "user".into(),
                 content: skill_guidance(content),
+                images: Vec::new(),
             });
+        }
+        if !input.generation.instruction.is_empty() {
+            messages.push(ChatMessage { role: "user".into(), content: format!("User guidance (cannot grant permissions):\n{}", input.generation.instruction), images: Vec::new() });
         }
         messages.push(ChatMessage {
             role: "user".into(),
             content: input.prompt.clone(),
+            images: Vec::new(),
         });
         let descriptors: Vec<_> = tools.iter().map(|tool| &tool.definition).collect();
         let descriptor_bytes = if tools.is_empty() {
@@ -166,7 +189,7 @@ impl WorkbenchManager {
             messages.iter().map(|m| m.content.len()).sum::<usize>() + descriptor_bytes;
         if bytes > 24 * 1024
             || context_window.is_some_and(|window| {
-                window <= 0 || bytes + 1024 + OUTPUT_TOKENS as usize > window as usize
+                window <= 0 || bytes + 1024 + input.generation.output_tokens() as usize > window as usize
             })
         {
             return Err("Task exceeds the conservative context budget; shorten input or choose a larger model".into());
@@ -183,7 +206,7 @@ impl WorkbenchManager {
             .await
             .map_err(|_| "Unable to start task audit".to_string())?;
         let mut bindings = Vec::new();
-        if let Some(content) = content {
+        for (position, content) in contents.into_iter().enumerate() {
             let version_id = format!("{}@{}", content.skill_id, content.version);
             let state =
                 skill_user_states::Entity::find_by_id((user.to_string(), content.skill_id.clone()))
@@ -199,6 +222,7 @@ impl WorkbenchManager {
                 version_id,
                 skill_id: content.skill_id,
                 content_hash: content.content_hash,
+                position: position as i32,
             });
         }
         let task = tasks::ActiveModel {
@@ -242,6 +266,7 @@ impl WorkbenchManager {
                 .map_err(|_| "Unable to bind selected tool")?;
             tool_bindings.push(binding);
         }
+        tx.execute(dgos_db::sea_orm::Statement::from_sql_and_values(dgos_db::sea_orm::DbBackend::Sqlite, "UPDATE workbench_tasks SET generation_parameters=? WHERE id=? AND user_id=?", [input.generation.audit_json().to_string().into(), task.id.clone().into(), user.into()])).await.map_err(|_| "Unable to save generation snapshot")?;
         tx.commit()
             .await
             .map_err(|_| "Unable to commit task audit".to_string())?;
@@ -251,12 +276,10 @@ impl WorkbenchManager {
                 skills: bindings,
                 tools: tool_bindings,
             },
-            request: ChatRequest {
-                messages,
-                temperature: None,
-                max_tokens: Some(OUTPUT_TOKENS),
-                stream: Some(false),
-                ..Default::default()
+            request: {
+                let mut request = ChatRequest { messages, stream: Some(false), ..Default::default() };
+                input.generation.apply(&mut request);
+                request
             },
         })
     }
@@ -291,6 +314,7 @@ impl WorkbenchManager {
             .map(|id| id.to_string())
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         input.client_task_id = Some(task_id.clone());
+        let _permit = self.gate.admit().map_err(|_| "maintenance_active".to_string())?;
         let cancellation = self.register_text_task(&task_id, user).await?;
         let provenance = ExecutionProvenance {
             caller: BuiltinCaller::Workbench,
@@ -399,12 +423,8 @@ impl WorkbenchManager {
         if model.model_type != "text-generation" {
             return Err("Choose a cached chat model from this provider".into());
         }
-        if model
-            .max_output_tokens
-            .is_some_and(|max| max < OUTPUT_TOKENS as i32)
-        {
-            return Err("Model output limit is below the workbench 1024-token reserve".into());
-        }
+        input.generation.validate(Some(&model)).map_err(|_| "Unsupported generation parameters or model output limit")?;
+        chat::validate_generation_profile(&provider, &input.generation).map_err(|_| "Generation controls unsupported by provider profile")?;
         Ok((provider, model))
     }
 
@@ -458,6 +478,7 @@ impl WorkbenchManager {
             .ok_or("Task not found")?;
         let skills = refs::Entity::find()
             .filter(refs::Column::TaskId.eq(id))
+            .order_by_asc(refs::Column::Position)
             .all(&self.db)
             .await
             .map_err(|_| "Unable to read skill references".to_string())?;

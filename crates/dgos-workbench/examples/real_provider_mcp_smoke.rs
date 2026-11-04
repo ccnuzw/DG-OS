@@ -125,14 +125,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let skills = SkillsManager::new(db.clone(), dir.path().join("skills"));
     let workbench = WorkbenchManager::new(db.clone());
     let input = ToolTaskInput {
-        task: TaskInput {
-            provider_id: provider.id,
-            model_id,
-            prompt: "Use the selected echo tool exactly once with {\"text\":\"DGOS-REAL-PROVIDER-MCP-20261028\"}. After the tool result, reply with a short confirmation. Do not answer before calling the tool.".into(),
-            skill_id: None,
-            allow_without_skill: true,
-            client_task_id: None,
-        },
+        task: TaskInput { provider_id: provider.id,
+        model_id,
+        prompt: "Use the selected echo tool exactly once with {\"text\":\"DGOS-REAL-PROVIDER-MCP-20261028\"}. After the tool result, reply with a short confirmation. Do not answer before calling the tool.".into(), skill_ids: vec![], generation: Default::default(), allow_without_skill: true,
+        client_task_id: None, },
         tools: vec![ToolSelection {
             server_id: tool.server_id.clone(),
             tool_name: tool.tool_name.clone(),

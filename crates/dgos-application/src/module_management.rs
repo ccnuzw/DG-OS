@@ -44,6 +44,10 @@ impl ModuleManagementService {
         Ok(views)
     }
 
+    pub async fn workspace_catalog(&self, session: &HostSession) -> DgosResult<dgos_types::WorkspaceAppCatalog> {
+        self.operations.workspace_catalog(session).await.map_err(DgosError::ModuleOperation)
+    }
+
     async fn summary(
         &self,
         session: &HostSession,

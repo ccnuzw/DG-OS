@@ -21,17 +21,16 @@ fn body_of(stub: &Stub, index: usize) -> Value {
 }
 
 fn tool_request() -> ToolChatRequest {
-    ToolChatRequest {
-        messages: vec![ToolMessage {
-            role: "user".into(),
-            content: Some("hi".into()),
-            tool_call_id: None,
-            tool_calls: vec![],
-            reasoning: None,
-        }],
-        tools: vec![],
-        max_tokens: 64,
-    }
+    ToolChatRequest { temperature: None, reasoning: None, messages: vec![ToolMessage {
+        role: "user".into(),
+        content: Some("hi".into()),
+        tool_call_id: None,
+        tool_calls: vec![],
+        reasoning: None,
+        images: Vec::new(),
+    }],
+    tools: vec![],
+    max_tokens: 64, }
 }
 
 fn tool_ok() -> String {

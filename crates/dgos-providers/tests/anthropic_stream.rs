@@ -183,10 +183,12 @@ async fn stream_request_sets_stream_true_lifts_system_and_defaults_max_tokens() 
             ChatMessage {
                 role: "system".into(),
                 content: "be brief".into(),
+                images: Vec::new(),
             },
             ChatMessage {
                 role: "user".into(),
                 content: "hello".into(),
+                images: Vec::new(),
             },
         ],
         max_tokens,
