@@ -65,6 +65,45 @@ async fn ac16_offline_initialization_search_and_safe_preview() {
 }
 
 #[tokio::test]
+async fn pinned_package_ignores_catalog_latest_but_rejects_changed_user_version() {
+    use dgos_db::{
+        entities::{skill_catalog, skill_user_states, skill_versions},
+        sea_orm::{ActiveModelTrait, Set},
+    };
+    let (manager, db, _dir) = setup().await;
+    manager.register_bundled_catalog(&source()).await.unwrap();
+    let id = "dgos.official.writing.summarize";
+    let installed = manager.install_skill(id, "alice").await.unwrap();
+    let content_hash = manager.get_skill_detail(id).await.unwrap().content.unwrap().content_hash;
+    let mut catalog: skill_catalog::ActiveModel = skill_catalog::Entity::find_by_id(id)
+        .one(&db).await.unwrap().unwrap().into();
+    catalog.latest_version = Set("99.0.0".into());
+    catalog.update(&db).await.unwrap();
+    let package = manager.load_pinned_package("alice", id, &installed.version, &content_hash)
+        .await.unwrap();
+    assert_eq!(package.version, installed.version);
+    assert!(package.body().contains("执行步骤"));
+    assert!(package.files().iter().any(|file| {
+        file.path == "LICENSE" && file.kind == dgos_skills::SkillPackageFileKind::License
+    }));
+    assert!(manager.load_pinned_package("alice", id, "99.0.0", &content_hash).await.is_err());
+
+    let old = skill_versions::Entity::find_by_id(format!("{id}@{}", installed.version))
+        .one(&db).await.unwrap().unwrap();
+    let mut replacement: skill_versions::ActiveModel = old.into();
+    replacement.id = Set(format!("{id}@99.0.0"));
+    replacement.version = Set("99.0.0".into());
+    replacement.insert(&db).await.unwrap();
+    let mut state: skill_user_states::ActiveModel = skill_user_states::Entity::find_by_id(
+        ("alice".to_string(), id.to_string()),
+    ).one(&db).await.unwrap().unwrap().into();
+    state.version_id = Set(format!("{id}@99.0.0"));
+    state.update(&db).await.unwrap();
+    assert!(manager.load_pinned_package("alice", id, &installed.version, &content_hash)
+        .await.is_err());
+}
+
+#[tokio::test]
 async fn ac19_initialization_preserves_disabled_user_state_and_user_isolation() {
     let (manager, db, _dir) = setup().await;
     manager.register_bundled_catalog(&source()).await.unwrap();

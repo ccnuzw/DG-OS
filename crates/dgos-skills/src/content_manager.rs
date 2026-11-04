@@ -193,6 +193,160 @@ impl SkillsManager {
         ))
     }
 
+    /// Load the user's exact enabled immutable version after verifying its hash.
+    /// The returned files are data only and must be published under host-owned
+    /// application data, never into a project or CLI configuration directory.
+    ///
+    /// Missing user state/version returns `SkillNotFound`; disabled user state
+    /// returns `SkillDisabled`. A changed installed version, hash mismatch or
+    /// unsafe package returns `InvalidManifest`. Catalog updates never select a
+    /// replacement: the host must ask the user to reselect an invalid pin.
+    /// `body()` borrows SKILL.md; `into_files()` transfers every validated file
+    /// to a publisher without copying. Compatibility describes content and tool
+    /// requirements only; the host still owns CLI/tool execution authorization.
+    pub async fn load_pinned_package(
+        &self,
+        user: &str,
+        id: &str,
+        version: &str,
+        expected_hash: &str,
+    ) -> Result<crate::PinnedSkillPackage> {
+        self.load_pinned_package_inner(user, id, version, expected_hash)
+            .await
+            .map_err(|error| match error {
+                SkillError::SkillNotFound(_) => SkillError::SkillNotFound("pinned version".into()),
+                SkillError::SkillDisabled(_) => SkillError::SkillDisabled("pinned Skill".into()),
+                SkillError::InvalidManifest(message)
+                    if message == "pinned Skill version is no longer installed for this user" =>
+                {
+                    SkillError::InvalidManifest(message)
+                }
+                _ => SkillError::InvalidManifest("pinned Skill package verification failed".into()),
+            })
+    }
+
+    async fn load_pinned_package_inner(
+        &self,
+        user: &str,
+        id: &str,
+        version: &str,
+        expected_hash: &str,
+    ) -> Result<crate::PinnedSkillPackage> {
+        use crate::{SkillPackageCompatibility, SkillPackageFeatureSupport, SkillPackageFile, SkillPackageFileKind};
+
+        let row = self.content_repo.enabled_version(id, user, version).await?;
+        if row.content_hash != expected_hash {
+            return Err(SkillError::InvalidManifest(
+                "pinned Skill content hash mismatch".into(),
+            ));
+        }
+        let root_metadata = tokio::fs::symlink_metadata(&self.skills_dir).await?;
+        if !root_metadata.is_dir() || root_metadata.file_type().is_symlink() {
+            return Err(SkillError::InvalidManifest("unsafe Skill storage root".into()));
+        }
+        let path = if row.is_bundled {
+            let path = PathBuf::from(&row.install_path);
+            let expected = safe_child(&self.skills_dir, &format!("bundled/{id}/{version}"))?;
+            if path != expected {
+                return Err(SkillError::InvalidManifest(
+                    "content outside snapshot root".into(),
+                ));
+            }
+            path
+        } else {
+            let hash_prefix = expected_hash.get(..32).ok_or_else(|| {
+                SkillError::InvalidManifest("invalid pinned Skill hash".into())
+            })?;
+            if row.install_path != format!("external/{id}/{hash_prefix}") {
+                return Err(SkillError::InvalidManifest("content outside snapshot root".into()));
+            }
+            safe_child(&self.skills_dir, &row.install_path)?
+        };
+
+        let (files, compatible_apps, required_tools) = if row.is_bundled {
+            let (meta, files, _) =
+                crate::content_package::validate_package_files(&path, expected_hash)?;
+            if meta.id != id || meta.version != version {
+                return Err(SkillError::InvalidManifest("snapshot identity mismatch".into()));
+            }
+            (files, meta.compatible_apps, meta.required_tools)
+        } else {
+            // Scan the complete tree using bounded reads and link checks.
+            let files = crate::content_package::read_package_files(&path)?;
+            let manifest = row.file_manifest.as_object().ok_or_else(|| {
+                SkillError::InvalidManifest("external file manifest is invalid".into())
+            })?;
+            if manifest.is_empty() {
+                return Err(SkillError::InvalidManifest(
+                    "external file manifest is invalid".into(),
+                ));
+            }
+            let validated = crate::package_validation::validate_external_files(files)?;
+            if validated.content_hash != expected_hash
+                || validated.file_manifest.len() != manifest.len()
+                || validated.file_manifest.iter().any(|(path, hash)| {
+                    manifest.get(path).and_then(serde_json::Value::as_str) != Some(hash.as_str())
+                })
+            {
+                return Err(SkillError::InvalidManifest(
+                    "external Skill snapshot hash mismatch".into(),
+                ));
+            }
+            if validated.skill_id != id || validated.version_label != version {
+                return Err(SkillError::InvalidManifest(
+                    "snapshot identity mismatch".into(),
+                ));
+            }
+            let mut metadata = row.metadata.clone();
+            if let Some(object) = metadata.as_object_mut() {
+                object.remove("provenance");
+                object.remove("file_manifest");
+            }
+            let meta: ContentSkillMetadata = serde_json::from_value(metadata)?;
+            if meta.id != id || meta.version != version {
+                return Err(SkillError::InvalidManifest("snapshot identity mismatch".into()));
+            }
+            let compatible_apps = meta.compatible_apps;
+            let required_tools = meta.required_tools;
+            (validated.files, compatible_apps, required_tools)
+        };
+        let body_index = files
+            .keys()
+            .position(|relative| relative == "SKILL.md")
+            .ok_or_else(|| SkillError::InvalidManifest("missing SKILL.md".into()))?;
+        let mut package_files = Vec::with_capacity(files.len());
+        for (relative, bytes) in files {
+            let kind = match relative.as_str() {
+                "SKILL.md" => SkillPackageFileKind::Body,
+                "skill.json" => SkillPackageFileKind::Manifest,
+                "LICENSE" => SkillPackageFileKind::License,
+                _ => SkillPackageFileKind::Resource,
+            };
+            package_files.push(SkillPackageFile {
+                path: relative,
+                kind,
+                bytes,
+            });
+        }
+        // Recheck after disk I/O so revocation during loading cannot publish a
+        // newly loaded package using an earlier enabled-state observation.
+        self.content_repo.enabled_version(id, user, version).await?;
+        Ok(crate::PinnedSkillPackage {
+            skill_id: id.into(),
+            version: version.into(),
+            content_hash: expected_hash.into(),
+            compatibility: SkillPackageCompatibility {
+                compatible_apps,
+                required_tools,
+                scripts: SkillPackageFeatureSupport::Unsupported,
+                hooks: SkillPackageFeatureSupport::Unsupported,
+                reason: "scripts and Hooks are not accepted by the installed package format and are never executed",
+            },
+            files: package_files,
+            body_index,
+        })
+    }
+
     pub(crate) async fn content_detail(
         &self,
         row: dgos_db::entities::skill_catalog::Model,
@@ -276,6 +430,15 @@ impl SkillsManager {
         result
     }
 
+    /// Non-secret installed version metadata for project capability selection.
+    pub async fn installed_content_pins(&self, user: &str) -> Result<Vec<(crate::Skill, String)>> {
+        let mut pins = Vec::new();
+        for skill in self.content_repo.user_skills(user).await? {
+            let version = self.content_repo.get_version(&skill.skill_id, &skill.version).await?;
+            pins.push((skill, version.content_hash));
+        }
+        Ok(pins)
+    }
     async fn prepare_content_skill_inner(
         &self,
         id: &str,

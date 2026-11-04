@@ -3,8 +3,8 @@ use dgos_db::entities::{
     skill_catalog as catalog, skill_user_states as states, skill_versions as versions,
 };
 use dgos_db::sea_orm::{
-    sea_query::OnConflict, ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait,
-    QueryFilter, QueryOrder, Set, TransactionTrait,
+    sea_query::OnConflict, ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection,
+    DbBackend, EntityTrait, QueryFilter, QueryOrder, Set, Statement, TransactionTrait,
 };
 
 pub struct ContentRepository {
@@ -166,6 +166,31 @@ impl ContentRepository {
             .ok_or_else(|| SkillError::SkillNotFound(format!("{id}@{version}")))
     }
 
+    /// Resolve only the user's currently installed and enabled exact version.
+    /// Catalog latest_version is deliberately irrelevant to this permission.
+    pub(crate) async fn enabled_version(
+        &self,
+        id: &str,
+        user: &str,
+        version: &str,
+    ) -> Result<versions::Model> {
+        let state = states::Entity::find_by_id((user.to_owned(), id.to_owned()))
+            .one(&self.db)
+            .await
+            .map_err(db_error)?
+            .ok_or_else(|| SkillError::SkillNotFound(id.into()))?;
+        if !state.enabled {
+            return Err(SkillError::SkillDisabled(id.into()));
+        }
+        let row = self.get_version(id, version).await?;
+        if state.version_id != row.id || row.skill_id != id || row.version != version {
+            return Err(SkillError::InvalidManifest(
+                "pinned Skill version is no longer installed for this user".into(),
+            ));
+        }
+        Ok(row)
+    }
+
     pub async fn add_user(&self, id: &str, user: &str) -> Result<()> {
         let entry = self
             .get_catalog_entry(id)
@@ -206,8 +231,6 @@ impl ContentRepository {
                 .ok_or_else(|| SkillError::SkillNotFound(row.version_id.clone()))?;
             let mut metadata = version.metadata;
             if let Some(object) = metadata.as_object_mut() {
-                // Batch B provenance and file manifests are version-record
-                // fields; the strict content DTO intentionally rejects them.
                 object.remove("provenance");
                 object.remove("file_manifest");
             }
@@ -242,5 +265,48 @@ impl ContentRepository {
         active.enabled = Set(enabled);
         active.update(&self.db).await.map_err(db_error)?;
         Ok(())
+    }
+
+    pub async fn remove_user(&self, id: &str, user: &str) -> Result<()> {
+        let tx = self.db.begin().await.map_err(db_error)?;
+        let state = states::Entity::find_by_id((user.to_string(), id.to_string()))
+            .one(&tx)
+            .await
+            .map_err(db_error)?
+            .ok_or_else(|| SkillError::SkillNotFound(id.into()))?;
+        let version = versions::Entity::find_by_id(&state.version_id)
+            .one(&tx)
+            .await
+            .map_err(db_error)?
+            .ok_or_else(|| SkillError::SkillNotFound(state.version_id.clone()))?;
+        if version.is_bundled {
+            return Err(SkillError::InvalidManifest(
+                "bundled content cannot be uninstalled; disable it instead".into(),
+            ));
+        }
+        let active = tx
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS count FROM workbench_task_skills binding \
+                 JOIN workbench_tasks task ON task.id = binding.task_id \
+                 WHERE binding.version_id = ? AND task.user_id = ? AND task.status = 'running'",
+                [state.version_id.into(), user.into()],
+            ))
+            .await
+            .map_err(db_error)?
+            .map(|row| row.try_get::<i64>("", "count"))
+            .transpose()
+            .map_err(|error| SkillError::DatabaseError(error.to_string()))?
+            .unwrap_or_default();
+        if active > 0 {
+            return Err(SkillError::InvalidManifest(
+                "Skill version is used by an active task".into(),
+            ));
+        }
+        states::Entity::delete_by_id((user.to_string(), id.to_string()))
+            .exec(&tx)
+            .await
+            .map_err(db_error)?;
+        tx.commit().await.map_err(db_error)
     }
 }

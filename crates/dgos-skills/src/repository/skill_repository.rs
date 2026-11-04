@@ -53,7 +53,7 @@ impl SkillRepository {
             .map_err(|e| SkillError::DatabaseError(e.to_string()))?
             .ok_or_else(|| SkillError::SkillNotFound(skill_id.to_string()))?;
 
-        Ok(Self::model_to_skill(model)?)
+        Self::model_to_skill(model)
     }
 
     pub async fn list_skills(&self, user_id: &str, enabled_only: bool) -> Result<Vec<Skill>> {
@@ -73,7 +73,7 @@ impl SkillRepository {
 
         models
             .into_iter()
-            .map(|m| Self::model_to_skill(m))
+            .map(Self::model_to_skill)
             .collect()
     }
 
@@ -200,7 +200,7 @@ impl SkillRepository {
             version: model.version,
             author: model.author,
             install_path: model.install_path,
-            call_type: CallType::from_str(&model.call_type)
+            call_type: CallType::parse(&model.call_type)
                 .ok_or_else(|| SkillError::Internal("Invalid call_type".to_string()))?,
             enabled: model.enabled,
             config: model.config,

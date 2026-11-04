@@ -155,11 +155,10 @@ fn frontmatter(body: &str) -> Result<(String, String)> {
                     return Err(invalid("duplicate frontmatter name"));
                 }
             }
-            "description" => {
-                if description.replace(value.to_owned()).is_some() {
-                    return Err(invalid("duplicate frontmatter description"));
-                }
+            "description" if description.replace(value.to_owned()).is_some() => {
+                return Err(invalid("duplicate frontmatter description"));
             }
+            "description" => { description = Some(value.to_owned()); }
             _ => {}
         }
     }
@@ -601,6 +600,14 @@ pub fn validate_external_zip_at_subpath(
         }
     }
 
+    validate_external_files(files)
+}
+
+/// Reuse the installed archive's metadata/identity rules without re-zipping or
+/// copying its verified snapshot bytes.
+pub(crate) fn validate_external_files(
+    files: BTreeMap<String, Vec<u8>>,
+) -> Result<ValidatedExternalPackage> {
     for bytes in files.values() {
         std::str::from_utf8(bytes).map_err(|_| invalid("package files must be UTF-8 text"))?;
     }

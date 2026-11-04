@@ -36,12 +36,15 @@ impl CallType {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "http" => Some(CallType::Http),
-            "cli" => Some(CallType::Cli),
-            "content" => Some(CallType::Content),
-            _ => None,
+    pub fn parse(s: &str) -> Option<Self> {
+        if s.eq_ignore_ascii_case("http") {
+            Some(CallType::Http)
+        } else if s.eq_ignore_ascii_case("cli") {
+            Some(CallType::Cli)
+        } else if s.eq_ignore_ascii_case("content") {
+            Some(CallType::Content)
+        } else {
+            None
         }
     }
 }

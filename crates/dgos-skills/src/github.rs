@@ -123,15 +123,11 @@ impl GithubAdapter {
 
     async fn resolve_ref_inner(&self, source: &GithubSource) -> Result<String> {
         let repo_path = format!("repos/{}/{}/", source.owner, source.repo);
-        let endpoint = if let Some(reference) = source.requested_ref.as_deref() {
-            format!("{repo_path}commits/{reference}")
-        } else {
-            format!("{repo_path}")
-        };
-        let url = self
-            .api_base
-            .join(&endpoint)
-            .map_err(|error| invalid(error.to_string()))?;
+        let url = match source.requested_ref.as_deref() {
+            Some(reference) => self.api_base.join(&format!("{repo_path}commits/{reference}")),
+            None => self.api_base.join(&repo_path),
+        }
+        .map_err(|error| invalid(error.to_string()))?;
         let response = self.get_with_retry(url).await?;
         if !response.status().is_success() {
             return Err(remote_error(response.status(), &source.normalized_source));
