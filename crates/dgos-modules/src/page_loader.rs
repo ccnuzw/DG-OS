@@ -41,6 +41,7 @@ pub enum PageInstruction {
         /// Runtime id of the loaded instance of the same module this load
         /// replaces, so the page can hand state over (D055).
         replaces: Option<String>,
+        views: crate::ModuleViewContribution,
     },
     Unload {
         ticket: String,
@@ -540,6 +541,7 @@ impl ModuleLoader for PageModuleLoader {
                 source,
                 hook_timeout_ms: self.hook_timeout_ms(),
                 replaces,
+                views: artifact.views(),
             },
         );
         if sent.is_err() {

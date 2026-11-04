@@ -1,9 +1,10 @@
 import { setLocaleForTesting } from '../src/i18n/runtime';
 import { StrictMode } from 'react';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { act, cleanup, fireEvent, render as renderView, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
-import { ToastViewport, clearToasts } from '@dgos/ui';
+import { ModalHost, ToastViewport, clearToasts } from '@dgos/ui';
 import { getToastSnapshot } from '../src/ui/feedback/toastStore';
 import SkillsManagement from '../src/pages/SkillsManagement';
 import { useSkillsStore } from '../src/stores/skillsStore';
@@ -11,9 +12,10 @@ import { useSkillsStore } from '../src/stores/skillsStore';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 const mockedInvoke = vi.mocked(invoke);
 const initial = useSkillsStore.getState();
+const render = (ui: React.ReactNode) => renderView(<MemoryRouter>{ui}</MemoryRouter>);
 const official = { skill_id: 'dgos.official.writing.summarize', name: 'Summary', latest_version: '1.0.0', category: 'writing',
   description: 'Evidence-based summary', author: 'DGOS Team', tags: ['summary'], identity: 'dgos_official',
-  source_kind: 'dgos_official', license_spdx: 'Apache-2.0', compatible_apps: ['ai-workbench'] };
+  source_kind: 'dgos_official', license_spdx: 'Apache-2.0', compatible_apps: ['ai-workbench'], install_path: 'bundled/dgos.official.writing.summarize/1.0.0' };
 const legacy = { skill_id: 'old-calculator', name: 'Old Calculator', latest_version: '1', category: 'old', tags: [], identity: 'legacy_registry', source_kind: 'legacy_registry', compatible_apps: [] };
 const manifest = { id: official.skill_id, name: official.name, version: '1.0.0', category: 'writing', tags: [], call_type: 'content', dependencies: {} };
 const detail = { ...official, format: 'skill_md', entry: 'SKILL.md', manifest, content: {
@@ -47,8 +49,7 @@ it('AC17 shows a local official library independently of legacy content and filt
   render(<StrictMode><SkillsManagement /></StrictMode>);
   await screen.findByText('Official library is available locally');
   expect(screen.queryByText('Skills registry unavailable')).toBeNull();
-  expect(screen.getByText('Bundled content · Apache-2.0')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Legacy: read-only' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.queryByRole('button', { name: 'Legacy: read-only' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'DGOS Official', exact: true }));
   expect(screen.queryByText('Old Calculator')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Legacy archive' }));
@@ -63,16 +64,13 @@ it('AC18 previews the SKILL.md, provenance, license and unverified quality witho
   const buttons = screen.getAllByRole('button', { name: 'Details' });
   buttons[0].focus();
   fireEvent.click(buttons[0]);
-  const dialog = await screen.findByRole('dialog');
-  expect(within(dialog).getByText(/Do not invent facts/)).toBeTruthy();
-  expect(within(dialog).getByText('SKILL.md package')).toBeTruthy();
-  expect(within(dialog).queryByText('Call Type:')).toBeNull();
-  expect(within(dialog).getByText(/not_evaluated/)).toBeTruthy();
-  expect(within(dialog).getByText('Apache License 2.0 text')).toBeTruthy();
+  const detail = await screen.findByRole('region', { name: 'Details' });
+  await within(detail).findByText(/Do not invent facts/);
+  expect(within(detail).getByText('SKILL.md package')).toBeTruthy();
+  expect(within(detail).getByText(/not_evaluated/)).toBeTruthy();
+  fireEvent.click(within(detail).getByText('License text'));
+  expect(within(detail).getByText('Apache License 2.0 text')).toBeTruthy();
   expect(mockedInvoke.mock.calls.some(([name]) => name === 'call_skill')).toBe(false);
-  fireEvent.keyDown(document, { key: 'Escape' });
-  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  expect(document.activeElement).toBe(buttons[0]);
 });
 
 it('AC20 adds an official skill and disables it without uninstalling bundled files', async () => {
@@ -113,13 +111,13 @@ it('D111 shows registry, installed-list and update-check load failures inline an
   const installedAlert = await screen.findByText('Unable to load installed skills: installed list unreadable');
   expect(installedAlert.closest('[role="alert"]')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Retry loading skills' })).toBeTruthy();
-  expect((await screen.findByText('Skills registry unavailable')).closest('[role="status"]')).toBeTruthy();
+  expect(screen.getAllByRole('status').some(node => node.textContent === 'Skills registry unavailable')).toBe(true);
   const state = useSkillsStore.getState();
   expect(state.registryError).toBe('registry host unreachable');
   expect(state.installedError).toBe('installed list unreadable');
   // The update check only runs after a successful registry fetch, so it is exercised on its own as well.
   await act(async () => { await expect(useSkillsStore.getState().checkUpdates()).rejects.toBe('update check unreachable'); });
-  expect((await screen.findByText('Unable to check skill updates: update check unreachable')).getAttribute('role')).toBe('alert');
+  expect(await screen.findByText('Unable to check skill updates: update check unreachable')).toBeTruthy();
   expect(getToastSnapshot().visible).toHaveLength(0);
   expect(getToastSnapshot().queued).toHaveLength(0);
   expect(screen.queryAllByRole('alert').every(node => !node.hasAttribute('data-state'))).toBe(true);

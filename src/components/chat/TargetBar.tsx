@@ -1,111 +1,74 @@
 import { t, useLocale as usePageLocale } from '../../i18n';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Button, Select, cn } from '@dgos/ui';
+import { Button, Popover, Select, Stack, cn } from '@dgos/ui';
 import type { Model, Provider } from '../../stores/providerStore';
 import type { Skill } from '../../stores/skillsStore';
-import { useChatStore, type ChatSession } from '../../stores/chatStore';
+import { useChatStore, type ChatSession, type ChatTargetInput } from '../../stores/chatStore';
 import { FOCUS } from './ChatNotice';
 import { fetchModels, fetchProviders, fetchSkills } from './catalog';
-
-// Provider/model/skill of the active session (AC02, AC21). Radix Select items cannot carry an empty value, so
-// "nothing chosen" travels as sentinels. A skill is either one chosen version or an explicit "no skill".
+import { GenerationControls, OrderedSkills } from './GenerationControls';
 const UNSET = '__unset__';
-const NO_SKILL = '__no_skill__';
 const LINK = cn('text-primary underline', FOCUS);
 export const SKILL_SELECT_ID = 'chat-skill-select';
-
-const skillValue = (session: ChatSession): string =>
-  session.skill_id ?? (session.no_skill_confirmed ? NO_SKILL : UNSET);
-
-export default function TargetBar({ session }: { session: ChatSession }) {
+const snapshot = (session: ChatSession): ChatTargetInput => ({ provider_id: session.provider_id, model_id: session.model_id, skill_ids: session.skills.map(s => s.skill_id), no_skill: session.no_skill_confirmed, generation: session.generation });
+export default function TargetBar({ session, skillRequest = 0 }: { session: ChatSession; skillRequest?: number }) {
   usePageLocale();
   const updateTarget = useChatStore(state => state.updateTarget);
+  const setSessionTargetDraft = useChatStore(state => state.setSessionTargetDraft);
+  const targetDraft = useChatStore(state => state.sessionTargetDrafts[session.id] ?? null);
   const generating = useChatStore(state => state.generation !== null);
+  const [target, setTarget] = useState<ChatTargetInput>(() => targetDraft ?? snapshot(session));
   const [providers, setProviders] = useState<Provider[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [providerId, setProviderId] = useState(session.provider_id ?? UNSET);
-  const [modelId, setModelId] = useState(session.model_id ?? UNSET);
-  const [skill, setSkill] = useState(skillValue(session));
   const [status, setStatus] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
-
+  const [open, setOpen] = useState(false);
+  useEffect(() => { if (skillRequest) setOpen(true); }, [skillRequest]);
+  useEffect(() => {
+    if (!open || !skillRequest) return;
+    const frame = requestAnimationFrame(() => document.getElementById(SKILL_SELECT_ID)?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [open, skillRequest]);
   useEffect(() => {
     let active = true;
-    Promise.all([fetchProviders(), fetchSkills()])
-      .then(([p, s]) => { if (active) { setProviders(p); setSkills(s); } })
-      .catch(() => { if (active) setStatus({ tone: 'error', text: t('chat.targetsFailed') }); })
-      .finally(() => { if (active) setLoaded(true); });
+    Promise.all([fetchProviders(), fetchSkills()]).then(([p, s]) => { if (active) { setProviders(p); setSkills(s); } }).catch(() => { if (active) setStatus({ tone: 'error', text: t('chat.targetsFailed') }); }).finally(() => { if (active) setLoaded(true); });
     return () => { active = false; };
-  }, []);
-
+  }, [open]);
   useEffect(() => {
-    setProviderId(session.provider_id ?? UNSET);
-    setModelId(session.model_id ?? UNSET);
-    setSkill(skillValue(session));
+    setTarget(useChatStore.getState().sessionTargetDrafts[session.id] ?? snapshot(session));
     setStatus(null);
-  }, [session.id, session.provider_id, session.model_id, session.skill_id, session.no_skill_confirmed]);
-
+  }, [session]);
   useEffect(() => {
     let active = true;
     setModels([]);
-    if (providerId === UNSET) return;
-    fetchModels(providerId)
-      .then(list => { if (active) setModels(list); })
-      .catch(() => { if (active) setStatus({ tone: 'error', text: t('chat.modelsFailed') }); });
+    if (!target.provider_id) return;
+    fetchModels(target.provider_id).then(list => { if (active) setModels(list); }).catch(() => { if (active) setStatus({ tone: 'error', text: t('chat.modelsFailed') }); });
     return () => { active = false; };
-  }, [providerId]);
-
-  const dirty = providerId !== (session.provider_id ?? UNSET) || modelId !== (session.model_id ?? UNSET) || skill !== skillValue(session);
-  const ready = providerId !== UNSET && modelId !== UNSET;
-
+  }, [target.provider_id, open]);
+  const patch = (values: Partial<ChatTargetInput>) => { const next = { ...target, ...values }; setTarget(next); setStatus(null); setSessionTargetDraft(session.id, next); };
+  const dirty = JSON.stringify(target) !== JSON.stringify(snapshot(session));
+  const ready = !!target.provider_id && !!target.model_id;
+  const locked = generating || saving;
   const apply = async () => {
-    if (!ready || saving) return;
-    setSaving(true);
-    setStatus(null);
-    const error = await updateTarget(session.id, {
-      provider_id: providerId,
-      model_id: modelId,
-      skill_id: skill === UNSET || skill === NO_SKILL ? null : skill,
-      no_skill: skill === NO_SKILL,
-    });
+    if (!ready || locked) return;
+    setSaving(true); setStatus(null);
+    const error = await updateTarget(session.id, target);
     setSaving(false);
+    if (!error) { setSessionTargetDraft(session.id, null); setOpen(false); }
     setStatus(error ? { tone: 'error', text: error } : { tone: 'ok', text: t('chat.targetUpdated') });
   };
-
-  const providerOptions = [{ value: UNSET, label: t('chat.selectProvider') }, ...providers.map(p => ({ value: p.id, label: p.name }))];
-  const modelOptions = [{ value: UNSET, label: t('chat.selectModel') }, ...models.map(m => ({ value: m.model_id, label: m.model_name }))];
-  const skillOptions = [
-    { value: UNSET, label: t('chat.noSkillSelected') },
-    { value: NO_SKILL, label: t('chat.explicitNoSkill') },
-    ...skills.map(s => ({ value: s.skill_id, label: `${s.name} — v${s.version}` })),
-  ];
-  const locked = generating || saving;
-
-  return (
-    <section aria-label={t('chat.target')} className="flex flex-col gap-2 rounded-md border border-border bg-muted p-3">
-      {loaded && !providers.length ? (
-        <p className="m-0 text-sm text-muted-foreground">{t('chat.noProviderBefore')}<Link to="/providers" className={LINK}>{t('chat.providerPage')}</Link> {t('chat.noProviderAfter')}</p>
-      ) : null}
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="min-w-0 grow basis-40">
-          <Select label={t('chat.provider')} options={providerOptions} value={providerId} disabled={locked} className="overflow-hidden"
-            onChange={value => { setProviderId(value); setModelId(UNSET); setStatus(null); }} />
-        </div>
-        <div className="min-w-0 grow basis-40">
-          <Select label={t('chat.model')} options={modelOptions} value={modelId} disabled={locked || providerId === UNSET} className="overflow-hidden"
-            onChange={value => { setModelId(value); setStatus(null); }} />
-        </div>
-        <div className="min-w-0 grow basis-40">
-          <Select id={SKILL_SELECT_ID} label={t('chat.skill')} options={skillOptions} value={skill} disabled={locked} className="overflow-hidden"
-            onChange={value => { setSkill(value); setStatus(null); }} />
-        </div>
-        <Button variant="secondary" disabled={locked || !ready || !dirty} loading={saving} onClick={() => void apply()}>{t('chat.applyTarget')}</Button>
-      </div>
-      <p className="m-0 text-xs text-muted-foreground">{t('chat.targetHelp')}</p>
-      {status ? <p role={status.tone === 'error' ? 'alert' : 'status'} className={cn('m-0 text-xs', status.tone === 'error' ? 'text-error-text' : 'text-success-text')}>{status.text}</p> : null}
-    </section>
-  );
+  return <Popover label={t('chat.target')} side="top" align="start" open={open} onOpenChange={setOpen} trigger={<Button aria-label={t('chat.target')} variant="ghost" size="sm">{session.model_id ?? t('chat.selectModel')} · {session.skills.length} {t('chat.skill')}</Button>} content={<section aria-label={t('chat.target')} className="chat-target">
+    {loaded && !providers.length && <p className="m-0 text-sm text-muted-foreground">{t('chat.noProviderBefore')}<Link to="/settings/providers" className={LINK}>{t('chat.providerPage')}</Link> {t('chat.noProviderAfter')}</p>}
+    <Stack gap={3}>
+      <Select label={t('chat.provider')} options={[{ value: UNSET, label: t('chat.selectProvider') }, ...providers.map(p => ({ value: p.id, label: p.name }))]} value={target.provider_id ?? UNSET} disabled={locked} onChange={v => patch({ provider_id: v === UNSET ? null : v, model_id: null })} />
+      <Select label={t('chat.model')} options={[{ value: UNSET, label: t('chat.selectModel') }, ...models.map(m => ({ value: m.model_id, label: m.model_name }))]} value={target.model_id ?? UNSET} disabled={locked || !target.provider_id} onChange={v => patch({ model_id: v === UNSET ? null : v })} />
+      <OrderedSkills id={SKILL_SELECT_ID} skills={skills} selected={target.skill_ids} onChange={skill_ids => patch({ skill_ids, no_skill: false })} without={target.no_skill} onWithoutChange={no_skill => patch({ no_skill })} disabled={locked} />
+      <GenerationControls value={target.generation} onChange={generation => patch({ generation })} model={models.find(m => m.model_id === target.model_id)} disabled={locked} />
+      <Button variant="secondary" disabled={locked || !ready || !dirty} loading={saving} onClick={() => void apply()}>{t('chat.applyTarget')}</Button>
+    </Stack>
+    {status && <p role={status.tone === 'error' ? 'alert' : 'status'} className={cn('m-0 text-xs', status.tone === 'error' ? 'text-error-text' : 'text-success-text')}>{status.text}</p>}
+  </section>} />;
 }

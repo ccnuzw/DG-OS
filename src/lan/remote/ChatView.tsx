@@ -308,8 +308,8 @@ export function ChatView({ api, session, streamUrl, createSocket = defaultSocket
   const title = panel === 'list' ? t('remote.sessionList') : panel === 'new' ? t('remote.newSession') : activeSession ? sessionLabel(activeSession) : t('remote.chat');
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col overflow-hidden">
-      <header className="flex items-center gap-2 border-b border-border px-3 py-2">
+    <div className="remote-chat mx-auto flex w-full flex-1 flex-col overflow-hidden">
+      <header className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-3 py-2">
         <Button variant="ghost" size="sm" onClick={() => setPanel(panel === 'list' ? 'chat' : 'list')}>
           {panel === 'chat' ? t('remote.sessionListButton') : t('remote.back')}
         </Button>
@@ -378,7 +378,7 @@ export function ChatView({ api, session, streamUrl, createSocket = defaultSocket
 
       {panel === 'chat' ? (
         <>
-          <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-3 py-4">
+          <div ref={scrollRef} onScroll={onScroll} className="remote-reading flex-1 overflow-y-auto px-3 py-4">
             {!activeId ? <p className="text-muted-foreground">{t('remote.selectSession')}</p> : null}
             {olderCursor !== null && olderCursor !== undefined ? (
               <div className="mb-4 flex justify-center">
@@ -404,7 +404,7 @@ export function ChatView({ api, session, streamUrl, createSocket = defaultSocket
             </ul>
           </div>
           {activeId ? (
-            <form className="flex items-end gap-2 border-t border-border p-3" onSubmit={onSubmit}>
+            <form className="remote-composer flex items-end gap-2 border-t border-border-subtle p-3" onSubmit={onSubmit}>
               <textarea
                 className={TEXTAREA}
                 rows={2}

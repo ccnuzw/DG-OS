@@ -1,0 +1,54 @@
+{
+  "source_directory": "/private/tmp/dgos-stage7-mcp-repair",
+  "archive_purpose": "阶段7 MCP补修诊断证据；仅归档既有记录，不重跑验收或关闭历史风险。",
+  "redaction": "仅将仓库绝对路径替换为<repo>；保留原始行序、PID、关联ID、耗时、固定错误类别和结果。人工审阅未发现凭据、请求正文或账户数据。",
+  "format": "日志使用.log.txt后缀，避免仓库*.log忽略规则；无构建产物。",
+  "boundaries": {
+    "native-diagnostic": "带临时阶段诊断的9/9轮次，不是最终构建。",
+    "native-final": "移除临时checkpoint后的12/12轮次。",
+    "installed-probes": "本机Node/Codex版本探针1/1，无模型调用。",
+    "controlled-handshake": "受控进程握手成功/拒绝/取消1/1，不是真实模型服务。"
+  },
+  "files": [
+    {
+      "source_file": "native-diagnostic.log",
+      "archive_file": "native-diagnostic.log.txt",
+      "source_sha256": "f3b77674b7f417f0f09b5662a8f96144418436c1541a7f56f40b147f3c47ebd1",
+      "archive_sha256": "f3b77674b7f417f0f09b5662a8f96144418436c1541a7f56f40b147f3c47ebd1",
+      "source_bytes": 4473,
+      "archive_bytes": 4473,
+      "lines": 86,
+      "redacted_repo_path_occurrences": 0
+    },
+    {
+      "source_file": "native-final.log",
+      "archive_file": "native-final.log.txt",
+      "source_sha256": "3c73879a1d31d012e3cf678f7d7a9a43ebd0ab6ffad56a437d285bd5b20d19cd",
+      "archive_sha256": "3c73879a1d31d012e3cf678f7d7a9a43ebd0ab6ffad56a437d285bd5b20d19cd",
+      "source_bytes": 713,
+      "archive_bytes": 713,
+      "lines": 13,
+      "redacted_repo_path_occurrences": 0
+    },
+    {
+      "source_file": "installed-probes.log",
+      "archive_file": "installed-probes.log.txt",
+      "source_sha256": "22fc691fe0b94365c823ed0f5dff314362e15986bf1c9d9b2eba895105275f3a",
+      "archive_sha256": "9c7ebd8230befcc18ef5894d0fb69d6f0076c320c0c8ecc54eff608bfc28933b",
+      "source_bytes": 7500,
+      "archive_bytes": 7380,
+      "lines": 46,
+      "redacted_repo_path_occurrences": 6
+    },
+    {
+      "source_file": "controlled-handshake.log",
+      "archive_file": "controlled-handshake.log.txt",
+      "source_sha256": "3396d94663d32a4dd5c176f06ecbdf24fb9bead78ab3d7b8299ad85f36a2508f",
+      "archive_sha256": "3396d94663d32a4dd5c176f06ecbdf24fb9bead78ab3d7b8299ad85f36a2508f",
+      "source_bytes": 10229,
+      "archive_bytes": 10229,
+      "lines": 55,
+      "redacted_repo_path_occurrences": 0
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+use dgos_db::ActivityPermit;
 use super::*;
 use dgos_mcp::{CallMcpToolRequest, McpManager, McpTool};
 use dgos_types::{
@@ -80,6 +81,7 @@ pub(super) struct ToolContext {
     messages: Vec<ToolMessage>,
     tools: Vec<SelectedTool>,
     window: Option<i32>,
+    generation: dgos_types::GenerationParameters,
     pending: Option<PendingProposal>,
     calls: HashSet<String>,
     tokens: i64,
@@ -93,6 +95,7 @@ pub(super) struct ToolSession {
     completion: Mutex<()>,
     tokens: AtomicI64,
     audit_warning: std::sync::atomic::AtomicBool,
+    permit: Mutex<Option<ActivityPermit>>,
 }
 
 impl ToolContext {
@@ -101,12 +104,14 @@ impl ToolContext {
         messages: Vec<ToolMessage>,
         tools: Vec<SelectedTool>,
         window: Option<i32>,
+        generation: dgos_types::GenerationParameters,
     ) -> Self {
         Self {
             record,
             messages,
             tools,
             window,
+            generation,
             pending: None,
             calls: HashSet::new(),
             tokens: 0,
@@ -145,6 +150,7 @@ impl ToolSession {
             completion: Mutex::new(()),
             tokens: AtomicI64::new(0),
             audit_warning: std::sync::atomic::AtomicBool::new(false),
+            permit: Mutex::new(None),
         }
     }
 }
@@ -162,6 +168,7 @@ impl WorkbenchManager {
         if self.stopping.is_cancelled() {
             return Err("process_interrupted".into());
         }
+        let permit = self.gate.admit().map_err(|_| "maintenance_active".to_string())?;
         if self
             .tool_tasks
             .lock()
@@ -218,10 +225,12 @@ impl WorkbenchManager {
                     tool_call_id: None,
                     tool_calls: vec![],
                     reasoning: None,
+                    images: message.images,
                 })
                 .collect(),
             tools,
             window: model.context_window,
+            generation: input.task.generation.clone(),
             pending: None,
             calls: HashSet::new(),
             tokens: 0,
@@ -234,6 +243,7 @@ impl WorkbenchManager {
             completion: Mutex::new(()),
             tokens: AtomicI64::new(0),
             audit_warning: std::sync::atomic::AtomicBool::new(false),
+            permit: Mutex::new(Some(permit)),
         });
         self.tool_tasks
             .lock()
@@ -435,6 +445,7 @@ impl WorkbenchManager {
                 tool_call_id: Some(pending.call.id),
                 tool_calls: vec![],
                 reasoning: None,
+                images: Vec::new(),
             });
         }
         let request = ToolChatRequest {
@@ -444,7 +455,9 @@ impl WorkbenchManager {
                 .iter()
                 .map(|tool| tool.definition.clone())
                 .collect(),
-            max_tokens: OUTPUT_TOKENS,
+            max_tokens: context.generation.output_tokens(),
+            temperature: context.generation.temperature,
+            reasoning: context.generation.reasoning.clone(),
         };
         validate_budget(&request, context.window)?;
         let provenance = ExecutionProvenance {
@@ -596,7 +609,7 @@ impl WorkbenchManager {
     /// Revoke all proposals before releasing in-memory task material at exit.
     pub async fn shutdown(&self) -> Result<()> {
         self.stopping.cancel();
-        for (_, (_, cancellation)) in self.text_tasks.lock().await.iter() {
+        for (_, cancellation) in self.text_tasks.lock().await.values() {
             cancellation.cancel();
         }
         let _start = self.tool_starts.lock().await;
@@ -657,6 +670,13 @@ impl WorkbenchManager {
             Ok::<_, String>(())
         }
         .await;
+        if let Some(permit) = session.permit.lock().await.take() {
+            if finalization.is_ok() {
+                drop(permit);
+            } else {
+                self.retained.lock().await.push(permit);
+            }
+        }
         session.cancel.cancel();
         session.context.lock().await.take();
         self.tool_tasks.lock().await.remove(id);
@@ -747,7 +767,7 @@ fn validate_budget(request: &ToolChatRequest, window: Option<i32>) -> Result<()>
         + reasoning;
     if bytes > 24 * 1024
         || window.is_some_and(|window| {
-            window <= 0 || bytes + 1024 + OUTPUT_TOKENS as usize > window as usize
+            window <= 0 || bytes + 1024 + request.max_tokens as usize > window as usize
         })
     {
         return Err("context_budget_exceeded".into());
@@ -778,6 +798,8 @@ mod tests {
             messages: vec![],
             tools: vec![],
             max_tokens: OUTPUT_TOKENS,
+            temperature: None,
+            reasoning: None,
         };
         assert!(validate_budget(&request, Some(100)).is_err());
         request.messages.push(ToolMessage {
@@ -786,6 +808,7 @@ mod tests {
             tool_call_id: Some("call_1".into()),
             tool_calls: vec![],
             reasoning: None,
+            images: Vec::new(),
         });
         assert!(validate_budget(&request, None).is_err());
     }
@@ -825,6 +848,7 @@ mod tests {
                 messages: vec![],
                 tools: vec![],
                 window: None,
+                generation: Default::default(),
                 pending: None,
                 calls: HashSet::new(),
                 tokens: 0,
@@ -834,6 +858,7 @@ mod tests {
             completion: Mutex::new(()),
             tokens: AtomicI64::new(0),
             audit_warning: std::sync::atomic::AtomicBool::new(false),
+            permit: Mutex::new(None),
         });
         manager
             .tool_tasks

@@ -1,0 +1,48 @@
+@layer theme, base, components, utilities;
+@layer components {
+  .workspace-rail, .workspace-nav-item, .workspace-brand { box-sizing: border-box; }
+  .workspace-account-widget > button, .workspace-account-widget > a { display: flex; align-items: center; justify-content: flex-start; gap: var(--spacing-2); width: 100%; min-width: 0; padding: var(--spacing-1); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-primary); text-decoration: none; font-size: var(--font-size-xs); }
+  .workspace-account-avatar { display: grid; flex: none; place-items: center; width: var(--spacing-6); height: var(--spacing-6); border-radius: var(--radius-full); background: var(--surface-selected); color: var(--accent-default); }
+  .workspace-account-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .workspace-account-footer[data-collapsed='true'] .workspace-account-widget > button, .workspace-account-footer[data-collapsed='true'] .workspace-account-widget > a { justify-content: center; padding-inline: 0; }
+  .workspace-nav-icon svg { width: calc(16rem / 14); height: calc(16rem / 14); }
+  .workspace-shell { display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: var(--surface-canvas); color: var(--text-primary); font-family: var(--font-family-ui); }
+  .workspace-stage { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+  .workspace-main { position: relative; display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+  .workspace-rail { display: flex; flex: none; flex-direction: column; width: var(--sidebar-width); min-height: 0; padding: var(--spacing-2); border-right: 1px solid var(--border-subtle); background: var(--surface-rail); }
+  .workspace-rail.is-collapsed { width: min(var(--sidebar-width-collapsed), 72px); padding: var(--spacing-2) var(--spacing-1); }
+  .workspace-brand { display: flex; flex: none; align-items: center; gap: var(--spacing-2); min-height: var(--spacing-10); margin-bottom: var(--spacing-4); padding: var(--spacing-1); font-size: var(--font-size-sm); font-weight: 500; }
+  .workspace-brand > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .workspace-brand-mark { display: grid; flex: none; width: var(--spacing-6); height: var(--spacing-6); place-items: center; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-panel); color: var(--accent-default); font-size: var(--font-size-xs); }
+  .workspace-navigation { display: flex; flex: 1; flex-direction: column; gap: var(--spacing-6); min-height: 0; overflow: auto; }
+  .workspace-nav-group { display: flex; flex-direction: column; gap: var(--spacing-1); }
+  .workspace-nav-heading { padding: var(--spacing-1) var(--spacing-2); color: var(--text-secondary); font-size: var(--font-size-xs); }
+  .workspace-nav-item { position: relative; display: flex; align-items: center; gap: var(--spacing-2); width: 100%; min-width: 0; min-height: max(30px, var(--spacing-8)); padding: var(--spacing-1) var(--spacing-2); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); text-decoration: none; text-align: left; font: inherit; font-size: var(--font-size-sm); cursor: pointer; transition: background-color var(--duration-fast), color var(--duration-fast); }
+  .workspace-nav-item:hover { background: var(--surface-hover); color: var(--text-primary); }
+  .workspace-nav-item.is-active { background: var(--surface-selected); color: var(--text-primary); }
+  .workspace-nav-item.is-active::before { position: absolute; inset: 25% auto 25% 0; width: 2px; border-radius: var(--radius-full); background: var(--accent-default); content: ''; }
+  .workspace-nav-item:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
+  .workspace-nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .workspace-nav-icon { display: grid; flex: none; width: var(--spacing-5); height: var(--spacing-5); place-items: center; border-radius: var(--radius-sm); color: var(--text-secondary); }
+  .workspace-nav-item[data-tone='ai'] .workspace-nav-icon { background: var(--status-success-surface); color: var(--status-success-text); }
+  .workspace-nav-item[data-tone='resource'] .workspace-nav-icon { background: var(--status-warning-surface); color: var(--status-warning-text); }
+  .workspace-nav-item[data-tone='tool'] .workspace-nav-icon { background: var(--status-info-surface); color: var(--status-info-text); }
+  .workspace-nav-item[data-tone='app'] .workspace-nav-icon { background: var(--surface-selected); color: var(--accent-default); }
+  .workspace-rail.is-collapsed .workspace-brand, .workspace-nav-item.is-collapsed { justify-content: center; padding-inline: 0; }
+  .workspace-rail-footer { display: flex; flex: none; flex-direction: column; gap: var(--spacing-1); padding-top: var(--spacing-2); margin-top: var(--spacing-3); border-top: 1px solid var(--border-subtle); }
+  .workspace-account-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-xs); }
+  .workspace-collapse { align-self: flex-end; background: linear-gradient(120deg, var(--accent-default), var(--status-info)); color: var(--accent-on); border: 0; }
+  .workspace-collapse:hover:not(:disabled) { background: var(--accent-hover); color: var(--accent-on); }
+  .workspace-rail.is-collapsed .workspace-collapse { align-self: center; }
+  .workspace-pinned-row { position: relative; display: flex; min-width: 0; align-items: center; }
+  .workspace-pinned-row > a { flex: 1; }
+  .workspace-pinned-row > button { flex: none; }
+  .workspace-rail.is-collapsed .workspace-pinned-row > button { position: absolute; right: 0; bottom: 0; min-width: 16px; min-height: 16px; width: 16px; height: 16px; padding: 0; background: var(--surface-panel); }
+  .workspace-pin-target { outline: 2px solid var(--border-focus); outline-offset: -3px; }
+  .workspace-pin-hint { padding: var(--spacing-2); border: 1px dashed var(--accent-default); border-radius: var(--radius-sm); font-size: var(--font-size-xs); color: var(--accent-default); overflow-wrap: anywhere; }
+  .workspace-account-footer { min-width: 0; }
+  .workspace-account-footer > div { min-width: 0; margin: 0; }
+  .workspace-account-footer button, .workspace-account-footer a { max-width: 100%; outline-offset: -2px; }
+  @media (max-width: 1119px) { .workspace-rail.is-collapsed { width: 54px; } }
+  @media (prefers-reduced-motion: reduce) { .workspace-nav-item { transition: none; } }
+}

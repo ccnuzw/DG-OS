@@ -4,8 +4,9 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-/// Secret storage owned by the desktop host. Provider code only receives a
-/// secret for the short duration needed to construct an adapter.
+/// Secret storage owned by the desktop host. Provider code receives a secret
+/// only to construct an adapter or an explicitly authorized host-only CLI launch
+/// snapshot. Neither path may serialize the secret into a renderer DTO or log it.
 #[async_trait]
 pub trait ProviderCredentialVault: Send + Sync {
     async fn store(&self, scope: &ProviderCredentialScope, secret: SecretValue) -> DgosResult<()>;
@@ -52,6 +53,9 @@ impl SecretValue {
         Ok(Self(normalized))
     }
 
+    /// Borrow the plaintext only inside trusted host code. Never put it into a DTO,
+    /// log, command-line argument, repository file, or global CLI configuration.
+    /// Copies made for a child process are the host's responsibility to clean up.
     pub fn expose(&self) -> &str {
         &self.0
     }

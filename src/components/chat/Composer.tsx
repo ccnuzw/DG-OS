@@ -1,12 +1,15 @@
 import { t, useLocale as usePageLocale } from '../../i18n';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { Button, Checkbox, Input, Loading, cn } from '@dgos/ui';
+import { Button, Checkbox, Input, Loading, Popover, cn } from '@dgos/ui';
 import { MAX_MESSAGE_BYTES, MAX_TOOLS, useChatStore, utf8Bytes } from '../../stores/chatStore';
 import { ChatNotice, FOCUS } from './ChatNotice';
 import { fetchConnectedTools, toolKey, type ConnectedTool } from './catalog';
-import { SKILL_SELECT_ID } from './TargetBar';
+import TargetBar from './TargetBar';
 import { formatNumber } from '../../i18n';
+import Attachments from './Attachments';
+import VoiceCapture from './VoiceCapture';
+import './conversation.css';
 
 const LINK = cn('text-primary underline', FOCUS);
 
@@ -23,25 +26,27 @@ function ToolPicker({ tools, selected, disabled, onLoaded, onChange }: ToolPicke
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  const version = useRef(0);
+  const latest = useRef({ selected, onLoaded, onChange });
+  latest.current = { selected, onLoaded, onChange };
+  useEffect(() => () => { version.current++; }, []);
 
   const load = () => {
+    const ticket = ++version.current;
     setLoading(true);
     setFailed(false);
     fetchConnectedTools()
-      .then(list => { onLoaded(list); onChange(selected.filter(key => list.some(tool => toolKey(tool) === key))); })
-      .catch(() => { onLoaded([]); onChange([]); setFailed(true); })
-      .finally(() => setLoading(false));
+      .then(list => { if (ticket !== version.current) return; const current = latest.current; current.onLoaded(list); current.onChange(current.selected.filter(key => list.some(tool => toolKey(tool) === key))); })
+      .catch(() => { if (ticket !== version.current) return; latest.current.onLoaded([]); setFailed(true); })
+      .finally(() => { if (ticket === version.current) setLoading(false); });
   };
 
   return (
-    <section aria-label={t('chat.tools')} className="rounded-md border border-border bg-background p-2">
-      <p className="m-0 mb-1 text-xs text-muted-foreground">{t('chat.toolContext')}</p>
-      <Button size="sm" variant="ghost" aria-expanded={open} disabled={disabled}
-        onClick={() => { const next = !open; setOpen(next); if (next && tools === null) load(); }}>
-        {open ? t('chat.collapse') : t('chat.expand')} {t('chat.toolPicker', { count: selected.length, limit: MAX_TOOLS })}
-      </Button>
-      {open ? (
-        <div className="mt-2 flex flex-col gap-2 text-sm">
+    <Popover label={t('chat.tools')} side="top" align="start" open={open} onOpenChange={next => { setOpen(next); if (next) load(); else version.current++; }} trigger={
+      <Button size="sm" variant="ghost" disabled={disabled}>{t('chat.toolPicker', { count: selected.length, limit: MAX_TOOLS })}</Button>
+    } content={
+        <div className="chat-tool-menu flex flex-col gap-2 text-sm">
+          <p className="m-0 text-xs text-muted-foreground">{t('chat.toolContext')}</p>
           <p className="m-0 text-xs text-muted-foreground">{t('chat.toolsHelp')}</p>
           {loading ? <Loading label={t('chat.loadingTools')} /> : null}
           {failed ? <p className="m-0 text-xs text-muted-foreground">{t('chat.toolsFailed')}</p> : null}
@@ -60,26 +65,32 @@ function ToolPicker({ tools, selected, disabled, onLoaded, onChange }: ToolPicke
           })}
           {tools?.length ? <Button size="sm" variant="ghost" onClick={load} disabled={loading}>{t('chat.refreshTools')}</Button> : null}
         </div>
-      ) : null}
-    </section>
+    } />
   );
 }
 
 export default function Composer() {
   usePageLocale();
   const session = useChatStore(state => state.activeSession);
+  const sessionId = session?.id ?? null;
   const stale = useChatStore(state => state.activeStale);
   const generation = useChatStore(state => state.generation);
   const actionError = useChatStore(state => state.actionError);
   const actionCode = useChatStore(state => state.actionCode);
   const lastSent = useChatStore(state => state.lastSent);
+  const draft = useChatStore(state => sessionId ? state.sessionDrafts[sessionId] ?? '' : '');
+  const selectedTools = useChatStore(state => sessionId ? state.sessionTools[sessionId] ?? [] : []);
+  const assets = useChatStore(state => sessionId ? state.sessionAssets[sessionId] : undefined);
+  const [assetBusy, setAssetBusy] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const setDraft = useChatStore(state => state.setDraft);
+  const setSessionTools = useChatStore(state => state.setSessionTools);
   const send = useChatStore(state => state.send);
   const stop = useChatStore(state => state.stop);
 
-  const [draft, setDraft] = useState('');
   const [tools, setTools] = useState<ConnectedTool[] | null>(null);
-  const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [pickerKey, setPickerKey] = useState(0);
+  const [skillRequest, setSkillRequest] = useState(0);
   const composing = useRef(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const seenSent = useRef(lastSent.seq);
@@ -88,31 +99,30 @@ export default function Composer() {
   const generating = generation !== null;
   const hasTarget = !!session?.provider_id && !!session?.model_id;
   // A session without a pinned skill and without an explicit "no skill" is refused by the host (1006013).
-  const skillDecided = !!session && (!!session.skill_id || session.no_skill_confirmed);
+  const skillDecided = !!session && (session.skills.length > 0 || session.no_skill_confirmed);
   const bytes = utf8Bytes(draft);
   const tooLong = bytes > MAX_MESSAGE_BYTES;
-  const canSend = !!session && !stale && !generating && hasTarget && skillDecided && draft.trim().length > 0 && !tooLong;
+  const canSend = !!session && !stale && !generating && !assetBusy && !voiceBusy && hasTarget && skillDecided && (draft.trim().length > 0 || !!assets?.length) && !tooLong;
 
-  // The host accepted a send: only now are the draft and the per-send tool choice cleared. Selections never outlive a send.
   useEffect(() => {
     if (lastSent.seq === seenSent.current) return;
     seenSent.current = lastSent.seq;
-    setDraft('');
-    setSelectedTools([]);
-  }, [lastSent]);
+    if (sessionId) { setDraft(sessionId, ''); setSessionTools(sessionId, []); }
+  }, [lastSent, sessionId, setDraft, setSessionTools]);
 
   useEffect(() => {
     if (wasGenerating.current && !generating) input.current?.focus();
     wasGenerating.current = generating;
   }, [generating]);
 
-  // 1006017: the host no longer accepts this tool selection. Drop it and make the picker load a fresh list on next open.
   useEffect(() => {
     if (actionCode !== 1006017) return;
-    setSelectedTools([]);
+    if (sessionId) setSessionTools(sessionId, []);
     setTools(null);
     setPickerKey(key => key + 1);
-  }, [actionCode, actionError]);
+  }, [actionCode, actionError, sessionId, setSessionTools]);
+
+  useEffect(() => { setTools(null); setPickerKey(key => key + 1); setAssetBusy(false); setVoiceBusy(false); }, [sessionId]);
 
   const submit = () => {
     if (!canSend) return;
@@ -130,7 +140,7 @@ export default function Composer() {
       event.preventDefault();
       const area = event.currentTarget;
       const { selectionStart, selectionEnd } = area;
-      setDraft(`${draft.slice(0, selectionStart)}\n${draft.slice(selectionEnd)}`);
+      if (sessionId) setDraft(sessionId, `${draft.slice(0, selectionStart)}\n${draft.slice(selectionEnd)}`);
       requestAnimationFrame(() => area.setSelectionRange(selectionStart + 1, selectionStart + 1));
       return;
     }
@@ -139,12 +149,12 @@ export default function Composer() {
   };
 
   return (
-    <form aria-label={t('chat.sendForm')} className="flex flex-col gap-2" onSubmit={event => { event.preventDefault(); submit(); }}>
+    <form aria-label={t('chat.sendForm')} className="chat-composer" onSubmit={event => { event.preventDefault(); submit(); }}>
       {actionError ? <ChatNotice tone="error">{actionError}</ChatNotice> : null}
       {actionCode === 1006013 && !generating ? (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">{t('chat.skillUnavailable')}</span>
-          <Button size="sm" variant="secondary" onClick={() => document.getElementById(SKILL_SELECT_ID)?.focus()}>{t('chat.reselectSkill')}</Button>
+          <Button size="sm" variant="secondary" onClick={() => setSkillRequest(value => value + 1)}>{t('chat.reselectSkill')}</Button>
         </div>
       ) : null}
       {actionCode === 1006017 ? (
@@ -157,12 +167,10 @@ export default function Composer() {
         <div className="flex flex-wrap items-center gap-2">
           <p id="chat-skill-hint" className="m-0 text-xs text-warning-text">
             {t('chat.chooseSkillHelp')}</p>
-          <Button size="sm" variant="secondary" onClick={() => document.getElementById(SKILL_SELECT_ID)?.focus()}>{t('chat.chooseSkill')}</Button>
+          <Button size="sm" variant="secondary" onClick={() => setSkillRequest(value => value + 1)}>{t('chat.chooseSkill')}</Button>
         </div>
       ) : null}
       {stale ? <p className="m-0 text-xs text-error-text">{t('chat.staleSend')}</p> : null}
-      <ToolPicker key={pickerKey} tools={tools} selected={selectedTools} disabled={generating || !session || stale}
-        onLoaded={setTools} onChange={setSelectedTools} />
       <Input
         ref={input}
         multiline
@@ -173,13 +181,17 @@ export default function Composer() {
         value={draft}
         disabled={!session || stale || generating}
         error={tooLong ? t('chat.tooLong') : undefined}
-        className="resize-y leading-relaxed"
-        onChange={event => setDraft(event.target.value)}
+        className="chat-composer-input"
+        onChange={event => { if (sessionId) setDraft(sessionId, event.target.value); }}
         onKeyDown={onKeyDown}
         onCompositionStart={() => { composing.current = true; }}
         onCompositionEnd={() => { composing.current = false; }}
       />
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      {sessionId && <div className="chat-media-controls"><Attachments key={`assets:${sessionId}`} sessionId={sessionId} disabled={stale || generating || voiceBusy} onBusy={setAssetBusy} /><VoiceCapture key={`voice:${sessionId}`} sessionId={sessionId} disabled={stale || generating || assetBusy} onBusy={setVoiceBusy} /></div>}
+      <div className="chat-composer-toolbar">
+        {session ? <TargetBar session={session} skillRequest={skillRequest} /> : null}
+        <ToolPicker key={pickerKey} tools={tools} selected={selectedTools} disabled={generating || !session || stale}
+          onLoaded={setTools} onChange={keys => { if (sessionId) setSessionTools(sessionId, keys); }} />
         <p id="chat-input-hint" className={cn('m-0 text-xs', tooLong ? 'text-error-text' : 'text-muted-foreground')}>
           {formatNumber(bytes)} / {formatNumber(MAX_MESSAGE_BYTES)} {t('chat.byteUnit')}
         </p>

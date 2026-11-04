@@ -141,7 +141,7 @@ function createHarness(attachScript: AttachStep[] = []) {
     state,
     created,
     revoked,
-    containers,
+    get containers() { return containers.filter(element => !element.hasAttribute('data-module-overlay')); },
     receipts,
     crashReports,
     timers,
@@ -701,5 +701,97 @@ describe('shared React (D055)', () => {
     expect(h.host.getSnapshot()).toEqual([]);
     expect(moduleProbe().evaluated).toBe(0);
     expect(h.revoked).toEqual(h.created);
+  });
+});
+
+describe('independent document views (D129)', () => {
+  it('shares one runtime, deduplicates documents and disposes only the closed view', async () => {
+    const h = await attachedHarness();
+    h.send(loadInstruction('counter.js', {
+      views: { layout: 'document', capability: 'multiple' },
+      source: `export default function createModule(host) {
+        const h = host.React.createElement;
+        return { Component: () => null, openView: ({ documentId }) => ({
+          Component: () => { const [n, set] = host.React.useState(0); return h('button', { onClick: () => set(n+1) }, documentId + ':' + n); },
+          beforeClose: () => ({ dirty: true, canSave: true }), save: () => false,
+        }) };
+      }`,
+    }));
+    await h.waitForReceipts(1);
+    const a = await h.host.openView('rt-1', 'a', 'doc-a');
+    const b = await h.host.openView('rt-1', 'b', 'doc-b');
+    expect(a.container).not.toBe(b.container);
+    expect(await h.host.openView('rt-1', 'duplicate', 'doc-a')).toBe(a);
+    a.container.querySelector('button')!.click();
+    await vi.waitFor(() => expect(a.container.textContent).toBe('doc-a:1'));
+    expect(b.container.textContent).toBe('doc-b:0');
+    expect(await h.host.saveView('rt-1', 'a')).toBe(false);
+    h.host.closeView('rt-1', 'a');
+    expect(b.container.textContent).toBe('doc-b:0');
+    expect(h.host.getSnapshot()[0].runtimeId).toBe('rt-1');
+    const reopened = await h.host.openView('rt-1', 'a', 'doc-a');
+    expect(reopened.container).not.toBe(a.container);
+    expect(reopened.container.textContent).toBe('doc-a:0');
+    h.send(unloadInstruction());
+    await h.waitForReceipts(2);
+    expect(b.container.textContent).toBe('');
+    expect(reopened.container.textContent).toBe('');
+  });
+
+  it.each(['close', 'reset', 'unload'] as const)('disposes a pending document returned after %s and never mounts it', async boundary => {
+    const h = await attachedHarness();
+    const gate = Promise.withResolvers<void>();
+    const control = { gate: gate.promise, disposed: 0 };
+    hooksControl().seenReact = control;
+    h.send(loadInstruction('counter.js', {
+      views: { layout: 'document', capability: 'multiple' },
+      source: `export default function createModule(host) {
+        const control = globalThis.__dgosHooks.seenReact;
+        return { Component: () => null, openView: async () => {
+          await control.gate;
+          return { Component: () => host.React.createElement('div', null, 'late document'),
+            dispose: () => { control.disposed++; } };
+        } };
+      }`,
+    }));
+    await h.waitForReceipts(1);
+    const pending = h.host.openView('rt-1', 'a', 'doc-a');
+    const rejected = expect(pending).rejects.toThrow('stale_view');
+    if (boundary === 'close') h.host.closeView('rt-1', 'a');
+    else if (boundary === 'reset') h.host.resetViews();
+    else {
+      h.send(unloadInstruction());
+      await h.waitForReceipts(2);
+    }
+    gate.resolve();
+    await rejected;
+    expect(control.disposed).toBe(1);
+    expect(document.querySelector('[data-module-view="a"]')).toBeNull();
+    if (boundary !== 'unload') {
+      const reopened = await h.host.openView('rt-1', 'a', 'doc-a');
+      expect(reopened.container.textContent).toBe('late document');
+      expect(control.disposed).toBe(1);
+    }
+  });
+
+  it('does not apply an old save acknowledgement to a closed and reopened document', async () => {
+    const h = await attachedHarness();
+    const gate = Promise.withResolvers<boolean>();
+    hooksControl().seenReact = gate.promise;
+    h.send(loadInstruction('counter.js', {
+      views: { layout: 'document', capability: 'multiple' },
+      source: `export default function createModule() {
+        return { Component: () => null, openView: () => ({ Component: () => null,
+          save: () => globalThis.__dgosHooks.seenReact }) };
+      }`,
+    }));
+    await h.waitForReceipts(1);
+    const old = await h.host.openView('rt-1', 'a', 'doc-a');
+    const saved = h.host.saveView('rt-1', 'a');
+    h.host.closeView('rt-1', 'a');
+    const reopened = await h.host.openView('rt-1', 'a', 'doc-a');
+    gate.resolve(true);
+    await expect(saved).resolves.toBe(false);
+    expect(reopened.container).not.toBe(old.container);
   });
 });

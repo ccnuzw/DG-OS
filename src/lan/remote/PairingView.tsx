@@ -53,7 +53,7 @@ export function PairingView({ api, initialCode = '', autoSubmit = false, notice,
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center gap-6 p-6">
+    <main className="mx-auto flex w-full max-w-112 flex-1 flex-col justify-center gap-6 p-6">
       <header className="flex flex-col gap-2">
         <h1 className="text-2xl font-semibold">{t('remote.connectTitle')}</h1>
         <p className="text-muted-foreground">{t('remote.connectHelp')}</p>

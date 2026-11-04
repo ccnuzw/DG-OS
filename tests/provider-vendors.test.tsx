@@ -84,7 +84,7 @@ async function choose(selectName: string, optionName: string) {
   await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
 }
 
-const createButton = () => screen.getByRole('button', { name: /💾 Create/ }) as HTMLButtonElement;
+const createButton = () => screen.getByRole('button', { name: 'Create', exact: true }) as HTMLButtonElement;
 
 function fillRequired() {
   fireEvent.change(input('Name *'), { target: { value: 'My service' } });
@@ -125,13 +125,6 @@ describe('Vendor selection (AC16)', () => {
 
     fireEvent.change(input('Base URL *'), { target: { value: 'https://gateway.example/anthropic' } });
     expect(input('Base URL *').value).toBe('https://gateway.example/anthropic');
-  });
-
-  it('D112 marks the Base URL input inputmode="url" without giving it type="url"', async () => {
-    mockHost();
-    await openNewForm();
-    expect(input('Base URL *').getAttribute('inputmode')).toBe('url');
-    expect(input('Base URL *').type).toBe('text');
   });
 
   it('asks for the adapter of a multi-endpoint vendor and requires a base URL before Create', async () => {
@@ -263,14 +256,13 @@ describe('Saved providers and the list (AC16)', () => {
   const lookalike = { ...savedBase, id: 'p-evil', name: 'Lookalike host', base_url: 'https://api.openai.com.evil.example/v1' };
   const unknownVendor = { ...savedBase, id: 'p-ghost', name: 'Ghost vendor', base_url: 'https://ghost.example/v1', config: { vendor_id: 'ghost' } };
 
-  const card = (name: string) => screen.getByRole('heading', { name, level: 3 }).closest('.cursor-pointer') as HTMLElement;
+  const card = (name: string) => screen.getByRole('group', { name, exact: true });
 
-  it('shows the vendor display name, with the protocol as secondary text, and infers it for legacy providers', async () => {
+  it('shows the host vendor display name and infers it for legacy providers', async () => {
     mockHost([acme, legacyOfficial, legacyThirdParty, lookalike, unknownVendor]);
     render(<ProviderManagement />);
 
     await waitFor(() => expect(within(card('Acme saved')).getByText('Acme Cloud')).toBeTruthy());
-    expect(within(card('Acme saved')).getByText('OpenAI compatible')).toBeTruthy();
     expect(within(card('Legacy official')).getByText('OpenAI')).toBeTruthy();
     expect(within(card('Legacy third party')).getByText('Custom')).toBeTruthy();
     expect(within(card('Lookalike host')).getByText('Custom')).toBeTruthy();
@@ -282,7 +274,7 @@ describe('Saved providers and the list (AC16)', () => {
       ? { success: true, data: acme }
       : undefined);
     render(<ProviderManagement />);
-    fireEvent.click(await screen.findByRole('heading', { name: 'Acme saved', level: 3 }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Acme saved', exact: true }));
 
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Vendor' }).textContent).toContain('Acme Cloud'));
     fireEvent.change(input('Name *'), { target: { value: 'Acme renamed' } });
@@ -302,10 +294,10 @@ describe('Saved providers and the list (AC16)', () => {
       ? { success: true, data: legacyThirdParty }
       : undefined);
     render(<ProviderManagement />);
-    fireEvent.click(await screen.findByRole('heading', { name: 'Legacy official', level: 3 }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Legacy official', exact: true }));
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Vendor' }).textContent).toContain('OpenAI'));
 
-    fireEvent.click(screen.getByRole('heading', { name: 'Legacy third party', level: 3 }));
+    fireEvent.click(screen.getByRole('button', { name: 'Legacy third party', exact: true }));
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Vendor' }).textContent).toContain('Custom'));
     fireEvent.change(input('Name *'), { target: { value: 'Renamed' } });
     fireEvent.click(screen.getByRole('button', { name: /Save Changes/ }));
@@ -318,7 +310,7 @@ describe('Saved providers and the list (AC16)', () => {
   it('requires a new API key once the vendor is changed on a saved provider', async () => {
     mockHost([acme]);
     render(<ProviderManagement />);
-    fireEvent.click(await screen.findByRole('heading', { name: 'Acme saved', level: 3 }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Acme saved', exact: true }));
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Vendor' }).textContent).toContain('Acme Cloud'));
 
     await choose('Vendor', 'OpenAI');

@@ -223,6 +223,28 @@ pub struct ModuleSummaryView {
     pub recent_crashes: u32,
 }
 
+/// D128 display-only catalog. No execution credentials or package paths.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceAppCatalog {
+    pub catalog_revision: String,
+    pub entries: Vec<WorkspaceAppEntry>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceAppEntry {
+    pub module_id: String,
+    pub display_name: String,
+    pub icon_resource_id: Option<String>,
+    pub layout: String,
+    pub view_capability: String,
+    pub enabled: bool,
+    pub permission_state: String,
+    pub runtime_state: ModuleRuntimeStatusState,
+    pub crashed: bool,
+}
+
 /// One permission audit row for the management page. It never carries a
 /// request id, resource id or user id (D093).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

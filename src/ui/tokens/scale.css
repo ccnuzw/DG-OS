@@ -10,14 +10,14 @@
 
   /* Smallest effective text size. 75% density makes the root 10.5px, so every size token is floored (D064). */
   --font-size-min: 11px;
-  --font-size-xs: max(calc(12rem / 14), var(--font-size-min));
-  --font-size-sm: max(calc(13rem / 14), var(--font-size-min));
-  --font-size-base: max(calc(14rem / 14), var(--font-size-min));
-  --font-size-lg: max(calc(16rem / 14), var(--font-size-min));
-  --font-size-xl: max(calc(18rem / 14), var(--font-size-min));
-  --font-size-2xl: max(calc(20rem / 14), var(--font-size-min));
-  --font-size-3xl: max(calc(24rem / 14), var(--font-size-min));
-  --font-size-4xl: max(calc(30rem / 14), var(--font-size-min));
+  --font-size-xs: max(var(--font-size-ui), var(--font-size-min));
+  --font-size-sm: max(calc(var(--font-size-ui) + 1px), var(--font-size-min));
+  --font-size-base: max(calc(var(--font-size-ui) + 2px), var(--font-size-min));
+  --font-size-lg: max(calc(var(--font-size-ui) + 4px), var(--font-size-min));
+  --font-size-xl: max(calc(var(--font-size-ui) + 6px), var(--font-size-min));
+  --font-size-2xl: max(calc(var(--font-size-ui) + 8px), var(--font-size-min));
+  --font-size-3xl: max(calc(var(--font-size-ui) + 12px), var(--font-size-min));
+  --font-size-4xl: max(calc(var(--font-size-ui) + 18px), var(--font-size-min));
 
   --line-height-tight: 1.25;
   --line-height-normal: 1.5;
@@ -78,6 +78,28 @@
   --opacity-disabled: 0.4;
   --opacity-hover: 0.8;
   --opacity-overlay: 0.6;
+
+  /* Role mapping for the prototype's UI, reading and code domains. These are not density values. */
+  --font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-family-reading: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-family-code: "SF Mono", Monaco, "Cascadia Code", monospace;
+  --font-size-ui: 12px;
+  --font-size-reading: 13px;
+  --font-size-code: 12px;
+  --line-height-ui: var(--line-height-normal);
+  --line-height-reading: var(--line-height-relaxed);
+  --line-height-code: var(--line-height-normal);
+  --control-height-compact: calc(28rem / 14);
+  --control-height-default: calc(36rem / 14);
+  --tab-height-workspace: var(--tabbar-height);
+  --tab-height-session: var(--session-tabbar-height);
+  --page-gap: var(--spacing-6);
+  --section-gap: var(--spacing-8);
+  --content-gap: var(--spacing-4);
+  --z-index-base: 0;
+  --z-index-shell: 10;
+  --z-index-sticky: 20;
+  --z-index-overlay: 40;
 
   /*
    * Global stacking layers (FR-005 §4.8). Only portalled overlays use these; they are the only z-index values

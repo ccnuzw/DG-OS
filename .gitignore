@@ -16,7 +16,10 @@ vendor/
 dist/
 dist-lan/
 build/
+tools/agent-bridge/bin/
 *.log
+__pycache__/
+*.pyc
 
 # 环境变量
 .env

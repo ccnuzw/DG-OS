@@ -1,5 +1,11 @@
+#[path = "cli_launch.rs"]
+mod cli_launch;
+pub use cli_launch::{CliProviderLaunch, CliProviderLaunchMetadata, CliProviderProtocol};
+#[path = "transcription.rs"]
+mod transcription;
 use dgos_db::sea_orm::DatabaseConnection;
 use dgos_db::{establish_connection, ModelRepository, ProviderRepository, UsageLogRepository};
+use dgos_db::{ActivityPermit, MaintenanceGate};
 use dgos_types::{
     build_model, recompute_models, valid_model_id, ChatRequest, ChatResponse, DgosError,
     DgosResult, ExecutionProvenance, Model, ModelKind, ModelSource, Provider, ProviderConfig,
@@ -24,8 +30,9 @@ use crate::vendor::validate_provider_config;
 use dgos_db::repositories::provider_repository::CredentialCleanup;
 
 /// Provider manager - main entry point for provider operations
+/// Clones share the database pool, vault, HTTP client, credential pointer lock and maintenance gate.
 pub struct ProviderManager {
-    #[allow(dead_code)]
+    // Retained so cloned repositories use the same database connection pool.
     db: DatabaseConnection,
     provider_repo: ProviderRepository,
     model_repo: ModelRepository,
@@ -33,12 +40,30 @@ pub struct ProviderManager {
     vault: Arc<dyn ProviderCredentialVault>,
     // Serialize credential pointer changes and their outbox cleanup. Network
     // calls release this lock after obtaining their immutable adapter snapshot.
-    credentials_lock: Mutex<()>,
+    credentials_lock: Arc<Mutex<()>>,
     /// Built once and cloned into every adapter (clones share one connection pool). Building a
     /// client per call stalled for about 3 s on macOS, outside every timeout and while
     /// `credentials_lock` was held. Built with the default connect timeout, which is the only
     /// one `create_adapter` uses.
     http: Option<reqwest::Client>,
+    /// Process-wide VACUUM gate. Each call and each stream holds a permit until its usage record is written.
+    gate: MaintenanceGate,
+}
+
+impl Clone for ProviderManager {
+    fn clone(&self) -> Self {
+        // Repositories are stateless connection wrappers and do not implement Clone.
+        Self {
+            db: self.db.clone(),
+            provider_repo: ProviderRepository::new(self.db.clone()),
+            model_repo: ModelRepository::new(self.db.clone()),
+            usage_log_repo: UsageLogRepository::new(self.db.clone()),
+            vault: self.vault.clone(),
+            credentials_lock: self.credentials_lock.clone(),
+            http: self.http.clone(),
+            gate: self.gate.clone(),
+        }
+    }
 }
 
 impl ProviderManager {
@@ -65,9 +90,16 @@ impl ProviderManager {
             model_repo,
             usage_log_repo,
             vault,
-            credentials_lock: Mutex::new(()),
+            credentials_lock: Arc::new(Mutex::new(())),
             http: crate::transport::http_client(AdapterOptions::default().connect_timeout),
+            gate: MaintenanceGate::new(),
         })
+    }
+
+    /// Production wiring passes the process-wide gate that VACUUM uses. Without it, the manager owns a private gate.
+    pub fn with_maintenance(mut self, gate: MaintenanceGate) -> Self {
+        self.gate = gate;
+        self
     }
 
     /// Create a new provider (without fetching models).
@@ -338,6 +370,7 @@ impl ProviderManager {
         provenance: Option<&ExecutionProvenance>,
     ) -> DgosResult<ChatResponse> {
         let start = Instant::now();
+        let _permit = self.gate.admit().map_err(|_| DgosError::ProviderRequestRejected)?;
 
         let provider = self
             .provider_repo
@@ -462,6 +495,7 @@ impl ProviderManager {
         expected_revision: Option<i64>,
         provenance: Option<&ExecutionProvenance>,
     ) -> DgosResult<ToolChatResponse> {
+        let _permit = self.gate.admit().map_err(|_| DgosError::ProviderRequestRejected)?;
         let provider = self
             .provider_repo
             .get(provider_id, user_id)
@@ -553,6 +587,7 @@ impl ProviderManager {
         expected_revision: Option<i64>,
         provenance: Option<&ExecutionProvenance>,
     ) -> DgosResult<crate::traits::BoxStream<crate::ChatChunk>> {
+        let permit = self.gate.admit().map_err(|_| DgosError::ProviderRequestRejected)?;
         let provider = self
             .provider_repo
             .get(provider_id, user_id)
@@ -582,6 +617,7 @@ impl ProviderManager {
                     provenance: provenance.cloned(),
                     started,
                     finished: false,
+                    permit: Some(permit),
                 };
                 Ok(audited_stream(stream, audit))
             }
@@ -1030,6 +1066,7 @@ struct StreamAudit {
     provenance: Option<ExecutionProvenance>,
     started: Instant,
     finished: bool,
+    permit: Option<ActivityPermit>,
 }
 
 impl StreamAudit {
@@ -1059,6 +1096,7 @@ impl Drop for StreamAudit {
             warn!("Stream dropped outside a runtime; usage record skipped");
             return;
         };
+        let permit = self.permit.take();
         let (db, provider_id, model_id, user_id, provenance, started) = (
             self.db.clone(),
             self.provider_id.clone(),
@@ -1068,6 +1106,7 @@ impl Drop for StreamAudit {
             self.started,
         );
         runtime.spawn(async move {
+            let _permit = permit;
             write_stream_log(
                 &db,
                 &provider_id,

@@ -10,6 +10,7 @@ pub struct Model {
     pub version_id: String,
     pub skill_id: String,
     pub content_hash: String,
+    pub position: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

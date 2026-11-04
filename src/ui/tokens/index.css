@@ -1,4 +1,6 @@
 @import "./colors.css";
+@import "./presets.css";
 @import "./scale.css";
+@import "./geometry.css";
 @import "./density.css";
 @import "./gate.css";

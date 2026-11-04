@@ -105,7 +105,7 @@ async fn fx() -> Fx {
         .await
         .unwrap();
     Fx {
-        chat: ChatManager::new(db.clone()),
+        chat: ChatManager::new(db.clone(), dgos_db::MaintenanceGate::new()),
         providers: ProviderManager::with_vault(&url, vault).await.unwrap(),
         provider_id: provider.id,
         db,
@@ -130,7 +130,8 @@ fn target(fx: &Fx, skill: Option<&str>, no_skill: bool) -> ChatTargetInput {
     ChatTargetInput {
         provider_id: Some(fx.provider_id.clone()),
         model_id: Some("chat".into()),
-        skill_id: skill.map(str::to_owned),
+        skill_ids: skill.map(str::to_owned).into_iter().collect(),
+        generation: Default::default(),
         no_skill,
     }
 }
@@ -165,6 +166,7 @@ async fn turn(fx: &Fx, session: &str, text: &str) -> Result<ChatEvent, ChatError
                 client_request_id: uuid::Uuid::new_v4().to_string(),
                 accept_destination: None,
                 tools: vec![],
+                asset_ids: vec![],
             },
         )
         .await?;
@@ -196,7 +198,7 @@ async fn the_pinned_version_is_sent_as_its_own_user_message_and_recorded_with_it
         .unwrap()
         .items
         .remove(0);
-    assert_eq!(pinned.skill_id.as_deref(), Some(SKILL));
+    assert_eq!(pinned.skills[0].skill_id, SKILL);
     assert!(matches!(
         turn(&fx, &s, "summarize this").await.unwrap(),
         ChatEvent::Done { .. }
@@ -286,7 +288,7 @@ async fn a_disabled_tampered_or_changed_skill_blocks_the_send_until_the_user_cho
     std::fs::write(&skill_file, original).unwrap();
 
     fx.db
-        .execute_unprepared("UPDATE chat_sessions SET skill_content_hash = 'not-the-pinned-hash'")
+        .execute_unprepared("UPDATE chat_sessions SET skill_refs = json_set(skill_refs, '$[0].content_hash', 'not-the-pinned-hash')")
         .await
         .unwrap();
     assert_eq!(
@@ -322,13 +324,7 @@ async fn a_disabled_tampered_or_changed_skill_blocks_the_send_until_the_user_cho
             &fx.providers,
             &fx.skills,
             ALICE,
-            UpdateChatSessionTargetInput {
-                session_id: s.clone(),
-                provider_id: Some(fx.provider_id.clone()),
-                model_id: Some("chat".into()),
-                skill_id: Some(SKILL.into()),
-                no_skill: false,
-            },
+            UpdateChatSessionTargetInput { session_id: s.clone(), provider_id: Some(fx.provider_id.clone()), model_id: Some("chat".into()), skill_ids: Some(SKILL.into()).into_iter().collect(), generation: Default::default(), no_skill: false },
         )
         .await
         .unwrap();
@@ -341,13 +337,9 @@ async fn a_disabled_tampered_or_changed_skill_blocks_the_send_until_the_user_cho
             &fx.providers,
             &fx.skills,
             ALICE,
-            UpdateChatSessionTargetInput {
-                session_id: s.clone(),
-                provider_id: Some(fx.provider_id.clone()),
-                model_id: Some("chat".into()),
-                skill_id: None,
-                no_skill: true,
-            },
+            UpdateChatSessionTargetInput { session_id: s.clone(),
+            provider_id: Some(fx.provider_id.clone()),
+            model_id: Some("chat".into()), skill_ids: vec![], generation: Default::default(), no_skill: true, },
         )
         .await
         .unwrap();
@@ -401,12 +393,7 @@ async fn a_skill_the_user_has_not_added_cannot_be_pinned() {
             &fx.skills,
             BOB,
             CreateChatSessionInput {
-                target: Some(ChatTargetInput {
-                    provider_id: None,
-                    model_id: None,
-                    skill_id: Some(SKILL.into()),
-                    no_skill: false,
-                }),
+                target: Some(ChatTargetInput { provider_id: None, model_id: None, skill_ids: Some(SKILL.into()).into_iter().collect(), generation: Default::default(), no_skill: false }),
             },
         )
         .await;
@@ -423,7 +410,7 @@ async fn a_skill_the_user_has_not_added_cannot_be_pinned() {
             ALICE,
             CreateChatSessionInput {
                 target: Some(ChatTargetInput {
-                    skill_id: Some(SKILL.into()),
+                    skill_ids: vec![SKILL.into()],
                     no_skill: true,
                     ..target(&fx, None, false)
                 }),
@@ -435,4 +422,42 @@ async fn a_skill_the_user_has_not_added_cannot_be_pinned() {
         Some(ChatError::InvalidMessageContent),
         "a skill and no-skill are mutually exclusive"
     );
+}
+
+#[tokio::test]
+async fn ordered_pins_and_controls_survive_session_read_and_reach_stream_request() {
+    let fx = fx().await;
+    let second = "dgos.official.writing.rewrite";
+    fx.skills.install_skill(second, ALICE).await.unwrap();
+    let mut chosen = target(&fx, Some(SKILL), false);
+    chosen.skill_ids = vec![second.into(), SKILL.into()];
+    chosen.generation = dgos_types::GenerationParameters { max_tokens: Some(4096), temperature: Some(0.4), reasoning: Some(dgos_types::ReasoningConfig { effort: Some("high".into()), budget_tokens: None }), instruction: "session guidance marker".into() };
+    let created = fx.chat.create_session(&fx.providers, &fx.skills, ALICE, CreateChatSessionInput { target: Some(chosen.clone()) }).await.unwrap();
+    let saved = fx.chat.list_sessions(ALICE, Default::default()).await.unwrap().items.remove(0);
+    assert_eq!(saved.generation, chosen.generation);
+    assert_eq!(saved.skills.iter().map(|s| s.skill_id.as_str()).collect::<Vec<_>>(), vec![second, SKILL]);
+    assert!(matches!(turn(&fx, &created.id, "summarize").await.unwrap(), ChatEvent::Done { .. }));
+    let bodies = fx.seen.lock().unwrap();
+    let wire = bodies.last().unwrap();
+    assert_eq!(wire["max_tokens"], 4096);
+    assert_eq!(wire["reasoning_effort"], "high");
+    assert!(wire["messages"][1]["content"].as_str().unwrap().contains(second));
+    assert!(wire["messages"][2]["content"].as_str().unwrap().contains(SKILL));
+    assert!(wire["messages"][3]["content"].as_str().unwrap().contains("session guidance marker"));
+    drop(bodies);
+    chosen.skill_ids.push(SKILL.into());
+    assert!(matches!(fx.chat.create_session(&fx.providers, &fx.skills, ALICE, CreateChatSessionInput { target: Some(chosen) }).await, Err(ChatError::InvalidMessageContent)));
+}
+
+#[tokio::test]
+async fn unsupported_budget_and_output_limit_refuse_before_session_commit_or_dispatch() {
+    let fx = fx().await;
+    let mut chosen = target(&fx, None, true);
+    chosen.generation.reasoning = Some(dgos_types::ReasoningConfig { effort: Some("high".into()), budget_tokens: Some(2048) });
+    assert!(fx.chat.create_session(&fx.providers, &fx.skills, ALICE, CreateChatSessionInput { target: Some(chosen.clone()) }).await.is_err());
+    chosen.generation.reasoning = None;
+    chosen.generation.max_tokens = Some(65537);
+    assert!(fx.chat.create_session(&fx.providers, &fx.skills, ALICE, CreateChatSessionInput { target: Some(chosen) }).await.is_err());
+    assert!(fx.chat.list_sessions(ALICE, Default::default()).await.unwrap().items.is_empty());
+    assert!(fx.seen.lock().unwrap().is_empty());
 }

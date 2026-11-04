@@ -53,10 +53,25 @@ pub struct McpConfirmationPrompt<'a> {
 
 /// Delivery of confirmation prompts to the page attachment of the call.
 /// Implemented by the Tauri channel transport.
+#[derive(Debug)]
+pub struct McpConfirmationDeliveryError;
+
+impl std::fmt::Display for McpConfirmationDeliveryError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("confirmation prompt could not be delivered")
+    }
+}
+
+impl std::error::Error for McpConfirmationDeliveryError {}
+
 pub trait McpConfirmationNotifier: Send + Sync {
     /// Push the prompt to exactly `attachment_id`. `Err` means it could not be
     /// delivered (no such attachment, dead channel); the call is then refused.
-    fn open(&self, attachment_id: &str, prompt: McpConfirmationPrompt<'_>) -> Result<(), ()>;
+    fn open(
+        &self,
+        attachment_id: &str,
+        prompt: McpConfirmationPrompt<'_>,
+    ) -> Result<(), McpConfirmationDeliveryError>;
     /// Tell the page the prompt is over (answered, expired or abandoned).
     /// Best effort.
     fn close(&self, attachment_id: &str, confirmation_id: &str);
@@ -445,10 +460,14 @@ mod tests {
     }
 
     impl McpConfirmationNotifier for Recorder {
-        fn open(&self, attachment_id: &str, prompt: McpConfirmationPrompt<'_>) -> Result<(), ()> {
+        fn open(
+            &self,
+            attachment_id: &str,
+            prompt: McpConfirmationPrompt<'_>,
+        ) -> Result<(), McpConfirmationDeliveryError> {
             self.opens.fetch_add(1, Ordering::SeqCst);
             if !self.deliverable {
-                return Err(());
+                return Err(McpConfirmationDeliveryError);
             }
             self.opened
                 .send(Opened {
@@ -459,7 +478,7 @@ mod tests {
                     tool_name: prompt.tool_name.to_owned(),
                     arguments: prompt.arguments.clone(),
                 })
-                .map_err(|_| ())
+                .map_err(|_| McpConfirmationDeliveryError)
         }
 
         fn close(&self, attachment_id: &str, confirmation_id: &str) {

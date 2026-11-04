@@ -3,6 +3,7 @@
 //! The page is the production `dist/`. Every page command is the production handler over a fresh,
 //! fully migrated SQLite file in a temp directory (providers use the in-memory vault from
 //! `dgos-providers/test-support`; the MCP vault refuses every call, so nothing touches the OS keychain).
+//! The host, module fixture and database-backed managers share one maintenance gate.
 //! Theme and density are set through the real `set_appearance_preferences` command and applied by the
 //! shipped controller on each page load; the harness never writes `data-theme`/`data-density` itself.
 //!
@@ -145,14 +146,13 @@ async fn seed(app: &AppHandle, checks: &mut Checks) {
 }
 
 pub(super) async fn set_appearance(app: &AppHandle, theme: &str, density: u32) -> bool {
-    ipc(
-        app,
-        MAIN,
-        "set_appearance_preferences",
-        json!({"patch": {"theme": theme, "density": density}}),
-    )
-    .await
-    .success()
+    let read=ipc(app, MAIN, "get_appearance_preferences", json!({})).await;
+    let mut snapshot=read.data()["snapshot"].clone();
+    let revision=snapshot.as_object_mut().and_then(|value| value.remove("revision"));
+    let Some(revision)=revision else { return false; };
+    snapshot["mode"]=json!(theme);
+    snapshot["density"]=json!(density);
+    ipc(app,MAIN,"set_appearance_preferences",json!({"snapshot":snapshot,"expectedRevision":revision})).await.success()
 }
 
 async fn navigate(app: &AppHandle, path: &str) -> bool {
@@ -250,11 +250,8 @@ async fn layout_matrix(app: &AppHandle, checks: &mut Checks, themes: &[&str], os
                         problems.push(format!("text smaller than 11px: {min}"));
                     }
                 }
-                if m["vw"].as_f64().unwrap_or(0.0) < 700.0 {
-                    problems.push(format!(
-                        "viewport narrower than the 800px window: {}",
-                        m["vw"]
-                    ));
+                if m["vw"].as_f64().is_none_or(|width| (width - 800.0).abs() > 1.0) {
+                    problems.push(format!("viewport is not the required 800px: {}", m["vw"]));
                 }
                 if route.ends_with("/providers") && m["hasProvider"] != true {
                     problems.push("seeded Provider is not rendered".into());
@@ -296,6 +293,10 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
     println!("INFO webview {}", info["value"]);
     seed(&app, &mut checks).await;
     let window = app.get_webview_window(MAIN).expect("main window");
+    if std::env::var_os("DGOS_UI_SHELL_ONLY").is_some() {
+        super::ui_keys::shell(app.clone(), &mut checks).await;
+        finish(checks, &world.root);
+    }
     // The OS appearance is forced per window (NSWindow.appearance) so `auto` is exercised in both
     // states without touching the user's system setting; WebKit derives prefers-color-scheme from it.
     window.set_theme(Some(tauri::Theme::Light)).ok();
@@ -354,6 +355,7 @@ pub fn run_ui() {
     let (world, bridge) =
         tauri::async_runtime::block_on(build_world_with(&[("p8-gallery", GALLERY)]));
     let db_url = format!("sqlite://{}?mode=rwc", world.root.join("dgos.db").display());
+    let maintenance = world.maintenance.clone();
     let (provider_manager, skills, mcp, workbench, appearance, probe) =
         tauri::async_runtime::block_on(async {
             let db = dgos_db::establish_connection(&db_url).await.expect("db");
@@ -382,7 +384,7 @@ pub fn run_ui() {
             .expect("seed provider");
             let providers = ProviderManager::with_vault(&db_url, vault)
                 .await
-                .expect("providers");
+                .expect("providers").with_maintenance(maintenance.clone());
             let skills_dir = world.root.join("skills");
             std::fs::create_dir_all(&skills_dir).unwrap();
             let skills = dgos_skills::SkillsManager::new(db.clone(), skills_dir);
@@ -398,8 +400,8 @@ pub fn run_ui() {
                     crate::session::SessionResolver::no_accounts(),
                 )),
                 Arc::new(RefusingMcpVault),
-            ));
-            let workbench = dgos_workbench::WorkbenchManager::new(db.clone());
+            ).with_maintenance(maintenance.clone()));
+            let workbench = dgos_workbench::WorkbenchManager::new(db.clone()).with_maintenance(maintenance.clone());
             let probe = dgos_db::establish_connection(&db_url)
                 .await
                 .expect("probe db");
@@ -418,9 +420,11 @@ pub fn run_ui() {
     let scenario_world = Mutex::new(Some(world));
     let result = tauri::Builder::default()
         .manage(Pending::default())
+        .manage(maintenance)
         .manage(crate::session::SessionResolver::no_accounts())
         .manage(LoadEvents(load_sender))
-        .manage(UiProbe(probe))
+        .manage(UiProbe(probe.clone()))
+        .manage(dgos_db::DesktopRepository::new(probe.clone()))
         .manage(manager)
         .manage(bridge)
         .manage(router)
@@ -452,8 +456,11 @@ pub fn run_ui() {
             WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("/".into()))
                 .inner_size(800.0, 600.0)
                 .min_inner_size(800.0, 600.0)
+                .max_inner_size(800.0, 600.0)
+                .resizable(false)
+                .maximizable(false)
                 .visible(true)
-                .focused(false)
+                .focused(true)
                 .build()?;
             let handle = app.handle().clone();
             let world = scenario_world.lock().unwrap().take().unwrap();
@@ -464,6 +471,8 @@ pub fn run_ui() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::get_desktop_preferences,
+            commands::set_desktop_preferences,
             commands::list_providers,
             commands::create_provider,
             commands::create_provider_with_models,
@@ -527,6 +536,7 @@ pub fn run_ui() {
             commands::disable_module,
             commands::uninstall_module,
             commands::list_modules,
+            commands::read_workspace_app_catalog,
             commands::grant_module_permission,
             commands::revoke_module_permission,
             commands::list_module_crashes,

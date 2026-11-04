@@ -4,8 +4,8 @@ import tailwindcss from "@tailwindcss/vite";
 // @ts-expect-error type error without @types/node package
 import { fileURLToPath } from "node:url";
 
-// Separate build of the remote LAN SPA (V1-FR-010), served by the host's HTTP server. It is not part of the Tauri
-// bundle and must not import @tauri-apps/* or src/modules/*. Output contract with the Rust server:
+// Separate build of the remote LAN SPA (V1-FR-010), served by the host's HTTP server and shipped as a
+// dist-lan resource by release-build.mjs. It must not import @tauri-apps/* or src/modules/*. Output contract:
 //   dist-lan/index.html and every other file under dist-lan/assets/, absolute /assets/... URLs.
 // The server sends a strict CSP (script-src 'self'; style-src 'self'), so the HTML has no inline script or style:
 // the modulepreload polyfill (an inline helper) is off and no asset is inlined as a data: URL.

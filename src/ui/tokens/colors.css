@@ -1,48 +1,54 @@
-/*
- * FR-005 §4.1 colour tokens. Light values live in `@theme static` so Tailwind emits them to :root
- * under their own names (static: emitted even when no utility uses them, which dynamic modules need).
- * Dark values override the same names under html[data-theme="dark"] (§5.2.1). Final values are fixed
- * by tests/design-tokens.test.tsx (AC20, D069); change a value only together with that test.
- * Literal colours are allowed only in src/ui/tokens/** (D068 R2).
- */
+/* Semantic aliases are one-way. Theme values are generated from theme/kernel.ts. */
 @theme static {
-  /* The default Tailwind palette is never imported; this keeps any later import from re-adding it (D066). */
   --color-*: initial;
-
-  --color-primary: #2563eb;
-  --color-primary-hover: #1d4ed8;
-  --color-primary-active: #1e40af;
-  --color-primary-light: #dbeafe;
-  --color-on-primary: #ffffff;
-
-  --color-success: #059669;
-  --color-success-bg: #d1fae5;
-  --color-success-text: #047857;
-  --color-error: #dc2626;
-  --color-error-bg: #fee2e2;
-  --color-error-text: #b91c1c;
-  --color-on-error: #ffffff;
-  --color-warning: #d97706;
-  --color-warning-bg: #fef3c7;
-  --color-warning-text: #92400e;
-  --color-info: #3b82f6;
-  --color-info-bg: #dbeafe;
-  --color-info-text: #1d4ed8;
-
-  --color-bg-primary: #ffffff;
-  --color-bg-secondary: #f9fafb;
-  --color-bg-tertiary: #f3f4f6;
-  --color-text-primary: #111827;
-  --color-text-secondary: #4b5563;
-  --color-text-tertiary: #6b7280;
-  --color-text-disabled: #d1d5db;
-  --color-border: #e5e7eb;
-  --color-border-control: #7b8494;
-  --color-divider: #f3f4f6;
-  --color-focus-ring: #2563eb;
-  /* Modal scrim (P5). Same in both themes; its strength is --opacity-overlay. Registered as exempt in contrast-pairs.json. */
   --color-overlay: #000000;
+  --color-text-disabled: #8c8c8c;
 }
+/* V2 page-pattern roles: aliases keep existing V1 values authoritative while giving layouts semantic names. */
+:root {
+  --surface-canvas: var(--color-bg-primary);
+  --surface-rail: var(--color-bg-rail);
+  --surface-panel: var(--color-bg-secondary);
+  --surface-card: var(--color-bg-secondary);
+  --surface-inset: var(--color-bg-tertiary);
+  --surface-control: var(--color-bg-secondary);
+  --surface-selected: var(--color-primary-light);
+  --surface-hover: var(--color-bg-tertiary);
+  --surface-active: var(--color-primary-light);
+  --border-subtle: var(--color-border);
+  --border-control: var(--color-border-control);
+  --border-focus: var(--color-focus-ring);
+  --text-primary: var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-tertiary: var(--color-text-tertiary);
+  --text-disabled: var(--color-text-disabled);
+  --accent-default: var(--color-primary);
+  --accent-hover: var(--color-primary-hover);
+  --accent-active: var(--color-primary-active);
+  --accent-on: var(--color-on-primary);
+  --status-success: var(--color-success);
+  --status-success-surface: var(--color-success-bg);
+  --status-success-text: var(--color-success-text);
+  --status-warning: var(--color-warning);
+  --status-warning-surface: var(--color-warning-bg);
+  --status-warning-text: var(--color-warning-text);
+  --status-error: var(--color-error);
+  --status-error-surface: var(--color-error-bg);
+  --status-error-text: var(--color-error-text);
+  --status-info: var(--color-info);
+  --status-info-surface: var(--color-info-bg);
+  --status-info-text: var(--color-info-text);
+  --overlay-scrim: var(--color-overlay);
+  --surface-popover: var(--color-bg-primary);
+  --surface-modal: var(--color-bg-secondary);
+  --text-reading: var(--color-text-primary);
+  --surface-reading: var(--color-bg-primary);
+  --text-content: var(--color-text-primary);
+  --surface-content: var(--color-bg-primary);
+  --text-code: var(--color-text-primary);
+  --surface-code: var(--color-bg-tertiary);
+}
+
 
 :root {
   color-scheme: light;
@@ -51,35 +57,4 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --color-primary: #60a5fa;
-  --color-primary-hover: #93c5fd;
-  --color-primary-active: #bfdbfe;
-  --color-primary-light: #1e3a8a;
-  --color-on-primary: #111827;
-
-  --color-success: #34d399;
-  --color-success-bg: #064e3b;
-  --color-success-text: #34d399;
-  --color-error: #f87171;
-  --color-error-bg: #7f1d1d;
-  --color-error-text: #fca5a5;
-  --color-on-error: #111827;
-  --color-warning: #fbbf24;
-  --color-warning-bg: #78350f;
-  --color-warning-text: #fbbf24;
-  --color-info: #60a5fa;
-  --color-info-bg: #1e3a8a;
-  --color-info-text: #93c5fd;
-
-  --color-bg-primary: #1f1f1f;
-  --color-bg-secondary: #2a2a2a;
-  --color-bg-tertiary: #363636;
-  --color-text-primary: #f9fafb;
-  --color-text-secondary: #9ca3af;
-  --color-text-tertiary: #8b93a1;
-  --color-text-disabled: #4b5563;
-  --color-border: #374151;
-  --color-border-control: #788291;
-  --color-divider: #2a2a2a;
-  --color-focus-ring: #60a5fa;
 }

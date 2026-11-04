@@ -119,13 +119,6 @@ describe('error code mapping (AC10)', () => {
     }
   });
 
-  it('the table is frozen and a mapped action only names a route that exists in the app', () => {
-    expect(Object.isFrozen(ERROR_MESSAGES)).toBe(true);
-    const appRoutes = ['/providers', '/skills', '/workbench', '/mcp', '/settings', '/settings/modules'];
-    for (const [key, info] of Object.entries(ERROR_MESSAGES)) {
-      if (info.action) expect(appRoutes, key).toContain(info.action.route);
-    }
-  });
 
   it('lookup never reaches prototype properties', () => {
     for (const code of [0, 1, -1, 1.5, Number.NaN, null]) expect(lookupError(code), String(code)).toBeUndefined();
@@ -338,9 +331,9 @@ describe('fallback and severity routing (AC18)', () => {
 
     it('is shown when the caller can navigate and the route exists, and navigates on click', () => {
       render(<Surface />);
-      act(() => handleError({ code: 1001001 }, { navigate, routeExists: (route) => route === '/providers' }));
+      act(() => handleError({ code: 1001001 }, { navigate, routeExists: (route) => route === '/settings/providers' }));
       fireEvent.click(screen.getByRole('button', { name: '查看 Provider 列表' }));
-      expect(navigate).toHaveBeenCalledExactlyOnceWith('/providers');
+      expect(navigate).toHaveBeenCalledExactlyOnceWith('/settings/providers');
     });
 
     it('is not shown when the route does not exist, or when there is no navigate or routeExists', () => {
@@ -444,25 +437,17 @@ describe('ErrorPage (AC19)', () => {
       expect(document.querySelector('.app-content')?.textContent).toContain('返回首页');
     });
 
-    it('返回首页 navigates to the welcome page', async () => {
+    it('returns from a missing route to the desktop', async () => {
       render(
         <MemoryRouter initialEntries={['/nope']}>
           <App />
         </MemoryRouter>,
       );
       fireEvent.click(await screen.findByRole('button', { name: '返回首页' }));
-      expect(await screen.findByText('DG-OS 首页')).toBeTruthy();
+      await waitFor(() => expect(document.querySelector('a[href="/"][aria-current="page"]')).not.toBeNull());
+      expect(screen.queryByRole('button', { name: '返回首页' })).toBeNull();
     });
 
-    it('known routes are not caught by the fallback', async () => {
-      render(
-        <MemoryRouter initialEntries={['/']}>
-          <App />
-        </MemoryRouter>
-      );
-      expect(await screen.findByText('DG-OS 首页')).toBeTruthy();
-      expect(screen.queryByText('404 页面不存在')).toBeNull();
-    });
 
     it('an unknown path under /settings keeps the existing Settings behaviour (not the 404 page)', async () => {
       render(

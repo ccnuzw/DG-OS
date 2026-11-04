@@ -12,6 +12,8 @@ import { Channel, invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { moduleHostUi, type ModuleHostUi } from './moduleHostUi';
 import { createModuleI18n, type HostI18n } from './moduleHostI18n';
 import { useLocale } from '../i18n';
+import { OverlayContainerContext } from '../ui/components/Popover';
+import { useProviderStore } from '../stores/providerStore';
 
 export type LoadFailureStage = 'import' | 'contract' | 'render' | 'hook' | 'timeout' | 'cancelled';
 
@@ -25,6 +27,7 @@ export interface LoadInstruction {
   hookTimeoutMs: number;
   // runtimeId of the already-loaded instance of the same module that this load replaces (hot update, D055).
   replaces?: string | null;
+  views?: { layout: 'document' | 'full-bleed'; capability: 'single' | 'multiple' };
 }
 
 export interface UnloadInstruction {
@@ -86,6 +89,12 @@ export interface ProviderChatResponse {
   [key: string]: unknown;
 }
 
+export interface ModuleProviderEntry {
+  providerId: string;
+  displayName: string;
+  models: { modelId: string; displayName: string; kind: string }[];
+}
+
 export class HostCallError extends Error {
   readonly code: number;
 
@@ -127,7 +136,20 @@ export interface ModuleInstanceView {
   readonly container: HTMLElement;
   // True after a render error was caught by the module boundary once the instance was shown (D055).
   readonly crashed: boolean;
+  readonly viewCapability?: 'single' | 'multiple';
 }
+
+export interface ModuleViewDescriptor {
+  Component: React.ComponentType;
+  beforeClose?: () => { dirty: boolean; canSave?: boolean; blocked?: boolean } | Promise<{ dirty: boolean; canSave?: boolean; blocked?: boolean }>;
+  save?: () => boolean | Promise<boolean>;
+  dispose?: () => void;
+}
+export interface ModuleDocumentView extends ModuleInstanceView {
+  readonly viewId: string;
+  readonly documentId: string | null;
+}
+interface OwnedDocumentView extends ModuleDocumentView { root: Root; descriptor: ModuleViewDescriptor }
 
 export interface InstructionChannel {
   onmessage: (message: HostInstruction) => void;
@@ -158,10 +180,12 @@ type LifecycleHook = (typeof LIFECYCLE_HOOKS)[number];
 interface ModuleLifecycle {
   Component: React.ComponentType;
   disposeI18n: () => void;
+  overlay: HTMLElement;
   onLoad?: () => unknown;
   onUnload?: () => unknown;
   onBeforeUpdate?: () => unknown;
   onAfterUpdate?: (state: unknown) => unknown;
+  openView?: (input: { viewId: string; documentId: string | null }) => ModuleViewDescriptor | Promise<ModuleViewDescriptor>;
 }
 
 interface ModuleInstance extends Omit<ModuleInstanceView, 'crashed'> {
@@ -171,6 +195,8 @@ interface ModuleInstance extends Omit<ModuleInstanceView, 'crashed'> {
   // True once the instance was shown. Only from then on a boundary catch counts as a crash.
   loaded: boolean;
   crashed: boolean;
+  viewCapability: 'single' | 'multiple';
+  views: Map<string, OwnedDocumentView>;
 }
 
 /** `host.network.request` input (D093): loopback HTTP(S) only, decided by the host. */
@@ -198,6 +224,8 @@ interface ModuleHostApi {
   readonly moduleId: string;
   readonly version: string;
   readonly providers: Readonly<{
+    list: (options?: HostCallOptions) => Promise<ModuleProviderEntry[]>;
+    subscribe: (listener: () => void) => () => void;
     call: (
       providerId: string,
       modelId: string,
@@ -335,6 +363,9 @@ export class ModuleRuntimeHost {
   private readonly routes = new Map<string, string>();
   private readonly listeners = new Set<() => void>();
   private snapshot: readonly ModuleInstanceView[] = [];
+  private readonly openingViews = new Map<string, Promise<ModuleDocumentView>>();
+  private viewEpoch = 0;
+  private readonly closedViews = new Set<string>();
   private mcpConfirmations: readonly PendingMcpConfirmation[] = [];
   private readonly mcpListeners = new Set<() => void>();
 
@@ -362,6 +393,74 @@ export class ModuleRuntimeHost {
   };
 
   getSnapshot = (): readonly ModuleInstanceView[] => this.snapshot;
+
+  async openView(runtimeId: string, viewId: string, documentId: string | null): Promise<ModuleDocumentView> {
+    const instance = this.instances.get(runtimeId);
+    if (!instance?.loaded || instance.disposed || instance.crashed) throw new Error('runtime_unavailable');
+    const existing = [...instance.views.values()].find(view => view.documentId === documentId);
+    if (existing) return existing;
+    if (instance.viewCapability === 'single') return { ...this.view(instance), viewId, documentId: null };
+    const key = JSON.stringify([runtimeId, documentId]);
+    const pending = this.openingViews.get(key);
+    if (pending) {
+      if (this.closedViews.has(JSON.stringify([runtimeId, viewId]))) return pending.then(() => this.openView(runtimeId, viewId, documentId), () => this.openView(runtimeId, viewId, documentId));
+      return pending;
+    }
+    const epoch = this.viewEpoch;
+    this.closedViews.delete(JSON.stringify([runtimeId, viewId]));
+    const operation = (async () => {
+      const descriptor = await instance.lifecycle.openView!({ viewId, documentId });
+      if (epoch !== this.viewEpoch || this.closedViews.has(JSON.stringify([runtimeId, viewId])) || instance.disposed || !instance.loaded || instance.crashed) { descriptor.dispose?.(); throw new Error('stale_view'); }
+      if (typeof descriptor?.Component !== 'function') throw new Error('invalid_view');
+      const container = (this.document ?? globalThis.document).createElement('div');
+      container.setAttribute('data-module-view', viewId);
+      const root = createRoot(container);
+      const owned: OwnedDocumentView = { ...this.view(instance), container, viewId, documentId, root, descriptor };
+      instance.views.set(viewId, owned);
+      try {
+        flushSync(() => root.render(React.createElement(ModuleBoundary, { onFailure: error => this.markCrashed(instance, error) }, React.createElement(OverlayContainerContext.Provider, { value: instance.lifecycle.overlay }, React.createElement(descriptor.Component)))));
+        if (instance.crashed) throw new Error('view_render_failed');
+      } catch (error) { this.disposeView(instance, owned); throw error; }
+      return owned;
+    })().finally(() => { if (this.openingViews.get(key) === operation) this.openingViews.delete(key); });
+    this.openingViews.set(key, operation);
+    return operation;
+  }
+
+  async prepareViewClose(runtimeId: string, viewId: string): Promise<{ dirty: boolean; canSave?: boolean; blocked?: boolean }> {
+    const instance = this.instances.get(runtimeId);
+    const view = instance?.views.get(viewId);
+    return await view?.descriptor.beforeClose?.() ?? { dirty: false };
+  }
+  async saveView(runtimeId: string, viewId: string): Promise<boolean> {
+    const instance = this.instances.get(runtimeId);
+    const view = instance?.views.get(viewId);
+    if (!instance || !view || instance.disposed || instance.crashed) return false;
+    try {
+      const saved = await view.descriptor.save?.();
+      return saved === true && !instance.disposed && !instance.crashed && instance.views.get(viewId) === view;
+    } catch { return false; }
+  }
+  closeView(runtimeId: string, viewId: string): void {
+    this.closedViews.add(JSON.stringify([runtimeId, viewId]));
+    const instance = this.instances.get(runtimeId);
+    const view = instance?.views.get(viewId);
+    if (instance && view) this.disposeView(instance, view);
+  }
+  private disposeView(instance: ModuleInstance, view: OwnedDocumentView): void {
+    if (instance.views.get(view.viewId) !== view) return;
+    instance.views.delete(view.viewId);
+    try { view.descriptor.dispose?.(); } catch { console.warn('module view disposal failed'); }
+    try { view.root.unmount(); } catch { console.warn('module view unmount failed'); }
+    view.container.remove();
+  }
+  resetViews(): void {
+    ++this.viewEpoch;
+    for (const instance of this.instances.values()) {
+      for (const view of [...instance.views.values()]) this.disposeView(instance, view);
+      instance.container.remove();
+    }
+  }
 
   // Pending `mcp.call` confirmations (D093). Host-side state only: it is not part of the instance snapshot
   // and not reachable through the `host` object a module receives. The host dialog reads it.
@@ -543,6 +642,7 @@ export class ModuleRuntimeHost {
       stage = 'contract';
       lifecycle = this.readContract(namespace, runtimeId, moduleId, version);
       if (lifecycle === null) return failed('contract');
+      if (instruction.views?.capability === 'multiple' && !lifecycle.openView) return failed('contract');
 
       stage = 'render';
       const container = (this.document ?? globalThis.document).createElement('div');
@@ -558,6 +658,8 @@ export class ModuleRuntimeHost {
         disposed: false,
         loaded: false,
         crashed: false,
+        viewCapability: instruction.views?.capability ?? 'single',
+        views: new Map(),
       };
       instance = created;
       this.instances.set(runtimeId, created);
@@ -579,7 +681,7 @@ export class ModuleRuntimeHost {
                   status.mounted = true;
                 },
               }),
-              React.createElement(created.lifecycle.Component),
+              React.createElement(OverlayContainerContext.Provider, { value: created.lifecycle.overlay }, instruction.views?.capability === 'multiple' ? null : React.createElement(created.lifecycle.Component)),
             ),
           );
         });
@@ -721,12 +823,17 @@ export class ModuleRuntimeHost {
     request: ProviderChatRequest,
     options?: HostCallOptions,
   ): Promise<ProviderChatResponse> {
+    const route = this.routes.get(runtimeId);
+    const epoch = this.viewEpoch;
     const response = await this.callCapability<ProviderChatResponse | undefined>(
       runtimeId,
       'module_call_provider',
       { providerId, modelId, request },
       options,
     );
+    if (options?.signal?.aborted || this.routes.get(runtimeId) !== route || this.viewEpoch !== epoch) {
+      throw new HostCallError(MODULE_CALL_CANCELLED_CODE, 'Module provider call expired');
+    }
     if (!response) throw new HostCallError(1000000, 'Host call failed');
     return response;
   }
@@ -738,13 +845,30 @@ export class ModuleRuntimeHost {
       return null;
     }
     const i18n = createModuleI18n();
-    const invalid = (): null => { i18n.dispose(); return null; };
+    const invalid = (): null => { i18n.dispose(); overlay.remove(); return null; };
+    const overlay = (this.document ?? globalThis.document).createElement('div');
+    overlay.setAttribute('data-module-runtime', runtimeId);
+    overlay.setAttribute('data-module-id', moduleId);
+    overlay.setAttribute('data-module-overlay', '');
+    globalThis.document.body.append(overlay);
     const host: ModuleHostApi = Object.freeze({
       React,
       apiVersion: 1 as const,
       moduleId,
       version,
       providers: Object.freeze({
+        list: async (options?: HostCallOptions) => {
+          const route = this.routes.get(runtimeId);
+          const epoch = this.viewEpoch;
+          const entries = await this.callCapability<ModuleProviderEntry[]>(runtimeId, 'module_list_provider_catalog', {}, options);
+          if (options?.signal?.aborted || this.routes.get(runtimeId) !== route || this.viewEpoch !== epoch) {
+            throw new HostCallError(MODULE_CALL_CANCELLED_CODE, 'Module catalog expired');
+          }
+          return entries;
+        },
+        subscribe: (listener: () => void) => useProviderStore.subscribe((state, previous) => {
+          if (state.providers !== previous.providers || state.models !== previous.models) listener();
+        }),
         call: (providerId: string, modelId: string, request: ProviderChatRequest, options?: HostCallOptions) =>
           this.callProvider(runtimeId, providerId, modelId, request, options),
       }),
@@ -796,6 +920,8 @@ export class ModuleRuntimeHost {
       console.error('module contract: Component is not a function or class component');
       return invalid();
     }
+    const openView = Reflect.get(produced, 'openView');
+    if (openView !== undefined && typeof openView !== 'function') return invalid();
     const hooks: Partial<Record<LifecycleHook, (...args: unknown[]) => unknown>> = {};
     for (const name of LIFECYCLE_HOOKS) {
       const hook: unknown = Reflect.get(produced, name);
@@ -806,7 +932,7 @@ export class ModuleRuntimeHost {
       }
       hooks[name] = (...args) => Reflect.apply(hook, produced, args) as unknown;
     }
-    return { Component: Component as React.ComponentType, disposeI18n: i18n.dispose, ...hooks };
+    return { Component: Component as React.ComponentType, ...(typeof openView === 'function' ? { openView: (input: {viewId: string; documentId: string | null}) => Reflect.apply(openView, produced, [input]) as ModuleViewDescriptor | Promise<ModuleViewDescriptor> } : {}), overlay, disposeI18n: () => { i18n.dispose(); overlay.remove(); }, ...hooks };
   }
 
   // Races the hook against a timer so a promise that never settles cannot hang the host.
@@ -842,6 +968,7 @@ export class ModuleRuntimeHost {
   private dispose(instance: ModuleInstance): void {
     if (instance.disposed) return;
     instance.disposed = true;
+    for (const view of [...instance.views.values()]) this.disposeView(instance, view);
     instance.lifecycle.disposeI18n();
     if (this.instances.get(instance.runtimeId) === instance) this.instances.delete(instance.runtimeId);
     this.routes.delete(instance.runtimeId);
@@ -865,6 +992,7 @@ export class ModuleRuntimeHost {
       version: instance.version,
       container: instance.container,
       crashed: instance.crashed,
+      viewCapability: instance.viewCapability,
     };
   }
 
@@ -879,6 +1007,7 @@ export class ModuleRuntimeHost {
   private markCrashed(instance: ModuleInstance, error: unknown): void {
     if (instance.crashed || instance.disposed) return;
     instance.crashed = true;
+    for (const view of [...instance.views.values()]) this.disposeView(instance, view);
     const view = this.view(instance);
     this.snapshot = this.snapshot.map((current) => (current.container === instance.container ? view : current));
     this.emit();

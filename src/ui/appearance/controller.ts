@@ -1,156 +1,120 @@
-import {
-  DEFAULTS,
-  parseConfirmed,
-  sanitize,
-  type Appearance,
-  type Density,
-  type ResolvedTheme,
-  type Theme,
-} from './model';
+import { applyTheme } from '../theme/apply';
+import { DEFAULTS, appearanceValues, parseAppearance, parseConfirmed, parseRead, type Appearance, type AppearanceRead, type AppearanceSnapshot, type ResolvedTheme } from './model';
 
-const DARK_QUERY = '(prefers-color-scheme: dark)';
-const PENDING_ATTRIBUTE = 'data-appearance-pending';
-
+export type AppearancePhase = 'loading'|'applied'|'drafting'|'invalid'|'applying'|'failed'|'unconfirmed'|'corrupt'|'unsupported_schema';
+export interface AppearanceState { phase:AppearancePhase; confirmed:AppearanceSnapshot|null; draft:Appearance; error:string|null; recoveryToken?:string }
 export interface AppearanceDeps {
-  /** The element that carries data-theme / data-density. Only attributes are written (D068 R1). */
-  root: HTMLElement;
-  /** get_appearance_preferences. Resolves the raw data; rejects on any failure. */
-  read: () => Promise<unknown>;
-  /** set_appearance_preferences. Resolves the host's complete preferences; rejects on any failure. */
-  write: (patch: Partial<Appearance>) => Promise<unknown>;
-  matchMedia?: (query: string) => MediaQueryList;
-  /** D065: the host must answer within this time or the defaults are used. */
-  readTimeoutMs?: number;
-  /** Called once per failed write, after the interface has rolled back (AC21). */
-  onWriteError?: (error: unknown) => void;
+  root:HTMLElement;
+  read:()=>Promise<unknown>;
+  write:(snapshot:Appearance,expectedRevision:number)=>Promise<unknown>;
+  recover?:(token:string)=>Promise<unknown>;
+  matchMedia?:(query:string)=>MediaQueryList;
+  readTimeoutMs?:number;
+  writeTimeoutMs?:number;
+  onWriteError?:(error:unknown)=>void;
 }
-
 export interface AppearanceController {
-  init(): Promise<void>;
-  /** Applies at once, then saves. Resolves when the write queue is idle. */
-  update(patch: Partial<Appearance>): Promise<void>;
-  dispose(): void;
-  getTheme(): Theme;
-  getResolvedTheme(): ResolvedTheme;
-  getDensity(): Density;
+  init():Promise<void>;
+  getSnapshot():AppearanceState;
+  subscribe(listener:()=>void):()=>void;
+  preview(values:Appearance):void;
+  cancel():void;
+  apply():Promise<void>;
+  verify():Promise<void>;
+  recover():Promise<void>;
+  dispose():void;
 }
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('timeout')), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
+function timeout<T>(promise:Promise<T>,ms:number):Promise<T> {
+  return new Promise((resolve,reject)=>{ const timer=setTimeout(()=>reject(new Error('unconfirmed')),ms); promise.then(v=>{clearTimeout(timer);resolve(v);},e=>{clearTimeout(timer);reject(e);}); });
 }
-
-export function createAppearanceController(deps: AppearanceDeps): AppearanceController {
-  const { root, read, write, onWriteError } = deps;
-  const readTimeoutMs = deps.readTimeoutMs ?? 1000;
-
-  // B05-02 B05-08: confirmed is what the host saved, applied is what the interface shows.
-  let confirmed: Appearance = { ...DEFAULTS };
-  let applied: Appearance = { ...DEFAULTS };
-  let systemTheme: ResolvedTheme = 'light';
-  let pendingPatch: Partial<Appearance> | null = null; // B05-23
-  let drain: Promise<void> | null = null; // one write in flight at a time
-  let initPromise: Promise<void> | null = null;
-  let disposeSystemListener: (() => void) | null = null;
-  let disposed = false;
-
-  // B05-04
-  function resolveTheme(theme: Theme): ResolvedTheme {
-    return theme === 'auto' ? systemTheme : theme;
-  }
-
-  // B05-05 B05-10: styles come from CSS attribute selectors, not from here.
-  function render(): void {
-    root.setAttribute('data-theme', resolveTheme(applied.theme));
-    root.setAttribute('data-density', String(applied.density));
-  }
-
-  // B05-26: the OS appearance only matters while the preference is auto.
-  function subscribeSystemTheme(): void {
-    const query = deps.matchMedia?.(DARK_QUERY);
-    if (!query) return;
-    systemTheme = query.matches ? 'dark' : 'light';
-    const onChange = (event: MediaQueryListEvent) => {
-      systemTheme = event.matches ? 'dark' : 'light';
-      if (applied.theme === 'auto') render();
-    };
-    query.addEventListener('change', onChange);
-    disposeSystemListener = () => query.removeEventListener('change', onChange);
-  }
-
-  // B05-03 B05-09 B05-25
-  function init(): Promise<void> {
-    initPromise ??= (async () => {
-      try {
-        let stored: unknown = null;
-        try {
-          stored = await withTimeout(read(), readTimeoutMs);
-        } catch {
-          stored = null; // B05-22: unreadable, slow or failed -> defaults, never an error
-        }
-        confirmed = sanitize(stored);
-        applied = { ...confirmed };
-        if (!disposed) subscribeSystemTheme();
-        render();
-      } finally {
-        root.removeAttribute(PENDING_ATTRIBUTE);
-      }
-    })();
-    return initPromise;
-  }
-
-  async function runDrain(): Promise<void> {
-    while (pendingPatch !== null) {
-      const next = pendingPatch;
-      pendingPatch = null;
-      try {
-        confirmed = parseConfirmed(await write(next));
-      } catch (error) {
-        // B05-24: drop whatever was queued and go back to the last value the host confirmed.
-        pendingPatch = null;
-        applied = { ...confirmed };
-        render();
-        onWriteError?.(error);
-        return;
-      }
+function canonical(value:unknown):unknown {
+  if(Array.isArray(value))return value.map(canonical);
+  if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([key,item])=>[key,canonical(item)]));
+  return typeof value==='string'&&/^#[0-9a-f]{6}$/i.test(value)?value.toLowerCase():value;
+}
+export function createAppearanceController(deps:AppearanceDeps):AppearanceController {
+  let state:AppearanceState={phase:'loading',confirmed:null,draft:structuredClone(DEFAULTS),error:null};
+  let initPromise:Promise<void>|null=null;
+  let disposed=false;
+  let sequence=0;
+  let pending: {values:Appearance;revision:number}|null=null;
+  const listeners=new Set<()=>void>();
+  const query=deps.matchMedia?.('(prefers-color-scheme: dark)');
+  let rendered:Appearance=structuredClone(DEFAULTS);
+  const render=(values:Appearance)=>{
+    const mode:ResolvedTheme=values.mode==='auto' ? query?.matches?'dark':'light' : values.mode;
+    applyTheme(deps.root,values,mode); rendered=values;
+  };
+  const emit=()=>{for(const listener of listeners) listener();};
+  const restore=()=>render(state.confirmed?appearanceValues(state.confirmed):DEFAULTS);
+  const systemChange=()=>render(rendered);
+  query?.addEventListener('change',systemChange);
+  function accept(read:AppearanceRead,keepDraft=false):void {
+    if(read.kind==='ready') {
+      state={phase:'applied',confirmed:read.snapshot,draft:keepDraft?state.draft:appearanceValues(read.snapshot),error:null};
+    } else {
+      state={phase:read.kind,confirmed:null,draft:structuredClone(DEFAULTS),error:read.kind,...(read.kind==='corrupt'?{recoveryToken:read.recoveryToken}:{})};
     }
-    applied = { ...confirmed };
-    render();
+    restore(); emit();
   }
-
-  // B05-06 B05-11: apply first, then save; changes made while a write is in flight merge into one patch.
-  async function update(patch: Partial<Appearance>): Promise<void> {
-    await init();
-    applied = { ...applied, ...patch };
-    render();
-    pendingPatch = { ...pendingPatch, ...patch };
-    drain ??= runDrain().finally(() => {
-      drain = null;
-    });
-    return drain;
+  async function init():Promise<void> {
+    initPromise??=(async()=>{
+      try {const raw=await timeout(deps.read(),deps.readTimeoutMs??1000);if(!disposed)accept(parseRead(raw));}
+      catch {if(!disposed){state={...state,phase:'failed',error:'read_failed'};restore();emit();}}
+      finally {deps.root.removeAttribute('data-appearance-pending');}
+    })();return initPromise;
   }
-
+  async function verify():Promise<void> {
+    if(disposed)return;
+    const seq=++sequence;
+    try {
+      const read=parseRead(await timeout(deps.read(),deps.readTimeoutMs??1000));
+      if(disposed||seq!==sequence)return;
+      if(pending&&read.kind==='ready') {
+        const matched=read.snapshot.revision===pending.revision+1&&JSON.stringify(canonical(appearanceValues(read.snapshot)))===JSON.stringify(canonical(pending.values));
+        const draft=state.draft;
+        accept(read,!matched);
+        if(!matched){state={...state,phase:'failed',draft,error:'revision_conflict'};emit();}
+        pending=null;
+      } else { pending=null; accept(read,true); }
+    } catch {if(seq===sequence&&!disposed){state={...state,phase:'unconfirmed',error:'unconfirmed'};restore();emit();}}
+  }
   return {
-    init,
-    update,
-    dispose() {
-      disposed = true;
-      disposeSystemListener?.();
-      disposeSystemListener = null;
+    init,getSnapshot:()=>state,subscribe(listener){listeners.add(listener);return()=>listeners.delete(listener);},
+    preview(draft){
+      if(['applying','unconfirmed','corrupt','unsupported_schema'].includes(state.phase)||!state.confirmed)return;
+      try {const valid=parseAppearance(draft);render(valid);state={...state,draft:valid,phase:'drafting',error:null};}
+      catch(error){state={...state,draft,phase:'invalid',error:error instanceof Error?error.message:'invalid'};}
+      emit();
     },
-    getTheme: () => applied.theme,
-    getResolvedTheme: () => resolveTheme(applied.theme),
-    getDensity: () => applied.density, // B05-12
+    cancel(){if(state.phase==='applying')return;state={...state,draft:state.confirmed?appearanceValues(state.confirmed):structuredClone(DEFAULTS),phase:state.phase==='unconfirmed'?'unconfirmed':state.confirmed?'applied':state.phase,error:null};restore();emit();},
+    async apply(){
+      if(!state.confirmed||!['drafting','failed'].includes(state.phase))return;
+      const values=parseAppearance(state.draft); const revision=state.confirmed.revision; const seq=++sequence;
+      pending={values,revision};state={...state,phase:'applying',error:null};emit();
+      try {
+        const raw=await timeout(deps.write(values,revision),deps.writeTimeoutMs??10000);
+        if(disposed||seq!==sequence)return;
+        if(!raw||typeof raw!=='object'||!('kind'in raw)||!('snapshot'in raw))throw new Error('unconfirmed');
+        const confirmed=parseConfirmed(raw.snapshot);
+        if(raw.kind==='saved') {state={phase:'applied',confirmed,draft:appearanceValues(confirmed),error:null};}
+        else if(raw.kind==='conflict'){state={...state,confirmed,phase:'failed',error:'revision_conflict'};}
+        else throw new Error('unconfirmed');
+        pending=null;
+        restore();emit();
+      }catch(error){
+        if(disposed||seq!==sequence)return;
+        const explicit=error&&typeof error==='object'&&'kind'in error&&error.kind==='appearance_error';
+        state={...state,phase:explicit?'failed':'unconfirmed',error:explicit?'save_failed':'unconfirmed'};restore();emit();
+        if(explicit){pending=null;deps.onWriteError?.(error);}else await verify();
+      }
+    },verify,
+    async recover(){
+      if(state.phase!=='corrupt'||!state.recoveryToken||!deps.recover)return;
+      const seq=++sequence;const token=state.recoveryToken;state={...state,phase:'applying'};emit();
+      try {const snapshot=parseConfirmed(await deps.recover(token));if(seq===sequence&&!disposed)accept({kind:'ready',snapshot,repairWarnings:[]});}
+      catch {if(seq===sequence&&!disposed)await verify();}
+    },
+    dispose(){disposed=true;sequence++;query?.removeEventListener('change',systemChange);listeners.clear();},
   };
 }

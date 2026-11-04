@@ -1,0 +1,15 @@
+.task-workbench, .agent-workbench { height: 100%; min-height: 0; min-width: 0; overflow: auto; padding: var(--spacing-4) var(--spacing-5); background: var(--surface-canvas); color: var(--text-primary); container-type: inline-size; }
+.task-header { display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: var(--spacing-3); padding-bottom: var(--spacing-3); margin-bottom: var(--spacing-4); border-bottom: 1px solid var(--border-subtle); }
+.task-columns { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: var(--spacing-4); max-width: calc(1180rem / 14); margin-inline: auto; align-items: start; }
+.task-columns > section > div, .task-history > div { border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+.task-history { margin: var(--spacing-5) auto 0; max-width: calc(1180rem / 14); border-top: 1px solid var(--border-subtle); }
+.task-reading { max-width: calc(720rem / 14); min-width: 0; margin-inline: auto; overflow-wrap: anywhere; }
+.agent-columns { display: grid; grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr); gap: var(--spacing-5); max-width: calc(1180rem / 14); margin-inline: auto; min-height: 0; }
+.agent-configuration { display: flex; min-width: 0; flex-direction: column; gap: var(--spacing-3); padding-right: var(--spacing-4); border-right: 1px solid var(--border-subtle); }
+.agent-conversation { display: flex; flex-direction: column; gap: var(--spacing-3); min-width: 0; max-width: calc(720rem / 14); width: 100%; margin-inline: auto; }
+.agent-messages { min-height: 12rem; display: flex; flex-direction: column; gap: var(--spacing-5); padding-block: var(--spacing-4); overflow-wrap: anywhere; }
+.agent-engine { appearance: none; width: 100%; min-width: 0; min-height: 2rem; border: 1px solid var(--border-control); border-radius: var(--radius-md); padding: var(--spacing-2); background: var(--surface-control); color: var(--text-primary); font: inherit; }
+.agent-engine:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.agent-composer { position: sticky; bottom: 0; display: flex; flex-direction: column; align-items: stretch; gap: var(--spacing-2); padding: var(--spacing-3); border: 1px solid var(--border-control); border-radius: var(--radius-lg); background: var(--surface-panel); }
+.agent-composer > button { align-self: end; }
+@container (max-width: 760px) { .task-columns, .agent-columns { grid-template-columns: minmax(0, 1fr); } .agent-configuration { border-right: 0; padding-right: 0; padding-bottom: var(--spacing-3); border-bottom: 1px solid var(--border-subtle); } }

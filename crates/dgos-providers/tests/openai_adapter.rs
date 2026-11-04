@@ -59,24 +59,23 @@ fn structured_request() -> ChatRequest {
 }
 
 fn tool_request() -> ToolChatRequest {
-    ToolChatRequest {
-        messages: vec![ToolMessage {
-            role: "user".into(),
-            content: Some("hi".into()),
-            tool_call_id: None,
-            tool_calls: vec![],
-            reasoning: None,
-        }],
-        tools: vec![ToolDefinition {
-            kind: "function".into(),
-            function: ToolFunction {
-                name: "read_file".into(),
-                description: "Selected tool".into(),
-                parameters: json!({"type": "object"}),
-            },
-        }],
-        max_tokens: 321,
-    }
+    ToolChatRequest { temperature: None, reasoning: None, messages: vec![ToolMessage {
+        role: "user".into(),
+        content: Some("hi".into()),
+        tool_call_id: None,
+        tool_calls: vec![],
+        reasoning: None,
+        images: Vec::new(),
+    }],
+    tools: vec![ToolDefinition {
+        kind: "function".into(),
+        function: ToolFunction {
+            name: "read_file".into(),
+            description: "Selected tool".into(),
+            parameters: json!({"type": "object"}),
+        },
+    }],
+    max_tokens: 321, }
 }
 
 async fn refused_call(adapter: &OpenAIAdapter, stub: &Stub, request: ChatRequest) {

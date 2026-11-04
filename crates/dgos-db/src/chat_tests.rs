@@ -32,21 +32,18 @@ fn begin<'a>(
     regenerate_of: Option<&'a str>,
     ids: (&'a str, &'a str),
 ) -> BeginGeneration<'a> {
-    BeginGeneration {
-        user,
-        session_id: session,
-        task_id: task,
-        user_message_id: ids.0,
-        assistant_message_id: ids.1,
-        user_content: content,
-        regenerate_of,
-        provider_id: "provider-1",
-        model_id: "model-1",
-        provider_config_revision: Some(3),
-        endpoint_fingerprint: "fp-a",
-        skill: None,
-        tools: &[],
-    }
+    BeginGeneration { user,
+    session_id: session,
+    task_id: task,
+    user_message_id: ids.0,
+    assistant_message_id: ids.1,
+    user_content: content,
+    assets: &[],
+    regenerate_of,
+    provider_id: "provider-1",
+    model_id: "model-1",
+    provider_config_revision: Some(3),
+    endpoint_fingerprint: "fp-a", skills: &[], generation: { static DEFAULT: std::sync::LazyLock<dgos_types::GenerationParameters> = std::sync::LazyLock::new(Default::default); &DEFAULT }, tools: &[], }
 }
 
 fn done<'a>(
@@ -999,7 +996,8 @@ async fn pinned_skill_and_no_skill_are_exclusive_and_clearing_resets_the_confirm
             &ChatTarget {
                 provider_id: Some("p".into()),
                 model_id: Some("m".into()),
-                skill: Some(skill.clone()),
+                skills: vec![skill.clone()],
+                generation: Default::default(),
                 no_skill: true,
             },
         )
@@ -1009,7 +1007,7 @@ async fn pinned_skill_and_no_skill_are_exclusive_and_clearing_resets_the_confirm
         !session.no_skill_confirmed,
         "a pinned skill wins over the no-skill flag"
     );
-    assert_eq!(session.skill_version_id.as_deref(), Some("skill@1.0.0"));
+    assert_eq!(session.skills[0].version_id, "skill@1.0.0");
     let none = repo
         .set_target(
             ALICE,
@@ -1021,12 +1019,12 @@ async fn pinned_skill_and_no_skill_are_exclusive_and_clearing_resets_the_confirm
         )
         .await
         .unwrap();
-    assert!(none.no_skill_confirmed && none.skill_id.is_none());
+    assert!(none.no_skill_confirmed && none.skills.is_empty());
     let cleared = repo
         .set_target(ALICE, &session.id, &ChatTarget::default())
         .await
         .unwrap();
-    assert!(!cleared.no_skill_confirmed && cleared.skill_id.is_none());
+    assert!(!cleared.no_skill_confirmed && cleared.skills.is_empty());
 }
 
 #[test]
@@ -1084,4 +1082,35 @@ async fn store_errors_do_not_echo_message_text() {
         "database errors are replaced by fixed text"
     );
     assert!(!format!("{broken:?}").contains("SENTINEL-ECHO"));
+}
+
+#[tokio::test]
+async fn generation_upgrade_retains_legacy_skill_and_safe_defaults() {
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    Migrator::up(&db, Some(29)).await.unwrap();
+    db.execute_unprepared("INSERT INTO chat_sessions(id,user_id,title,skill_id,skill_version_id,skill_content_hash,created_at,updated_at) VALUES('legacy','alice','old','rewrite','rewrite@1','hash',1,1)").await.unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    let session = ChatRepository::new(db).get_session(ALICE, "legacy").await.unwrap();
+    assert_eq!(session.skills, vec![PinnedSkill { skill_id: "rewrite".into(), version_id: "rewrite@1".into(), content_hash: "hash".into() }]);
+    assert_eq!(session.generation.output_tokens(), 1024);
+    assert!(session.generation.instruction.is_empty());
+}
+
+#[tokio::test]
+async fn generation_preferences_survive_reload_but_guidance_stays_out_of_audit() {
+    let db = memory().await;
+    let repo = ChatRepository::new(db.clone());
+    let generation = dgos_types::GenerationParameters { max_tokens: Some(4096), temperature: Some(0.4), instruction: "PRIVATE-GUIDANCE".into(), ..Default::default() };
+    let target = ChatTarget { generation: generation.clone(), no_skill: true, ..Default::default() };
+    let session = repo.create_session(ALICE, &target).await.unwrap();
+    assert_eq!(ChatRepository::new(db.clone()).get_session(ALICE, &session.id).await.unwrap().generation, generation);
+    let mut params = begin(ALICE, &session.id, "controls", Some("hello"), None, ("question", "reply"));
+    params.generation = &generation;
+    repo.begin_generation(&params).await.unwrap();
+    let row = db.query_one(Statement::from_string(DbBackend::Sqlite, "SELECT generation_parameters FROM workbench_tasks WHERE id='controls'".to_owned())).await.unwrap().unwrap();
+    let audit: serde_json::Value = serde_json::from_str(&row.try_get::<String>("", "generation_parameters").unwrap()).unwrap();
+    assert_eq!(audit["max_tokens"], 4096);
+    assert_eq!(audit["temperature"], serde_json::json!(0.4_f32));
+    assert!(audit.get("instruction").is_none());
+    assert!(!audit.to_string().contains("PRIVATE-GUIDANCE"));
 }

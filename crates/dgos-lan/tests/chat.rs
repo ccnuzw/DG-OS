@@ -111,12 +111,8 @@ async fn the_remote_sees_only_chats_of_this_pairing() {
             &*env.host.skills.read().await,
             ALICE,
             CreateChatSessionInput {
-                target: Some(ChatTargetInput {
-                    provider_id: Some(env.provider_id.clone()),
-                    model_id: Some("chat-model".into()),
-                    skill_id: None,
-                    no_skill: true,
-                }),
+                target: Some(ChatTargetInput { provider_id: Some(env.provider_id.clone()),
+                model_id: Some("chat-model".into()), skill_ids: vec![], generation: Default::default(), no_skill: true, }),
             },
         )
         .await
@@ -140,7 +136,7 @@ async fn the_remote_sees_only_chats_of_this_pairing() {
         .iter()
         .map(|c| c["id"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(ids, [mine.clone()]);
+    assert_eq!(ids, std::slice::from_ref(&mine));
     for other in [&desktop.id, &theirs] {
         let read = env
             .get(&format!("/api/v1/lan/chat/sessions/{other}/messages"))

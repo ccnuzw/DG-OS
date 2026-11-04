@@ -60,12 +60,18 @@ impl UserDataDomain {
         }
     }
 
-    /// The `user_id` tables this domain removes the user's rows from. Child
-    /// tables without `user_id` (models, MCP tools, task references) are
-    /// removed through their parent ids and are not listed.
+    /// Tables keyed by `owner`, purged with the workbench domain and included in orphan accounting.
+    pub fn owner_tables(self) -> &'static [&'static str] {
+        match self {
+            UserDataDomain::Workbench => &["development_run_capabilities", "development_session_capabilities", "development_capability_heads", "development_capability_revisions", "development_selection", "development_commands", "development_runs", "development_review_observations", "development_review_baselines", "development_agent_sessions", "development_project_operations", "development_tasks", "development_projects"],
+            _ => &[],
+        }
+    }
+
+    /// Tables keyed by `user_id`; child tables without an owner column are removed through their parents.
     pub fn user_tables(self) -> &'static [&'static str] {
         match self {
-            UserDataDomain::Chat => &["chat_messages", "chat_sessions"],
+            UserDataDomain::Chat => &["chat_message_assets", "asset_leases", "chat_assets", "chat_messages", "chat_sessions"],
             UserDataDomain::Workbench => &["workbench_tasks"],
             UserDataDomain::Mcp => &["mcp_usage_logs", "mcp_connection_logs", "mcp_servers"],
             UserDataDomain::Providers => &["provider_usage_logs", "usage_logs", "providers"],
@@ -135,10 +141,11 @@ impl UserDataRepository {
     pub async fn orphan_count(&self) -> DgosResult<u64> {
         let mut total = 0;
         for domain in UserDataDomain::ORDER {
-            for table in domain.user_tables() {
+            for (table, column) in domain.user_tables().iter().map(|table| (*table, "user_id"))
+                .chain(domain.owner_tables().iter().map(|table| (*table, "owner"))) {
                 let sql = format!(
-                    "SELECT COUNT(*) AS n FROM {table} WHERE user_id NOT IN (SELECT id FROM users) \
-                     AND NOT (user_id = ? AND NOT EXISTS (SELECT 1 FROM users))"
+                    "SELECT COUNT(*) AS n FROM {table} WHERE {column} NOT IN (SELECT id FROM users) \
+                     AND NOT ({column} = ? AND NOT EXISTS (SELECT 1 FROM users))"
                 );
                 let row = self
                     .db
@@ -204,6 +211,19 @@ fn statements(domain: UserDataDomain) -> &'static [&'static str] {
     match domain {
         UserDataDomain::Chat => &[],
         UserDataDomain::Workbench => &[
+            "DELETE FROM development_run_capabilities WHERE owner = ?1",
+            "DELETE FROM development_session_capabilities WHERE owner = ?1",
+            "DELETE FROM development_capability_heads WHERE owner = ?1",
+            "DELETE FROM development_capability_revisions WHERE owner = ?1",
+            "DELETE FROM development_selection WHERE owner = ?1",
+            "DELETE FROM development_commands WHERE owner = ?1",
+            "DELETE FROM development_runs WHERE owner = ?1",
+            "DELETE FROM development_review_observations WHERE owner = ?1",
+            "DELETE FROM development_review_baselines WHERE owner = ?1",
+            "DELETE FROM development_agent_sessions WHERE owner = ?1",
+            "DELETE FROM development_project_operations WHERE owner = ?1",
+            "DELETE FROM development_tasks WHERE owner = ?1",
+            "DELETE FROM development_projects WHERE owner = ?1",
             "DELETE FROM workbench_task_skills WHERE task_id IN \
              (SELECT id FROM workbench_tasks WHERE user_id = ?1)",
             "DELETE FROM workbench_task_tools WHERE task_id IN \

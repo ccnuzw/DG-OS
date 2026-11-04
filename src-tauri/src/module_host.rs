@@ -44,6 +44,7 @@ pub enum InstructionDto {
         source: String,
         hook_timeout_ms: u64,
         replaces: Option<String>,
+        views: dgos_modules::ModuleViewContribution,
     },
     Unload {
         ticket: String,
@@ -79,6 +80,7 @@ impl From<PageInstruction> for InstructionDto {
                 source,
                 hook_timeout_ms,
                 replaces,
+                views,
             } => Self::Load {
                 ticket,
                 runtime_id,
@@ -87,6 +89,7 @@ impl From<PageInstruction> for InstructionDto {
                 source,
                 hook_timeout_ms,
                 replaces,
+                views,
             },
             PageInstruction::Unload {
                 ticket,
@@ -240,9 +243,11 @@ impl dgos_application::McpConfirmationNotifier for ChannelTransport {
         &self,
         attachment_id: &str,
         prompt: dgos_application::McpConfirmationPrompt<'_>,
-    ) -> Result<(), ()> {
+    ) -> Result<(), dgos_application::McpConfirmationDeliveryError> {
         let channels = self.channels();
-        let channel = channels.get(attachment_id).ok_or(())?;
+        let channel = channels
+            .get(attachment_id)
+            .ok_or(dgos_application::McpConfirmationDeliveryError)?;
         channel
             .send(InstructionDto::ConfirmMcp {
                 confirmation_id: prompt.confirmation_id.to_owned(),
@@ -253,6 +258,7 @@ impl dgos_application::McpConfirmationNotifier for ChannelTransport {
             })
             .map_err(|_| {
                 tracing::warn!("module MCP confirmation could not be delivered");
+                dgos_application::McpConfirmationDeliveryError
             })
     }
 
@@ -465,6 +471,9 @@ pub fn handle_page_load<R: tauri::Runtime>(
         if let Some(streams) = webview.try_state::<crate::provider_streams::ProviderStreams>() {
             streams.cancel_owner(webview.label());
         }
+        if let Some(transcriptions) = webview.try_state::<crate::chat_media::Transcriptions>() {
+            transcriptions.cancel_owner(webview.label());
+        }
         // Same for chat: the received part is saved as interrupted (D074).
         if let Some(chat) = webview.try_state::<dgos_workbench::ChatManager>() {
             chat.cancel_window(webview.label());
@@ -482,6 +491,9 @@ pub fn handle_window_event<R: tauri::Runtime>(
         }
         if let Some(streams) = window.try_state::<crate::provider_streams::ProviderStreams>() {
             streams.cancel_owner(window.label());
+        }
+        if let Some(transcriptions) = window.try_state::<crate::chat_media::Transcriptions>() {
+            transcriptions.cancel_owner(window.label());
         }
         if let Some(chat) = window.try_state::<dgos_workbench::ChatManager>() {
             chat.cancel_window(window.label());
@@ -545,13 +557,14 @@ mod tests {
             source: "export default 1;".into(),
             hook_timeout_ms: 5000,
             replaces: Some("rt-0".into()),
+            views: dgos_modules::ModuleViewContribution::default(),
         });
         assert_eq!(
             serde_json::to_value(load).unwrap(),
             json!({
                 "kind": "load", "ticket": "t1", "runtimeId": "rt-1", "moduleId": "mod-a",
                 "version": "1.0.0", "source": "export default 1;", "hookTimeoutMs": 5000,
-                "replaces": "rt-0"
+                "replaces": "rt-0", "views": {"layout":"document","capability":"single"}
             })
         );
         assert_eq!(

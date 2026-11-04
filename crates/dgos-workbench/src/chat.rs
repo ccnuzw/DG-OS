@@ -16,6 +16,7 @@ use dgos_db::{
     sea_orm::DatabaseConnection, BeginGeneration, ChatMessage, ChatRepository, ChatSession,
     ChatStoreError, ChatTarget, FinalizeGeneration, Finalized, History, PinnedSkill, SearchHit,
 };
+use dgos_db::{ActivityPermit, MaintenanceGate};
 use dgos_mcp::McpManager;
 use dgos_providers::ProviderManager;
 use dgos_skills::SkillsManager;
@@ -73,6 +74,10 @@ pub enum ChatError {
     ProviderNotSelected,
     InvalidSearchQuery,
     ToolTurnInvalid,
+    AssetInvalid,
+    AssetLimitExceeded,
+    AssetNotFound,
+    AssetReferenced,
     Provider(u32),
     Internal,
 }
@@ -95,6 +100,10 @@ impl ChatError {
             Self::ProviderNotSelected => 1006015,
             Self::InvalidSearchQuery => 1006016,
             Self::ToolTurnInvalid => 1006017,
+            Self::AssetInvalid => 1006018,
+            Self::AssetLimitExceeded => 1006019,
+            Self::AssetNotFound => 1006020,
+            Self::AssetReferenced => 1006021,
             Self::Provider(code) => *code,
             Self::Internal => 1000000,
         }
@@ -118,6 +127,10 @@ impl ChatError {
             Self::ProviderNotSelected => "provider_not_selected",
             Self::InvalidSearchQuery => "invalid_search_query",
             Self::ToolTurnInvalid => "tool_turn_invalid",
+            Self::AssetInvalid => "asset_invalid",
+            Self::AssetLimitExceeded => "asset_limit_exceeded",
+            Self::AssetNotFound => "asset_not_found",
+            Self::AssetReferenced => "asset_referenced",
             Self::Provider(_) => "provider_error",
             Self::Internal => "internal_error",
         }
@@ -154,6 +167,7 @@ impl From<ChatStoreError> for ChatError {
             ChatStoreError::NotRegenerable => Self::MessageNotRegenerable,
             ChatStoreError::InvalidCursor => Self::InvalidSearchQuery,
             ChatStoreError::InvalidTitle => Self::InvalidMessageContent,
+            ChatStoreError::AssetNotFound => Self::InvalidMessageContent,
             ChatStoreError::Db(_) => Self::Internal,
         }
     }
@@ -172,7 +186,9 @@ pub struct ChatTargetInput {
     #[serde(default)]
     pub model_id: Option<String>,
     #[serde(default)]
-    pub skill_id: Option<String>,
+    pub skill_ids: Vec<String>,
+    #[serde(default)]
+    pub generation: dgos_types::GenerationParameters,
     #[serde(default)]
     pub no_skill: bool,
 }
@@ -209,7 +225,9 @@ pub struct UpdateChatSessionTargetInput {
     #[serde(default)]
     pub model_id: Option<String>,
     #[serde(default)]
-    pub skill_id: Option<String>,
+    pub skill_ids: Vec<String>,
+    #[serde(default)]
+    pub generation: dgos_types::GenerationParameters,
     #[serde(default)]
     pub no_skill: bool,
 }
@@ -252,6 +270,10 @@ pub struct SendChatInput {
     /// non-streaming tool turn; nothing is remembered for the next send.
     #[serde(default)]
     pub tools: Vec<ToolSelection>,
+    /// Controlled asset ids attached to this message (V2 D133 §2). Validated against the account's
+    /// stored assets and linked in the same transaction as the message.
+    #[serde(default)]
+    pub asset_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -409,6 +431,8 @@ pub struct GenerationJob {
     active: Arc<Active>,
     /// Frees the registry slot if the job is dropped without running.
     _guard: ReleaseGuard,
+    /// Held from admission to the terminal write, so VACUUM cannot run during a generation.
+    _permit: ActivityPermit,
 }
 
 impl GenerationJob {
@@ -439,13 +463,15 @@ pub struct ChatManager {
     stopping: Arc<AtomicBool>,
     db: DatabaseConnection,
     tool_turns: Arc<Mutex<HashMap<String, Arc<ToolTurn>>>>,
+    gate: MaintenanceGate,
 }
 
 struct Prepared {
     provider: Provider,
     model: Model,
     fingerprint: String,
-    skill: Option<PreparedSkill>,
+    skills: Vec<PreparedSkill>,
+    generation: dgos_types::GenerationParameters,
 }
 
 struct PreparedSkill {
@@ -454,13 +480,16 @@ struct PreparedSkill {
 }
 
 impl ChatManager {
-    pub fn new(db: DatabaseConnection) -> Self {
+    /// `gate` is the process-wide maintenance gate shared with every other writer (D133 item 5).
+    /// Callers pass the same instance they manage as state; it is never created here.
+    pub fn new(db: DatabaseConnection, gate: MaintenanceGate) -> Self {
         Self {
             repo: ChatRepository::new(db.clone()),
             db,
             active: Arc::new(Mutex::new(HashMap::new())),
             stopping: Arc::new(AtomicBool::new(false)),
             tool_turns: Arc::new(Mutex::new(HashMap::new())),
+            gate,
         }
     }
 
@@ -670,7 +699,8 @@ impl ChatManager {
             &ChatTargetInput {
                 provider_id: input.provider_id,
                 model_id: input.model_id,
-                skill_id: input.skill_id,
+                skill_ids: input.skill_ids,
+                generation: input.generation,
                 no_skill: input.no_skill,
             },
         )
@@ -776,7 +806,7 @@ impl ChatManager {
     ) -> Result<Sent> {
         let task_id = canonical_uuid(&input.client_request_id)?;
         let content = input.content.trim();
-        if content.is_empty() || content.len() > MAX_MESSAGE_BYTES {
+        if (content.is_empty() && input.asset_ids.is_empty()) || content.len() > MAX_MESSAGE_BYTES {
             return Err(ChatError::InvalidMessageContent);
         }
         if self.stopping.load(Ordering::SeqCst) {
@@ -795,8 +825,10 @@ impl ChatManager {
             model_id: "",
             provider_config_revision: None,
             endpoint_fingerprint: "",
-            skill: None,
+            skills: &[],
+            generation: &dgos_types::GenerationParameters::default(),
             tools: &[],
+            assets: &input.asset_ids,
         };
         if let Some(begun) = self.repo.find_replay(&probe).await? {
             return Ok(replayed(task_id, begun));
@@ -845,19 +877,29 @@ impl ChatManager {
         } else {
             (crate::tools::TOOL_HOST_POLICY, tool_reserve(&selected))
         };
-        let (messages, dropped) = assemble_with(
+        let assets = crate::assets::ChatAssets::new(self.db.clone());
+        let current_assets = assets.for_send(user, &input.asset_ids).await?;
+        let history_assets = assets.for_messages(user, &history.rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>()).await?;
+        let (messages, dropped) = assemble_assets(
             policy,
             reserve,
-            prepared.skill.as_ref().map(|s| &s.content),
+            &prepared.skills.iter().map(|s| &s.content).collect::<Vec<_>>(),
             &history,
             content,
             prepared.model.context_window,
+            &prepared.generation,
+            &current_assets,
+            &history_assets,
         )?;
+        validate_image_support(&messages, &prepared.model)?;
         let plan = (!selected.is_empty()).then(|| ToolPlan {
             messages: messages.clone(),
             tools: selected,
             window: prepared.model.context_window,
+            generation: prepared.generation.clone(),
         });
+        // Shared-database maintenance (D133 item 5) refuses new generations at once instead of waiting.
+        let permit = self.gate.admit().map_err(|_| ChatError::GenerationInProgress)?;
         let active = self.register(user, &task_id, &input.session_id, window)?;
         let guard = ReleaseGuard {
             registry: self.active.clone(),
@@ -882,8 +924,10 @@ impl ChatManager {
                 model_id: &prepared.model.model_id,
                 provider_config_revision: Some(prepared.provider.config_revision),
                 endpoint_fingerprint: &prepared.fingerprint,
-                skill: prepared.skill.as_ref().map(|s| &s.pin),
+                skills: &prepared.skills.iter().map(|s| s.pin.clone()).collect::<Vec<_>>(),
+                generation: &prepared.generation,
                 tools: &tool_refs,
+                assets: &input.asset_ids,
             })
             .await;
         let begun = match begun {
@@ -912,10 +956,11 @@ impl ChatManager {
                 provider_id: prepared.provider.id,
                 model_id: prepared.model.model_id,
                 revision: Some(prepared.provider.config_revision),
-                request: wire_request(messages),
+                request: wire_request(messages, &prepared.generation),
                 plan,
                 active,
                 _guard: guard,
+                _permit: permit,
             }),
         })
     }
@@ -964,8 +1009,10 @@ impl ChatManager {
             model_id: "",
             provider_config_revision: None,
             endpoint_fingerprint: "",
-            skill: None,
+            skills: &[],
+            generation: &dgos_types::GenerationParameters::default(),
             tools: &[],
+            assets: &[],
         };
         if let Some(begun) = self.repo.find_replay(&probe).await? {
             return Ok(replayed(task_id, begun));
@@ -996,12 +1043,25 @@ impl ChatManager {
             .repo
             .history(user, &session_id, Some(question.seq), MAX_CONTEXT_BYTES)
             .await?;
-        let (messages, dropped) = assemble(
-            prepared.skill.as_ref().map(|s| &s.content),
+        let assets = crate::assets::ChatAssets::new(self.db.clone());
+        let mut ids: Vec<_> = history.rows.iter().map(|row| row.id.clone()).collect();
+        ids.push(question.id.clone());
+        let mut history_assets = assets.for_messages(user, &ids).await?;
+        let current_assets = history_assets.remove(&question.id).unwrap_or_default();
+        let (messages, dropped) = assemble_assets(
+            HOST_POLICY,
+            0,
+            &prepared.skills.iter().map(|s| &s.content).collect::<Vec<_>>(),
             &history,
             &question.content,
             prepared.model.context_window,
+            &prepared.generation,
+            &current_assets,
+            &history_assets,
         )?;
+        validate_image_support(&messages, &prepared.model)?;
+        // Same admission as send: maintenance refuses new generations at once instead of waiting.
+        let permit = self.gate.admit().map_err(|_| ChatError::GenerationInProgress)?;
         let active = self.register(user, &task_id, &session_id, window)?;
         let guard = ReleaseGuard {
             registry: self.active.clone(),
@@ -1024,8 +1084,10 @@ impl ChatManager {
                 model_id: &prepared.model.model_id,
                 provider_config_revision: Some(prepared.provider.config_revision),
                 endpoint_fingerprint: &prepared.fingerprint,
-                skill: prepared.skill.as_ref().map(|s| &s.pin),
+                skills: &prepared.skills.iter().map(|s| s.pin.clone()).collect::<Vec<_>>(),
+                generation: &prepared.generation,
                 tools: &[],
+                assets: &[],
             })
             .await;
         let begun = match begun {
@@ -1054,10 +1116,11 @@ impl ChatManager {
                 provider_id: prepared.provider.id,
                 model_id: prepared.model.model_id,
                 revision: Some(prepared.provider.config_revision),
-                request: wire_request(messages),
+                request: wire_request(messages, &prepared.generation),
                 plan: None,
                 active,
                 _guard: guard,
+                _permit: permit,
             }),
         })
     }
@@ -1085,7 +1148,9 @@ impl ChatManager {
             caller: BuiltinCaller::Workbench,
             request_id: task_id.to_owned(),
         };
-        let skill = resolve_skill(skills, user, &session, &provenance).await?;
+        session.generation.validate(Some(&model))?;
+        validate_generation_profile(&provider, &session.generation)?;
+        let skills = resolve_skills(skills, user, &session, &provenance).await?;
         let (fingerprint, host) = fingerprint(&provider.provider_type, &provider.base_url)?;
         let last = self
             .repo
@@ -1100,7 +1165,8 @@ impl ChatManager {
             provider,
             model,
             fingerprint,
-            skill,
+            skills,
+            generation: session.generation,
         })
     }
 
@@ -1127,6 +1193,7 @@ impl ChatManager {
             plan,
             active,
             _guard,
+            _permit,
         } = job;
         if plan.is_some() {
             // A tool turn belongs to `run_tool_turn`; running it as plain text would drop its tools.
@@ -1339,14 +1406,10 @@ fn canonical_uuid(raw: &str) -> Result<String> {
         .map_err(|_| ChatError::InvalidMessageContent)
 }
 
-fn wire_request(messages: Vec<WireMessage>) -> ChatRequest {
-    ChatRequest {
-        messages,
-        temperature: None,
-        max_tokens: Some(OUTPUT_TOKENS),
-        stream: Some(true),
-        ..Default::default()
-    }
+fn wire_request(messages: Vec<WireMessage>, generation: &dgos_types::GenerationParameters) -> ChatRequest {
+    let mut request = ChatRequest { messages, stream: Some(true), ..Default::default() };
+    generation.apply(&mut request);
+    request
 }
 
 /// Splits `text` so the first part fits `room` bytes on a character boundary; `true` when
@@ -1483,13 +1546,15 @@ fn outcome(buffer: &str, end: End) -> Outcome {
 /// system -> skill -> whole completed turns -> current message. Turns are dropped from the oldest
 /// until the rest fits; a message is never truncated and the host system text is the only
 /// system content. Returns the messages and the number of completed turns left out.
+#[cfg(test)]
 fn assemble(
-    skill: Option<&dgos_skills::PreparedContent>,
+    skills: &[&dgos_skills::PreparedContent],
     history: &History,
     current: &str,
     context_window: Option<i32>,
+    generation: &dgos_types::GenerationParameters,
 ) -> Result<(Vec<WireMessage>, u32)> {
-    assemble_with(HOST_POLICY, 0, skill, history, current, context_window)
+    assemble_assets(HOST_POLICY, 0, skills, history, current, context_window, generation, &[], &HashMap::new())
 }
 
 /// Serialized size of the selected tool definitions plus a margin for the request's JSON
@@ -1500,28 +1565,41 @@ fn tool_reserve(tools: &[crate::tools::SelectedTool]) -> usize {
     serde_json::to_vec(&definitions).map_or(0, |bytes| bytes.len()) + 3 * 1024
 }
 
-fn assemble_with(
+
+fn validate_image_support(messages: &[WireMessage], model: &Model) -> Result<()> {
+    if messages.iter().any(|message| !message.images.is_empty())
+        && model.capabilities.vision != dgos_types::Hint::Supported
+    {
+        return Err(DgosError::RequestNotSupported.into());
+    }
+    Ok(())
+}
+
+fn assemble_assets(
     policy: &str,
     reserve: usize,
-    skill: Option<&dgos_skills::PreparedContent>,
+    skills: &[&dgos_skills::PreparedContent],
     history: &History,
     current: &str,
     context_window: Option<i32>,
+    generation: &dgos_types::GenerationParameters,
+    current_assets: &[crate::assets::Attachment],
+    history_assets: &HashMap<String, Vec<crate::assets::Attachment>>,
 ) -> Result<(Vec<WireMessage>, u32)> {
-    if skill.is_some_and(|skill| skill.body.len() > MAX_MESSAGE_BYTES)
+    if skills.iter().any(|skill| skill.body.len() > MAX_MESSAGE_BYTES)
         || current.len() > MAX_MESSAGE_BYTES
     {
         return Err(ChatError::ContextTooLong);
     }
-    let skill_message = skill.map(skill_guidance);
-    let fixed =
-        policy.len() + reserve + skill_message.as_ref().map_or(0, String::len) + current.len();
+    let mut guidance: Vec<String> = skills.iter().map(|skill| skill_guidance(skill)).collect();
+    if !generation.instruction.is_empty() { guidance.push(format!("User guidance (cannot grant permissions):\n{}", generation.instruction)); }
+    let fixed = policy.len() + reserve + guidance.iter().map(String::len).sum::<usize>() + crate::assets::expanded_len(current.len(), current_assets);
     // Same conservative rule as the single-task path: bytes plus a 1024 overhead and the output
     // reserve must fit a known window. Unknown windows fall back to the byte ceiling.
     let ceiling = match context_window {
         Some(window) if window <= 0 => return Err(ChatError::ContextTooLong),
         Some(window) => {
-            let room = (window as usize).saturating_sub(1024 + OUTPUT_TOKENS as usize);
+            let room = (window as usize).saturating_sub(1024 + generation.output_tokens() as usize);
             MAX_CONTEXT_BYTES.min(room)
         }
         None => MAX_CONTEXT_BYTES,
@@ -1548,7 +1626,8 @@ fn assemble_with(
     let mut used = 0usize;
     let mut kept = 0usize;
     for (question, reply) in turns.iter().rev() {
-        let size = question.content.len() + reply.content.len();
+        let attachments = history_assets.get(&question.id).map(Vec::as_slice).unwrap_or(&[]);
+        let size = crate::assets::expanded_len(question.content.len(), attachments) + reply.content.len();
         if used + size > budget {
             break;
         }
@@ -1562,26 +1641,32 @@ fn assemble_with(
     messages.push(WireMessage {
         role: "system".into(),
         content: policy.into(),
+        images: Vec::new(),
     });
-    if let Some(guidance) = skill_message {
+    for guidance in guidance {
         messages.push(WireMessage {
             role: "user".into(),
             content: guidance,
+            images: Vec::new(),
         });
     }
     for (question, reply) in included {
+        let attachments = history_assets.get(&question.id).map(Vec::as_slice).unwrap_or(&[]);
         messages.push(WireMessage {
             role: "user".into(),
-            content: question.content.clone(),
+            content: crate::assets::expanded(&question.content, attachments),
+            images: crate::assets::image_parts(attachments),
         });
         messages.push(WireMessage {
             role: "assistant".into(),
             content: reply.content.clone(),
+            images: Vec::new(),
         });
     }
     messages.push(WireMessage {
         role: "user".into(),
-        content: current.to_owned(),
+        content: crate::assets::expanded(current, current_assets),
+        images: crate::assets::image_parts(current_assets),
     });
     Ok((messages, dropped as u32))
 }
@@ -1654,44 +1739,33 @@ async fn resolve_model(
     Ok((provider, model))
 }
 
-async fn resolve_skill(
+pub(super) fn validate_generation_profile(provider: &Provider, generation: &dgos_types::GenerationParameters) -> Result<()> {
+    let vendor_id = provider.config.as_ref().and_then(|v| v.get("vendor_id")).and_then(Value::as_str).unwrap_or_else(|| dgos_providers::vendor::infer_vendor(&provider.provider_type, &provider.base_url));
+    let profile = dgos_providers::vendor::resolve_profile(vendor_id, &provider.provider_type, &provider.base_url)?;
+    profile.check_sampling(generation.temperature, generation.reasoning.as_ref())?;
+    if let Some(reasoning) = &generation.reasoning {
+        let mapped = profile.reasoning_params(reasoning)?;
+        if reasoning.budget_tokens.is_some() && !matches!(mapped, dgos_providers::vendor::ReasoningParams::AnthropicBudget { .. }) { return Err(DgosError::RequestNotSupported.into()); }
+        if matches!(mapped, dgos_providers::vendor::ReasoningParams::AnthropicBudget { budget } if budget >= generation.output_tokens()) { return Err(DgosError::RequestNotSupported.into()); }
+    }
+    Ok(())
+}
+
+async fn resolve_skills(
     skills: &SkillsManager,
     user: &str,
     session: &ChatSession,
     provenance: &ExecutionProvenance,
-) -> Result<Option<PreparedSkill>> {
-    match (
-        &session.skill_id,
-        &session.skill_version_id,
-        &session.skill_content_hash,
-    ) {
-        (Some(skill_id), Some(version_id), Some(hash)) => {
-            let content = skills
-                .prepare_content_skill_with_provenance(skill_id, user, Some(provenance))
-                .await
-                .map_err(|_| ChatError::SkillUnavailable)?;
-            // Same version and bytes as pinned, or blocked: never a silent newer version.
-            if format!("{}@{}", content.skill_id, content.version) != *version_id
-                || content.content_hash != *hash
-            {
-                return Err(ChatError::SkillUnavailable);
-            }
-            if content.body.len() > MAX_MESSAGE_BYTES {
-                return Err(ChatError::ContextTooLong);
-            }
-            Ok(Some(PreparedSkill {
-                pin: PinnedSkill {
-                    skill_id: skill_id.clone(),
-                    version_id: version_id.clone(),
-                    content_hash: hash.clone(),
-                },
-                content,
-            }))
-        }
-        _ if session.no_skill_confirmed => Ok(None),
-        // Neither a pinned version nor an explicit "no skill": the user has to choose.
-        _ => Err(ChatError::SkillUnavailable),
+) -> Result<Vec<PreparedSkill>> {
+    if session.skills.is_empty() && !session.no_skill_confirmed { return Err(ChatError::SkillUnavailable); }
+    let mut prepared = Vec::with_capacity(session.skills.len());
+    for pin in &session.skills {
+        let content = skills.prepare_content_skill_with_provenance(&pin.skill_id, user, Some(provenance)).await.map_err(|_| ChatError::SkillUnavailable)?;
+        if format!("{}@{}", content.skill_id, content.version) != pin.version_id || content.content_hash != pin.content_hash { return Err(ChatError::SkillUnavailable); }
+        if content.body.len() > MAX_MESSAGE_BYTES { return Err(ChatError::ContextTooLong); }
+        prepared.push(PreparedSkill { pin: pin.clone(), content });
     }
+    Ok(prepared)
 }
 
 async fn resolve_target(
@@ -1700,34 +1774,31 @@ async fn resolve_target(
     user: &str,
     target: &ChatTargetInput,
 ) -> Result<ChatTarget> {
-    if target.skill_id.is_some() && target.no_skill {
+    if !target.skill_ids.is_empty() && target.no_skill {
         return Err(ChatError::InvalidMessageContent);
     }
+    target.generation.validate(None)?;
+    let mut seen = std::collections::HashSet::new();
+    if target.skill_ids.iter().any(|id| !seen.insert(id)) { return Err(ChatError::InvalidMessageContent); }
     match (&target.provider_id, &target.model_id) {
         (None, None) => {}
         (Some(provider), Some(model)) => {
-            resolve_model(providers, user, Some(provider), Some(model)).await?;
+            let (provider, model) = resolve_model(providers, user, Some(provider), Some(model)).await?;
+            target.generation.validate(Some(&model))?;
+            validate_generation_profile(&provider, &target.generation)?;
         }
         _ => return Err(ChatError::ProviderNotSelected),
     }
-    let skill = match &target.skill_id {
-        Some(id) => {
-            let content = skills
-                .prepare_content_skill_with_provenance(id, user, None)
-                .await
-                .map_err(|_| ChatError::SkillUnavailable)?;
-            Some(PinnedSkill {
-                skill_id: content.skill_id.clone(),
-                version_id: format!("{}@{}", content.skill_id, content.version),
-                content_hash: content.content_hash.clone(),
-            })
-        }
-        None => None,
-    };
+    let mut pins = Vec::with_capacity(target.skill_ids.len());
+    for id in &target.skill_ids {
+        let content = skills.prepare_content_skill_with_provenance(id, user, None).await.map_err(|_| ChatError::SkillUnavailable)?;
+        pins.push(PinnedSkill { skill_id: content.skill_id.clone(), version_id: format!("{}@{}", content.skill_id, content.version), content_hash: content.content_hash });
+    }
     Ok(ChatTarget {
         provider_id: target.provider_id.clone(),
         model_id: target.model_id.clone(),
-        skill,
+        skills: pins,
+        generation: target.generation.clone(),
         no_skill: target.no_skill,
     })
 }
@@ -1739,6 +1810,7 @@ mod tests {
 
     fn row(seq: i64, role: &str, content: &str) -> HistoryRow {
         HistoryRow {
+            id: format!("m{seq}"),
             seq,
             role: role.into(),
             content: content.into(),
@@ -1767,7 +1839,7 @@ mod tests {
             ],
             2,
         );
-        let (messages, dropped) = assemble(None, &h, "now", None).unwrap();
+        let (messages, dropped) = assemble(&[], &h, "now", None, &dgos_types::GenerationParameters::default()).unwrap();
         assert_eq!(dropped, 0);
         assert_eq!(
             roles(&messages),
@@ -1793,7 +1865,7 @@ mod tests {
             3,
         );
         // 24 KiB minus the host text leaves room for two 8 KiB turns, not three.
-        let (messages, dropped) = assemble(None, &h, "now", None).unwrap();
+        let (messages, dropped) = assemble(&[], &h, "now", None, &dgos_types::GenerationParameters::default()).unwrap();
         assert_eq!(dropped, 1);
         let contents: Vec<_> = messages.iter().map(|m| m.content.as_str()).collect();
         assert!(!contents.contains(&"old question"));
@@ -1817,7 +1889,7 @@ mod tests {
             ],
             2,
         );
-        let (messages, dropped) = assemble(None, &h, "now", None).unwrap();
+        let (messages, dropped) = assemble(&[], &h, "now", None, &dgos_types::GenerationParameters::default()).unwrap();
         let contents: Vec<_> = messages.iter().map(|m| m.content.as_str()).collect();
         assert!(contents.contains(&"answered question") && contents.contains(&"answer"));
         assert!(!contents.contains(&"failed question"));
@@ -1831,26 +1903,26 @@ mod tests {
         let h = history(vec![], 0);
         let too_long = "y".repeat(MAX_MESSAGE_BYTES + 1);
         assert_eq!(
-            assemble(None, &h, &too_long, None).unwrap_err(),
+            assemble(&[], &h, &too_long, None, &Default::default()).unwrap_err(),
             ChatError::ContextTooLong
         );
         // A known small window leaves no room even for the host text.
         assert_eq!(
-            assemble(None, &h, "hi", Some(2048)).unwrap_err(),
+            assemble(&[], &h, "hi", Some(2048), &Default::default()).unwrap_err(),
             ChatError::ContextTooLong
         );
         assert_eq!(
-            assemble(None, &h, "hi", Some(0)).unwrap_err(),
+            assemble(&[], &h, "hi", Some(0), &Default::default()).unwrap_err(),
             ChatError::ContextTooLong
         );
-        assert!(assemble(None, &h, "hi", Some(32768)).is_ok());
+        assert!(assemble(&[], &h, "hi", Some(32768), &Default::default()).is_ok());
     }
 
     #[test]
     fn assemble_with_the_whole_history_dropped_still_succeeds_when_the_current_message_fits() {
         let huge = "z".repeat(40 * 1024);
         let h = history(vec![row(1, "user", "q"), row(2, "assistant", &huge)], 1);
-        let (messages, dropped) = assemble(None, &h, "now", None).unwrap();
+        let (messages, dropped) = assemble(&[], &h, "now", None, &dgos_types::GenerationParameters::default()).unwrap();
         assert_eq!(dropped, 1);
         assert_eq!(messages.len(), 2);
     }
@@ -1958,7 +2030,7 @@ mod tests {
         let db = dgos_db::sea_orm::Database::connect("sqlite::memory:")
             .await
             .unwrap();
-        let manager = ChatManager::new(db);
+        let manager = ChatManager::new(db, dgos_db::MaintenanceGate::new());
         let first = manager.register("alice", "task-1", "s1", "main").unwrap();
         assert_eq!(
             manager
@@ -1987,7 +2059,7 @@ mod tests {
         let db = dgos_db::sea_orm::Database::connect("sqlite::memory:")
             .await
             .unwrap();
-        let manager = ChatManager::new(db);
+        let manager = ChatManager::new(db, dgos_db::MaintenanceGate::new());
         let alice = manager.register("alice", "t1", "s1", "main").unwrap();
         assert_eq!(
             manager.register("alice", "t2", "s2", "main").unwrap_err(),
@@ -2022,7 +2094,7 @@ mod tests {
         let db = dgos_db::sea_orm::Database::connect("sqlite::memory:")
             .await
             .unwrap();
-        let manager = ChatManager::new(db);
+        let manager = ChatManager::new(db, dgos_db::MaintenanceGate::new());
         let a = manager.register("alice", "t1", "s1", "main").unwrap();
         let b = manager.register("bob", "t2", "s2", "other").unwrap();
         a.stop("process_interrupted");

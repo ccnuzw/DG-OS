@@ -5,9 +5,13 @@
   "entry": "entry.js",
   "artifact": {
     "version": "1.0.0",
-    "sha256": "278d137aa113f188bfb33bab68f9bba09df4177d115281bf0e659bde0af05bd6"
+    "sha256": "ae0042e02ee7ecab3348b4dde5a769131cdd2b113d7e68ebdfb23633199b00ea"
   },
   "permissions": [
     "providers.call"
-  ]
+  ],
+  "views": {
+    "layout": "document",
+    "capability": "multiple"
+  }
 }

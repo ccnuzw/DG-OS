@@ -10,7 +10,7 @@ impl ProviderCredentialVault for OsProviderCredentialVault {
     async fn store(&self, scope: &ProviderCredentialScope, secret: SecretValue) -> DgosResult<()> {
         let account = scope.account();
         os_credentials::run("provider.store", move || {
-            let entry = keyring::Entry::new(PROVIDER_SERVICE, &account).map_err(|error| error)?;
+            let entry = keyring::Entry::new(PROVIDER_SERVICE, &account)?;
             entry.set_password(secret.expose())
         })
         .await
@@ -24,10 +24,7 @@ impl ProviderCredentialVault for OsProviderCredentialVault {
     async fn load(&self, scope: &ProviderCredentialScope) -> DgosResult<SecretValue> {
         let account = scope.account();
         let value = os_credentials::run("provider.load", move || {
-            let value = keyring::Entry::new(PROVIDER_SERVICE, &account)
-                .map_err(|error| error)?
-                .get_password()
-                .map_err(|error| error)?;
+            let value = keyring::Entry::new(PROVIDER_SERVICE, &account)?.get_password()?;
             Ok(value)
         })
         .await
@@ -43,7 +40,7 @@ impl ProviderCredentialVault for OsProviderCredentialVault {
     async fn remove(&self, scope: &ProviderCredentialScope) -> DgosResult<()> {
         let account = scope.account();
         os_credentials::run("provider.remove", move || {
-            let entry = keyring::Entry::new(PROVIDER_SERVICE, &account).map_err(|error| error)?;
+            let entry = keyring::Entry::new(PROVIDER_SERVICE, &account)?;
             match entry.delete_credential() {
                 Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
                 Err(error) => Err(error),

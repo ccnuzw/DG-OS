@@ -1,0 +1,25 @@
+/*
+ * FR-005 §4.2 layout geometry, extended by the V2-FR-009 design baseline.
+ *
+ * Geometry not represented by the spacing scale: workspace/session tabs and navigation width.
+ *
+ * N is the design-baseline pixel value: `calc(Nrem / 14)` is N px at 100% density and scales with the
+ * five density steps (D064). The `max()` guards keep the smallest chrome usable at 75%, where geometry
+ * shrinks by 25% but text stops at the 11px floor.
+ */
+:root {
+  /* Workspace/session tabs: 33px / 38px at 100%, preserving text at high density. */
+  --tabbar-height: max(26px, calc(33rem / 14));
+  --session-tabbar-height: max(30px, calc(38rem / 14));
+
+  /* Navigation rail follows FR-009 final-render baseline. */
+  --sidebar-width: calc(188rem / 14);
+  --sidebar-width-collapsed: calc(54rem / 14);
+
+  /* Settings and readable work areas follow FR-009's final rendered measurements. */
+  --settings-nav-width: calc(150rem / 14);
+  --launcher-width: calc(760rem / 14);
+  --conversation-width: calc(720rem / 14);
+  --document-width: calc(720rem / 14);
+
+}

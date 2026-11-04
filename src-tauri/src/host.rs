@@ -1,7 +1,26 @@
 use crate::session::SessionResolver;
+use dgos_db::repositories::maintenance_gate::{ActivityPermit, MaintenanceGate};
 use dgos_types::{BuiltinCaller, DgosError, HostExecutionContext, HostSession};
 use std::sync::Arc;
 use tauri::{Manager, WebviewWindow};
+
+/// Keeps maintenance admission alive through the complete command, including awaited writes.
+pub struct Admission<T> {
+    value: T,
+    _permit: Option<ActivityPermit>,
+}
+impl<T> std::ops::Deref for Admission<T> {
+    type Target = T;
+    fn deref(&self) -> &T { &self.value }
+}
+pub fn admitted<T>(window: &WebviewWindow, value: T) -> Result<Admission<T>, DgosError> {
+    let permit = match window.try_state::<MaintenanceGate>() {
+        Some(gate) => Some(gate.admit().map_err(|_| DgosError::ProviderRequestRejected)?),
+        None if cfg!(any(test, feature = "webview-smoke")) => None,
+        None => return Err(DgosError::InternalError("maintenance admission unavailable".into())),
+    };
+    Ok(Admission { value, _permit: permit })
+}
 
 /// The pre-account identity, for tests and smoke fixtures that seed data.
 /// Production commands resolve the user through `SessionResolver`.
@@ -25,6 +44,8 @@ pub enum Capability {
     Appearance,
     /// FR-010 host LAN management (contract §14.8). Settings caller only.
     LanManage,
+    /// Storage statistics and cleanup (D133 item 5). Settings caller only.
+    StorageManage,
 }
 
 /// Entry gate of the renderer commands: trusted main window, then the
@@ -34,7 +55,7 @@ pub fn context(
     window: &WebviewWindow,
     caller: BuiltinCaller,
     capability: Capability,
-) -> Result<HostExecutionContext, DgosError> {
+) -> Result<Admission<HostExecutionContext>, DgosError> {
     let url = window.url().map_err(|_| DgosError::PermissionDenied)?;
     if !trusted_main_window(window.label(), &url, cfg!(debug_assertions)) {
         return Err(DgosError::PermissionDenied);
@@ -43,7 +64,21 @@ pub fn context(
     if !allows(caller, capability) {
         return Err(DgosError::PermissionDenied);
     }
-    Ok(HostExecutionContext::for_builtin(session.user_id(), caller))
+    let value = HostExecutionContext::for_builtin(session.user_id(), caller);
+    // Storage owns its exclusive lease; its cleanup writes acquire their own activity permit.
+    if matches!(capability, Capability::StorageManage) {
+        Ok(Admission { value, _permit: None })
+    } else {
+        admitted(window, value)
+    }
+}
+
+
+/// Admits one write that already passed its own session gate (`workspace_catalog_session` or
+/// `module_session`). Same non-blocking `MaintenanceGate::admit`; the caller holds the permit for
+/// the whole write.
+pub fn admit_activity(app: &tauri::AppHandle) -> Result<ActivityPermit, DgosError> {
+    app.state::<MaintenanceGate>().admit().map_err(|_| DgosError::ProviderRequestRejected)
 }
 
 /// The resolver's current session. A host without a resolver fails closed.
@@ -89,13 +124,19 @@ fn is_settings_route(url: &tauri::Url) -> bool {
 pub fn module_session(
     window: &WebviewWindow,
     capability: Capability,
-) -> Result<HostSession, DgosError> {
+) -> Result<Admission<HostSession>, DgosError> {
     let context = context(window, BuiltinCaller::Settings, capability)?;
     let url = window.url().map_err(|_| DgosError::PermissionDenied)?;
     if !is_settings_route(&url) {
         return Err(DgosError::PermissionDenied);
     }
-    Ok(HostSession::for_user(context.user_id()))
+    Ok(Admission { value: HostSession::for_user(context.user_id()), _permit: context._permit })
+}
+
+/// D128 read-only workspace policy: trusted main plus host session, no Settings route privilege.
+pub fn workspace_catalog_session(window: &WebviewWindow) -> Result<Admission<HostSession>, DgosError> {
+    module_host_window(window)?;
+    admitted(window, resolved_session(window)?)
 }
 
 /// Entry gate for the module host bridge commands (D046). Window label and
@@ -132,9 +173,9 @@ pub fn account_window(window: &WebviewWindow) -> Result<(), DgosError> {
 /// user is derived here, never taken from the renderer; the confirmation
 /// broker then requires the host-issued id to belong to that user. Not
 /// isolation: scripts sharing the page's realm can call it too (D050).
-pub fn module_confirmation_session(window: &WebviewWindow) -> Result<HostSession, DgosError> {
+pub fn module_confirmation_session(window: &WebviewWindow) -> Result<Admission<HostSession>, DgosError> {
     module_host_window(window)?;
-    resolved_session(window)
+    admitted(window, resolved_session(window)?)
 }
 
 // Internal route policy, not a sandbox for code sharing the host's JavaScript realm.

@@ -112,6 +112,7 @@ impl ModulePermissionRepository {
     /// Register a module row for the broker. This stores only a validated
     /// manifest summary; it does not install or execute a module package.
     #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn register_module(
         &self,
         id: impl Into<String>,

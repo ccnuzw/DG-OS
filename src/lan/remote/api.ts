@@ -20,8 +20,8 @@ export interface ChatSession {
   title_source: 'auto' | 'user';
   provider_id: string | null;
   model_id: string | null;
-  skill_id: string | null;
-  skill_version_id: string | null;
+  skills: { skill_id: string; version_id: string; content_hash: string }[];
+  generation: { temperature?: number | null; reasoning?: { effort?: string; budget_tokens?: number } | null; max_tokens?: number | null; instruction?: string };
   no_skill_confirmed: boolean;
   created_at: number;
   updated_at: number;

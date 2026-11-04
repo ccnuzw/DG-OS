@@ -299,6 +299,112 @@ async fn scoped_provider_crud_and_transactional_order_preserve_normal_lifecycle(
     assert_eq!(repo.list("local-user").await.unwrap().len(), 1);
 }
 
+#[tokio::test]
+async fn provider_delete_after_usage_is_atomic_and_account_scoped() {
+    let db = database().await;
+    let repo = ProviderRepository::new(db.clone());
+    let models = ModelRepository::new(db.clone());
+    let usage = crate::UsageLogRepository::new(db.clone());
+    for (id, owner) in [("target", "local"), ("sibling", "local"), ("foreign", "other")] {
+        repo.create_with_models(
+            id.into(),
+            config(id),
+            owner.into(),
+            Some(format!("{id}-reference")),
+            vec![model(id)],
+        )
+        .await
+        .unwrap();
+        usage.create(id, id, owner, 2, 1, 10, true, None).await.unwrap();
+    }
+    // Upgraded databases can still contain the original usage rows as well
+    // as their authoritative copies. Both FKs must allow the physical delete.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "INSERT INTO usage_logs (id, provider_id, model_id, user_id, request_tokens, \
+         response_tokens, total_tokens, latency_ms, success, error_code, created_at) \
+         SELECT id, provider_id, model_id, user_id, request_tokens, response_tokens, \
+         total_tokens, latency_ms, success, error_code, created_at FROM provider_usage_logs",
+    ))
+    .await
+    .unwrap();
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "INSERT INTO chat_sessions (id, user_id, title, provider_id, model_id, created_at, updated_at) \
+         VALUES ('history-chat', 'local', 'Retained history', 'target', 'target', 1, 1); \
+         INSERT INTO workbench_tasks (id, user_id, app_id, provider_id, model_id, status, created_at) \
+         VALUES ('history-task', 'local', 'fixture', 'target', 'target', 'succeeded', 1)",
+    ))
+    .await
+    .unwrap();
+
+    assert!(matches!(
+        repo.delete("target", "other").await,
+        Err(DgosError::ProviderNotFound(_))
+    ));
+    assert_eq!(usage.list("local", None).await.unwrap().len(), 2);
+    assert_eq!(models.list("target").await.unwrap().len(), 1);
+    assert!(repo.pending_credential_cleanup().await.unwrap().is_empty());
+
+    // A late failure must restore usage rows and the cleanup outbox too.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "CREATE TRIGGER reject_provider_delete BEFORE DELETE ON providers \
+         WHEN OLD.id = 'target' BEGIN SELECT RAISE(ABORT, 'fixture failure'); END",
+    ))
+    .await
+    .unwrap();
+    assert!(matches!(
+        repo.delete("target", "local").await,
+        Err(DgosError::DatabaseError(_))
+    ));
+    assert!(repo.get("target", "local").await.unwrap().is_some());
+    assert_eq!(models.list("target").await.unwrap().len(), 1);
+    assert_eq!(usage.list("local", None).await.unwrap().len(), 2);
+    assert!(repo.pending_credential_cleanup().await.unwrap().is_empty());
+    let legacy = db.query_one(Statement::from_string(
+        DbBackend::Sqlite,
+        "SELECT COUNT(*) AS n FROM usage_logs WHERE provider_id = 'target'",
+    )).await.unwrap().unwrap();
+    assert_eq!(legacy.try_get::<i64>("", "n").unwrap(), 1);
+    db.execute(Statement::from_string(DbBackend::Sqlite, "DROP TRIGGER reject_provider_delete"))
+        .await
+        .unwrap();
+
+    repo.delete("target", "local").await.unwrap();
+    assert!(repo.get("target", "local").await.unwrap().is_none());
+    assert!(models.list("target").await.unwrap().is_empty());
+    assert!(matches!(
+        repo.model_snapshot("target", "local", "target").await,
+        Err(DgosError::ProviderNotFound(_))
+    ));
+    assert_eq!(repo.list("local").await.unwrap()[0].id, "sibling");
+    assert_eq!(repo.list("other").await.unwrap()[0].id, "foreign");
+    assert_eq!(usage.list("local", None).await.unwrap()[0].provider_id, "sibling");
+    assert_eq!(usage.list("other", None).await.unwrap()[0].provider_id, "foreign");
+    for id in ["sibling", "foreign"] {
+        assert_eq!(models.list(id).await.unwrap().len(), 1);
+    }
+    let legacy = db.query_all(Statement::from_string(
+        DbBackend::Sqlite,
+        "SELECT provider_id FROM usage_logs ORDER BY provider_id",
+    )).await.unwrap();
+    assert_eq!(legacy.len(), 2);
+    assert_eq!(legacy[0].try_get::<String>("", "provider_id").unwrap(), "foreign");
+    assert_eq!(legacy[1].try_get::<String>("", "provider_id").unwrap(), "sibling");
+    let cleanup = repo.pending_credential_cleanup().await.unwrap();
+    assert_eq!(cleanup.len(), 1);
+    assert_eq!(cleanup[0].provider_id, "target");
+    assert_eq!(cleanup[0].user_id, "local");
+    assert_eq!(cleanup[0].credential_ref, "target-reference");
+    let history = db.query_one(Statement::from_string(
+        DbBackend::Sqlite,
+        "SELECT (SELECT COUNT(*) FROM chat_sessions WHERE provider_id = 'target') + \
+         (SELECT COUNT(*) FROM workbench_tasks WHERE provider_id = 'target') AS n",
+    )).await.unwrap().unwrap();
+    assert_eq!(history.try_get::<i64>("", "n").unwrap(), 2);
+}
+
 fn host_model(model_id: &str) -> Model {
     build_model(
         "openai_compatible",

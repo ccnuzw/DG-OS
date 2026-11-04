@@ -46,6 +46,54 @@ fn admit(
         })
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModuleProviderEntry {
+    provider_id: String,
+    display_name: String,
+    models: Vec<ModuleModelEntry>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModuleModelEntry {
+    model_id: String,
+    display_name: String,
+    kind: String,
+}
+
+/// D133: local metadata only; the existing providers.call grant is checked
+/// independently on both this read and every subsequent execution.
+#[tauri::command]
+pub async fn module_list_provider_catalog(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    attachment_id: String,
+    route: String,
+    call_id: String,
+) -> CommandResponse<Vec<ModuleProviderEntry>> {
+    let _permit = match host::admit_activity(&app) { Ok(permit) => permit, Err(error) => return CommandResponse::from(Err(error)) };
+    let call = match admit(&app, &window, &attachment_id, &route, &call_id) {
+        Ok(call) => call,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    let dispatch = app.state::<ModuleCapabilityDispatchService>();
+    let providers = app.state::<dgos_providers::ProviderManager>();
+    let result = dispatch.run_bound(call, ModulePermission::ProvidersCall, Duration::from_secs(10), |grant| async move {
+        let mut entries = Vec::new();
+        for provider in providers.list_providers(&grant.user_id).await?.into_iter().filter(|p| p.enabled) {
+            let models = providers.list_models(&provider.id, &grant.user_id).await?.into_iter().map(|model| ModuleModelEntry {
+                model_id: model.model_id,
+                display_name: model.model_name,
+                kind: model.model_type,
+            }).collect();
+            entries.push(ModuleProviderEntry { provider_id: provider.id, display_name: provider.name, models });
+        }
+        Ok(entries)
+    }).await;
+    CommandResponse::from(result)
+}
+
 /// What a module receives from `skills.prepare`: the pinned content of one
 /// installed, enabled skill. No local path, no execution (D016).
 #[derive(serde::Serialize)]
@@ -68,6 +116,7 @@ pub async fn module_prepare_skill(
     call_id: String,
     skill_id: String,
 ) -> CommandResponse<ModuleSkillContent> {
+    let _permit = match host::admit_activity(&app) { Ok(permit) => permit, Err(error) => return CommandResponse::from(Err(error)) };
     let call = match admit(&app, &window, &attachment_id, &route, &call_id) {
         Ok(call) => call,
         Err(error) => return CommandResponse::from(Err(error)),
@@ -117,6 +166,7 @@ pub async fn module_network_request(
     call_id: String,
     request: dgos_application::ModuleNetworkRequestInput,
 ) -> CommandResponse<dgos_application::ModuleNetworkResponse> {
+    let _permit = match host::admit_activity(&app) { Ok(permit) => permit, Err(error) => return CommandResponse::from(Err(error)) };
     let call = match admit(&app, &window, &attachment_id, &route, &call_id) {
         Ok(call) => call,
         Err(error) => return CommandResponse::from(Err(error)),
@@ -144,6 +194,7 @@ pub async fn module_storage_get(
     call_id: String,
     key: String,
 ) -> CommandResponse<Option<serde_json::Value>> {
+    let _permit = match host::admit_activity(&app) { Ok(permit) => permit, Err(error) => return CommandResponse::from(Err(error)) };
     let call = match admit(&app, &window, &attachment_id, &route, &call_id) {
         Ok(call) => call,
         Err(error) => return CommandResponse::from(Err(error)),
@@ -173,6 +224,7 @@ pub async fn module_storage_set(
     key: String,
     value: serde_json::Value,
 ) -> CommandResponse<()> {
+    let _permit = match host::admit_activity(&app) { Ok(permit) => permit, Err(error) => return CommandResponse::from(Err(error)) };
     let call = match admit(&app, &window, &attachment_id, &route, &call_id) {
         Ok(call) => call,
         Err(error) => return CommandResponse::from(Err(error)),
@@ -200,6 +252,7 @@ pub async fn module_storage_delete(
     call_id: String,
     key: String,
 ) -> CommandResponse<()> {
+    let _permit = match host::admit_activity(&app) { Ok(permit) => permit, Err(error) => return CommandResponse::from(Err(error)) };
     let call = match admit(&app, &window, &attachment_id, &route, &call_id) {
         Ok(call) => call,
         Err(error) => return CommandResponse::from(Err(error)),
@@ -226,6 +279,7 @@ pub async fn module_storage_list(
     route: String,
     call_id: String,
 ) -> CommandResponse<Vec<dgos_db::ModuleStorageEntry>> {
+    let _permit = match host::admit_activity(&app) { Ok(permit) => permit, Err(error) => return CommandResponse::from(Err(error)) };
     let call = match admit(&app, &window, &attachment_id, &route, &call_id) {
         Ok(call) => call,
         Err(error) => return CommandResponse::from(Err(error)),
@@ -248,6 +302,7 @@ pub async fn module_storage_list(
 /// dialog (never module UI) and the host itself mints and consumes the
 /// one-time MCP token, so the module cannot obtain or supply one. The 120 s
 /// deadline runs from admission and includes the wait for the user.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn module_call_mcp_tool(
     app: tauri::AppHandle,
@@ -259,6 +314,7 @@ pub async fn module_call_mcp_tool(
     tool_name: String,
     arguments: serde_json::Value,
 ) -> CommandResponse<dgos_application::ModuleMcpResult> {
+    let _permit = match host::admit_activity(&app) { Ok(permit) => permit, Err(error) => return CommandResponse::from(Err(error)) };
     let call = match admit(&app, &window, &attachment_id, &route, &call_id) {
         Ok(call) => call,
         Err(error) => return CommandResponse::from(Err(error)),

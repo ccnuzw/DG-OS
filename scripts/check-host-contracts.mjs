@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { checkReactVersions } from './react-version.mjs';
 
 // Static contract checks supplement compilation; they do not prove WebView isolation.
-const files = ['provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'modules', 'module_host', 'module_capabilities', 'appearance', 'accounts', 'lan', 'locale'];
+const files = ['provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'chat_assets', 'agents', 'development_review', 'development_runtime', 'development_capabilities', 'desktop', 'cli', 'storage', 'modules', 'module_host', 'module_capabilities', 'appearance', 'accounts', 'lan', 'locale'];
 // FR-010 / interface contract §14.8: the eight LAN host commands. Exact parameter lists; no user
 // id, caller, session token or access code. Every one enters through the Settings caller with
 // `Capability::LanManage`, which `allows` grants to Settings only.
@@ -45,6 +45,7 @@ const callCommands = new Map([
 // D093: the five non-Provider capabilities, one typed command each, in `module_capabilities.rs`.
 // Same exact allow-list rule; every one must admit through the channel before the dispatch service.
 const capabilityCommands = new Map([
+  ['module_list_provider_catalog', new Set(['app', 'window', 'attachment_id', 'route', 'call_id'])],
   ['module_storage_get', new Set(['app', 'window', 'attachment_id', 'route', 'call_id', 'key'])],
   ['module_storage_set', new Set(['app', 'window', 'attachment_id', 'route', 'call_id', 'key', 'value'])],
   ['module_storage_delete', new Set(['app', 'window', 'attachment_id', 'route', 'call_id', 'key'])],
@@ -85,7 +86,8 @@ const auditParams = new Set(['app', 'window', 'module_id', 'before', 'limit']);
 // a user nor reach any other setting.
 const appearanceParams = new Map([
   ['get_appearance_preferences', new Set(['app', 'window'])],
-  ['set_appearance_preferences', new Set(['app', 'window', 'patch'])],
+  ['set_appearance_preferences', new Set(['app', 'window', 'snapshot', 'expected_revision'])],
+  ['recover_appearance_preferences', new Set(['app', 'window', 'recovery_token'])],
 ]);
 // D118: host-level language preference. It is available before account sign-in,
 // so it uses the trusted main-window gate rather than a user-session gate.
@@ -135,7 +137,7 @@ const chatExactParams = new Map([
 let commands = 0;
 for (const file of files) {
   const source = readFileSync(new URL(`../src-tauri/src/commands/${file}.rs`, import.meta.url), 'utf8');
-  const handlers = [...source.matchAll(/#\[tauri::command\]\s+pub async fn (\w+)\(([\s\S]*?)\) -> [\s\S]*?\{([\s\S]*?)(?=\n#\[|\npub struct |\n#\[cfg|$)/g)];
+  const handlers = [...source.matchAll(/#\[tauri::command\]\s+pub (?:async )?fn (\w+)\(([\s\S]*?)\) -> [\s\S]*?\{([\s\S]*?)(?=\n#\[|\npub struct |\n#\[cfg|$)/g)];
   assert.ok(handlers.length, `${file}: no command handlers checked`);
   for (const [, name, args, body] of handlers) {
     assert.match(args, /window:\s*WebviewWindow/, `${name}: host window context is required`);
@@ -210,6 +212,34 @@ for (const file of files) {
       if (exact.includes('input')) {
         assert.match(args, /input:\s*\w+Input\b/, `${name}: input must be a typed *Input struct`);
       }
+    } else if (file === 'desktop') {
+      const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
+      const exact = name === 'get_desktop_preferences' ? ['app', 'window'] : name === 'set_desktop_preferences' ? ['app', 'window', 'values', 'expected_revision'] : null;
+      assert.ok(exact, `${name}: unknown desktop command`);
+      assert.deepEqual([...names].sort(), exact.sort(), `${name}: fixed desktop parameters only`);
+      assert.match(body, /host::workspace_catalog_session\(\s*&window\s*\)/, `${name}: dedicated workspace session gate`);
+    } else if (file === 'cli') {
+      const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
+      const exact = name === 'get_cli_preferences' ? ['app', 'window'] : name === 'set_cli_preferences' ? ['app', 'window', 'paths', 'expected_revision'] : name === 'probe_cli' ? ['app', 'window', 'tool', 'path'] : null;
+      assert.ok(exact, `${name}: unknown CLI command`);
+      assert.deepEqual([...names].sort(), exact.sort(), `${name}: fixed CLI parameters only`);
+      assert.match(body, /host::workspace_catalog_session\(\s*&window\s*\)/, `${name}: dedicated session gate`);
+    } else if (file === 'storage') {
+      const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
+      const exact = ['get_storage_overview', 'preview_vacuum'].includes(name) ? ['app', 'window']
+        : ['preview_storage_cleanup', 'execute_storage_cleanup', 'execute_vacuum'].includes(name) ? ['app', 'window', 'input'] : null;
+      assert.ok(exact, `${name}: unknown storage command`);
+      assert.deepEqual([...names].sort(), exact.sort(), `${name}: fixed storage parameters only`);
+      assert.match(body, /host::module_session\(\s*&window,\s*Capability::StorageManage\s*\)/, `${name}: Settings storage session gate`);
+      if (exact.includes('input')) assert.match(args, /input:\s*\w+Input\b/, `${name}: typed cleanup input only`);
+    } else if (file === 'chat_assets') {
+      const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
+      const exact = ['import_chat_asset', 'transcribe_chat_audio'].includes(name) ? ['app', 'window', 'input']
+        : ['preview_chat_asset', 'remove_chat_asset'].includes(name) ? ['app', 'window', 'asset_id']
+          : name === 'cancel_chat_transcription' ? ['app', 'window', 'request_id'] : null;
+      assert.ok(exact, `${name}: unknown media command`);
+      assert.deepEqual([...names].sort(), exact.sort(), `${name}: fixed media parameters only`);
+      assert.match(body, /host::context\(\s*&window,\s*BuiltinCaller::Workbench,\s*Capability::TasksRun\s*\)/, `${name}: Workbench media session gate`);
     } else if (file === 'appearance') {
       const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
       const allowed = appearanceParams.get(name);
@@ -235,10 +265,13 @@ for (const file of files) {
       for (const param of names) {
         assert.ok(allowed.has(param), `${name}: module command parameter \`${param}\` is not allowed`);
       }
-      assert.match(body, /host::module_session\(\s*&window,/, `${name}: missing host entry gate`);
+      if (name === 'read_workspace_app_catalog') {
+        assert.deepEqual([...names].sort(), ['app', 'window'], `${name}: no renderer identity or selectors`);
+        assert.match(body, /host::workspace_catalog_session\(\s*&window\s*\)/, `${name}: dedicated read-only host gate`);
+      } else assert.match(body, /host::module_session\(\s*&window,/, `${name}: missing host entry gate`);
     } else {
       assert.doesNotMatch(args, /\b(?:user_id|module_id|caller)\s*:/, `${name}: identity belongs to the host`);
-      assert.match(body, /host::context\(\s*&window,/, `${name}: missing host entry gate`);
+      if (!['development_runtime', 'development_capabilities'].includes(file)) assert.match(body, /host::context\(\s*&window,/, `${name}: missing host entry gate`);
       const exact = providerExactParams.get(name);
       if (file === 'provider_commands' && exact) {
         const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
@@ -275,6 +308,59 @@ for (const file of files) {
         const expected = skillExactParams.get(name);
         assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: parameter list must be exactly ${expected.join(', ')}`);
         assert.match(body, /host::context\(\s*&window,\s*BuiltinCaller::Settings,\s*Capability::SkillsManage\s*\)/, `${name}: Skills Batch B commands use the Settings SkillsManage gate`);
+      }
+      if (file === 'development_review') {
+        const expected = ['list_development_files', 'read_development_file', 'read_development_diff'].includes(name) ? ['app', 'window', 'input']
+          : ['read_development_review', 'list_development_runs'].includes(name) ? ['app', 'window', 'task_id'] : null;
+        assert.ok(expected, `${name}: unrecognized review command`);
+        const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
+        assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: review parameter allow-list`);
+        assert.match(body, /host::context\(\s*&window,\s*BuiltinCaller::Workbench,\s*Capability::TasksRun/, `${name}: review host gate`);
+        assert.match(body, /agent_session\(\)/, `${name}: review account lease`);
+        assert.match(body, /lease\.is_cancelled\(\)/, `${name}: review revoked lease`);
+      }
+      if (file === 'development_runtime') {
+        const expected = ['save_development_file','save_development_commands','start_development_process'].includes(name) || ['write_development_terminal','resize_development_terminal'].includes(name) ? ['app','window','input']
+          : ['read_development_commands','read_development_process','list_development_processes','stop_development_process'].includes(name) ? ['app','window', name === 'read_development_commands' ? 'project_id' : name === 'list_development_processes' ? 'task_id' : 'id']
+            : name === 'open_development_external' ? ['app','window','input'] : null;
+        assert.ok(expected, `${name}: unrecognized development runtime command`);
+        const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
+        assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: runtime parameter allow-list`);
+        const runtimeCaller = source.match(/\nfn caller\([\s\S]*?\n\}/)?.[0];
+        assert.ok(runtimeCaller, 'development runtime: missing shared caller gate');
+        assert.match(runtimeCaller, /host::context\(\s*window,\s*BuiltinCaller::Workbench,\s*Capability::TasksRun/, `${name}: runtime Workbench host gate`);
+        assert.match(runtimeCaller, /agent_session\(\)/, `${name}: runtime account lease`);
+        assert.match(runtimeCaller, /session\.user_id\(\) != context\.user_id\(\) \|\| lease\.is_cancelled\(\)/, `${name}: runtime owner and lease must agree`);
+        const callerAt = body.search(/caller\(\s*&app,\s*&window\)/);
+        assert.ok(callerAt >= 0 && callerAt < body.indexOf('state::<AgentManager>'), `${name}: runtime caller gate must precede manager access`);
+        assert.match(body, /lease(?:\.clone\(\))?/, `${name}: runtime lease must be retained`);
+      }
+      if (file === 'development_capabilities') {
+        const expected = ['read_development_capabilities','revoke_development_capabilities'].includes(name) ? ['app','window','project_id']
+          : ['save_development_capabilities','respond_development_capability_confirmation'].includes(name) ? ['app','window','input']
+          : ['get_development_session_capabilities','list_development_capability_confirmations'].includes(name) ? ['app','window','session_id']
+          : name === 'read_development_capability_catalog' ? ['app','window'] : null;
+        assert.ok(expected, `${name}: unrecognized project capability command`);
+        const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
+        assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: project capability parameter allow-list`);
+        const capabilityCaller = source.match(/\nfn caller\([\s\S]*?\n\}/)?.[0];
+        assert.match(capabilityCaller ?? '', /host::context\(\s*window,\s*BuiltinCaller::Workbench,\s*Capability::TasksRun/, `${name}: project capability host gate`);
+        assert.match(capabilityCaller, /session\.user_id\(\) != context\.user_id\(\) \|\| lease\.is_cancelled\(\)/, `${name}: project capability account lease`);
+        assert.match(body, /caller\(\s*&app,\s*&window\)\?/, `${name}: project capability caller required`);
+      }
+      if (file === 'agents') {
+        const expected = ['open_agent_session', 'send_agent_message', 'respond_agent_request', 'create_development_project', 'update_development_project', 'save_development_task', 'select_development_context', 'classify_agent_session'].includes(name)
+          ? ['app', 'window', 'input']
+          : ['list_agent_sessions', 'read_development_workspace'].includes(name)
+            ? ['app', 'window']
+            : ['get_agent_session', 'interrupt_agent_session', 'close_agent_session'].includes(name)
+              ? ['app', 'window', 'session_id']
+              : name === 'inspect_development_project' ? ['app', 'window', 'project_id'] : null;
+        assert.ok(expected, `${name}: unrecognized Agent command`);
+        const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
+        assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: parameter allow-list changed`);
+        assert.match(body, /host::context\(\s*&window,\s*BuiltinCaller::Workbench,\s*Capability::TasksRun/, `${name}: Agent commands require Workbench TasksRun`);
+        assert.doesNotMatch(body, /sandbox|credential|provider_secret/i, `${name}: renderer must not control process authority`);
       }
     }
     commands += 1;

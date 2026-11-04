@@ -458,6 +458,8 @@ pub fn run_provider_stream() {
     std::fs::create_dir_all(dir.join("modules")).expect("temp dir");
     let url = format!("sqlite://{}?mode=rwc", dir.join("dgos.db").display());
     let upstream = Arc::new(Upstream::default());
+    let maintenance = dgos_db::MaintenanceGate::new();
+    let maintenance_for_state = maintenance.clone();
     let (providers, provider_id, service) = tauri::async_runtime::block_on(async {
         let db = dgos_db::establish_connection(&url)
             .await
@@ -482,7 +484,8 @@ pub fn run_provider_stream() {
             .expect("provider");
         let providers = ProviderManager::with_vault(&url, vault)
             .await
-            .expect("manager");
+            .expect("manager")
+            .with_maintenance(maintenance.clone());
         let publisher = Arc::new(ModulePublisher::new(dir.join("modules"), db.clone()));
         let permissions = Arc::new(ModulePermissionRepository::new(db));
         let capabilities = HostCapabilityService::with_publisher(permissions, publisher);
@@ -497,6 +500,7 @@ pub fn run_provider_stream() {
     context.config_mut().app.windows.clear();
 
     let result = tauri::Builder::default()
+        .manage(maintenance_for_state)
         .manage(Pending::default())
         .manage(crate::session::SessionResolver::no_accounts())
         .manage(LoadEvents(load_sender))

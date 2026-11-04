@@ -7,12 +7,12 @@
 //! WKWebView; all management, confirmation, tool and recovery actions go
 //! through production Tauri commands.
 
-use super::{eval, finish, goto, wait_load, Checks, LoadEvents, Pending};
+use super::{eval, finish, ipc, wait_load, Checks, LoadEvents, Pending};
 use crate::commands;
 use async_trait::async_trait;
 use dgos_db::sea_orm_migration::MigratorTrait;
 use dgos_mcp::{
-    CreateMcpServerRequest, CredentialScope, HttpConfig, McpCallPolicy, McpCredentialVault,
+    CreateMcpServerRequest, CredentialScope, HttpConfig, McpCredentialVault,
     McpError, McpManager, SecretToken, StdioConfig, TransportKind,
 };
 use serde_json::{json, Value};
@@ -28,13 +28,17 @@ const USER: &str = "default-user";
 const MAIN: &str = "main";
 const SMOKE_WATCHDOG: Duration = Duration::from_secs(600);
 
-struct AllowCalls;
-#[async_trait]
-impl McpCallPolicy for AllowCalls {
-    async fn allows_call(&self, _: &str, _: &str, _: &str) -> bool {
-        true
-    }
-}
+// Match the shipped accessibility labels without changing the user's locale.
+const BROWSER_LABELS: &str = r#"
+  const language = document.documentElement.getAttribute('data-locale') || document.documentElement.lang;
+  const locale = language === 'en' ? 'en-US' : language === 'zh' ? 'zh-CN' : language;
+  const labels = {
+    'zh-CN': { inspect: '检查 / 调用', review: '检查工具调用', confirm: '确认并调用工具', completed: '工具已完成', error: '工具返回错误', result: '工具结果', close: '关闭', recovery: 'MCP 连接恢复已停止' },
+    'en-US': { inspect: 'Inspect / call', review: 'Review tool call', confirm: 'Confirm and call tool', completed: 'Tool completed', error: 'Tool reported an error', result: 'Tool result', close: 'Close', recovery: 'MCP connection recovery stopped' },
+  }[locale];
+  if (!labels) throw new Error('unsupported MCP page locale: ' + locale);
+"#;
+
 
 #[derive(Default)]
 struct MemoryVault(Mutex<std::collections::HashMap<String, String>>);
@@ -85,18 +89,21 @@ async fn official_http(prefix: &str) -> (Child, String) {
         .kill_on_drop(true)
         .spawn()
         .expect("start official SDK MCP server");
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
     let mut line = String::new();
-    tokio::time::timeout(
-        Duration::from_secs(10),
-        BufReader::new(child.stdout.take().unwrap()).read_line(&mut line),
-    )
-    .await
-    .expect("official SDK server startup timeout")
-    .expect("official SDK server output");
+    let bytes = tokio::time::timeout(Duration::from_secs(10), stdout.read_line(&mut line))
+        .await
+        .expect("official SDK server startup timeout")
+        .expect("official SDK server output");
+    assert!(bytes > 0, "official SDK server exited before readiness");
+    // The SDK can log after readiness; dropping its reader can cause EPIPE.
+    tauri::async_runtime::spawn(async move {
+        let _ = tokio::io::copy(&mut stdout, &mut tokio::io::sink()).await;
+    });
     (child, line.trim().to_owned())
 }
 
-async fn build_fixture() -> Result<Fixture, String> {
+async fn build_fixture(maintenance: dgos_db::MaintenanceGate, resolver: Arc<crate::session::SessionResolver>) -> Result<Fixture, String> {
     let filesystem = std::env::var("DGOS_OFFICIAL_FILESYSTEM_SERVER")
         .map(PathBuf::from)
         .map_err(|_| {
@@ -120,9 +127,9 @@ async fn build_fixture() -> Result<Fixture, String> {
     let vault = Arc::new(MemoryVault::default());
     let manager = Arc::new(McpManager::with_policy_and_vault(
         db.clone(),
-        Arc::new(AllowCalls),
+        Arc::new(commands::DesktopMcpPolicy(resolver)),
         vault,
-    ));
+    ).with_maintenance(maintenance));
     let fs_server = manager
         .create_server(
             USER,
@@ -148,7 +155,7 @@ async fn build_fixture() -> Result<Fixture, String> {
     manager
         .connect(USER, &fs_server.id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("official filesystem connect: {e}"))?;
     let (sdk_child, url) = official_http(&prefix).await;
     let http_server = manager
         .create_server(
@@ -179,7 +186,7 @@ async fn build_fixture() -> Result<Fixture, String> {
     manager
         .connect(USER, &http_server.id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("official SDK HTTP connect: {e}"))?;
     Ok(Fixture {
         root,
         manager,
@@ -190,51 +197,99 @@ async fn build_fixture() -> Result<Fixture, String> {
 }
 
 async fn call_in_browser(app: &AppHandle, server_name: &str, tool_name: &str, args: &str) -> Value {
-    let result = eval(app, MAIN, &format!(r#"
-      const wait = (ms) => new Promise(r => setTimeout(r, ms));
-      const until = async (fn, ms=15000) => {{ const t=Date.now(); while(Date.now()-t<ms) {{ const v=fn(); if(v) return v; await wait(50); }} return false; }};
+    let select = eval(app, MAIN, &format!(r#"
+      {BROWSER_LABELS}
       const txt = e => (e?.textContent || '').trim();
-      const buttons = () => [...document.querySelectorAll('button')];
-      const select = buttons().find(b => b.getAttribute('aria-label') === 'Select {server_name}');
-      if (!select) throw new Error('server row missing'); select.click();
-      const tool = await until(() => [...document.querySelectorAll('article')].find(a => a.querySelector('code')?.textContent === {tool_name:?}));
-      const ready = tool?.querySelector('button'); if (!ready) throw new Error('tool button missing');
-      ready.click();
-      const dialog = await until(() => document.querySelector('[role=dialog]')); if (!dialog) throw new Error('tool dialog missing');
-      const input = dialog.querySelector('textarea'); if (!input) throw new Error('arguments input missing');
-      const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(input, {args:?}); input.dispatchEvent(new Event('input', {{bubbles:true}}));
-      [...dialog.querySelectorAll('button')].find(b => txt(b) === 'Review tool call').click();
-      const review = await until(() => dialog.querySelector('section[aria-label="Review tool call"]')); if (!review) throw new Error('review surface missing');
-      const reviewed = txt(review).includes({server_name:?}) && txt(review).includes({tool_name:?})
-        && txt(review).includes(JSON.stringify(JSON.parse({args:?}), null, 2));
-      const confirm = await until(() => [...dialog.querySelectorAll('button')].find(b => txt(b) === 'Confirm and call tool')); if (!confirm) throw new Error('confirmation button missing');
-      confirm.click();
-      const result = await until(() => txt(dialog).includes('Tool completed') || txt(dialog).includes('Tool reported an error'), 20000);
-      return {{result: !!result, reviewed, text: txt(dialog)}};
-    "#, server_name = server_name, tool_name = tool_name, args = args)).await;
-    if result["ok"] == true {
-        result["value"].clone()
-    } else {
-        json!({"__error":result["error"]})
-    }
+      const row = [...document.querySelectorAll('.mcp-server-row button[aria-pressed]')].find(b => [...b.querySelectorAll('span')].some(s => txt(s) === {server_name:?}));
+      if (!row) throw new Error('server row missing');
+      row.click();
+      const t = Date.now();
+      while (Date.now()-t < 15000) {{
+        const tool = [...document.querySelectorAll('.mcp-server-detail article')].find(a => txt(a.querySelector('code')) === {tool_name:?});
+        const button = [...(tool?.querySelectorAll('button') || [])].find(b => txt(b) === labels.inspect);
+        if (button) {{ button.click(); return true; }}
+        await new Promise(r => setTimeout(r, 50));
+      }}
+      throw new Error('tool button missing');
+    "#)).await;
+    if select["ok"] != true { return json!({"phase":"select tool", "failure":select}); }
+    let review = eval(app, MAIN, &format!(r#"
+      {BROWSER_LABELS}
+      const txt = e => (e?.textContent || '').trim();
+      const t = Date.now();
+      let dialog;
+      while (Date.now()-t < 15000) {{
+        dialog = document.querySelector('[role=dialog]');
+        if (dialog?.querySelector('textarea')) break;
+        await new Promise(r => setTimeout(r, 50));
+      }}
+      const input = dialog?.querySelector('textarea');
+      if (!input) throw new Error('arguments input missing');
+      const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+      set.call(input, {args:?}); input.dispatchEvent(new Event('input', {{bubbles:true}}));
+      return true;
+    "#)).await;
+    if review["ok"] != true { return json!({"phase":"enter arguments", "failure":review}); }
+    let review = eval(app, MAIN, &format!(r#"
+      {BROWSER_LABELS}
+      const txt = e => (e?.textContent || '').trim();
+      const dialog = document.querySelector('[role=dialog]');
+      const button = [...dialog.querySelectorAll('button')].find(b => txt(b) === labels.review);
+      if (!button) throw new Error('review button missing'); button.click();
+      const t = Date.now();
+      while (Date.now()-t < 15000) {{
+        const review = [...dialog.querySelectorAll('section[aria-label]')].find(s => s.getAttribute('aria-label') === labels.review);
+        if (review) return txt(review.querySelector('strong')) === {server_name:?}
+          && txt(review.querySelector('code')) === {tool_name:?}
+          && txt(review.querySelector('pre')) === JSON.stringify(JSON.parse({args:?}), null, 2);
+        await new Promise(r => setTimeout(r, 50));
+      }}
+      throw new Error('review surface missing: '+txt(dialog));
+    "#)).await;
+    if review["ok"] != true || review["value"] != true { return json!({"phase":"review arguments", "failure":review}); }
+    let result = eval(app, MAIN, &format!(r#"
+      {BROWSER_LABELS}
+      const txt = e => (e?.textContent || '').trim();
+      const dialog = document.querySelector('[role=dialog]');
+      const confirm = [...dialog.querySelectorAll('button')].find(b => txt(b) === labels.confirm);
+      if (!confirm) throw new Error('confirmation button missing'); confirm.click();
+      const t = Date.now();
+      let result;
+      while (Date.now()-t < 20000) {{
+        result = [...dialog.querySelectorAll('section[aria-label]')].find(s => s.getAttribute('aria-label') === labels.result && [labels.completed, labels.error].includes(txt(s.querySelector('h3'))));
+        if (result) break;
+        await new Promise(r => setTimeout(r, 50));
+      }}
+      const text = txt(dialog);
+      const close = [...dialog.querySelectorAll('button')].find(b => txt(b) === labels.close);
+      if (!close) throw new Error('tool close button missing'); close.click();
+      return {{result: !!result, reviewed: true, text}};
+    "#)).await;
+    if result["ok"] == true { result["value"].clone() }
+    else { json!({"phase":"call tool", "failure":result}) }
 }
 
 async fn scenario(app: AppHandle, fixture: Fixture) {
     let mut checks = Checks::default();
-    let loaded = goto(&app, MAIN, "/mcp").await;
+    let loaded = eval(&app, MAIN, r#"
+      const state = {...history.state, idx:(history.state?.idx??0)+1, key:crypto.randomUUID()};
+      history.pushState(state, '', '/mcp');
+      dispatchEvent(new PopStateEvent('popstate', {state}));
+      return location.pathname === '/mcp';
+    "#).await;
     checks.check(
         "W4 real WebView loads MCP management",
-        loaded,
+        loaded["ok"] == true && loaded["value"] == true,
         "page did not load",
     );
     let _hydrated = eval(&app, MAIN, r#"
       const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
       const t=Date.now();
-      while(Date.now()-t<15000 && !document.querySelector('button[aria-label^="Select "]')) await wait(50);
-      return !!document.querySelector('button[aria-label^="Select "]');
+      while(Date.now()-t<15000 && !document.querySelector('.mcp-server-row button[aria-pressed]')) await wait(50);
+      return !!document.querySelector('.mcp-server-row button[aria-pressed]');
     "#).await;
     let seeded = fixture.manager.list_servers(USER).await.unwrap_or_default();
-    let rows = eval(&app, MAIN, r#"return {rows:[...document.querySelectorAll('button[aria-label^="Select "]')].map(x => x.getAttribute('aria-label')), text:document.body.innerText, alerts:[...document.querySelectorAll('[role=alert]')].map(x=>x.innerText)}"#).await;
+    let rows = eval(&app, MAIN, r#"return {rows:[...document.querySelectorAll('.mcp-server-row button[aria-pressed]')].map(x => x.textContent), text:document.body.innerText, alerts:[...document.querySelectorAll('[role=alert]')].map(x=>x.innerText)}"#).await;
     checks.check(
         "two acceptance MCP servers are managed together",
         seeded.len() == 2
@@ -279,7 +334,7 @@ async fn scenario(app: AppHandle, fixture: Fixture) {
     // recovery. The smoke-only monitor hook advances the production retry state
     // without changing its 30-second release interval.
     let manager = app.state::<commands::McpState>().manager.clone();
-    let _ = manager
+    let changed = manager
         .update_server(
             USER,
             &fixture.filesystem_id,
@@ -294,22 +349,36 @@ async fn scenario(app: AppHandle, fixture: Fixture) {
             },
         )
         .await;
-    let _ = manager.connect(USER, &fixture.filesystem_id).await;
+    checks.check("recovery configuration is accepted", changed.is_ok(), format!("{changed:?}"));
+    let disconnected = manager.connect(USER, &fixture.filesystem_id).await;
+    checks.check("recovery endpoint fails explicitly", disconnected.is_err(), format!("{disconnected:?}"));
     for _ in 0..3 {
         manager.monitor_once_for_smoke().await;
         manager
             .make_reconnect_due_for_smoke(&fixture.filesystem_id)
             .await;
     }
-    let notice = goto(&app, MAIN, "/workbench").await;
+    let recovery_state = manager.list_servers(USER).await.unwrap_or_default();
+    checks.check("three recovery attempts exhaust the failed connection", recovery_state.iter().any(|s| s.id == fixture.filesystem_id && s.reconnect_exhausted && s.status == "error"), format!("{recovery_state:?}"));
+    let notice = eval(&app, MAIN, r#"
+      const state = {...history.state, idx:(history.state?.idx??0)+1, key:crypto.randomUUID()};
+      history.pushState(state, '', '/workbench');
+      dispatchEvent(new PopStateEvent('popstate', {state}));
+      return location.pathname === '/workbench';
+    "#).await;
     let recovery = eval(&app, MAIN, r#"
+      const stopped = () => {
+        const locale = document.documentElement.getAttribute('data-locale');
+        const label = locale === 'zh-CN' ? 'MCP 连接恢复已停止' : locale === 'en-US' ? 'MCP connection recovery stopped' : null;
+        return label !== null && [...document.querySelectorAll('[role="alert"][aria-label]')].some(e => e.getAttribute('aria-label') === label);
+      };
       const t=Date.now();
-      while(Date.now()-t<15000 && !document.querySelector('[role="alert"][aria-label="MCP connection recovery stopped"]')) await new Promise(r=>setTimeout(r,50));
-      return !!document.querySelector('[role="alert"][aria-label="MCP connection recovery stopped"]');
+      while(Date.now()-t<15000 && !stopped()) await new Promise(r=>setTimeout(r,50));
+      return {shown: stopped(), locale: document.documentElement.getAttribute('data-locale'), alerts: [...document.querySelectorAll('[role="alert"]')].map(e=>({label:e.getAttribute('aria-label'),text:e.textContent}))};
     "#).await;
     checks.check(
         "real WebView shows bounded recovery failure outside management",
-        notice && recovery["ok"] == true && recovery["value"] == true,
+        notice["ok"] == true && notice["value"] == true && recovery["ok"] == true && recovery["value"]["shown"] == true,
         recovery,
     );
 
@@ -319,12 +388,53 @@ async fn scenario(app: AppHandle, fixture: Fixture) {
         .unwrap_or_default();
     checks.check(
         "real MCP calls have redacted usage records",
-        logs.iter().any(|log| log.outcome == "success")
-            && logs
-                .iter()
-                .all(|log| log.task_ref.as_deref().unwrap_or("").len() < 200),
-        format!("{} logs", logs.len()),
+        logs.len() == 1 && logs[0].outcome == "success" && logs[0].tool_name == "echo"
+            && !serde_json::to_string(&logs).unwrap().contains("DGOS-FR003-W4-ECHO")
+            && !serde_json::to_string(&logs).unwrap().contains("test-only-token-acceptance"),
+        format!("{} terminal echo logs, no result or credential markers", logs.len()),
     );
+
+    // Restore through the real page command gate, then verify the global notice
+    // disappears and a newly confirmed call works without replaying the old one.
+    let restored = eval(&app, MAIN, r#"
+      const state = {...history.state, idx:(history.state?.idx??0)+1, key:crypto.randomUUID()};
+      history.pushState(state, '', '/mcp');
+      dispatchEvent(new PopStateEvent('popstate', {state}));
+      const t=Date.now();
+      while(Date.now()-t<15000 && !document.querySelector('.mcp-server-row')) await new Promise(r=>setTimeout(r,50));
+      return !!document.querySelector('.mcp-server-row');
+    "#).await;
+    let configured = ipc(&app, MAIN, "update_mcp_server", json!({"serverId":fixture.filesystem_id,"request":{
+        "transport":"stdio", "stdio":{
+            "executable":std::env::var("DGOS_OFFICIAL_NODE").unwrap_or_else(|_|"node".into()),
+            "args":[std::env::var("DGOS_OFFICIAL_FILESYSTEM_SERVER").unwrap(),fixture.root], "cwd":null
+        }
+    }})).await;
+    let connected = ipc(&app, MAIN, "connect_mcp_server", json!({"serverId":fixture.filesystem_id})).await;
+    checks.check("manual recovery uses production configuration and connection commands",
+        restored["ok"] == true && !configured.rejected() && !connected.rejected()
+            && connected.0["value"]["status"] == "ready", format!("{} {}",configured.describe(),connected.describe()));
+    let cleared = eval(&app, MAIN, r#"
+      const state = {...history.state, idx:(history.state?.idx??0)+1, key:crypto.randomUUID()};
+      history.pushState(state, '', '/workbench');
+      dispatchEvent(new PopStateEvent('popstate', {state}));
+      const t=Date.now();
+      const stopped=()=>document.querySelector('[role=alert][aria-label]');
+      while(Date.now()-t<15000 && stopped()) await new Promise(r=>setTimeout(r,50));
+      const cleared = !stopped() && location.pathname === '/workbench';
+      const back = {...history.state, idx:(history.state?.idx??0)+1, key:crypto.randomUUID()};
+      history.pushState(back, '', '/mcp');
+      dispatchEvent(new PopStateEvent('popstate', {state:back}));
+      while(Date.now()-t<15000 && !document.querySelector('.mcp-server-row')) await new Promise(r=>setTimeout(r,50));
+      return cleared;
+    "#).await;
+    checks.check("successful manual recovery clears the cross-page warning", cleared["ok"] == true && cleared["value"] == true, cleared);
+    let resumed = call_in_browser(&app, "Official Filesystem", "list_directory", &json!({"path":fixture.root}).to_string()).await;
+    let fs_logs = manager.list_usage_logs(USER, Some(&fixture.filesystem_id), Some(50)).await.unwrap_or_default();
+    checks.check("recovered filesystem executes one new confirmed call with terminal audit",
+        resumed["result"] == true && resumed["text"].as_str().is_some_and(|text|text.contains("acceptance.txt"))
+            && fs_logs.len() == 2 && fs_logs.iter().all(|log|log.tool_name == "list_directory" && log.outcome == "success"),
+        json!({"call":resumed,"audit":fs_logs}));
     let _ = manager.shutdown().await;
     let sdk_child = { fixture.sdk_child.lock().unwrap().take() };
     if let Some(mut child) = sdk_child {
@@ -339,7 +449,9 @@ pub fn run_mcp() {
         println!("SMOKE RESULT: watchdog expired");
         std::process::exit(2);
     });
-    let fixture = match tauri::async_runtime::block_on(build_fixture()) {
+    let maintenance = dgos_db::MaintenanceGate::new();
+    let resolver = crate::session::SessionResolver::no_accounts();
+    let fixture = match tauri::async_runtime::block_on(build_fixture(maintenance.clone(), resolver.clone())) {
         Ok(fixture) => fixture,
         Err(error) => {
             println!("SMOKE RESULT: 0 passed, 1 failed");
@@ -355,7 +467,8 @@ pub fn run_mcp() {
     let fixture_for_setup = fixture_cell.clone();
     let result = tauri::Builder::default()
         .manage(Pending::default())
-        .manage(crate::session::SessionResolver::no_accounts())
+        .manage(maintenance)
+        .manage(resolver)
         .manage(LoadEvents(load_sender))
         .manage(commands::McpState {
             manager: manager.clone(),

@@ -19,8 +19,9 @@ use super::{
 };
 use crate::commands;
 use crate::module_host::{self, ChannelTransport, ModuleHostBridge};
-use dgos_application::{ModuleOperationManager, ModuleReleaseService};
+use dgos_application::{ModuleCrashService, ModuleManagementService, ModuleOperationManager, ModuleReleaseService};
 use dgos_db::sea_orm_migration::MigratorTrait;
+use dgos_db::{ModuleCrashRepository, ModulePermissionRepository};
 use dgos_modules::{
     LoaderTimeouts, LocalModuleSources, ModulePageTransport, ModulePublisher,
     ModuleRuntimeSupervisor, PageInstruction, PageLoaderConfig, PageModuleLoader, PageSendError,
@@ -132,6 +133,8 @@ struct RealWorld {
     root: PathBuf,
     sources: PathBuf,
     manager: ModuleOperationManager,
+    maintenance: dgos_db::MaintenanceGate,
+    management: ModuleManagementService,
     recording: Arc<RecordingTransport>,
 }
 
@@ -146,10 +149,11 @@ async fn build_world() -> (RealWorld, ModuleHostBridge) {
     fs::create_dir_all(&sources).unwrap();
 
     let url = format!("sqlite://{}?mode=rwc", root.join("dgos.db").display());
+    let maintenance = dgos_db::MaintenanceGate::new();
     let db = dgos_db::establish_connection(&url).await.unwrap();
     dgos_db::migrations::Migrator::up(&db, None).await.unwrap();
 
-    let publisher = Arc::new(ModulePublisher::new(store, db));
+    let publisher = Arc::new(ModulePublisher::new(store, db.clone()));
     let release = ModuleReleaseService::new(publisher.clone());
     let mut pins: Vec<(String, String, String)> = Vec::new();
     for (module, body, pinned) in PACKAGES {
@@ -194,13 +198,21 @@ async fn build_world() -> (RealWorld, ModuleHostBridge) {
         publisher,
         supervisor,
         LocalModuleSources::new(sources.clone()),
-    );
+    )
+    .with_maintenance(maintenance.clone());
     manager.spawn_lost_runtime_reporter(lost).unwrap();
+    let crashes = ModuleCrashService::new(ModuleCrashRepository::new(db.clone()), manager.clone());
+    let management = ModuleManagementService::new(Arc::new(ModulePermissionRepository::new(db)), manager.clone(), crashes);
+    for (module, _, _) in PACKAGES {
+        management.grant(&dgos_types::HostSession::for_user(crate::host::LOCAL_USER), module, "providers.call").await.unwrap();
+    }
     (
         RealWorld {
             root,
             sources,
             manager,
+            maintenance,
+            management,
             recording,
         },
         ModuleHostBridge::new(loader, transport),
@@ -208,6 +220,7 @@ async fn build_world() -> (RealWorld, ModuleHostBridge) {
 }
 
 async fn run_op(app: &AppHandle, command: &str, module: &str) -> Value {
+    navigate(app, "/settings").await;
     let reply = ipc(app, "main", command, json!({"moduleId": module})).await;
     match reply.data()["operation_id"].as_str() {
         Some(operation) if reply.success() => poll_operation(app, "main", operation).await,
@@ -243,7 +256,7 @@ async fn dom(app: &AppHandle) -> Value {
     eval(
         app,
         "main",
-        "return Array.from(document.querySelectorAll('[data-module-runtime]')).map(e=>({\
+        "return Array.from(document.querySelectorAll('[data-module-runtime]:not([data-module-overlay])')).map(e=>({\
          runtime:e.getAttribute('data-module-runtime'),module:e.getAttribute('data-module-id'),\
          text:e.textContent,connected:e.isConnected}))",
     )
@@ -277,19 +290,19 @@ fn events(probe: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The module's DOM lives in its panel (D055); open it from the sidebar like a user.
+/// Open the production workspace surface, then overlay Settings for management IPC.
 async fn open_panel(app: &AppHandle, module: &str) {
-    eval(
-        app,
-        "main",
-        &format!(
-            "const sel='[data-module-id=\"{module}\"]';\
-             if(!document.querySelector(sel)){{const a=document.querySelector('a[href=\"/settings/modules/{module}\"]');if(a)a.click();}}\
-             for(let i=0;i<50&&!document.querySelector(sel);i++)await new Promise(r=>setTimeout(r,100));\
-             return !!document.querySelector(sel)"
-        ),
-    )
-    .await;
+    navigate(app, &format!("/apps/{module}")).await;
+    eval(app, "main", &format!(
+        "for(let i=0;i<50;i++){{if(document.querySelector('[data-module-id=\"{module}\"] button'))return true;await new Promise(r=>setTimeout(r,100));}}return false"
+    )).await;
+    navigate(app, "/settings").await;
+}
+
+async fn navigate(app: &AppHandle, path: &str) {
+    eval(app, "main", &format!(
+        "const state={{...history.state,idx:(history.state?.idx??0)+1,key:crypto.randomUUID()}};history.pushState(state,'',{path:?});dispatchEvent(new PopStateEvent('popstate',{{state}}));await new Promise(r=>setTimeout(r,300));return location.pathname"
+    )).await;
 }
 
 fn module_nodes(dom: &Value, module: &str) -> Vec<Value> {
@@ -328,6 +341,8 @@ async fn scenario(app: AppHandle, world: RealWorld, ready: bool) {
         root,
         sources,
         manager,
+        maintenance: _,
+        management: _,
         recording,
     } = world;
     let main = "main";
@@ -517,22 +532,17 @@ async fn scenario(app: AppHandle, world: RealWorld, ready: bool) {
         bridge_off_route,
     );
     checks.check(
-        "the module stays ready on the host and its DOM is detached while away",
+        "the module stays ready and its workspace surface is hidden while away",
         matches!(
             manager.runtime_status("real-counter"),
             Ok(view) if view.state == dgos_types::ModuleRuntimeStatusState::Ready
-        ) && dom(&app).await.as_array().is_some_and(Vec::is_empty),
+        ) && eval(&app, main, "const n=document.querySelector('[data-module-id=\"real-counter\"]');return !!n && !!n.closest('[hidden]')").await["value"] == true,
         "module did not survive route change",
     );
-    let back = eval(
-        &app,
-        main,
-        "document.querySelector('a[href=\"/settings/modules/real-counter\"]').click();\
-         await new Promise(r=>setTimeout(r,300));\
-         const e=document.querySelector('[data-module-id=\"real-counter\"]');\
-         return {path:location.pathname,mark:e&&e.__smokeMark,connected:e&&e.isConnected,text:e&&e.textContent}",
-    )
-    .await;
+    open_panel(&app, "real-counter").await;
+    let back = eval(&app, main,
+        "const e=document.querySelector('[data-module-id=\"real-counter\"]');return {path:location.pathname,mark:e&&e.__smokeMark,connected:e&&e.isConnected,text:e&&e.textContent}"
+    ).await;
     let readmitted = ipc(
         &app,
         main,
@@ -541,8 +551,8 @@ async fn scenario(app: AppHandle, world: RealWorld, ready: bool) {
     )
     .await;
     checks.check(
-        "returning to Settings re-attaches the same DOM node with its state, and the gate allows again",
-        back["value"]["path"] == "/settings/modules/real-counter"
+        "returning to the module preserves its DOM/state and Settings restores management access",
+        back["value"]["path"] == "/settings"
             && back["value"]["mark"] == "kept"
             && back["value"]["connected"] == true
             && back["value"]["text"] == "count:1"
@@ -918,9 +928,13 @@ pub fn run_real() {
 
     let (world, bridge) = world.take().unwrap();
     let manager = world.manager.clone();
+    let maintenance = world.maintenance.clone();
+    let management = world.management.clone();
     let scenario_world = Mutex::new(Some(world));
     let result = tauri::Builder::default()
         .manage(Pending::default())
+        .manage(maintenance)
+        .manage(management)
         .manage(crate::session::SessionResolver::no_accounts())
         .manage(LoadEvents(load_sender))
         .manage(manager)
@@ -956,6 +970,8 @@ pub fn run_real() {
             commands::get_module_operation,
             commands::get_module_runtime_status,
             commands::attach_module_host,
+            commands::read_workspace_app_catalog,
+            commands::list_modules,
             commands::report_module_host,
             super::smoke_report,
         ])

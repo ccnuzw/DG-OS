@@ -1,0 +1,13 @@
+PASS W4 real WebView loads MCP management
+PASS two acceptance MCP servers are managed together
+PASS real WebView shows exact tool confirmation and filesystem result
+PASS real WebView calls the second HTTP MCP
+PASS recovery configuration is accepted
+PASS recovery endpoint fails explicitly
+PASS three recovery attempts exhaust the failed connection
+PASS real WebView shows bounded recovery failure outside management
+PASS real MCP calls have redacted usage records
+PASS manual recovery uses production configuration and connection commands
+PASS successful manual recovery clears the cross-page warning
+PASS recovered filesystem executes one new confirmed call with terminal audit
+SMOKE RESULT: 12 passed, 0 failed

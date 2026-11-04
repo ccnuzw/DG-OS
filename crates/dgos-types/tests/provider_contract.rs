@@ -78,6 +78,7 @@ fn tool_message_reasoning_is_never_serialized_or_deserialized() {
             blocks: vec![json!({"type": "thinking", "thinking": "PRIVATE-THOUGHT",
                 "signature": "SECRET-SIG"})],
         }),
+        images: Vec::new(),
     };
     let wire = serde_json::to_string(&message).unwrap();
     assert!(
@@ -113,6 +114,7 @@ fn message_reasoning_debug_shows_sizes_not_content() {
         tool_call_id: None,
         tool_calls: vec![],
         reasoning: Some(reasoning),
+        images: Vec::new(),
     };
     let shown = format!("{message:?}");
     assert!(

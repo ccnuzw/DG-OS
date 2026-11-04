@@ -229,6 +229,18 @@ impl ProviderRepository {
             )
             .await?;
         }
+        // Both the current and legacy usage tables restrict parent deletion.
+        // Remove only this owned Provider's usage in the same transaction as
+        // the credential cleanup intent; models cascade when the parent goes.
+        for table in ["provider_usage_logs", "usage_logs"] {
+            tx.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                format!("DELETE FROM {table} WHERE provider_id = ? AND user_id = ?"),
+                [id.into(), user_id.into()],
+            ))
+            .await
+            .map_err(db_error)?;
+        }
         let result = providers::Entity::delete_many()
             .filter(providers::Column::Id.eq(id))
             .filter(providers::Column::UserId.eq(user_id))

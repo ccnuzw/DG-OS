@@ -43,9 +43,10 @@ pub async fn set_lan_enabled(
     window: WebviewWindow,
     enabled: bool,
 ) -> CommandResponse<LanStatus> {
-    if let Err(error) = host::context(&window, BuiltinCaller::Settings, Capability::LanManage) {
-        return CommandResponse::from(Err(error));
-    }
+    let _context = match host::context(&window, BuiltinCaller::Settings, Capability::LanManage) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
     CommandResponse::from(lan(&app).set_enabled(enabled).await)
 }
 
@@ -57,9 +58,10 @@ pub async fn set_lan_port(
     window: WebviewWindow,
     port: i64,
 ) -> CommandResponse<LanStatus> {
-    if let Err(error) = host::context(&window, BuiltinCaller::Settings, Capability::LanManage) {
-        return CommandResponse::from(Err(error));
-    }
+    let _context = match host::context(&window, BuiltinCaller::Settings, Capability::LanManage) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
     CommandResponse::from(lan(&app).set_port(port).await)
 }
 

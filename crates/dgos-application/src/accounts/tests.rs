@@ -26,22 +26,14 @@ struct FakeSession {
 }
 
 impl FakeSession {
-    fn log(&self) -> Vec<String> {
-        self.log.lock().unwrap().clone()
-    }
-    fn clear(&self) {
-        self.log.lock().unwrap().clear();
-    }
+    fn log(&self) -> Vec<String> { self.log.lock().unwrap().clone() }
+    fn clear(&self) { self.log.lock().unwrap().clear(); }
 }
 
 #[async_trait]
 impl SessionPort for FakeSession {
     fn state(&self) -> SessionState {
-        self.state
-            .lock()
-            .unwrap()
-            .clone()
-            .unwrap_or(SessionState::Switching)
+        self.state.lock().unwrap().clone().unwrap_or(SessionState::Switching)
     }
     fn set_state(&self, state: SessionState) {
         let label = match &state {
@@ -497,6 +489,7 @@ async fn switching_ends_the_old_session_in_order_and_a_failed_switch_keeps_it() 
         ]
     );
 }
+
 
 #[tokio::test]
 async fn data_of_one_account_is_not_visible_to_another() {

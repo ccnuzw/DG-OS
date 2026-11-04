@@ -222,7 +222,7 @@ async fn fx() -> Fx {
         .await
         .unwrap();
     Fx {
-        chat: ChatManager::new(db.clone()),
+        chat: ChatManager::new(db.clone(), dgos_db::MaintenanceGate::new()),
         workbench: WorkbenchManager::new(db.clone()),
         skills: SkillsManager::new(db.clone(), dir.path().join("skills")),
         providers,
@@ -280,12 +280,8 @@ async fn until(mut condition: impl FnMut() -> bool) {
 }
 
 fn target(fx: &Fx) -> ChatTargetInput {
-    ChatTargetInput {
-        provider_id: Some(fx.provider_id.clone()),
-        model_id: Some("chat-model".into()),
-        skill_id: None,
-        no_skill: true,
-    }
+    ChatTargetInput { provider_id: Some(fx.provider_id.clone()),
+    model_id: Some("chat-model".into()), skill_ids: vec![], generation: Default::default(), no_skill: true, }
 }
 
 async fn session(fx: &Fx, user: &str) -> ChatSession {
@@ -309,6 +305,7 @@ fn send_input(session: &str, content: &str) -> SendChatInput {
         client_request_id: uuid::Uuid::new_v4().to_string(),
         accept_destination: None,
         tools: vec![],
+        asset_ids: vec![],
     }
 }
 
@@ -882,13 +879,9 @@ async fn each_send_rereads_the_provider_and_blocks_a_changed_destination() {
             &fx.providers,
             &fx.skills,
             ALICE,
-            UpdateChatSessionTargetInput {
-                session_id: s.id.clone(),
-                provider_id: Some(moved.id.clone()),
-                model_id: Some("chat-model".into()),
-                skill_id: None,
-                no_skill: true,
-            },
+            UpdateChatSessionTargetInput { session_id: s.id.clone(),
+            provider_id: Some(moved.id.clone()),
+            model_id: Some("chat-model".into()), skill_ids: vec![], generation: Default::default(), no_skill: true, },
         )
         .await
         .unwrap();
@@ -1061,21 +1054,18 @@ async fn history_over_budget_drops_whole_oldest_turns_and_reports_them() {
     let repo = ChatRepository::new(fx.db.clone());
     for i in 1..=4 {
         let (task, user, assistant) = (format!("seed-{i}"), format!("su{i}"), format!("sa{i}"));
-        repo.begin_generation(&BeginGeneration {
-            user: ALICE,
-            session_id: &s.id,
-            task_id: &task,
-            user_message_id: &user,
-            assistant_message_id: &assistant,
-            user_content: Some(&format!("question-{i}")),
-            regenerate_of: None,
-            provider_id: "p",
-            model_id: "m",
-            provider_config_revision: None,
-            endpoint_fingerprint: "seed",
-            skill: None,
-            tools: &[],
-        })
+        repo.begin_generation(&BeginGeneration { user: ALICE,
+        session_id: &s.id,
+        task_id: &task,
+        user_message_id: &user,
+        assistant_message_id: &assistant,
+        user_content: Some(&format!("question-{i}")),
+        assets: &[],
+        regenerate_of: None,
+        provider_id: "p",
+        model_id: "m",
+        provider_config_revision: None,
+        endpoint_fingerprint: "seed", skills: &[], generation: &dgos_types::GenerationParameters::default(), tools: &[], })
         .await
         .unwrap();
         repo.finalize_generation(&FinalizeGeneration {
@@ -1253,7 +1243,7 @@ async fn restart_recovery_finalizes_unfinished_generations_without_resending() {
     drop(regen);
     let hits = fx.up.hits();
 
-    let restarted = ChatManager::new(fx.db.clone());
+    let restarted = ChatManager::new(fx.db.clone(), dgos_db::MaintenanceGate::new());
     assert_eq!(
         restarted.recover_interrupted().await.unwrap(),
         0,
@@ -1287,7 +1277,7 @@ async fn restart_recovery_finalizes_unfinished_generations_without_resending() {
         .await
         .unwrap();
     drop(sent);
-    let after = ChatManager::new(fx.db.clone());
+    let after = ChatManager::new(fx.db.clone(), dgos_db::MaintenanceGate::new());
     assert_eq!(after.recover_interrupted().await.unwrap(), 1);
     fx.workbench.recover_interrupted().await.unwrap();
     let stored = messages(&fx, ALICE, &s.id).await;
@@ -1382,7 +1372,7 @@ async fn another_user_cannot_touch_a_session_and_gets_the_missing_answer() {
                         session_id: id.into(),
                         provider_id: None,
                         model_id: None,
-                        skill_id: None,
+                        skill_ids: vec![], generation: Default::default(),
                         no_skill: false
                     }
                 )
@@ -1622,4 +1612,55 @@ async fn chat_generations_stay_out_of_the_single_task_history() {
         "chat audit rows leaked into the single-task history"
     );
     assert!(history.is_empty());
+}
+
+#[tokio::test]
+async fn controlled_attachments_survive_send_replay_history_and_regeneration() {
+    let fx = fx().await;
+    let s = session(&fx, ALICE).await;
+    let assets = dgos_workbench::ChatAssets::new(fx.db.clone());
+    let asset = assets.import(ALICE, dgos_workbench::ChatAssetImportInput {
+        name: "proof.txt".into(), mime: "text/plain".into(), base64: "QVRUQUNITUVOVC1QUk9PRg==".into(),
+    }).await.unwrap();
+    assert!(matches!(assets.preview(BOB, &asset.id).await, Err(ChatError::AssetNotFound)));
+    let mut input = send_input(&s.id, "read the attachment");
+    input.asset_ids.push(asset.id.clone());
+    let sent = start(&fx, ALICE, input.clone()).await.unwrap();
+    let ack = sent.ack;
+    fx.chat.run_generation(&fx.providers, sent.job.unwrap(), &Collect::default()).await;
+    assert_eq!(fx.up.body(0)["messages"].as_array().unwrap().last().unwrap()["content"], "read the attachment\n\n[Attachment: proof.txt]\nATTACHMENT-PROOF");
+    assert!(matches!(assets.remove(ALICE, &asset.id).await, Err(ChatError::AssetReferenced)));
+    let replay = start(&fx, ALICE, input.clone()).await.unwrap();
+    assert!(replay.ack.replayed && replay.job.is_none());
+    input.asset_ids.clear();
+    assert!(matches!(start(&fx, ALICE, input).await, Err(ChatError::RequestIdConflict)));
+    regenerate(&fx, ALICE, &ack.assistant_message_id, None).await.unwrap();
+    assert_eq!(fx.up.body(1)["messages"].as_array().unwrap().last().unwrap()["content"], fx.up.body(0)["messages"].as_array().unwrap().last().unwrap()["content"]);
+    turn(&fx, ALICE, &s.id, "continue").await;
+    assert!(fx.up.body(2)["messages"].as_array().unwrap().iter().any(|message| message["content"].as_str().is_some_and(|text| text.contains("ATTACHMENT-PROOF"))));
+    let oversized = assets.import(ALICE, dgos_workbench::ChatAssetImportInput {
+        name: "large.txt".into(), mime: "text/plain".into(), base64: {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD.encode(vec![b'x'; 24 * 1024])
+        },
+    }).await.unwrap();
+    let mut input = send_input(&s.id, "too much context");
+    input.asset_ids.push(oversized.id);
+    assert!(matches!(start(&fx, ALICE, input).await, Err(ChatError::ContextTooLong)));
+    let image = assets.import(ALICE, dgos_workbench::ChatAssetImportInput {
+        name: "proof.png".into(), mime: "image/png".into(), base64: "iVBORw0KGgo=".into(),
+    }).await.unwrap();
+    let mut input = send_input(&s.id, "look");
+    input.asset_ids.push(image.id.clone());
+    assert!(matches!(start(&fx, ALICE, input).await, Err(ChatError::Provider(1001020))));
+    assert_eq!(fx.up.hits(), 3);
+    dgos_db::ModelRepository::new(fx.db.clone()).sync_models(&fx.provider_id, vec![dgos_types::Model {
+        id: uuid::Uuid::new_v4().to_string(), model_id: "chat-model".into(), model_name: "vision fixture".into(),
+        model_type: "text-generation".into(), supports_vision: true, ..Default::default()
+    }]).await.unwrap();
+    let mut input = send_input(&s.id, "");
+    input.asset_ids.push(image.id.clone());
+    let sent = start(&fx, ALICE, input).await.unwrap();
+    fx.chat.run_generation(&fx.providers, sent.job.unwrap(), &Collect::default()).await;
+    assert_eq!(fx.up.body(3)["messages"].as_array().unwrap().last().unwrap()["content"][1]["image_url"]["url"], "data:image/png;base64,iVBORw0KGgo=");
 }

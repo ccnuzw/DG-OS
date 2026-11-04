@@ -14,8 +14,10 @@
 //! Not proven: a real vendor, VoiceOver, other platforms' WebViews, real pointer hit-testing,
 //! `WebviewWindow::close()` (the window is `destroy()`ed, which emits the same `Destroyed` event).
 
+#[path = "phase6.rs"]
+mod phase6;
 use super::modules::build_world_with;
-use super::{eval, finish, goto, wait_load, Checks, LoadEvents, Pending};
+use super::{eval, finish, goto, ipc, wait_load, Checks, LoadEvents, Pending};
 use crate::commands;
 use crate::host::LOCAL_USER;
 use crate::module_host::{self, StartupLoad};
@@ -174,6 +176,15 @@ async fn handle(socket: &mut TcpStream, up: &Upstream) {
         }
         buffer.extend_from_slice(&chunk[..n]);
     }
+    if path.ends_with("/audio/transcriptions") {
+        let body = String::from_utf8_lossy(&buffer[header_end..header_end + length]);
+        let valid = head.contains("synthetic-chat-smoke-key") && body.contains("whisper-1") && body.contains("OggSphase6-controlled-audio");
+        let text = if valid { r#"{"text":"PHASE6-TRANSCRIBED"}"# } else { r#"{"error":"invalid controlled request"}"# };
+        let status = if valid { 200 } else { 400 };
+        let out = format!("HTTP/1.1 {status} Status\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{text}", text.len());
+        let _ = socket.write_all(out.as_bytes()).await;
+        return;
+    }
     if !path.ends_with("/chat/completions") {
         up.stray.lock().unwrap().push(path);
         let _ = socket
@@ -316,15 +327,19 @@ const choose = async (label, opt) => {
   await wait(100);
 };
 const newSession = async (model) => {
-  const nav = $('nav[aria-label="会话"]');
-  const list = () => $$('section[aria-label="会话列表"] li').length;
-  const before = list();
-  btn('新建会话', nav).click();
-  const ready = await until(() => list() > before && $('section[aria-label="会话目标"]') && txt(combo('Provider')).includes('选择 Provider'));
+  const before = $$('[aria-label="AI 会话标签"] [role=tab]').length;
+  const create = $('button[aria-label="新建会话"]') || btn('新建会话');
+  if (!create) throw new Error('new session control missing');
+  create.click();
+  const ready = await until(() => $$('[aria-label="AI 会话标签"] [role=tab]').length > before && $('button[aria-label="会话目标"]'));
   if (!ready) throw new Error('new session did not appear');
+  $('button[aria-label="会话目标"]').click();
+  await until(() => combo('Provider'));
   await choose('Provider', 'Smoke Loopback');
   await choose('模型', model);
-  await choose('技能', '明确不使用技能');
+  const noSkill = await until(() => [...document.querySelectorAll('[role="checkbox"]')].find(el => document.querySelector(`label[for="${el.id}"]`)?.textContent?.includes('明确不使用技能')));
+  if (!noSkill) throw new Error('no-skill checkbox missing');
+  if (noSkill.getAttribute('aria-checked') !== 'true') noSkill.click();
   const ap = await until(() => { const b = btn('应用目标'); return b && !b.disabled && b; });
   if (!ap) throw new Error('apply button never enabled');
   ap.click();
@@ -1563,6 +1578,161 @@ async fn block_destroy(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
 
 // ---------------------------------------------------------------------------------------------
 
+async fn block_workspace_task(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
+    fx.up.script(Script::Sse(vec![Step::Hold]));
+    let loaded = goto(app, MAIN, "/tasks/single").await;
+    checks.check("[10] task surface loads", loaded, "navigation");
+    let started = js(app, r#"
+        await choose('Provider', 'Smoke Loopback');
+        await choose('模型', 'chat-model');
+        const noSkill = await until(() => $$('[role=checkbox]').find(el=>labelOf(el).includes('明确不使用技能')));
+        noSkill.click();
+        const input = $$('textarea').find(el=>labelOf(el)==='任务输入'); setVal(input, 'P3 keep this task input'); window.__taskInput = input;
+        const run = await until(() => { const b=btn('不使用 Skill 运行'); return b && !b.disabled && b; }); run.click();
+        return !!await until(() => btn('取消任务'));
+    "#).await;
+    checks.check("[10] task starts through production runner and IPC", started == true, started.to_string());
+    let kept = js(app, r#"
+        const link = name => $$('a').find(a=>txt(a)===name);
+        link('桌面总览').click(); await until(()=>location.pathname==='/');
+        link('设置').click(); await until(()=>$('[data-settings-shell]'));
+        const preserved = window.__taskInput.isConnected && window.__taskInput.value==='P3 keep this task input';
+        btn('关闭设置').click(); await until(()=>!$('[data-settings-shell]'));
+        link('单任务').click(); await until(()=>location.pathname==='/tasks/single');
+        return {preserved, same:window.__taskInput===$$('textarea').find(el=>labelOf(el)==='任务输入'), running:!!btn('取消任务'), cancelled:window.__spy.calls.includes('cancel_workbench_task')};
+    "#).await;
+    checks.check("[10] desktop and settings preserve task, input and DOM without cancelling", kept["preserved"]==true && kept["same"]==true && kept["running"]==true && kept["cancelled"]==false, kept.to_string());
+    let refused = js(app, r#"
+        $('button[aria-label="关闭 单任务"]').click();
+        await until(()=>$('[role=alertdialog],[role=dialog]'));
+        btn('取消').click(); await until(()=>!$('[role=alertdialog],[role=dialog]'));
+        return {running:!!btn('取消任务'), cancelled:window.__spy.calls.includes('cancel_workbench_task')};
+    "#).await;
+    checks.check("[10] declining close leaves the host task running", refused["running"]==true && refused["cancelled"]==false, refused.to_string());
+    let closed = js(app, r#"
+        $('button[aria-label="关闭 单任务"]').click();
+        const stop = await until(()=>btn('停止并关闭')); stop.click();
+        const gone = await until(()=>!$('button[aria-label="关闭 单任务"]'),12000);
+        const records = await window.__TAURI_INTERNALS__.invoke('list_workbench_tasks',{});
+        return {gone:!!gone, cancelled:window.__spy.calls.includes('cancel_workbench_task'), terminal:records.some(r=>r.task.status==='interrupted' && r.task.error_code==='task_cancelled')};
+    "#).await;
+    checks.check("[10] stop-and-close waits for host cancellation terminal", closed["gone"]==true && closed["cancelled"]==true && closed["terminal"]==true, closed.to_string());
+}
+
+#[tauri::command]
+async fn get_account_state(app: AppHandle, window: tauri::WebviewWindow) -> Result<commands::CommandResponse<dgos_application::AccountState>, String> {
+    if app.try_state::<dgos_application::AccountService>().is_none() {
+        return Err("Command get_account_state not found".into());
+    }
+    Ok(commands::get_account_state(app, window).await)
+}
+
+async fn block_account_workspace(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
+    let resolver = app.state::<Arc<crate::session::SessionResolver>>().inner().clone();
+    let mcp = app.state::<commands::McpState>().manager.clone();
+    let ports = dgos_application::AccountPorts::new(&fx.db, Arc::new(crate::session::HostSessionPort::new(resolver.clone(), mcp, app.clone())));
+    let accounts = dgos_application::AccountService::new(fx.db.clone(), ports);
+    accounts.recover().await.unwrap();
+    app.manage(accounts);
+    let agent_manager = dgos_agents::AgentManager::with_maintenance(fx.root.join("agents.json"), dgos_db::DevelopmentRepository::new(fx.db.clone()), app.state::<dgos_db::MaintenanceGate>().inner().clone());
+    agent_manager.load().await.unwrap();
+    app.manage(agent_manager);
+    let alice = ipc(app, MAIN, "create_account", json!({"input":{"username":"alice","password":"alice-password"}})).await;
+    let bob = ipc(app, MAIN, "create_account", json!({"input":{"username":"bob","password":"bob-password"}})).await;
+    checks.check("[11] two real accounts created", alice.success() && bob.success(), format!("{} {}", alice.describe(), bob.describe()));
+    goto(app, MAIN, "/tasks/single").await;
+    fx.up.script(Script::Sse(vec![Step::Hold]));
+    let task = js(app, r#"
+        await choose('Provider','Smoke Loopback'); await choose('模型','chat-model');
+        (await until(()=>$$('[role=checkbox]').find(el=>labelOf(el).includes('明确不使用技能')))).click();
+        window.__oldInput=$$('textarea').find(el=>labelOf(el)==='任务输入'); setVal(window.__oldInput,'ACCOUNT-OLD-TASK-DRAFT');
+        (await until(()=>{const b=btn('不使用 Skill 运行');return b&&!b.disabled&&b;})).click();
+        return !!await until(()=>btn('取消任务'));
+    "#).await;
+    let provider = ipc(app, MAIN, "list_providers", json!({})).await.data()[0]["id"].as_str().unwrap().to_owned();
+    let created = ipc(app, MAIN, "create_chat_session", json!({"input":{"target":{"provider_id":provider,"model_id":"chat-model","skill_ids":[],"no_skill":true}}})).await;
+    checks.check("[11] old-owner chat created",created.success(),created.describe());
+    let Some(session_id) = created.data()["id"].as_str().map(str::to_owned) else { return; };
+    fx.up.script(Script::Sse(vec![delta("ACCOUNT-OLD-STREAM"),Step::Hold]));
+    let chat = js(app, &format!(r#"
+        const id={session_id:?};
+        const callback=window.__TAURI_INTERNALS__.transformCallback(event=>{{ window.__accountEvents=(window.__accountEvents||[]).concat(event); }},false);
+        const ack=await window.__TAURI_INTERNALS__.invoke('send_chat_message',{{input:{{session_id:id,content:'ACCOUNT-OLD-CHAT',client_request_id:crypto.randomUUID()}},onEvent:`__CHANNEL__:${{callback}}`}});
+        return {{ack,stream:!!await until(()=>(window.__accountEvents||[]).some(e=>e.message?.kind==='delta'||e.kind==='delta'))}};
+    "#)).await;
+    let module = js(app, r#"
+        history.pushState({},'', '/apps/mc-1'); window.dispatchEvent(new PopStateEvent('popstate'));
+        return !!await until(()=>$('[data-module-id="mc-1"]'));
+    "#).await;
+    #[cfg(unix)]
+    let agent_id = {
+        use std::os::unix::fs::PermissionsExt;
+        let executable=fx.root.join("codex-account-fixture");
+        std::fs::write(&executable,r##"#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\n' 'codex-cli 0.0.0'; exit 0; fi
+while IFS= read -r line; do
+case "$line" in
+*'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}';;
+*'"method":"thread/start"'*) printf '%s\n' '{"id":2,"result":{"thread":{"id":"account-thread","turns":[]}}}';;
+*'"method":"turn/start"'*) printf '%s\n' '{"id":3,"result":{"turn":{"id":"account-turn"}}}' '{"method":"turn/started","params":{"turn":{"id":"account-turn"}}}' '{"id":"account-approval","method":"item/commandExecution/requestApproval","params":{"command":"echo allowed","availableDecisions":["accept","decline"]}}';;
+esac
+done
+"##).unwrap();
+        std::fs::set_permissions(&executable,std::fs::Permissions::from_mode(0o700)).unwrap();
+        let id=uuid::Uuid::new_v4().to_string();
+        let probe = ipc(app, MAIN, "probe_cli", json!({"tool":"codex","path":executable})).await;
+        let current = ipc(app, MAIN, "get_cli_preferences", json!({})).await;
+        let paths = json!({"codex":executable,"claude":null,"gemini":null,"node":null});
+        let saved = ipc(app, MAIN, "set_cli_preferences", json!({"paths":paths,"expectedRevision":current.data()["revision"]})).await;
+        let readback = ipc(app, MAIN, "get_cli_preferences", json!({})).await;
+        let stale = ipc(app, MAIN, "set_cli_preferences", json!({"paths":paths,"expectedRevision":current.data()["revision"]})).await;
+        checks.check("[11] CLI version, account CAS save and readback use production IPC",probe.success() && probe.data()["status"]=="available" && probe.data()["version"]=="codex-cli 0.0.0" && probe.data()["managed"]==false && saved.data()["saved"]==true && readback.data()["paths"]["codex"]==json!(executable) && stale.data()["saved"]==false,format!("{} {} {} {}",probe.describe(),saved.describe(),readback.describe(),stale.describe()));
+        let manager = app.state::<dgos_agents::AgentManager>();
+        let project = manager.create_project(LOCAL_USER, dgos_agents::projects::CreateProjectInput { kind: "import".into(), name: "Account boundary".into(), path: fx.root.to_string_lossy().into_owned(), source: None }, tokio_util::sync::CancellationToken::new()).await.unwrap();
+        let development_task = manager.save_development_task(LOCAL_USER, dgos_agents::projects::SaveTaskInput { id: None, project_id: project.id, goal: "Account boundary".into(), requirements: "Reject old account operations".into(), status: "todo".into() }, tokio_util::sync::CancellationToken::new()).await.unwrap();
+        let opened=ipc(app,MAIN,"open_agent_session",json!({"input":{"id":id,"engine":"codex","task_id":development_task.id,"options":{"workspace":fx.root,"resume_id":null,"model":null,"trust_workspace":true}}})).await;
+        let sent=ipc(app,MAIN,"send_agent_message",json!({"input":{"session_id":id,"request_id":uuid::Uuid::new_v4(),"text":"hold for account change"}})).await;
+        checks.check("[11] production Agent process starts",opened.0["ok"]==true && sent.0["ok"]==true,format!("{} {}",opened.describe(),sent.describe()));
+        id
+    };
+    let (_, old_lease)=resolver.agent_session().unwrap();
+    checks.check("[11] chat, task and module run together",task==true && chat["stream"]==true && module==true,format!("task={task} chat={chat} module={module}"));
+    let failed=ipc(app,MAIN,"sign_in",json!({"input":{"username":"bob","password":"incorrect"}})).await;
+    let intact=js(app,"return window.__oldInput.isConnected && window.__oldInput.value==='ACCOUNT-OLD-TASK-DRAFT';").await;
+    let running=fx.db.query_one(Statement::from_string(DbBackend::Sqlite,"SELECT COUNT(*) AS n FROM workbench_tasks WHERE status='running'".to_owned())).await.unwrap().unwrap().try_get::<i64>("","n").unwrap();
+    checks.check("[11] failed authentication preserves all running work and draft",failed.code()==Some(1008005) && intact==true && running==2 && !old_lease.is_cancelled(),format!("{} intact={intact} running={running}",failed.describe()));
+    let reload_path = app.get_webview_window(MAIN).and_then(|window| window.url().ok()).map(|url| url.path().to_owned()).unwrap_or_default();
+    let reloaded=app.state::<LoadEvents>().0.subscribe();
+    let submitted=js(app,r#"
+        const account=await until(()=>$('button[aria-label="alice"]')); kd(account,'ArrowDown');
+        const switchItem=await until(()=>$$('[role=menuitem]').find(el=>txt(el)==='切换用户')); kd(switchItem,'Enter');
+        const dialog=await until(()=>$('[role=dialog]'));
+        setVal($('input[type=password]',dialog),'bob-password'); await wait(50);
+        const submit=btn('切换',dialog); if(!submit) return {error:'missing switch button',dialog:txt(dialog)}; submit.click(); return true;
+    "#).await;
+    let loaded=wait_load(reloaded,MAIN,&reload_path).await;
+    let switched=ipc(app,MAIN,"get_account_state",json!({})).await;
+    checks.check("[11] production account menu switches and reloads",submitted==true && loaded && switched.data()["current"]["username"]=="bob",format!("submitted={submitted} loaded={loaded} path={reload_path} {}",switched.describe()));
+    let records=ipc(app,MAIN,"list_workbench_tasks",json!({})).await;
+    let sessions=ipc(app,MAIN,"list_chat_sessions",json!({"input":{}})).await;
+    let terminal=fx.db.query_one(Statement::from_string(DbBackend::Sqlite,"SELECT COUNT(*) AS n FROM workbench_tasks WHERE status='running'".to_owned())).await.unwrap().unwrap().try_get::<i64>("","n").unwrap();
+    checks.check("[11] switching cancels old tasks and isolates new owner data",switched.success() && old_lease.is_cancelled() && terminal==0 && records.0["value"].as_array().is_some_and(|r|r.is_empty()) && sessions.data()["items"].as_array().is_some_and(|r|r.is_empty()),format!("{} records={} sessions={} running={terminal}",switched.describe(),records.describe(),sessions.describe()));
+    #[cfg(unix)]
+    checks.check("[11] new account cannot read old Agent",ipc(app,MAIN,"get_agent_session",json!({"sessionId":agent_id})).await.0["ok"]==false,"old Agent accessible");
+    let gate=js(app,"return !!await until(()=>$('button[aria-label=\"bob\"]'));").await;
+    let clean=js(app,"return !!await until(()=>window.__oldInput===undefined && !$$('textarea').some(el=>el.value.includes('ACCOUNT-OLD-')) && !document.body.textContent.includes('ACCOUNT-OLD-'));").await;
+    checks.check("[11] new account page contains no old views or drafts",clean==true && gate==true,clean.to_string());
+    let out=ipc(app,MAIN,"sign_out",json!({})).await;
+    let denied=ipc(app,MAIN,"list_workbench_tasks",json!({})).await;
+    let back=ipc(app,MAIN,"sign_in",json!({"input":{"username":"alice","password":"alice-password"}})).await;
+    let (_, fresh)=resolver.agent_session().unwrap();
+    #[cfg(unix)]
+    let old_agent_denied=ipc(app,MAIN,"get_agent_session",json!({"sessionId":agent_id})).await.0["ok"]==false;
+    #[cfg(not(unix))]
+    let old_agent_denied=true;
+    checks.check("[11] sign-out gates commands and same-owner relogin cannot revive old lease",out.success() && denied.0["ok"]==false && back.success() && old_lease.is_cancelled() && !fresh.is_cancelled() && old_agent_denied,format!("{} {} {}",out.describe(),denied.describe(),back.describe()));
+}
+
 async fn scenario(app: AppHandle, root_ready: bool) {
     let mut checks = Checks::default();
     let (up, db, root, mcp_note) = {
@@ -1583,6 +1753,18 @@ async fn scenario(app: AppHandle, root_ready: bool) {
     if !root_ready {
         checks.check("main window loaded /workbench", false, "page never loaded");
         finish(checks, &root);
+    }
+    if std::env::var("DGOS_CHAT_SMOKE_ONLY").ok().as_deref()==Some("12") {
+        phase6::run(&app, &mut checks, &fx).await;
+        finish(checks, &root);
+    }
+    if std::env::var("DGOS_CHAT_SMOKE_ONLY").ok().as_deref()==Some("11") {
+        block_account_workspace(&app,&mut checks,&fx).await;
+        finish(checks,&root);
+    }
+    if wanted(10) {
+        block_workspace_task(&app, &mut checks, &fx).await;
+        if std::env::var("DGOS_CHAT_SMOKE_ONLY").ok().as_deref() == Some("10") { finish(checks, &root); }
     }
     let info = eval(
         &app,
@@ -1639,6 +1821,7 @@ pub fn run_chat() {
     let (world, bridge) = tauri::async_runtime::block_on(build_world_with(&[]));
     let db_url = format!("sqlite://{}?mode=rwc", world.root.join("dgos.db").display());
     let upstream = Arc::new(Upstream::default());
+    let maintenance = world.maintenance.clone();
     let (providers, skills, mcp, workbench, chat, appearance, probe, port, mcp_note) =
         tauri::async_runtime::block_on(async {
             let db = dgos_db::establish_connection(&db_url).await.expect("db");
@@ -1666,7 +1849,7 @@ pub fn run_chat() {
             .expect("seed provider");
             let providers = ProviderManager::with_vault(&db_url, vault)
                 .await
-                .expect("providers");
+                .expect("providers").with_maintenance(maintenance.clone());
             providers
                 .add_manual_model(
                     &provider.id,
@@ -1676,16 +1859,21 @@ pub fn run_chat() {
                 )
                 .await
                 .expect("manual model");
+            providers.add_manual_model(&provider.id, LOCAL_USER, "whisper-1", Some("speech-transcription")).await.expect("transcription model");
             let skills_dir = world.root.join("skills");
             std::fs::create_dir_all(&skills_dir).unwrap();
             let skills = dgos_skills::SkillsManager::new(db.clone(), skills_dir);
+            if std::env::var("DGOS_CHAT_SMOKE_ONLY").ok().as_deref() == Some("12") {
+                skills.register_bundled_catalog(&std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../skills")).await.expect("bundled catalog");
+                for id in ["dgos.official.writing.summarize", "dgos.official.writing.rewrite"] { skills.install_skill(id, LOCAL_USER).await.expect("journey skill"); }
+            }
             let mcp = Arc::new(McpManager::with_policy_and_vault(
                 db.clone(),
                 Arc::new(commands::DesktopMcpPolicy(
                     crate::session::SessionResolver::no_accounts(),
                 )),
                 Arc::new(RefusingMcpVault),
-            ));
+            ).with_maintenance(maintenance.clone()));
             let fixture = concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/../crates/dgos-mcp/tests/fixtures/mcp-server.mjs"
@@ -1714,8 +1902,8 @@ pub fn run_chat() {
                 },
                 Err(error) => Some(format!("create failed: {error:?}")),
             };
-            let workbench = dgos_workbench::WorkbenchManager::new(db.clone());
-            let chat = dgos_workbench::ChatManager::new(db.clone());
+            let workbench = dgos_workbench::WorkbenchManager::new(db.clone()).with_maintenance(maintenance.clone());
+            let chat = dgos_workbench::ChatManager::new(db.clone(), maintenance.clone());
             let probe = dgos_db::establish_connection(&db_url)
                 .await
                 .expect("probe db");
@@ -1741,6 +1929,7 @@ pub fn run_chat() {
     let router = world.router.clone();
     let crashes = world.crashes.clone();
     let management = world.management.clone();
+    let capabilities = world.capabilities.clone();
     let root = world.root.clone();
     let scenario_world = Mutex::new(Some(world));
     let fixture = Fixture {
@@ -1749,9 +1938,20 @@ pub fn run_chat() {
         root,
         mcp_note,
     };
+    let desktop = dgos_db::DesktopRepository::new(fixture.db.clone());
+    let cli = dgos_db::CliRepository::new(fixture.db.clone());
+    let chat_assets = dgos_workbench::ChatAssets::new(fixture.db.clone());
+    let storage = Arc::new(dgos_application::StorageService::new(
+        dgos_db::StorageRepository::new(fixture.db.clone()),
+        dgos_db::AssetRepository::new(fixture.db.clone()),
+        fixture.root.join("skills"),
+        maintenance.clone(),
+    ));
     let result = tauri::Builder::default()
         .manage(Pending::default())
         .manage(crate::session::SessionResolver::no_accounts())
+        .manage(crate::capabilities::ProviderCallService::new(capabilities.clone()))
+        .manage(crate::capabilities::ModuleCapabilityDispatchService::new(capabilities))
         .manage(LoadEvents(load_sender))
         .manage(fixture)
         .manage(Port(port))
@@ -1766,6 +1966,12 @@ pub fn run_chat() {
             manager: Arc::new(tokio::sync::RwLock::new(skills)),
         })
         .manage(commands::McpState { manager: mcp })
+        .manage(desktop)
+        .manage(cli)
+        .manage(maintenance)
+        .manage(chat_assets)
+        .manage(crate::chat_media::Transcriptions::default())
+        .manage(storage)
         .manage(workbench)
         .manage(chat)
         .manage(appearance)
@@ -1803,6 +2009,34 @@ pub fn run_chat() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_account_state,
+            commands::create_account,
+            commands::sign_in,
+            commands::sign_out,
+            commands::open_agent_session,
+            commands::send_agent_message,
+            commands::get_agent_session,
+            commands::list_agent_sessions,
+            commands::close_agent_session,
+            commands::module_list_provider_catalog,
+            commands::module_call_provider,
+            commands::cancel_module_call,
+            commands::get_desktop_preferences,
+            commands::set_desktop_preferences,
+            commands::get_cli_preferences,
+            commands::set_cli_preferences,
+            commands::probe_cli,
+            commands::get_storage_overview,
+            commands::preview_storage_cleanup,
+            commands::execute_storage_cleanup,
+            commands::preview_vacuum,
+            commands::execute_vacuum,
+            commands::import_chat_asset,
+            commands::preview_chat_asset,
+            commands::remove_chat_asset,
+            commands::transcribe_chat_audio,
+            commands::cancel_chat_transcription,
+            commands::read_workspace_app_catalog,
             commands::list_providers,
             commands::create_provider,
             commands::create_provider_with_models,

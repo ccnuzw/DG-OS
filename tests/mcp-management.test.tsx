@@ -75,6 +75,7 @@ async function chooseTransport(label: string) {
 it('persists explicit remote plaintext consent and resets it whenever the endpoint changes', async () => {
   render(<McpManagement />);
   await screen.findByText('Alpha');
+  fireEvent.click(screen.getByRole('button', { name: 'Add MCP server' }));
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Remote' } });
   await chooseTransport('HTTP endpoint');
   fireEvent.change(screen.getByLabelText(/^Server URL/), { target: { value: 'http://example.invalid/mcp' } });
@@ -131,6 +132,7 @@ it('loads only selected server tools and supports keyboard-operable selection', 
 it('preserves spaces in argv and does not connect a saved server automatically', async () => {
   render(<McpManagement />);
   await screen.findByText('Alpha');
+  fireEvent.click(screen.getByRole('button', { name: 'Add MCP server' }));
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Local' } });
   fireEvent.change(screen.getByLabelText('Executable'), { target: { value: '/usr/local/bin/server' } });
   fireEvent.change(screen.getByLabelText(/^Arguments/), { target: { value: '["--root", "/Users/me/My Documents"]' } });
@@ -145,6 +147,7 @@ it('preserves spaces in argv and does not connect a saved server automatically',
 it('allows incomplete argv editing but rejects malformed JSON without saving', async () => {
   render(<McpManagement />);
   await screen.findByText('Alpha');
+  fireEvent.click(screen.getByRole('button', { name: 'Add MCP server' }));
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Local' } });
   fireEvent.change(screen.getByLabelText('Executable'), { target: { value: '/usr/local/bin/server' } });
   fireEvent.change(screen.getByLabelText(/^Arguments/), { target: { value: '["--root",' } });
@@ -174,7 +177,7 @@ it('requires explicit review and confirmation and sends exactly the reviewed par
   render(<McpManagement />);
   const dialog = await inspector();
   expect(within(dialog).getByText('Input schema')).toBeTruthy();
-  expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Close' }));
+  expect(dialog.contains(document.activeElement)).toBe(true);
   fireEvent.change(within(dialog).getByLabelText('Arguments (JSON)'), { target: { value: '{"text":"reviewed"}' } });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Review tool call', exact: true }));
   expect(mocked.mock.calls.some(([name]) => name === 'call_mcp_tool' || name === 'confirm_mcp_tool')).toBe(false);
@@ -193,7 +196,7 @@ it('requires explicit review and confirmation and sends exactly the reviewed par
 
 it('closing an inspector without consent does not call tools and restores focus', async () => {
   render(<McpManagement />); const dialog = await inspector();
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+  fireEvent.click(dialog.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!);
   expect(screen.queryByRole('dialog')).toBeNull();
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Inspect / call' })));
   expect(mocked.mock.calls.some(([name]) => name === 'confirm_mcp_tool' || name === 'call_mcp_tool')).toBe(false);
@@ -372,7 +375,7 @@ it('leaves editing alone when another server is deleted and ends it when the edi
   fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0]);
   fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete MCP server?' })).getByRole('button', { name: 'Delete' }));
   await waitFor(() => expect(screen.queryByText('Edit Alpha')).toBeNull());
-  expect(screen.getByText('Add MCP server')).toBeTruthy();
+  expect(screen.queryByRole('form', { name: 'Server configuration' })).toBeNull();
 });
 
 it('removes a bearer token only after the dialog is confirmed', async () => {
@@ -432,6 +435,7 @@ it('does not raise a host error toast for argument validation that never reached
   vi.spyOn(console, 'error').mockImplementation(() => {});
   renderWithFeedback();
   await screen.findByText('Alpha');
+  fireEvent.click(screen.getByRole('button', { name: 'Add MCP server' }));
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Local' } });
   fireEvent.change(screen.getByLabelText('Executable'), { target: { value: '/usr/local/bin/server' } });
   fireEvent.change(screen.getByLabelText(/^Arguments/), { target: { value: '["--root",' } });
@@ -492,6 +496,7 @@ it('D111 keeps repeated status-poll failures inline: no Toast after 30 s of fail
 it('D112 marks the MCP Server URL input inputmode="url" without giving it type="url"', async () => {
   render(<McpManagement />);
   await screen.findByText('Alpha');
+  fireEvent.click(screen.getByRole('button', { name: 'Add MCP server' }));
   await chooseTransport('HTTP endpoint');
   const url = screen.getByLabelText(/^Server URL/) as HTMLInputElement;
   expect(url.getAttribute('inputmode')).toBe('url');

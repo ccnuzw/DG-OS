@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
-import { NavLink } from 'react-router-dom';
-import { Button, Input, Modal, RadioGroup, Stack, cn } from '@dgos/ui';
+import { NavLink, useNavigate } from 'react-router-dom';
+import { Button, DropdownMenu, Icon, Input, Modal, RadioGroup, Stack, cn } from '@dgos/ui';
 import { ROUTES } from '../appRoutes';
 import { usePageError } from '../pageError';
 import { useAccount } from './AccountContext';
@@ -106,8 +106,9 @@ function SwitchUserDialog({
 }
 
 // Nav widget. Renders nothing when the app runs without AccountGate.
-export default function AccountMenu() {
+export default function AccountMenu({ collapsed = false }: { collapsed?: boolean }) {
   const { t } = useLocale();
+  const navigate = useNavigate();
   const account = useAccount();
   const reportError = usePageError('AccountMenu');
   const [switching, setSwitching] = useState(false);
@@ -118,11 +119,7 @@ export default function AccountMenu() {
 
   if (state.mode === 'no_accounts') {
     return (
-      <div className="ml-auto flex items-center gap-2">
-        <NavLink to={ROUTES.account} className={LINK_CLASS}>
-           {t('account.create')}
-        </NavLink>
-      </div>
+      <div className="workspace-account-widget"><NavLink to={ROUTES.account} title={t('account.create')} aria-label={t('account.create')} className={LINK_CLASS}><span className="workspace-account-avatar"><Icon name="home" size="sm" /></span>{collapsed ? null : <span>{t('account.create')}</span>}</NavLink></div>
     );
   }
   if (state.mode !== 'signed_in' || !state.current) return null;
@@ -141,17 +138,13 @@ export default function AccountMenu() {
   };
 
   return (
-    <div className="ml-auto flex items-center gap-2">
-      <span className="text-sm text-muted-foreground">{state.current.username}</span>
-      <NavLink to={ROUTES.account} className={LINK_CLASS}>
-         {t('account.title')}
-      </NavLink>
-      <Button variant="ghost" size="sm" onClick={() => setSwitching(true)}>
-         {t('account.switch')}
-      </Button>
-      <Button variant="ghost" size="sm" loading={busy} onClick={() => void leave()}>
-         {t('account.signOut')}
-      </Button>
+    <div className="workspace-account-widget">
+      <DropdownMenu label={state.current.username} trigger={<Button variant="ghost" size="sm" disabled={busy} title={state.current.username} aria-label={state.current.username}><span className="workspace-account-avatar">{state.current.username.slice(0, 1)}</span>{collapsed ? null : <span className="workspace-account-name">{state.current.username}</span>}</Button>} items={[
+        { kind: 'label', text: state.current.username },
+        { kind: 'item', id: 'account', label: t('account.title'), icon: 'home', onSelect: () => navigate(ROUTES.account) },
+        { kind: 'item', id: 'switch', label: t('account.switch'), onSelect: () => setSwitching(true) },
+        { kind: 'item', id: 'signout', label: t('account.signOut'), danger: true, onSelect: () => void leave() },
+      ]} />
       {switching ? (
         <SwitchUserDialog
           current={state.current.username}

@@ -16,6 +16,7 @@ import {
   TAILWIND_BRACKET_TOKEN,
 } from './scripts/design-check/patterns.mjs';
 import { IGNORE_GLOBS, SCRIPT_GLOBS, TOKEN_GLOBS } from './scripts/design-check/scope.mjs';
+import { themeWriterRule } from './scripts/design-check/theme-writer.mjs';
 
 const R1 = 'R1 禁止内联样式';
 const R2 = 'R2 禁止硬编码颜色';
@@ -98,5 +99,13 @@ export default [
     // AC12 exception: token definitions may spell colours. Inline styles and arbitrary values stay forbidden.
     files: TOKEN_GLOBS,
     rules: { 'no-restricted-syntax': ['error', ...restrictedNoColor] },
+  },
+  {
+    files: ['src/ui/theme/apply.ts'],
+    plugins: { dgos: { rules: { 'theme-writer': themeWriterRule } } },
+    rules: {
+      'no-restricted-syntax': ['error', ...restricted.filter(rule => !rule.selector.startsWith('MemberExpression[computed='))],
+      'dgos/theme-writer': 'error',
+    },
   },
 ];

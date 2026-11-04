@@ -14,6 +14,7 @@ export const ruleName = 'dgos/defined-custom-properties';
 
 const messages = utils.ruleMessages(ruleName, {
   rejected: (name) => `Custom property "${name}" is not defined in the design tokens`,
+  cycle: (name) => `Custom property dependency cycle includes "${name}"`,
 });
 
 const VAR_REFERENCE = /var\(\s*(--[\w-]+)/g;
@@ -36,6 +37,32 @@ const rule = (primary, secondary) => (root, result) => {
   for (const reference of result.stylelint.referenceRoots) {
     reference.walkDecls(/^--/, (decl) => defined.add(decl.prop));
     reference.walkAtRules('property', (atRule) => defined.add(atRule.params.trim()));
+  }
+
+  const graph = new Map();
+  const declarations = new Map();
+  for (const reference of [...result.stylelint.referenceRoots, root]) {
+    reference.walkDecls(/^--/, decl => {
+      if (!graph.has(decl.prop)) graph.set(decl.prop, new Set());
+      for (const match of decl.value.matchAll(VAR_REFERENCE)) graph.get(decl.prop).add(match[1]);
+      if (reference === root) declarations.set(decl.prop, decl);
+    });
+  }
+  const cyclic = new Set();
+  const visited = new Set();
+  const active = [];
+  function visit(name) {
+    const index = active.indexOf(name);
+    if (index >= 0) { for (const member of active.slice(index)) cyclic.add(member); return; }
+    if (visited.has(name)) return;
+    active.push(name);
+    for (const target of graph.get(name) ?? []) visit(target);
+    active.pop(); visited.add(name);
+  }
+  for (const name of graph.keys()) visit(name);
+  for (const name of cyclic) {
+    const node = declarations.get(name);
+    if (node) utils.report({ result, ruleName, message: messages.cycle(name), node, index: 0, endIndex: name.length });
   }
 
   root.walkDecls((decl) => {

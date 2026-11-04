@@ -1,0 +1,19 @@
+/* Page-pattern layout only; this is a local responsive rule, not a persisted density or breakpoint contract. */
+.resource-layout-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 64rem) {
+  .resource-layout-grid {
+    grid-template-columns: minmax(14rem, 0.85fr) minmax(0, 1.15fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .resource-layout-grid * {
+    transition: none;
+    animation: none;
+  }
+}
+.resource-card-header { grid-template-columns: minmax(0, 1fr) auto; }

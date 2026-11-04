@@ -8,8 +8,8 @@ import { Spinner } from './Spinner';
 // Heights are the spec's 32/36/40px at 100% density: h-8/h-9/h-10 are 8/9/10 x 4rem/14 (FR-005 §7.1.1).
 const buttonVariants = cva(
   [
-    'inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md font-medium',
-    'transition-colors disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress',
+    'control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-0 border-solid font-sans font-medium',
+    'transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress',
     FOCUS_RING,
   ],
   {
@@ -21,7 +21,10 @@ const buttonVariants = cva(
         ghost: 'bg-transparent text-foreground enabled:hover:bg-accent',
         link: 'bg-transparent text-primary underline-offset-4 enabled:hover:underline',
       },
+      // h-6/h-7 are 24/28px at a 14px root (4rem/14 * N): the compact sizes the workspace chrome uses.
       size: {
+        xxs: 'h-6 px-2 text-xs',
+        xs: 'h-7 px-3 text-sm',
         sm: 'h-8 px-3 text-sm',
         md: 'h-9 px-4 text-sm',
         lg: 'h-10 px-5 text-base',
@@ -32,13 +35,15 @@ const buttonVariants = cva(
       },
     },
     compoundVariants: [
+      { iconOnly: true, size: 'xxs', className: 'w-6' },
+      { iconOnly: true, size: 'xs', className: 'w-7' },
       { iconOnly: true, size: 'sm', className: 'w-8' },
       { iconOnly: true, size: 'md', className: 'w-9' },
       { iconOnly: true, size: 'lg', className: 'w-10' },
       // A link reads as text: no fixed height, no padding. Compound classes come last, so they beat the size's.
       { variant: 'link', className: 'h-auto px-0' },
     ],
-    defaultVariants: { variant: 'primary', size: 'md', iconOnly: false },
+    defaultVariants: { variant: 'primary', size: 'xs', iconOnly: false },
   },
 );
 

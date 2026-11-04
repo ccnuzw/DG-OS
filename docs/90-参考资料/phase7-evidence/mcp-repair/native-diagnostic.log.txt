@@ -1,0 +1,86 @@
+{"fixture":"official-sdk-http","event":"request","id":1,"method":"POST"}
+{"fixture":"official-sdk-http","event":"finish","id":1,"status":200,"elapsedMs":11}
+{"fixture":"official-sdk-http","event":"close","id":1,"finished":true,"elapsedMs":12}
+{"fixture":"official-sdk-http","event":"request","id":2,"method":"POST"}
+{"fixture":"official-sdk-http","event":"finish","id":2,"status":202,"elapsedMs":2}
+{"fixture":"official-sdk-http","event":"close","id":2,"finished":true,"elapsedMs":2}
+{"fixture":"official-sdk-http","event":"request","id":3,"method":"POST"}
+{"fixture":"official-sdk-http","event":"finish","id":3,"status":200,"elapsedMs":3}
+{"fixture":"official-sdk-http","event":"close","id":3,"finished":true,"elapsedMs":3}
+MCP WEBVIEW step=1 phase=dispatch
+MCP WEBVIEW step=1 phase=entered
+MCP WEBVIEW step=1 phase=completed
+MCP WEBVIEW step=1 phase=report elapsed_ms=95 ok=true
+PASS W4 real WebView loads MCP management
+MCP WEBVIEW step=2 phase=dispatch
+MCP WEBVIEW step=2 phase=entered
+MCP WEBVIEW step=2 phase=completed
+MCP WEBVIEW step=2 phase=report elapsed_ms=363 ok=true
+MCP WEBVIEW step=3 phase=dispatch
+MCP WEBVIEW step=3 phase=entered
+MCP WEBVIEW step=3 phase=completed
+MCP WEBVIEW step=3 phase=report elapsed_ms=2 ok=true
+PASS two acceptance MCP servers are managed together
+MCP WEBVIEW step=4 phase=dispatch
+MCP WEBVIEW step=4 phase=entered
+MCP WEBVIEW step=4 phase=completed
+MCP WEBVIEW step=4 phase=report elapsed_ms=71 ok=true
+MCP WEBVIEW step=5 phase=dispatch
+MCP WEBVIEW step=5 phase=entered
+MCP WEBVIEW step=5 phase=completed
+MCP WEBVIEW step=5 phase=report elapsed_ms=6 ok=true
+MCP WEBVIEW step=6 phase=dispatch
+MCP WEBVIEW step=6 phase=entered
+MCP WEBVIEW step=6 phase=completed
+MCP WEBVIEW step=6 phase=report elapsed_ms=53 ok=true
+MCP WEBVIEW step=7 phase=dispatch
+MCP WEBVIEW step=7 phase=entered
+MCP WEBVIEW step=7 phase=completed
+MCP WEBVIEW step=7 phase=report elapsed_ms=59 ok=true
+PASS real WebView shows exact tool confirmation and filesystem result
+MCP WEBVIEW step=8 phase=dispatch
+MCP WEBVIEW step=8 phase=entered
+MCP WEBVIEW step=8 phase=completed
+MCP WEBVIEW step=8 phase=report elapsed_ms=63 ok=true
+MCP WEBVIEW step=9 phase=dispatch
+MCP WEBVIEW step=9 phase=entered
+MCP WEBVIEW step=9 phase=completed
+MCP WEBVIEW step=9 phase=report elapsed_ms=5 ok=true
+MCP WEBVIEW step=10 phase=dispatch
+MCP WEBVIEW step=10 phase=entered
+MCP WEBVIEW step=10 phase=completed
+MCP WEBVIEW step=10 phase=report elapsed_ms=52 ok=true
+MCP WEBVIEW step=11 phase=dispatch
+MCP WEBVIEW step=11 phase=entered
+{"fixture":"official-sdk-http","event":"request","id":4,"method":"POST"}
+{"fixture":"official-sdk-http","event":"finish","id":4,"status":200,"elapsedMs":3}
+{"fixture":"official-sdk-http","event":"close","id":4,"finished":true,"elapsedMs":3}
+MCP WEBVIEW step=11 phase=completed
+MCP WEBVIEW step=11 phase=report elapsed_ms=58 ok=true
+PASS real WebView calls the second HTTP MCP
+PASS recovery configuration is accepted
+PASS recovery endpoint fails explicitly
+{"fixture":"official-sdk-http","event":"request","id":5,"method":"POST"}
+{"fixture":"official-sdk-http","event":"finish","id":5,"status":200,"elapsedMs":2}
+{"fixture":"official-sdk-http","event":"close","id":5,"finished":true,"elapsedMs":2}
+{"fixture":"official-sdk-http","event":"request","id":6,"method":"POST"}
+{"fixture":"official-sdk-http","event":"finish","id":6,"status":200,"elapsedMs":2}
+{"fixture":"official-sdk-http","event":"close","id":6,"finished":true,"elapsedMs":2}
+{"fixture":"official-sdk-http","event":"request","id":7,"method":"POST"}
+{"fixture":"official-sdk-http","event":"finish","id":7,"status":200,"elapsedMs":2}
+{"fixture":"official-sdk-http","event":"close","id":7,"finished":true,"elapsedMs":2}
+PASS three recovery attempts exhaust the failed connection
+MCP WEBVIEW step=12 phase=dispatch
+MCP WEBVIEW step=12 phase=entered
+MCP WEBVIEW step=12 phase=completed
+MCP WEBVIEW step=12 phase=report elapsed_ms=11 ok=true
+MCP WEBVIEW step=13 phase=dispatch
+MCP WEBVIEW step=13 phase=entered
+MCP WEBVIEW step=13 phase=completed
+MCP WEBVIEW step=13 phase=report elapsed_ms=8000 ok=true
+PASS real WebView shows bounded recovery failure outside management
+PASS real MCP calls have redacted usage records
+{"fixture":"official-sdk-http","event":"request","id":8,"method":"DELETE"}
+{"fixture":"official-sdk-http","event":"finish","id":8,"status":200,"elapsedMs":1}
+{"fixture":"official-sdk-http","event":"close","id":8,"finished":true,"elapsedMs":1}
+SMOKE RESULT: 9 passed, 0 failed

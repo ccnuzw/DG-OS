@@ -31,7 +31,7 @@ function TabsTrigger(props: StyleFree<ComponentProps<typeof TabsPrimitive.Trigge
     <TabsPrimitive.Trigger
       {...rest}
       className={cn(
-        '-mb-px inline-flex h-9 items-center border-b-2 border-transparent px-3 text-sm font-medium text-muted-foreground transition-colors',
+        '-mb-px inline-flex h-7 appearance-none items-center border-0 border-b-2 border-solid border-transparent bg-transparent px-3 font-sans text-sm font-medium text-muted-foreground transition-colors motion-reduce:transition-none',
         'enabled:hover:text-foreground',
         'data-[state=active]:border-primary data-[state=active]:text-foreground',
         'disabled:cursor-not-allowed disabled:opacity-disabled',

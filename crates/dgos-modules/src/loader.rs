@@ -21,6 +21,7 @@ pub struct VerifiedModuleArtifact {
     version: String,
     integrity: String,
     entry: Arc<[u8]>,
+    views: crate::ModuleViewContribution,
 }
 
 impl fmt::Debug for VerifiedModuleArtifact {
@@ -46,8 +47,12 @@ impl VerifiedModuleArtifact {
             version,
             integrity,
             entry,
+            views: crate::ModuleViewContribution::default(),
         }
     }
+
+    pub(crate) fn with_views(mut self, views: crate::ModuleViewContribution) -> Self { self.views = views; self }
+    pub fn views(&self) -> crate::ModuleViewContribution { self.views }
 
     pub fn module_id(&self) -> &str {
         &self.module_id

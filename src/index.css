@@ -10,7 +10,7 @@
 }
 
 :root {
-  font-family: var(--font-family-base);
+  font-family: var(--font-family-ui);
   line-height: var(--line-height-normal);
   font-weight: var(--font-weight-normal);
 
@@ -24,7 +24,7 @@
    font-size stays off :root: the root size is the density (tokens/density.css). */
 body {
   margin: 0;
-  font-size: var(--font-size-base);
+  font-size: max(11px, var(--font-size-ui));
   display: flex;
   min-width: 320px;
   min-height: 100vh;

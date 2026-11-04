@@ -2,6 +2,7 @@ import { t } from '../i18n';
 import { create } from 'zustand';
 import { Channel, invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { extractErrorCode, lookupError } from '@dgos/ui';
+import type { GenerationParameters } from '../components/chat/GenerationControls';
 
 // FR-006 stages 3-5 chat store. Contract: docs/04-技术架构/当前版本/V1-接口契约.md §10.1.
 // - Every command is invoked as invoke('<name>', { input, onEvent? }) with snake_case input keys. Identity comes from the
@@ -12,10 +13,12 @@ import { extractErrorCode, lookupError } from '@dgos/ui';
 // - Reasoning text lives only in `generation.reasoning`. It is never written to `messages`, never copied.
 
 export type ChatMessageStatus = 'generating' | 'completed' | 'interrupted' | 'failed';
+export interface ChatAsset { id: string; name: string; mime: string; bytes_len: number }
 export interface ChatSession {
   id: string; title: string; title_source: 'auto' | 'user';
   provider_id: string | null; model_id: string | null;
-  skill_id: string | null; skill_version_id: string | null;
+  skills: { skill_id: string; version_id: string; content_hash: string }[];
+  generation: GenerationParameters;
   no_skill_confirmed: boolean;
   created_at: number; updated_at: number;
 }
@@ -26,11 +29,12 @@ export interface ChatMessage {
   error_code: string | null;
   total_tokens: number | null;
   result_unknown: boolean;
+  assets?: ChatAsset[];
   created_at: number; updated_at: number;
 }
 export interface ChatTargetInput {
   provider_id: string | null; model_id: string | null;
-  skill_id: string | null; no_skill: boolean;
+  skill_ids: string[]; no_skill: boolean; generation: GenerationParameters;
 }
 export interface ChatSessionPage { items: ChatSession[]; next_cursor: string | null }
 export interface ChatMessagePage { items: ChatMessage[]; next_before_seq: number | null }
@@ -139,7 +143,7 @@ export interface Generation {
 }
 export interface ChatNotice { tone: 'error' | 'warning' | 'info'; text: string }
 export type PendingDestination =
-  | { kind: 'send'; sessionId: string; content: string; tools: ChatToolSelection[]; fingerprint: string; host: string }
+  | { kind: 'send'; sessionId: string; content: string; tools: ChatToolSelection[]; assetIds?: string[]; fingerprint: string; host: string }
   | { kind: 'regenerate'; sessionId: string; messageId: string; fingerprint: string; host: string };
 export type SendOutcome = 'started' | 'needs_confirmation' | 'rejected';
 
@@ -158,6 +162,22 @@ export interface ChatState {
   searchLoading: boolean;
   searchError: string | null;
 
+  /** Per-session UI state that must survive inner and outer workspace switches. */
+  sessionNotices: Record<string, ChatNotice | null>;
+  sessionActionErrors: Record<string, string | null>;
+  sessionActionCodes: Record<string, number | null>;
+  sessionPendingDestinations: Record<string, PendingDestination | null>;
+  openSessionIds: string[];
+  activeSessionId: string | null;
+  sessionViews: Record<string, SessionViewState>;
+  sessionDrafts: Record<string, string>;
+  sessionTargetDrafts: Record<string, ChatTargetInput | null>;
+  sessionTools: Record<string, string[]>;
+  sessionAssets: Record<string, ChatAsset[]>;
+  sessionScrollTop: Record<string, number>;
+  generations: Record<string, Generation>;
+
+  // Active-session projection kept stable for existing chat components and consumers.
   activeSession: ChatSession | null;
   activeStale: boolean;
   messages: ChatMessage[];
@@ -170,10 +190,8 @@ export interface ChatState {
   generation: Generation | null;
   notice: ChatNotice | null;
   actionError: string | null;
-  /** IPC error code behind `actionError` when the host refused a command (1006013, 1006017, ...); null for local checks. */
   actionCode: number | null;
   pendingDestination: PendingDestination | null;
-  /** Incremented when a send is accepted; the composer clears its draft and tool selection on a change. */
   lastSent: { seq: number; sessionId: string };
 
   loadSessions: () => Promise<void>;
@@ -182,14 +200,22 @@ export interface ChatState {
   loadMoreSearch: () => Promise<void>;
   createSession: (target?: ChatTargetInput) => Promise<ChatSession | null>;
   selectSession: (session: ChatSession) => Promise<void>;
+  closeSession: (sessionId: string) => void;
   loadLatestMessages: () => Promise<void>;
   loadOlderMessages: () => Promise<void>;
+  setDraft: (sessionId: string, draft: string) => void;
+  setSessionTargetDraft: (sessionId: string, target: ChatTargetInput | null) => void;
+  setSessionTools: (sessionId: string, tools: string[]) => void;
+  setSessionAssets: (sessionId: string, assets: ChatAsset[]) => void;
+  setSessionScrollTop: (sessionId: string, top: number) => void;
   renameSession: (sessionId: string, title: string) => Promise<string | null>;
   deleteSession: (sessionId: string) => Promise<string | null>;
   updateTarget: (sessionId: string, target: ChatTargetInput) => Promise<string | null>;
-  send: (content: string, tools?: ChatToolSelection[], acceptDestination?: string) => Promise<SendOutcome>;
+  send: (content: string, tools?: ChatToolSelection[], acceptDestination?: string, assetIds?: string[]) => Promise<SendOutcome>;
   regenerate: (messageId: string, acceptDestination?: string) => Promise<SendOutcome>;
   stop: () => Promise<void>;
+  stopSession: (sessionId: string) => Promise<void>;
+  cancelAll: () => Promise<void>;
   cancelOnLeave: () => void;
   decideTool: (type: 'approve' | 'deny') => Promise<void>;
   confirmDestination: () => void;
@@ -198,17 +224,54 @@ export interface ChatState {
   reset: () => void;
 }
 
+export interface SessionViewState {
+  messages: ChatMessage[];
+  olderCursor: number | null;
+  newerTrimmed: boolean;
+  messagesLoading: boolean;
+  messagesError: string | null;
+  droppedTurns: Record<string, number>;
+  stale: boolean;
+  loaded: boolean;
+}
+
+function emptySessionView(): SessionViewState {
+  return { messages: [], olderCursor: null, newerTrimmed: false, messagesLoading: false, messagesError: null, droppedTurns: {}, stale: false, loaded: false };
+}
+
+function projectActive(state: Data, activeSessionId: string | null): Partial<Data> {
+  const view = activeSessionId ? state.sessionViews[activeSessionId] ?? emptySessionView() : emptySessionView();
+  return {
+    activeSessionId,
+    activeSession: activeSessionId ? state.sessions.find(session => session.id === activeSessionId) ?? null : null,
+    activeStale: view.stale,
+    messages: view.messages,
+    olderCursor: view.olderCursor,
+    newerTrimmed: view.newerTrimmed,
+    messagesLoading: view.messagesLoading,
+    messagesError: view.messagesError,
+    droppedTurns: view.droppedTurns,
+    generation: activeSessionId ? state.generations[activeSessionId] ?? null : null,
+    notice: activeSessionId ? state.sessionNotices[activeSessionId] ?? null : null,
+    actionError: activeSessionId ? state.sessionActionErrors[activeSessionId] ?? null : null,
+    actionCode: activeSessionId ? state.sessionActionCodes[activeSessionId] ?? null : null,
+    pendingDestination: activeSessionId ? state.sessionPendingDestinations[activeSessionId] ?? null : null,
+  };
+}
+
 type Data = Omit<ChatState, 'loadSessions' | 'loadMoreSessions' | 'setSearchQuery' | 'loadMoreSearch' | 'createSession'
-  | 'selectSession' | 'loadLatestMessages' | 'loadOlderMessages' | 'renameSession' | 'deleteSession' | 'updateTarget'
-  | 'send' | 'regenerate' | 'stop' | 'cancelOnLeave' | 'decideTool' | 'confirmDestination' | 'dismissDestination'
-  | 'dismissNotice' | 'reset'>;
+  | 'selectSession' | 'closeSession' | 'loadLatestMessages' | 'loadOlderMessages' | 'setDraft' | 'setSessionTargetDraft' | 'setSessionTools' | 'setSessionAssets' | 'setSessionScrollTop'
+  | 'renameSession' | 'deleteSession' | 'updateTarget' | 'send' | 'regenerate' | 'stop' | 'stopSession' | 'cancelAll' | 'cancelOnLeave'
+  | 'decideTool' | 'confirmDestination' | 'dismissDestination' | 'dismissNotice' | 'reset'>;
 
 const initialData = (): Data => ({
   sessions: [], sessionsCursor: null, sessionsCapped: false, sessionsLoading: false, sessionsLoaded: false, sessionsError: null,
   searchQuery: '', searchResults: [], searchCursor: null, searchCapped: false, searchLoading: false, searchError: null,
+  sessionNotices: {}, sessionActionErrors: {}, sessionActionCodes: {}, sessionPendingDestinations: {},
+  openSessionIds: [], activeSessionId: null, sessionViews: {}, sessionDrafts: {}, sessionTargetDrafts: {}, sessionTools: {}, sessionAssets: {}, sessionScrollTop: {}, generations: {},
   activeSession: null, activeStale: false, messages: [], olderCursor: null, newerTrimmed: false,
-  messagesLoading: false, messagesError: null, droppedTurns: {},
-  generation: null, notice: null, actionError: null, actionCode: null, pendingDestination: null,
+  messagesLoading: false, messagesError: null, droppedTurns: {}, generation: null,
+  notice: null, actionError: null, actionCode: null, pendingDestination: null,
   lastSent: { seq: 0, sessionId: '' },
 });
 
@@ -250,6 +313,7 @@ interface Run {
   sessionId: string;
   kind: 'send' | 'regenerate';
   content: string;
+  assets: ChatAsset[];
   taskId: string;
   acked: boolean;
   assistantId: string | null;
@@ -266,11 +330,12 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
     ...overrides,
   };
 
-  let run: Run | null = null;
+  const runs = new Map<string, Run>();
   let sessionsToken = 0;
-  let messagesToken = 0;
+  const messageTokens = new Map<string, number>();
   let searchToken = 0;
   let searchTimer: number | undefined;
+  let accountEpoch = 0;
 
   async function call<T>(command: string, args: Record<string, unknown>): Promise<T> {
     let response: CommandResponse<T>;
@@ -287,40 +352,49 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
   }
 
   return create<ChatState>()((set, get) => {
-    const replaceSession = (session: ChatSession) => set(state => ({
-      sessions: state.sessions.map(item => item.id === session.id ? session : item),
-      searchResults: state.searchResults.map(hit => hit.session.id === session.id ? { ...hit, session } : hit),
-      activeSession: state.activeSession?.id === session.id ? session : state.activeSession,
-    }));
+    const replaceSession = (session: ChatSession) => set(state => {
+      const next = {
+        ...state,
+        sessions: state.sessions.map(item => item.id === session.id ? session : item),
+        searchResults: state.searchResults.map(hit => hit.session.id === session.id ? { ...hit, session } : hit),
+      };
+      return { ...next, ...projectActive(next, state.activeSessionId) };
+    });
 
     const markStale = (sessionId: string) => {
-      if (get().activeSession?.id === sessionId) set({ activeStale: true });
+      set(state => {
+        const view = state.sessionViews[sessionId] ?? emptySessionView();
+        const next = { ...state, sessionViews: { ...state.sessionViews, [sessionId]: { ...view, stale: true } } };
+        return { ...next, ...projectActive(next, state.activeSessionId) };
+      });
       void get().loadSessions();
     };
 
     /** Reloads the first page and merges it in front of what is already shown (title, order and time may have changed). */
     async function refreshSessions() {
+      const token = accountEpoch;
       try {
         const page = await call<ChatSessionPage>('list_chat_sessions', { input: { limit: SESSION_PAGE } });
+        if (token !== accountEpoch) return;
         set(state => {
           const merged = mergeById(page.items, state.sessions, item => item.id).slice(0, SESSION_CAP);
           const cursor = state.sessions.length ? state.sessionsCursor : page.next_cursor;
-          const active = state.activeSession && merged.find(item => item.id === state.activeSession!.id);
-          return {
-            sessions: merged, sessionsCursor: cursor, sessionsCapped: merged.length >= SESSION_CAP && cursor !== null,
-            sessionsLoaded: true, activeSession: active || state.activeSession,
-          };
+          const next = { ...state, sessions: merged, sessionsCursor: cursor, sessionsCapped: merged.length >= SESSION_CAP && cursor !== null, sessionsLoaded: true };
+          return { ...next, ...projectActive(next, state.activeSessionId) };
         });
       } catch {
-        // The list is a convenience here; the terminal state of the run is already shown.
+        // A terminal event remains authoritative; this refresh is best-effort.
       }
     }
 
     function patchGeneration(r: Run, patch: Partial<Generation> | ((g: Generation) => Partial<Generation>)) {
-      if (run !== r) return;
+      if (runs.get(r.sessionId) !== r) return;
       set(state => {
-        if (!state.generation || state.generation.runId !== r.id) return {};
-        return { generation: { ...state.generation, ...(typeof patch === 'function' ? patch(state.generation) : patch) } };
+        const current = state.generations[r.sessionId];
+        if (!current || current.runId !== r.id) return {};
+        const generation = { ...current, ...(typeof patch === 'function' ? patch(current) : patch) };
+        const next = { ...state, generations: { ...state.generations, [r.sessionId]: generation } };
+        return { ...next, ...projectActive(next, state.activeSessionId) };
       });
     }
 
@@ -333,141 +407,120 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
     }
 
     function finalize(r: Run, snapshot: ChatMessage | null, error: Extract<ChatStreamEvent, { kind: 'error' }> | null) {
-      if (run !== r) return;
-      run = null;
-      const generation = get().generation;
-      const showing = get().activeSession?.id === r.sessionId;
+      if (runs.get(r.sessionId) !== r) return;
+      runs.delete(r.sessionId);
+      const generation = get().generations[r.sessionId];
       const replaced = generation?.replacesMessageId ?? null;
       let notice: ChatNotice | null = null;
       if (error) {
         const base = generationErrorText(error.error_code, error.provider_code);
-        notice = error.regeneration_discarded
-          ? { tone: 'warning', text: t('chat.regenerationKept', { message: base }) }
-          : { tone: error.error_code === 'task_cancelled' ? 'info' : 'error', text: base };
+        notice = error.regeneration_discarded ? { tone: 'warning', text: t('chat.regenerationKept', { message: base }) } : { tone: error.error_code === 'task_cancelled' ? 'info' : 'error', text: base };
         if (error.result_unknown) notice = { tone: notice.tone === 'info' ? 'warning' : notice.tone, text: `${notice.text}${t('chat.unknownResult')}` };
       }
       let reload = false;
       set(state => {
-        let messages = state.messages;
-        if (showing) {
-          if (snapshot) {
-            const keepOld = error?.regeneration_discarded === true;
-            if (replaced && !keepOld && snapshot.id !== replaced) messages = messages.filter(item => item.id !== replaced);
-            messages = upsertMessage(messages, snapshot);
-          } else {
-            reload = true;
-          }
-          if (messages.length > MESSAGE_CAP) reload = true;
-        }
-        return { generation: null, messages, notice: showing || !error ? notice : notice };
+        const view = state.sessionViews[r.sessionId] ?? emptySessionView();
+        let messages = view.messages;
+        if (snapshot) {
+          const keepOld = error?.regeneration_discarded === true;
+          if (replaced && !keepOld && snapshot.id !== replaced) messages = messages.filter(item => item.id !== replaced);
+          messages = upsertMessage(messages, snapshot);
+        } else reload = true;
+        if (messages.length > MESSAGE_CAP) reload = true;
+        const next = { ...state, sessionViews: { ...state.sessionViews, [r.sessionId]: { ...view, messages } }, generations: Object.fromEntries(Object.entries(state.generations).filter(([id]) => id !== r.sessionId)), sessionNotices: { ...state.sessionNotices, [r.sessionId]: notice } };
+        return { ...next, ...projectActive(next, state.activeSessionId) };
       });
-      if (reload) void get().loadLatestMessages();
+      if (reload && get().activeSessionId === r.sessionId) void get().loadLatestMessages();
       void refreshSessions();
     }
 
     function applyEvent(r: Run, event: ChatStreamEvent) {
-      if (run !== r || !event || typeof event !== 'object') return;
+      if (runs.get(r.sessionId) !== r || !event || typeof event !== 'object') return;
       const id = eventAssistantId(event);
       if (id !== null && r.assistantId !== null && id !== r.assistantId) return;
       switch (event.kind) {
-        case 'started':
-          return;
-        case 'delta':
-          return patchGeneration(r, g => ({ text: g.text + event.text }));
-        case 'reasoning_delta':
-          return patchGeneration(r, g => ({ reasoning: g.reasoning + event.text }));
-        case 'tool_proposal':
-          return patchGeneration(r, { phase: 'awaiting_tool', proposal: event.proposal, proposalBusy: false });
-        case 'done':
-          return finalize(r, event.message, null);
-        case 'error':
-          return finalize(r, event.message, event);
-        default:
-          return;
+        case 'started': return;
+        case 'delta': return patchGeneration(r, g => ({ text: g.text + event.text }));
+        case 'reasoning_delta': return patchGeneration(r, g => ({ reasoning: g.reasoning + event.text }));
+        case 'tool_proposal': return patchGeneration(r, { phase: 'awaiting_tool', proposal: event.proposal, proposalBusy: false });
+        case 'done': return finalize(r, event.message, null);
+        case 'error': return finalize(r, event.message, event);
+        default: return;
       }
     }
 
     function handleEvent(r: Run, event: ChatStreamEvent) {
-      if (run !== r) return;
-      if (!r.acked) {
-        r.buffer.push(event);
-        return;
-      }
+      if (runs.get(r.sessionId) !== r) return;
+      if (!r.acked) { r.buffer.push(event); return; }
       applyEvent(r, event);
     }
 
     function onAck(r: Run, ack: SendAck) {
-      if (run !== r) return;
+      if (runs.get(r.sessionId) !== r) return;
       r.acked = true;
       r.assistantId = ack.assistant_message_id;
       r.taskId = ack.task_id || r.taskId;
       if (ack.replayed) {
-        // The host did not call upstream again and does not re-attach the channel: show what it has stored.
-        run = null;
-        set({ generation: null });
-        void get().loadLatestMessages();
+        runs.delete(r.sessionId);
+        set(state => {
+          const next = { ...state, generations: Object.fromEntries(Object.entries(state.generations).filter(([id]) => id !== r.sessionId)) };
+          return { ...next, ...projectActive(next, state.activeSessionId) };
+        });
+        if (get().activeSessionId === r.sessionId) void get().loadLatestMessages();
         return;
       }
       set(state => {
-        let messages = state.messages;
-        if (r.kind === 'send' && state.activeSession?.id === r.sessionId && !messages.some(m => m.id === ack.user_message_id)) {
+        const view = state.sessionViews[r.sessionId] ?? emptySessionView();
+        let messages = view.messages;
+        if (r.kind === 'send' && !messages.some(m => m.id === ack.user_message_id)) {
           const now = Math.floor(Date.now() / 1000);
-          messages = [...messages, {
-            id: ack.user_message_id, session_id: r.sessionId, seq: (messages[messages.length - 1]?.seq ?? 0) + 1,
-            role: 'user', content: r.content, status: 'completed', task_id: ack.task_id, finish_reason: null,
-            error_code: null, total_tokens: null, result_unknown: false, created_at: now, updated_at: now,
-          }];
+          messages = [...messages, { id: ack.user_message_id, session_id: r.sessionId, seq: (messages[messages.length - 1]?.seq ?? 0) + 1, role: 'user', content: r.content, assets: r.assets, status: 'completed', task_id: ack.task_id, finish_reason: null, error_code: null, total_tokens: null, result_unknown: false, created_at: now, updated_at: now }];
         }
-        return {
-          messages,
-          droppedTurns: ack.dropped_turns > 0 ? { ...state.droppedTurns, [ack.assistant_message_id]: ack.dropped_turns } : state.droppedTurns,
-          generation: state.generation && state.generation.runId === r.id
-            ? { ...state.generation, assistantMessageId: ack.assistant_message_id, phase: state.generation.phase === 'sending' ? 'running' : state.generation.phase }
-            : state.generation,
-          lastSent: r.kind === 'send' ? { seq: state.lastSent.seq + 1, sessionId: r.sessionId } : state.lastSent,
-        };
+        const current = state.generations[r.sessionId];
+        const generation = current?.runId === r.id ? { ...current, assistantMessageId: ack.assistant_message_id, phase: current.phase === 'sending' ? 'running' as const : current.phase } : current;
+        const next = { ...state, sessionViews: { ...state.sessionViews, [r.sessionId]: { ...view, messages, droppedTurns: ack.dropped_turns > 0 ? { ...view.droppedTurns, [ack.assistant_message_id]: ack.dropped_turns } : view.droppedTurns } }, generations: generation ? { ...state.generations, [r.sessionId]: generation } : state.generations, lastSent: r.kind === 'send' ? { seq: state.lastSent.seq + 1, sessionId: r.sessionId } : state.lastSent };
+        return { ...next, ...projectActive(next, state.activeSessionId) };
       });
-      const buffered = r.buffer.splice(0);
-      for (const event of buffered) applyEvent(r, event);
-      if (r.stopRequested && run === r) void cancelRun(r);
+      if (r.kind === 'send') set(state => ({ sessionAssets: { ...state.sessionAssets, [r.sessionId]: (state.sessionAssets[r.sessionId] ?? []).filter(asset => !r.assets.some(sent => sent.id === asset.id)) } }));
+      for (const event of r.buffer.splice(0)) applyEvent(r, event);
+      if (r.stopRequested && runs.get(r.sessionId) === r) void cancelRun(r);
     }
 
-    async function start(
-      kind: 'send' | 'regenerate', sessionId: string, command: string, input: Record<string, unknown>,
-      requestId: string, content: string, toolsMode: boolean, replacesMessageId: string | null,
-      pending: () => PendingDestination,
-    ): Promise<SendOutcome> {
-      const r: Run = {
-        id: requestId, sessionId, kind, content, taskId: requestId, acked: false, assistantId: null, buffer: [], stopRequested: false,
-      };
-      // B06-59: the channel exists before the command is invoked, so no early event can be lost.
+    async function start(kind: 'send' | 'regenerate', sessionId: string, command: string, input: Record<string, unknown>, requestId: string, content: string, toolsMode: boolean, replacesMessageId: string | null, pending: () => PendingDestination): Promise<SendOutcome> {
+      const epoch = accountEpoch;
+      const assets = kind === 'send' ? (get().sessionAssets[sessionId] ?? []).filter(asset => (input.asset_ids as string[] | undefined)?.includes(asset.id)) : [];
+      const r: Run = { id: requestId, sessionId, kind, content, assets, taskId: requestId, acked: false, assistantId: null, buffer: [], stopRequested: false };
       const channel = deps.createChannel();
       channel.onmessage = event => handleEvent(r, event);
-      run = r;
-      set({
-        generation: {
-          runId: requestId, sessionId, kind, phase: 'sending', assistantMessageId: null, text: '', reasoning: '',
-          toolsMode, proposal: null, proposalBusy: false, stopping: false, replacesMessageId,
-        },
-        actionError: null, actionCode: null, notice: null,
+      runs.set(sessionId, r);
+      set(state => {
+        const generation: Generation = { runId: requestId, sessionId, kind, phase: 'sending', assistantMessageId: null, text: '', reasoning: '', toolsMode, proposal: null, proposalBusy: false, stopping: false, replacesMessageId };
+        const next = { ...state, generations: { ...state.generations, [sessionId]: generation }, sessionNotices: { ...state.sessionNotices, [sessionId]: null }, sessionActionErrors: { ...state.sessionActionErrors, [sessionId]: null }, sessionActionCodes: { ...state.sessionActionCodes, [sessionId]: null } };
+        return { ...next, ...projectActive(next, state.activeSessionId) };
       });
       try {
         const ack = await call<SendAck>(command, { input, onEvent: channel });
         onAck(r, ack);
         return 'started';
       } catch (error) {
-        if (run === r) {
-          run = null;
-          set({ generation: null });
+        if (epoch !== accountEpoch) return 'rejected';
+        if (runs.get(sessionId) === r) {
+          runs.delete(sessionId);
+          set(state => {
+            const next = { ...state, generations: Object.fromEntries(Object.entries(state.generations).filter(([id]) => id !== sessionId)) };
+            return { ...next, ...projectActive(next, state.activeSessionId) };
+          });
         }
         const code = error instanceof ChatCommandError ? error.code : null;
         const destination = error instanceof ChatCommandError ? destinationDetail(error.detail) : null;
         if (code === 1006012 && destination) {
           const token = pending();
-          set({ pendingDestination: { ...token, fingerprint: destination.fingerprint, host: destination.host } });
+          const pendingDestination = { ...token, fingerprint: destination.fingerprint, host: destination.host };
+          set(state => ({ sessionPendingDestinations: { ...state.sessionPendingDestinations, [sessionId]: pendingDestination }, ...(state.activeSessionId === sessionId ? { pendingDestination } : {}) }));
           return 'needs_confirmation';
         }
-        set({ actionError: chatErrorText(error), actionCode: code });
+        const text = chatErrorText(error);
+        set(state => ({ sessionActionErrors: { ...state.sessionActionErrors, [sessionId]: text }, sessionActionCodes: { ...state.sessionActionCodes, [sessionId]: code }, ...(state.activeSessionId === sessionId ? { actionError: text, actionCode: code } : {}) }));
         if (code === 1006001) markStale(sessionId);
         return 'rejected';
       }
@@ -475,26 +528,16 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
 
     return {
       ...initialData(),
-
       async loadSessions() {
         const token = ++sessionsToken;
         set({ sessionsLoading: true, sessionsError: null });
         try {
           const page = await call<ChatSessionPage>('list_chat_sessions', { input: { limit: SESSION_PAGE } });
           if (token !== sessionsToken) return;
-          set(state => {
-            const active = state.activeSession && page.items.find(item => item.id === state.activeSession!.id);
-            return {
-              sessions: page.items, sessionsCursor: page.next_cursor,
-              sessionsCapped: page.items.length >= SESSION_CAP && page.next_cursor !== null,
-              sessionsLoading: false, sessionsLoaded: true, activeSession: active || state.activeSession,
-            };
-          });
-        } catch (error) {
-          if (token === sessionsToken) set({ sessionsLoading: false, sessionsLoaded: true, sessionsError: chatErrorText(error) });
-        }
+          set(state => { const next = { ...state, sessions: page.items, sessionsCursor: page.next_cursor, sessionsCapped: page.next_cursor !== null, sessionsLoading: false, sessionsLoaded: true }; return { ...next, ...projectActive(next, state.activeSessionId) }; });
+          if (!get().activeSessionId && page.items[0]) await get().selectSession(page.items[0]);
+        } catch (error) { if (token === sessionsToken) set({ sessionsLoading: false, sessionsLoaded: true, sessionsError: chatErrorText(error) }); }
       },
-
       async loadMoreSessions() {
         const { sessionsCursor, sessionsLoading, sessions } = get();
         if (!sessionsCursor || sessionsLoading || sessions.length >= SESSION_CAP) return;
@@ -503,274 +546,106 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
         try {
           const page = await call<ChatSessionPage>('list_chat_sessions', { input: { cursor: sessionsCursor, limit: SESSION_PAGE } });
           if (token !== sessionsToken) return;
-          set(state => {
-            const merged = mergeById(state.sessions, page.items, item => item.id).slice(0, SESSION_CAP);
-            return {
-              sessions: merged, sessionsCursor: page.next_cursor,
-              sessionsCapped: merged.length >= SESSION_CAP && page.next_cursor !== null, sessionsLoading: false,
-            };
-          });
-        } catch (error) {
-          if (token === sessionsToken) set({ sessionsLoading: false, sessionsError: chatErrorText(error) });
-        }
+          set(state => ({ sessions: mergeById(state.sessions, page.items, item => item.id).slice(0, SESSION_CAP), sessionsCursor: page.next_cursor, sessionsCapped: page.next_cursor !== null, sessionsLoading: false }));
+        } catch (error) { if (token === sessionsToken) set({ sessionsLoading: false, sessionsError: chatErrorText(error) }); }
       },
-
       setSearchQuery(query) {
-        clearTimeout(searchTimer);
-        searchTimer = undefined;
-        ++searchToken;
+        clearTimeout(searchTimer); searchTimer = undefined; ++searchToken;
         const trimmed = query.trim();
         set({ searchQuery: query, searchResults: [], searchCursor: null, searchCapped: false, searchLoading: false, searchError: null });
         if (!trimmed) return;
-        if (charCount(trimmed) > SEARCH_MAX_CHARS) {
-          set({ searchError: chatErrorText(new ChatCommandError(1006016)) });
-          return;
-        }
+        if (charCount(trimmed) > SEARCH_MAX_CHARS) { set({ searchError: chatErrorText(new ChatCommandError(1006016)) }); return; }
         const token = searchToken;
         searchTimer = window.setTimeout(async () => {
-          searchTimer = undefined;
-          set({ searchLoading: true });
           try {
             const page = await call<ChatSearchPage>('search_chat_sessions', { input: { query: trimmed, limit: SESSION_PAGE } });
-            if (token !== searchToken) return;
-            set({
-              searchResults: page.items, searchCursor: page.next_cursor,
-              searchCapped: page.items.length >= SESSION_CAP && page.next_cursor !== null, searchLoading: false,
-            });
-          } catch (error) {
-            if (token === searchToken) set({ searchLoading: false, searchError: chatErrorText(error) });
-          }
+            if (token === searchToken) set({ searchResults: page.items, searchCursor: page.next_cursor, searchCapped: page.next_cursor !== null, searchLoading: false });
+          } catch (error) { if (token === searchToken) set({ searchLoading: false, searchError: chatErrorText(error) }); }
         }, deps.searchDebounceMs);
       },
-
       async loadMoreSearch() {
         const { searchCursor, searchLoading, searchResults, searchQuery } = get();
-        const trimmed = searchQuery.trim();
-        if (!searchCursor || searchLoading || !trimmed || searchResults.length >= SESSION_CAP) return;
-        const token = ++searchToken;
-        set({ searchLoading: true, searchError: null });
+        if (!searchCursor || searchLoading || !searchQuery.trim() || searchResults.length >= SESSION_CAP) return;
+        const token = ++searchToken; set({ searchLoading: true, searchError: null });
         try {
-          const page = await call<ChatSearchPage>('search_chat_sessions', { input: { query: trimmed, cursor: searchCursor, limit: SESSION_PAGE } });
-          if (token !== searchToken) return;
-          set(state => {
-            const merged = mergeById(state.searchResults, page.items, hit => hit.session.id).slice(0, SESSION_CAP);
-            return { searchResults: merged, searchCursor: page.next_cursor, searchCapped: merged.length >= SESSION_CAP && page.next_cursor !== null, searchLoading: false };
-          });
-        } catch (error) {
-          if (token === searchToken) set({ searchLoading: false, searchError: chatErrorText(error) });
-        }
+          const page = await call<ChatSearchPage>('search_chat_sessions', { input: { query: searchQuery.trim(), cursor: searchCursor, limit: SESSION_PAGE } });
+          if (token === searchToken) set(state => ({ searchResults: mergeById(state.searchResults, page.items, hit => hit.session.id).slice(0, SESSION_CAP), searchCursor: page.next_cursor, searchCapped: page.next_cursor !== null, searchLoading: false }));
+        } catch (error) { if (token === searchToken) set({ searchLoading: false, searchError: chatErrorText(error) }); }
       },
-
       async createSession(target) {
-        set({ actionError: null, actionCode: null });
+        const token = accountEpoch;
         try {
           const session = await call<ChatSession>('create_chat_session', { input: target ? { target } : {} });
+          if (token !== accountEpoch) return null;
           set(state => ({ sessions: mergeById([session], state.sessions, item => item.id).slice(0, SESSION_CAP) }));
-          await get().selectSession(session);
-          return session;
-        } catch (error) {
-          set({ actionError: chatErrorText(error), actionCode: error instanceof ChatCommandError ? error.code : null });
-          return null;
-        }
+          await get().selectSession(session); return session;
+        } catch (error) { if (token === accountEpoch) set({ actionError: chatErrorText(error), actionCode: error instanceof ChatCommandError ? error.code : null }); return null; }
       },
-
       async selectSession(session) {
-        const current = get().activeSession;
-        if (current?.id === session.id && !get().activeStale) return;
-        ++messagesToken;
-        set({
-          activeSession: session, activeStale: false, messages: [], olderCursor: null, newerTrimmed: false,
-          messagesError: null, actionError: null, actionCode: null, notice: null, droppedTurns: {}, pendingDestination: null,
-        });
-        await get().loadLatestMessages();
+        const state = get();
+        const view = state.sessionViews[session.id] ?? emptySessionView();
+        const next = { ...state, openSessionIds: state.openSessionIds.includes(session.id) ? state.openSessionIds : [...state.openSessionIds, session.id], sessionViews: { ...state.sessionViews, [session.id]: view } };
+        set({ ...next, ...projectActive(next, session.id), notice: state.sessionNotices[session.id] ?? null, actionError: state.sessionActionErrors[session.id] ?? null, actionCode: state.sessionActionCodes[session.id] ?? null, pendingDestination: state.sessionPendingDestinations[session.id] ?? null });
+        if (!view.loaded && !view.messagesLoading) await get().loadLatestMessages();
       },
-
+      closeSession(sessionId) {
+        const state = get(); const index = state.openSessionIds.indexOf(sessionId); if (index < 0) return;
+        const openSessionIds = state.openSessionIds.filter(id => id !== sessionId);
+        const active = state.activeSessionId === sessionId ? (openSessionIds[index] ?? openSessionIds[index - 1] ?? null) : state.activeSessionId;
+        set(current => { const next = { ...current, openSessionIds }; return { ...next, ...projectActive(next, active), notice: active ? next.sessionNotices[active] ?? null : null, actionError: active ? next.sessionActionErrors[active] ?? null : null, actionCode: active ? next.sessionActionCodes[active] ?? null : null, pendingDestination: active ? next.sessionPendingDestinations[active] ?? null : null }; });
+      },
       async loadLatestMessages() {
-        const session = get().activeSession;
-        if (!session) return;
-        const token = ++messagesToken;
-        set({ messagesLoading: true, messagesError: null });
+        const session = get().activeSession; if (!session) return;
+        const epoch = accountEpoch;
+        const token = (messageTokens.get(session.id) ?? 0) + 1; messageTokens.set(session.id, token);
+        set(state => ({ sessionViews: { ...state.sessionViews, [session.id]: { ...(state.sessionViews[session.id] ?? emptySessionView()), messagesLoading: true, messagesError: null } }, messagesLoading: true, messagesError: null }));
         try {
-          const page = await call<ChatMessagePage>('list_chat_messages', { input: { session_id: session.id, limit: MESSAGE_PAGE } });
-          if (token !== messagesToken) return;
-          set({ messages: page.items, olderCursor: page.next_before_seq, newerTrimmed: false, messagesLoading: false });
-        } catch (error) {
-          if (token !== messagesToken) return;
-          set({ messagesLoading: false, messagesError: chatErrorText(error) });
-          if (error instanceof ChatCommandError && error.code === 1006001) markStale(session.id);
-        }
+          const page = await call<ChatMessagePage>('list_chat_messages', { input: { session_id: session.id, limit: MESSAGE_PAGE } }); if (epoch !== accountEpoch || messageTokens.get(session.id) !== token) return;
+          set(state => { const view = { ...(state.sessionViews[session.id] ?? emptySessionView()), messages: page.items, olderCursor: page.next_before_seq, newerTrimmed: false, messagesLoading: false, messagesError: null, loaded: true }; const next = { ...state, sessionViews: { ...state.sessionViews, [session.id]: view } }; return { ...next, ...projectActive(next, next.activeSessionId) }; });
+        } catch (error) { if (epoch === accountEpoch && messageTokens.get(session.id) === token) { const text = chatErrorText(error); set(state => ({ sessionViews: { ...state.sessionViews, [session.id]: { ...(state.sessionViews[session.id] ?? emptySessionView()), messagesLoading: false, messagesError: text, loaded: true } }, messagesLoading: false, messagesError: text })); if (error instanceof ChatCommandError && error.code === 1006001) markStale(session.id); } }
       },
-
       async loadOlderMessages() {
-        const { activeSession, olderCursor, messagesLoading } = get();
-        if (!activeSession || olderCursor === null || messagesLoading) return;
-        const token = ++messagesToken;
-        set({ messagesLoading: true, messagesError: null });
+        const session = get().activeSession; if (!session) return; const current = get().sessionViews[session.id] ?? emptySessionView(); if (current.olderCursor === null || current.messagesLoading) return;
+        const epoch = accountEpoch;
+        const token = (messageTokens.get(session.id) ?? 0) + 1; messageTokens.set(session.id, token); set({ messagesLoading: true, messagesError: null });
         try {
-          const page = await call<ChatMessagePage>('list_chat_messages', {
-            input: { session_id: activeSession.id, before_seq: olderCursor, limit: MESSAGE_PAGE },
-          });
-          if (token !== messagesToken) return;
-          set(state => {
-            let merged = mergeById(page.items, state.messages, item => item.id);
-            let trimmed = state.newerTrimmed;
-            // Window cap: the side opposite to the scroll direction (the newest messages) is dropped.
-            if (merged.length > MESSAGE_CAP) {
-              merged = merged.slice(0, MESSAGE_CAP);
-              trimmed = true;
-            }
-            return { messages: merged, olderCursor: page.next_before_seq, newerTrimmed: trimmed, messagesLoading: false };
-          });
-        } catch (error) {
-          if (token === messagesToken) set({ messagesLoading: false, messagesError: chatErrorText(error) });
-        }
+          const page = await call<ChatMessagePage>('list_chat_messages', { input: { session_id: session.id, before_seq: current.olderCursor, limit: MESSAGE_PAGE } }); if (epoch !== accountEpoch || messageTokens.get(session.id) !== token) return;
+          set(state => { const view = state.sessionViews[session.id] ?? emptySessionView(); let messages = mergeById(page.items, view.messages, item => item.id); let newerTrimmed = view.newerTrimmed; if (messages.length > MESSAGE_CAP) { messages = messages.slice(0, MESSAGE_CAP); newerTrimmed = true; } const next = { ...state, sessionViews: { ...state.sessionViews, [session.id]: { ...view, messages, olderCursor: page.next_before_seq, newerTrimmed, messagesLoading: false } } }; return { ...next, ...projectActive(next, next.activeSessionId) }; });
+        } catch (error) { if (epoch === accountEpoch && messageTokens.get(session.id) === token) set({ messagesLoading: false, messagesError: chatErrorText(error) }); }
       },
-
-      async renameSession(sessionId, title) {
-        const trimmed = title.trim();
-        const length = charCount(trimmed);
-        if (length < 1 || length > TITLE_MAX_CHARS) return chatErrorText(new ChatCommandError(1006007));
-        try {
-          const session = await call<ChatSession>('rename_chat_session', { input: { session_id: sessionId, title: trimmed } });
-          replaceSession(session);
-          return null;
-        } catch (error) {
-          if (error instanceof ChatCommandError && error.code === 1006001) markStale(sessionId);
-          return chatErrorText(error);
-        }
-      },
-
-      async deleteSession(sessionId) {
-        try {
-          await call<unknown>('delete_chat_session', { input: { session_id: sessionId } });
-        } catch (error) {
-          // A second delete reports "not found": the session is gone either way.
-          if (!(error instanceof ChatCommandError && error.code === 1006001)) return chatErrorText(error);
-        }
-        ++messagesToken;
-        set(state => {
-          const wasActive = state.activeSession?.id === sessionId;
-          return {
-            sessions: state.sessions.filter(item => item.id !== sessionId),
-            searchResults: state.searchResults.filter(hit => hit.session.id !== sessionId),
-            ...(wasActive ? { activeSession: null, activeStale: false, messages: [], olderCursor: null, newerTrimmed: false, messagesLoading: false, messagesError: null, droppedTurns: {} } : {}),
-          };
-        });
-        return null;
-      },
-
-      async updateTarget(sessionId, target) {
-        try {
-          const session = await call<ChatSession>('update_chat_session_target', { input: { session_id: sessionId, ...target } });
-          replaceSession(session);
-          return null;
-        } catch (error) {
-          if (error instanceof ChatCommandError && error.code === 1006001) markStale(sessionId);
-          return chatErrorText(error);
-        }
-      },
-
-      async send(content, tools = [], acceptDestination) {
-        const session = get().activeSession;
-        if (!session || get().activeStale || get().generation || run) return 'rejected';
-        if (!content.trim()) {
-          set({ actionError: t('chat.emptyMessage'), actionCode: null });
-          return 'rejected';
-        }
-        if (utf8Bytes(content) > MAX_MESSAGE_BYTES) {
-          set({ actionError: t('chat.tooLong'), actionCode: null });
-          return 'rejected';
-        }
-        if (tools.length > MAX_TOOLS) {
-          set({ actionError: t('chat.toolLimit'), actionCode: null });
-          return 'rejected';
-        }
-        // Dropping the newest side of the window means local order may be stale: re-anchor on the latest page first.
+      setDraft(sessionId, draft) { set(state => ({ sessionDrafts: { ...state.sessionDrafts, [sessionId]: draft } })); },
+      setSessionTargetDraft(sessionId, target) { set(state => ({ sessionTargetDrafts: { ...state.sessionTargetDrafts, [sessionId]: target } })); },
+      setSessionTools(sessionId, tools) { set(state => ({ sessionTools: { ...state.sessionTools, [sessionId]: tools } })); },
+      setSessionAssets(sessionId, assets) { set(state => ({ sessionAssets: { ...state.sessionAssets, [sessionId]: assets } })); },
+      setSessionScrollTop(sessionId, top) { set(state => ({ sessionScrollTop: { ...state.sessionScrollTop, [sessionId]: top } })); },
+      async renameSession(sessionId, title) { const token = accountEpoch; const trimmed = title.trim(); if (charCount(trimmed) < 1 || charCount(trimmed) > TITLE_MAX_CHARS) return chatErrorText(new ChatCommandError(1006007)); try { const value = await call<ChatSession>('rename_chat_session', { input: { session_id: sessionId, title: trimmed } }); if (token !== accountEpoch) return null; replaceSession(value); return null; } catch (error) { if (token === accountEpoch && error instanceof ChatCommandError && error.code === 1006001) markStale(sessionId); return token === accountEpoch ? chatErrorText(error) : null; } },
+      async deleteSession(sessionId) { const token = accountEpoch; try { await call<unknown>('delete_chat_session', { input: { session_id: sessionId } }); } catch (error) { if (token !== accountEpoch) return null; if (!(error instanceof ChatCommandError && error.code === 1006001)) return chatErrorText(error); } if (token !== accountEpoch) return null; runs.delete(sessionId); messageTokens.delete(sessionId); set(state => { const openSessionIds = state.openSessionIds.filter(id => id !== sessionId); const active = state.activeSessionId === sessionId ? (openSessionIds[0] ?? null) : state.activeSessionId; const next = { ...state, sessions: state.sessions.filter(item => item.id !== sessionId), searchResults: state.searchResults.filter(hit => hit.session.id !== sessionId), openSessionIds }; return { ...next, ...projectActive(next, active) }; }); return null; },
+      async updateTarget(sessionId, target) { const token = accountEpoch; try { const value = await call<ChatSession>('update_chat_session_target', { input: { session_id: sessionId, ...target } }); if (token !== accountEpoch) return null; replaceSession(value); return null; } catch (error) { if (token === accountEpoch && error instanceof ChatCommandError && error.code === 1006001) markStale(sessionId); return token === accountEpoch ? chatErrorText(error) : null; } },
+      async send(content, tools = [], acceptDestination, assetIds) {
+        const { activeSession, activeSessionId, activeStale, generation } = get();
+        if (!activeSession || !activeSessionId || activeStale || generation || runs.size > 0) return 'rejected';
+        const ids = assetIds ?? (get().sessionAssets[activeSessionId] ?? []).map(asset => asset.id);
+        if (!content.trim() && !ids.length) { set({ actionError: t('chat.emptyMessage') }); return 'rejected'; }
+        if (utf8Bytes(content) > MAX_MESSAGE_BYTES) { set({ actionError: t('chat.tooLong') }); return 'rejected'; }
+        if (tools.length > MAX_TOOLS) { set({ actionError: t('chat.toolLimit') }); return 'rejected'; }
         if (get().newerTrimmed) await get().loadLatestMessages();
-        if (get().activeSession?.id !== session.id || get().generation || run) return 'rejected';
+        if (get().activeSessionId !== activeSessionId || get().generation || runs.size > 0) return 'rejected';
         const requestId = deps.newRequestId();
-        const input: Record<string, unknown> = { session_id: session.id, content, client_request_id: requestId };
+        const input: Record<string, unknown> = { session_id: activeSessionId, content, client_request_id: requestId, ...(ids.length ? { asset_ids: ids } : {}) };
         if (acceptDestination) input.accept_destination = acceptDestination;
         if (tools.length) input.tools = tools.map(tool => ({ server_id: tool.server_id, tool_name: tool.tool_name, schema_hash: tool.schema_hash }));
-        return start('send', session.id, 'send_chat_message', input, requestId, content, tools.length > 0, null,
-          () => ({ kind: 'send', sessionId: session.id, content, tools, fingerprint: '', host: '' }));
+        return start('send', activeSessionId, 'send_chat_message', input, requestId, content, tools.length > 0, null, () => ({ kind: 'send', sessionId: activeSessionId, content, tools, assetIds: ids, fingerprint: '', host: '' }));
       },
-
-      async regenerate(messageId, acceptDestination) {
-        const { activeSession, messages, newerTrimmed } = get();
-        if (!activeSession || get().activeStale || get().generation || run) return 'rejected';
-        const last = messages[messages.length - 1];
-        if (newerTrimmed || !last || last.id !== messageId || last.role !== 'assistant') {
-          set({ actionError: chatErrorText(new ChatCommandError(1006014)), actionCode: 1006014 });
-          return 'rejected';
-        }
-        const requestId = deps.newRequestId();
-        const input: Record<string, unknown> = { message_id: messageId, client_request_id: requestId };
-        if (acceptDestination) input.accept_destination = acceptDestination;
-        return start('regenerate', activeSession.id, 'regenerate_chat_message', input, requestId, '', false, messageId,
-          () => ({ kind: 'regenerate', sessionId: activeSession.id, messageId, fingerprint: '', host: '' }));
-      },
-
-      async stop() {
-        const r = run;
-        if (!r) return;
-        r.stopRequested = true;
-        patchGeneration(r, { stopping: true });
-        // Before the ack the host has not registered the cancel token yet: onAck cancels as soon as it can.
-        if (r.acked) await cancelRun(r);
-      },
-
-      cancelOnLeave() {
-        const r = run;
-        if (!r) return;
-        r.stopRequested = true;
-        if (r.acked) void cancelRun(r);
-      },
-
-      async decideTool(type) {
-        const r = run;
-        const generation = get().generation;
-        if (!r || !generation?.proposal || generation.proposalBusy) return;
-        const proposal = generation.proposal;
-        patchGeneration(r, { proposalBusy: true });
-        set({ actionError: null, actionCode: null });
-        try {
-          await call<unknown>('advance_chat_tool_turn', { input: { task_id: r.taskId, action: { type, proposal_id: proposal.id } } });
-          patchGeneration(r, { phase: 'tool_running', proposal: null, proposalBusy: false });
-        } catch (error) {
-          const stale = error instanceof ChatCommandError && error.code === 1006017;
-          patchGeneration(r, stale ? { proposal: null, proposalBusy: false } : { proposalBusy: false });
-          set({ actionError: chatErrorText(error), actionCode: error instanceof ChatCommandError ? error.code : null });
-        }
-      },
-
-      confirmDestination() {
-        const pending = get().pendingDestination;
-        if (!pending) return;
-        set({ pendingDestination: null });
-        // A new request id is generated by send/regenerate: the rejected attempt never created a task row.
-        if (pending.kind === 'send') void get().send(pending.content, pending.tools, pending.fingerprint);
-        else void get().regenerate(pending.messageId, pending.fingerprint);
-      },
-
-      dismissDestination(token) {
-        if (token && get().pendingDestination !== token) return;
-        set({ pendingDestination: null });
-      },
-
-      dismissNotice() {
-        set({ notice: null });
-      },
-
-      reset() {
-        clearTimeout(searchTimer);
-        searchTimer = undefined;
-        run = null;
-        ++sessionsToken;
-        ++messagesToken;
-        ++searchToken;
-        set(initialData());
-      },
+      async regenerate(messageId, acceptDestination) { const { activeSession, activeSessionId, messages, newerTrimmed } = get(); if (!activeSession || !activeSessionId || get().activeStale || get().generation || runs.size > 0) return 'rejected'; const last = messages[messages.length - 1]; if (newerTrimmed || !last || last.id !== messageId || last.role !== 'assistant') { set({ actionError: chatErrorText(new ChatCommandError(1006014)), actionCode: 1006014 }); return 'rejected'; } const requestId = deps.newRequestId(); const input: Record<string, unknown> = { message_id: messageId, client_request_id: requestId }; if (acceptDestination) input.accept_destination = acceptDestination; return start('regenerate', activeSessionId, 'regenerate_chat_message', input, requestId, '', false, messageId, () => ({ kind: 'regenerate', sessionId: activeSessionId, messageId, fingerprint: '', host: '' })); },
+      async stop() { const id = get().activeSessionId; if (id) await get().stopSession(id); },
+      async stopSession(sessionId) { const r = runs.get(sessionId); if (!r) return; r.stopRequested = true; patchGeneration(r, { stopping: true }); if (r.acked) await cancelRun(r); },
+      async cancelAll() { await Promise.all([...runs.keys()].map(sessionId => get().stopSession(sessionId))); },
+      cancelOnLeave() { /* Route and inner-tab switches are not cancellation boundaries. */ },
+      async decideTool(type) { const id = get().activeSessionId; const r = id ? runs.get(id) : undefined; const generation = id ? get().generations[id] : null; if (!r || !generation?.proposal || generation.proposalBusy) return; patchGeneration(r, { proposalBusy: true }); try { await call<unknown>('advance_chat_tool_turn', { input: { task_id: r.taskId, action: { type, proposal_id: generation.proposal.id } } }); patchGeneration(r, { phase: 'tool_running', proposal: null, proposalBusy: false }); } catch (error) { if (runs.get(r.sessionId) !== r) return; const stale = error instanceof ChatCommandError && error.code === 1006017; patchGeneration(r, stale ? { proposal: null, proposalBusy: false } : { proposalBusy: false }); const text = chatErrorText(error); set(state => ({ actionError: text, actionCode: error instanceof ChatCommandError ? error.code : null, sessionActionErrors: { ...state.sessionActionErrors, [id!]: text }, sessionActionCodes: { ...state.sessionActionCodes, [id!]: error instanceof ChatCommandError ? error.code : null } })); } },
+      confirmDestination() { const pending = get().pendingDestination; if (!pending) return; set(state => ({ pendingDestination: null, sessionPendingDestinations: { ...state.sessionPendingDestinations, [pending.sessionId]: null } })); if (pending.kind === 'send') void get().send(pending.content, pending.tools, pending.fingerprint, pending.assetIds); else void get().regenerate(pending.messageId, pending.fingerprint); },
+      dismissDestination(token) { const pending = get().pendingDestination; if (token && token !== pending) return; set(state => ({ pendingDestination: null, ...(pending ? { sessionPendingDestinations: { ...state.sessionPendingDestinations, [pending.sessionId]: null } } : {}) })); },
+      dismissNotice() { const id = get().activeSessionId; if (id) set(state => ({ notice: null, sessionNotices: { ...state.sessionNotices, [id]: null } })); },
+      reset() { ++accountEpoch; clearTimeout(searchTimer); searchTimer = undefined; runs.clear(); messageTokens.clear(); ++sessionsToken; ++searchToken; set(initialData()); },
     };
   });
 }

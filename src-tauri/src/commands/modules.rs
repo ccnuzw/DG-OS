@@ -148,6 +148,15 @@ pub async fn list_modules(
     CommandResponse::from(service.list(&session).await)
 }
 
+#[tauri::command]
+pub async fn read_workspace_app_catalog(app: tauri::AppHandle, window: WebviewWindow) -> CommandResponse<dgos_types::WorkspaceAppCatalog> {
+    let session = match host::workspace_catalog_session(&window) {
+        Ok(session) => session,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    CommandResponse::from(app.state::<ModuleManagementService>().workspace_catalog(&session).await)
+}
+
 /// Grants one permission the module's manifest declares. The permission is a
 /// D006 string; the host re-reads the manifest and refuses anything else.
 #[tauri::command]

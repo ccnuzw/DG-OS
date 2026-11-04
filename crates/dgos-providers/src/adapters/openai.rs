@@ -191,7 +191,7 @@ impl ProviderAdapter for OpenAIAdapter {
     ) -> DgosResult<ToolChatResponse> {
         // One attempt: host tool orchestration never relies on provider retries.
         let url = self.transport.url("/chat/completions")?;
-        let state = BodyState::new(tool_body(self.profile(), model_id, &request));
+        let state = BodyState::new(tool_body(self.profile(), model_id, &request)?);
         let options = &self.transport.options;
         let response = self
             .transport
@@ -249,35 +249,15 @@ fn chat_body(
 ) -> DgosResult<Value> {
     let mut body = json!({
         "model": model_id,
-        "messages": request.messages,
+        "messages": request.messages.iter().map(chat_message_json).collect::<Vec<_>>(),
         "stream": stream
     });
     let object = body
         .as_object_mut()
         .expect("json! object literal is an object");
-    if let Some(temperature) = request.temperature {
-        // Widening f32 to f64 would print 0.7 as 0.699999988...; use the shortest f32 form.
-        if let Some(number) = format!("{temperature}")
-            .parse::<f64>()
-            .ok()
-            .and_then(serde_json::Number::from_f64)
-        {
-            object.insert("temperature".into(), Value::Number(number));
-        }
-    }
-    if let Some(max_tokens) = request.max_tokens {
-        object.insert(profile.max_tokens_field.into(), json!(max_tokens));
-    }
+    apply_generation(profile, object, request.temperature, request.max_tokens, request.reasoning.as_ref())?;
     if stream && profile.send_stream_options {
         object.insert("stream_options".into(), json!({"include_usage": true}));
-    }
-    if let Some(reasoning) = &request.reasoning {
-        match profile.reasoning_params(reasoning)? {
-            ReasoningParams::OpenAiEffort(effort) => {
-                object.insert("reasoning_effort".into(), json!(effort));
-            }
-            _ => return Err(DgosError::InternalError("Profile mismatch".into())),
-        }
     }
     if let Some(format) = &request.response_format {
         if profile.structured != StructuredOutput::OpenAiJsonSchema {
@@ -295,7 +275,28 @@ fn chat_body(
     Ok(body)
 }
 
-fn tool_body(profile: &Profile, model_id: &str, request: &ToolChatRequest) -> Value {
+/// Wire form of one chat message. Text-only messages keep the plain string content; a message
+/// with images becomes a content array of one text part and one `image_url` part per image, each a
+/// base64 data URL built from the host-validated bytes.
+fn chat_message_json(message: &dgos_types::ChatMessage) -> Value {
+    use base64::Engine as _;
+    if message.images.is_empty() {
+        return json!({"role": message.role, "content": message.content});
+    }
+    let mut parts = vec![json!({"type": "text", "text": message.content})];
+    for image in &message.images {
+        let url = format!(
+            "data:{};base64,{}",
+            image.mime,
+            base64::engine::general_purpose::STANDARD.encode(&image.data)
+        );
+        parts.push(json!({"type": "image_url", "image_url": {"url": url}}));
+    }
+    json!({"role": message.role, "content": parts})
+}
+
+fn tool_body(profile: &Profile, model_id: &str, request: &ToolChatRequest) -> DgosResult<Value> {
+    profile.check_sampling(request.temperature, request.reasoning.as_ref())?;
     let mut body = json!({
         "model": model_id,
         "messages": request.messages.iter().map(tool_message_json).collect::<Vec<_>>(),
@@ -305,14 +306,29 @@ fn tool_body(profile: &Profile, model_id: &str, request: &ToolChatRequest) -> Va
     let object = body
         .as_object_mut()
         .expect("json! object literal is an object");
-    object.insert(profile.max_tokens_field.into(), json!(request.max_tokens));
+    apply_generation(profile, object, request.temperature, Some(request.max_tokens), request.reasoning.as_ref())?;
     if profile.send_tool_choice {
         object.insert("tool_choice".into(), json!("auto"));
     }
     if profile.send_parallel_tool_calls {
         object.insert("parallel_tool_calls".into(), json!(false));
     }
-    body
+    Ok(body)
+}
+
+fn apply_generation(profile: &Profile, object: &mut serde_json::Map<String, Value>, temperature: Option<f32>, max_tokens: Option<u32>, reasoning: Option<&dgos_types::ReasoningConfig>) -> DgosResult<()> {
+    if let Some(temperature) = temperature {
+        let number = format!("{temperature}").parse::<f64>().ok().and_then(serde_json::Number::from_f64).ok_or(DgosError::RequestNotSupported)?;
+        object.insert("temperature".into(), Value::Number(number));
+    }
+    if let Some(max_tokens) = max_tokens { object.insert(profile.max_tokens_field.into(), json!(max_tokens)); }
+    if let Some(reasoning) = reasoning {
+        match profile.reasoning_params(reasoning)? {
+            ReasoningParams::OpenAiEffort(effort) => { object.insert("reasoning_effort".into(), json!(effort)); }
+            _ => return Err(DgosError::InternalError("Profile mismatch".into())),
+        }
+    }
+    Ok(())
 }
 
 /// The wire form of one message. `ToolMessage` never serializes its reasoning, so the fields the
@@ -326,6 +342,21 @@ fn tool_message_json(message: &ToolMessage) -> Value {
                     object.insert(name.clone(), field.clone());
                 }
             }
+        }
+    }
+    if !message.images.is_empty() {
+        use base64::Engine as _;
+        let mut parts = vec![json!({"type": "text", "text": message.content.clone().unwrap_or_default()})];
+        for image in &message.images {
+            let url = format!(
+                "data:{};base64,{}",
+                image.mime,
+                base64::engine::general_purpose::STANDARD.encode(&image.data)
+            );
+            parts.push(json!({"type": "image_url", "image_url": {"url": url}}));
+        }
+        if let Some(object) = value.as_object_mut() {
+            object.insert("content".into(), Value::Array(parts));
         }
     }
     value
@@ -695,6 +726,7 @@ mod tests {
             tool_call_id: None,
             tool_calls: vec![],
             reasoning: None,
+            images: Vec::new(),
         };
         let value = tool_message_json(&plain);
         for name in REASONING_FIELDS {

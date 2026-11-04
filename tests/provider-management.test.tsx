@@ -110,7 +110,7 @@ describe('Provider form lifecycle', () => {
       return { success: true, data: [] };
     });
     render(<ProviderManagement />);
-    fireEvent.click(await screen.findByRole('heading', { name: 'Saved fixture', level: 3 }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Saved fixture', exact: true }));
     fireEvent.change(screen.getByLabelText('Name *'), { target: { value: 'Unsaved draft' } });
     fireEvent.change(screen.getByLabelText('API Key *'), { target: { value: 'synthetic-draft-key' } });
     await act(async () => { resolveModels({ success: true, data: [modelFixture] }); });
@@ -132,7 +132,7 @@ describe('Provider form lifecycle', () => {
       return { success: true, data: [] };
     });
     render(<ProviderManagement />);
-    fireEvent.click(await screen.findByRole('heading', { name: 'Saved fixture', level: 3 }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Saved fixture', exact: true }));
     expect(await screen.findByRole('heading', { name: 'Fixture model' })).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Base URL *'), { target: { value: 'https://example.invalid/new' } });
     fireEvent.change(screen.getByLabelText('API Key *'), { target: { value: 'synthetic-new-key' } });
@@ -153,7 +153,7 @@ function renderWithToasts() {
 
 async function openSavedProvider() {
   renderWithToasts();
-  fireEvent.click(await screen.findByRole('heading', { name: 'Saved fixture', level: 3 }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Saved fixture', exact: true }));
   await screen.findByLabelText('Name *');
 }
 
@@ -314,7 +314,7 @@ describe('Provider store failures reach the unified error handling', () => {
       return { success: true, data: [] };
     });
     renderWithToasts();
-    fireEvent.click(await screen.findByRole('heading', { name: 'Saved fixture', level: 3 }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Saved fixture', exact: true }));
 
     await waitFor(() => expect(toasts()).toHaveLength(1));
     expect(toasts()[0].textContent).toContain('Operation failed');
@@ -336,9 +336,9 @@ describe('Provider store failures reach the unified error handling', () => {
       return { success: true, data: [] };
     });
     renderWithToasts();
-    fireEvent.click(await screen.findByRole('heading', { name: 'Saved fixture', level: 3 }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Saved fixture', exact: true }));
     await waitFor(() => expect(rejectFirst).toBeTypeOf('function'));
-    fireEvent.click(screen.getByRole('heading', { name: 'Other fixture', level: 3 }));
+    fireEvent.click(screen.getByRole('button', { name: 'Other fixture', exact: true }));
     await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith('list_models', { providerId: 'provider-other' }));
 
     await act(async () => { rejectFirst(new Error(HOST_MESSAGE)); });
@@ -402,7 +402,7 @@ describe('Provider list controls', () => {
         return { success: true, data: [] };
       });
       renderWithToasts();
-      await screen.findByRole('heading', { name: 'Alpha', level: 3 });
+      await screen.findByRole('button', { name: 'Alpha', exact: true });
       expect(names()).toEqual(['Alpha', 'Beta', 'Gamma']);
 
       fireEvent.click(button('Move Beta up'));
@@ -426,7 +426,7 @@ describe('Provider list controls', () => {
         command === 'list_providers' ? { success: true, data: rows } : { success: true, data: [] }
       ));
       renderWithToasts();
-      await screen.findByRole('heading', { name: 'Alpha', level: 3 });
+      await screen.findByRole('button', { name: 'Alpha', exact: true });
 
       expect(button('Move Alpha up').disabled).toBe(true);
       expect(button('Move Alpha down').disabled).toBe(false);
@@ -448,7 +448,7 @@ describe('Provider list controls', () => {
         return { success: true, data: [] };
       });
       renderWithToasts();
-      await screen.findByRole('heading', { name: 'Alpha', level: 3 });
+      await screen.findByRole('button', { name: 'Alpha', exact: true });
 
       fireEvent.click(button('Move Beta up'));
       await waitFor(() => expect(button('Move Gamma up').disabled).toBe(true));
@@ -468,7 +468,7 @@ describe('Provider list controls', () => {
         return { success: true, data: [] };
       });
       renderWithToasts();
-      await screen.findByRole('heading', { name: 'Alpha', level: 3 });
+      await screen.findByRole('button', { name: 'Alpha', exact: true });
 
       fireEvent.click(button('Move Beta up'));
 
@@ -749,7 +749,7 @@ describe('Provider confirm dialogs (WKWebView has no window.confirm)', () => {
     await openSavedProvider();
     dirtyName();
 
-    const target = screen.getByRole('heading', { name: 'Other fixture', level: 3 });
+    const target = screen.getByRole('button', { name: 'Other fixture', exact: true });
     fireEvent.click(target); fireEvent.click(target);
     let dialog = await screen.findByRole('dialog', { name: 'Discard unsaved changes?' });
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
@@ -758,7 +758,7 @@ describe('Provider confirm dialogs (WKWebView has no window.confirm)', () => {
     expect((screen.getByLabelText('Name *') as HTMLInputElement).value).toBe('Unsaved draft');
     expect(modelCalls(otherFixture.id)).toHaveLength(0);
 
-    fireEvent.click(screen.getByRole('heading', { name: 'Other fixture', level: 3 }));
+    fireEvent.click(screen.getByRole('button', { name: 'Other fixture', exact: true }));
     dialog = await screen.findByRole('dialog', { name: 'Discard unsaved changes?' });
     const discard = within(dialog).getByRole('button', { name: 'Discard' });
     fireEvent.click(discard); fireEvent.click(discard);
@@ -772,12 +772,12 @@ describe('Provider confirm dialogs (WKWebView has no window.confirm)', () => {
   it('Esc leaves the draft in place, and a selection without unsaved changes needs no dialog', async () => {
     mockTwoProviders();
     await openSavedProvider();
-    fireEvent.click(screen.getByRole('heading', { name: 'Other fixture', level: 3 }));
+    fireEvent.click(screen.getByRole('button', { name: 'Other fixture', exact: true }));
     await waitFor(() => expect((screen.getByLabelText('Name *') as HTMLInputElement).value).toBe('Other fixture'));
     expect(screen.queryByRole('dialog')).toBeNull();
 
     dirtyName();
-    fireEvent.click(screen.getByRole('heading', { name: 'Saved fixture', level: 3 }));
+    fireEvent.click(screen.getByRole('button', { name: 'Saved fixture', exact: true }));
     fireEvent.keyDown(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' }), { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect((screen.getByLabelText('Name *') as HTMLInputElement).value).toBe('Unsaved draft');
@@ -825,7 +825,7 @@ describe('Provider confirm dialogs (WKWebView has no window.confirm)', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(screen.queryByLabelText('Name *')).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Saved fixture', level: 3 })).toBeNull();
-    expect(screen.getByRole('heading', { name: 'Other fixture', level: 3 })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Other fixture', exact: true })).toBeTruthy();
     expect(deleteCalls()).toHaveLength(1);
   });
 
@@ -845,7 +845,7 @@ describe('Provider confirm dialogs (WKWebView has no window.confirm)', () => {
   it('closes an open dialog when the page unmounts and never acts afterwards', async () => {
     mockTwoProviders();
     const view = render(<><ProviderManagement /><ModalHost /></>);
-    fireEvent.click(await screen.findByRole('heading', { name: 'Saved fixture', level: 3 }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Saved fixture', exact: true }));
     await screen.findByLabelText('Name *');
     fireEvent.click(screen.getByRole('button', { name: /🗑️ Delete/ }));
     await screen.findByRole('dialog', { name: 'Delete Provider?' });

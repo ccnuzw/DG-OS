@@ -1,0 +1,93 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import {
+  EmptyState,
+  FilterBar,
+  FixedActionBar,
+  Notice,
+  ResourceCard,
+  ResourceDetail,
+  ResourceList,
+  SearchField,
+  SectionHeader,
+  StatusBadge,
+} from '@dgos/ui';
+
+afterEach(cleanup);
+
+describe('page patterns', () => {
+  it('exposes visible status semantics without relying on color', () => {
+    render(
+      <>
+        <StatusBadge status="success" label="Connected" />
+        <Notice tone="error" title="Connection failed">Check the service settings.</Notice>
+        <EmptyState title="No resources" description="Add a resource to get started." />
+        <SectionHeader title="资源" description="支持较长的中英文说明。" />
+      </>,
+    );
+    expect(screen.getByText('Connected')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toContain('Connection failed');
+    expect(screen.getByText('No resources')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '资源' })).toBeTruthy();
+  });
+
+  it('renders loading, empty, error and read-only states', () => {
+    const retry = vi.fn();
+    const { rerender } = render(<ResourceList loading loadingLabel="Loading resources" />);
+    expect(screen.getByRole('status').textContent).toContain('Loading resources');
+
+    rerender(<ResourceList empty emptyContent={<EmptyState title="没有资源" />} />);
+    expect(screen.getByText('没有资源')).toBeTruthy();
+
+    rerender(<ResourceList error errorContent={<Notice tone="error" action={<button onClick={retry}>Retry</button>}>Unavailable</Notice>} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(retry).toHaveBeenCalledOnce();
+
+    rerender(<ResourceDetail readOnly><span>Read only detail</span></ResourceDetail>);
+    expect(screen.getByText('Read only detail').parentElement?.getAttribute('data-read-only')).toBe('true');
+  });
+
+  it('supports keyboard selection and disabled/read-only cards', () => {
+    const onSelect = vi.fn();
+    const { rerender } = render(<ResourceCard title="Keyboard resource" onSelect={onSelect} />);
+    const card = screen.getByRole('button', { name: 'Keyboard resource' });
+    card.focus();
+    fireEvent.keyDown(card, { key: 'Enter' });
+    fireEvent.keyDown(card, { key: ' ' });
+    expect(onSelect).toHaveBeenCalledTimes(2);
+
+    rerender(<ResourceCard title="Disabled resource" onSelect={onSelect} disabled />);
+    expect(screen.getByRole('button', { name: 'Disabled resource' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Disabled resource' }).getAttribute('tabindex')).toBeNull();
+
+    rerender(<ResourceCard title="Read-only resource" onSelect={onSelect} readOnly />);
+    const readOnly = screen.getByRole('button', { name: 'Read-only resource' });
+    expect(readOnly.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(readOnly);
+    expect(onSelect).toHaveBeenCalledTimes(2);
+
+    const onAction = vi.fn();
+    rerender(<ResourceCard title="Resource" onSelect={onSelect} actions={<button onClick={onAction}>Manage</button>} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    expect(onAction).toHaveBeenCalledOnce();
+    expect(onSelect).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears a search field by keyboard-reachable button and wraps action areas', () => {
+    const onChange = vi.fn();
+    const onClear = vi.fn();
+    render(
+      <>
+        <SearchField label="Search resources" value="long 中文 query" onChange={onChange} onClear={onClear} clearLabel="Clear search" />
+        <FilterBar label="Resource filters" actions={<button type="submit">Apply filters</button>}>
+          <span>Long filter label that can wrap</span>
+        </FilterBar>
+        <FixedActionBar label="Resource actions" status="Unsaved changes"><button>Save</button></FixedActionBar>
+      </>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+    expect(onClear).toHaveBeenCalledOnce();
+    expect(screen.getByRole('group', { name: 'Resource filters' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeTruthy();
+  });
+});

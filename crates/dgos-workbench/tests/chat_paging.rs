@@ -46,7 +46,7 @@ async fn seeded(sessions: usize, messages_per_session: usize) -> (DatabaseConnec
         }
     }
     db.execute_unprepared("COMMIT").await.unwrap();
-    (db.clone(), ChatManager::new(db))
+    (db.clone(), ChatManager::new(db, dgos_db::MaintenanceGate::new()))
 }
 
 #[tokio::test]

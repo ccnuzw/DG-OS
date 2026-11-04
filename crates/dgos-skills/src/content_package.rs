@@ -1,5 +1,4 @@
 use crate::{BundledCatalog, BundledSkill, ContentSkillMetadata, Result, SkillError};
-use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     path::{Component, Path, PathBuf},
@@ -67,6 +66,13 @@ fn collect(
             if files.len() >= MAX_PACKAGE_FILES || entry.metadata()?.len() > MAX_FILE_BYTES {
                 return Err(invalid("package file limit exceeded"));
             }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if entry.metadata()?.nlink() != 1 {
+                    return Err(invalid("hard links are not allowed"));
+                }
+            }
             let top = ["skill.json", "SKILL.md", "LICENSE"].contains(&rel.as_str());
             let resource = rel.contains('/')
                 && ["references", "templates", "examples"]
@@ -100,16 +106,25 @@ fn collect(
     Ok(())
 }
 
-pub fn validate_package(path: &Path, expected_hash: &str) -> Result<BundledSkill> {
-    if std::fs::symlink_metadata(path)?.file_type().is_symlink() {
-        return Err(invalid("symlink package root"));
+pub(crate) fn read_package_files(path: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(invalid("unsafe package root"));
     }
     let mut files = BTreeMap::new();
     let mut total = 0;
     let mut entries = 0;
     collect(path, path, &mut files, &mut total, &mut entries)?;
+    Ok(files)
+}
+
+pub(crate) fn validate_package_files(
+    path: &Path,
+    expected_hash: &str,
+) -> Result<(ContentSkillMetadata, BTreeMap<String, Vec<u8>>, BTreeMap<String, String>)> {
+    let files = read_package_files(path)?;
     for required in ["skill.json", "SKILL.md", "LICENSE"] {
-        if files.get(required).map_or(true, |bytes| bytes.is_empty()) {
+        if files.get(required).is_none_or(|bytes| bytes.is_empty()) {
             return Err(invalid(format!("missing {required}")));
         }
     }
@@ -136,7 +151,7 @@ pub fn validate_package(path: &Path, expected_hash: &str) -> Result<BundledSkill
         || !categories.contains(&meta.category.as_str())
         || meta.name.trim().is_empty()
         || !meta.license.redistributable
-        || meta.license.spdx.as_deref().map_or(true, str::is_empty)
+        || meta.license.spdx.as_deref().is_none_or(str::is_empty)
         || meta
             .id
             .bytes()
@@ -145,28 +160,25 @@ pub fn validate_package(path: &Path, expected_hash: &str) -> Result<BundledSkill
     {
         return Err(invalid("invalid official skill metadata"));
     }
-    let mut hash = Sha256::new();
-    let mut manifest = BTreeMap::new();
-    let body =
-        String::from_utf8(files["SKILL.md"].clone()).map_err(|_| invalid("non UTF-8 body"))?;
-    let license_text =
-        String::from_utf8(files["LICENSE"].clone()).map_err(|_| invalid("non UTF-8 license"))?;
-    for (name, bytes) in files {
-        hash.update(name.as_bytes());
-        hash.update([0]);
-        hash.update(&bytes);
-        hash.update([0]);
-        manifest.insert(name, format!("{:x}", Sha256::digest(&bytes)));
-    }
-    let actual = format!("{:x}", hash.finalize());
+    let (actual, manifest) = crate::content_hash(&files);
     if actual != expected_hash {
         return Err(invalid("package hash mismatch"));
     }
+    Ok((meta, files, manifest))
+}
+
+pub fn validate_package(path: &Path, expected_hash: &str) -> Result<BundledSkill> {
+    let (metadata, mut bytes, files) = validate_package_files(path, expected_hash)?;
+    let content_hash = expected_hash.to_owned();
+    let body = String::from_utf8(bytes.remove("SKILL.md").unwrap())
+        .map_err(|_| invalid("non UTF-8 body"))?;
+    let license_text = String::from_utf8(bytes.remove("LICENSE").unwrap())
+        .map_err(|_| invalid("non UTF-8 license"))?;
     Ok(BundledSkill {
-        metadata: meta,
+        metadata,
         install_path: path.to_string_lossy().into_owned(),
-        content_hash: actual,
-        files: manifest,
+        content_hash,
+        files,
         body,
         license_text,
     })

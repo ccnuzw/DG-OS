@@ -124,6 +124,7 @@ fn activate(app: &AppHandle) -> bool {
     window
         .with_webview(|webview| unsafe {
             let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+            let _: Bool = msg_send![ns_app, setActivationPolicy: 0isize];
             let _: () = msg_send![ns_app, activateIgnoringOtherApps: Bool::YES];
             let win = webview.ns_window() as *mut AnyObject;
             let _: () = msg_send![win, makeKeyAndOrderFront: std::ptr::null_mut::<AnyObject>()];
@@ -149,6 +150,11 @@ async fn prepare(app: &AppHandle) -> bool {
     let mut focused = false;
     for _ in 0..12 {
         activate(app);
+        window.with_webview(|webview| unsafe {
+            let win=webview.ns_window() as *mut AnyObject;
+            let view=webview.inner() as *mut AnyObject;
+            let _:Bool=msg_send![win, makeFirstResponder:view];
+        }).ok();
         sleep(Duration::from_millis(300)).await;
         if truthy(app, "document.hasFocus()").await {
             focused = true;
@@ -312,36 +318,15 @@ async fn home(app: &AppHandle, checks: &mut Checks) {
         format!("{back:?}"),
     );
 
-    // Space and Enter activate the focused button (physical keys, not .click()).
-    js(
-        app,
-        "window.__p8greet = 0; document.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('button'); if (e.isTrusted && e.detail === 0 && b && lbl(b) === 'Greet') window.__p8greet++; }, true); return true;",
-    )
-    .await;
-    let found = tab_until(app, "lbl(document.activeElement) === 'Greet'", n + 2, false).await;
-    checks.check("Home: Tab reaches the Greet button", found, "not reached");
+    // The desktop organizer stays on the page and responds to physical Space/Enter.
+    let found = tab_until(app, "document.activeElement.matches('.desktop-header summary')", n + 2, false).await;
+    checks.check("Desktop: Tab reaches organizer", found, "not reached");
     if found {
         key(app, Key::Space).await;
-        let after_space = js(app, "return window.__p8greet;").await;
+        let opened = js(app, "return document.querySelector('.desktop-header details').open;").await;
         key(app, Key::Enter).await;
-        let after_enter = js(app, "return window.__p8greet;").await;
-        sleep(Duration::from_millis(400)).await;
-        let toasts = js(app, "return [...document.querySelectorAll('[data-toast-type]')].map((t) => ({ type: t.dataset.toastType, role: t.getAttribute('role'), live: t.getAttribute('aria-live') }));").await;
-        checks.check(
-            "Home: Space activates the focused button once",
-            after_space == 1,
-            after_space.to_string(),
-        );
-        checks.check(
-            "Home: Enter activates the focused button once",
-            after_enter == 2,
-            after_enter.to_string(),
-        );
-        checks.check(
-            "Home: the unregistered `greet` command surfaces an error Toast with role=alert/aria-live=assertive",
-            toasts.as_array().is_some_and(|t| !t.is_empty() && t.iter().all(|x| x["type"] == "error" && x["role"] == "alert" && x["live"] == "assertive")),
-            toasts.to_string(),
-        );
+        let closed = js(app, "return !document.querySelector('.desktop-header details').open;").await;
+        checks.check("Desktop: Space opens organizer and Enter closes it", opened == true && closed == true, format!("opened={opened}, closed={closed}"));
     }
 }
 
@@ -352,7 +337,7 @@ async fn skills_tabs(app: &AppHandle, checks: &mut Checks) {
     }
     let found = tab_until(
         app,
-        "document.activeElement.getAttribute('role') === 'tab'",
+        "document.activeElement.getAttribute('role') === 'tab' && document.activeElement.closest('[role=tablist]').getAttribute('aria-label') === 'Skills 视图'",
         30,
         false,
     )
@@ -365,14 +350,14 @@ async fn skills_tabs(app: &AppHandle, checks: &mut Checks) {
     if !found {
         return;
     }
-    let state = "const t = document.activeElement; return { role: t.getAttribute('role'), sel: t.getAttribute('aria-selected'), label: lbl(t), roving: [...document.querySelectorAll('[role=tab]')].filter((x) => x.tabIndex === 0).length };";
+    let state = "const t = document.activeElement; return { role: t.getAttribute('role'), sel: t.getAttribute('aria-selected'), label: lbl(t), roving: [...t.closest('[role=tablist]').querySelectorAll('[role=tab]')].filter((x) => x.tabIndex === 0).length };";
     let s = js(app, state).await;
     checks.check("Skills: Tab lands on the selected tab; exactly one tab is in the tab order (roving tabindex)", s["sel"] == "true" && s["roving"] == 1, s.to_string());
     for (k, name, want) in [
-        (Key::Right, "Right", "Installed"),
-        (Key::Left, "Left", "Browse"),
-        (Key::End, "End", "Installed"),
-        (Key::Home, "Home", "Browse"),
+        (Key::Right, "Right", "已安装"),
+        (Key::Left, "Left", "浏览 Skills"),
+        (Key::End, "End", "已安装"),
+        (Key::Home, "Home", "浏览 Skills"),
     ] {
         key(app, k).await;
         let s = js(app, state).await;
@@ -861,9 +846,8 @@ async fn error_boundary(app: &AppHandle, checks: &mut Checks) {
         checks.check("ErrorBoundary: Home loaded", false, "page never loaded");
         return;
     }
-    // A real render error: put an object into the greeting state (React throws "Objects are not valid as a
-    // React child" while rendering), found through the fiber that owns the "Welcome" heading.
-    let injected = js(app, "const h1 = [...document.querySelectorAll('h1')].find((e) => e.textContent.includes('Welcome')); const fk = Object.keys(h1).find((k) => k.startsWith('__reactFiber$')); let f = h1[fk]; while (f && !(f.tag === 0 && f.memoizedState)) f = f.return; let hook = f && f.memoizedState; while (hook && !(hook.queue && hook.memoizedState === '')) hook = hook.next; if (!hook) return false; hook.queue.dispatch({ not: 'a child' }); return true;").await;
+    // A failing state updater exercises the real boundary; retry mounts a fresh desktop.
+    let injected = js(app, "const h1 = document.querySelector('.desktop-page h1'); if(!h1)return false; const fk = Object.keys(h1).find(k => k.startsWith('__reactFiber$')); let f = h1[fk]; while(f && !(f.tag === 0 && f.memoizedState)) f = f.return; let hook = f && f.memoizedState; while(hook && !(hook.queue && typeof hook.memoizedState === 'boolean')) hook = hook.next; if(!hook)return false; hook.queue.dispatch(() => { throw new Error('smoke render'); }); return true;").await;
     checks.check(
         "ErrorBoundary: injected a render-time error into the Home page",
         injected == true,
@@ -907,7 +891,7 @@ async fn error_boundary(app: &AppHandle, checks: &mut Checks) {
     );
     if found {
         key(app, Key::Enter).await;
-        let back = js(app, "return !!(await until(() => !document.querySelector('[data-error-kind=error]') && [...document.querySelectorAll('h1')].some((e) => e.textContent.includes('Welcome')), 4000));").await == true;
+        let back = js(app, "return !!(await until(() => !document.querySelector('[data-error-kind=error]') && document.querySelector('h1'), 4000));").await == true;
         checks.check(
             "ErrorBoundary: Enter on 重试 remounts the page and recovers",
             back,
@@ -1037,7 +1021,7 @@ async fn gallery_themes(app: &AppHandle, checks: &mut Checks) {
 async fn host_appearance(app: &AppHandle) -> Value {
     super::ipc(app, MAIN, "get_appearance_preferences", json!({}))
         .await
-        .0["value"]["data"]
+        .0["value"]["data"]["snapshot"]
         .clone()
 }
 
@@ -1059,183 +1043,34 @@ fn focus_radio(label: &str) -> String {
     )
 }
 
-/// V1-E2E-05 (switch theme -> switch density -> show a Toast) through the real Settings > Appearance page.
-/// Each step is one physical key press on a control that was focused beforehand: Enter on the link and on the
-/// button, Right on a radio group. Outcomes are read from the DOM and from the real host command.
-/// Setup shortcuts that are not key presses: the preferences are reset over IPC and each starting control is
-/// focused with `.focus()`.
+/// Production editor: keyboard preview, explicit apply, reload and failure rollback.
 async fn appearance_e2e(app: &AppHandle, checks: &mut Checks) {
-    let reset = set_appearance(app, "light", 100).await;
-    checks.check(
-        "E2E-05: host reset to light/100",
-        reset,
-        "set_appearance_preferences failed",
-    );
-    if !ready(app, "/settings").await {
-        checks.check("E2E-05: /settings loaded", false, "page never loaded");
-        return;
+    set_appearance(app,"light",100).await;
+    if !ready(app,"/settings/appearance").await {
+        checks.check("appearance editor loads",false,"page never loaded");return;
     }
-
-    // D085: the Settings shell's tabs activate manually, so Enter on the focused 外观 tab opens the page.
-    let link = "const a = [...document.querySelectorAll('[role=\"tablist\"][aria-label=\"系统设置\"] [role=\"tab\"]')].find((x) => x.textContent.trim() === '外观'); if (!a) return false; a.focus(); return document.activeElement === a;";
-    let focused = js(app, link).await == true;
-    if focused {
-        key(app, Key::Enter).await;
-    }
-    let opened = js(
-        app,
-        "return !!(await until(() => location.pathname === '/settings/appearance' && [...document.querySelectorAll('h1')].some((h) => h.textContent.trim() === '外观设置')));",
-    )
-    .await
-        == true;
-    checks.check(
-        "E2E-05: Enter on the 外观 tab on /settings opens /settings/appearance",
-        focused && opened,
-        format!("focused={focused} opened={opened}"),
-    );
-    if !opened {
-        return;
-    }
-
-    let base = js(
-        app,
-        "const bg = bgOf(document.body); window.__e2e = { lum: lum(bg), font: parseFloat(css(root, 'fontSize')) }; return { theme: root.dataset.theme, density: root.dataset.density, lum: window.__e2e.lum, font: window.__e2e.font, themeChecked: [...document.querySelectorAll('[role=\"radio\"]')].filter((r) => r.getAttribute('aria-checked') === 'true').map((r) => lbl(r)) };",
-    )
-    .await;
-    checks.check(
-        "E2E-05: the page starts on the host values (light, 100%)",
-        base["theme"] == "light"
-            && base["density"] == "100"
-            && base["themeChecked"] == json!(["亮色", "100%"]),
-        base.to_string(),
-    );
-
-    // Step 1: theme. Right on the focused "亮色" radio moves the choice to "暗色".
-    let on_light = js(app, &focus_radio("亮色")).await == true;
-    key(app, Key::Right).await;
-    let dark = js(
-        app,
-        "const ok = await until(() => root.dataset.theme === 'dark'); const r = [...document.querySelectorAll('[role=\"radio\"]')].find((x) => lbl(x) === '暗色'); return { ok: !!ok, checked: !!r && r.getAttribute('aria-checked') === 'true', lum: lum(bgOf(document.body)), base: window.__e2e.lum };",
-    )
-    .await;
-    let dark_ok = on_light
-        && dark["ok"] == true
-        && dark["checked"] == true
-        && dark["lum"].as_f64().unwrap_or(1.0) < 0.2
-        && dark["base"].as_f64().unwrap_or(0.0) > 0.5;
-    checks.check(
-        "E2E-05 step 1: Right on the theme group applies dark (data-theme, checked radio, body background darker)",
-        dark_ok,
-        format!("on_light={on_light} {dark}"),
-    );
-    checks.check(
-        "E2E-05 step 1: the host saved theme=dark",
-        host_has(app, "theme", json!("dark")).await,
-        host_appearance(app).await.to_string(),
-    );
-
-    // Step 2: interface scale. Two Rights on the focused "100%" radio reach "150%".
-    let on_100 = js(app, &focus_radio("100%")).await == true;
-    key(app, Key::Right).await;
-    key(app, Key::Right).await;
-    let scale = js(
-        app,
-        "const ok = await until(() => root.dataset.density === '150'); const r = [...document.querySelectorAll('[role=\"radio\"]')].find((x) => lbl(x) === '150%'); return { ok: !!ok, checked: !!r && r.getAttribute('aria-checked') === 'true', font: parseFloat(css(root, 'fontSize')), base: window.__e2e.font, overflowX: root.scrollWidth > root.clientWidth };",
-    )
-    .await;
-    let ratio_ok = scale["font"]
-        .as_f64()
-        .zip(scale["base"].as_f64())
-        .is_some_and(|(f, b)| b > 0.0 && (f / b - 1.5).abs() < 0.01);
-    checks.check(
-        "E2E-05 step 2: two Rights on the scale group apply 150% (data-density, checked radio, root font 1.5x, no horizontal overflow)",
-        on_100 && scale["ok"] == true && scale["checked"] == true && ratio_ok && scale["overflowX"] == false,
-        format!("on_100={on_100} {scale}"),
-    );
-    checks.check(
-        "E2E-05 step 2: the host saved density=150 and still has theme=dark",
-        host_has(app, "density", json!(150)).await && host_appearance(app).await["theme"] == "dark",
-        host_appearance(app).await.to_string(),
-    );
-
-    // Step 3: Toast. Enter on the preview button.
-    let on_button = js(
-        app,
-        "const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === '显示通知'); if (!b) return false; b.focus(); return document.activeElement === b;",
-    )
-    .await
-        == true;
-    if on_button {
-        key(app, Key::Enter).await;
-    }
-    let toast = js(
-        app,
-        "const t = await until(() => [...document.querySelectorAll('[role=\"status\"]')].find((x) => x.textContent.includes('这是一条示例通知'))); return t ? { role: t.getAttribute('role'), live: t.getAttribute('aria-live'), geo: geo(t) } : null;",
-    )
-    .await;
-    checks.check(
-        "E2E-05 step 3: Enter on the preview button shows an info Toast (role=status, polite) inside the viewport",
-        on_button && toast["role"] == "status" && toast["live"] == "polite" && toast["geo"]["inside"] == true,
-        format!("on_button={on_button} {toast}"),
-    );
-
-    // The choices survive a reload: they come back from the host, not from the page.
-    let reloaded = ready(app, "/settings/appearance").await;
-    let again = js(
-        app,
-        "return { theme: root.dataset.theme, density: root.dataset.density, checked: [...document.querySelectorAll('[role=\"radio\"]')].filter((r) => r.getAttribute('aria-checked') === 'true').map((r) => lbl(r)) };",
-    )
-    .await;
-    checks.check(
-        "E2E-05: after a reload the page shows dark/150% from the host",
-        reloaded
-            && again["theme"] == "dark"
-            && again["density"] == "150"
-            && again["checked"] == json!(["暗色", "150%"]),
-        again.to_string(),
-    );
-
-    // AC21 on the real renderer and host: a failing save rolls the page back and raises one error Toast.
-    // The fault is a SQLite trigger on the second connection; the page and host code are the shipped ones.
-    let probe = &app.state::<UiProbe>().0;
-    let armed = probe
-        .execute_unprepared(
-            "CREATE TRIGGER fail_theme BEFORE UPDATE ON system_settings WHEN NEW.setting_key='appearance.theme' \
-             BEGIN SELECT RAISE(ABORT, 'scripted failure'); END;",
-        )
-        .await
-        .is_ok();
-    checks.check(
-        "E2E-05 failure: fault injected (theme updates abort)",
-        armed,
-        "trigger not created",
-    );
-    let on_dark = js(app, &focus_radio("暗色")).await == true;
-    key(app, Key::Right).await;
-    let failed = js(
-        app,
-        "const t = await until(() => [...document.querySelectorAll('[role=\"alert\"]')].find((x) => x.textContent.includes('操作失败'))); await wait(300); const r = (n) => [...document.querySelectorAll('[role=\"radio\"]')].find((x) => lbl(x) === n); return { toast: !!t, live: t ? t.getAttribute('aria-live') : null, alerts: [...document.querySelectorAll('[role=\"alert\"]')].filter((x) => x.textContent.includes('操作失败')).length, dark: r('暗色').getAttribute('aria-checked'), auto: r('跟随系统').getAttribute('aria-checked'), theme: root.dataset.theme, leaked: document.body.innerText.includes('scripted') || document.body.innerText.includes('system_settings') };",
-    )
-    .await;
-    checks.check(
-        "E2E-05 failure: a failed save rolls the page back to dark, raises exactly one assertive error Toast and leaks no driver text",
-        on_dark
-            && failed["toast"] == true
-            && failed["live"] == "assertive"
-            && failed["alerts"] == 1
-            && failed["dark"] == "true"
-            && failed["auto"] == "false"
-            && failed["theme"] == "dark"
-            && failed["leaked"] == false,
-        format!("on_dark={on_dark} {failed}"),
-    );
-    checks.check(
-        "E2E-05 failure: the host still has theme=dark",
-        host_appearance(app).await["theme"] == "dark",
-        host_appearance(app).await.to_string(),
-    );
-    let _ = probe.execute_unprepared("DROP TRIGGER fail_theme").await;
-    set_appearance(app, "light", 100).await;
+    let before=host_appearance(app).await;
+    let focused=js(app,&focus_radio("亮色")).await==true;
+    key(app,Key::Right).await;
+    let preview=js(app,"return !!(await until(()=>root.dataset.theme==='dark'));").await;
+    checks.check("keyboard theme preview does not persist",focused&&preview==true&&host_appearance(app).await==before,preview.to_string());
+    let apply="const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='应用外观');if(!b)return false;b.focus();return document.activeElement===b;";
+    let focused=js(app,apply).await==true;
+    key(app,Key::Enter).await;
+    checks.check("Enter applies full dark snapshot",focused&&host_has(app,"mode",json!("dark")).await,host_appearance(app).await.to_string());
+    let loaded=ready(app,"/settings/appearance").await;
+    let dark=js(app,"return root.dataset.theme==='dark';").await;
+    checks.check("editor reload reads confirmed dark snapshot",loaded&&dark==true,dark.to_string());
+    let probe=&app.state::<UiProbe>().0;
+    let armed=probe.execute_unprepared("CREATE TRIGGER fail_theme BEFORE UPDATE ON system_settings WHEN NEW.setting_key='appearance.snapshot.v2' BEGIN SELECT RAISE(ABORT,'scripted failure'); END").await.is_ok();
+    js(app,&focus_radio("暗色")).await;
+    key(app,Key::Left).await;
+    js(app,apply).await;
+    key(app,Key::Enter).await;
+    let rollback=js(app,"const alert=await until(()=>[...document.querySelectorAll('[role=alert]')].find(x=>x.textContent.includes('草稿保留')));return {alert:!!alert,theme:root.dataset.theme,leaked:document.body.textContent.includes('scripted failure')};").await;
+    checks.check("failed apply restores confirmed theme and keeps draft",armed&&rollback["alert"]==true&&rollback["theme"]=="dark"&&rollback["leaked"]==false&&host_appearance(app).await["mode"]=="dark",rollback.to_string());
+    let _=probe.execute_unprepared("DROP TRIGGER fail_theme").await;
+    set_appearance(app,"light",100).await;
 }
 
 /// Tab through every stop of the Home page and check each focus ring, in the theme already applied.
@@ -1306,8 +1141,8 @@ async fn settings_tab_rings(app: &AppHandle, checks: &mut Checks) {
         }
         let want = [
             "Provider",
-            "Skills",
-            "MCP",
+            "技能中心",
+            "MCP 管理",
             "模块",
             "外观",
             "关于",
@@ -1359,7 +1194,7 @@ async fn focus_ring_targets(app: &AppHandle, checks: &mut Checks) {
     let input = "document.activeElement.id === 'g-input-error' && document.activeElement.getAttribute('aria-invalid') === 'true'";
     let checkbox = "document.activeElement.getAttribute('role') === 'checkbox' && document.activeElement.getAttribute('aria-checked') === 'true'";
     let trigger = "document.activeElement.id === 'g-toast-long'";
-    let close = "document.activeElement.getAttribute('aria-label') === '关闭通知' && !!document.activeElement.closest('[data-toast-type=\"error\"]')";
+    let close = "document.activeElement.getAttribute('aria-label') === '关闭' && !!document.activeElement.closest('[data-toast-type=\"error\"]')";
     for (theme, density) in [("light", 100u32), ("light", 175), ("dark", 100)] {
         let tag = format!("Focus ring targets {theme}/{density}%");
         set_appearance(app, theme, density).await;
@@ -1455,7 +1290,7 @@ const DLG: &str = r#"
 const dlg = () => document.querySelector('[role="dialog"]');
 const dlgTitle = () => { const d = dlg(); const t = d && document.getElementById(d.getAttribute('aria-labelledby')); return t ? t.textContent.trim() : null; };
 const dlgState = () => { const d = dlg(); return d ? { title: dlgTitle(), inside: d.contains(document.activeElement), focus: lbl(document.activeElement), buttons: [...d.querySelectorAll('button')].map((b) => lbl(b)) } : null; };
-const nameInput = () => { const l = [...document.querySelectorAll('label')].find((x) => x.textContent.trim().startsWith('Name')); return l && l.control; };
+const nameInput = () => { const l = [...document.querySelectorAll('label')].find((x) => x.textContent.trim().startsWith('名称')); return l && l.control; };
 "#;
 
 async fn jd(app: &AppHandle, body: &str) -> Value {
@@ -1543,8 +1378,8 @@ async fn confirm_dialogs(app: &AppHandle, checks: &mut Checks) {
         return;
     }
 
-    let delete_trigger = "const a = await until(() => [...document.querySelectorAll('article')].find((x) => x.textContent.includes('confirm-probe'))); const b = a && [...a.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Delete'); if (!b) return false; b.focus(); return document.activeElement === b;";
-    let title = "Delete MCP server?";
+    let delete_trigger = "const a = await until(() => [...document.querySelectorAll('article')].find((x) => x.textContent.includes('confirm-probe'))); const b = a && [...a.querySelectorAll('button')].find((x) => x.textContent.trim() === '删除'); if (!b) return false; b.focus(); return document.activeElement === b;";
+    let title = "删除 MCP Server？";
 
     if open_expect(app, checks, "MCP delete", delete_trigger, title).await {
         key(app, Key::Escape).await;
@@ -1552,12 +1387,12 @@ async fn confirm_dialogs(app: &AppHandle, checks: &mut Checks) {
             "MCP delete: Esc closes the dialog, keeps the server and returns focus to Delete",
             dialog_gone(app).await
                 && mcp_has(app, &id).await
-                && truthy(app, "document.activeElement && document.activeElement.textContent.trim() === 'Delete'").await,
+                && truthy(app, "document.activeElement && document.activeElement.textContent.trim() === '删除'").await,
             "dialog open, server missing or focus not restored",
         );
     }
     if open_expect(app, checks, "MCP delete (Cancel)", delete_trigger, title).await {
-        let on_cancel = tab_to_dialog_button(app, "Cancel").await;
+        let on_cancel = tab_to_dialog_button(app, "取消").await;
         key(app, Key::Enter).await;
         checks.check(
             "MCP delete: Enter on Cancel closes the dialog and keeps the server",
@@ -1566,7 +1401,7 @@ async fn confirm_dialogs(app: &AppHandle, checks: &mut Checks) {
         );
     }
     if open_expect(app, checks, "MCP delete (Delete)", delete_trigger, title).await {
-        let on_delete = tab_to_dialog_button(app, "Delete").await;
+        let on_delete = tab_to_dialog_button(app, "删除").await;
         key(app, Key::Enter).await;
         let closed = dialog_gone(app).await;
         let off_page = jd(
@@ -1587,9 +1422,9 @@ async fn confirm_dialogs(app: &AppHandle, checks: &mut Checks) {
         return;
     }
     let select = "const h = await until(() => [...document.querySelectorAll('h3')].find((x) => x.textContent.includes('Provider-with-an-extremely-long'))); if (!h) return false; h.click(); return !!(await until(() => nameInput()));";
-    let dirty = "const i = nameInput(); if (!i) return false; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, 'Unsaved draft'); i.dispatchEvent(new Event('input', { bubbles: true })); return !!(await until(() => document.querySelector('[aria-label=\"Unsaved changes\"]')));";
-    let new_trigger = "const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === '+ New Provider'); if (!b) return false; b.focus(); return document.activeElement === b;";
-    let discard = "Discard unsaved changes?";
+    let dirty = "const i = nameInput(); if (!i) return false; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, 'Unsaved draft'); i.dispatchEvent(new Event('input', { bubbles: true })); return !!(await until(() => document.querySelector('[aria-label=\"未保存的更改\"]')));";
+    let new_trigger = "const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === '+ 新建 Provider'); if (!b) return false; b.focus(); return document.activeElement === b;";
+    let discard = "放弃未保存的更改？";
     let selected = jd(app, select).await == true;
     let drafted = selected && jd(app, dirty).await == true;
     checks.check(
@@ -1603,7 +1438,7 @@ async fn confirm_dialogs(app: &AppHandle, checks: &mut Checks) {
             checks.check(
                 "Provider discard: Esc keeps the draft in place and does not open the new-provider form",
                 dialog_gone(app).await
-                    && jd(app, "return !!(nameInput() && nameInput().value === 'Unsaved draft' && ![...document.querySelectorAll('h2')].some((h) => h.textContent.trim() === 'New Provider'));").await == true,
+                    && jd(app, "return !!(nameInput() && nameInput().value === 'Unsaved draft' && ![...document.querySelectorAll('h2')].some((h) => h.textContent.trim() === '新建 Provider'));").await == true,
                 "draft lost or the form switched",
             );
         }
@@ -1616,10 +1451,10 @@ async fn confirm_dialogs(app: &AppHandle, checks: &mut Checks) {
         )
         .await
         {
-            let on_discard = tab_to_dialog_button(app, "Discard").await;
+            let on_discard = tab_to_dialog_button(app, "放弃").await;
             key(app, Key::Enter).await;
             let closed = dialog_gone(app).await;
-            let fresh = jd(app, "return !!(await until(() => [...document.querySelectorAll('h2')].some((h) => h.textContent.trim() === 'New Provider') && nameInput() && nameInput().value === ''));").await == true;
+            let fresh = jd(app, "return !!(await until(() => [...document.querySelectorAll('h2')].some((h) => h.textContent.trim() === '新建 Provider') && nameInput() && nameInput().value === ''));").await == true;
             checks.check(
                 "Provider discard: Enter on Discard closes the dialog and opens the empty new-provider form",
                 on_discard && closed && fresh,
@@ -1628,8 +1463,8 @@ async fn confirm_dialogs(app: &AppHandle, checks: &mut Checks) {
         }
     }
 
-    let delete_form = "const b = await until(() => [...document.querySelectorAll('footer button')].find((x) => x.textContent.includes('Delete'))); if (!b) return false; b.focus(); return document.activeElement === b;";
-    let delete_title = "Delete Provider?";
+    let delete_form = "const b = await until(() => [...document.querySelectorAll('footer button')].find((x) => x.textContent.includes('删除'))); if (!b) return false; b.focus(); return document.activeElement === b;";
+    let delete_title = "删除 Provider？";
     if jd(app, select).await != true {
         checks.check(
             "Provider delete: the seeded Provider opens in the form",
@@ -1655,7 +1490,7 @@ async fn confirm_dialogs(app: &AppHandle, checks: &mut Checks) {
     )
     .await
     {
-        let on_delete = tab_to_dialog_button(app, "Delete").await;
+        let on_delete = tab_to_dialog_button(app, "删除").await;
         key(app, Key::Enter).await;
         let closed = dialog_gone(app).await;
         let off_page = jd(app, "return !!(await until(() => !document.body.innerText.includes('Provider-with-an-extremely-long')));").await == true;
@@ -1665,4 +1500,54 @@ async fn confirm_dialogs(app: &AppHandle, checks: &mut Checks) {
             format!("onDelete={on_delete} closed={closed} offPage={off_page}"),
         );
     }
+}
+
+/// Phase 4 only: shipped shell, real catalog/module and native Escape/Tab, without the density matrix.
+pub(super) async fn shell(app: AppHandle, checks: &mut Checks) {
+    checks.check("shell native window ready", prepare(&app).await, "WKWebView first responder");
+    key(&app, Key::Tab).await;
+    checks.check("shell physical Tab moves focus", truthy(&app, "document.activeElement !== document.body && document.hasFocus()").await, "native Tab preflight");
+    let launcher = js(&app, r#"
+document.querySelector('.workspace-navigation button').click();
+await until(() => [...document.querySelectorAll('.workspace-launcher-item')].find(e => e.title === 'p8-gallery'));
+const item = [...document.querySelectorAll('.workspace-launcher-item')].find(e => e.title === 'p8-gallery');
+if (!item) return {error:'empty real catalog'};
+item.focus();
+return {name:item.textContent, dialog:!!document.querySelector('.workspace-launcher-panel')};
+"#).await;
+    checks.check("shell real catalog launcher", launcher["dialog"] == true, launcher.to_string());
+    // P is dispatched here as an action shortcut; native Tab/Escape are exercised separately below.
+    let pinned = js(&app, r#"
+document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'p',bubbles:true}));
+await until(() => document.querySelector('.workspace-pinned-row'));
+return !!document.querySelector('.workspace-pinned-row');
+"#).await;
+    checks.check("shell pins catalog app", pinned == true, pinned.to_string());
+    key(&app, Key::Escape).await;
+    checks.check("shell native Escape closes launcher", !truthy(&app, "document.querySelector('.workspace-launcher-panel')").await, "launcher dismissed");
+    let opened = js(&app, r#"
+document.querySelector('.workspace-pinned-row a').click();
+return !!(await until(() => document.querySelector('#g-open'),20000));
+"#).await;
+    checks.check("shell opens actual module view", opened == true, opened.to_string());
+    let settings = js(&app, r#"
+window.__shellModule = document.querySelector('#g-open');
+document.querySelector('a[href="/settings"]').click();
+await until(() => document.querySelector('.workspace-settings-categories'));
+const dialog = document.querySelector('.workspace-settings-dialog');
+return {open:!!dialog,background:window.__shellModule?.isConnected,width:dialog?.getBoundingClientRect().width,focus:dialog?.contains(document.activeElement),direction:getComputedStyle(document.querySelector('.workspace-settings-tabs')).flexDirection};
+"#).await;
+    checks.check("shell settings preserves module and traps focus", settings["open"] == true && settings["background"] == true && settings["focus"] == true && settings["direction"] == "row", settings.to_string());
+    key(&app, Key::Escape).await;
+    let returned = js(&app, "await until(() => !document.querySelector('.workspace-settings-dialog')); return {same:document.querySelector('#g-open') === window.__shellModule,focus:document.activeElement?.getAttribute('href'),path:location.pathname};").await;
+    checks.check("shell settings Escape returns same module", returned["same"] == true && returned["path"] == "/apps/p8-gallery", returned.to_string());
+    let command = js(&app, "const trigger=document.querySelector('.workspace-tab-actions button[title*=Ctrl]'); trigger.focus(); trigger.click(); return !!(await until(() => document.querySelector('.workspace-command input') === document.activeElement));").await;
+    checks.check("shell command autofocus", command == true, command.to_string());
+    key(&app, Key::Escape).await;
+    checks.check("shell command Escape restores focus", truthy(&app, "!document.querySelector('.workspace-command') && document.activeElement?.title?.includes('Ctrl')").await, "command trigger restored");
+    let focus = js(&app, "document.querySelector('.workspace-tab-actions button[aria-pressed]').click(); await until(() => !document.querySelector('.workspace-rail')); return !document.querySelector('.workspace-rail');").await;
+    key(&app, Key::Escape).await;
+    checks.check("shell focus mode native Escape restores rail", focus == true && truthy(&app, "document.querySelector('.workspace-rail')").await, focus.to_string());
+    let closed = js(&app, "document.querySelector('.workspace-tab-close').click(); return !!(await until(() => !document.querySelector('[data-workspace-tab]') && location.pathname === '/'));").await;
+    checks.check("shell closes workspace and returns home", closed == true, closed.to_string());
 }

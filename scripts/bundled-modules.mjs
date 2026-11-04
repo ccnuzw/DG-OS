@@ -29,7 +29,7 @@ const u64 = (n) => {
 const frame = (bytes) => Buffer.concat([u64(bytes.length), bytes]);
 const text = (value) => Buffer.from(String(value), 'utf8');
 
-const KNOWN_MANIFEST_KEYS = new Set(['id', 'name', 'version', 'entry', 'artifact', 'permissions', 'requires']);
+const KNOWN_MANIFEST_KEYS = new Set(['id', 'name', 'version', 'entry', 'artifact', 'permissions', 'requires', 'views']);
 
 // Fixed-order encoding of every manifest field except artifact.sha256 (digest.rs `manifest_canon`).
 export function manifestCanon(manifest) {
@@ -56,6 +56,11 @@ export function manifestCanon(manifest) {
     }
     if (requires.react === undefined || requires.react === null) parts.push(Buffer.from([0]));
     else parts.push(Buffer.from([1]), frame(text(requires.react)));
+  }
+  if (manifest.views !== undefined && manifest.views !== null) {
+    const views = manifest.views;
+    if (Object.keys(views).some(key => !['layout', 'capability'].includes(key)) || !['document', 'full-bleed'].includes(views.layout) || !['single', 'multiple'].includes(views.capability)) throw new Error('invalid view contribution');
+    parts.push(frame(text('views')), frame(text(views.layout)), frame(text(views.capability)));
   }
   return Buffer.concat(parts);
 }

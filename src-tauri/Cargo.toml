@@ -27,6 +27,7 @@ dgos-workbench = { path = "../crates/dgos-workbench" }
 dgos-mcp = { path = "../crates/dgos-mcp" }
 dgos-modules = { path = "../crates/dgos-modules" }
 dgos-application = { path = "../crates/dgos-application" }
+dgos-agents = { path = "../crates/dgos-agents" }
 dgos-lan = { path = "../crates/dgos-lan" }
 
 # Tauri
@@ -43,6 +44,7 @@ uuid = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+base64 = "0.22"
 
 # Logging
 tracing = { workspace = true }
@@ -162,3 +164,9 @@ name = "webview_smoke_providers"
 path = "tests/webview_smoke_providers.rs"
 harness = false
 required-features = ["provider-smoke"]
+
+[[test]]
+name = "webview_smoke_agents"
+path = "tests/webview_smoke_agents.rs"
+harness = false
+required-features = ["webview-smoke"]

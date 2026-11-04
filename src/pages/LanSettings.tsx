@@ -294,10 +294,10 @@ export default function LanSettings() {
       return;
     }
     confirm({
-      title: '关闭局域网协同？',
+      title: t('lan.disableTitle'),
       icon: 'warning',
-      content: '关闭后会断开全部设备，并停止接受局域网连接。',
-      confirmText: '确认关闭',
+      content: t('lan.disableContent'),
+      confirmText: t('lan.disableConfirm'),
       confirmVariant: 'danger',
       onConfirm: () => changeEnabled(false),
     });
@@ -345,10 +345,10 @@ export default function LanSettings() {
       return;
     }
     confirm({
-      title: '修改端口？',
+      title: t('lan.changePortTitle'),
       icon: 'warning',
-      content: `服务正在运行，改用端口 ${port} 会断开全部设备并作废当前访问凭据。`,
-      confirmText: '修改并断开',
+      content: t('lan.changePortContent', { port }),
+      confirmText: t('lan.changePortConfirm'),
       confirmVariant: 'danger',
       onConfirm: () => applyPort(port, true),
     });
@@ -356,10 +356,10 @@ export default function LanSettings() {
 
   const disconnectOne = (device: LanDevice) => {
     confirm({
-      title: '断开设备？',
+      title: t('lan.disconnectTitle'),
       icon: 'warning',
-      content: `将断开“${device.label}”（${device.peer_ip}），该设备需要重新配对才能再次使用。`,
-      confirmText: '断开',
+      content: t('lan.disconnectContent', { label: device.label, ip: device.peer_ip }),
+      confirmText: t('lan.disconnect'),
       confirmVariant: 'danger',
       onConfirm: async () => {
         try {
@@ -374,10 +374,10 @@ export default function LanSettings() {
 
   const disconnectAll = () => {
     confirm({
-      title: '断开全部设备？',
+      title: t('lan.disconnectAllTitle'),
       icon: 'warning',
-      content: `将断开当前 ${devices.length} 台设备，它们都需要重新配对。`,
-      confirmText: '断开全部',
+      content: t('lan.disconnectAllContent', { count: devices.length }),
+      confirmText: t('lan.disconnectAll'),
       confirmVariant: 'danger',
       onConfirm: async () => {
         try {
@@ -395,8 +395,8 @@ export default function LanSettings() {
   const actualPort = currentPort;
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6 text-foreground">
-      <h1 className="m-0 text-2xl font-semibold text-foreground">{t('lan.title')}</h1>
+    <div className="settings-content settings-sections text-foreground">
+      <h1 className="m-0 text-lg font-semibold text-foreground">{t('lan.title')}</h1>
         <div role="note" className="rounded-lg border border-warning bg-warning-bg p-3 text-sm text-warning-text wrap-anywhere">
          {t('lan.trustedNetwork')}
       </div>

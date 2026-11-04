@@ -7,11 +7,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { ToastViewport, clearToasts, disposeAppearance, initAppearance, updateAppearance } from '@dgos/ui';
+import { ToastViewport, clearToasts, disposeAppearance, initAppearance } from '@dgos/ui';
 import App from '../src/App';
 import { routeExists } from '../src/appRoutes';
 import { usePageError } from '../src/pageError';
 import { resetLocaleForTesting, setLocaleForTesting } from '../src/i18n/runtime';
+import { useDesktopPreferences } from '../src/workspace/desktopPreferences';
 
 const host = vi.hoisted(() => ({
   handler: async (_command: string, _args?: unknown): Promise<unknown> => null,
@@ -28,6 +29,8 @@ vi.mock('@tauri-apps/api/core', () => {
 });
 
 beforeEach(() => {
+  useDesktopPreferences.getState().reset();
+  useDesktopPreferences.setState({ loaded: true });
   setLocaleForTesting('zh-CN');
   host.handler = async (command) => (command === 'list_mcp_servers' ? [] : null);
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -44,26 +47,26 @@ afterEach(() => {
 });
 
 describe('navigation', () => {
-  it('marks only the current route, and Home / Settings do not stay marked on nested routes', () => {
+  it('marks Settings on its exact route', () => {
     render(
       <MemoryRouter initialEntries={['/settings']}>
         <App />
       </MemoryRouter>,
     );
     const current = screen
-      .getAllByRole('link')
+      .getAllByRole('link', { hidden: true })
       .filter((link) => link.getAttribute('aria-current') === 'page')
       .map((link) => link.textContent);
     expect(current).toEqual(['设置']);
   });
 
-  it('marks Home on / and nothing on an unknown path', () => {
+  it('marks Desktop on / and nothing on an unknown path', () => {
     const { unmount } = render(
       <MemoryRouter initialEntries={['/']}>
         <App />
       </MemoryRouter>,
     );
-    expect(screen.getByRole('link', { name: '首页' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('link', { name: '桌面总览' }).getAttribute('aria-current')).toBe('page');
     unmount();
 
     render(
@@ -73,27 +76,35 @@ describe('navigation', () => {
     );
     expect(screen.getAllByRole('link').filter((link) => link.getAttribute('aria-current') === 'page')).toEqual([]);
   });
-});
 
-describe('Home greet failure', () => {
-  it('shows the unified error Toast when greet rejects with a host code, and keeps the old greeting', async () => {
-    host.handler = async (command) => {
-      if (command === 'list_mcp_servers') return [];
-      if (command === 'greet') throw { code: 1001002, message: 'secret upstream text sk-live-123' };
-      return null;
-    };
-    render(
-      <MemoryRouter initialEntries={['/']}>
-        <App />
-        <ToastViewport />
-      </MemoryRouter>,
-    );
-    fireEvent.click(screen.getByRole('button', { name: '问候' }));
-    expect(await screen.findByText('API Key 无效')).toBeTruthy();
-    expect(document.body.textContent).not.toContain('sk-live-123');
-    expect(console.error).toHaveBeenCalledWith('[dgos] error', { code: 1001002, where: 'Home' });
+  it.each(['/Settings', '/%73ettings', '/settings%2Fmodules'])(
+    'does not mark Desktop or Settings on %s', (path) => {
+      render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
+      expect(document.querySelector('a[href="/"]')?.getAttribute('aria-current')).toBeNull();
+      expect(document.querySelector('a[href="/settings"]')?.getAttribute('aria-current')).toBeNull();
+      expect(screen.queryAllByRole('tab', { selected: true })).toEqual([]);
+    },
+  );
+
+  it('updates navigation and open tab names when the locale changes without losing selection', () => {
+    render(<MemoryRouter initialEntries={['/skills']}><App /></MemoryRouter>);
+    expect(screen.getByRole('link', { name: '技能中心' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('tab', { name: '技能中心' }).getAttribute('aria-selected')).toBe('true');
+    act(() => setLocaleForTesting('en-US'));
+    expect(screen.getByRole('link', { name: 'Skills' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('tab', { name: 'Skills' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('link', { name: 'Desktop' }).getAttribute('href')).toBe('/');
+    expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('href')).toBe('/settings');
+    expect(screen.getByRole('button', { name: 'Collapse navigation' }).getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse navigation' }));
+    expect(screen.getByRole('button', { name: 'Expand navigation' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByRole('link', { name: 'Skills' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('tab', { name: 'Skills' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Expand navigation' }));
+    expect(screen.getByRole('button', { name: 'Collapse navigation' }).getAttribute('aria-expanded')).toBe('true');
   });
 });
+
 
 describe('usePageError', () => {
   function Probe({ code }: { code: number }) {
@@ -116,7 +127,7 @@ describe('usePageError', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'fail' }));
     fireEvent.click(await screen.findByRole('button', { name: '查看 Provider 列表' }));
-    await waitFor(() => expect(document.querySelector('output')?.textContent).toBe('/providers'));
+    await waitFor(() => expect(document.querySelector('output')?.textContent).toBe('/settings/providers'));
   });
 
   it('shows the Toast without an action button when there is no router', async () => {
@@ -136,33 +147,11 @@ describe('usePageError', () => {
   });
 
   it('routeExists accepts the shell routes and rejects anything else', () => {
-    for (const route of ['/', '/providers', '/skills', '/workbench', '/mcp', '/settings', '/settings/modules', '/settings/appearance']) {
+    for (const route of ['/', '/providers', '/settings/providers', '/settings/skills', '/settings/mcp', '/account', '/skills', '/workbench', '/tasks/single', '/tasks/agent', '/mcp', '/settings', '/settings/modules', '/settings/appearance']) {
       expect(routeExists(route)).toBe(true);
     }
     for (const route of ['/nowhere', '/providers/', '/settings/modules/x', '', 'providers']) {
       expect(routeExists(route)).toBe(false);
     }
-  });
-});
-
-describe('appearance write failure', () => {
-  it('rolls the interface back and tells the user through the unified Toast, with only code and place logged', async () => {
-    host.handler = async (command) => {
-      if (command === 'get_appearance_preferences') return { success: true, data: { theme: 'light', density: 100 } };
-      if (command === 'set_appearance_preferences') return { success: false, error: { code: 1005006, message: 'db path /Users/x' } };
-      return null;
-    };
-    render(<ToastViewport />);
-    await initAppearance();
-    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
-
-    await act(async () => {
-      await updateAppearance({ theme: 'dark' });
-    });
-
-    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
-    expect(await screen.findByText('操作失败（错误码 1005006）')).toBeTruthy();
-    expect(document.body.textContent).not.toContain('/Users/x');
-    expect(console.error).toHaveBeenCalledWith('[dgos] error', { code: 1005006, where: 'appearance' });
   });
 });

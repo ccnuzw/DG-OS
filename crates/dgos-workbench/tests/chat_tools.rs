@@ -153,7 +153,7 @@ async fn fx() -> Fx {
         .unwrap()
         .remove(0);
     Fx {
-        chat: ChatManager::new(db.clone()),
+        chat: ChatManager::new(db.clone(), dgos_db::MaintenanceGate::new()),
         skills: SkillsManager::new(db.clone(), dir.path().join("skills")),
         providers: ProviderManager::with_vault(&db_url, vault).await.unwrap(),
         provider_id: provider.id,
@@ -238,12 +238,8 @@ async fn session(fx: &Fx) -> String {
             &fx.skills,
             ALICE,
             CreateChatSessionInput {
-                target: Some(ChatTargetInput {
-                    provider_id: Some(fx.provider_id.clone()),
-                    model_id: Some("chat".into()),
-                    skill_id: None,
-                    no_skill: true,
-                }),
+                target: Some(ChatTargetInput { provider_id: Some(fx.provider_id.clone()),
+                model_id: Some("chat".into()), skill_ids: vec![], generation: Default::default(), no_skill: true, }),
             },
         )
         .await
@@ -258,6 +254,7 @@ fn input(session: &str, text: &str, tools: Vec<ToolSelection>) -> SendChatInput 
         client_request_id: uuid::Uuid::new_v4().to_string(),
         accept_destination: None,
         tools,
+        asset_ids: vec![],
     }
 }
 
@@ -825,4 +822,21 @@ async fn a_plain_send_after_a_tool_turn_needs_no_reselection_and_carries_no_auth
         .await,
         0
     );
+}
+
+#[tokio::test]
+async fn pending_tool_approval_blocks_maintenance_until_terminal() {
+    let mut fx = fx().await;
+    let gate = dgos_db::MaintenanceGate::new();
+    fx.chat = ChatManager::new(fx.db.clone(), gate.clone());
+    let s = session(&fx).await;
+    let (first, second) = script_rounds(&mut fx, true).await;
+    let (task, sink) = start_turn(&fx, &s, "hold maintenance while waiting").await;
+    assert!(gate.begin_maintenance().is_err());
+    let proposal_id = sink.proposal().unwrap().id;
+    decide(&fx, ALICE, &task, ToolAction::Approve { proposal_id }).await.unwrap();
+    assert!(sink.take().iter().any(|event| matches!(event, ChatEvent::Done { .. })));
+    assert!(gate.begin_maintenance().is_ok());
+    first.assert_async().await;
+    second.assert_async().await;
 }

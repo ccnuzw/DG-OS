@@ -54,7 +54,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), Channel: class {} }));
 vi.mock('../src/modules/moduleRuntimeHost', () => ({ moduleRuntimeHost: fakeHost }));
 vi.mock('../src/pages/ProviderManagement', () => ({ default: () => null }));
 vi.mock('../src/pages/SkillsManagement', () => ({ default: () => null }));
-vi.mock('../src/pages/Workbench', () => ({ default: () => null }));
+vi.mock('../src/components/chat/ChatWorkbench', () => ({ default: () => null }));
 vi.mock('../src/pages/McpManagement', () => ({ default: () => null }));
 
 import { invoke } from '@tauri-apps/api/core';
@@ -114,6 +114,7 @@ function installInvoke() {
     const params = args as Record<string, unknown> | undefined;
     state.calls.push({ command, args: params });
     if (command === 'list_modules') return ok(structuredClone(state.modules));
+    if (command === 'read_workspace_app_catalog') return ok({ catalogRevision: 'test', entries: state.modules.map(module => ({ moduleId: module.module_id, displayName: module.name, iconResourceId: null, layout: 'document', viewCapability: 'single', enabled: module.enabled, permissionState: module.permissions.every((permission: {granted: boolean}) => permission.granted) ? 'granted' : 'pending', runtimeState: module.runtime.state, crashed: module.runtime.state === 'failed' })) });
     if (command === 'list_module_crashes') return ok(state.crashes);
     if (command === 'list_mcp_servers') return [];
     if (command === 'grant_module_permission' || command === 'revoke_module_permission') {
@@ -244,8 +245,10 @@ describe('Module management list', () => {
     fireEvent.mouseDown(await screen.findByRole('tab', { name: 'Modules' }), { button: 0 });
     expect(await screen.findByRole('heading', { name: 'Module management' })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('link', { name: 'Home' }));
-    fireEvent.click(screen.getByRole('link', { name: 'Modules' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
+    await screen.findByRole('link', { name: 'Settings' });
+    fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
+    fireEvent.mouseDown(await screen.findByRole('tab', { name: 'Modules' }), { button: 0 });
     expect(await screen.findByRole('heading', { name: 'Module management' })).toBeTruthy();
   });
 
@@ -574,87 +577,23 @@ describe('Module management list', () => {
   });
 });
 
-describe('Module panel', () => {
-  it('says the module is not running when there is no live instance', async () => {
-    renderAt('/settings/modules/dgos.beta');
-
-    expect(await screen.findByText('This module is not running')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Back to module management' })).toBeTruthy();
-  });
-
-  it('shows a crash banner whose Reload module stops and starts the module', async () => {
-    renderAt('/settings/modules/dgos.beta');
-    act(() => fakeHost.set([instanceFor('dgos.beta', true)]));
-
-    expect(await screen.findByText('Module dgos.beta crashed')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'View details' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Reload module' }));
-
+describe('Module crash recovery in management', () => {
+  it('keeps crash recovery available after the runtime has been released', async () => {
+    state.modules = [makeModule({ recent_crashes: 1, runtime: { ...makeModule().runtime, state: 'failed' } })];
+    renderAt('/settings/modules');
+    await screen.findByRole('heading', { name: 'Beta' });
+    expect(card('dgos.beta').getByRole('alert')).toBeTruthy();
+    expect(card('dgos.beta').getByRole('alert').textContent).toContain('dgos.beta');
+    fireEvent.click(card('dgos.beta').getByRole('button', { name: 'Reload' }));
     await waitFor(() => expect(lifecycleCommands()).toEqual(['stop_module', 'start_module']));
+    expect(card('dgos.beta').getByRole('alert').textContent).toContain('dgos.beta');
   });
-
-  it('keeps the crash banner when the host marks the runtime failed and the instance is already released', async () => {
-    state.modules = [
-      makeModule({ recent_crashes: 1, runtime: { ...makeModule().runtime, state: 'failed' } }),
-    ];
-    renderAt('/settings/modules/dgos.beta');
-
-    // No live instance in the page, but the host recorded a crash and failed the runtime.
-    expect(await screen.findByText('Module dgos.beta crashed')).toBeTruthy();
-    expect(screen.getByText('This module is not running')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Reload module' }));
-    await waitFor(() => expect(lifecycleCommands()).toEqual(['stop_module', 'start_module']));
-  });
-
-  it('shows no crash banner for a failed runtime that never recorded a crash', async () => {
-    state.modules = [makeModule({ recent_crashes: 0, runtime: { ...makeModule().runtime, state: 'failed' } })];
-    renderAt('/settings/modules/dgos.beta');
-
-    expect(await screen.findByText('This module is not running')).toBeTruthy();
-    expect(screen.queryByText('Module dgos.beta crashed')).toBeNull();
-  });
-
-  it('uninstalls a crashed module after confirmation and leaves the panel', async () => {
-    renderAt('/settings/modules/dgos.beta');
-    act(() => fakeHost.set([instanceFor('dgos.beta', true)]));
-    await screen.findByText('Module dgos.beta crashed');
-
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Uninstall' }) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByRole('button', { name: 'Uninstall' }));
-    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Uninstall dgos.beta' })).getByRole('button', { name: 'Confirm uninstall' }));
-
-    expect(await screen.findByRole('heading', { name: 'Module management' })).toBeTruthy();
-    expect(lifecycleCommands()).toEqual(['uninstall_module']);
-  });
-
-  it('disables Uninstall in the crash banner of an official module', async () => {
-    renderAt('/settings/modules/dgos.alpha');
-    act(() => fakeHost.set([instanceFor('dgos.alpha', true)]));
-    await screen.findByText('Module dgos.alpha crashed');
-
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Alpha' })).toBeTruthy());
-    expect((screen.getByRole('button', { name: 'Uninstall' }) as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it('warns that a module with three recorded crashes may be faulty', async () => {
-    state.modules = [makeModule({ recent_crashes: 3, enabled: false })];
-    renderAt('/settings/modules/dgos.beta');
-
-    expect(await screen.findByText('This module may be faulty; it was disabled. Consider uninstalling it.')).toBeTruthy();
-  });
-});
-
-describe('Sidebar module entries', () => {
-  it('adds a link for a ready instance and removes it after unload', async () => {
-    renderAt('/settings');
-    await screen.findByRole('tablist', { name: 'Settings' });
-    expect(screen.queryByRole('link', { name: 'dgos.beta' })).toBeNull();
-
+  it('keeps installed catalog entries after their runtime unloads', async () => {
+    renderAt('/');
+    const link = await screen.findByRole('button', { name: 'Beta', exact: true });
+    expect((link as HTMLButtonElement).disabled).toBe(false);
     act(() => fakeHost.set([instanceFor('dgos.beta', false)]));
-    const link = await screen.findByRole('link', { name: 'dgos.beta' });
-    expect(link.getAttribute('href')).toBe('/settings/modules/dgos.beta');
-
     act(() => fakeHost.set([]));
-    await waitFor(() => expect(screen.queryByRole('link', { name: 'dgos.beta' })).toBeNull());
+    expect(screen.getByRole('button', { name: 'Beta', exact: true })).toBe(link);
   });
 });

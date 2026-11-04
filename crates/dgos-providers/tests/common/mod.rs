@@ -248,6 +248,7 @@ pub fn request() -> ChatRequest {
         messages: vec![ChatMessage {
             role: "user".into(),
             content: "hello".into(),
+            images: Vec::new(),
         }],
         temperature: None,
         max_tokens: Some(16),

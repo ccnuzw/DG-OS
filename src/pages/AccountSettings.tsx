@@ -180,8 +180,8 @@ export default function AccountSettings() {
 
   if (!account) {
     return (
-      <div className="mx-auto flex max-w-2xl flex-col gap-6 p-6">
-        <h1 className="m-0 text-2xl font-semibold text-foreground">{t('account.title')}</h1>
+      <div className="settings-content settings-sections">
+        <h1 className="m-0 text-lg font-semibold text-foreground">{t('account.title')}</h1>
         <p className="m-0 text-sm text-muted-foreground">{t('account.unavailable')}</p>
       </div>
     );
@@ -191,8 +191,8 @@ export default function AccountSettings() {
   if (state.mode === 'no_accounts') {
     return (
       <div className="h-full overflow-y-auto">
-        <div className="mx-auto flex max-w-2xl flex-col gap-6 p-6">
-          <h1 className="m-0 text-2xl font-semibold text-foreground">{t('account.title')}</h1>
+        <div className="settings-content settings-sections">
+          <h1 className="m-0 text-lg font-semibold text-foreground">{t('account.title')}</h1>
           <Card>
             <Card.Header>
               <h2 className="m-0 text-base font-semibold">{t('account.first')}</h2>
@@ -214,8 +214,8 @@ export default function AccountSettings() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto flex max-w-2xl flex-col gap-6 p-6">
-        <h1 className="m-0 text-2xl font-semibold text-foreground">{t('account.title')}</h1>
+      <div className="settings-content settings-sections">
+        <h1 className="m-0 text-lg font-semibold text-foreground">{t('account.title')}</h1>
         <Card>
           <Card.Header>
             <h2 className="m-0 text-base font-semibold">{t('account.current')}</h2>

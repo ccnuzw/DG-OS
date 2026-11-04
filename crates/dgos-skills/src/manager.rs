@@ -187,15 +187,11 @@ impl SkillsManager {
         self.skill_repo.toggle_skill(id, user, false).await
     }
 
-    pub async fn uninstall_skill(&self, id: &str, _user: &str) -> Result<()> {
-        if self.content_repo.get_catalog_entry(id).await?.is_some() {
-            return Err(SkillError::InvalidManifest(
-                "Bundled content cannot be uninstalled; disable it instead".into(),
-            ));
+    pub async fn uninstall_skill(&self, id: &str, user: &str) -> Result<()> {
+        if self.content_repo.get_catalog_entry(id).await?.is_none() {
+            return Err(SkillError::LegacyFormatUnsupported);
         }
-        // Deletion requires a migration/ownership review: old installs may share
-        // files across users. Never delete arbitrary legacy install_path values.
-        Err(SkillError::LegacyFormatUnsupported)
+        self.content_repo.remove_user(id, user).await
     }
 
     pub async fn update_skill_config(

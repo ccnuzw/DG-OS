@@ -98,6 +98,8 @@ pub struct ModuleManifest {
     pub permissions: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requires: Option<Requires>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub views: Option<ModuleViewContribution>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -105,6 +107,21 @@ pub struct ModuleManifest {
 pub struct Artifact {
     pub version: String,
     pub sha256: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ModuleViewLayout { #[default] Document, FullBleed }
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModuleViewCapability { #[default] Single, Multiple }
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ModuleViewContribution {
+    pub layout: ModuleViewLayout,
+    pub capability: ModuleViewCapability,
 }
 
 #[derive(Clone, Debug)]
@@ -352,7 +369,7 @@ impl ModulePublisher {
             version.to_owned(),
             integrity.to_owned(),
             snapshot.entry,
-        ))
+        ).with_views(manifest.views.unwrap_or_default()))
     }
 
     /// Re-verify a staged package so a load smoke can run before the
@@ -1176,6 +1193,7 @@ impl ModulePublisher {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn record_update_event(
         &self,
         operation_id: &str,
@@ -1247,6 +1265,7 @@ impl ReleaseSnapshot {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn insert_update_event(
     db: &impl ConnectionTrait,
     operation_id: &str,

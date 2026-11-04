@@ -104,10 +104,7 @@ pub fn verify_release_bundle(pins: &[ReleasePin<'_>], root: &Path) -> Vec<Releas
         valid.insert((module_id, version), integrity);
     }
 
-    let found = match scan_bundle(root, &mut violations) {
-        Some(found) => found,
-        None => BTreeSet::new(),
-    };
+    let found = scan_bundle(root, &mut violations).unwrap_or_default();
 
     for (module_id, version) in &found {
         if !named.contains(&(module_id.clone(), version.clone())) {

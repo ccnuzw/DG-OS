@@ -14,16 +14,22 @@ use dgos_mcp::{ConnectionScope, McpManager};
 use dgos_types::{DgosError, DgosResult, HostSession};
 use std::sync::{Arc, RwLock};
 use tauri::Manager;
+use tokio_util::sync::CancellationToken;
+
+struct ResolvedState {
+    account: SessionState,
+    agent_lease: CancellationToken,
+}
 
 pub struct SessionResolver {
-    state: RwLock<SessionState>,
+    state: RwLock<ResolvedState>,
 }
 
 impl SessionResolver {
     /// Production start: closed until account recovery settles the state.
     pub fn starting() -> Arc<Self> {
         Arc::new(Self {
-            state: RwLock::new(SessionState::Switching),
+            state: RwLock::new(ResolvedState { account: SessionState::Switching, agent_lease: CancellationToken::new() }),
         })
     }
 
@@ -32,7 +38,7 @@ impl SessionResolver {
     #[cfg(any(test, feature = "webview-smoke"))]
     pub fn no_accounts() -> Arc<Self> {
         Arc::new(Self {
-            state: RwLock::new(SessionState::NoAccounts),
+            state: RwLock::new(ResolvedState { account: SessionState::NoAccounts, agent_lease: CancellationToken::new() }),
         })
     }
 
@@ -40,14 +46,13 @@ impl SessionResolver {
         self.state
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+            .account.clone()
     }
 
     fn set(&self, state: SessionState) {
-        *self
-            .state
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = state;
+        let mut current = self.state.write().unwrap_or_else(|p| p.into_inner());
+        current.agent_lease.cancel();
+        *current = ResolvedState { account: state, agent_lease: CancellationToken::new() };
     }
 
     /// The current session; `1008007` while signed out, switching or
@@ -58,6 +63,19 @@ impl SessionResolver {
             .user_id()
             .map(HostSession::for_user)
             .ok_or(DgosError::SessionInvalid)
+    }
+
+    pub fn agent_session(&self) -> Result<(HostSession, CancellationToken), DgosError> {
+        let current = self.state.read().unwrap_or_else(|p| p.into_inner());
+        let owner = current.account.user_id().ok_or(DgosError::SessionInvalid)?;
+        Ok((HostSession::for_user(owner), current.agent_lease.clone()))
+    }
+
+
+
+    pub fn close_agents(&self) {
+        let current = self.state.write().unwrap_or_else(|p| p.into_inner());
+        current.agent_lease.cancel();
     }
 }
 
@@ -100,44 +118,47 @@ impl SessionPort for HostSessionPort {
         self.resolver.set(state);
     }
 
-    /// Interface contract §9.4 steps 2-3, in order. The resolver is already
-    /// switching, so no new command can start work for the user meanwhile.
     async fn release(&self, user_id: &str) {
+        if let Some(appearance) = self.app.try_state::<dgos_db::AppearanceRepository>() {
+            appearance.invalidate_recovery(user_id);
+        }
         self.mcp.set_connection_scope(ConnectionScope::Nobody);
-        let session = HostSession::for_user(user_id);
-        if let Some(modules) = self.app.try_state::<ModuleOperationManager>() {
-            let failed = modules.stop_all(&session).await;
-            if !failed.is_empty() {
-                tracing::warn!(
-                    count = failed.len(),
-                    "module runtimes did not stop at session end"
-                );
-            }
+        // Revoke the page generation before awaiting any lifecycle hook. Old module routes
+        // must stay unusable even when a runtime's unload fails or a load finishes late.
+        if let Some(bridge) = self.app.try_state::<crate::module_host::ModuleHostBridge>() {
+            bridge.page_started(crate::module_host::MODULE_WINDOW);
         }
-        if let Some(chat) = self.app.try_state::<dgos_workbench::ChatManager>() {
-            if !chat.cancel_user(user_id).await {
-                tracing::warn!("chat generations still settling at session end");
-            }
-        }
-        if let Some(workbench) = self.app.try_state::<dgos_workbench::WorkbenchManager>() {
-            if !workbench.cancel_user(user_id).await {
-                tracing::warn!("single tasks still settling at session end");
-            }
-        }
-        // Desktop streams are owned by the only window, which belongs to the
-        // session that is ending.
-        if let Some(streams) = self
-            .app
-            .try_state::<crate::provider_streams::ProviderStreams>()
-        {
+        if let Some(streams) = self.app.try_state::<crate::provider_streams::ProviderStreams>() {
             streams.cancel_owner(crate::module_host::MODULE_WINDOW);
         }
         if let Some(confirmations) = self.app.try_state::<Arc<ModuleMcpConfirmations>>() {
             confirmations.cancel_user(user_id);
         }
-        if self.mcp.disconnect_user(user_id).await.is_err() {
-            tracing::warn!("MCP connections could not all be closed at session end");
-        }
+        let agents = async {
+            if let Some(agents) = self.app.try_state::<dgos_agents::AgentManager>() {
+                if !agents.cancel_user(user_id).await { tracing::warn!("Agent processes still settling at session end"); }
+            }
+        };
+        let modules = async {
+            if let Some(modules) = self.app.try_state::<ModuleOperationManager>() {
+                let failed = modules.stop_all(&HostSession::for_user(user_id)).await;
+                if !failed.is_empty() { tracing::warn!(count = failed.len(), "module runtimes did not stop at session end"); }
+            }
+        };
+        let chat = async {
+            if let Some(chat) = self.app.try_state::<dgos_workbench::ChatManager>() {
+                if !chat.cancel_user(user_id).await { tracing::warn!("chat generations still settling at session end"); }
+            }
+        };
+        let workbench = async {
+            if let Some(workbench) = self.app.try_state::<dgos_workbench::WorkbenchManager>() {
+                if !workbench.cancel_user(user_id).await { tracing::warn!("single tasks still settling at session end"); }
+            }
+        };
+        let mcp = async {
+            if self.mcp.disconnect_user(user_id).await.is_err() { tracing::warn!("MCP connections could not all be closed at session end"); }
+        };
+        tokio::join!(agents, modules, chat, workbench, mcp);
     }
 }
 
@@ -218,5 +239,20 @@ mod tests {
         ] {
             assert_eq!(connection_scope(&state), ConnectionScope::Nobody);
         }
+    }
+    #[test]
+    fn revoked_agent_lease_never_revives_after_switch_or_same_user_relogin() {
+        let resolver = SessionResolver::no_accounts();
+        let (_, old) = resolver.agent_session().unwrap();
+        for state in [SessionState::Switching, SessionState::Deleting, SessionState::SignedOut] {
+            resolver.set(state);
+            assert!(old.is_cancelled());
+            assert!(resolver.agent_session().is_err());
+        }
+        resolver.set(SessionState::NoAccounts);
+        let (_, fresh) = resolver.agent_session().unwrap();
+        assert!(!fresh.is_cancelled());
+        resolver.close_agents();
+        assert!(fresh.is_cancelled());
     }
 }

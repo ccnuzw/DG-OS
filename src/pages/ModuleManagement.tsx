@@ -1,6 +1,5 @@
 import { t, useLocale as usePageLocale } from '../i18n';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
 import { Button, Card, Checkbox, Loading, Stack, StatusIcon, cn } from '@dgos/ui';
 import {
   ModuleApiError,
@@ -268,6 +267,7 @@ export default function ModuleManagement() {
   const [diffs, setDiffs] = useState<Record<string, PermissionDiff>>({});
   const [auditLogs, setAuditLogs] = useState<Record<string, AuditLogState>>({});
   const [auditBusy, setAuditBusy] = useState(false);
+  const [filter, setFilter] = useState('all');
   const mounted = useRef(true);
   const reportError = usePageError('ModuleManagement');
   // `refresh` runs on mount and after every action; keeping the reporter in a ref keeps it out of its dependencies.
@@ -421,22 +421,24 @@ export default function ModuleManagement() {
     }
     await loadAudit(moduleId, null);
   }
+  const visibleModules = modules?.filter(module => filter === 'all' || (filter === 'enabled' ? module.enabled : module.runtime.state === 'failed' || module.permissions.some(permission => !permission.granted)));
 
   return (
-    <div className="mx-auto min-w-0 max-w-240 p-8 text-foreground">
+    <div className="settings-content settings-sections text-foreground">
       <header className="mb-4">
-        <h1 className="m-0 mb-2 text-2xl font-semibold text-foreground">{t('module.title')}</h1>
+        <h1 className="m-0 mb-2 text-lg font-semibold text-foreground">{t('module.title')}</h1>
         <p className="m-0 mb-2 text-sm text-muted-foreground">
           {t('module.subtitle')}</p>
-        <Link to="/settings" className={cn('text-sm', MODULE_LINK_CLASS)}>{t('module.backSettings')}</Link>
       </header>
 
+      <div role="group" aria-label={t('module.filters')} className="flex flex-wrap gap-2">{['all', 'enabled', 'pending'].map(value => <Button key={value} variant={filter === value ? 'primary' : 'secondary'} aria-pressed={filter === value} onClick={() => setFilter(value)}>{t(`module.filter.${value}`)}</Button>)}</div>
       {loadError !== null && <ErrorNotice error={loadError} />}
       {modules === null && loadError === null && <Loading label={t('module.loading')} />}
       {modules?.length === 0 && <p className="text-sm text-muted-foreground">{t('module.none')}</p>}
+      {Boolean(modules?.length) && visibleModules?.length === 0 && <p role="status" className="text-sm text-muted-foreground">{t('module.noMatches')}</p>}
 
       <Stack gap={4}>
-        {modules?.map((module) => {
+        {visibleModules?.map((module) => {
           const notice = notices[module.module_id] ?? {};
           const confirming = pending?.moduleId === module.module_id ? pending.kind : null;
           return (
@@ -444,7 +446,7 @@ export default function ModuleManagement() {
               <Card>
                 <Card.Header>
                   <Stack direction="horizontal" gap={2} className="flex-wrap items-center">
-                    <h2 className="m-0 mr-2 min-w-0 text-xl font-semibold wrap-anywhere">{module.name}</h2>
+                    <h2 className="m-0 mr-2 min-w-0 text-sm font-semibold wrap-anywhere">{module.name}</h2>
                     <span className={BADGE_CLASS}>{t('module.version')} {module.version}</span>
                     {module.official && <span className="rounded-full bg-info-bg px-2 py-0.5 text-xs text-info-text">{t('module.official')}</span>}
                     <span className={BADGE_CLASS}>{module.enabled ? t('providerForm.enabled') : t('module.disabled')}</span>
@@ -455,6 +457,8 @@ export default function ModuleManagement() {
                   <p className="m-0 mb-2 text-muted-foreground wrap-anywhere">
                      {module.module_id} {t('detail.recentCrashes')} {module.recent_crashes}
                   </p>
+                  {module.runtime.state === 'failed' && module.recent_crashes > 0 && <NoticeBox tone="error" role="alert">{t('module.moduleCrashed', { id: module.module_id })}</NoticeBox>}
+                  {module.recent_crashes >= 3 && <NoticeBox tone="warning" role="alert">{t('module.faulty')}</NoticeBox>}
 
                   {module.permissions.length === 0 ? (
                     <p className="m-0 my-2">{t('module.noPermissions')}</p>

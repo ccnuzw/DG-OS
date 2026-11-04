@@ -28,8 +28,8 @@ export function MessageItem({ message, live, failure, canRegenerate, onRegenerat
     <li className={cn('flex flex-col gap-1', mine ? 'items-end' : 'items-start')} data-role={message.role}>
       <div
         className={cn(
-          'max-w-full rounded-lg px-3 py-2 text-base',
-          mine ? 'bg-primary text-on-primary' : 'bg-secondary text-secondary-foreground',
+          'max-w-full rounded-lg px-3 py-2 type-reading',
+          mine ? 'bg-surface-inset text-foreground' : 'text-foreground',
         )}
       >
         {generating && live?.reasoning ? (

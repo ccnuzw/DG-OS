@@ -34,7 +34,7 @@ export function parseBlocks(css: string): Block[] {
 
 const LIGHT_PRELUDES = new Set(['@theme static', ':root']);
 const DARK_PRELUDE = ':root[data-theme="dark"]';
-const TOKEN_FILES = ['colors.css', 'scale.css'];
+const TOKEN_FILES = ['colors.css', 'presets.css', 'scale.css'];
 
 export function tokenBlocks(): Block[] {
   return TOKEN_FILES.flatMap((file) => parseBlocks(readUi('tokens', file)));
@@ -45,7 +45,7 @@ export function themeTokens(): { light: Map<string, string>; dark: Map<string, s
   const light = new Map<string, string>();
   const darkOnly = new Map<string, string>();
   for (const block of tokenBlocks()) {
-    const target = LIGHT_PRELUDES.has(block.prelude) ? light : block.prelude === DARK_PRELUDE ? darkOnly : null;
+    const target = LIGHT_PRELUDES.has(block.prelude) ? light : block.prelude === DARK_PRELUDE || block.prelude.includes(':root:not([data-preset])[data-theme="dark"]') ? darkOnly : null;
     if (!target) continue;
     for (const [name, value] of block.declarations) target.set(name, value);
   }

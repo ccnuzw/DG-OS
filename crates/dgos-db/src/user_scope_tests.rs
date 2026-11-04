@@ -63,6 +63,9 @@ fn seed(user: &str, n: u32) -> String {
           VALUES ('chat-{n}', '{user}', 't', 1, 1);
         INSERT INTO chat_messages (id, session_id, user_id, seq, role, status, task_id, created_at, updated_at)
           VALUES ('msg-{n}', 'chat-{n}', '{user}', 1, 'user', 'completed', 'task-{n}', 1, 1);
+        INSERT INTO chat_assets (id,user_id,name,mime,bytes,created_at) VALUES ('asset-{n}','{user}','a.txt','text/plain',X'61',1);
+        INSERT INTO chat_message_assets (message_id,user_id,asset_id,position) VALUES ('msg-{n}','{user}','asset-{n}',0);
+        INSERT INTO asset_leases (asset_id,user_id,lease_id,expires_at) VALUES ('asset-{n}','{user}','draft-{n}',1);
         INSERT INTO skills (id, skill_id, name, version, install_path, call_type, manifest, installed_at, updated_at, user_id)
           VALUES ('legacy-{n}', 'skill-1', 's', '1', '/x', 'cli', '{{}}', 1, 1, '{user}');
         INSERT INTO skill_user_states (user_id, skill_id, version_id, enabled, created_at)
@@ -345,7 +348,7 @@ async fn mcp_outbox_is_idempotent_and_tracks_live_references() {
     };
     outbox.stage(&entry).await.unwrap();
     outbox.stage(&entry).await.unwrap();
-    assert_eq!(outbox.pending().await.unwrap(), [entry.clone()]);
+    assert_eq!(outbox.pending().await.unwrap(), std::slice::from_ref(&entry));
     assert!(!outbox.is_active("ref").await.unwrap());
     db.execute_unprepared(
         "INSERT INTO mcp_servers (id, user_id, name, transport, config_json, credential_ref, created_at, updated_at)

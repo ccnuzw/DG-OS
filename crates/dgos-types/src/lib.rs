@@ -5,11 +5,13 @@ pub mod appearance;
 pub mod error;
 pub mod execution;
 pub mod locale;
+pub mod generation;
+pub use generation::GenerationParameters;
 pub mod model_catalog;
 pub mod module_operation;
 pub mod provider;
 
-pub use appearance::{AppearancePatch, AppearancePreferences, Density, Theme};
+pub use appearance::{AppearanceRead, AppearanceSave, AppearanceSnapshot, AppearanceValues};
 pub use error::{DgosError, DgosResult};
 pub use execution::{
     BuiltinCaller, ExecutionProvenance, ExecutionSource, HostExecutionContext, HostSession,
@@ -28,5 +30,6 @@ pub use module_operation::{
     ModuleOperationKind, ModuleOperationOutcome, ModuleOperationState, ModuleOperationView,
     ModulePermissionAuditPageView, ModulePermissionAuditView, ModulePermissionView,
     ModuleRuntimeStatusState, ModuleRuntimeStatusView, ModuleSummaryView,
+    WorkspaceAppCatalog, WorkspaceAppEntry,
 };
 pub use provider::*;

@@ -1,201 +1,173 @@
-//! Appearance preferences (V1-FR-005 §10.1, D065).
-//!
-//! The two preferences are closed sets validated by the host. A renderer
-//! patch arrives as raw JSON so every rejection goes through the command
-//! envelope with a registered error code instead of failing inside Tauri's
-//! argument decoding.
-
-use crate::error::DgosError;
+//! Full appearance snapshots (D126). Identity and revision are host-owned.
+use crate::{DgosError, DgosResult};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{json, Value};
 
-/// Logical `system_settings` keys. Only these two are ever read or written.
-pub const THEME_KEY: &str = "appearance.theme";
-pub const DENSITY_KEY: &str = "appearance.density";
-
+pub const SNAPSHOT_KEY: &str = "appearance.snapshot.v2";
+pub const MAX_REVISION: u64 = 9_007_199_254_740_991;
 pub const DENSITIES: [u16; 5] = [75, 100, 125, 150, 175];
+pub const PRESETS: [&str; 5] = ["precision", "studio", "paper", "forest", "slate"];
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Theme {
-    #[default]
-    Light,
-    Dark,
-    Auto,
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AppearanceValues {
+    pub schema_version: u32,
+    pub mode: String,
+    pub variants: Variants,
+    pub typography: Typography,
+    pub density: u16,
+    pub effects: Effects,
 }
-
-impl Theme {
-    pub fn parse(value: &Value) -> Option<Self> {
-        match value.as_str()? {
-            "light" => Some(Theme::Light),
-            "dark" => Some(Theme::Dark),
-            "auto" => Some(Theme::Auto),
-            _ => None,
-        }
-    }
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Variants { pub light: Variant, pub dark: Variant }
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Variant { pub preset_id: String, pub overrides: Overrides }
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Overrides { pub interface: InterfaceColors, pub reading: ContentColors, pub code: ContentColors }
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InterfaceColors {
+    #[serde(skip_serializing_if = "Option::is_none")] pub accent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub background: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub foreground: Option<String>,
 }
-
-/// Interface scale in percent; always one of [`DENSITIES`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(transparent)]
-pub struct Density(u16);
-
-impl Default for Density {
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContentColors {
+    #[serde(skip_serializing_if = "Option::is_none")] pub background: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub foreground: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Typography {
+    pub ui_font_id: String, pub reading_font_id: String, pub code_font_id: String,
+    pub ui_size: u16, pub reading_size: u16, pub code_size: u16, pub line_height: f64,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Effects { pub sidebar_treatment: String, pub reduced_motion: String }
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AppearanceSnapshot {
+    pub revision: u64,
+    #[serde(flatten)] pub values: AppearanceValues,
+}
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AppearanceRead {
+    #[serde(rename_all = "camelCase")]
+    Ready { snapshot: AppearanceSnapshot, repair_warnings: Vec<String> },
+    #[serde(rename_all = "camelCase")]
+    Corrupt { safe_defaults: AppearanceValues, recovery_token: String },
+    #[serde(rename_all = "camelCase")]
+    UnsupportedSchema { safe_defaults: AppearanceValues, schema_version: u64 },
+}
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AppearanceSave {
+    Saved { snapshot: AppearanceSnapshot },
+    Conflict { code: u32, snapshot: AppearanceSnapshot },
+}
+impl Default for AppearanceValues {
     fn default() -> Self {
-        Density(100)
+        serde_json::from_value(json!({
+            "schemaVersion":2,"mode":"light","density":100,
+            "variants":{"light":{"presetId":"studio","overrides":{"interface":{},"reading":{},"code":{}}},"dark":{"presetId":"studio","overrides":{"interface":{},"reading":{},"code":{}}}},
+            "typography":{"uiFontId":"system","readingFontId":"system","codeFontId":"mono","uiSize":12,"readingSize":13,"codeSize":12,"lineHeight":1.75},
+            "effects":{"sidebarTreatment":"solid","reducedMotion":"system"}
+        })).expect("valid built-in appearance")
     }
 }
-
-impl Density {
-    pub fn new(percent: u16) -> Option<Self> {
-        DENSITIES.contains(&percent).then_some(Density(percent))
-    }
-
-    /// Only JSON integers qualify: `125.0`, `"125"` and `true` are not densities.
-    pub fn parse(value: &Value) -> Option<Self> {
-        Self::new(u16::try_from(value.as_u64()?).ok()?)
-    }
-
-    pub fn percent(self) -> u16 {
-        self.0
-    }
-}
-
-/// The complete, valid preferences returned to the renderer.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-pub struct AppearancePreferences {
-    pub theme: Theme,
-    pub density: Density,
-}
-
-/// A validated, non-empty update. Absent fields stay unchanged.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AppearancePatch {
-    theme: Option<Theme>,
-    density: Option<Density>,
-}
-
-impl AppearancePatch {
-    pub fn theme(&self) -> Option<Theme> {
-        self.theme
-    }
-
-    pub fn density(&self) -> Option<Density> {
-        self.density
-    }
-
-    /// Validate a renderer patch. `null` counts as absent. Rejections:
-    /// 1005001 unknown theme, 1005006 unknown density, 1005002 not an
-    /// object, an unknown key, or no field at all. Error text is fixed and
-    /// never echoes the input.
-    pub fn parse(raw: &Value) -> Result<Self, DgosError> {
-        let object: &Map<String, Value> =
-            raw.as_object().ok_or(DgosError::InvalidAppearancePatch)?;
-        if object.keys().any(|key| key != "theme" && key != "density") {
-            return Err(DgosError::InvalidAppearancePatch);
+impl AppearanceValues {
+    pub fn parse(raw: &Value) -> DgosResult<Self> {
+        if raw.get("schemaVersion").and_then(Value::as_u64).is_some_and(|v| v > 2) { return Err(DgosError::AppearanceSchemaUnsupported); }
+        let mut values: Self = serde_json::from_value(raw.clone()).map_err(|_| DgosError::InvalidAppearancePatch)?;
+        if values.schema_version != 2 { return Err(DgosError::InvalidAppearancePatch); }
+        if !["light", "dark", "auto"].contains(&values.mode.as_str()) { return Err(DgosError::ThemeNotFound); }
+        if !DENSITIES.contains(&values.density) { return Err(DgosError::InvalidDensity); }
+        let t = &values.typography;
+        if !["system", "humanist"].contains(&t.ui_font_id.as_str()) || !["system", "humanist", "serif"].contains(&t.reading_font_id.as_str()) || !["mono", "system"].contains(&t.code_font_id.as_str())
+            || ![12,13,14,16].contains(&t.ui_size) || ![13,14,16,18,20].contains(&t.reading_size) || ![12,13,14,16,18].contains(&t.code_size) || ![1.5,1.75,2.0].contains(&t.line_height)
+            || !["solid","soft"].contains(&values.effects.sidebar_treatment.as_str()) || !["system","reduce"].contains(&values.effects.reduced_motion.as_str()) { return Err(DgosError::InvalidAppearancePatch); }
+        for variant in [&mut values.variants.light, &mut values.variants.dark] {
+            if !PRESETS.contains(&variant.preset_id.as_str()) { return Err(DgosError::ThemeNotFound); }
+            for color in [&mut variant.overrides.interface.accent, &mut variant.overrides.interface.background, &mut variant.overrides.interface.foreground, &mut variant.overrides.reading.background, &mut variant.overrides.reading.foreground, &mut variant.overrides.code.background, &mut variant.overrides.code.foreground].into_iter().flatten() {
+                if color.len() != 7 || !color.starts_with('#') || !color.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit) { return Err(DgosError::InvalidAppearancePatch); }
+                color.make_ascii_lowercase();
+            }
         }
-        let theme = match object.get("theme") {
-            None | Some(Value::Null) => None,
-            Some(value) => Some(Theme::parse(value).ok_or(DgosError::ThemeNotFound)?),
-        };
-        let density = match object.get("density") {
-            None | Some(Value::Null) => None,
-            Some(value) => Some(Density::parse(value).ok_or(DgosError::InvalidDensity)?),
-        };
-        if theme.is_none() && density.is_none() {
-            return Err(DgosError::InvalidAppearancePatch);
+        for (mode, variant) in [("light", &values.variants.light), ("dark", &values.variants.dark)] {
+            validate_colors(mode, variant)?;
         }
-        Ok(Self { theme, density })
+        Ok(values)
     }
+}
+impl AppearanceSnapshot {
+    pub fn parse(raw: &Value) -> DgosResult<Self> {
+        let mut object = raw.as_object().cloned().ok_or(DgosError::InvalidAppearancePatch)?;
+        let revision = object.remove("revision").and_then(|v| v.as_u64()).filter(|v| *v <= MAX_REVISION).ok_or(DgosError::InvalidAppearancePatch)?;
+        Ok(Self { revision, values: AppearanceValues::parse(&Value::Object(object))? })
+    }
+}
+
+fn validate_colors(mode: &str, variant: &Variant) -> DgosResult<()> {
+    static SEEDS: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| serde_json::from_str(include_str!("../../../src/ui/tokens/presets.json")).expect("built-in seeds"));
+    let seed = &SEEDS[&variant.preset_id][mode];
+    let color = |value: &str| -> [f64; 3] {
+        [1, 3, 5].map(|offset| u8::from_str_radix(&value[offset..offset+2], 16).expect("validated color") as f64)
+    };
+    let background = color(variant.overrides.interface.background.as_deref().unwrap_or(seed["background"].as_str().unwrap()));
+    let foreground = color(variant.overrides.interface.foreground.as_deref().unwrap_or(seed["foreground"].as_str().unwrap()));
+    let accent = color(variant.overrides.interface.accent.as_deref().unwrap_or(seed["accent"].as_str().unwrap()));
+    let luminance = |rgb: [f64; 3]| {
+        let c = rgb.map(|n| { let n=n/255.0; if n<=0.04045 {n/12.92} else {((n+0.055)/1.055).powf(2.4)} });
+        c[0]*0.2126+c[1]*0.7152+c[2]*0.0722
+    };
+    let contrast = |a: [f64; 3], b: [f64; 3]| { let a=luminance(a); let b=luminance(b); (a.max(b)+0.05)/(a.min(b)+0.05) };
+    for amount in [0.0, 0.035, 0.055, 0.075] {
+        let surface = std::array::from_fn(|i| (background[i]+(foreground[i]-background[i])*amount).round());
+        if contrast(foreground,surface)<4.5 || contrast(accent,surface)<3.0 { return Err(DgosError::InvalidAppearancePatch); }
+    }
+    for scope in [&variant.overrides.reading, &variant.overrides.code] {
+        let bg=scope.background.as_deref().map(color).unwrap_or(background);
+        let fg=scope.foreground.as_deref().map(color).unwrap_or(foreground);
+        if contrast(bg,fg)<4.5 { return Err(DgosError::InvalidAppearancePatch); }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-
-    fn code(raw: Value) -> u32 {
-        AppearancePatch::parse(&raw).unwrap_err().error_code()
-    }
-
     #[test]
-    fn accepts_exactly_the_closed_sets() {
-        for theme in ["light", "dark", "auto"] {
-            assert!(AppearancePatch::parse(&json!({ "theme": theme })).is_ok());
-        }
+    fn rejects_unknown_fields_and_css_injection_and_incomplete_values() {
+        let mut value = serde_json::to_value(AppearanceValues::default()).unwrap();
+        value["variants"]["light"]["overrides"]["interface"]["accent"] = json!("url(secret)");
+        assert!(AppearanceValues::parse(&value).is_err());
+        value["variants"]["light"]["overrides"]["interface"] = json!({});
+        value["userId"] = json!("other");
+        assert!(AppearanceValues::parse(&value).is_err());
+        assert!(AppearanceValues::parse(&json!({"mode":"dark"})).is_err());
+    }
+    #[test]
+    fn validates_typography_and_preserves_every_density() {
         for density in DENSITIES {
-            assert!(AppearancePatch::parse(&json!({ "density": density })).is_ok());
+            let mut value = serde_json::to_value(AppearanceValues::default()).unwrap();
+            value["density"] = json!(density);
+            assert_eq!(AppearanceValues::parse(&value).unwrap().density, density);
+            value["typography"]["codeSize"] = json!(10);
+            assert!(AppearanceValues::parse(&value).is_err());
         }
     }
-
     #[test]
-    fn rejects_values_outside_the_sets_with_their_own_codes() {
-        for theme in [
-            json!("Dark"),
-            json!("sepia"),
-            json!(""),
-            json!(1),
-            json!(true),
-            json!([]),
-        ] {
-            assert_eq!(code(json!({ "theme": theme })), 1005001);
-        }
-        for density in [
-            json!(0),
-            json!(80),
-            json!(200),
-            json!(-100),
-            json!(100.5),
-            json!(125.0),
-            json!("125"),
-            json!(true),
-            json!(70000),
-        ] {
-            assert_eq!(code(json!({ "density": density })), 1005006, "{density}");
-        }
-    }
-
-    #[test]
-    fn rejects_empty_unknown_and_non_object_patches() {
-        for raw in [
-            json!({}),
-            json!({ "theme": null }),
-            json!({ "theme": null, "density": null }),
-            json!({ "theme": "dark", "font_size": 14 }),
-            json!({ "setting_key": "appearance.theme", "theme": "dark" }),
-            json!("dark"),
-            json!(null),
-            json!([{ "theme": "dark" }]),
-        ] {
-            assert_eq!(code(raw.clone()), 1005002, "{raw}");
-        }
-    }
-
-    #[test]
-    fn a_bad_field_rejects_the_whole_pair() {
-        assert_eq!(code(json!({ "theme": "dark", "density": 90 })), 1005006);
-        assert_eq!(code(json!({ "theme": "neon", "density": 100 })), 1005001);
-    }
-
-    #[test]
-    fn error_text_never_echoes_input() {
-        let message = AppearancePatch::parse(&json!({ "theme": "<script>x</script>" }))
-            .unwrap_err()
-            .to_string();
-        assert!(!message.contains("script"), "{message}");
-    }
-
-    #[test]
-    fn serializes_as_the_wire_contract() {
-        let value = serde_json::to_value(AppearancePreferences::default()).unwrap();
-        assert_eq!(value, json!({ "theme": "light", "density": 100 }));
-        let dark = AppearancePreferences {
-            theme: Theme::Dark,
-            density: Density::new(175).unwrap(),
-        };
-        assert_eq!(
-            serde_json::to_value(dark).unwrap(),
-            json!({ "theme": "dark", "density": 175 })
-        );
+    fn revision_is_host_safe_integer_and_future_schema_is_protected() {
+        let mut value = serde_json::to_value(AppearanceSnapshot { revision:0, values:AppearanceValues::default() }).unwrap();
+        value["revision"] = json!(MAX_REVISION+1);
+        assert!(AppearanceSnapshot::parse(&value).is_err());
+        value["revision"] = json!(0);
+        value["schemaVersion"] = json!(3);
+        assert_eq!(AppearanceSnapshot::parse(&value).unwrap_err().error_code(),1005009);
     }
 }

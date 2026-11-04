@@ -19,7 +19,7 @@ import { t, useLocale } from '../../i18n';
 // border and icon (non-text, >= 3:1). Classes are complete literals so Tailwind's scanner emits them.
 const toastVariants = cva(
   [
-    'pointer-events-auto flex min-w-75 max-w-100 items-start gap-3 rounded-lg border p-3 shadow-lg',
+    'pointer-events-auto flex w-full min-w-0 max-w-100 items-start gap-3 rounded-lg border border-solid p-3 shadow-lg',
     'motion-reduce:animate-none',
   ],
   {
@@ -136,7 +136,7 @@ export function ToastViewport() {
   return createPortal(
     <section
        aria-label={t('system.notifications')}
-      className="pointer-events-none fixed right-5 top-20 z-toast flex flex-col gap-2"
+      className="pointer-events-none fixed inset-x-5 top-20 z-toast flex flex-col items-end gap-2"
     >
       {visible.map((item) => (
         <ToastCard key={item.id} item={item} />

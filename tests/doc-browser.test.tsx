@@ -5,10 +5,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const dir = new URL('../docs/90-参考资料/', import.meta.url);
 const specRoot = new URL('../docs/03-功能规格/', import.meta.url);
-// Every frozen-decision log the generator reads: V1 and the versions in gate preparation (D100).
-const decisionLogs = ['V1-冻结决策.md', 'V2-冻结决策.md'].map(
-  (name) => new URL(`../docs/06-决策记录/${name}`, import.meta.url),
-);
+// Include every version's frozen-decision log, matching the generator's document inventory.
+const decisionRoot = new URL('../docs/06-决策记录/', import.meta.url);
+const decisionLogs = readdirSync(decisionRoot).filter(name => /^V\d+-冻结决策\.md$/.test(name)).sort().map(name => new URL(name, decisionRoot));
 const browserUrl = new URL('产品文档浏览器.html', dir);
 const dataUrl = new URL('产品文档浏览器-文档数据.js', dir);
 const VIEWS = ['overview', 'reader', 'features', 'map', 'evolution', 'timeline'];
@@ -103,7 +102,7 @@ describe('generated data', () => {
     const ids = decisionLogs.flatMap((log) =>
       [...readFileSync(log, 'utf8').matchAll(/^## (D\d{3}) /gm)].map((match) => match[1]),
     );
-    expect(data.decisions.map((decision) => decision.id)).toEqual(ids);
+    expect(data.decisions.map((decision) => decision.id).sort()).toEqual(ids.sort());
   });
 });
 

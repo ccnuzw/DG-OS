@@ -12,7 +12,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
-import { Button, Modal, ModalHost, Select, ToastViewport, Tooltip, clearToasts, toast } from '@dgos/ui';
+import { Button, DropdownMenu, Popover, Modal, ModalHost, Select, ToastViewport, Tooltip, clearToasts, toast } from '@dgos/ui';
 import { CONFIRM_FAILED_TEXT } from '../src/ui/components/Modal';
 import { compileUi, contrast, themeTokens } from './helpers/designTokens';
 
@@ -650,5 +650,24 @@ describe('overlay tokens and class literals (D066, D069)', () => {
     expect(css).toMatch(/\.max-h-9\\\/10\s*\{\s*max-height:\s*calc\(9 \/ 10 \* 100%\)/);
     expect(css).toMatch(/\.wrap-break-word\s*\{\s*overflow-wrap:\s*break-word/);
     expect(css).toMatch(/\.wrap-anywhere\s*\{\s*overflow-wrap:\s*anywhere/);
+  });
+});
+
+describe('compact popup behavior',()=>{
+  it('closes a popover with Escape and returns focus to its trigger',async()=>{
+    render(<Popover label="Details" trigger={<Button>Open details</Button>} content={<Button>Inside</Button>}/>);
+    const trigger=screen.getByRole('button',{name:'Open details'});trigger.focus();fireEvent.click(trigger);
+    const dialog=await screen.findByRole('dialog',{name:'Details'});
+    fireEvent.keyDown(dialog,{key:'Escape'});
+    await waitFor(()=>expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(()=>expect(document.activeElement).toBe(trigger));
+  });
+  it('does not execute a disabled menu action and selects an enabled action once',async()=>{
+    const disabled=vi.fn(),enabled=vi.fn();
+    render(<DropdownMenu trigger={<Button>Actions</Button>} items={[{kind:'item',id:'disabled',label:'Disabled',disabled:true,onSelect:disabled},{kind:'item',id:'enabled',label:'Enabled',onSelect:enabled}]}/>);
+    fireEvent.pointerDown(screen.getByRole('button',{name:'Actions'}),{button:0,ctrlKey:false});
+    const item=await screen.findByRole('menuitem',{name:'Disabled'});fireEvent.click(item);expect(disabled).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('menuitem',{name:'Enabled'}));expect(enabled).toHaveBeenCalledTimes(1);
+    await waitFor(()=>expect(screen.queryByRole('menu')).toBeNull());
   });
 });

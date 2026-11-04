@@ -1,0 +1,46 @@
+   Compiling dgos-types v0.1.0 (<repo>/crates/dgos-types)
+   Compiling dgos-db v0.1.0 (<repo>/crates/dgos-db)
+   Compiling dgos-skills v0.1.0 (<repo>/crates/dgos-skills)
+   Compiling dgos-providers v0.1.0 (<repo>/crates/dgos-providers)
+   Compiling dgos-mcp v0.1.0 (<repo>/crates/dgos-mcp)
+   Compiling dgos-agents v0.1.0 (<repo>/crates/dgos-agents)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 23.31s
+     Running unittests src/lib.rs (target/debug/deps/dgos_agents-9e7dbccb42a71ec0)
+
+running 1 test
+ INFO dgos_agents::process: agent process phase correlation_id=1 host_pid=49907 child_pid=None elapsed_ms=0 operation="version_probe" tool="node" stage="probe" outcome="waiting" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=1 host_pid=49907 child_pid=None elapsed_ms=0 operation="version_probe" tool="node" stage="discovery" outcome="waiting" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=1 host_pid=49907 child_pid=None elapsed_ms=0 operation="version_probe" tool="node" stage="discovery" outcome="completed" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=1 host_pid=49907 child_pid=None elapsed_ms=0 operation="version_probe" tool="node" stage="spawn" outcome="waiting" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=1 host_pid=49907 child_pid=None elapsed_ms=1 operation="version_probe" tool="node" stage="spawn" outcome="completed" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=1 host_pid=49907 child_pid=Some(50020) elapsed_ms=1 operation="version_probe" tool="node" stage="spawned" outcome="completed" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=1 host_pid=49907 child_pid=Some(50020) elapsed_ms=1 operation="version_probe" tool="node" stage="version_stdout" outcome="waiting" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=1 host_pid=49907 child_pid=Some(50020) elapsed_ms=18 operation="version_probe" tool="node" stage="version_stdout" outcome="completed" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=1 host_pid=49907 child_pid=Some(50020) elapsed_ms=18 operation="version_probe" tool="node" stage="exit_wait" outcome="waiting" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=1 host_pid=49907 child_pid=Some(50020) elapsed_ms=18 operation="version_probe" tool="node" stage="exit_wait" outcome="completed" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=1 host_pid=49907 child_pid=Some(50020) elapsed_ms=18 operation="version_probe" tool="node" stage="version_validate" outcome="waiting" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=1 host_pid=49907 child_pid=Some(50020) elapsed_ms=18 operation="version_probe" tool="node" stage="version_validate" outcome="completed" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=1 host_pid=49907 child_pid=Some(50020) elapsed_ms=18 operation="version_probe" tool="node" stage="cleanup" outcome="waiting" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=1 host_pid=49907 child_pid=Some(50020) elapsed_ms=18 operation="version_probe" tool="node" stage="group_kill" outcome="requested" error_class="group_absent_or_signal_failed"
+ INFO dgos_agents::process: agent process phase correlation_id=1 host_pid=49907 child_pid=Some(50020) elapsed_ms=18 operation="version_probe" tool="node" stage="cleanup" outcome="completed" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=1 host_pid=49907 child_pid=None elapsed_ms=18 operation="version_probe" tool="node" stage="probe" outcome="completed" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=2 host_pid=49907 child_pid=None elapsed_ms=0 operation="version_probe" tool="codex" stage="probe" outcome="waiting" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=2 host_pid=49907 child_pid=None elapsed_ms=0 operation="version_probe" tool="codex" stage="discovery" outcome="waiting" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=2 host_pid=49907 child_pid=None elapsed_ms=0 operation="version_probe" tool="codex" stage="discovery" outcome="completed" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=2 host_pid=49907 child_pid=None elapsed_ms=0 operation="version_probe" tool="codex" stage="spawn" outcome="waiting" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=2 host_pid=49907 child_pid=None elapsed_ms=0 operation="version_probe" tool="codex" stage="spawn" outcome="completed" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=2 host_pid=49907 child_pid=Some(50021) elapsed_ms=0 operation="version_probe" tool="codex" stage="spawned" outcome="completed" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=2 host_pid=49907 child_pid=Some(50021) elapsed_ms=0 operation="version_probe" tool="codex" stage="version_stdout" outcome="waiting" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=2 host_pid=49907 child_pid=Some(50021) elapsed_ms=12 operation="version_probe" tool="codex" stage="version_stdout" outcome="completed" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=2 host_pid=49907 child_pid=Some(50021) elapsed_ms=12 operation="version_probe" tool="codex" stage="exit_wait" outcome="waiting" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=2 host_pid=49907 child_pid=Some(50021) elapsed_ms=12 operation="version_probe" tool="codex" stage="exit_wait" outcome="completed" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=2 host_pid=49907 child_pid=Some(50021) elapsed_ms=12 operation="version_probe" tool="codex" stage="version_validate" outcome="waiting" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=2 host_pid=49907 child_pid=Some(50021) elapsed_ms=12 operation="version_probe" tool="codex" stage="version_validate" outcome="completed" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=2 host_pid=49907 child_pid=Some(50021) elapsed_ms=12 operation="version_probe" tool="codex" stage="cleanup" outcome="waiting" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=2 host_pid=49907 child_pid=Some(50021) elapsed_ms=12 operation="version_probe" tool="codex" stage="group_kill" outcome="requested" error_class="group_absent_or_signal_failed"
+ INFO dgos_agents::process: agent process phase correlation_id=2 host_pid=49907 child_pid=Some(50021) elapsed_ms=12 operation="version_probe" tool="codex" stage="cleanup" outcome="completed" error_class="none"
+ INFO dgos_agents::process: agent process phase correlation_id=2 host_pid=49907 child_pid=None elapsed_ms=12 operation="version_probe" tool="codex" stage="probe" outcome="completed" error_class="none"
+test cli::tests::installed_node_codex_probe_diagnostic ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 46 filtered out; finished in 0.03s
+

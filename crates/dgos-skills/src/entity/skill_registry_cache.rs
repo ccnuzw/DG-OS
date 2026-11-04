@@ -182,6 +182,78 @@ pub struct PreparedContent {
     pub body: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillPackageFileKind {
+    Body,
+    Manifest,
+    License,
+    Resource,
+    Script,
+    Hook,
+}
+
+/// Host-only package bytes. Debug intentionally omits the payload.
+pub struct SkillPackageFile {
+    pub path: String,
+    pub kind: SkillPackageFileKind,
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for SkillPackageFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SkillPackageFile")
+            .field("path", &self.path)
+            .field("kind", &self.kind)
+            .field("byte_count", &self.bytes.len())
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillPackageFeatureSupport {
+    Unsupported,
+}
+
+#[derive(Debug)]
+pub struct SkillPackageCompatibility {
+    pub compatible_apps: Vec<String>,
+    pub required_tools: Vec<String>,
+    pub scripts: SkillPackageFeatureSupport,
+    pub hooks: SkillPackageFeatureSupport,
+    pub reason: &'static str,
+}
+
+/// Verified immutable bytes for publication under the host's application data
+/// directory. This host-only type deliberately has no serialization contract.
+/// Loading or enabling content grants no script, Hook, or native-shell authority.
+#[derive(Debug)]
+pub struct PinnedSkillPackage {
+    pub skill_id: String,
+    pub version: String,
+    pub content_hash: String,
+    pub compatibility: SkillPackageCompatibility,
+    pub(crate) files: Vec<SkillPackageFile>,
+    pub(crate) body_index: usize,
+}
+
+impl PinnedSkillPackage {
+    /// Borrow the verified UTF-8 body without duplicating its file bytes.
+    pub fn body(&self) -> &str {
+        std::str::from_utf8(&self.files[self.body_index].bytes)
+            .expect("validated package body is UTF-8")
+    }
+
+    /// Includes SKILL.md, manifest/license when present, and every resource.
+    pub fn files(&self) -> &[SkillPackageFile] {
+        &self.files
+    }
+
+    /// Transfer ownership to an application-data publisher without copying.
+    pub fn into_files(self) -> Vec<SkillPackageFile> {
+        self.files
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct BundledCatalog {
     pub schema_version: String,

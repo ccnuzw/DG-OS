@@ -11,6 +11,11 @@ const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/ser
 const { SSEServerTransport } = require('@modelcontextprotocol/sdk/server/sse.js');
 const { z } = require('zod');
 const legacy = process.argv[3] === 'legacy';
+const diagnostics = process.env.DGOS_MCP_HTTP_DIAGNOSTICS === '1';
+let nextRequest = 0;
+function diagnostic(event, fields) {
+  if (diagnostics) console.error(JSON.stringify({ fixture: 'official-sdk-http', event, ...fields }));
+}
 const mcp = new McpServer({ name: 'dgos-sdk-compatibility', version: '1.0.0' });
 mcp.registerTool('echo', {
   description: 'Echo synthetic compatibility data',
@@ -26,6 +31,17 @@ if (!legacy) {
   await mcp.connect(transport);
 }
 const server = http.createServer(async (request, response) => {
+  const id = ++nextRequest;
+  const started = performance.now();
+  const method = ['GET', 'POST', 'DELETE'].includes(request.method) ? request.method : 'other';
+  // Never include URL/query, headers, body, session IDs or exception messages.
+  diagnostic('request', { id, method });
+  response.once('finish', () => diagnostic('finish', {
+    id, status: response.statusCode, elapsedMs: Math.round(performance.now() - started),
+  }));
+  response.once('close', () => diagnostic('close', {
+    id, finished: response.writableFinished, elapsedMs: Math.round(performance.now() - started),
+  }));
   try {
     if (!legacy && request.url === '/mcp') {
       await transport.handleRequest(request, response);
@@ -41,6 +57,7 @@ const server = http.createServer(async (request, response) => {
       response.writeHead(404).end();
     }
   } catch {
+    diagnostic('handler-error', { id, headersSent: response.headersSent });
     if (!response.headersSent) response.writeHead(500).end();
     else response.end();
   }

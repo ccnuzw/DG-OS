@@ -305,7 +305,7 @@ ON shutdown:
 1. 先实现纯解析器、zip 校验器和 provenance DTO；为每个限制建立失败测试。
 2. 实现 GitHub adapter（ref→commit、归档下载、缓存、超时和取消），仅用 fixture 验证，不开放 UI。
 3. 新增 migration、操作日志和恢复器；完成故障注入、并发和账户删除测试。（首个实现切片已完成，测试与恢复边界仍需补齐。）
-4. 暴露 Tauri preview/confirm/cancel 命令，加入 Settings 页面 ZIP 上传、来源预览与受控命令输入；更新接口契约和 Host contract 检查。更新命令仍待实现。
+4. 暴露 Tauri preview/confirm/cancel 命令，加入 Settings 页面 ZIP 上传、来源预览、受控命令输入和外部包按用户卸载；卸载仅移除用户状态，保留共享不可变快照，并拒绝删除当前用户运行任务引用的版本。更新命令仍待实现。
 5. 接入 Workbench 真实任务并记录固定版本，完成本地包和固定 GitHub commit 的真实闭环。
 6. 发布前运行 `skills:check`、Rust/前端回归、真实 GitHub pinned smoke 和打包资源比对；跨平台、签名与服务条款仍属发布阶段。
 
@@ -316,5 +316,5 @@ ON shutdown:
 | 日期 | 变更 | 关联决策 |
 | --- | --- | --- |
 | 2026-11-01 | 新建 Batch B 技术设计：本地 zip、受控 GitHub、`npx skills add` 解析、安装操作日志、原子发布与恢复、更新和测试门禁 | D115 |
-| 2026-11-02 | 实现来源解析、受限 ZIP 校验、外部 manifest/provenance 摘要和固定 commit 的 GitHub HTTPS 适配器；安装操作日志、发布与命令仍待实现 | D115 |
 | 2026-11-02 | 实现安装操作 migration/repository、用户隔离 staging、哈希校验、原子发布/启动恢复、五条 Settings 命令（含 ZIP 字节上传）和页面预览确认；更新/卸载、完整测试资产和 Workbench 闭环仍待实现 | D115 |
+| 2026-11-03 | 实现外部 Skill 按用户卸载；数据库事务拒绝当前用户运行任务引用版本，保留共享快照；增加 Rust 集成测试与 Settings 确认按钮。更新及 Workbench 外部版本闭环仍待实现 | D115 |

@@ -16,6 +16,7 @@ impl UsageLogRepository {
 
     /// Create a usage log entry. Usage counts as reported when any token count is non-zero, the
     /// same rule the chat terminal uses for an all-zero `usage` (D074).
+    #[allow(clippy::too_many_arguments)]
     pub async fn create(
         &self,
         provider_id: &str,

@@ -78,11 +78,7 @@ impl std::fmt::Debug for SessionState {
 pub trait SessionPort: Send + Sync {
     fn state(&self) -> SessionState;
     fn set_state(&self, state: SessionState);
-    /// Steps 2-3 of interface contract §9.4 for `user_id`: stop every module
-    /// runtime and wait for in-flight calls, cancel and wait for chat,
-    /// single tasks and Provider streams, cancel pending MCP confirmations
-    /// and close the user's MCP connections. Best effort: a part that does
-    /// not settle is logged; the session still ends.
+    /// Best-effort release of owner work; the session still ends when cleanup is incomplete.
     async fn release(&self, user_id: &str);
 }
 
@@ -393,53 +389,32 @@ impl AccountService {
             _ => return Err(DgosError::SessionInvalid),
         };
         let key = simple_lowercase(&input.username);
-        let Some(user) = self
-            .inner
-            .users
-            .find_active_by_key(&key)
-            .await
-            .map_err(storage)?
-        else {
-            // Same work as a real check; not counted (D090).
+        let Some(user) = self.inner.users.find_active_by_key(&key).await.map_err(storage)? else {
             let password = input.password;
             blocking(move || password::verify_dummy(&password)).await?;
             return Err(DgosError::SignInRejected);
         };
         let upgraded = self.verify_throttled(&user, input.password).await?;
-        if current.as_deref() == Some(user.id.as_str()) {
-            return self.snapshot().await;
-        }
-        if let Some(previous) = current {
-            self.end_session(&previous, SessionState::Switching).await;
+        if current.as_deref() == Some(user.id.as_str()) { return self.snapshot().await; }
+        if let Some(previous) = current.as_deref() {
+            self.end_session(previous, SessionState::Switching).await;
         }
         let now = self.now();
         let signed_in = async {
             if let Some(hash) = upgraded {
-                self.inner
-                    .users
-                    .set_password_hash(&user.id, &hash, now)
-                    .await
-                    .map_err(storage)?;
+                self.inner.users.set_password_hash(&user.id, &hash, now).await.map_err(storage)?;
             }
             self.record_sign_in(&user.id, now).await
-        }
-        .await;
+        }.await;
         if let Err(error) = signed_in {
-            // The old session already ended; never leave the resolver
-            // switching.
-            let resting = self.resting_state().await;
-            self.inner.ports.session.set_state(resting);
+            self.inner.ports.session.set_state(self.resting_state().await);
             return Err(error);
         }
-        self.inner
-            .ports
-            .session
-            .set_state(SessionState::SignedIn(user.id.clone()));
+        self.inner.ports.session.set_state(SessionState::SignedIn(user.id.clone()));
         tracing::info!(user = %short(&user.id), "signed in");
         self.snapshot().await
     }
 
-    /// Idempotent outside `signed_in`.
     pub async fn sign_out(&self) -> DgosResult<AccountState> {
         let _guard = self.inner.lock.lock().await;
         if let SessionState::SignedIn(user) = self.inner.ports.session.state() {
@@ -451,22 +426,14 @@ impl AccountService {
         self.snapshot().await
     }
 
-    /// Current user only; the current password counts toward the back-off.
-    /// The session ends afterwards: the user signs in with the new password.
     pub async fn change_password(&self, input: ChangePasswordInput) -> DgosResult<AccountState> {
         let _guard = self.inner.lock.lock().await;
         let user = self.signed_in_user().await?;
         self.verify_throttled(&user, input.current_password).await?;
         check_password(&input.new_password)?;
         let new_password = input.new_password;
-        let hash = blocking(move || password::hash(&new_password))
-            .await?
-            .ok_or_else(|| storage(DgosError::InternalError("hash".into())))?;
-        self.inner
-            .users
-            .set_password_hash(&user.id, &hash, self.now())
-            .await
-            .map_err(storage)?;
+        let hash = blocking(move || password::hash(&new_password)).await?.ok_or_else(|| storage(DgosError::InternalError("hash".into())))?;
+        self.inner.users.set_password_hash(&user.id, &hash, self.now()).await.map_err(storage)?;
         self.end_session(&user.id, SessionState::Switching).await;
         let resting = self.resting_state().await;
         self.inner.ports.session.set_state(resting);

@@ -71,6 +71,7 @@ struct Inner {
 #[derive(Clone)]
 pub struct ModuleOperationManager {
     inner: Arc<Inner>,
+    maintenance: dgos_db::MaintenanceGate,
 }
 
 impl ModuleOperationManager {
@@ -103,7 +104,15 @@ impl ModuleOperationManager {
                     tail: None,
                 }),
             }),
+            maintenance: dgos_db::MaintenanceGate::new(),
         }
+    }
+
+    /// Admits every operation through the shared maintenance gate. The permit is taken at
+    /// acceptance and held until the operation is terminal.
+    pub fn with_maintenance(mut self, gate: dgos_db::MaintenanceGate) -> Self {
+        self.maintenance = gate;
+        self
     }
 
     /// A loader reports that a loaded runtime's page is gone (D044). The
@@ -374,6 +383,34 @@ impl ModuleOperationManager {
         Ok(views)
     }
 
+    /// D128: project the installed directory, including unloaded modules.
+    pub async fn workspace_catalog(&self, session: &HostSession) -> Result<dgos_types::WorkspaceAppCatalog, ErrorKind> {
+        use sha2::{Digest, Sha256};
+        let published = self.inner.publisher.published_modules(session.user_id()).await.map_err(map_management_error)?;
+        let mut entries = Vec::with_capacity(published.len());
+        let mut revision = Sha256::new();
+        for module in published {
+            let runtime = self.runtime_status(&module.module_id)?;
+            // Version/integrity are revision inputs, never catalog fields.
+            revision.update(module.integrity.as_bytes());
+            revision.update(runtime.runtime_id.as_deref().unwrap_or_default().as_bytes());
+            let entry = dgos_types::WorkspaceAppEntry {
+                module_id: module.module_id,
+                display_name: module.name,
+                icon_resource_id: None,
+                layout: match module.views.layout { dgos_modules::ModuleViewLayout::Document => "document", dgos_modules::ModuleViewLayout::FullBleed => "full-bleed" }.into(),
+                view_capability: match module.views.capability { dgos_modules::ModuleViewCapability::Single => "single", dgos_modules::ModuleViewCapability::Multiple => "multiple" }.into(),
+                enabled: module.enabled,
+                permission_state: if module.declared.iter().all(|permission| module.granted.contains(permission)) { "granted" } else { "pending" }.into(),
+                crashed: runtime.state == dgos_types::ModuleRuntimeStatusState::Failed,
+                runtime_state: runtime.state,
+            };
+            revision.update(serde_json::to_vec(&entry).map_err(|_| ErrorKind::Internal)?);
+            entries.push(entry);
+        }
+        Ok(dgos_types::WorkspaceAppCatalog { catalog_revision: format!("{:x}", revision.finalize()), entries })
+    }
+
     pub fn operation(&self, operation_id: &str) -> Result<ModuleOperationView, ErrorKind> {
         self.inner
             .state()
@@ -439,6 +476,11 @@ impl ModuleOperationManager {
 
         // Acceptance is synchronous and atomic: either the operation is
         // registered and spawned, or nothing changed.
+        // Refused during VACUUM before anything is registered; held by the task until terminal.
+        let permit = self
+            .maintenance
+            .admit()
+            .map_err(|_| ErrorKind::OperationInProgress)?;
         let previous = {
             let mut state = self.inner.state();
             if kind != ModuleOperationKind::Stop && state.availability != Availability::Available {
@@ -474,6 +516,7 @@ impl ModuleOperationManager {
         let module = module_id.to_owned();
         let id = operation_id.clone();
         runtime.spawn(async move {
+            let _permit = permit;
             if let Some(mut previous) = previous {
                 // A dropped predecessor sender only means it is gone.
                 let _ = previous.wait_for(|finished| *finished).await;
@@ -887,6 +930,21 @@ mod tests {
         fn stage_update(&self, module: &str, version: &str) {
             write_package(&self.sources.path().join(module), module, version);
         }
+    }
+
+    #[tokio::test]
+    async fn workspace_catalog_includes_unloaded_apps_and_tracks_runtime_changes_without_management_fields() {
+        let fixture = Fixture::new(&[MODULE]).await;
+        let before = fixture.manager.workspace_catalog(&fixture.session).await.unwrap();
+        assert_eq!(before.entries[0].module_id, MODULE);
+        assert_eq!(before.entries[0].runtime_state, ModuleRuntimeStatusState::NotLoaded);
+        fixture.run_start(MODULE).await;
+        let after = fixture.manager.workspace_catalog(&fixture.session).await.unwrap();
+        assert_eq!(after.entries[0].runtime_state, ModuleRuntimeStatusState::Ready);
+        assert_ne!(before.catalog_revision, after.catalog_revision);
+        let json = serde_json::to_value(after).unwrap();
+        let fields = json["entries"][0].as_object().unwrap();
+        for forbidden in ["runtimeId", "integrity", "version", "path", "manifest", "permissions", "userId"] { assert!(!fields.contains_key(forbidden)); }
     }
 
     async fn wait_until(mut condition: impl FnMut() -> bool) {
