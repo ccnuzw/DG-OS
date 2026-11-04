@@ -111,14 +111,22 @@ async fn official_sdk_http_flow(mode: &str) {
         .kill_on_drop(true)
         .spawn()
         .unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
     let mut url = String::new();
-    tokio::time::timeout(
+    let bytes = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        BufReader::new(child.stdout.take().unwrap()).read_line(&mut url),
+        stdout.read_line(&mut url),
     )
     .await
     .unwrap()
     .unwrap();
+    assert!(bytes > 0, "official SDK server exited before announcing its URL");
+    // The HTTP adapter can log to stdout after startup (for example on an
+    // aborted SSE response). Keep draining until child exit instead of closing
+    // the pipe and turning a diagnostic write into an unhandled EPIPE.
+    let stdout_drain = tokio::spawn(async move {
+        tokio::io::copy(&mut stdout, &mut tokio::io::sink()).await
+    });
     let db = Database::connect("sqlite::memory:").await.unwrap();
     dgos_db::migrations::Migrator::up(&db, None).await.unwrap();
     let manager = McpManager::with_policy(db, Arc::new(Allow));
@@ -140,7 +148,15 @@ async fn official_sdk_http_flow(mode: &str) {
         )
         .await
         .unwrap();
-    manager.connect("compat-user", &server.id).await.unwrap();
+    manager
+        .connect("compat-user", &server.id)
+        .await
+        .unwrap_or_else(|error| {
+            panic!(
+                "official SDK {mode} connect failed: {error}; child status: {:?}",
+                child.try_wait()
+            )
+        });
     let tools = manager.list_tools("compat-user", &server.id).await.unwrap();
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].tool_name, "echo");
@@ -181,4 +197,5 @@ async fn official_sdk_http_flow(mode: &str) {
         .contains("DGOS SDK compatibility"));
     manager.disconnect("compat-user", &server.id).await.unwrap();
     child.kill().await.unwrap();
+    stdout_drain.await.unwrap().unwrap();
 }

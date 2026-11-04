@@ -184,6 +184,7 @@ pub struct McpManager {
     shutdown_lock: Arc<Mutex<()>>,
     client: Client,
     connection_scope: Arc<std::sync::RwLock<ConnectionScope>>,
+    maintenance: dgos_db::MaintenanceGate,
 }
 
 struct Confirmation {
@@ -240,12 +241,19 @@ impl McpManager {
             monitor: Arc::new(StdMutex::new(None)),
             shutdown_lock: Arc::new(Mutex::new(())),
             connection_scope: Arc::new(std::sync::RwLock::new(ConnectionScope::AllUsers)),
+            maintenance: dgos_db::MaintenanceGate::new(),
             // Never redirect credentials or tool arguments to a second origin.
             client: Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect("HTTP client"),
         }
+    }
+
+    /// Shared-database maintenance gate (D133). Production passes the gate VACUUM uses.
+    pub fn with_maintenance(mut self, gate: dgos_db::MaintenanceGate) -> Self {
+        self.maintenance = gate;
+        self
     }
 
     /// Starts the bounded auto-connect and health monitor. It never blocks app startup.
@@ -267,22 +275,22 @@ impl McpManager {
                 let Some(manager) = manager.upgrade() else {
                     break;
                 };
+                // One health tick is one unit of activity; a busy gate skips this tick.
+                let Ok(permit) = manager.maintenance.admit() else {
+                    continue;
+                };
                 manager.monitor_tick().await;
+                drop(permit);
             }
         }));
     }
 
-    /// Stop admission first, then drain work before releasing shared sessions.
+    /// Stop admission and transports before draining database audit writes.
     /// The desktop host bounds the overall wait; crash recovery handles leftovers.
     pub async fn shutdown(&self) -> Result<()> {
         self.stopping.cancel();
         self.call_slots.close();
         let _shutdown = self.shutdown_lock.lock().await;
-        let monitor = self.monitor.lock().unwrap().take();
-        if let Some(monitor) = monitor {
-            let _ = monitor.await;
-        }
-        let _runtime = self.runtime.write().await;
         self.confirmations.write().await.clear();
         let sessions = std::mem::take(&mut *self.sessions.write().await);
         let mut closing = tokio::task::JoinSet::new();
@@ -292,24 +300,35 @@ impl McpManager {
                 id
             });
         }
+        // Reap transports before waiting for calls to finish their database audit.
+        // A locked database must not keep a child alive past the host exit budget.
+        let mut closed = Vec::new();
         while let Some(result) = closing.join_next().await {
             if let Ok(id) = result {
-                if let Some(row) = mcp_servers::Entity::find_by_id(&id)
-                    .one(&self.db)
-                    .await
-                    .map_err(map_db)?
-                {
-                    self.record_connection_event(
-                        &row.user_id,
-                        &id,
-                        "disconnected",
-                        "configured",
-                        None,
-                        None,
-                        None,
-                    )
-                    .await;
-                }
+                closed.push(id);
+            }
+        }
+        let monitor = self.monitor.lock().unwrap().take();
+        if let Some(monitor) = monitor {
+            let _ = monitor.await;
+        }
+        let _runtime = self.runtime.write().await;
+        for id in closed {
+            if let Some(row) = mcp_servers::Entity::find_by_id(&id)
+                .one(&self.db)
+                .await
+                .map_err(map_db)?
+            {
+                self.record_connection_event(
+                    &row.user_id,
+                    &id,
+                    "disconnected",
+                    "configured",
+                    None,
+                    None,
+                    None,
+                )
+                .await;
             }
         }
         self.reconnects.write().await.clear();
@@ -729,11 +748,15 @@ impl McpManager {
             Ok(session) => {
                 self.revoke_confirmations(id).await;
                 let new_session = Arc::new(session);
-                let old_session = self
-                    .sessions
-                    .write()
-                    .await
-                    .insert(id.to_string(), new_session);
+                let old_session = {
+                    let mut sessions = self.sessions.write().await;
+                    if self.stopping.is_cancelled() {
+                        drop(sessions);
+                        new_session.close().await;
+                        return Err(McpError::Cancelled);
+                    }
+                    sessions.insert(id.to_string(), new_session)
+                };
                 if let Some(old_session) = old_session {
                     old_session.close().await;
                 }
@@ -1333,9 +1356,9 @@ impl McpManager {
         };
         let result = tokio::select! {
             biased;
-            result = &mut call => result,
             _ = self.stopping.cancelled() => { active.token.cancel(); call.await },
             _ = external_cancel => { active.token.cancel(); call.await },
+            result = &mut call => result,
         };
         if let Err(error) = &result {
             self.record_rejected_call(user_id, &input, error, provenance)
@@ -1396,7 +1419,7 @@ impl McpManager {
                 "Selected tool schema changed".into(),
             ));
         }
-        let fingerprint = call_fingerprint(user_id, &input, &tool.schema_hash);
+        let fingerprint = call_fingerprint(user_id, input, &tool.schema_hash);
         let confirmation = match input.confirmation_token.as_deref() {
             Some(token) => self.confirmations.write().await.remove(token),
             None => None,
@@ -1630,6 +1653,7 @@ impl McpManager {
             .collect())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn record_connection_event(
         &self,
         user_id: &str,

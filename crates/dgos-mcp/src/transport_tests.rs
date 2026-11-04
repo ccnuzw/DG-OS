@@ -99,6 +99,63 @@ async fn http_json_matches_request_and_reuses_session_header() {
 }
 
 #[tokio::test]
+async fn http_connection_failure_retains_safe_category_without_replaying_or_disclosing_url() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!(
+        "http://{}/private-endpoint?token=synthetic-query-secret",
+        listener.local_addr().unwrap()
+    );
+    let server = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut socket = BufReader::new(socket);
+        let mut content_length = 0;
+        loop {
+            let mut line = String::new();
+            socket.read_line(&mut line).await.unwrap();
+            if line == "\r\n" {
+                break;
+            }
+            if let Some(length) = line.to_ascii_lowercase().strip_prefix("content-length: ") {
+                content_length = length.trim().parse::<usize>().unwrap();
+            }
+        }
+        let mut body = vec![0; content_length];
+        socket.read_exact(&mut body).await.unwrap();
+        drop(socket);
+        assert!(timeout(Duration::from_millis(100), listener.accept())
+            .await
+            .is_err());
+    });
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let session = Session::http(
+        url.clone(),
+        client,
+        Some(crate::SecretToken::new("synthetic-header-secret".into()).unwrap()),
+    )
+    .unwrap();
+    let error = session
+        .request(
+            &request(1, "ping", json!({"text": "synthetic-body-secret"})),
+            1_000,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, McpError::Transport(_)));
+    let message = error.to_string();
+    assert!(message.contains("HTTP request failed (category=request, io="));
+    for secret in [
+        url.as_str(),
+        "private-endpoint",
+        "synthetic-query-secret",
+        "synthetic-header-secret",
+        "synthetic-body-secret",
+    ] {
+        assert!(!message.contains(secret));
+    }
+    server.await.unwrap();
+}
+
+#[tokio::test]
 async fn http_close_releases_session_once_with_protocol_and_scoped_credentials() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());

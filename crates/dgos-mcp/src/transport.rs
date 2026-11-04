@@ -194,7 +194,7 @@ impl Session {
             url,
             client,
             session_id: Mutex::new(None),
-            bearer: bearer.map(|token| Arc::new(token)),
+            bearer: bearer.map(Arc::new),
             negotiated: Arc::new(OnceLock::new()),
             legacy: Mutex::new(None),
         }))
@@ -311,38 +311,6 @@ pub struct StdioSession {
     negotiated: OnceLock<NegotiatedProtocol>,
 }
 
-#[cfg(test)]
-mod shutdown_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn stdio_close_reaps_child_and_is_idempotent() {
-        let session = Session::stdio(
-            "node",
-            &[format!(
-                "{}/tests/fixtures/mcp-server.mjs",
-                env!("CARGO_MANIFEST_DIR")
-            )],
-            None,
-        )
-        .await
-        .unwrap();
-        let Session::Stdio(child) = &session else {
-            unreachable!()
-        };
-        assert!(child.child.lock().await.id().is_some());
-        session.close().await;
-        assert!(child.child.lock().await.try_wait().unwrap().is_some());
-        session.close().await;
-        assert!(session
-            .request(
-                &crate::protocol::request(next_id(), "ping", serde_json::json!({})),
-                100
-            )
-            .await
-            .is_err());
-    }
-}
 
 struct Outbound {
     bytes: Vec<u8>,
@@ -459,7 +427,7 @@ impl HttpSession {
         let response = request
             .send()
             .await
-            .map_err(|_| McpError::Transport("HTTP request failed".into()))?;
+            .map_err(http_request_error)?;
         if response.status().is_success() {
             if let Some(value) = response
                 .headers()
@@ -561,6 +529,46 @@ impl HttpSession {
     }
 }
 
+fn http_request_error(error: reqwest::Error) -> McpError {
+    use std::error::Error;
+
+    let category = if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connect"
+    } else if error.is_builder() {
+        "builder"
+    } else if error.is_body() {
+        "body"
+    } else if error.is_decode() {
+        "decode"
+    } else if error.is_request() {
+        "request"
+    } else {
+        "unknown"
+    };
+    let mut source = error.source();
+    let mut io = "none";
+    while let Some(cause) = source {
+        if let Some(error) = cause.downcast_ref::<std::io::Error>() {
+            io = match error.kind() {
+                std::io::ErrorKind::ConnectionRefused => "connection_refused",
+                std::io::ErrorKind::ConnectionReset => "connection_reset",
+                std::io::ErrorKind::ConnectionAborted => "connection_aborted",
+                std::io::ErrorKind::BrokenPipe => "broken_pipe",
+                std::io::ErrorKind::TimedOut => "timed_out",
+                std::io::ErrorKind::NotFound => "not_found",
+                _ => "other",
+            };
+            break;
+        }
+        source = cause.source();
+    }
+    // Error Display/source messages may contain URLs, credentials or peer text.
+    // Retain only fixed categories so the first failure remains diagnosable.
+    McpError::Transport(format!("HTTP request failed (category={category}, io={io})"))
+}
+
 pub(crate) fn event_boundary(bytes: &[u8]) -> Option<(usize, usize)> {
     (0..bytes.len()).find_map(|index| {
         if bytes[index..].starts_with(b"\r\n\r\n") {
@@ -610,4 +618,36 @@ pub fn next_id() -> u64 {
 }
 pub fn response_result(response: JsonRpcResponse) -> Result<Value> {
     ensure_response(response)
+}
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stdio_close_reaps_child_and_is_idempotent() {
+        let session = Session::stdio(
+            "node",
+            &[format!(
+                "{}/tests/fixtures/mcp-server.mjs",
+                env!("CARGO_MANIFEST_DIR")
+            )],
+            None,
+        )
+        .await
+        .unwrap();
+        let Session::Stdio(child) = &session else {
+            unreachable!()
+        };
+        assert!(child.child.lock().await.id().is_some());
+        session.close().await;
+        assert!(child.child.lock().await.try_wait().unwrap().is_some());
+        session.close().await;
+        assert!(session
+            .request(
+                &crate::protocol::request(next_id(), "ping", serde_json::json!({})),
+                100
+            )
+            .await
+            .is_err());
+    }
 }

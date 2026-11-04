@@ -23,7 +23,7 @@ impl McpCredentialVault for OsCredentialVault {
     async fn store(&self, scope: &CredentialScope, token: SecretToken) -> dgos_mcp::Result<()> {
         let account = scope.account();
         os_credentials::run("mcp.store", move || {
-            let entry = keyring::Entry::new(MCP_SERVICE, &account).map_err(|error| error)?;
+            let entry = keyring::Entry::new(MCP_SERVICE, &account)?;
             entry.set_password(token.expose())
         })
         .await
@@ -34,10 +34,7 @@ impl McpCredentialVault for OsCredentialVault {
     async fn load(&self, scope: &CredentialScope) -> dgos_mcp::Result<SecretToken> {
         let account = scope.account();
         let value = os_credentials::run("mcp.load", move || {
-            keyring::Entry::new(MCP_SERVICE, &account)
-                .map_err(|error| error)?
-                .get_password()
-                .map_err(|error| error)
+            keyring::Entry::new(MCP_SERVICE, &account)?.get_password()
         })
         .await
         .map_err(|failure| match failure {
@@ -50,7 +47,7 @@ impl McpCredentialVault for OsCredentialVault {
     async fn remove(&self, scope: &CredentialScope) -> dgos_mcp::Result<()> {
         let account = scope.account();
         os_credentials::run("mcp.remove", move || {
-            let entry = keyring::Entry::new(MCP_SERVICE, &account).map_err(|error| error)?;
+            let entry = keyring::Entry::new(MCP_SERVICE, &account)?;
             match entry.delete_credential() {
                 Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
                 Err(error) => Err(error),
