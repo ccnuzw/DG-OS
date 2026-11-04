@@ -1,0 +1,42 @@
+/* Design prototype: command palette and desktop app shortcuts. */
+.command-trigger{font-size:9px;letter-spacing:.04em}
+.command-desktop-trigger{margin-left:auto;font-size:10px;flex-shrink:0}
+.command-layer{position:fixed;inset:0;z-index:40;display:flex;align-items:flex-start;justify-content:center;padding:11vh 16px 16px;background:#15192355;backdrop-filter:blur(3px)}
+.command-panel{width:min(620px,96vw);max-height:76vh;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border);border-radius:10px;box-shadow:0 18px 60px #0000002b;overflow:hidden}
+.command-search{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--border);color:var(--muted)}
+.command-search svg{width:15px;height:15px;flex-shrink:0}
+.command-search input{flex:1;border:0;background:transparent;padding:0;min-height:26px;color:var(--text);font-size:12px}
+.command-search input:focus-visible{outline:0}
+.command-results{overflow:auto;padding:6px}
+.command-group{padding:5px 0}
+.command-group>small{display:block;font-size:9px;color:var(--muted);padding:4px 8px;letter-spacing:.05em}
+.command-item{display:flex;align-items:center;gap:7px;width:100%;min-height:33px;padding:5px 8px;text-align:left;border-radius:5px;color:var(--text)}
+.command-item:hover,.command-item.active{background:var(--blue-soft);color:var(--blue)}
+.command-icon{display:grid;place-items:center;width:21px;height:21px;border-radius:4px;background:var(--inset);color:var(--muted);flex-shrink:0}
+.command-icon svg{width:13px;height:13px}
+.command-label{font-size:11px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.command-hint{font-size:9px;color:var(--muted);margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%}
+.command-item.active .command-hint{color:var(--blue);opacity:.72}
+.command-empty{font-size:11px;color:var(--muted);text-align:center;padding:30px 10px;margin:0}
+.command-foot{display:flex;justify-content:space-between;padding:7px 14px;border-top:1px solid var(--border);color:var(--muted);font-size:9px}
+.desktop-command-apps{border-top:1px solid var(--border);margin-top:20px;padding-top:16px}
+.desktop-command-apps header{margin-bottom:8px}
+.desktop-command-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+.desktop-command-app{display:flex;align-items:center;gap:7px;text-align:left;padding:8px;min-height:48px;border:1px solid var(--border);border-radius:6px;background:var(--panel)}
+.desktop-command-app:hover{border-color:color-mix(in srgb,var(--blue) 35%,var(--border));background:var(--blue-soft)}
+.desktop-command-app .icon-tile{width:25px;height:25px;flex-shrink:0}
+.desktop-command-app .icon-tile svg{width:14px;height:14px}
+.desktop-command-app strong{display:block;font-size:10px;font-weight:500}
+.desktop-command-app small{display:block;font-size:8px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:800px){.desktop-command-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.command-layer{padding-top:7vh}.command-hint{display:none}.command-panel{max-height:82vh}}
+@media(max-width:520px){.desktop-command-grid{grid-template-columns:1fr}.command-layer{padding:12px}.command-panel{width:100%;max-height:90vh}}
+
+.desktop-runtime{display:flex;align-items:center;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:9px;color:var(--muted)}
+.desktop-runtime small{font-size:8px;letter-spacing:.05em;color:var(--muted)}
+.desktop-runtime span{color:var(--text)}
+
+.desktop-fixed,.desktop-recent{display:flex;align-items:flex-start;gap:8px;margin-top:7px;padding-top:7px;border-top:1px solid var(--border);font-size:9px;color:var(--muted)}
+.desktop-fixed small,.desktop-recent small{font-size:8px;letter-spacing:.05em;flex-shrink:0}
+.desktop-fixed span,.desktop-recent span{display:flex;flex-wrap:wrap;gap:4px;color:var(--text)}
+.desktop-recent button{font-size:8px;min-height:20px;padding:2px 6px;border:1px solid var(--border);border-radius:3px;color:var(--muted)}
+.desktop-recent button:hover{background:var(--blue-soft);color:var(--blue)}
