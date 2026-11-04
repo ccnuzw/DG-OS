@@ -1,11 +1,9 @@
 import { useSyncExternalStore } from 'react';
-import { phase2EnUS } from '../../i18n/locales/phase2.en-US';
-import { phase2ZhCN } from '../../i18n/locales/phase2.zh-CN';
+import { remoteCatalogs } from '../../i18n/remoteCatalogs';
+import { formatMessage } from '../../i18n/message';
 import type { Locale } from '../../i18n/runtime';
 
-type RemoteKey = keyof typeof phase2EnUS;
-
-const catalogs = { 'zh-CN': phase2ZhCN, 'en-US': phase2EnUS } as const;
+type RemoteKey = keyof typeof remoteCatalogs['en-US'];
 let locale: Locale = 'zh-CN';
 const listeners = new Set<() => void>();
 
@@ -22,10 +20,7 @@ export function subscribeRemoteLocale(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 export function t(key: RemoteKey, variables?: Record<string, string | number>): string {
-  const value = catalogs[locale][key] ?? key;
-  return value.replace(/\{([a-zA-Z0-9_]+)\}/g, (match, name: string) => (
-    variables && Object.prototype.hasOwnProperty.call(variables, name) ? String(variables[name]) : match
-  ));
+  return formatMessage(remoteCatalogs[locale], key, variables);
 }
 
 export function useRemoteLocale(): { locale: Locale; t: typeof t } {

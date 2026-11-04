@@ -30,10 +30,16 @@ const DEFAULT_STATE: LocaleState = {
 let state: LocaleState = { ...DEFAULT_STATE };
 let initPromise: Promise<void> | null = null;
 let writePromise: Promise<void> | null = null;
+let confirmed: LocaleState = { ...DEFAULT_STATE };
+let generation = 0;
+let requestSequence = 0;
 const listeners = new Set<() => void>();
 
 function emit(): void {
-  if (typeof document !== 'undefined') document.documentElement.setAttribute('data-locale', state.locale);
+  if (typeof document !== 'undefined') {
+    document.documentElement.lang = state.locale;
+    document.documentElement.setAttribute('data-locale', state.locale);
+  }
   for (const listener of listeners) listener();
 }
 
@@ -45,10 +51,6 @@ function isLocale(value: unknown): value is Locale {
   return value === 'zh-CN' || value === 'en-US';
 }
 
-function resolveBrowserLocale(): Locale {
-  const language = typeof navigator === 'undefined' ? '' : navigator.language.toLowerCase();
-  return language === 'zh' || language.startsWith('zh-') ? 'zh-CN' : 'en-US';
-}
 
 function parseResponse(raw: unknown): LanguagePreferences {
   const response = raw as CommandResponse<unknown> | null;
@@ -85,11 +87,15 @@ export function resetLocaleForTesting(): void {
   state = { ...DEFAULT_STATE };
   initPromise = null;
   writePromise = null;
+  confirmed = { ...DEFAULT_STATE };
+  generation += 1;
+  requestSequence = 0;
   emit();
 }
 
 export function setLocaleForTesting(locale: Locale): void {
   state = { preference: locale, locale, catalog_version: 'v1', initialized: true };
+  confirmed = state;
   initPromise = Promise.resolve();
   emit();
 }
@@ -99,12 +105,14 @@ export async function initLocale(): Promise<void> {
     try {
       const result = parseResponse(await invoke<CommandResponse<unknown>>('get_language_preferences'));
       state = { ...result, initialized: true };
+      confirmed = state;
       if (typeof document !== 'undefined') document.documentElement.setAttribute('data-locale', state.locale);
       emit();
     } catch {
       // Older smoke hosts and old development harnesses do not register the
       // new command. The deterministic default keeps them usable.
       state = { ...DEFAULT_STATE, initialized: true };
+      confirmed = state;
       if (typeof document !== 'undefined') document.documentElement.setAttribute('data-locale', state.locale);
       emit();
     }
@@ -113,27 +121,30 @@ export async function initLocale(): Promise<void> {
 }
 
 export async function updateLanguage(preference: LanguagePreference): Promise<void> {
+  if (!isPreference(preference)) throw new Error('Invalid language preference');
   await initLocale();
-  const previous = state;
-  // Apply the selected preference immediately. The host response remains the
-  // source of truth for `system`, whose resolved locale is platform-dependent.
+  const epoch = generation;
+  const sequence = ++requestSequence;
   state = {
     ...state,
     preference,
-    locale: preference === 'zh-CN' ? 'zh-CN' : preference === 'en-US' ? 'en-US' : resolveBrowserLocale(),
+    locale: preference === 'system' ? state.locale : preference,
   };
   emit();
   const request = async () => {
+    if (epoch !== generation) throw new Error('Language request superseded');
     try {
       const result = parseResponse(await invoke<CommandResponse<unknown>>('set_language_preferences', { language: preference }));
-      state = { ...result, initialized: true };
-      emit();
+      if (epoch !== generation) return;
+      confirmed = { ...result, initialized: true };
+      if (sequence === requestSequence) { state = confirmed; emit(); }
     } catch (error) {
-      state = previous;
-      emit();
+      if (epoch === generation) { generation += 1; state = confirmed; emit(); }
       throw error;
     }
   };
-  writePromise = (writePromise ?? Promise.resolve()).then(request, request);
-  return writePromise;
+  const pending = (writePromise ?? Promise.resolve()).catch(() => {}).then(request);
+  writePromise = pending;
+  void pending.finally(() => { if (writePromise === pending) writePromise = null; }).catch(() => {});
+  return pending;
 }

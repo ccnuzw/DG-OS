@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const invoke = vi.hoisted(() => vi.fn());
 
+import { formatMessage } from '../src/i18n/message';
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 
 import {
@@ -63,4 +64,11 @@ describe('host language runtime', () => {
     expect(getLanguagePreference()).toBe('zh-CN');
     expect(getLocale()).toBe('zh-CN');
   });
+});
+
+it('interpolates user values as literal text and diagnoses missing parameters',()=>{
+  const catalog={'example':'Hello {name}'};
+  expect(formatMessage(catalog,'example',{name:'<user>{name}'})).toBe('Hello <user>{name}');
+  expect(formatMessage(catalog,'example')).toBe('⟦example⟧');
+  expect(formatMessage(catalog,'missing')).toBe('⟦missing⟧');
 });
