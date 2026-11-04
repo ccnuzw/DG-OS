@@ -57,3 +57,9 @@
     cursor: pointer;
   }
 }
+
+.remote-chat { max-width: calc(800rem / 14); background: var(--surface-canvas); }
+.remote-reading > ul { max-width: calc(720rem / 14); margin-inline: auto; }
+.remote-composer { max-width: calc(720rem / 14); width: 100%; margin-inline: auto; background: var(--surface-panel); }
+.remote-chat [data-role='assistant'] > div:first-child { padding-inline: 0; }
+.remote-chat .type-reading { font-family: var(--font-family-reading); font-size: var(--font-size-reading); line-height: var(--line-height-reading); }

@@ -7,6 +7,9 @@ import type { Provider, ProviderConfig, Model } from '../stores/providerStore';
 import { Button, Modal, Stack } from '@dgos/ui';
 import { usePageError } from '../pageError';
 import { useLocale } from '../i18n';
+import { useSurfaceCloseGuard } from '../workspace/SurfaceContext';
+import { confirmDiscard } from '../workspace/closeCoordinator';
+import './settings-content.css';
 
 const EMPTY_MODELS: Model[] = [];
 
@@ -41,6 +44,15 @@ export default function ProviderManagement() {
   const [reordering, setReordering] = useState(false);
   const [migratingProviderId, setMigratingProviderId] = useState<string | null>(null);
   const selectionGeneration = useRef(0);
+  useSurfaceCloseGuard(async () => {
+    if (!hasUnsavedChanges) return true;
+    if (!await confirmDiscard()) return false;
+    selectionGeneration.current += 1;
+    setHasUnsavedChanges(false);
+    setSelectedProvider(null);
+    setIsCreatingProvider(false);
+    return true;
+  });
   const reportError = usePageError('ProviderManagement');
   // The store keeps the raw failure of the last create/update/toggle/migrate/delete next to its message string.
   const reportFailure = () => reportError(useProviderStore.getState().lastFailure);
@@ -112,7 +124,7 @@ export default function ProviderManagement() {
       return;
     }
     void confirmAction(
-      { title: 'Discard unsaved changes?', content: 'You have unsaved changes. Discard them?', confirmText: 'Discard', confirmVariant: 'danger' },
+      { title: t('provider.discardTitle'), content: t('provider.discardConfirm'), confirmText: t('provider.discardAction'), confirmVariant: 'danger' },
       () => {
         proceed();
         setHasUnsavedChanges(false);
@@ -167,7 +179,7 @@ export default function ProviderManagement() {
     const target = selectedProvider;
     let deleted = false;
     await confirmAction(
-      { title: t('detail.deleteProvider'), content: `Are you sure you want to delete "${target.name}"? This action cannot be undone.`, confirmText: t('providerForm.delete'), confirmVariant: 'danger' },
+      { title: t('detail.deleteProvider'), content: t('provider.deleteNamedConfirm', { name: target.name }), confirmText: t('providerForm.delete'), confirmVariant: 'danger' },
       async () => {
         const success = await deleteProvider(target.id);
         if (success) {
@@ -245,12 +257,7 @@ export default function ProviderManagement() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-background text-foreground">
-      <header className="shrink-0 border-b border-border px-6 py-6">
-        <p className="m-0 text-xs font-semibold uppercase text-primary">{t('provider.kicker')}</p>
-        <h1 className="m-0 mt-1 text-3xl font-semibold text-foreground">{t('provider.title')}</h1>
-        <p className="m-0 mt-2 text-sm text-muted-foreground">{t('provider.subtitle')}</p>
-      </header>
+    <div className="provider-page" data-detail-open={selectedProvider !== null || isCreatingProvider}>
 
       {error && (
         <div
@@ -299,7 +306,7 @@ export default function ProviderManagement() {
       </div>
       {migratingProviderId && <p role="status" className="mx-6 mt-4 mb-0 text-sm text-muted-foreground">{t('detail.waitingVault')}</p>}
 
-      <div className="flex min-h-0 flex-1 flex-wrap content-start items-start">
+      <div className="provider-columns">
         <ProviderList
           vendors={vendors}
           providers={providers}
@@ -314,7 +321,8 @@ export default function ProviderManagement() {
           hasUnsavedChanges={hasUnsavedChanges}
         />
 
-        <div className="min-w-0 grow basis-120 p-6">
+        <div className="provider-detail">
+          <Button variant="ghost" size="sm" className="provider-back" onClick={() => discardThen(() => { setSelectedProvider(null); setIsCreatingProvider(false); })}>{t('provider.selectTitle')}</Button>
           <Stack gap={4}>
              {modelsLoading && <p role="status" className="m-0 text-sm text-muted-foreground">{t('provider.loadingModels')}</p>}
             {providers.length === 0 && !isCreatingProvider ? (

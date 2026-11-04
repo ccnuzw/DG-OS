@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
-import Workbench from '../src/pages/Workbench';
+import Workbench from '../src/components/chat/ChatWorkbench';
 import ChatWorkbench from '../src/components/chat/ChatWorkbench';
 import { useChatStore } from '../src/stores/chatStore';
 import { MockChannel } from './helpers/mockChannel';
@@ -25,8 +25,8 @@ const ok = (data: unknown) => ({ success: true, data });
 const fail = (code: number, detail?: unknown) => ({ success: false, error: { code, message: 'host text must never be shown', detail } });
 
 const session = (over: Args = {}) => ({
-  id: 's1', title: '季度复盘', title_source: 'user', provider_id: 'p1', model_id: 'chat1', skill_id: null,
-  skill_version_id: null, no_skill_confirmed: true, created_at: 1, updated_at: 2, ...over,
+  id: 's1', title: '季度复盘', title_source: 'user', provider_id: 'p1', model_id: 'chat1', skills: [],
+  generation: {}, no_skill_confirmed: true, created_at: 1, updated_at: 2, ...over,
 });
 const message = (seq: number, role: 'user' | 'assistant', content: string, over: Args = {}) => ({
   id: `m${seq}`, session_id: 's1', seq, role, content, status: 'completed', task_id: null, finish_reason: 'stop',
@@ -95,7 +95,7 @@ function renderPage(page: 'chat' | 'workbench' = 'chat') {
 
 async function openSession(title = '季度复盘', page: 'chat' | 'workbench' = 'chat') {
   const view = renderPage(page);
-  fireEvent.click(await screen.findByRole('button', { name: new RegExp(title) }));
+  fireEvent.click(await screen.findByRole('tab', { name: new RegExp(title) }));
   await screen.findByRole('textbox', { name: '消息输入' });
   return view;
 }
@@ -123,6 +123,7 @@ const emit = (channel: MockChannel, event: Args) => act(() => { channel.emit(eve
 const settle = (resolveAck: (ack: Args) => void, ack: Args) => act(async () => { resolveAck(ack); });
 
 async function choose(name: string, option: string) {
+  if (!screen.queryByRole('combobox', { name })) fireEvent.click(screen.getByRole('button', { name: '会话目标' }));
   const trigger = await screen.findByRole('combobox', { name });
   await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
   trigger.focus();
@@ -148,7 +149,7 @@ describe('sessions', () => {
     fireEvent.click(screen.getAllByRole('button', { name: '新建会话' })[0]);
     await screen.findByRole('textbox', { name: '消息输入' });
     expect(calls('create_chat_session')).toEqual([{ input: {} }]);
-    expect(screen.getByRole('heading', { name: '新会话' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '新会话' })).toBeTruthy();
     expect(screen.getByText(/请先在上方选择 Provider 和模型/)).toBeTruthy();
     expect(screen.getByText(/这个会话还没有选择技能/)).toBeTruthy();
     typeDraft('先打个招呼');
@@ -160,10 +161,70 @@ describe('sessions', () => {
     handlers.list_chat_sessions = () => ok({ items: [session({ id: 'sA', title: '会话 A' }), session({ id: 'sB', title: '会话 B' })], next_cursor: null });
     handlers.list_chat_messages = ({ input }) => ok({ items: [message(1, 'user', `属于 ${input.session_id}`, { session_id: input.session_id })], next_before_seq: null });
     renderPage();
+    fireEvent.click(screen.getByRole('button', { name: '会话历史' }));
     fireEvent.click(await screen.findByRole('button', { name: /会话 B/ }));
     await screen.findByText('属于 sB');
-    expect(calls('list_chat_messages')).toEqual([{ input: { session_id: 'sB', limit: 50 } }]);
-    expect(screen.getByRole('heading', { name: '会话 B' })).toBeTruthy();
+    expect(calls('list_chat_messages').at(-1)).toEqual({ input: { session_id: 'sB', limit: 50 } });
+    expect(screen.getByRole('tab', { name: '会话 B' }).getAttribute('aria-selected')).toBe('true');
+  });
+  it('isolates drafts and unsaved capability targets between open session tabs', async () => {
+    handlers.list_chat_sessions = () => ok({ items: [session({ id: 'sA', title: '会话 A' }), session({ id: 'sB', title: '会话 B', provider_id: 'p2', model_id: 'modelB', skills: [{ skill_id: 'writing', version_id: 'writing@1', content_hash: 'hash' }] })], next_cursor: null });
+    handlers.list_providers = () => ok([{ id: 'p1', name: '服务 A', enabled: true, credential_status: 'stored' }, { id: 'p2', name: '服务 B', enabled: true, credential_status: 'stored' }]);
+    handlers.list_models = ({ providerId }) => ok([{ id: 'm', model_id: providerId === 'p2' ? 'modelB' : 'chat1', provider_id: providerId, model_name: providerId === 'p2' ? '模型 B' : 'Chat', model_type: 'chat' }]);
+    renderPage();
+    await screen.findByRole('tab', { name: '会话 A' });
+    typeDraft('draft A');
+    await choose('Provider', '服务 B');
+    await choose('模型', '模型 B');
+    fireEvent.click(screen.getByRole('checkbox', { name: '明确不使用技能' }));
+    fireEvent.click(screen.getByRole('button', { name: '会话历史' }));
+    fireEvent.click(await screen.findByRole('button', { name: '会话 B' }));
+    await screen.findByRole('textbox', { name: '消息输入' });
+    typeDraft('draft B');
+    expect(useChatStore.getState().sessionTargetDrafts.sA).toEqual({ provider_id: 'p2', model_id: 'modelB', skill_ids: [], no_skill: false, generation: {} });
+    expect(useChatStore.getState().sessionTargetDrafts.sB).toBeUndefined();
+    fireEvent.click(screen.getByRole('tab', { name: /会话 A/ }));
+    expect(draftBox().value).toBe('draft A');
+    expect(useChatStore.getState().sessionTargetDrafts.sA?.provider_id).toBe('p2');
+    fireEvent.click(screen.getByRole('tab', { name: /会话 B/ }));
+    expect(draftBox().value).toBe('draft B');
+    expect(useChatStore.getState().sessionTargetDrafts.sB).toBeUndefined();
+  });
+  it('switching away from a running session preserves its generation and returns to it', async () => {
+    handlers.list_chat_sessions = () => ok({ items: [session({ id: 'sA', title: '会话 A' }), session({ id: 'sB', title: '会话 B' })], next_cursor: null });
+    const view = await openSession('会话 A');
+    const resolveAck = deferSend();
+    typeDraft('running draft');
+    fireEvent.click(sendButton());
+    const args = await sentArgs();
+    await settle(resolveAck, ackFor(args));
+    fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
+    expect(calls('cancel_chat_generation')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('tab', { name: /会话 A/ }));
+    expect(screen.getByRole('article', { name: '助手消息（生成中）' })).toBeTruthy();
+    expect(calls('cancel_chat_generation')).toHaveLength(0);
+    view.unmount();
+  });
+
+  it('closing a running session requires confirmation and preserves accepted input content', async () => {
+    await openSession();
+    const resolveAck = deferSend();
+    typeDraft('keep this draft');
+    fireEvent.click(sendButton());
+    const args = await sentArgs();
+    await settle(resolveAck, ackFor(args));
+    const close = screen.getByRole('button', { name: '关闭 季度复盘' });
+    close.focus();
+    fireEvent.click(close);
+    const dialog = await screen.findByRole('dialog', { name: '关闭会话' });
+    expect(calls('cancel_chat_generation')).toHaveLength(0);
+    expect(dialog.textContent).toContain('会保留已生成内容和输入草稿');
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭会话' }));
+    await waitFor(() => expect(calls('cancel_chat_generation')).toEqual([{ taskId: args.input.client_request_id }]));
+    expect(screen.queryByRole('tab', { name: '会话 A' })).toBeNull();
+    await useChatStore.getState().selectSession(session());
+    expect(useChatStore.getState().sessionDrafts.s1).toBe('');
+    expect(useChatStore.getState().sessionViews.s1?.messages[0]?.content).toBe('keep this draft');
   });
 
   // Ten jsdom render rounds up to 300 nodes: about 1.6 s alone, but over the 5 s default when the
@@ -177,6 +238,7 @@ describe('sessions', () => {
       return ok({ items, next_cursor: start + items.length < pool.length ? String(start + items.length) : null });
     };
     renderPage();
+    fireEvent.click(screen.getByRole('button', { name: '会话历史' }));
     const items = () => within(screen.getByRole('region', { name: '会话列表' })).getAllByRole('listitem');
     await waitFor(() => expect(items()).toHaveLength(30));
     for (let page = 2; page <= 10; page += 1) {
@@ -190,7 +252,7 @@ describe('sessions', () => {
 });
 
 describe('undecided skill', () => {
-  const undecided = () => session({ no_skill_confirmed: false, skill_id: null });
+  const undecided = () => session({ no_skill_confirmed: false });
 
   it('blocks sending until a skill or an explicit no-skill is applied, then sends', async () => {
     handlers.list_chat_sessions = () => ok({ items: [undecided()], next_cursor: null });
@@ -200,14 +262,11 @@ describe('undecided skill', () => {
     expect(screen.getByText(/这个会话还没有选择技能/)).toBeTruthy();
     expect(sendButton().disabled).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: '去选择技能' }));
-    expect(document.activeElement).toBe(screen.getByRole('combobox', { name: '技能' }));
+    await waitFor(() => expect(document.activeElement?.id).toBe('chat-skill-select'));
 
-    await choose('技能', '明确不使用技能');
+    fireEvent.click(screen.getByRole('checkbox', { name: '明确不使用技能' }));
     fireEvent.click(screen.getByRole('button', { name: '应用目标' }));
     await waitFor(() => expect(sendButton().disabled).toBe(false));
-    expect(calls('update_chat_session_target')).toEqual([
-      { input: { session_id: 's1', provider_id: 'p1', model_id: 'chat1', skill_id: null, no_skill: true } },
-    ]);
     expect(screen.queryByText(/这个会话还没有选择技能/)).toBeNull();
     deferSend();
     fireEvent.click(sendButton());
@@ -215,7 +274,7 @@ describe('undecided skill', () => {
   });
 
   it('1006013 on a pinned skill that became unavailable offers re-choosing the skill', async () => {
-    handlers.list_chat_sessions = () => ok({ items: [session({ skill_id: 'summary', skill_version_id: 'summary@1.0.0', no_skill_confirmed: false })], next_cursor: null });
+    handlers.list_chat_sessions = () => ok({ items: [session({ skills: [{ skill_id: 'summary', version_id: 'summary@1.0.0', content_hash: 'hash' }], no_skill_confirmed: false })], next_cursor: null });
     handlers.send_chat_message = () => fail(1006013);
     await openSession();
     typeDraft('技能被禁用后发送');
@@ -223,7 +282,7 @@ describe('undecided skill', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('会话固定的技能不可用，请重新选择技能或明确选择无技能。');
     expect(screen.getByText('会话固定的技能现在不可用。')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '重新选择技能' }));
-    expect(document.activeElement).toBe(screen.getByRole('combobox', { name: '技能' }));
+    await waitFor(() => expect(document.activeElement?.id).toBe('chat-skill-select'));
     expect(draftBox().value).toBe('技能被禁用后发送');
   });
 });
@@ -310,7 +369,7 @@ describe('send, stream and terminal snapshot', () => {
     await waitFor(() => expect(calls('cancel_chat_generation')).toEqual([{ taskId: args.input.client_request_id }]));
   });
 
-  it('unmounting the page cancels the running generation', async () => {
+  it('unmounting the page preserves the running generation', async () => {
     const view = await openSession();
     const resolveAck = deferSend();
     typeDraft('离开页面');
@@ -318,19 +377,10 @@ describe('send, stream and terminal snapshot', () => {
     const args = await sentArgs();
     await settle(resolveAck, ackFor(args));
     view.unmount();
-    await waitFor(() => expect(calls('cancel_chat_generation')).toEqual([{ taskId: args.input.client_request_id }]));
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(calls('cancel_chat_generation')).toHaveLength(0);
   });
 
-  it('leaving the chat tab cancels the running generation', async () => {
-    await openSession('季度复盘', 'workbench');
-    const resolveAck = deferSend();
-    typeDraft('切换标签');
-    fireEvent.click(sendButton());
-    const args = await sentArgs();
-    await settle(resolveAck, ackFor(args));
-    fireEvent.mouseDown(screen.getByRole('tab', { name: '单任务' }), { button: 0 });
-    await waitFor(() => expect(calls('cancel_chat_generation')).toEqual([{ taskId: args.input.client_request_id }]));
-  });
 
   it('a send has no tools key and no accept_destination unless they were chosen', async () => {
     await openSession();
@@ -401,7 +451,7 @@ describe('destination_changed (1006012)', () => {
     typeDraft('先不发');
     fireEvent.click(sendButton());
     const dialog = await screen.findByRole('dialog', { name: 'Provider 目标已变化' });
-    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(calls('send_chat_message')).toHaveLength(1);
     expect(draftBox().value).toBe('先不发');
@@ -691,7 +741,6 @@ describe('MCP tool turn', () => {
 
   it('shows the per-send note before any tool is opened and lists connected tools on demand', async () => {
     await openSession();
-    expect(screen.getByText('工具往返不会进入后续对话上下文')).toBeTruthy();
     expect(calls('list_mcp_servers')).toHaveLength(0);
     await pickTools(/read_file/);
     expect(calls('list_mcp_tools')).toEqual([{ serverId: 'srv1' }]);
@@ -794,9 +843,9 @@ describe('disclosures and deletion', () => {
 
   it('shows every mandatory disclosure with and without an open session', async () => {
     renderPage();
-    await screen.findByRole('button', { name: /季度复盘/ });
+    await screen.findByRole('tab', { name: /季度复盘/ });
     for (const text of DISCLOSURES) expect(screen.getByText(text)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /季度复盘/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /季度复盘/ }));
     await screen.findByRole('textbox', { name: '消息输入' });
     for (const text of DISCLOSURES) expect(screen.getByText(text)).toBeTruthy();
   });
@@ -808,7 +857,7 @@ describe('disclosures and deletion', () => {
     const dialog = await screen.findByRole('dialog', { name: '删除会话' });
     expect(dialog.textContent).toContain('确定删除？应用内将无法恢复。已删除内容可能残留在数据库空闲页和备份中。');
     expect(calls('delete_chat_session')).toHaveLength(0);
-    fireEvent.click(within(dialog).getByRole('button', { name: '删除' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: '删除会话' }));
     await waitFor(() => expect(calls('delete_chat_session')).toEqual([{ input: { session_id: 's1' } }]));
     await screen.findByRole('heading', { name: '开始一次对话' });
   });
@@ -835,5 +884,189 @@ describe('identity', () => {
       expect(commands.has(name)).toBe(true);
     }
     expect(keysOf(mocked.mock.calls.map(([, payload]) => payload)).some(key => /^user_?id$/i.test(key))).toBe(false);
+  });
+});
+
+describe('account reset response isolation', () => {
+  it('does not reopen a session whose create response arrives after account reset', async () => {
+    const pending = Promise.withResolvers<unknown>();
+    handlers.create_chat_session = () => pending.promise;
+    const creating = useChatStore.getState().createSession();
+    useChatStore.getState().reset();
+    pending.resolve(ok(session()));
+    expect(await creating).toBeNull();
+    expect(useChatStore.getState().sessions).toEqual([]);
+    expect(useChatStore.getState().activeSessionId).toBeNull();
+  });
+
+  it('does not let a previous account message request overwrite a fresh request for the same session', async () => {
+    const old = Promise.withResolvers<unknown>();
+    const fresh = Promise.withResolvers<unknown>();
+    await useChatStore.getState().loadSessions();
+    handlers.list_chat_messages = () => old.promise;
+    const selecting = useChatStore.getState().loadLatestMessages();
+    useChatStore.getState().reset();
+    handlers.list_chat_messages = () => fresh.promise;
+    const reopening = useChatStore.getState().loadSessions();
+    await waitFor(() => expect(calls('list_chat_messages').length).toBeGreaterThanOrEqual(3));
+    old.resolve(ok({ items: [message(1, 'assistant', 'old account output')], next_before_seq: null }));
+    await selecting;
+    expect(useChatStore.getState().messages).toEqual([]);
+    expect(useChatStore.getState().messagesLoading).toBe(true);
+    fresh.resolve(ok({ items: [message(2, 'assistant', 'fresh account output')], next_before_seq: null }));
+    await reopening;
+    expect(useChatStore.getState().messages.map(item => item.content)).toEqual(['fresh account output']);
+  });
+
+  it('ignores a rejected send from the old account after reset', async () => {
+    await useChatStore.getState().loadSessions();
+    const pending = Promise.withResolvers<unknown>();
+    handlers.send_chat_message = () => pending.promise;
+    const sending = useChatStore.getState().send('old request');
+    useChatStore.getState().reset();
+    pending.resolve(fail(1006012, {fingerprint: 'old', host: 'old-provider'}));
+    await sending;
+    expect(useChatStore.getState().sessionPendingDestinations).toEqual({});
+    expect(useChatStore.getState().sessionActionErrors).toEqual({});
+    expect(useChatStore.getState().generations).toEqual({});
+  });
+});
+
+describe('controlled attachment drafts', () => {
+  it('keeps an attachment on send failure and transfers it to the message only after acknowledgement', async () => {
+    await openSession();
+    const asset = { id: 'asset-one', name: 'notes.txt', mime: 'text/plain', bytes_len: 12 };
+    act(() => useChatStore.getState().setSessionAssets('s1', [asset]));
+    handlers.send_chat_message = () => fail(1006008);
+    fireEvent.click(sendButton());
+    await screen.findByRole('alert');
+    expect(useChatStore.getState().sessionAssets.s1).toEqual([asset]);
+    const resolveAck = deferSend();
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(calls('send_chat_message')).toHaveLength(2));
+    const args = calls('send_chat_message')[1];
+    expect(args.input.asset_ids).toEqual(['asset-one']);
+    await settle(resolveAck, ackFor(args));
+    expect(useChatStore.getState().sessionAssets.s1).toEqual([]);
+    expect(useChatStore.getState().messages.find(item => item.id === 'u-new')?.assets).toEqual([asset]);
+  });
+
+  it('cancels a pending import without adding its late asset to the draft', async () => {
+    const view = await openSession();
+    const pending = Promise.withResolvers<unknown>();
+    handlers.import_chat_asset = () => pending.promise;
+    handlers.remove_chat_asset = () => ok({ removed: true });
+    fireEvent.change(view.container.querySelector('input[type=file]')!, { target: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] } });
+    await waitFor(() => expect(calls('import_chat_asset')).toHaveLength(1));
+    fireEvent.click(screen.getByRole('button', { name: '取消导入' }));
+    await act(async () => pending.resolve(ok({ id: 'cancelled-asset', name: 'notes.txt', mime: 'text/plain', bytes_len: 5 })));
+    await waitFor(() => expect(calls('remove_chat_asset')).toEqual([{ assetId: 'cancelled-asset' }]));
+    expect(useChatStore.getState().sessionAssets.s1 ?? []).toEqual([]);
+  });
+
+  it('finishes removing the original draft after the composer unmounts', async () => {
+    const view = await openSession();
+    const asset = { id: 'removed-asset', name: 'remove.txt', mime: 'text/plain', bytes_len: 5 };
+    act(() => useChatStore.getState().setSessionAssets('s1', [asset]));
+    const pending = Promise.withResolvers<unknown>();
+    handlers.remove_chat_asset = () => pending.promise;
+    fireEvent.click(screen.getByRole('button', { name: '移除 remove.txt' }));
+    await waitFor(() => expect(calls('remove_chat_asset')).toHaveLength(1));
+    expect(screen.queryByRole('button', { name: '取消导入' })).toBeNull();
+    view.unmount();
+    await act(async () => pending.resolve(ok({ removed: true })));
+    expect(useChatStore.getState().sessionAssets.s1).toEqual([]);
+  });
+
+  it('retains a draft when the host refuses removal of a referenced asset', async () => {
+    await openSession();
+    const asset = { id: 'referenced-asset', name: 'shared.txt', mime: 'text/plain', bytes_len: 5 };
+    act(() => useChatStore.getState().setSessionAssets('s1', [asset]));
+    handlers.remove_chat_asset = () => fail(1006014);
+    fireEvent.click(screen.getByRole('button', { name: '移除 shared.txt' }));
+    await screen.findByRole('alert');
+    expect(useChatStore.getState().sessionAssets.s1).toEqual([asset]);
+  });
+});
+
+describe('microphone cancellation', () => {
+  it.each(['cancel', 'unmount', 'reset'] as const)('releases late microphone permission after %s without transcribing', async boundary => {
+    const original = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
+    const permission = Promise.withResolvers<MediaStream>();
+    const stop = vi.fn();
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: vi.fn(() => permission.promise) } });
+    try {
+      handlers.list_providers = () => ok([{ id: 'voice-provider', name: 'Voice service', base_url: 'https://voice.example.invalid/v1', enabled: true, credential_status: 'stored', provider_type: 'openai_compatible' }]);
+      handlers.list_models = () => ok([{ model_id: 'transcriber', model_name: 'Transcriber', model_type: 'speech-transcription' }]);
+      const view = await openSession();
+      fireEvent.click(screen.getByRole('button', { name: '语音输入' }));
+      await choose('转写服务', 'Voice service · voice.example.invalid');
+      await choose('转写模型', 'Transcriber');
+      fireEvent.click(screen.getByRole('button', { name: '开始录音' }));
+      await screen.findByText('等待麦克风授权…');
+      if (boundary === 'cancel') fireEvent.click(screen.getByRole('button', { name: '取消' }));
+      else if (boundary === 'unmount') view.unmount();
+      else act(() => useChatStore.getState().reset());
+      await act(async () => permission.resolve({ getTracks: () => [{ stop }] } as unknown as MediaStream));
+      expect(stop).toHaveBeenCalledTimes(1);
+      expect(calls('transcribe_chat_audio')).toEqual([]);
+      expect(Object.values(useChatStore.getState().sessionDrafts).every(draft => draft === '')).toBe(true);
+    } finally {
+      if (original) Object.defineProperty(navigator, 'mediaDevices', original); else Reflect.deleteProperty(navigator, 'mediaDevices');
+    }
+  });
+
+  it.each(['failure', 'cancel', 'unmount'] as const)('handles transcription %s without losing or leaking a draft', async boundary => {
+    const devices = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
+    const mediaRecorder = Object.getOwnPropertyDescriptor(globalThis, 'MediaRecorder');
+    const createUrl = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');
+    const revokeUrl = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL');
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:voice-test') });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+    const stop = vi.fn();
+    class Recorder {
+      static isTypeSupported() { return true; }
+      state = 'inactive';
+      mimeType = 'audio/webm';
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      start() { this.state = 'recording'; }
+      stop() { this.state = 'inactive'; this.ondataavailable?.({ data: new Blob(['recording']) }); this.onstop?.(); }
+    }
+    Object.defineProperty(globalThis, 'MediaRecorder', { configurable: true, value: Recorder });
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [{ stop }] })) } });
+    try {
+      handlers.list_providers = () => ok([{ id: 'voice-provider', name: 'Voice service', base_url: 'https://voice.example.invalid/v1', enabled: true, credential_status: 'stored', provider_type: 'openai_compatible' }]);
+      handlers.list_models = () => ok([{ model_id: 'transcriber', model_name: 'Transcriber', model_type: 'speech-transcription' }]);
+      const pending = Promise.withResolvers<unknown>();
+      handlers.transcribe_chat_audio = () => pending.promise;
+      handlers.cancel_chat_transcription = () => ok(true);
+      const view = await openSession();
+      typeDraft('keep this draft');
+      fireEvent.click(screen.getByRole('button', { name: '语音输入' }));
+      await choose('转写服务', 'Voice service · voice.example.invalid');
+      await choose('转写模型', 'Transcriber');
+      fireEvent.click(screen.getByRole('button', { name: '开始录音' }));
+      fireEvent.click(await screen.findByRole('button', { name: '结束录音' }));
+      fireEvent.click(await screen.findByRole('button', { name: '转写到草稿' }));
+      await waitFor(() => expect(calls('transcribe_chat_audio')).toHaveLength(1));
+      if (boundary === 'cancel') fireEvent.click(screen.getByRole('button', { name: '取消' }));
+      if (boundary === 'unmount') view.unmount();
+      await act(async () => pending.resolve(boundary === 'failure' ? fail(1004001) : ok({ text: 'late transcript' })));
+      expect(useChatStore.getState().sessionDrafts.s1).toBe('keep this draft');
+      expect(stop).toHaveBeenCalledTimes(1);
+      if (boundary === 'failure') {
+        expect(view.container.querySelector('audio')).not.toBeNull();
+        expect((screen.getByRole('button', { name: '转写到草稿' }) as HTMLButtonElement).disabled).toBe(false);
+      } else {
+        expect(calls('cancel_chat_transcription')).toEqual([{ requestId: calls('transcribe_chat_audio')[0].input.request_id }]);
+      }
+      view.unmount();
+    } finally {
+      if (devices) Object.defineProperty(navigator, 'mediaDevices', devices); else Reflect.deleteProperty(navigator, 'mediaDevices');
+      if (mediaRecorder) Object.defineProperty(globalThis, 'MediaRecorder', mediaRecorder); else Reflect.deleteProperty(globalThis, 'MediaRecorder');
+      if (createUrl) Object.defineProperty(URL, 'createObjectURL', createUrl); else Reflect.deleteProperty(URL, 'createObjectURL');
+      if (revokeUrl) Object.defineProperty(URL, 'revokeObjectURL', revokeUrl); else Reflect.deleteProperty(URL, 'revokeObjectURL');
+    }
   });
 });

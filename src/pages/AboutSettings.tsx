@@ -46,8 +46,8 @@ export default function AboutSettings() {
   }, [read]);
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-6 p-6 text-foreground">
-      <h1 className="m-0 text-2xl font-semibold text-foreground">{t('about.title')}</h1>
+    <div className="settings-content settings-sections text-foreground">
+      <h1 className="m-0 text-lg font-semibold text-foreground">{t('about.title')}</h1>
       <Card>
         <Card.Header>
           <h2 className="m-0 text-base font-semibold">{t('about.version')}</h2>

@@ -1,7 +1,7 @@
 import { t, useLocale as usePageLocale } from '../i18n';
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Button, Card, Checkbox, Input, Select, Stack, cn, extractErrorCode } from '@dgos/ui';
+import { Button, Checkbox, Input, Select, Stack, cn, extractErrorCode } from '@dgos/ui';
 import { usePageError } from '../pageError';
 import { MODEL_KINDS, resolveVendorId, useProviderStore } from '../stores/providerStore';
 import type { ProviderConfig, ProviderVendor, Model, Provider } from '../stores/providerStore';
@@ -459,10 +459,10 @@ export default function ProviderForm({
   };
 
   return (
-    <div className="flex max-w-190 flex-col gap-6">
+    <div className="provider-form">
       {/* 标题 */}
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-4">
-        <h2 className="m-0 min-w-0 wrap-anywhere text-2xl font-semibold text-foreground">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
+        <h2 className="m-0 min-w-0 wrap-anywhere text-lg font-semibold text-foreground">
           {isNewMode ? t('providerForm.new') : provider.name}
         </h2>
         {isEditMode && (
@@ -471,11 +471,8 @@ export default function ProviderForm({
       </header>
 
       {/* 配置区 */}
-      <Card>
-        <Card.Header>
-          <h3 className="m-0 text-base font-semibold">{t('providerForm.configuration')}</h3>
-        </Card.Header>
-        <Card.Body>
+      <section className="settings-section" aria-label={t('providerForm.configuration')}>
+        <h3 className="settings-section-title">{t('providerForm.configuration')}</h3>
           <Stack gap={4}>
             <Stack gap={1}>
               <Input
@@ -608,15 +605,11 @@ export default function ProviderForm({
               )}
             </Stack>
           </Stack>
-        </Card.Body>
-      </Card>
+      </section>
 
       {/* 操作区 */}
-      <Card>
-        <Card.Header>
-          <h3 className="m-0 text-base font-semibold">{t('providerForm.actions')}</h3>
-        </Card.Header>
-        <Card.Body>
+      <section className="settings-section" aria-label={t('providerForm.actions')}>
+        <h3 className="settings-section-title">{t('providerForm.actions')}</h3>
           <Stack gap={3}>
             {needsProbe && (
               <Stack gap={1}>
@@ -671,22 +664,18 @@ export default function ProviderForm({
               <div className="wrap-anywhere rounded-md bg-error-bg p-3 text-sm text-error-text">✗ {modelsError}</div>
             )}
           </Stack>
-        </Card.Body>
-      </Card>
+      </section>
 
       {/* 模型列表 */}
       {(models.length > 0 || isEditMode) && (
-        <Card>
-          <Card.Header>
-            <h3 className="m-0 text-base font-semibold">{t('detail.models')}{models.length})</h3>
-          </Card.Header>
-          <Card.Body>
+        <section className="settings-section" aria-label={t('providerForm.refreshModels')}>
+            <h3 className="settings-section-title">{t('detail.models')}{models.length})</h3>
             <Stack gap={3}>
-              <div className="flex flex-wrap gap-3">
+              <div className="provider-models">
                 {models.map((model) => (
                   <div
                     key={model.id}
-                    className="flex min-w-0 grow basis-60 flex-col gap-1 rounded-lg border border-border bg-background p-3"
+                    className="provider-model-row"
                   >
                     <h4 className="m-0 wrap-anywhere text-sm font-semibold text-foreground">{model.model_name}</h4>
                     <div className="wrap-anywhere font-mono text-xs text-muted-foreground">{model.model_id}</div>
@@ -765,12 +754,11 @@ export default function ProviderForm({
                   {t('providerForm.modelsUpdated')}</p>
               )}
             </Stack>
-          </Card.Body>
-        </Card>
+        </section>
       )}
 
       {/* 底部操作 */}
-      <footer className="flex flex-wrap items-center gap-3 border-t border-border pt-6">
+      <footer className="settings-actions">
         {isEditMode && onDelete && (
           <Button variant="danger" onClick={handleDelete} disabled={saving}>
             {t('detail.delete')}</Button>
@@ -781,7 +769,7 @@ export default function ProviderForm({
           loading={saving}
           disabled={loading || needsNewKey || !formData.name || !formData.base_url || (!isEditMode && !formData.api_key)}
         >
-          {saving ? t('providerForm.saving') : isNewMode ? `💾 ${t('providerForm.create')}` : `💾 ${t('providerForm.saveChanges')}`}
+          {saving ? t('providerForm.saving') : isNewMode ? t('providerForm.create') : t('providerForm.saveChanges')}
         </Button>
       </footer>
     </div>

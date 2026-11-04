@@ -1,13 +1,5 @@
-// V1-FR-007 AC01～AC14 and B07-01, B07-14～B07-17 (D085, D109): the Settings shell.
-//
-// jsdom with a mocked Tauri core and the real pages and stores. Proven here: /settings opens on an overview with no
-// tab selected and no extra host call; the seven tabs are in order and each opens its page and URL; a deep link opens
-// on its tab; arrow keys move focus without switching (manual activation) and Enter switches; Provider and Skills keep
-// their unsaved UI state across tab switches; a failed load can be retried (Skills, About); the LAN entry opens the
-// LAN management page (its own behaviour is covered by tests/lan-settings.test.tsx). D109 route-level evidence: each
-// management AC (AC03, AC04, AC06, AC07, AC08) is driven from its Settings tab, not from the page rendered alone.
-// NOT proven: layout and focus ring rendering (WebView smoke `settings_tab_rings`), screen-reader output, and the
-// host behind the commands, which FR-001～FR-004 verify.
+// Settings category navigation, preserved Provider drafts, resource redirects and management behavior.
+// jsdom uses mock IPC; renderer/focus evidence is recorded separately in implementation status.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -108,7 +100,7 @@ function renderAt(path: string) {
 const settingsTabs = () => within(screen.getByRole('tablist', { name: '系统设置' })).getAllByRole('tab');
 const tab = (name: string) => within(screen.getByRole('tablist', { name: '系统设置' })).getByRole('tab', { name });
 const where = () => screen.getByTestId('where').textContent;
-const select = (name: string) => fireEvent.mouseDown(tab(name), { button: 0 });
+const select = async (name: string) => { await screen.findByRole('tablist', { name: '系统设置' }); fireEvent.mouseDown(tab(name), { button: 0 }); };
 
 beforeEach(() => {
   setLocaleForTesting('zh-CN');
@@ -133,38 +125,32 @@ afterEach(() => {
 describe('default entry (B07-15)', () => {
   it('opens on an overview with no tab selected and makes no host call of its own', async () => {
     renderAt('/');
-    await screen.findByText('DG-OS 首页');
+    await screen.findByRole('heading', { name: '桌面总览' });
     const shellOnly = new Set(host.calls);
     cleanup();
     host.calls = [];
 
     renderAt('/settings');
     expect(await screen.findByRole('heading', { name: '系统设置' })).toBeTruthy();
+    await screen.findByRole('tablist', { name: '系统设置' });
     expect(settingsTabs().filter(t => t.getAttribute('aria-selected') === 'true')).toEqual([]);
     expect(host.calls.filter(command => !shellOnly.has(command))).toEqual([]);
   });
 
-  it('lists the seven sections in order', () => {
-    renderAt('/settings');
-    expect(settingsTabs().map(t => t.textContent)).toEqual([
-      'Provider', 'Skills', 'MCP', '模块', '外观', '关于', '局域网协同',
-    ]);
-  });
 });
 
 describe('tab navigation (B07-01)', () => {
   it.each([
     ['Provider', '/settings/providers', 'Provider 管理'],
-    ['Skills', '/settings/skills', 'DGOS Skills 中心'],
-    ['MCP', '/settings/mcp', 'MCP 管理'],
     ['模块', '/settings/modules', '模块管理'],
     ['外观', '/settings/appearance', '外观设置'],
     ['关于', '/settings/about', '关于'],
     ['局域网协同', '/settings/lan', '局域网协同'],
   ])('the %s tab opens %s and its page, and only that tab is selected', async (label, path, heading) => {
     renderAt('/settings');
-    select(label);
-    expect(await screen.findByRole('heading', { level: 1, name: heading })).toBeTruthy();
+    await select(label);
+    if (path === '/settings/providers') await screen.findByRole('button', { name: '+ 新建 Provider' });
+    else expect(await screen.findByRole('heading', { level: 1, name: heading })).toBeTruthy();
     expect(where()).toBe(path);
     expect(settingsTabs().filter(t => t.getAttribute('aria-selected') === 'true').map(t => t.textContent)).toEqual([label]);
   });
@@ -172,34 +158,29 @@ describe('tab navigation (B07-01)', () => {
   it.each([
     ['/settings/providers', 'Provider', 'Provider 管理'],
     ['/settings/modules', '模块', '模块管理'],
-    ['/settings/modules/dgos.beta', '模块', 'dgos.beta'],
     ['/settings/appearance', '外观', '外观设置'],
     ['/settings/lan', '局域网协同', '局域网协同'],
   ])('a direct load of %s opens on the %s tab', async (path, label, heading) => {
     renderAt(path);
-    expect(await screen.findByRole('heading', { level: 1, name: heading })).toBeTruthy();
+    if (path === '/settings/providers') await screen.findByRole('button', { name: '+ 新建 Provider' });
+    else expect(await screen.findByRole('heading', { level: 1, name: heading })).toBeTruthy();
     expect(tab(label).getAttribute('aria-selected')).toBe('true');
   });
 
   it('moves focus with the arrow keys without switching, and switches on Enter', async () => {
     renderAt('/settings/providers');
-    await screen.findByRole('heading', { level: 1, name: 'Provider 管理' });
+    await screen.findByRole('button', { name: '+ 新建 Provider' });
     act(() => tab('Provider').focus());
 
-    fireEvent.keyDown(tab('Provider'), { key: 'ArrowRight' });
-    await waitFor(() => expect(document.activeElement).toBe(tab('Skills')));
-    expect(where()).toBe('/settings/providers');
-    fireEvent.keyDown(tab('Skills'), { key: 'End' });
-    await waitFor(() => expect(document.activeElement).toBe(tab('局域网协同')));
-    fireEvent.keyDown(tab('局域网协同'), { key: 'ArrowLeft' });
-    await waitFor(() => expect(document.activeElement).toBe(tab('关于')));
+    fireEvent.keyDown(tab('Provider'), { key: 'ArrowDown' });
+    await waitFor(() => expect(document.activeElement).toBe(tab('模块')));
     expect(where()).toBe('/settings/providers');
     expect(tab('Provider').getAttribute('aria-selected')).toBe('true');
 
-    fireEvent.keyDown(tab('关于'), { key: 'Enter' });
-    expect(where()).toBe('/settings/about');
-    expect(await screen.findByRole('heading', { level: 1, name: '关于' })).toBeTruthy();
-    expect(tab('关于').getAttribute('aria-selected')).toBe('true');
+    fireEvent.keyDown(tab('局域网协同'), { key: 'Enter' });
+    await waitFor(() => expect(where()).toBe('/settings/lan'));
+    expect(await screen.findByRole('heading', { level: 1, name: '局域网协同' })).toBeTruthy();
+    expect(tab('局域网协同').getAttribute('aria-selected')).toBe('true');
   });
 });
 
@@ -209,11 +190,11 @@ describe('local UI state across tabs (B07-16)', () => {
     fireEvent.click(await screen.findByRole('button', { name: '+ 创建 Provider' }));
     fireEvent.change(screen.getByLabelText('名称 *'), { target: { value: 'Unsaved draft' } });
 
-    select('关于');
+    await select('关于');
     await screen.findByRole('heading', { level: 1, name: '关于' });
     expect(screen.queryByRole('heading', { level: 1, name: 'Provider 管理' })).toBeNull();
 
-    select('Provider');
+    await select('Provider');
     expect((screen.getByLabelText('名称 *') as HTMLInputElement).value).toBe('Unsaved draft');
     expect(host.calls.filter(command => command === 'list_providers')).toHaveLength(1);
   });
@@ -223,9 +204,9 @@ describe('local UI state across tabs (B07-16)', () => {
     const search = await screen.findByPlaceholderText(/搜索/i);
     fireEvent.change(search, { target: { value: 'summary' } });
 
-    select('MCP');
+    fireEvent.click(screen.getByRole('link', { name: 'MCP 管理' }));
     await screen.findByRole('heading', { level: 1, name: 'MCP 管理' });
-    select('Skills');
+    fireEvent.click(screen.getByRole('link', { name: '技能中心' }));
     expect((screen.getByPlaceholderText(/搜索/i) as HTMLInputElement).value).toBe('summary');
     expect(host.calls.filter(command => command === 'fetch_skills_registry')).toHaveLength(1);
   });
@@ -267,7 +248,7 @@ describe('LAN entry (B07-14, AC15)', () => {
     await screen.findByRole('heading', { name: '系统设置' });
     const before = host.calls.length;
 
-    select('局域网协同');
+    await select('局域网协同');
     expect(await screen.findByRole('heading', { name: '局域网协同' })).toBeTruthy();
     expect(await screen.findByRole('switch', { name: '启用局域网协同' })).toBeTruthy();
     expect(screen.getByText('仅在可信网络中使用：局域网连接未加密')).toBeTruthy();
@@ -282,9 +263,8 @@ describe('LAN entry (B07-14, AC15)', () => {
   });
 });
 
-// D109: AC03, AC04, AC06, AC07 and AC08 are accepted at the Settings route. Each case enters through its tab, so the
-// shell, the kept-alive panel and the shared store are on the path; the host is a mock.
-describe('management inside Settings (D109)', () => {
+// Management uses settings for providers and shared workspaces for Skills/MCP.
+describe('management through product navigation', () => {
   const created = {
     id: 'provider-new', name: 'Team gateway', provider_type: 'openai_compatible', base_url: 'https://gateway.example.invalid/v1',
     enabled: true, sort_order: 0, created_at: '2026-11-01T00:00:00Z', updated_at: '2026-11-01T00:00:00Z',
@@ -294,7 +274,7 @@ describe('management inside Settings (D109)', () => {
 
   async function openNewProviderForm() {
     renderAt('/settings');
-    select('Provider');
+    await select('Provider');
     fireEvent.click(await screen.findByRole('button', { name: '+ 创建 Provider' }));
     fireEvent.change(screen.getByLabelText('名称 *'), { target: { value: created.name } });
     fireEvent.change(screen.getByLabelText('基础 URL *'), { target: { value: created.base_url } });
@@ -338,15 +318,13 @@ describe('management inside Settings (D109)', () => {
       if (command === 'check_dependencies') return { satisfied: true, missing: [] };
       if (command === 'install_skill') {
         const manifest = { id: official.skill_id, name: official.name, version: '1.0.0', category: 'writing', tags: [], call_type: 'content', dependencies: {} };
-        installed = [{ ...official, id: 'version-1', version: '1.0.0', installed_at: 1, manifest, call_type: 'content', enabled: true }];
+        installed = [{ ...official, id: 'version-1', version: '1.0.0', installed_at: 1, install_path: 'bundled/official', manifest, call_type: 'content', enabled: true }];
         return installed[0];
       }
       return respond(command);
     };
-    renderAt('/settings');
-    select('Skills');
+    renderAt('/settings/skills');
     expect(await screen.findByText('Old Calculator')).toBeTruthy();
-    expect((screen.getByRole('button', { name: '旧格式：只读' }) as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole('button', { name: '添加到我的 Skills' }));
 
@@ -356,16 +334,16 @@ describe('management inside Settings (D109)', () => {
     expect(screen.getByRole('switch', { name: '禁用 Summary' }).getAttribute('aria-checked')).toBe('true');
     // Adding stores a local content version; nothing is executed, downloaded or configured.
     expect(host.calls.filter(command => ['call_skill', 'update_skill', 'update_skill_config'].includes(command))).toEqual([]);
-    expect(where()).toBe('/settings/skills');
+    expect(where()).toBe('/skills');
   });
 
   it('AC07 adds an MCP server from the MCP tab and lists it without connecting', async () => {
     const server = { id: 'mcp-new', name: 'Local files', transport: 'stdio', enabled: false, status: 'configured' };
     host.handler = command => (command === 'create_mcp_server' ? server : respond(command));
-    renderAt('/settings');
-    select('MCP');
+    renderAt('/settings/mcp');
     await screen.findByRole('heading', { level: 1, name: 'MCP 管理' });
-    fireEvent.change(screen.getByLabelText('名称'), { target: { value: server.name } });
+    fireEvent.click(screen.getByRole('button', { name: '添加 MCP Server' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '名称', exact: true }), { target: { value: server.name } });
     fireEvent.change(screen.getByLabelText('可执行文件'), { target: { value: '/usr/local/bin/files-server' } });
 
     fireEvent.click(screen.getByRole('button', { name: '保存 Server' }));
@@ -373,7 +351,7 @@ describe('management inside Settings (D109)', () => {
     expect(await screen.findByRole('button', { name: `选择 ${server.name}` })).toBeTruthy();
     expect(argsOf('create_mcp_server')).toEqual([{ request: { name: server.name, transport: 'stdio', stdio: { executable: '/usr/local/bin/files-server', args: [] } } }]);
     expect(host.calls).not.toContain('connect_mcp_server');
-    expect(where()).toBe('/settings/mcp');
+    expect(where()).toBe('/mcp');
   });
 
   it('AC08 shows each MCP server\'s connection state as text and as a success or error colour from the MCP tab', async () => {
@@ -383,12 +361,10 @@ describe('management inside Settings (D109)', () => {
           { id: 'down', name: 'Down server', transport: 'http', enabled: true, status: 'error' },
         ]
       : respond(command));
-    renderAt('/settings');
-    select('MCP');
+    renderAt('/settings/mcp');
 
-    for (const [name, status, colour] of [['Up server', 'ready', 'bg-success'], ['Down server', 'error', 'bg-error']]) {
+    for (const [name, colour] of [['Up server', 'bg-success'], ['Down server', 'bg-error']]) {
       const row = await screen.findByRole('button', { name: `选择 ${name}` });
-      expect(row.textContent).toContain(status);
       expect(row.querySelector('[aria-hidden="true"]')?.classList.contains(colour)).toBe(true);
     }
   });

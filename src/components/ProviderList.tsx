@@ -42,11 +42,10 @@ export default function ProviderList({
   };
 
   return (
-    <aside className="flex min-w-0 max-w-full shrink-0 basis-80 flex-col gap-4 p-4">
-      <div className="flex items-center justify-between gap-3">
+    <aside className="provider-list">
+      <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-           <p className="m-0 text-xs font-semibold uppercase text-muted-foreground">{t('provider.kicker')}</p>
-           <h2 className="m-0 text-lg font-semibold text-foreground">{t('nav.providers')}</h2>
+           <h2 className="m-0 text-sm font-medium text-foreground">{t('nav.providers')}</h2>
         </div>
         <span
           className="inline-flex min-w-8 items-center justify-center rounded-full bg-secondary px-2 py-1 text-sm font-semibold text-foreground"
@@ -71,15 +70,15 @@ export default function ProviderList({
             <div
               key={provider.id}
               className={cn(
-                'flex cursor-pointer flex-col gap-3 rounded-lg border bg-card p-4 text-card-foreground transition-colors hover:bg-muted',
-                selected ? 'border-primary' : 'border-border',
+                'provider-list-item',
+                selected && 'is-selected',
                 !provider.enabled && 'text-muted-foreground',
               )}
-              onClick={() => onSelect(provider)}
+              role="group" aria-label={provider.name}
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
-                  <h3 className="m-0 min-w-0 wrap-anywhere text-base font-semibold">{provider.name}</h3>
+                  <h3 className="m-0 min-w-0 wrap-anywhere text-sm font-medium"><button type="button" className="provider-select" onClick={() => onSelect(provider)}>{provider.name}</button></h3>
                   {selected && hasUnsavedChanges && (
                     <span role="img" aria-label={t('detail.unsaved')} title={t('detail.unsaved')} className="text-error-text">
                       ●
@@ -177,11 +176,6 @@ export default function ProviderList({
                     const vendorName = vendors.find((vendor) => vendor.vendor_id === vendorId)?.display_name ?? vendorId;
                     return <span className="min-w-0 wrap-anywhere text-sm font-semibold">{vendorName}</span>;
                   })()}
-                  <span className="min-w-0 wrap-anywhere text-xs uppercase text-muted-foreground">
-                    {provider.provider_type === 'openai_compatible'
-                      ? 'OpenAI compatible'
-                      : provider.provider_type.replace(/[_-]/g, ' ')}
-                  </span>
                 </div>
                 <span
                   className={cn(
@@ -195,7 +189,6 @@ export default function ProviderList({
 
               <div className="flex items-center justify-between gap-3">
                 <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="text-sm font-semibold">{provider.enabled ? t('provider.available') : t('provider.paused')}</span>
                   <span className="wrap-anywhere text-xs text-muted-foreground">
                     {!provider.enabled
                       ? t('provider.excluded')
@@ -221,7 +214,7 @@ export default function ProviderList({
         })}
       </Stack>
 
-      <Button size="lg" onClick={onNewProvider} className="w-full">
+      <Button size="sm" variant="secondary" onClick={onNewProvider} className="w-full">
          + {t('provider.new')}
       </Button>
 

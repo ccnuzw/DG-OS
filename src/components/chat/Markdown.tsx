@@ -110,7 +110,7 @@ function CodeBlock({ lang, text }: { lang?: string; text: string }) {
           <Button size="sm" variant="ghost" onClick={() => copy(text)}>{t('chat.copyCode')}</Button>
         </span>
       </div>
-      <pre tabIndex={0} aria-label={label ? t('chat.codeLabel', { language: label }) : t('chat.code')} className={cn('chat-code m-0 overflow-x-auto p-3 font-mono text-xs leading-relaxed', FOCUS)}>
+      <pre tabIndex={0} aria-label={label ? t('chat.codeLabel', { language: label }) : t('chat.code')} className={cn('chat-code type-code m-0 overflow-x-auto p-3', FOCUS)}>
         <code>{highlighted ?? text}</code>
       </pre>
     </div>
@@ -152,7 +152,7 @@ function renderInline(tokens: readonly Token[] | undefined): ReactNode[] {
       }
       case 'codespan': {
         const codespan = token as Tokens.Codespan;
-        return <code key={index} className="rounded-sm bg-secondary px-1 font-mono text-xs">{codespan.text}</code>;
+        return <code key={index} className="type-code rounded-sm px-1">{codespan.text}</code>;
       }
       case 'br':
         return <br key={index} />;
@@ -241,13 +241,13 @@ function renderBlocks(tokens: readonly Token[]): ReactNode[] {
 
 function PlainText({ source }: { source: string }) {
   usePageLocale();
-  return <pre className="m-0 whitespace-pre-wrap font-sans text-sm wrap-anywhere">{source}</pre>;
+  return <pre className="type-reading m-0 whitespace-pre-wrap wrap-anywhere">{source}</pre>;
 }
 
 function MarkdownBody({ source }: { source: string }) {
   usePageLocale();
   const tokens = useMemo(() => Lexer.lex(source), [source]);
-  return <div className="text-sm leading-relaxed">{renderBlocks(tokens)}</div>;
+  return <div className="type-reading">{renderBlocks(tokens)}</div>;
 }
 
 interface BoundaryProps { source: string; children: ReactNode }

@@ -16,6 +16,7 @@ import AccountGate from '../src/accounts/AccountGate';
 import { takeCleanupNotice, type AccountState } from '../src/accounts/accountApi';
 import { reloadApp } from '../src/accounts/reload';
 import { resetLocaleForTesting, setLocaleForTesting } from '../src/i18n/runtime';
+import { useChatStore } from '../src/stores/chatStore';
 
 const host = vi.hoisted(() => ({
   calls: [] as Array<[string, unknown]>,
@@ -73,7 +74,7 @@ const typeInto = (label: string | RegExp, value: string, scope: HTMLElement = do
   fireEvent.change(within(scope).getByLabelText(label), { target: { value } });
 const press = (name: string, scope: HTMLElement = document.body) =>
   fireEvent.click(within(scope).getByRole('button', { name }));
-const appVisible = () => screen.findByText('DG-OS 首页');
+const appVisible = () => screen.findByRole('heading', { name: '桌面总览' });
 
 const FORBIDDEN: Record<string, true> = { user_id: true, userid: true, token: true, session: true, account_id: true, accountid: true };
 function forbiddenKeys(value: unknown, found: string[] = []): string[] {
@@ -104,6 +105,7 @@ afterEach(() => {
   act(() => Modal.closeAll());
   act(() => clearToasts());
   cleanup();
+  useChatStore.getState().reset();
   vi.restoreAllMocks();
   resetLocaleForTesting();
 });
@@ -113,7 +115,7 @@ describe('gate', () => {
     reply('get_account_state', fail(1000000), ok(signedIn));
     renderApp();
     expect(await screen.findByRole('heading', { name: '无法读取账户状态' })).toBeTruthy();
-    expect(screen.queryByText('DG-OS 首页')).toBeNull();
+    expect(screen.queryByRole('heading', { name: '桌面总览' })).toBeNull();
     press('重试');
     await appVisible();
     expect(callsOf('get_account_state')).toHaveLength(2);
@@ -131,7 +133,7 @@ describe('gate', () => {
     host.rejections.get_account_state = 'Command sign_in not found';
     renderApp();
     expect(await screen.findByRole('heading', { name: '无法读取账户状态' })).toBeTruthy();
-    expect(screen.queryByText('DG-OS 首页')).toBeNull();
+    expect(screen.queryByRole('heading', { name: '桌面总览' })).toBeNull();
   });
 
   it('a database that could not be opened shows the reason and the file location, and offers no retry', async () => {
@@ -144,7 +146,7 @@ describe('gate', () => {
     expect(screen.getByText(path)).toBeTruthy();
     expect(screen.getByText(/没有修改这个文件/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: '重试' })).toBeNull();
-    expect(screen.queryByText('DG-OS 首页')).toBeNull();
+    expect(screen.queryByRole('heading', { name: '桌面总览' })).toBeNull();
     expect(callsOf('get_account_state')).toHaveLength(1);
   });
 
@@ -170,7 +172,7 @@ describe('first launch (no_accounts)', () => {
     host.state = noAccounts;
     renderApp();
     expect(await screen.findByRole('heading', { name: '欢迎使用 DG-OS' })).toBeTruthy();
-    expect(screen.queryByText('DG-OS 首页')).toBeNull();
+    expect(screen.queryByRole('heading', { name: '桌面总览' })).toBeNull();
 
     typeInto('用户名', 'alice');
     typeInto('密码', 'password1');
@@ -206,7 +208,7 @@ describe('first launch (no_accounts)', () => {
     press('暂不创建，继续使用');
     await appVisible();
     expect(screen.queryByRole('heading', { name: '欢迎使用 DG-OS' })).toBeNull();
-    expect(within(screen.getByRole('navigation')).getByRole('link', { name: '创建账户' })).toBeTruthy();
+    expect(within(screen.getByRole('complementary', { name: '主导航' })).getByRole('link', { name: '创建账户' })).toBeTruthy();
     expect(callsOf('create_account')).toHaveLength(0);
   });
 
@@ -237,7 +239,7 @@ describe('signed out', () => {
     expect(screen.getByRole('radio', { name: 'bob' }).getAttribute('aria-checked')).toBe('true');
     expect(screen.getByRole('radio', { name: 'alice' }).getAttribute('aria-checked')).toBe('false');
     expect(screen.queryByText(/创建|新建|注册/)).toBeNull();
-    expect(screen.queryByText('DG-OS 首页')).toBeNull();
+    expect(screen.queryByRole('heading', { name: '桌面总览' })).toBeNull();
   });
 
   it('shows the wrong-password text, the throttle seconds and the deletion notice without reloading', async () => {
@@ -279,11 +281,14 @@ describe('signed in: nav menu', () => {
   it('shows the current user, switches to another user with that user\'s password and reloads', async () => {
     renderApp();
     await appVisible();
-    const nav = screen.getByRole('navigation');
+    const nav = screen.getByRole('complementary', { name: '主导航' });
     expect(within(nav).getByText('alice')).toBeTruthy();
-    expect(within(nav).getByRole('link', { name: '账户' })).toBeTruthy();
+    fireEvent.pointerDown(within(nav).getByRole('button', { name: 'alice' }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole('menuitem', { name: '账户' })).toBeTruthy();
 
-    press('切换用户');
+    const cancel = vi.spyOn(useChatStore.getState(), 'cancelAll');
+    useChatStore.getState().setDraft('running-session', 'keep current draft');
+    fireEvent.click(screen.getByRole('menuitem', { name: '切换用户' }));
     const dialog = await screen.findByRole('dialog', { name: '切换用户' });
     expect(within(dialog).getByRole('radio', { name: 'bob' }).getAttribute('aria-checked')).toBe('true');
     expect(within(dialog).queryByRole('radio', { name: 'alice' })).toBeNull();
@@ -293,8 +298,10 @@ describe('signed in: nav menu', () => {
     press('切换', dialog);
     expect(await within(dialog).findByText('用户名或密码错误')).toBeTruthy();
     expect(reloadApp).not.toHaveBeenCalled();
-    expect(screen.getByText('DG-OS 首页')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '桌面总览', hidden: true })).toBeTruthy();
     expect(within(nav).getByText('alice')).toBeTruthy();
+    expect(cancel).not.toHaveBeenCalled();
+    expect(useChatStore.getState().sessionDrafts['running-session']).toBe('keep current draft');
 
     reply('sign_in', ok({ ...signedIn, current: bob }));
     typeInto('密码', 'good-password', dialog);
@@ -307,7 +314,8 @@ describe('signed in: nav menu', () => {
     renderApp();
     await appVisible();
     reply('sign_out', ok(signedOut));
-    press('注销');
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'alice' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: '注销' }));
     await waitFor(() => expect(reloadApp).toHaveBeenCalledTimes(1));
     expect(callsOf('sign_out')).toHaveLength(1);
   });

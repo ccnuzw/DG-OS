@@ -1,12 +1,14 @@
-/* Auto-fill grids that Tailwind utilities cannot express without arbitrary values (design rule R2). */
-.skills-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(22rem, 100%), 1fr));
-  gap: var(--spacing-4);
-}
-
-.skills-detail-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(14rem, 100%), 1fr));
-  gap: var(--spacing-2);
+/* Resource grid and sticky inspector share the product's compact geometry. */
+.skills-page { min-width: 0; container-type: inline-size; }
+.skills-content { min-width: 0; max-width: calc(1180rem / 14); }
+.skills-resource-layout { grid-template-columns: minmax(0, 1.5fr) minmax(calc(300rem / 14), 0.8fr); align-items: start; gap: var(--spacing-3); overflow: visible; }
+.skills-resource-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(220rem / 14)), 1fr)); align-items: stretch; gap: var(--spacing-2); overflow: visible; }
+.skills-resource-detail { position: sticky; top: 0; max-height: 70dvh; overflow: auto; }
+.skills-facts { grid-template-columns: minmax(5rem, auto) minmax(0, 1fr); }
+.skills-facts dt { color: var(--text-secondary); }
+.skills-facts dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+@container (max-width: 760px) {
+  .skills-resource-layout { grid-template-columns: minmax(0, 1fr); }
+  .skills-resource-list, .skills-resource-detail { max-height: none; }
+  .skills-resource-detail { position: static; }
 }

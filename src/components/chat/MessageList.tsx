@@ -5,6 +5,8 @@ import { generationErrorText, useChatStore, type ChatMessage, type ChatToolPropo
 import { ChatNotice, FOCUS } from './ChatNotice';
 import { COPY_TEXT, useCopyFeedback } from './clipboard';
 import Markdown from './Markdown';
+import Disclosures from './Disclosures';
+import { AssetPreview } from './Attachments';
 
 const LONG_CONTENT_CHARS = 4000;
 const ROLE_LABEL = { user: 'chat.user', assistant: 'chat.assistant' } as const;
@@ -33,7 +35,7 @@ function MessageItem({ message, isLast, canRegenerate, dropped }: { message: Cha
   const errorText = message.status === 'completed' ? null : messageErrorText(message.error_code);
   return (
     <li>
-      <article aria-label={t('chat.messageAria', { role: t(ROLE_LABEL[message.role]) })} className={cn('rounded-lg border border-border p-3', assistant ? 'bg-card' : 'bg-background')}>
+      <article aria-label={t('chat.messageAria', { role: t(ROLE_LABEL[message.role]) })} className={cn('chat-message', assistant ? 'chat-assistant-message' : 'chat-user-message')}>
         <header className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <strong className="text-sm text-foreground">{t(ROLE_LABEL[message.role])}</strong>
           {message.status === 'interrupted' ? <Badge tone="warning">{t('chat.interrupted')}</Badge> : null}
@@ -43,8 +45,9 @@ function MessageItem({ message, isLast, canRegenerate, dropped }: { message: Cha
         <div className={cn(collapsed && 'max-h-96 overflow-y-auto')} tabIndex={collapsed ? 0 : undefined} aria-label={collapsed ? t('chat.longScrollable') : undefined}>
           {assistant
             ? (message.content ? <Markdown source={message.content} /> : <p className="m-0 text-sm text-muted-foreground">{t('chat.emptyContent')}</p>)
-            : <p className="m-0 whitespace-pre-wrap text-sm wrap-anywhere">{message.content}</p>}
+            : <p className="type-reading m-0 whitespace-pre-wrap wrap-anywhere">{message.content}</p>}
         </div>
+        {message.assets?.map(asset => <AssetPreview key={asset.id} asset={asset} />)}
         {long ? <Button size="sm" variant="ghost" className="mt-1" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? t('chat.collapseLong') : t('chat.expandAll')}</Button> : null}
         {assistant && dropped > 0 ? <p className="mt-2 mb-0 text-xs text-muted-foreground">{t('chat.omitted', { count: formatNumber(dropped) })}</p> : null}
         {assistant && message.finish_reason === 'length' ? <p className="mt-2 mb-0 text-xs text-warning-text">{t('chat.truncated')}</p> : null}
@@ -112,7 +115,7 @@ function StreamingBubble({ generation }: { generation: Generation }) {
   const status = generation.stopping ? t('chat.stopping') : generation.toolsMode && generation.phase === 'running' ? t('chat.waitingToolsModel') : t(PHASE_TEXT[generation.phase]);
   return (
     <li>
-      <article aria-label={t('chat.streamingAria')} aria-busy="true" className="rounded-lg border border-border bg-card p-3">
+      <article aria-label={t('chat.streamingAria')} aria-busy="true" className="chat-message chat-assistant-message">
         <header className="mb-2 flex flex-wrap items-center gap-2">
           <strong className="text-sm">{t('chat.assistant')}</strong>
           <Loading size="sm" label={status} />
@@ -137,6 +140,8 @@ export default function MessageList() {
   const messages = useChatStore(state => state.messages);
   const generation = useChatStore(state => state.generation);
   const activeId = useChatStore(state => state.activeSession?.id ?? null);
+  const scrollTop = useChatStore(state => activeId ? state.sessionScrollTop[activeId] ?? 0 : 0);
+  const setSessionScrollTop = useChatStore(state => state.setSessionScrollTop);
   const olderCursor = useChatStore(state => state.olderCursor);
   const trimmed = useChatStore(state => state.newerTrimmed);
   const loading = useChatStore(state => state.messagesLoading);
@@ -161,22 +166,23 @@ export default function MessageList() {
     const element = container.current;
     if (!element) return;
     if (previousHeight.current !== null) {
-      // Older messages were prepended: keep the same message under the pointer.
       element.scrollTop += element.scrollHeight - previousHeight.current;
       previousHeight.current = null;
+    } else if (scrollTop > 0 && !stick.current) {
+      element.scrollTop = scrollTop;
     } else if (stick.current) {
       element.scrollTop = element.scrollHeight;
     }
-  }, [firstId, visible.length, live?.text, live?.phase, live?.proposal?.id]);
+  }, [activeId, scrollTop, firstId, visible.length, live?.text, live?.phase, live?.proposal?.id]);
 
   const onScroll = () => {
     const element = container.current;
-    if (element) stick.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+    if (element) { stick.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48; if (activeId) setSessionScrollTop(activeId, element.scrollTop); }
   };
 
   return (
-    <div ref={container} onScroll={onScroll} className="min-h-0 grow overflow-y-auto" aria-busy={loading}>
-      <div className="flex flex-col gap-3 p-1">
+    <div ref={container} onScroll={onScroll} className="chat-message-scroll" aria-busy={loading}>
+      <div className="chat-reading-column flex flex-col gap-3">
         {olderCursor !== null ? (
           <Button variant="secondary" loading={loading} onClick={() => { previousHeight.current = container.current?.scrollHeight ?? null; void loadOlder(); }}>{t('chat.earlier')}</Button>
         ) : null}
@@ -188,7 +194,7 @@ export default function MessageList() {
           </div>
         ) : null}
         {!loading && !error && !visible.length && !live ? <p className="m-0 text-sm text-muted-foreground">{t('chat.noMessages')}</p> : null}
-        <ol aria-label={t('chat.messages')} className="m-0 flex list-none flex-col gap-3 p-0">
+        <ol aria-label={t('chat.messages')} className="chat-message-list">
           {visible.map(message => (
             <MessageItem key={message.id} message={message} isLast={message.id === last?.id}
               canRegenerate={!live && !trimmed && !stale} dropped={dropped[message.id] ?? 0} />
@@ -201,6 +207,7 @@ export default function MessageList() {
             <Button variant="secondary" onClick={() => void loadLatest()}>{t('chat.latest')}</Button>
           </div>
         ) : null}
+        <Disclosures />
       </div>
     </div>
   );

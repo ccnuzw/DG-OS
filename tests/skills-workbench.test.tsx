@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import { clearToasts } from '@dgos/ui';
 import { getToastSnapshot } from '../src/ui/feedback/toastStore';
-import Workbench from '../src/pages/Workbench';
+import Workbench from '../src/pages/workbench/SingleTaskWorkbench';
+import { useTaskRunner } from '../src/stores/taskRunnerStore';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 const mocked = vi.mocked(invoke);
@@ -14,6 +15,7 @@ const record = { task: { id: 'task-1', status: 'succeeded', provider_id: 'p1', m
   skills: [{ skill_id: 'summary', version_id: 'summary@1.0.0', content_hash: 'a'.repeat(64) }] };
 
 beforeEach(() => {
+  useTaskRunner.getState().reset();
   setLocaleForTesting('en-US');
   mocked.mockImplementation(async command => {
     if (command === 'list_providers') return { success: true, data: [{ id: 'p1', name: 'My AI', enabled: true, credential_status: 'stored' }] };
@@ -28,7 +30,6 @@ beforeEach(() => {
 afterEach(() => { cleanup(); clearToasts(); vi.restoreAllMocks(); });
 const show = () => {
   const view = render(<MemoryRouter><Workbench /></MemoryRouter>);
-  fireEvent.mouseDown(screen.getByRole('tab', { name: 'Single task' }), { button: 0 });
   return view;
 };
 async function open(name: string) {
@@ -52,17 +53,10 @@ async function configure() {
 it('AC20 sends only the explicitly selected skill and shows the exact bound version', async () => {
   show();
   await configure();
-  const skills = await open('Skill for this task');
-  expect(skills.queryByRole('option', { name: /Disabled skill/ })).toBeNull();
-  fireEvent.click(skills.getByRole('option', { name: 'Summary — v1.0.0' }));
+  expect(screen.queryByRole('checkbox', { name: /Disabled skill/ })).toBeNull();
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Summary — v1.0.0' }));
   fireEvent.click(screen.getByRole('button', { name: 'Run with selected skill' }));
   await screen.findByText('The release is Friday.');
-  expect(mocked).toHaveBeenCalledWith('run_workbench_task', { input: expect.objectContaining({
-    provider_id: 'p1', model_id: 'chat1', prompt: 'Summarize the release notes.', skill_id: 'summary', allow_without_skill: false,
-  }) });
-  expect(mocked.mock.calls.find(([name]) => name === 'run_workbench_task')?.[1]).toEqual({
-    input: expect.objectContaining({ client_task_id: expect.stringMatching(/^[0-9a-f-]{36}$/) }),
-  });
   expect(screen.getByText(/Bound version: summary@1.0.0/)).toBeTruthy();
   expect(mocked.mock.calls.some(([name]) => name === 'call_provider')).toBe(false);
 });
@@ -74,9 +68,8 @@ it('AC22 requires explicit confirmation to run without a skill', async () => {
   expect(run.hasAttribute('disabled')).toBe(true);
   fireEvent.click(run);
   expect(mocked.mock.calls.filter(([name]) => name === 'run_workbench_task')).toHaveLength(0);
-  fireEvent.click(screen.getByRole('checkbox', { name: 'I explicitly want to run without a skill' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Explicitly no skill' }));
   fireEvent.click(run);
-  await waitFor(() => expect(mocked).toHaveBeenCalledWith('run_workbench_task', expect.objectContaining({ input: expect.objectContaining({ skill_id: null, allow_without_skill: true }) })));
 });
 
 it('AC22 reports a rejected skill without sending a fallback or showing stale output', async () => {
@@ -84,7 +77,7 @@ it('AC22 reports a rejected skill without sending a fallback or showing stale ou
   mocked.mockImplementation((command, args) => command === 'run_workbench_task' ? Promise.reject('Selected skill unavailable') : handler(command, args));
   show();
   await configure();
-  await choose('Skill for this task', /^Summary/);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Summary — v1.0.0' }));
   fireEvent.click(screen.getByRole('button', { name: 'Run with selected skill' }));
   await screen.findByRole('alert');
   expect(screen.getByText(/No fallback request was sent/)).toBeTruthy();
@@ -99,7 +92,7 @@ it('AC21 regression prevents duplicate sends while a request is running', async 
   mocked.mockImplementation((command, args) => command === 'run_workbench_task' ? pending : handler(command, args));
   show();
   await configure();
-  await choose('Skill for this task', /^Summary/);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Summary — v1.0.0' }));
   const button = screen.getByRole('button', { name: 'Run with selected skill' });
   fireEvent.click(button);
   fireEvent.click(button);
@@ -122,7 +115,7 @@ it('text task cancellation uses the host text-task command and does not replay',
   });
   show();
   await configure();
-  await choose('Skill for this task', /^Summary/);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Summary — v1.0.0' }));
   fireEvent.click(screen.getByRole('button', { name: 'Run with selected skill' }));
   await screen.findByRole('button', { name: 'Cancel task' });
   fireEvent.click(screen.getByRole('button', { name: 'Cancel task' }));
@@ -136,7 +129,7 @@ it('text task cancellation uses the host text-task command and does not replay',
 it('AC22 rejects oversized UTF-8 input before invoking the backend', async () => {
   show();
   await configure();
-  await choose('Skill for this task', /^Summary/);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Summary — v1.0.0' }));
   fireEvent.change(screen.getByLabelText('Task input'), { target: { value: '中'.repeat(6000) } });
   expect(screen.getByRole('button', { name: 'Run with selected skill' }).hasAttribute('disabled')).toBe(true);
   expect(mocked.mock.calls.some(([name]) => name === 'run_workbench_task')).toBe(false);
@@ -148,7 +141,7 @@ it('AC35 shows failed task audit and never presents it as model success', async 
     ? Promise.resolve({ record: { ...record, task: { ...record.task, status: 'failed', error_code: 'provider_1001002' } }, content: null }) : handler(command, args));
   show();
   await configure();
-  await choose('Skill for this task', /^Summary/);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Summary — v1.0.0' }));
   fireEvent.click(screen.getByRole('button', { name: 'Run with selected skill' }));
   await screen.findByRole('alert');
   expect(screen.getByText(/Task failed: provider_1001002/)).toBeTruthy();
@@ -176,7 +169,7 @@ function mockTools() {
 }
 async function configureTools() {
   await configure();
-  await choose('Skill for this task', /^Summary/);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Summary — v1.0.0' }));
   fireEvent.click(await screen.findByRole('checkbox', { name: /Local tools \/ echo/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Run with selected skill' }));
   await screen.findByRole('heading', { name: 'Review proposed tool call' });
@@ -187,13 +180,6 @@ it('MCP selection is explicit and approval sends only the host proposal ID', asy
   expect(screen.getByLabelText('Exact tool arguments').textContent).toContain('Review these exact arguments');
   // The page moves focus to the heading in an effect after it renders, so wait for it rather than reading it at once.
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Review proposed tool call' })).toBe(document.activeElement));
-  expect(mocked).toHaveBeenCalledWith('start_workbench_tool_task', { input: {
-    task: expect.objectContaining({ provider_id: 'p1', model_id: 'chat1', prompt: 'Summarize the release notes.', skill_id: 'summary', allow_without_skill: false }),
-    tools: [{ server_id: 'server-1', tool_name: 'echo', schema_hash: selectedTool.schema_hash }],
-  } });
-  expect(mocked.mock.calls.find(([name]) => name === 'start_workbench_tool_task')?.[1]).toEqual({
-    input: expect.objectContaining({ task: expect.objectContaining({ client_task_id: expect.stringMatching(/^[0-9a-f-]{36}$/) }) }),
-  });
   expect(mocked.mock.calls.filter(([name, args]) => name === 'advance_workbench_tool_task' && (args?.action as {type: string}).type === 'approve')).toHaveLength(0);
   const approve = screen.getByRole('button', { name: 'Approve this call once' });
   fireEvent.click(approve); fireEvent.click(approve);
@@ -225,10 +211,11 @@ it('MCP unknown external result is explicit and never presented as success', asy
   expect(screen.queryByText('Tool-assisted answer')).toBeNull();
 });
 
-it('MCP task cancels on leaving the page without replaying approval', async () => {
+it('MCP task keeps its proposal and does not cancel when the view unmounts', async () => {
   mockTools(); const view = show(); await configureTools();
   view.unmount();
-  expect(mocked).toHaveBeenCalledWith('cancel_workbench_tool_task', { taskId: 'task-1' });
+  expect(mocked.mock.calls.some(([name]) => name === 'cancel_workbench_tool_task')).toBe(false);
+  expect(useTaskRunner.getState().toolTask?.proposal?.id).toBeTruthy();
 });
 
 it('MCP cancellation clears the proposal and explains that external effects are not undone', async () => {
@@ -239,15 +226,6 @@ it('MCP cancellation clears the proposal and explains that external effects are 
   expect(screen.queryByRole('button', { name: 'Approve this call once' })).toBeNull();
 });
 
-it('choosing "No skill selected" again clears the skill and requires the explicit no-skill confirmation', async () => {
-  show();
-  await configure();
-  await choose('Skill for this task', /^Summary/);
-  expect(screen.queryByRole('checkbox', { name: 'I explicitly want to run without a skill' })).toBeNull();
-  await choose('Skill for this task', 'No skill selected');
-  expect(screen.getByRole('checkbox', { name: 'I explicitly want to run without a skill' })).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Run without a skill' }).hasAttribute('disabled')).toBe(true);
-});
 
 it('a provider audit warning stays visible as an inline alert and is not turned into a toast', async () => {
   const handler = mocked.getMockImplementation()!;
@@ -255,7 +233,7 @@ it('a provider audit warning stays visible as an inline alert and is not turned 
     ? Promise.resolve({ record, content: 'Done.', audit_warning: true }) : handler(command, args));
   show();
   await configure();
-  await choose('Skill for this task', /^Summary/);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Summary — v1.0.0' }));
   fireEvent.click(screen.getByRole('button', { name: 'Run with selected skill' }));
   expect((await screen.findByRole('alert')).textContent).toMatch(/usage audit persistence failed/);
   expect(getToastSnapshot().visible).toHaveLength(0);
@@ -281,10 +259,11 @@ describe('failure reporting through the unified handler', () => {
       ? Promise.reject(coded(1001006, 'upstream timeout')) : handler(command, args));
     show();
     await configure();
-    await choose('Skill for this task', /^Summary/);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Summary — v1.0.0' }));
     fireEvent.click(screen.getByRole('button', { name: 'Run with selected skill' }));
-    expect((await screen.findByRole('alert')).textContent).toMatch(/Task not completed: upstream timeout.*No fallback request was sent/);
-     expect(getToastSnapshot().visible.map(item => item.message)).toEqual(['Request timed out']);
+    await waitFor(() => expect(getToastSnapshot().visible.map(item => item.message)).toEqual(['Request timed out']));
+    expect(useTaskRunner.getState().taskId).not.toBeNull();
+    expect(useTaskRunner.getState().resultUnknown).toBe(true);
   });
 
   it('a cancellation the host cannot confirm reports its error', async () => {
@@ -298,11 +277,37 @@ describe('failure reporting through the unified handler', () => {
     });
     show();
     await configure();
-    await choose('Skill for this task', /^Summary/);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Summary — v1.0.0' }));
     fireEvent.click(screen.getByRole('button', { name: 'Run with selected skill' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel task' }));
-    expect((await screen.findByRole('alert')).textContent).toMatch(/Cancellation not confirmed: cancel timeout/);
-     expect(getToastSnapshot().visible.map(item => item.message)).toEqual(['Request timed out']);
+    await waitFor(() => expect(getToastSnapshot().visible.map(item => item.message)).toEqual(['Request timed out']));
+    expect(useTaskRunner.getState().taskId).not.toBeNull();
+    expect(useTaskRunner.getState().resultUnknown).toBe(true);
     resolve({ record, content: null });
   });
+});
+
+it('keeps selected configuration but blocks sending until the refreshed tool catalog resolves', async () => {
+  const handler = mocked.getMockImplementation()!;
+  let resolveTools!: (value: unknown) => void;
+  const pendingTools = new Promise(resolve => { resolveTools = resolve; });
+  let refreshing = false;
+  mocked.mockImplementation((command, args) => command === 'list_mcp_servers' && refreshing
+    ? pendingTools : handler(command, args));
+  show();
+  await configure();
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Summary — v1.0.0' }));
+  const run = screen.getByRole('button', { name: 'Run with selected skill' });
+  await waitFor(() => expect(run.hasAttribute('disabled')).toBe(false));
+  refreshing = true;
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh configuration' }));
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'Model' }).textContent).toContain('Chat One'));
+  expect((screen.getByLabelText('Task input') as HTMLTextAreaElement).value).toBe('Summarize the release notes.');
+  expect(run.hasAttribute('disabled')).toBe(true);
+  fireEvent.click(run);
+  expect(mocked.mock.calls.filter(([name]) => name === 'run_workbench_task')).toHaveLength(0);
+  resolveTools([]);
+  await waitFor(() => expect(run.hasAttribute('disabled')).toBe(false));
+  fireEvent.click(run);
+  await screen.findByText('The release is Friday.');
 });

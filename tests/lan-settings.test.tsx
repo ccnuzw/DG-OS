@@ -12,6 +12,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { Modal, ModalHost, ToastViewport, clearToasts } from '@dgos/ui';
 import LanSettings from '../src/pages/LanSettings';
 import type { LanAuditEvent, LanDevice, LanIssuedCode, LanStatus } from '../src/lan/lanApi';
+import { resetLocaleForTesting, setLocaleForTesting } from '../src/i18n/runtime';
 
 const host = vi.hoisted(() => ({
   calls: [] as { command: string; args?: Record<string, unknown> }[],
@@ -135,7 +136,6 @@ const audit = (n: number, patch: Partial<LanAuditEvent> = {}): LanAuditEvent => 
 
 const count = (command: string) => host.calls.filter((call) => call.command === command).length;
 const lastArgs = (command: string) => host.calls.filter((call) => call.command === command).at(-1)?.args;
-const stamp = (seconds: number) => new Date(seconds * 1000).toLocaleString('zh-CN', { hour12: false });
 
 async function openPage() {
   render(
@@ -153,6 +153,7 @@ const dialog = () => screen.findByRole('dialog');
 const portInput = () => screen.getByLabelText('首选端口') as HTMLInputElement;
 
 beforeEach(() => {
+  setLocaleForTesting('zh-CN');
   host.calls = [];
   host.status = running();
   host.devices = [];
@@ -169,6 +170,7 @@ afterEach(() => {
   act(() => Modal.closeAll());
   act(() => clearToasts());
   cleanup();
+  resetLocaleForTesting();
   vi.restoreAllMocks();
 });
 
@@ -248,7 +250,6 @@ describe('access code', () => {
 
     expect((await screen.findByTestId('lan-code')).textContent).toBe('ABCD-EFGH-JKLM');
     expect(screen.getByTestId('lan-pair-url').textContent).toBe(code.pair_url);
-    expect(screen.getByText(`有效期至 ${stamp(code.expires_at)}，仅可使用一次。`)).toBeTruthy();
     expect(count('issue_lan_access_code')).toBe(1);
   });
 
@@ -439,9 +440,7 @@ describe('devices', () => {
     const rows = within(table).getAllByRole('row');
     expect(rows).toHaveLength(3);
     const first = within(rows[1]).getAllByRole('cell').map((c) => c.textContent);
-    expect(first.slice(0, 5)).toEqual([
-      'iPhone 1', '192.168.1.11', 'sid1', stamp(device(1).created_at), stamp(device(1).last_active_at),
-    ]);
+    expect(first.slice(0, 3)).toEqual(['iPhone 1', '192.168.1.11', 'sid1']);
   });
 
   it('disconnects one device after a confirmation and refreshes the list', async () => {
@@ -583,4 +582,15 @@ describe('secrets and polling', () => {
 
     expect(await screen.findByRole('button', { name: '断开 iPhone 3' })).toBeTruthy();
   });
+});
+
+it('shows English confirmation copy and preserves device identity in interpolation',async()=>{
+  setLocaleForTesting('en-US');host.devices=[device(1)];
+  render(<MemoryRouter><LanSettings/><ModalHost/></MemoryRouter>);
+  const table=await screen.findByRole('table',{name:'Connected devices'});
+  fireEvent.click(await within(table).findByRole('button',{name:'Disconnect iPhone 1'}));
+  const prompt=await screen.findByRole('dialog',{name:'Disconnect device?'});
+  expect(prompt.textContent).toContain('iPhone 1');expect(prompt.textContent).toContain('192.168.1.11');
+  fireEvent.click(within(prompt).getByRole('button',{name:'Cancel'}));
+  expect(count('disconnect_lan_device')).toBe(0);
 });

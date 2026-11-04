@@ -1,0 +1,27 @@
+.desktop-page { max-width: calc(1200rem / 14); min-width: 0; margin-inline: auto; padding: var(--spacing-5); color: var(--text-primary); }
+.desktop-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: var(--spacing-3); }
+.desktop-header h1 { margin: 0; font-size: var(--font-size-lg); font-weight: 600; }
+.desktop-header p { margin: var(--spacing-1) 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
+.desktop-header details { position: relative; font-size: var(--font-size-sm); }
+.desktop-header summary { cursor: pointer; }
+.desktop-header label { display: flex; gap: var(--spacing-2); padding-block: var(--spacing-2); }
+.desktop-shortcuts { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr)); gap: var(--spacing-4); padding-block: var(--spacing-5); }
+.desktop-shortcut { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: var(--spacing-2); padding: var(--spacing-3); border: 0; border-radius: var(--radius-lg); background: transparent; color: inherit; font: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.desktop-shortcut:hover { background: var(--surface-hover); }
+.desktop-shortcut:disabled { opacity: .5; cursor: not-allowed; }
+.desktop-icon { display: flex; justify-content: center; align-items: center; width: 3rem; height: 3rem; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-panel); color: var(--color-primary); }
+.desktop-recent { width: 60%; box-sizing: border-box; padding: var(--spacing-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-panel); }
+.desktop-page h2 { margin: 0 0 var(--spacing-3); font-size: var(--font-size-sm); font-weight: 600; }
+.desktop-recent-list { display: flex; flex-direction: column; gap: var(--spacing-1); }
+.desktop-recent-list button { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-3); width: 100%; min-width: 0; padding: var(--spacing-3); border: 0; border-radius: var(--radius-md); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.desktop-recent-list button:hover { background: var(--surface-hover); }
+.desktop-recent-list button > span:first-of-type { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.desktop-recent time, .desktop-status p { color: var(--text-secondary); font-size: var(--font-size-xs); }
+.desktop-status > button { margin-right: var(--spacing-2); }
+.desktop-page button:focus-visible, .desktop-page summary:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.desktop-overview { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: var(--spacing-4); margin-top: var(--spacing-5); }
+.desktop-overview > section { min-width: 0; padding: var(--spacing-5); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-panel); }
+.desktop-start { display: flex; flex-direction: column; gap: var(--spacing-4); }
+.desktop-start p { flex: 1; margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
+.desktop-shortcuts { padding: var(--spacing-3); margin-block: var(--spacing-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-panel); }
+@media (max-width: 800px) { .desktop-overview { grid-template-columns: minmax(0, 1fr); } .desktop-recent { width: 100%; } }

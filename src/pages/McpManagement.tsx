@@ -4,10 +4,13 @@ import { Button, Card, Checkbox, Input, Loading, Modal, Select, Stack, Switch, c
 import type { ConfirmOptions, ModalHandle } from '@dgos/ui';
 import { usePageError } from '../pageError';
 import { formatDateTime } from '../i18n';
+import { useSurfaceCloseGuard, useSurfaceActive, useSurfaceStatus } from '../workspace/SurfaceContext';
+import { confirmDiscard } from '../workspace/closeCoordinator';
 import {
   useMcpStore, mcpErrorMessage, McpServer, McpStatus, McpTool, McpTransport,
   CreateMcpServerRequest, CallMcpToolRequest, CallMcpToolResponse,
 } from '../stores/mcpStore';
+import './McpManagement.css';
 
 const emptyConfig = (): CreateMcpServerRequest => ({
   name: '', transport: 'stdio', stdio: { executable: '', args: [] },
@@ -45,10 +48,10 @@ function useSingleConfirm() {
   };
 }
 
-function CardTitle({ kicker, title, aside }: { kicker: string; title: ReactNode; aside?: ReactNode }) {
+function CardTitle({ title, aside }: { kicker?: string; title: ReactNode; aside?: ReactNode }) {
   usePageLocale();
   return <Card.Header className="flex flex-wrap items-start justify-between gap-3">
-    <div className="min-w-0"><span className={KICKER}>{kicker}</span><h2 className="m-0 text-lg font-semibold wrap-anywhere">{title}</h2></div>
+    <h2 className="m-0 min-w-0 text-sm font-semibold wrap-anywhere">{title}</h2>
     {aside}
   </Card.Header>;
 }
@@ -71,13 +74,16 @@ function ServerForm({ editing, onSaved, onCancel }: {
   const [configReady, setConfigReady] = useState(!editing);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const baseline = useRef(JSON.stringify({ config: emptyConfig(), argv: '[]' }));
+  useSurfaceStatus({ dirty: baseline.current !== JSON.stringify({ config, argv }) });
+  useSurfaceCloseGuard(async () => !savingRef.current && (baseline.current === JSON.stringify({ config, argv }) || await confirmDiscard()));
   useEffect(() => {
     let current = true;
     setError(''); setArgv('[]'); setConfig(emptyConfig()); setLoading(false); setConfigReady(!editing);
     if (!editing) return;
     setLoading(true);
     getConfig(editing.id).then(value => {
-      if (current) { setConfig(value); setArgv(JSON.stringify(value.stdio?.args ?? [])); setConfigReady(true); }
+      if (current) { setConfig(value); setArgv(JSON.stringify(value.stdio?.args ?? [])); baseline.current = JSON.stringify({ config: value, argv: JSON.stringify(value.stdio?.args ?? []) }); setConfigReady(true); }
     }).catch(error => { if (current) { setError(mcpErrorMessage(error)); report.current(error); } })
       .finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
@@ -108,7 +114,7 @@ function ServerForm({ editing, onSaved, onCancel }: {
     savingRef.current = true; setSaving(true);
     try {
       const server = editing ? await update(editing.id, request) : await create(request);
-      setConfig(emptyConfig()); setArgv('[]'); onSaved(server);
+      setConfig(emptyConfig()); setArgv('[]'); baseline.current = JSON.stringify({ config: emptyConfig(), argv: '[]' }); onSaved(server);
     } catch (error) { setError(mcpErrorMessage(error)); reportError(error); }
     finally { savingRef.current = false; setSaving(false); }
   }
@@ -152,7 +158,7 @@ function ServerForm({ editing, onSaved, onCancel }: {
       </Card.Body>
       <Card.Footer className="flex-wrap justify-start">
         <Button type="submit" disabled={frozen} loading={saving}>{saving ? t('providerForm.saving') : editing ? t('mcp.saveChanges') : t('mcp.saveServer')}</Button>
-        {editing && <Button type="button" variant="secondary" disabled={saving} onClick={onCancel}>{t('mcp.cancelEditing')}</Button>}
+        <Button type="button" variant="secondary" disabled={saving} onClick={() => { if (baseline.current === JSON.stringify({ config, argv })) onCancel(); else void confirmDiscard().then(discard => { if (discard) onCancel(); }); }}>{t('common.cancel')}</Button>
       </Card.Footer>
     </form>
   </Card>;
@@ -164,6 +170,8 @@ function Credentials({ server }: { server: McpServer }) {
   const reportError = usePageError('McpManagement');
   const confirm = useSingleConfirm();
   const [token, setValue] = useState('');
+  const surfaceActive = useSurfaceActive();
+  useEffect(() => { if (!surfaceActive) setValue(''); }, [surfaceActive]);
   const [notice, setNotice] = useState('');
   const busy = pending.includes(server.id);
   async function save(event: FormEvent) {
@@ -314,66 +322,69 @@ export default function McpManagement() {
   const [editing, setEditing] = useState<McpServer | null>(null);
   const [tool, setTool] = useState<McpTool | null>(null);
   const [notice, setNotice] = useState('');
+  const [formOpen, setFormOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const filteredServers = servers.filter(server => server.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()) && (statusFilter === 'all' || (statusFilter === 'ready' ? server.status === 'ready' || server.status === 'degraded' : server.status !== 'ready' && server.status !== 'degraded')));
   const selectedServer = servers.find(server => server.id === selected);
   const toolServer = tool ? servers.find(server => server.id === tool.server_id) : null;
   useEffect(() => { void fetch(); }, [fetch]);
   useEffect(() => { if (selected) { void loadTools(selected); void fetchLogs(selected); void fetchConnections(selected); } }, [selected, loadTools, fetchLogs, fetchConnections]);
   // Poll only status/config metadata. Never poll or replay a tool call.
   useEffect(() => { const id = window.setInterval(() => { if (!useMcpStore.getState().pending.length) { void fetch(); if (selected) void fetchConnections(selected); } }, 10000); return () => window.clearInterval(id); }, [fetch, selected, fetchConnections]);
-  return <main className="h-full overflow-auto bg-background p-6 text-foreground">
-    <div className="mx-auto flex max-w-300 flex-col gap-5">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1 basis-72">
-          <p className={cn(KICKER, 'mb-1')}>{t('mcp.kicker')}</p>
-          <h1 className="m-0 mb-2 text-3xl font-bold wrap-anywhere">{t('mcp.title')}</h1>
-          <p className={MUTED}>{t('mcp.subtitle')}</p>
-        </div>
-        <span className="rounded-full bg-secondary px-3 py-1 text-xs font-semibold text-secondary-foreground">{t('mcp.versionNote')}</span>
+  return <main className="mcp-page">
+    <div className="mcp-content">
+      <header className="mcp-header">
+        <div className="min-w-0"><h1 className="m-0 text-lg font-semibold">{t('mcp.title')}</h1><p className={MUTED}>{t('mcp.subtitle')}</p></div>
+        <div className="flex flex-wrap gap-2"><Button size="xs" disabled={formOpen} onClick={() => { setEditing(null); setFormOpen(true); }}>{t('mcp.addServer')}</Button><Button variant="secondary" size="xs" disabled={loading} onClick={() => void fetch()}>{t('mcp.refreshStatus')}</Button></div>
       </header>
       {error && <div role="alert" className="rounded-lg border border-error bg-error-bg px-4 py-3 text-sm text-error-text wrap-anywhere">{error}</div>}
       {notice && <div role="status" className="rounded-lg border border-success bg-success-bg px-4 py-3 text-sm text-success-text wrap-anywhere">{notice}</div>}
-      <section className="flex flex-wrap items-start gap-5">
-        <ServerForm editing={editing} onCancel={() => setEditing(null)} onSaved={server => {
-          setEditing(null); setSelected(server.id); setNotice(t('mcp.saved'));
-        }} />
-        <Card className="min-w-0 flex-1 grow-2 basis-72">
-          <CardTitle kicker={t('mcp.controlRoom')} title={t('mcp.yourServers')} aside={<Button type="button" variant="secondary" size="sm" disabled={loading} onClick={() => void fetch()}>{t('mcp.refreshStatus')}</Button>} />
-          <Card.Body>
+      {formOpen && <ServerForm editing={editing} onCancel={() => { setFormOpen(false); setEditing(null); }} onSaved={server => {
+        setFormOpen(false); setEditing(null); setSelected(server.id); setNotice(t('mcp.saved'));
+      }} />}
+      <div className="mcp-columns">
+        <section className="mcp-server-list" aria-label={t('mcp.yourServers')}>
+          <h2 className="m-0 text-sm font-semibold">{t('mcp.yourServers')}</h2>
+          <Input label={t('mcp.searchServers')} value={query} onChange={event => setQuery(event.target.value)} />
+          <Select label={t('mcp.filterServers')} value={statusFilter} onChange={setStatusFilter} options={['all', 'ready', 'offline'].map(value => ({ value, label: t(`mcp.filter.${value}`) }))} />
+          <div>
             <Stack gap={3}>
               {loading && !servers.length && <Loading label={t('mcp.loadingServers')} />}
               {!loading && !servers.length && <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center"><strong className="text-sm">{t('mcp.noServers')}</strong><p className={MUTED}>{t('mcp.addServerHelp')}</p></div>}
-              {servers.map(server => {
+              {!loading && servers.length > 0 && !filteredServers.length && <p className={MUTED}>{t('mcp.noMatches')}</p>}
+              {filteredServers.map(server => {
                 const busy = pending.includes(server.id);
                 const connected = server.status === 'ready' || server.status === 'degraded';
-                return <article className={cn('flex flex-wrap items-center gap-3 rounded-lg border p-3', selected === server.id ? 'border-primary bg-primary-light' : 'border-border bg-background')} key={server.id}>
+                return <article className={cn('mcp-server-row', selected === server.id && 'is-selected')} key={server.id}>
                   <Button variant="ghost" className="h-auto min-w-0 flex-1 basis-44 items-start justify-start gap-3 whitespace-normal px-2 py-2 text-left" aria-label={t('mcp.selectServer', { name: server.name })} onClick={() => setSelected(server.id)} aria-pressed={selected === server.id}>
                     <span aria-hidden="true" className={cn('mt-1.5 size-2.5 shrink-0 rounded-full', STATUS_DOT[server.status])} />
                     <span className="flex min-w-0 flex-col gap-1">
                       <span className="text-sm font-semibold wrap-anywhere">{server.name}</span>
-                      <span className="text-xs text-muted-foreground wrap-anywhere">{server.transport} · {server.status}{server.auto_connect ? ' · auto-connect' : ''}</span>
+                      <span className="text-xs text-muted-foreground wrap-anywhere">{server.transport} · {t(`mcp.status.${server.status}`)}{server.auto_connect ? ` · ${t('mcp.autoConnect')}` : ''}</span>
                       {server.last_error_class && <span className="text-xs text-error-text wrap-anywhere">{server.last_error_class}</span>}
                     </span>
                   </Button>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button variant="secondary" size="sm" disabled={!server.enabled || busy} onClick={() => (connected ? disconnect(server.id) : connect(server.id)).catch(reportError)}>{busy ? t('mcp.working') : connected ? t('mcp.disconnect') : t('remote.connect')}</Button>
-                    <Button variant="secondary" size="sm" aria-label={t('mcp.editName', { name: server.name })} disabled={busy} onClick={() => { setSelected(server.id); setEditing(server); }}>{t('mcp.edit')}</Button>
+                    <Button variant="secondary" size="sm" aria-label={t('mcp.editName', { name: server.name })} disabled={busy || formOpen} onClick={() => { setSelected(server.id); setEditing(server); setFormOpen(true); }}>{t('mcp.edit')}</Button>
                     <Switch aria-label={`${t('mcp.enable')} ${server.name}`} disabled={busy} checked={server.enabled} onChange={checked => toggle(server.id, checked).catch(reportError)} />
                     <Button variant="danger" size="sm" disabled={busy} onClick={() => confirm({
                       title: t('mcp.deleteServer'),
                       content: t('mcp.deleteServerConfirm', { name: server.name }),
                       confirmText: t('providerForm.delete'), cancelText: t('module.cancel'), confirmVariant: 'danger',
                       onConfirm: async () => {
-                        await remove(server.id).then(() => setEditing(current => (current?.id === server.id ? null : current))).catch(reportError);
+                        await remove(server.id).then(() => { if (editing?.id === server.id) { setEditing(null); setFormOpen(false); } }).catch(reportError);
                       },
                     })}>{t('providerForm.delete')}</Button>
                   </div>
                 </article>;
               })}
             </Stack>
-          </Card.Body>
-        </Card>
-      </section>
-      {selectedServer && <>
+          </div>
+        </section>
+      <section className="mcp-server-detail" aria-label={t('mcp.title')}>
+      {selectedServer ? <>
         {selectedServer.transport === 'http' && <Credentials key={selectedServer.id} server={selectedServer} />}
         <Card>
           <CardTitle kicker={t('mcp.discovered')} title={t('mcp.serverTools', { name: selectedServer.name })} aside={<div className="flex flex-wrap items-center gap-3"><span className="text-xs text-muted-foreground">{t('mcp.noPermissionFromDescriptions')}</span><Button variant="secondary" size="sm" disabled={pending.includes(selectedServer.id) || selectedServer.status !== 'ready'} onClick={() => discoverTools(selectedServer.id).catch(reportError)}>{t('mcp.refreshTools')}</Button></div>} />
@@ -414,7 +425,9 @@ export default function McpManagement() {
             </Stack>
           </Card.Body>
         </Card>
-      </>}
+      </> : <div className="p-6 text-sm text-muted-foreground">{t('mcp.connectToDiscover')}</div>}
+      </section>
+      </div>
       {tool && toolServer && <ToolDialog tool={tool} server={toolServer} onClose={() => setTool(null)} />}
     </div>
   </main>;
