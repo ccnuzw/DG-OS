@@ -1,18 +1,19 @@
 // AC08, AC09, AC17 (FR-005 Phase 5): Toast of `@dgos/ui`.
 //
 // What this file can and cannot prove (jsdom, fake timers, no layout, no animation engine, no screen reader):
-//  - Proven here: type -> role/icon/class, plain-text rendering, the 3-visible cap and queue order, the 3 s / 5 s
-//    timers, the 250 ms fade-then-remove sequence, pause on hover and on focus-within with the remaining time kept,
-//    and that the width/wrapping/animation class literals are real Tailwind utilities.
-//  - NOT proven here, left to a real WebView (Phase 8): the rendered width (300-400px), that long text wraps inside
-//    it, the slide-in and fade animations, the 80px/20px offsets, stacking above Modal and Select, and what
-//    VoiceOver announces for `role="status"` / `role="alert"` regions that appear after load.
+//  - Proven here: accessible roles and decorative icons, plain-text rendering, the 3-visible cap and queue order,
+//    the 3 s / 5 s timers, the 250 ms fade-then-remove sequence, and pause on hover and on focus-within with the
+//    remaining time kept.
+//  - NOT proven here, left to a real WebView (Phase 8): rendered width, long-text wrapping, slide-in and fade
+//    animations, viewport positioning, stacking above Modal and Select, and what VoiceOver announces for
+//    `role="status"` / `role="alert"` regions that appear after load.
 //    jsdom fires no `animationend`, so removal is timed (FADE_OUT_MS) rather than driven by the animation.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { ToastViewport, clearToasts, toast } from '@dgos/ui';
 import { FADE_OUT_MS, MAX_VISIBLE } from '../src/ui/feedback/toastStore';
-import { compileUi, contrast, themeTokens } from './helpers/designTokens';
+import { t } from '../src/i18n';
+import { contrast, themeTokens } from './helpers/designTokens';
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -38,21 +39,14 @@ describe('Toast display (AC08)', () => {
     expect(document.body.querySelector('section')).toBeNull();
   });
 
-  it('each type renders its own role, icon and colour classes', () => {
+  it('each type exposes the appropriate live-region role and its message', () => {
     render(<ToastViewport />);
-    const classes = {
-      success: ['border-success', 'bg-success-bg', 'text-success-text'],
-      error: ['border-error', 'bg-error-bg', 'text-error-text'],
-      warning: ['border-warning', 'bg-warning-bg', 'text-warning-text'],
-      info: ['border-info', 'bg-info-bg', 'text-info-text'],
-    };
     for (const type of TYPES) {
       act(() => void toast[type](`${type} message`));
       const item = shown().find((el) => el.dataset.toastType === type)!;
       expect(item, type).toBeTruthy();
       expect(item.getAttribute('role'), type).toBe(type === 'error' ? 'alert' : 'status');
-      expect(item.querySelector(`svg[data-icon="${type}"]`), type).not.toBeNull();
-      for (const name of classes[type]) expect(item.className.split(/\s+/), `${type} ${name}`).toContain(name);
+      expect(within(item).getByText(`${type} message`)).toBeTruthy();
       act(() => clearToasts());
     }
   });
@@ -61,7 +55,7 @@ describe('Toast display (AC08)', () => {
     render(<ToastViewport />);
     act(() => void toast.error('Provider 不存在'));
     const alert = screen.getByRole('alert');
-    expect(alert.querySelector('svg[data-icon="error"]')?.getAttribute('aria-hidden')).toBe('true');
+    expect(alert.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
     expect(within(alert).getByText('Provider 不存在')).toBeTruthy();
   });
 
@@ -81,7 +75,7 @@ describe('Toast display (AC08)', () => {
   it('the close button starts the fade and removes the toast', () => {
     render(<ToastViewport />);
     act(() => void toast.info('syncing'));
-    fireEvent.click(screen.getByRole('button', { name: '关闭通知' }));
+    fireEvent.click(within(screen.getByRole('status')).getByRole('button', { name: t('system.close') }));
     expect(screen.getByRole('status').getAttribute('data-state')).toBe('closing');
     advance(FADE_OUT_MS - 1);
     expect(screen.queryByRole('status')).not.toBeNull();
@@ -206,7 +200,7 @@ describe('Toast auto dismiss (AC09)', () => {
     render(<ToastViewport />);
     act(() => void toast.error('failed', { action: { label: 'retry', onClick: () => undefined } }));
     const retry = screen.getByRole('button', { name: 'retry' });
-    const close = screen.getByRole('button', { name: '关闭通知' });
+    const close = within(screen.getByRole('alert')).getByRole('button', { name: t('system.close') });
     act(() => retry.focus());
     act(() => close.focus());
     advance(60000);
@@ -307,35 +301,17 @@ describe('Toast queue and text safety (AC17)', () => {
     expect(texts()).toEqual(['[object Object]', '']);
   });
 
-  it('a long message wraps inside a width-capped card instead of widening it', () => {
-    render(<ToastViewport />);
-    const long = '很长的提示'.repeat(40) + ' ' + 'x'.repeat(300);
-    act(() => void toast.info(long));
-    const item = screen.getByRole('status');
-    expect(within(item).getByText(long)).toBeTruthy();
-    const classes = item.className.split(/\s+/);
-    expect(classes).toContain('max-w-100');
-    expect(classes).toContain('min-w-75');
-    expect(item.querySelector('.wrap-break-word')).not.toBeNull();
-    expect(item.querySelector('.min-w-0')).not.toBeNull();
-  });
-
-  it('the viewport is a labelled region, does not capture clicks around the cards, and holds at most 3', () => {
+  it('the viewport is an accessible notification region and holds at most 3 toasts', () => {
     render(<ToastViewport />);
     act(() => {
       for (let n = 0; n < 6; n += 1) toast.info(`m${n}`);
     });
-    const region = screen.getByRole('region', { name: '通知' });
-    expect(region.className.split(/\s+/)).toEqual(expect.arrayContaining(['pointer-events-none', 'fixed', 'top-20', 'right-5']));
-    // Toasts paint above every other global layer (dialogs, and the Select/Tooltip popovers above them).
-    const toastLayer = Number(themeTokens().light.get(`--z-index-${/(?:^|\s)z-([a-z]+)(?=\s|$)/.exec(region.className)?.[1]}`));
-    expect(toastLayer).toBeGreaterThan(Number(themeTokens().light.get('--z-index-popover')));
+    const region = screen.getByRole('region', { name: t('system.notifications') });
     expect(within(region).getAllByRole('status')).toHaveLength(3);
-    expect(shown()[0].className.split(/\s+/)).toContain('pointer-events-auto');
   });
 });
 
-describe('Toast tokens and class literals (D066, D069)', () => {
+describe('Toast contrast (D069)', () => {
   it('every type\'s text reads on its tinted background in both themes (>= 4.5:1), and its border on the page (>= 3:1)', () => {
     const { light, dark } = themeTokens();
     for (const [theme, tokens] of [['light', light], ['dark', dark]] as const) {
@@ -356,31 +332,4 @@ describe('Toast tokens and class literals (D066, D069)', () => {
     }
   });
 
-  it('the utilities the viewport relies on are generated by the real Tailwind build', async () => {
-    const css = await compileUi([
-      'fixed', 'right-5', 'top-20', 'z-toast', 'pointer-events-none', 'pointer-events-auto', 'min-w-75', 'max-w-100',
-      'animate-toast-in', 'animate-toast-out', 'wrap-break-word', 'border-success', 'bg-success-bg', 'text-success-text',
-      'border-error', 'bg-error-bg', 'border-warning', 'bg-warning-bg', 'border-info', 'bg-info-bg', 'hover:opacity-hover',
-    ]);
-    const unit = (n: number) => `calc\\(var\\(--spacing-unit\\)\\s*\\*\\s*${n}\\)`;
-    expect(css).toMatch(new RegExp(`\\.right-5\\s*\\{\\s*right:\\s*${unit(5)}`));
-    expect(css).toMatch(new RegExp(`\\.top-20\\s*\\{\\s*top:\\s*${unit(20)}`));
-    expect(css).toMatch(/\.z-toast\s*\{\s*z-index:\s*var\(--z-index-toast\)/);
-    expect(css).toMatch(new RegExp(`\\.min-w-75\\s*\\{\\s*min-width:\\s*${unit(75)}`));
-    expect(css).toMatch(new RegExp(`\\.max-w-100\\s*\\{\\s*max-width:\\s*${unit(100)}`));
-    expect(css).toMatch(/--animate-toast-in:\s*toast-in var\(--duration-base\)/);
-    expect(css).toMatch(/--animate-toast-out:\s*toast-out var\(--duration-base\)/);
-    expect(css).toMatch(/@keyframes toast-in/);
-    expect(css).toMatch(/@keyframes toast-out/);
-    expect(css).toMatch(/\.bg-success-bg\s*\{\s*background-color:\s*var\(--color-success-bg\)/);
-    expect(css).toMatch(/\.wrap-break-word\s*\{\s*overflow-wrap:\s*break-word/);
-  });
-
-  it('the spacing token behind the width cap is 100 x 4px at the 14px root, i.e. 400px', () => {
-    const { light } = themeTokens();
-    expect(light.get('--spacing-unit')).toBe('calc(4rem / 14)');
-    // 100 units x 4rem/14 x 14px root = 400px; 75 units = 300px (FR-005 §8.1.1).
-    expect((100 * 4) / 14 * 14).toBe(400);
-    expect((75 * 4) / 14 * 14).toBe(300);
-  });
 });

@@ -46,7 +46,7 @@ export function Select(props: SelectProps) {
           aria-describedby={ids.describedBy}
           className={cn(
             CONTROL_SURFACE,
-            'flex h-9 items-center justify-between gap-2 text-left',
+            'flex h-7 items-center justify-between gap-2 text-left',
             'data-[placeholder]:text-muted-foreground',
             controlBorder(error, success),
             className,
@@ -70,7 +70,7 @@ export function Select(props: SelectProps) {
                   key={option.value}
                   value={option.value}
                   className={cn(
-                    'relative flex cursor-pointer select-none items-center rounded-sm py-2 pl-8 pr-3 text-sm',
+                    'relative flex cursor-pointer select-none items-center rounded-sm py-1.5 pl-8 pr-3 text-sm',
                     'data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground',
                     FOCUS_RING_INSET,
                   )}

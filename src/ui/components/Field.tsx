@@ -51,7 +51,7 @@ export function controlBorder(error: string | undefined, success: boolean): stri
 
 /** Surface shared by Input, textarea and the Select trigger. */
 export const CONTROL_SURFACE = [
-  'w-full rounded-md border bg-background px-3 text-sm text-foreground',
+  'control-text-fit w-full appearance-none rounded-md border border-solid bg-background px-3 font-sans text-sm text-foreground',
   'placeholder:text-muted-foreground',
   'disabled:cursor-not-allowed disabled:opacity-disabled',
   FOCUS_RING,

@@ -103,6 +103,29 @@ describe('clean fixture passes (AC11, AC12)', () => {
   });
 });
 
+it('rejects indirect token dependency cycles',async()=>{
+  const dir=mkdtempSync(join(tmpdir(),'dgos-cycle-'));
+  try {
+    cpSync(join(cleanRoot,'src','ui'),join(dir,'src','ui'),{recursive:true});
+    writeFileSync(join(dir,'src','ui','tokens','cycle.css'),':root { --cycle-a: var(--cycle-b); --cycle-b: var(--cycle-a); }');
+    const result=await runDesignCheck(dir);
+    expect(result.violations.some((finding:Finding)=>finding.message.includes('dependency cycle'))).toBe(true);
+  } finally {rmSync(dir,{recursive:true,force:true});}
+});
+
+it('restricts style access to the exact theme writer operation',async()=>{
+  const dir=mkdtempSync(join(tmpdir(),'dgos-writer-'));
+  try {
+    cpSync(join(cleanRoot,'src','ui'),join(dir,'src','ui'),{recursive:true});
+    mkdirSync(join(dir,'src','ui','theme'),{recursive:true});
+    const path=join(dir,'src','ui','theme','apply.ts');
+    writeFileSync(path,'export function apply(root,name,value){root.style.setProperty(name,value);}\n');
+    expect((await runDesignCheck(dir)).ok).toBe(true);
+    writeFileSync(path,'export function apply(root){root.style.cssText="display:none";}\n');
+    expect((await runDesignCheck(dir)).violations.some((finding:Finding)=>finding.rule==='dgos/theme-writer')).toBe(true);
+  } finally {rmSync(dir,{recursive:true,force:true});}
+});
+
 describe('npm run design:check exit code and output (AC11, AC12)', () => {
   const cli = [join(repo, 'scripts', 'design-check.mjs'), '--root'];
 

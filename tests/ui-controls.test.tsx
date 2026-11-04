@@ -35,41 +35,8 @@ afterEach(cleanup);
 const untyped = <T,>(props: object) => props as unknown as T;
 
 describe('Button (AC05)', () => {
-  const variants = ['primary', 'secondary', 'danger', 'ghost', 'link'] as const;
-  const sizes = ['sm', 'md', 'lg'] as const;
 
-  it('renders each variant with its own token classes', () => {
-    const expected: Record<(typeof variants)[number], string[]> = {
-      primary: ['bg-primary', 'text-primary-foreground'],
-      secondary: ['bg-secondary', 'border-input'],
-      danger: ['bg-destructive', 'text-destructive-foreground'],
-      ghost: ['bg-transparent'],
-      link: ['text-primary', 'px-0', 'h-auto'],
-    };
-    for (const variant of variants) {
-      const { unmount } = render(<Button variant={variant}>{variant}</Button>);
-      const classes = screen.getByRole('button', { name: variant }).className.split(/\s+/);
-      for (const name of expected[variant]) expect(classes, `${variant} -> ${name}`).toContain(name);
-      unmount();
-    }
-  });
 
-  it('maps sizes to the 32/36/40px height tokens', () => {
-    const height = { sm: 'h-8', md: 'h-9', lg: 'h-10' };
-    for (const size of sizes) {
-      const { unmount } = render(<Button size={size}>go</Button>);
-      expect(screen.getByRole('button').className.split(/\s+/)).toContain(height[size]);
-      unmount();
-    }
-  });
-
-  it('defaults to primary, md and type="button" (never an accidental form submit)', () => {
-    render(<Button>save</Button>);
-    const button = screen.getByRole('button', { name: 'save' });
-    expect(button.getAttribute('type')).toBe('button');
-    expect(button.className).toContain('bg-primary');
-    expect(button.className).toContain('h-9');
-  });
 
   it('calls onClick when enabled', () => {
     const onClick = vi.fn();

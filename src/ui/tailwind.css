@@ -11,6 +11,8 @@
    no bare --background/--primary variables exist at runtime. See FR-005 §4.7 for the full table. */
 @theme inline {
   --color-background: var(--color-bg-primary);
+  /* Navigation rail surface (V2-FR-009 baseline); only bg-rail exists as a utility name. */
+  --color-rail: var(--color-bg-rail);
   --color-foreground: var(--color-text-primary);
   --color-card: var(--color-bg-secondary);
   --color-card-foreground: var(--color-text-primary);
@@ -28,11 +30,54 @@
   --color-input: var(--color-border-control);
   --color-ring: var(--color-focus-ring);
 
+  /* V2 semantic roles. Existing V1 utilities remain valid; these names make page patterns self-describing. */
+  --color-surface-canvas: var(--surface-canvas);
+  --color-surface-rail: var(--surface-rail);
+  --color-surface-panel: var(--surface-panel);
+  --color-surface-card: var(--surface-card);
+  --color-surface-inset: var(--surface-inset);
+  --color-surface-control: var(--surface-control);
+  --color-surface-selected: var(--surface-selected);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-active: var(--surface-active);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-focus: var(--border-focus);
+  --color-text-primary-role: var(--text-primary);
+  --color-text-secondary-role: var(--text-secondary);
+  --color-text-tertiary-role: var(--text-tertiary);
+  --color-accent-default: var(--accent-default);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-active: var(--accent-active);
+  --color-status-success: var(--status-success);
+  --color-status-warning: var(--status-warning);
+  --color-status-error: var(--status-error);
+  --color-status-info: var(--status-info);
+  --color-status-success-surface: var(--status-success-surface);
+  --color-status-warning-surface: var(--status-warning-surface);
+  --color-status-error-surface: var(--status-error-surface);
+  --color-status-info-surface: var(--status-info-surface);
+  --color-status-success-text: var(--status-success-text);
+  --color-status-warning-text: var(--status-warning-text);
+  --color-status-error-text: var(--status-error-text);
+  --color-status-info-text: var(--status-info-text);
+  --color-surface-popover: var(--surface-popover);
+  --color-surface-modal: var(--surface-modal);
+  --color-surface-reading: var(--surface-reading);
+  --color-surface-content: var(--surface-content);
+  --color-surface-code: var(--surface-code);
+  --color-text-reading: var(--text-reading);
+  --color-text-content: var(--text-content);
+  --color-text-code: var(--text-code);
+  --z-layer-base: var(--z-index-base);
+  --z-layer-shell: var(--z-index-shell);
+  --z-layer-sticky: var(--z-index-sticky);
+  --z-layer-overlay: var(--z-index-overlay);
+
   /* The base unit: p-2 = 2 * 4px at a 14px root. */
   --spacing: var(--spacing-unit);
 
-  --font-sans: var(--font-family-base);
-  --font-mono: var(--font-family-mono);
+  --font-sans: var(--font-family-ui);
+  --font-mono: var(--font-family-code);
 
   --text-xs: var(--font-size-xs);
   --text-xs--line-height: var(--line-height-normal);
@@ -77,11 +122,9 @@
   @keyframes toast-in {
     from {
       opacity: 0;
-      transform: translateX(100%);
     }
     to {
       opacity: 1;
-      transform: none;
     }
   }
 
@@ -112,5 +155,44 @@
       opacity: 1;
       transform: none;
     }
+  }
+}
+
+/* Explicit content roles do not scale with geometric density. */
+@utility type-reading {
+  font-family: var(--font-family-reading);
+  font-size: max(var(--font-size-min), var(--font-size-reading));
+  line-height: var(--line-height-reading);
+  color: var(--text-reading);
+  background-color: var(--surface-reading);
+}
+@utility type-code {
+  font-family: var(--font-family-code);
+  font-size: max(var(--font-size-min), var(--font-size-code));
+  line-height: var(--line-height-code);
+  color: var(--text-code);
+  background-color: var(--surface-code);
+}
+
+html[data-reduced-motion="reduce"] *,
+html[data-reduced-motion="reduce"] *::before,
+html[data-reduced-motion="reduce"] *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+
+html[data-sidebar-treatment="soft"] .bg-surface-rail {
+  background-color: color-mix(in srgb, var(--surface-rail) 75%, var(--surface-canvas));
+}
+
+@layer utilities {
+  pre:not(.font-sans):not(.type-reading), code:not(.type-reading), .font-mono:not(.type-reading) {
+    font-family: var(--font-family-code);
+    font-size: max(var(--font-size-min), var(--font-size-code));
+    line-height: var(--line-height-code);
+  }
+  .control-text-fit {
+    min-height: calc(1lh + 2px);
   }
 }

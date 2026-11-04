@@ -9,8 +9,8 @@ interface FieldExtras {
   success?: boolean;
 }
 
-// FR-005 §7.1.2 lists these four. Other `type` values are not part of the contract.
-export type InputType = 'text' | 'password' | 'email' | 'number';
+// FR-005 controls plus the semantic search field used by V2 page patterns.
+export type InputType = 'text' | 'password' | 'email' | 'number' | 'search';
 
 export type SingleLineInputProps = Omit<DomProps<'input'>, 'type'> &
   FieldExtras &
@@ -48,7 +48,7 @@ function InputField(props: SingleLineInputProps) {
         type={type}
         aria-invalid={error ? true : undefined}
         aria-describedby={ids.describedBy}
-        className={cn(CONTROL_SURFACE, 'h-9', controlBorder(error, success), className)}
+        className={cn(CONTROL_SURFACE, 'h-7', controlBorder(error, success), className)}
       />
     </Field>
   );
@@ -77,7 +77,7 @@ function TextareaField(props: MultilineInputProps) {
         rows={rows}
         aria-invalid={error ? true : undefined}
         aria-describedby={ids.describedBy}
-        className={cn(CONTROL_SURFACE, 'min-h-16 py-2', controlBorder(error, success), className)}
+        className={cn(CONTROL_SURFACE, 'type-reading min-h-16 py-2', controlBorder(error, success), className)}
       />
     </Field>
   );

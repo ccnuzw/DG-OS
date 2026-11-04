@@ -66,7 +66,7 @@ function ModalView(props: ModalProps) {
     icon,
     children,
     confirmText,
-    cancelText = t('system.close'),
+    cancelText = t('common.cancel'),
     confirmVariant = 'primary',
     onConfirm,
     onCancel,
@@ -173,7 +173,7 @@ function ModalView(props: ModalProps) {
               variant="ghost"
               size="sm"
               iconOnly
-              aria-label={t('system.closeDialog')}
+              aria-label={t('common.close')}
               disabled={pending}
               className="absolute right-3 top-3"
             >

@@ -28,9 +28,9 @@ type BilingualMessage = { zh: ErrorMessage; en: ErrorMessage };
 
 const BILINGUAL_ERRORS: Readonly<Record<number, BilingualMessage>> = Object.freeze({
   1000000: { zh: { message: '操作失败', description: '请稍后重试，持续出现时查看日志', severity: 'moderate' }, en: { message: 'Operation failed', description: 'Please try again later. Check the logs if the problem persists', severity: 'moderate' } },
-  1001001: { zh: { message: 'Provider 不存在', description: '请检查 Provider ID 是否正确', severity: 'moderate', action: { label: '查看 Provider 列表', route: '/providers' } }, en: { message: 'Provider not found', description: 'Check that the Provider ID is correct', severity: 'moderate', action: { label: 'View Providers', route: '/providers' } } },
+  1001001: { zh: { message: 'Provider 不存在', description: '请检查 Provider ID 是否正确', severity: 'moderate', action: { label: '查看 Provider 列表', route: '/settings/providers' } }, en: { message: 'Provider not found', description: 'Check that the Provider ID is correct', severity: 'moderate', action: { label: 'View Providers', route: '/settings/providers' } } },
   1001002: { zh: { message: 'API Key 无效', description: 'Provider 返回认证错误，请检查 API Key 是否正确', severity: 'moderate' }, en: { message: 'Invalid API key', description: 'The Provider rejected authentication. Check the API key', severity: 'moderate' } },
-  1001003: { zh: { message: 'Provider 不可用', description: '请启用 Provider 或检查网络与配置', severity: 'moderate', action: { label: '查看 Provider 列表', route: '/providers' } }, en: { message: 'Provider unavailable', description: 'Enable the Provider or check the network and configuration', severity: 'moderate', action: { label: 'View Providers', route: '/providers' } } },
+  1001003: { zh: { message: 'Provider 不可用', description: '请启用 Provider 或检查网络与配置', severity: 'moderate', action: { label: '查看 Provider 列表', route: '/settings/providers' } }, en: { message: 'Provider unavailable', description: 'Enable the Provider or check the network and configuration', severity: 'moderate', action: { label: 'View Providers', route: '/settings/providers' } } },
   1001006: { zh: { message: '请求超时', description: '请检查网络后重试', severity: 'moderate' }, en: { message: 'Request timed out', description: 'Check the network and try again', severity: 'moderate' } },
   1001007: { zh: { message: '流式输出中断', description: '请重新生成', severity: 'minor' }, en: { message: 'Streaming output interrupted', description: 'Generate the response again', severity: 'minor' } },
   1001015: { zh: { message: '系统凭据库不可用', description: '请解锁系统凭据库；如果是开发版升级后首次使用，请重新保存 API Key 或令牌后重试', severity: 'severe' }, en: { message: 'OS credential store unavailable', description: 'Unlock the credential store. After a development upgrade, save the API key or token again', severity: 'severe' } },
@@ -55,7 +55,7 @@ export const ERROR_MESSAGES: Readonly<Record<number, ErrorMessage>> = Object.fre
     message: 'Provider 不存在',
     description: '请检查 Provider ID 是否正确',
     severity: 'moderate',
-    action: { label: '查看 Provider 列表', route: '/providers' },
+    action: { label: '查看 Provider 列表', route: '/settings/providers' },
   },
   1001002: {
     message: 'API Key 无效',
@@ -66,7 +66,7 @@ export const ERROR_MESSAGES: Readonly<Record<number, ErrorMessage>> = Object.fre
     message: 'Provider 不可用',
     description: '请启用 Provider 或检查网络与配置',
     severity: 'moderate',
-    action: { label: '查看 Provider 列表', route: '/providers' },
+    action: { label: '查看 Provider 列表', route: '/settings/providers' },
   },
   1001004: {
     message: '模型不存在',

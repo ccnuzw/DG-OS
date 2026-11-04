@@ -25,6 +25,7 @@ export function Tooltip({ content, children, delayDuration = 400 }: TooltipProps
         <TooltipPrimitive.Portal>
           <TooltipPrimitive.Content
             sideOffset={6}
+            collisionPadding={8}
             className="z-popover max-w-75 rounded-md border border-border bg-popover px-3 py-1.5 text-sm text-popover-foreground shadow-md wrap-break-word"
           >
             {text}

@@ -1,0 +1,22 @@
+{
+  "precision": {
+    "light": { "accent": "#1555d9", "background": "#faf8f1", "foreground": "#242831" },
+    "dark": { "accent": "#94b7ff", "background": "#202321", "foreground": "#eeeee7" }
+  },
+  "studio": {
+    "light": { "accent": "#a46a24", "background": "#f8f6ef", "foreground": "#29323d" },
+    "dark": { "accent": "#ddb576", "background": "#242521", "foreground": "#eae9e2" }
+  },
+  "paper": {
+    "light": { "accent": "#985b05", "background": "#faf6ed", "foreground": "#303129" },
+    "dark": { "accent": "#e9be76", "background": "#26231e", "foreground": "#f0e8da" }
+  },
+  "forest": {
+    "light": { "accent": "#176748", "background": "#f3f7f3", "foreground": "#26382e" },
+    "dark": { "accent": "#89d8af", "background": "#19251f", "foreground": "#e0eee5" }
+  },
+  "slate": {
+    "light": { "accent": "#6942b5", "background": "#f5f5fa", "foreground": "#30313e" },
+    "dark": { "accent": "#c5abff", "background": "#22212b", "foreground": "#eeebf6" }
+  }
+}

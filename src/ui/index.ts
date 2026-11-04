@@ -29,11 +29,8 @@ export {
   THEMES,
   createAppearanceController,
   disposeAppearance,
-  getCurrentDensity,
-  getCurrentTheme,
-  getResolvedTheme,
   initAppearance,
-  updateAppearance,
+  useAppearance,
 } from './appearance';
 export type {
   Appearance,
@@ -59,3 +56,39 @@ export { ERROR_MESSAGES, lookupError } from './errors/messages';
 export type { ErrorMessage, Severity } from './errors/messages';
 export { extractErrorCode, handleError } from './errors/handleError';
 export type { HandleErrorOptions } from './errors/handleError';
+export {
+  EmptyState,
+  FilterBar,
+  FixedActionBar,
+  Notice,
+  ResourceCard,
+  ResourceDetail,
+  ResourceLayout,
+  ResourceList,
+  SearchField,
+  SectionHeader,
+  StatusBadge,
+} from './components/PagePatterns';
+export type {
+  EmptyStateProps,
+  FilterBarProps,
+  FixedActionBarProps,
+  NoticeProps,
+  NoticeTone,
+  ResourceCardProps,
+  ResourceDetailProps,
+  ResourceLayoutProps,
+  ResourceListProps,
+  SearchFieldProps,
+  SectionHeaderProps,
+  StatusBadgeProps,
+  StatusBadgeStatus,
+} from './components/PagePatterns';
+export { Icon } from './components/Icon';
+export type { IconProps } from './components/Icon';
+export { Popover } from './components/Popover';
+export type { PopoverProps } from './components/Popover';
+export { ContextMenu, DropdownMenu } from './components/Menu';
+export type { MenuItem, ContextMenuProps, DropdownMenuProps } from './components/Menu';
+export { Slider } from './components/Slider';
+export type { SliderProps } from './components/Slider';
