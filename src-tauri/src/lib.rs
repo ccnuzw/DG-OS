@@ -1,6 +1,7 @@
 // DG-OS: A local-first AI application development framework
 // Main library entry point
 
+mod chat_media;
 mod capabilities;
 mod commands;
 mod host;
@@ -91,12 +92,13 @@ pub fn run() {
                     }
                 };
 
+                let maintenance = dgos_db::MaintenanceGate::new();
                 let manager = ProviderManager::with_vault(
                     &database_url,
                     Arc::new(provider_credentials::OsProviderCredentialVault),
                 )
                 .await
-                .expect("Failed to initialize provider manager");
+                .expect("Failed to initialize provider manager").with_maintenance(maintenance.clone());
                 // Provider credential migration and outbox recovery run per account
                 // after account recovery, below.
 
@@ -129,7 +131,7 @@ pub fn run() {
                     db.clone(),
                     Arc::new(commands::DesktopMcpPolicy(resolver.clone())),
                     Arc::new(commands::OsCredentialVault),
-                ));
+                ).with_maintenance(maintenance.clone()));
                 mcp_manager
                     .recover_runtime_status()
                     .await
@@ -143,7 +145,7 @@ pub fn run() {
 
                 tracing::info!("Database migrations completed");
 
-                let workbench = dgos_workbench::WorkbenchManager::new(db.clone());
+                let workbench = dgos_workbench::WorkbenchManager::new(db.clone()).with_maintenance(maintenance.clone());
                 workbench
                     .recover_interrupted()
                     .await
@@ -151,7 +153,7 @@ pub fn run() {
 
                 // Chat generations left `generating` by a previous run end as interrupted; nothing
                 // is resent (D074). Safe because the instance lock above is held.
-                let chat = dgos_workbench::ChatManager::new(db.clone());
+                let chat = dgos_workbench::ChatManager::new(db.clone(), maintenance.clone());
                 chat.recover_interrupted()
                     .await
                     .expect("Failed to recover chat generations");
@@ -229,7 +231,7 @@ pub fn run() {
                     module_publisher.clone(),
                     module_supervisor,
                     dgos_modules::LocalModuleSources::new(module_sources_dir),
-                );
+                ).with_maintenance(maintenance.clone());
                 module_operations
                     .spawn_lost_runtime_reporter(module_lost)
                     .expect("Failed to start the module runtime loss reporter");
@@ -296,14 +298,31 @@ pub fn run() {
                 app_handle.manage(module_publisher);
                 app_handle.manage(module_host_bridge);
 
+                let project_capabilities = dgos_agents::capabilities::ProjectCapabilities::new(dgos_db::DevelopmentRepository::new(db.clone()), manager.clone(), skills_state.manager.clone(), mcp_state.manager.clone(), app_dir.join("project-capabilities"));
+                app_handle.manage(project_capabilities.clone());
                 // Store managers in app state
                 app_handle.manage(manager);
                 app_handle.manage(skills_state);
                 app_handle.manage(dgos_db::AppearanceRepository::new(db.clone()));
                 app_handle.manage(dgos_db::HostSettingsRepository::new(db.clone()));
+                app_handle.manage(dgos_db::DesktopRepository::new(db.clone()));
+                app_handle.manage(dgos_db::CliRepository::new(db.clone()));
+                app_handle.manage(maintenance.clone());
+                app_handle.manage(dgos_workbench::ChatAssets::new(db.clone()));
+                app_handle.manage(chat_media::Transcriptions::default());
+                app_handle.manage(Arc::new(dgos_application::StorageService::new(
+                    dgos_db::StorageRepository::new(db.clone()),
+                    dgos_db::AssetRepository::new(db.clone()),
+                    app_dir.join("skills"),
+                    maintenance.clone(),
+                )));
                 let mcp_for_accounts = mcp_state.manager.clone();
                 app_handle.manage(mcp_state);
                 app_handle.manage(workbench);
+                let agents = dgos_agents::AgentManager::with_maintenance(app_dir.join("agent-sessions.json"), dgos_db::DevelopmentRepository::new(db.clone()), maintenance.clone());
+                agents.install_capabilities(project_capabilities);
+                if agents.load().await.is_err() { tracing::error!("Agent session index unavailable; Agent admission remains closed"); }
+                app_handle.manage(agents);
                 app_handle.manage(chat);
 
                 // FR-008 startup (technical design `recover`): after chat and task
@@ -385,6 +404,19 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::import_chat_asset,
+            commands::preview_chat_asset,
+            commands::remove_chat_asset,
+            commands::transcribe_chat_audio,
+            commands::cancel_chat_transcription,
+            commands::get_cli_preferences,
+            commands::set_cli_preferences,
+            commands::probe_cli,
+            commands::get_storage_overview,
+            commands::preview_storage_cleanup,
+            commands::execute_storage_cleanup,
+            commands::preview_vacuum,
+            commands::execute_vacuum,
             commands::list_providers,
             commands::create_provider,
             commands::create_provider_with_models,
@@ -441,6 +473,42 @@ pub fn run() {
             commands::send_chat_message,
             commands::regenerate_chat_message,
             commands::cancel_chat_generation,
+            commands::list_agent_sessions,
+            commands::open_agent_session,
+            commands::get_agent_session,
+            commands::send_agent_message,
+            commands::respond_agent_request,
+            commands::interrupt_agent_session,
+            commands::close_agent_session,
+            commands::read_development_workspace,
+            commands::create_development_project,
+            commands::update_development_project,
+            commands::inspect_development_project,
+            commands::save_development_task,
+            commands::select_development_context,
+            commands::classify_agent_session,
+            commands::list_development_files,
+            commands::read_development_file,
+            commands::read_development_review,
+            commands::read_development_diff,
+            commands::save_development_file,
+            commands::read_development_commands,
+            commands::save_development_commands,
+            commands::start_development_process,
+            commands::read_development_process,
+            commands::list_development_processes,
+            commands::stop_development_process,
+            commands::write_development_terminal,
+            commands::resize_development_terminal,
+            commands::open_development_external,
+            commands::list_development_runs,
+            commands::read_development_capabilities,
+            commands::save_development_capabilities,
+            commands::revoke_development_capabilities,
+            commands::read_development_capability_catalog,
+            commands::get_development_session_capabilities,
+            commands::list_development_capability_confirmations,
+            commands::respond_development_capability_confirmation,
             commands::advance_chat_tool_turn,
             // MCP commands
             commands::list_mcp_servers,
@@ -473,11 +541,15 @@ pub fn run() {
              // Appearance preferences (D065): typed, no generic settings access
              commands::get_appearance_preferences,
              commands::set_appearance_preferences,
+             commands::recover_appearance_preferences,
+             commands::get_desktop_preferences,
+             commands::set_desktop_preferences,
              // Host language preference (D118): available before account sign-in
              commands::get_language_preferences,
              commands::set_language_preferences,
             // Module capability call (D051): typed, one command per capability
             commands::module_call_provider,
+            commands::module_list_provider_catalog,
             commands::cancel_module_call,
             // Module capability calls (D093): typed, one command per capability
             commands::module_prepare_skill,
@@ -493,6 +565,7 @@ pub fn run() {
             commands::disable_module,
             commands::uninstall_module,
             commands::list_modules,
+            commands::read_workspace_app_catalog,
             commands::grant_module_permission,
             commands::revoke_module_permission,
             commands::list_module_crashes,
@@ -518,6 +591,15 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { .. } = event {
+                if let Some(resolver) = app.try_state::<Arc<session::SessionResolver>>() {
+                    resolver.close_agents();
+                }
+                let agents = app.try_state::<dgos_agents::AgentManager>().map(|m| m.inner().clone());
+                if let Some(agents) = &agents { agents.close(); }
+                // Agent cleanup is independent of unrelated managers being present.
+                let agent_cleanup = async move {
+                    match agents { Some(agents) => agents.shutdown().await, None => true }
+                };
                 // Absent when startup stopped at a database failure: nothing to shut down.
                 let (Some(mcp), Some(workbench), Some(chat), Some(lan)) = (
                     app.try_state::<commands::McpState>(),
@@ -525,6 +607,9 @@ pub fn run() {
                     app.try_state::<dgos_workbench::ChatManager>(),
                     app.try_state::<Arc<dgos_lan::LanService>>(),
                 ) else {
+                    if !tauri::async_runtime::block_on(agent_cleanup) {
+                        tracing::warn!("Agent shutdown incomplete");
+                    }
                     return;
                 };
                 let mcp = mcp.manager.clone();
@@ -532,18 +617,18 @@ pub fn run() {
                 let chat = chat.inner().clone();
                 let lan = lan.inner().clone();
                 let result = tauri::async_runtime::block_on(async move {
-                    tokio::time::timeout(
-                        std::time::Duration::from_secs(5),
-                        async move {
-                            // B10-30: remote sessions end first, so no remote request starts work
-                            // while the rest shuts down.
+                    // Owned process cleanup must finish even if unrelated managers
+                    // exceed their shutdown deadline.
+                    let other_cleanup = async {
+                        tokio::time::timeout(std::time::Duration::from_secs(5), async {
                             lan.shutdown().await;
                             tokio::join!(workbench.shutdown(), mcp.shutdown(), chat.shutdown())
-                        },
-                    ).await
+                        }).await
+                    };
+                    tokio::join!(other_cleanup, agent_cleanup)
                 });
                 match result {
-                    Ok((Ok(()), Ok(()), true)) => {}
+                    (Ok((Ok(()), Ok(()), true)), true) => {}
                     _ => tracing::warn!("Desktop shutdown incomplete; startup recovery will finalize interrupted audits"),
                 }
             }

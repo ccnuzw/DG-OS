@@ -95,10 +95,11 @@ pub fn build(
     db: &DatabaseConnection,
     resolver: Arc<SessionResolver>,
 ) -> Arc<LanService> {
+    let maintenance = app.state::<dgos_db::MaintenanceGate>().inner().clone();
     let core = Arc::new(LanCore::new(
         Arc::new(SystemClock),
         Arc::new(ResolverIssuer(resolver)),
-        Arc::new(DbAuditSink::spawn(LanAuditRepository::new(db.clone()))),
+        Arc::new(DbAuditSink::spawn_with_maintenance(LanAuditRepository::new(db.clone()), maintenance.clone())),
         Arc::new(ManagedChat::new(TauriChatHost(app.clone()))),
     ));
     LanService::new(

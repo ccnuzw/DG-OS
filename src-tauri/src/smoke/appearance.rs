@@ -1,13 +1,6 @@
-//! Real-WebView calibration for the FR-005 Phase 1 tokens (AC01/AC03/AC20 on the real renderer).
-//!
-//! The page is the production `dist/` (so the compiled Tailwind CSS and the appearance controller are
-//! the shipped ones). Only `smoke_report` is registered, so `get_appearance_preferences` is rejected by
-//! Tauri as an unknown command: that is the genuine read-failure path (AC21 read side), and the page must
-//! come up with the defaults. The harness then sets `data-theme`/`data-density` itself, exactly the two
-//! attributes the controller writes, and reads `getComputedStyle`.
-//!
-//! What this does not prove: persistence (no host command yet), the controller's own switching (covered by
-//! tests/appearance.test.tsx), focus-ring visibility (needs eyes), VoiceOver, or any other platform's WebView.
+//! Real-WebView calibration of generated V2 theme CSS, contrast and independent typography.
+//! The read-failure path uses production defaults. Static palette calibration removes the
+//! controller's inline resolved values before selecting generated preset/mode attributes.
 
 use super::{eval, wait_load, Checks, LoadEvents, Pending, WATCHDOG};
 use serde_json::{json, Value};
@@ -110,7 +103,7 @@ async fn scenario(app: AppHandle, ready: bool) {
     // AC01 on the real renderer: body colours equal the token of each theme; the theme actually changes them.
     let themes = js(
         &app,
-        "const out = {}; for (const theme of ['light', 'dark']) { root.setAttribute('data-theme', theme); \
+        "root.removeAttribute('style'); const out = {}; for (const theme of ['light', 'dark']) { root.setAttribute('data-theme', theme); \
          const bg = probe('background-color: var(--color-bg-primary)'); const fg = probe('color: var(--color-text-primary)'); \
          out[theme] = { body: css(document.body, 'backgroundColor'), token: css(bg, 'backgroundColor'), text: css(document.body, 'color'), textToken: css(fg, 'color'), scheme: css(root, 'colorScheme') }; } \
          root.setAttribute('data-theme', 'light'); document.querySelectorAll('[data-smoke-probe]').forEach(e => e.remove()); return out;",
@@ -144,17 +137,17 @@ async fn scenario(app: AppHandle, ready: bool) {
     // AC20 on rendered colours: every declared pair, both themes, from what the engine actually paints.
     let contrast = js(
         &app,
-        "const bad = []; let n = 0; for (const theme of ['light', 'dark']) { root.setAttribute('data-theme', theme); \
+        "const bad = []; let n = 0; for (const preset of ['studio','precision','paper','forest','slate']) { root.setAttribute('data-preset',preset); for (const theme of ['light', 'dark']) { root.setAttribute('data-theme', theme); \
          for (const p of PAIRS.pairs) { const el = probe(`color: var(--color-${p.fg}); background-color: var(--color-${p.bg})`); \
          const r = ratio(rgb(css(el, 'color')), rgb(css(el, 'backgroundColor'))); n++; \
-         if (r < (p.kind === 'text' ? 4.5 : 3)) bad.push(`${theme} ${p.fg}/${p.bg}=${r.toFixed(2)}`); } } \
-         root.setAttribute('data-theme', 'light'); document.querySelectorAll('[data-smoke-probe]').forEach(e => e.remove()); return { n, bad };",
+         if (r < (p.kind === 'text' ? 4.5 : 3)) bad.push(`${preset}/${theme} ${p.fg}/${p.bg}=${r.toFixed(2)}`); } } } \
+         root.setAttribute('data-preset','studio'); root.setAttribute('data-theme', 'light'); document.querySelectorAll('[data-smoke-probe]').forEach(e => e.remove()); return { n, bad };",
     )
     .await;
     checks.check(
         &format!(
-            "rendered contrast: {} pairs x 2 themes meet WCAG thresholds",
-            contrast["n"].as_u64().unwrap_or(0) / 2
+            "rendered contrast: {} pairs x 5 presets x 2 modes meet WCAG thresholds",
+            contrast["n"].as_u64().unwrap_or(0) / 10
         ),
         contrast["bad"] == json!([]) && contrast["n"].as_u64().unwrap_or(0) > 0,
         contrast.to_string(),
@@ -175,12 +168,12 @@ async fn scenario(app: AppHandle, ready: bool) {
     let near = |a: &Value, b: f64| a.as_f64().map(|v| (v - b).abs() < 0.05).unwrap_or(false);
     let d100 = &density["100"];
     checks.check(
-        "100%: root 14px, spacing unit 4px, p-2 = 8px, radius-md = 8px, body text 14px",
+        "100%: root 14px, spacing unit 4px, p-2 = 8px, radius-md = 8px, UI text 12px",
         near(&d100["root"], 14.0)
             && near(&d100["unit"], 4.0)
             && near(&d100["spacing2"], 8.0)
             && near(&d100["radiusMd"], 8.0)
-            && near(&d100["body"], 14.0),
+            && near(&d100["body"], 12.0),
         d100.to_string(),
     );
     let want = [
@@ -238,6 +231,11 @@ async fn scenario(app: AppHandle, ready: bool) {
         overflow["100"]["over"] == false,
         overflow["100"].to_string(),
     );
+
+    let loaded = super::goto(&app, "main", "/settings/appearance").await;
+    checks.check("control scenario loads appearance editor", loaded, "navigation failed");
+    let roles = js(&app, "for(let i=0;i<100&&!document.querySelector('.appearance-editor input');i++)await new Promise(r=>setTimeout(r,50));root.dataset.density='75';root.style.setProperty('--font-size-ui','16px');root.style.setProperty('--font-size-code','18px');const code=document.createElement('code');code.className='text-xs';code.textContent='path/example';document.body.append(code);const input=document.querySelector('.appearance-editor input');const button=document.querySelector('.appearance-editor .settings-actions button');root.dataset.reducedMotion='reduce';return {code:css(code,'fontSize'),input:input.getBoundingClientRect().height,line:px(css(input,'lineHeight')),button:button.getBoundingClientRect().height,transition:css(button,'transitionProperty')};").await;
+    checks.check("large independent code and UI text fit compact controls with reduced motion",roles["code"]=="18px"&&roles["input"].as_f64().unwrap_or(0.0)>roles["line"].as_f64().unwrap_or(999.0)&&roles["button"]==roles["input"]&&roles["transition"]=="none",roles.to_string());
 
     // The gate itself: with the attribute back on, nothing paints and the body is not the light token.
     let gate_css = js(

@@ -87,6 +87,7 @@ pub async fn report_module_host(
 /// admission failures answer `1004004` without saying why; a runtime at its
 /// in-flight limit answers the retryable `1001005`. Authorization is checked
 /// again on every call by the dispatch service.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn module_call_provider(
     app: tauri::AppHandle,
@@ -112,6 +113,7 @@ pub async fn module_call_provider(
             return CommandResponse::from(Err(DgosError::PermissionDenied));
         }
     };
+    let _permit = match host::admit_activity(&app) { Ok(permit) => permit, Err(error) => return CommandResponse::from(Err(error)) };
     let dispatch = app.state::<ModuleCapabilityDispatchService>();
     let providers = app.state::<ProviderManager>();
     let result = dispatch
@@ -160,6 +162,7 @@ pub struct CrashRecorded {
 /// from the host-issued route, never from the page; the host sanitizes
 /// `error_name` and `stack` and keeps no message text. Every refusal is
 /// `1004004` without a reason.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn report_module_crash(
     app: tauri::AppHandle,
@@ -182,6 +185,7 @@ pub async fn report_module_crash(
             return CommandResponse::from(Err(DgosError::PermissionDenied));
         }
     };
+    let _permit = match host::admit_activity(&app) { Ok(permit) => permit, Err(error) => return CommandResponse::from(Err(error)) };
     let crashes = app.state::<ModuleCrashService>();
     let result = crashes
         .report(&runtime, &source, &error_name, &stack)

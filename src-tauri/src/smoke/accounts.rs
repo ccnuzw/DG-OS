@@ -3,8 +3,8 @@
 //! Registers the production account commands and one ordinary command
 //! (`get_appearance_preferences`) over a file-backed, migrated SQLite
 //! database, with the production `SessionResolver` and `HostSessionPort`
-//! (the account service builds and recovers as in `lib.rs`), loads the
-//! shipped `dist/` in a real WebView and drives the commands with
+//! (the account service builds and recovers as in `lib.rs`), shares the managed
+//! maintenance gate with its MCP manager, loads the shipped `dist/` in a real WebView and drives the commands with
 //! `window.__TAURI_INTERNALS__.invoke`. Reloads run the shipped `AccountGate`
 //! against the real host, so the page that appears is what the host decided.
 //!
@@ -69,7 +69,8 @@ async fn count(probe: &DatabaseConnection, sql: &str) -> i64 {
 async fn recover(app: &AppHandle) -> AccountService {
     let fixture = app.state::<Fixture>();
     let resolver = app.state::<Arc<SessionResolver>>().inner().clone();
-    let mcp = Arc::new(McpManager::new(fixture.db.clone()));
+    let maintenance = app.state::<dgos_db::MaintenanceGate>().inner().clone();
+    let mcp = Arc::new(McpManager::new(fixture.db.clone()).with_maintenance(maintenance));
     let ports = AccountPorts::new(
         &fixture.db,
         Arc::new(HostSessionPort::new(resolver, mcp, app.clone())),
@@ -120,8 +121,8 @@ async fn scenario(app: AppHandle, ready: bool) {
     );
     let page = heading(&app).await;
     checks.check(
-        "AC01: the shipped gate shows the welcome page",
-        page == "欢迎使用 DGOS",
+        "AC01: first run offers account creation and skip without an account",
+        eval(&app, "main", "return !!document.querySelector('form input[autocomplete=\"username\"]') && document.querySelectorAll('input[type=\"password\"]').length===2 && !![...document.querySelectorAll('button')].find(b=>b.type!== 'submit');").await["value"] == true,
         &page,
     );
 
@@ -405,8 +406,8 @@ async fn scenario(app: AppHandle, ready: bool) {
     );
     let page = heading(&app).await;
     checks.check(
-        "the shipped gate shows the welcome page again",
-        page == "欢迎使用 DGOS",
+        "after deleting the last account, first run offers account creation again",
+        eval(&app, "main", "return !!document.querySelector('form input[autocomplete=\"username\"]') && document.querySelectorAll('input[type=\"password\"]').length===2;").await["value"] == true,
         &page,
     );
 
@@ -484,6 +485,7 @@ pub fn run_accounts() {
 
     let result = tauri::Builder::default()
         .manage(Pending::default())
+        .manage(dgos_db::MaintenanceGate::new())
         .manage(SessionResolver::starting())
         .manage(LoadEvents(load_sender))
         .manage(AppearanceRepository::new(db.clone()))

@@ -164,7 +164,7 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const txt = (el) => ((el && el.textContent) || '').trim();
 const btn = (t, root = document) => $$('button', root).find((b) => txt(b) === t);
 const setVal = (el, v) => { const p = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(p, 'value').set.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); };
-const dialog = () => $('[role=dialog], [role=alertdialog]');
+const dialog = () => $('[role=alertdialog]') || $$('[role=dialog]').findLast(d => !d.querySelector('[role=tablist][aria-label="系统设置"]'));
 const confirmIn = async (label) => { const d = await until(dialog); if (!d) throw new Error('no confirmation dialog'); const b = btn(label, d); if (!b) throw new Error('no ' + label + ' in dialog: ' + txt(d)); b.click(); await until(() => !dialog()); };
 const field = (term) => { const dt = $$('dt').find((x) => txt(x) === term); return dt ? txt(dt.nextElementSibling) : null; };
 const sw = () => $('[role=switch][aria-label="启用局域网协同"]') || $$('[role=switch]').find((x) => x.labels && x.labels[0] && txt(x.labels[0]) === '启用局域网协同');
@@ -1016,6 +1016,7 @@ fn run_phase(phase: String) -> ! {
     let url = format!("sqlite://{}?mode=rwc", dir.join("dgos.db").display());
     let upstream_hits = Arc::new(AtomicUsize::new(0));
     let first = phase == "first-start";
+    let maintenance = dgos_db::MaintenanceGate::new();
     let (db, probe, providers, chat, skills) = tauri::async_runtime::block_on(async {
         let db = dgos_db::establish_connection(&url).await.expect("db");
         dgos_db::migrations::Migrator::up(&db, None)
@@ -1051,7 +1052,7 @@ fn run_phase(phase: String) -> ! {
         };
         let providers = ProviderManager::with_vault(&url, vault)
             .await
-            .expect("providers");
+            .expect("providers").with_maintenance(maintenance.clone());
         if let Some(id) = seeded {
             providers
                 .add_manual_model(
@@ -1063,7 +1064,7 @@ fn run_phase(phase: String) -> ! {
                 .await
                 .expect("model");
         }
-        let chat = dgos_workbench::ChatManager::new(db.clone());
+        let chat = dgos_workbench::ChatManager::new(db.clone(), maintenance.clone());
         chat.recover_interrupted().await.expect("chat recovery");
         let skills_dir = dir.join("skills");
         std::fs::create_dir_all(&skills_dir).expect("skills dir");
@@ -1078,6 +1079,7 @@ fn run_phase(phase: String) -> ! {
 
     let result = tauri::Builder::default()
         .manage(Pending::default())
+        .manage(maintenance)
         .manage(TitleReplies::default())
         .manage(LoadEvents(load_sender))
         .manage(resolver.clone())
@@ -1109,7 +1111,8 @@ fn run_phase(phase: String) -> ! {
             let start = tauri::async_runtime::block_on(async {
                 let lan = crate::lan::build(&handle, &db, resolver.clone());
                 handle.manage(lan.clone());
-                let mcp = Arc::new(McpManager::new(db.clone()));
+                let maintenance = handle.state::<dgos_db::MaintenanceGate>().inner().clone();
+                let mcp = Arc::new(McpManager::new(db.clone()).with_maintenance(maintenance));
                 let mut ports = AccountPorts::new(
                     &db,
                     Arc::new(HostSessionPort::new(resolver.clone(), mcp, handle.clone())),

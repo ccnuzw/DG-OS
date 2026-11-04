@@ -25,12 +25,12 @@ use super::{
 use crate::commands;
 use crate::module_host::{self, ChannelTransport, ModuleHostBridge, RoutePublisher};
 use dgos_application::{
-    HostCapabilityService, ModuleCapabilityDispatchService, ModuleOperationManager,
-    ModuleReleaseService,
+    HostCapabilityService, ModuleCapabilityDispatchService, ModuleCrashService,
+    ModuleManagementService, ModuleOperationManager, ModuleReleaseService,
 };
 use dgos_db::sea_orm::{ConnectionTrait, DatabaseConnection, Statement};
 use dgos_db::sea_orm_migration::MigratorTrait;
-use dgos_db::{ModulePermission, ModulePermissionRepository};
+use dgos_db::{ModuleCrashRepository, ModulePermission, ModulePermissionRepository};
 use dgos_modules::{
     LoaderTimeouts, LocalModuleSources, ModuleAdmission, ModuleCallRouter, ModulePublisher,
     ModuleRuntimeSupervisor, PageLoaderConfig, PageModuleLoader, PinnedModuleAdmission,
@@ -52,32 +52,50 @@ impl ModuleAdmission for TestAndBuiltinAdmission {
     }
 }
 
-/// Fill in and submit the shipped console through its real DOM, then report
-/// what it shows. React inputs only see the native value setter plus an
-/// `input` event.
-async fn drive_console(app: &AppHandle, provider: &str, prompt: &str) -> Value {
+/// Open the D129 document contribution through the workspace route. The shell
+/// requires a grant to open a view; revocation is exercised after it is mounted.
+async fn open_console(app: &AppHandle) -> Value {
+    eval(app, MAIN,
+        "history.pushState({}, '', '/apps/provider-console/documents/call-smoke'); window.dispatchEvent(new PopStateEvent('popstate'));\
+         for (let i = 0; i < 50; i++) { const root = document.querySelector('[data-module-view] [data-testid=provider-console]'); if (root && root.querySelector('[role=combobox]')?.disabled === false) return true; await new Promise(r => setTimeout(r, 100)); }\
+         return false;"
+    ).await
+}
+
+/// Submit the shipped UI once. Observe catalog/response state without retrying
+/// commands; preserve evaluation errors in the failure evidence.
+async fn drive_console(app: &AppHandle, prompt: &str) -> Value {
     let body = format!(
-        "const link = document.querySelector('a[href=\"/settings/modules/provider-console\"]'); if (link && !document.querySelector('[data-module-id=\"provider-console\"]')) link.click();\
-         for (let i = 0; i < 50 && !document.querySelector('[data-module-id=\"provider-console\"]'); i++) await new Promise((r) => setTimeout(r, 100));\
-         const root = document.querySelector('[data-module-id=\"provider-console\"]');\
-         if (!root) return {{missing: true}};\
+        "const root = document.querySelector('[data-module-view] [data-testid=provider-console]');\
+         if (!root) return {{missing: true, path: location.pathname}};\
          const set = (el, v) => {{ const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;\
            Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v); el.dispatchEvent(new Event('input', {{bubbles: true}})); }};\
-         const inputs = root.querySelectorAll('input');\
-         set(inputs[0], {provider:?}); set(inputs[1], 'fixture-chat'); set(root.querySelector('textarea'), {prompt:?});\
+         const refresh = [...root.querySelectorAll('button')].find(b => /Refresh catalog|刷新目录/.test(b.textContent));\
+         const catalogDeadline = performance.now() + 2500;\
+         while (refresh.disabled && performance.now() < catalogDeadline) await new Promise(r => setTimeout(r, 50));\
+         if (refresh.disabled) return {{timeout: 'initial catalog'}};\
+         refresh.click(); await new Promise(r => setTimeout(r, 50));\
+         while (refresh.disabled && performance.now() < catalogDeadline) await new Promise(r => setTimeout(r, 50));\
+         if (refresh.disabled) return {{timeout: 'refreshed catalog'}};\
+         const catalogError = root.querySelector('[role=alert]'); if (catalogError) return {{catalogError:catalogError.textContent}};\
+         const choose = async (trigger, value) => {{ const key = (el, name) => el.dispatchEvent(new KeyboardEvent('keydown', {{key: name, bubbles: true, cancelable: true}})); key(trigger, 'ArrowDown'); await new Promise(r=>setTimeout(r,30)); const option = [...document.querySelectorAll('[role=option]')].find(o=>o.textContent.trim() === value); if (!option) throw new Error('Missing catalog option: ' + value); key(option, 'Enter'); await new Promise(r=>setTimeout(r,30)); }};\
+         const selects = root.querySelectorAll('[role=combobox]');\
+         await choose(selects[0], 'Synthetic smoke'); await choose(selects[1], 'fixture-chat'); set(root.querySelector('textarea'), {prompt:?});\
          await new Promise((r) => setTimeout(r, 80));\
-         const stale = root.querySelector('[role=\"alert\"]');\
-         const staleReply = root.querySelector('[data-testid=\"provider-console-reply\"]');\
-         root.querySelector('button').click();\
+         const stale = root.querySelector('[role=alert]');\
+         const staleReply = root.querySelector('[data-testid=provider-console-reply]');\
+         const send = [...root.querySelectorAll('button')].find(b => /^(Send|发送)$/.test(b.textContent));\
+         if (!send || send.disabled) return {{disabledSend: true}}; send.click();\
          for (let i = 0; i < 100; i++) {{\
-           const reply = root.querySelector('[data-testid=\"provider-console-reply\"]');\
-           const alert = root.querySelector('[role=\"alert\"]');\
+           const reply = root.querySelector('[data-testid=provider-console-reply]');\
+           const alert = root.querySelector('[role=alert]');\
            if ((reply && reply !== staleReply) || (alert && alert !== stale)) return {{reply: reply && reply.textContent, alert: alert && alert.textContent}};\
            await new Promise((r) => setTimeout(r, 50));\
          }}\
-         return {{timeout: true}};"
+         return {{timeout: 'provider response'}};"
     );
-    eval(app, MAIN, &body).await["value"].clone()
+    let result = eval(app, MAIN, &body).await;
+    if result["ok"] == true { result["value"].clone() } else { result }
 }
 use dgos_providers::test_support::{seed_provider, MemoryCredentialVault};
 use dgos_providers::ProviderManager;
@@ -90,6 +108,29 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 static NEXT_CALL: AtomicUsize = AtomicUsize::new(1);
+
+/// Observe the actual command entry without replacing Tauri's read-only JS
+/// `invoke`. Record only command/callId, never route keys or business payloads.
+#[derive(Default)]
+struct CallTrace(Mutex<Vec<Value>>);
+
+impl CallTrace {
+    fn record(&self, command: &str, payload: &tauri::ipc::InvokeBody) {
+        if matches!(command, "module_call_provider" | "cancel_module_call") {
+            if let tauri::ipc::InvokeBody::Json(args) = payload {
+                self.0.lock().unwrap().push(json!({"cmd": command, "callId": args["callId"]}));
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.0.lock().unwrap().len()
+    }
+
+    fn since(&self, start: usize) -> Vec<Value> {
+        self.0.lock().unwrap()[start..].to_vec()
+    }
+}
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -228,6 +269,8 @@ struct CallWorld {
     router: Arc<ModuleCallRouter>,
     dispatch: ModuleCapabilityDispatchService,
     manager: ModuleOperationManager,
+    management: ModuleManagementService,
+    maintenance: dgos_db::MaintenanceGate,
 }
 
 async fn build_world() -> (CallWorld, ModuleHostBridge, ProviderManager) {
@@ -242,6 +285,7 @@ async fn build_world() -> (CallWorld, ModuleHostBridge, ProviderManager) {
 
     let url = format!("sqlite://{}?mode=rwc", root.join("dgos.db").display());
     let db = dgos_db::establish_connection(&url).await.unwrap();
+    let maintenance = dgos_db::MaintenanceGate::new();
     dgos_db::migrations::Migrator::up(&db, None).await.unwrap();
 
     // Fake Provider on loopback.
@@ -265,7 +309,8 @@ async fn build_world() -> (CallWorld, ModuleHostBridge, ProviderManager) {
     )
     .await
     .unwrap();
-    let providers = ProviderManager::with_vault(&url, vault).await.unwrap();
+    let providers = ProviderManager::with_vault(&url, vault).await.unwrap().with_maintenance(maintenance.clone());
+    providers.add_manual_model(&provider.id, USER, "fixture-chat", Some("text-generation")).await.unwrap();
 
     // Both modules carry the same source; only the first is ever granted.
     let publisher = Arc::new(ModulePublisher::new(store, db.clone()));
@@ -320,8 +365,14 @@ async fn build_world() -> (CallWorld, ModuleHostBridge, ProviderManager) {
         publisher,
         supervisor,
         LocalModuleSources::new(sources),
-    );
+    )
+    .with_maintenance(maintenance.clone());
     manager.spawn_lost_runtime_reporter(lost).unwrap();
+    let management = ModuleManagementService::new(
+        permissions.clone(),
+        manager.clone(),
+        ModuleCrashService::new(ModuleCrashRepository::new(db.clone()), manager.clone()),
+    );
     (
         CallWorld {
             root,
@@ -333,6 +384,8 @@ async fn build_world() -> (CallWorld, ModuleHostBridge, ProviderManager) {
             router,
             dispatch,
             manager,
+            management,
+            maintenance,
         },
         ModuleHostBridge::new(loader, transport),
         providers,
@@ -771,15 +824,7 @@ async fn scenario(app: AppHandle, world: CallWorld, bridge_ready: bool) {
     .await;
 
     // -- Cancellation (D113) -------------------------------------------------------
-    let hook = eval(
-        &app,
-        MAIN,
-        "if (!window.__cancelTrace) { window.__cancelTrace = [];\
-         const internals = window.__TAURI_INTERNALS__; const real = internals.invoke.bind(internals);\
-         internals.invoke = (cmd, args, ...rest) => { if (cmd === 'module_call_provider' || cmd === 'cancel_module_call') window.__cancelTrace.push({cmd, callId: args && args.callId}); return real(cmd, args, ...rest); }; }\
-         return true;",
-    )
-    .await;
+    let trace_start = app.state::<CallTrace>().len();
     let before = world.routes.request_stats(&runtime).unwrap_or_default();
     let hits_before = hits();
     let started = eval(
@@ -798,15 +843,12 @@ async fn scenario(app: AppHandle, world: CallWorld, bridge_ready: bool) {
         MAIN,
         "const run = globalThis.__cancelRun; const t = performance.now(); run.abort();\
          const out = await run.promise;\
-         return {out, ms: performance.now() - t, trace: window.__cancelTrace};",
+         return {out, ms: performance.now() - t};",
     )
     .await;
     let o = Outcome::parse(&reply["value"]["out"]);
     let ms = reply["value"]["ms"].as_f64().unwrap_or(f64::MAX);
-    let trace = reply["value"]["trace"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let trace = app.state::<CallTrace>().since(trace_start);
     let sent: Vec<_> = trace
         .iter()
         .filter(|t| t["cmd"] == "module_call_provider")
@@ -822,14 +864,13 @@ async fn scenario(app: AppHandle, world: CallWorld, bridge_ready: bool) {
         .to_owned();
     checks.check(
         "the page's AbortSignal sends one cancel_module_call for the in-flight call's own callId",
-        hook["ok"] == true
-            && started["ok"] == true
+        started["ok"] == true
             && reached.is_ok()
             && sent.len() == 1
             && cancels.len() == 1
             && !call_id.is_empty()
             && cancels[0]["callId"] == call_id.as_str(),
-        format!("{hook} {started} {reached:?} {trace:?}"),
+        format!("{started} {reached:?} {trace:?}"),
     );
     checks.check(
         "the aborted call rejects with 1004028 at the cancel's pace, not at the host deadline",
@@ -858,7 +899,7 @@ async fn scenario(app: AppHandle, world: CallWorld, bridge_ready: bool) {
     let resent = world.routes.request_stats(&runtime).unwrap_or_default();
     checks.check(
         "resending the cancelled call's id is refused with 1004004: no admission, the Provider is untouched",
-        !ok && code == Some(DENIED) && hits() == hits_before + 1 && resent == after,
+        !call_id.is_empty() && !ok && code == Some(DENIED) && hits() == hits_before + 1 && resent == after,
         format!("{ok} {code:?} hits+={} {resent:?}", hits() - hits_before),
     );
     let forged_attachment = ipc(
@@ -877,7 +918,7 @@ async fn scenario(app: AppHandle, world: CallWorld, bridge_ready: bool) {
     .await;
     checks.check(
         "a cancel with a forged attachment or an unknown route is refused with 1004004",
-        !forged_attachment.success()
+        !call_id.is_empty() && !forged_attachment.success()
             && forged_attachment.code() == Some(DENIED)
             && !forged_route.success()
             && forged_route.code() == Some(DENIED),
@@ -903,7 +944,7 @@ async fn scenario(app: AppHandle, world: CallWorld, bridge_ready: bool) {
     .await;
     checks.check(
         "cancelling an already settled or an unknown call id on the real route answers false and changes nothing",
-        settled_id.success()
+        !call_id.is_empty() && settled_id.success()
             && settled_id.data() == &json!(false)
             && unknown_id.success()
             && unknown_id.data() == &json!(false)
@@ -911,20 +952,21 @@ async fn scenario(app: AppHandle, world: CallWorld, bridge_ready: bool) {
         format!("{} {}", settled_id.describe(), unknown_id.describe()),
     );
     let hits_mid = hits();
+    let trace_mid = app.state::<CallTrace>().len();
     let reply = eval(
         &app,
         MAIN,
         &format!(
-            "const sent = () => window.__cancelTrace.filter((t) => t.cmd === 'module_call_provider').length;\
-             const n = sent(); const run = globalThis.__dgosCancelCallers['call-module']({provider:?}, 'never sent', true);\
-             return {{out: await run.promise, sent: sent() - n}};"
+            "const run = globalThis.__dgosCancelCallers['call-module']({provider:?}, 'never sent', true);\
+             return await run.promise;"
         ),
     )
     .await;
-    let o = Outcome::parse(&reply["value"]["out"]);
+    let o = Outcome::parse(&reply["value"]);
     checks.check(
         "an already aborted signal rejects with 1004028 without sending the call at all",
-        !o.ok && o.code == Some(1004028) && reply["value"]["sent"] == 0 && hits() == hits_mid,
+        !o.ok && o.code == Some(1004028)
+            && app.state::<CallTrace>().len() == trace_mid && hits() == hits_mid,
         format!("{o:?} {reply}"),
     );
     let _ = wait_until(
@@ -1128,35 +1170,34 @@ async fn scenario(app: AppHandle, world: CallWorld, bridge_ready: bool) {
             && st["integrity"] == pinned_digest.as_str(),
         format!("{started} {st}"),
     );
+    // D129 does not open an ungranted app. Mount with a grant, then revoke
+    // without invalidating the shell catalog, so the live module UI must
+    // prove the host rechecks authorization on its next catalog request.
+    world.permissions.grant(USER, CONSOLE, ModulePermission::ProvidersCall).await.unwrap();
+    let opened = open_console(&app).await;
+    world.permissions.revoke(USER, CONSOLE, ModulePermission::ProvidersCall).await.unwrap();
+    let audits_before = denied_audits(&world.db, CONSOLE).await;
     let hits_before = hits();
-    let mut shown = Value::Null;
-    for _ in 0..40 {
-        shown = drive_console(&app, &provider, "ungranted console").await;
-        if denied_audits(&world.db, CONSOLE).await > 0 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    let shown = drive_console(&app, "ungranted console").await;
     checks.check(
-        "its real UI shows a refusal before any grant, audited, with the Provider untouched",
-        shown["alert"]
-            .as_str()
-            .is_some_and(|text| text.contains("1004004"))
-            && denied_audits(&world.db, CONSOLE).await >= 1
+        "its mounted real UI refuses catalog access after revocation, audited, with the Provider untouched",
+        opened["ok"] == true && opened["value"] == true && shown["catalogError"].as_str().is_some()
+            && denied_audits(&world.db, CONSOLE).await > audits_before
             && hits() == hits_before,
-        format!("{shown} hits+={}", hits() - hits_before),
+        format!("opened={opened} {shown} hits+={}", hits() - hits_before),
     );
     world
         .permissions
         .grant(USER, CONSOLE, ModulePermission::ProvidersCall)
         .await
         .unwrap();
-    let shown = drive_console(&app, &provider, "hello console").await;
+    let shown = drive_console(&app, "hello console").await;
     checks.check(
         "after a grant the real UI sends the prompt and renders the Provider's reply",
         shown["reply"] == SECRET_REPLY && hits() == hits_before + 1,
         format!("{shown} hits+={}", hits() - hits_before),
     );
+    let _ = eval(&app, MAIN, "history.pushState({}, '', '/settings'); window.dispatchEvent(new PopStateEvent('popstate')); return true;").await;
     let _ = run_op(&app, "stop_module", CONSOLE).await;
 
     // -- Attribution and redaction ------------------------------------------------
@@ -1220,15 +1261,20 @@ pub fn run_call() {
     let manager = world.manager.clone();
     let router = world.router.clone();
     let dispatch = world.dispatch.clone();
+    let management = world.management.clone();
+    let maintenance = world.maintenance.clone();
     let scenario_world = Mutex::new(Some(world));
     let result = tauri::Builder::default()
         .manage(Pending::default())
+        .manage(CallTrace::default())
+        .manage(maintenance)
         .manage(crate::session::SessionResolver::no_accounts())
         .manage(LoadEvents(load_sender))
         .manage(manager)
         .manage(bridge)
         .manage(router)
         .manage(dispatch)
+        .manage(management)
         .manage(providers)
         .on_page_load(|webview, payload| {
             module_host::handle_page_load(webview, payload);
@@ -1254,18 +1300,24 @@ pub fn run_call() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(|invoke| {
+            invoke.message.webview().state::<CallTrace>().record(invoke.message.command(), invoke.message.payload());
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
             commands::start_module,
             commands::stop_module,
             commands::update_module,
             commands::get_module_operation,
             commands::get_module_runtime_status,
+            commands::read_workspace_app_catalog,
             commands::attach_module_host,
             commands::report_module_host,
             commands::module_call_provider,
+            commands::module_list_provider_catalog,
             commands::cancel_module_call,
             super::smoke_report,
-        ])
+            ];
+            handler(invoke)
+        })
         .run(context);
     if let Err(error) = result {
         println!("SMOKE RESULT: tauri failed to run: {error}");

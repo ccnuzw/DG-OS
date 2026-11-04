@@ -18,7 +18,7 @@
 //! confirmation, revocation, audit paging and isolation, audit/usage-log redaction, and the management page
 //! flows (enable consent, grant, revoke, permission log, update permission diff) on the platform WebView of
 //! the machine that runs it. It does not prove Windows WebView2 or Linux WebKitGTK, real pointer hit-testing
-//! (clicks are DOM `click()`), a release build, or isolation between modules (the realm is shared, D042).
+//! (DOM mouse/click events), a release build, or isolation between modules (the realm is shared, D042).
 
 use super::{
     eval, finish, ipc, poll_operation, wait_load, wait_until, Checks, LoadEvents, Pending, WATCHDOG,
@@ -256,6 +256,7 @@ struct CapWorld {
     server_id: String,
     http: Arc<HttpStats>,
     http_port: u16,
+    maintenance: dgos_db::MaintenanceGate,
 }
 
 async fn build_world() -> (CapWorld, Managed) {
@@ -273,6 +274,7 @@ async fn build_world() -> (CapWorld, Managed) {
 
     let url = format!("sqlite://{}?mode=rwc", root.join("dgos.db").display());
     let db = dgos_db::establish_connection(&url).await.unwrap();
+    let maintenance = dgos_db::MaintenanceGate::new();
     dgos_db::migrations::Migrator::up(&db, None).await.unwrap();
 
     // Loopback HTTP fixture for network.local.
@@ -347,7 +349,8 @@ async fn build_world() -> (CapWorld, Managed) {
         publisher,
         supervisor,
         LocalModuleSources::new(sources.clone()),
-    );
+    )
+    .with_maintenance(maintenance.clone());
     manager.spawn_lost_runtime_reporter(lost).unwrap();
     let crashes = ModuleCrashService::new(ModuleCrashRepository::new(db.clone()), manager.clone());
     let management =
@@ -360,7 +363,7 @@ async fn build_world() -> (CapWorld, Managed) {
             crate::session::SessionResolver::no_accounts(),
         )),
         Arc::new(RefusingMcpVault),
-    ));
+    ).with_maintenance(maintenance.clone()));
     let server = mcp
         .create_server(
             USER,
@@ -419,6 +422,7 @@ async fn build_world() -> (CapWorld, Managed) {
             server_id: server.id,
             http,
             http_port,
+            maintenance,
         },
         Managed {
             manager,
@@ -560,12 +564,41 @@ async fn dialog_gone(app: &AppHandle) -> bool {
     until(app, &body, 5).await
 }
 
-/// SPA navigation through the shipped nav link to `path`; true once the window's pathname is `path`.
+/// Click the shipped rail link without reloading the module runtime. Settings opens its Provider category.
 async fn navigate(app: &AppHandle, path: &str) -> bool {
+    let destination = if path == "/settings" {
+        "/settings/providers"
+    } else {
+        path
+    };
     let body = format!(
-        "const a = [...document.querySelectorAll('nav a')].find((n) => n.getAttribute('href') === {path:?});\
+        "const a = [...document.querySelectorAll('.workspace-rail a')].find((n) => n.getAttribute('href') === {path:?});\
          if (!a) return false; a.click();\
-         for (let i = 0; i < 50; i++) {{ if (location.pathname === {path:?}) return true; await new Promise((r) => setTimeout(r, 100)); }}\
+         let selected = false;\
+         for (let i = 0; i < 50; i++) {{\
+           if ({path:?} === '/settings' && location.pathname === '/settings' && !selected) {{\
+             const tab = [...document.querySelectorAll('[data-settings-shell] [role=\"tab\"]')].find((n) => n.textContent.trim() === 'Provider');\
+             if (tab) {{ tab.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, button: 0 }})); tab.click(); selected = true; }}\
+           }}\
+           if (location.pathname === {destination:?}) return true;\
+           await new Promise((r) => setTimeout(r, 100));\
+         }}\
+         return false;"
+    );
+    js(app, &body).await == json!(true)
+}
+
+/// Settings categories activate on Radix's primary mousedown; click alone does not select a tab.
+async fn select_settings(app: &AppHandle, section: &str, label: &str) -> bool {
+    let path = format!("/settings/{section}");
+    let body = format!(
+        "const tab = [...document.querySelectorAll('[data-settings-shell] [role=\"tab\"]')].find((n) => n.textContent.trim() === {label:?});\
+         if (!tab || tab.disabled) return false;\
+         tab.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, button: 0 }})); tab.click();\
+         for (let i = 0; i < 50; i++) {{\
+           if (location.pathname === {path:?} && tab.getAttribute('aria-selected') === 'true') return true;\
+           await new Promise((r) => setTimeout(r, 100));\
+         }}\
          return false;"
     );
     js(app, &body).await == json!(true)
@@ -1327,7 +1360,7 @@ async fn scenario(app: AppHandle, w: CapWorld, ready: bool) {
     );
     let back = navigate(&app, "/settings").await;
     checks.check(
-        "[5] SPA navigation back to /settings for the management steps",
+        "[5] SPA navigation back through Settings to /settings/providers for the management steps",
         back,
         "navigation failed",
     );
@@ -1543,12 +1576,8 @@ async fn scenario(app: AppHandle, w: CapWorld, ready: bool) {
     );
 
     // -- [9] Management page ------------------------------------------------------------------------------
-    let opened = js(
-        &app,
-        "const a = document.querySelector('a[href=\"/settings/modules\"]'); if (!a) return false; a.click(); return true;",
-    )
-    .await
-        == json!(true);
+    // This host does not register locale commands, so the shipped UI uses its deterministic zh-CN default.
+    let opened = select_settings(&app, "modules", "模块").await;
     let page = until(
         &app,
         "return !!document.querySelector('[data-testid=\"module-cap-ui\"]') && !!document.querySelector('[data-testid=\"module-cap-upd\"]');",
@@ -1556,14 +1585,14 @@ async fn scenario(app: AppHandle, w: CapWorld, ready: bool) {
     )
     .await;
     checks.check(
-        "[9] the Modules link opens the management page listing the fixture modules",
+        "[9] the Modules category tab opens the management page listing the fixture modules",
         opened && page,
         format!("opened={opened} page={page}"),
     );
 
     // Enable consent (AC01/AC02).
     let ui_card = card_js(UI);
-    let enable_clicked = click_in_card(&app, UI, "Enable").await;
+    let enable_clicked = click_in_card(&app, UI, "启用").await;
     let consent = until(
         &app,
         &format!("{ui_card} return !!(card && card.querySelector('[role=\"dialog\"]'));"),
@@ -1586,7 +1615,7 @@ async fn scenario(app: AppHandle, w: CapWorld, ready: bool) {
             }),
         consent_text.clone(),
     );
-    let cancel = click_in_card(&app, UI, "Cancel").await;
+    let cancel = click_in_card(&app, UI, "取消").await;
     let consent_closed = until(
         &app,
         &format!("{ui_card} return !!card && !card.querySelector('[role=\"dialog\"]');"),
@@ -1604,7 +1633,7 @@ async fn scenario(app: AppHandle, w: CapWorld, ready: bool) {
             && action_count(&w.db, UI, "granted").await == 0,
         format!("{:?}", module_view(&after_cancel, UI)),
     );
-    let again = click_in_card(&app, UI, "Enable").await;
+    let again = click_in_card(&app, UI, "启用").await;
     let boxed = until(
         &app,
         &format!("{ui_card} return !!(card && card.querySelector('[role=\"dialog\"] [role=\"checkbox\"]'));"),
@@ -1613,12 +1642,12 @@ async fn scenario(app: AppHandle, w: CapWorld, ready: bool) {
     .await;
     let ticked = js(
         &app,
-        &format!("{ui_card} card.querySelector('[role=\"dialog\"] [role=\"checkbox\"]').click(); return true;"),
+        &format!("{ui_card} const checkbox = card && card.querySelector('[role=\"dialog\"] [role=\"checkbox\"]'); if (!checkbox || checkbox.disabled) return false; checkbox.click(); return true;"),
     )
     .await
         == json!(true);
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let confirmed = click_in_card(&app, UI, "Confirm enable").await;
+    let confirmed = click_in_card(&app, UI, "确认启用").await;
     let mut view = Value::Null;
     for _ in 0..150 {
         let all = listed(&app).await;
@@ -1644,13 +1673,13 @@ async fn scenario(app: AppHandle, w: CapWorld, ready: bool) {
     );
 
     // Revoke and permission log (AC06/AC08).
-    let revoke_clicked = click_labelled(&app, UI, "Revoke storage.read for Capability UI").await;
+    let revoke_clicked = click_labelled(&app, UI, "撤销 Capability UI 的 storage.read").await;
     let flipped = until(
         &app,
         &format!(
             "{ui_card} if (!card) return false;\
              const li = [...card.querySelectorAll('li')].find((n) => (n.querySelector('code') || {{}}).textContent === 'storage.read');\
-             return !!li && li.textContent.includes('Not granted') && !!card.querySelector('button[aria-label=\"Grant storage.read for Capability UI\"]');"
+             return !!li && li.textContent.includes('未授予') && !!card.querySelector('button[aria-label=\"向 Capability UI 授予 storage.read\"]');"
         ),
         5,
     )
@@ -1667,11 +1696,11 @@ async fn scenario(app: AppHandle, w: CapWorld, ready: bool) {
             && action_count(&w.db, UI, "revoked").await == 1,
         format!("{:?}", module_view(&after_revoke, UI)),
     );
-    let log_clicked = click_in_card(&app, UI, "Permission log").await;
+    let log_clicked = click_in_card(&app, UI, "权限日志").await;
     let log_shown = until(
         &app,
         &format!(
-            "{ui_card} const r = card && card.querySelector('[aria-label=\"Permission log\"]');\
+            "{ui_card} const r = card && card.querySelector('[role=\"region\"][aria-label=\"权限日志\"]');\
              return !!r && r.textContent.includes('granted') && r.textContent.includes('revoked') && r.textContent.includes('storage.read');"
         ),
         5,
@@ -1715,29 +1744,20 @@ async fn scenario(app: AppHandle, w: CapWorld, ready: bool) {
         .lock()
         .unwrap()
         .push((UPD.to_owned(), "2.0.0".to_owned(), digest));
-    // The page lists modules at mount; reload its list by going away and back.
-    let _ = js(
-        &app,
-        "const a = document.querySelector('a[href=\"/settings\"]'); if (a) a.click(); return true;",
-    )
-    .await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let _ = js(
-        &app,
-        "const a = document.querySelector('a[href=\"/settings/modules\"]'); if (a) a.click(); return true;",
-    )
-    .await;
+    // Modules is not kept alive: selecting another category and returning remounts its list through the SPA.
+    let left_modules = select_settings(&app, "providers", "Provider").await;
+    let reopened_modules = select_settings(&app, "modules", "模块").await;
     let card_ready = until(
         &app,
-        "const c = document.querySelector('[data-testid=\"module-cap-upd\"]'); return !!c && c.textContent.includes('storage.write') && c.textContent.includes('Granted');",
+        "const c = document.querySelector('[data-testid=\"module-cap-upd\"]'); return !!c && c.textContent.includes('storage.write') && c.textContent.includes('已授予');",
         10,
     )
     .await;
-    let update_clicked = click_in_card(&app, UPD, "Update").await;
+    let update_clicked = click_in_card(&app, UPD, "更新").await;
     // The first rendered notice must already list both sections; the page's module list may still be
     // the pre-update one at that moment, and that must not hide the newly declared permission.
     let first_notice_js = format!(
-        "{} const n = card && [...card.querySelectorAll('[role=\"status\"]')].find((x) => x.textContent.includes('Permissions changed')); return n ? n.textContent : '';",
+        "{} const n = card && [...card.querySelectorAll('[role=\"status\"]')].find((x) => x.textContent.includes('此更新修改了权限。')); return n ? n.textContent : '';",
         card_js(UPD)
     );
     let mut notice_text = String::new();
@@ -1753,12 +1773,14 @@ async fn scenario(app: AppHandle, w: CapWorld, ready: bool) {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     let notice = !notice_text.is_empty();
-    let added_at = notice_text.find("Newly declared");
-    let withdrawn_at = notice_text.find("No longer declared");
+    let added_at = notice_text.find("新声明但尚未授予：");
+    let withdrawn_at = notice_text.find("不再声明，因此已撤销你的授权：");
     let after_update = listed(&app).await;
     checks.check(
         "[9] Update shows a notice listing the newly declared permission (with Grant) and the withdrawn one (AC09)",
         granted_both
+            && left_modules
+            && reopened_modules
             && card_ready
             && update_clicked
             && notice
@@ -1773,7 +1795,7 @@ async fn scenario(app: AppHandle, w: CapWorld, ready: bool) {
     let grant_new = click_labelled(
         &app,
         UPD,
-        "Grant new permission network.local for Capability Update",
+        "向 Capability Update 授予新权限 network.local",
     )
     .await;
     let mut granted_now = false;
@@ -1810,6 +1832,7 @@ pub fn run_capabilities() {
     // The window is created below so the harness controls the first URL.
     context.config_mut().app.windows.clear();
 
+    let maintenance = world.maintenance.clone();
     let Managed {
         manager,
         bridge,
@@ -1825,6 +1848,7 @@ pub fn run_capabilities() {
     let result = tauri::Builder::default()
         .manage(Pending::default())
         .manage(crate::session::SessionResolver::no_accounts())
+        .manage(maintenance)
         .manage(LoadEvents(load_sender))
         .manage(manager)
         .manage(bridge)

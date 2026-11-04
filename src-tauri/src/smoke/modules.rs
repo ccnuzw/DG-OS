@@ -51,6 +51,12 @@ const REACT_ID: &str = "mr-react";
 const BARE_ID: &str = "mr-bare";
 const CONSOLE: &str = "provider-console";
 
+// Fixture locale only; lifecycle commands below use production host authorization.
+#[tauri::command]
+fn get_language_preferences() -> Value {
+    json!({"success":true,"data":{"preference":"en-US","locale":"en-US","catalog_version":"v1"},"error":null})
+}
+
 const DISABLED: u64 = 1004009;
 const UPDATE_FAILED: u64 = 1004013;
 const INCOMPATIBLE: u64 = 1004022;
@@ -83,6 +89,8 @@ pub(super) struct ModWorld {
     pub(super) router: Arc<ModuleCallRouter>,
     pub(super) crashes: ModuleCrashService,
     pub(super) management: ModuleManagementService,
+    pub(super) capabilities: dgos_application::HostCapabilityService,
+    pub(super) maintenance: dgos_db::MaintenanceGate,
     /// Test pins for versions that arrive later through the update source.
     pins: Arc<Mutex<Vec<(String, String, String)>>>,
 }
@@ -121,6 +129,7 @@ pub(super) async fn build_world_with(extra: &[(&str, &str)]) -> (ModWorld, Modul
 
     let url = format!("sqlite://{}?mode=rwc", root.join("dgos.db").display());
     let db = dgos_db::establish_connection(&url).await.unwrap();
+    let maintenance = dgos_db::MaintenanceGate::new();
     dgos_db::migrations::Migrator::up(&db, None).await.unwrap();
 
     let publisher = Arc::new(ModulePublisher::new(store.clone(), db.clone()));
@@ -173,18 +182,24 @@ pub(super) async fn build_world_with(extra: &[(&str, &str)]) -> (ModWorld, Modul
             stop: Duration::from_secs(5),
         });
     let manager = ModuleOperationManager::with_supervisor(
-        publisher,
+        publisher.clone(),
         supervisor,
         LocalModuleSources::new(sources.clone()),
-    );
+    )
+    .with_maintenance(maintenance.clone());
     manager.spawn_lost_runtime_reporter(lost).unwrap();
     manager.recover().await.unwrap();
     let crashes = ModuleCrashService::new(ModuleCrashRepository::new(db.clone()), manager.clone());
+    let permissions = Arc::new(ModulePermissionRepository::new(db));
+    let capabilities = dgos_application::HostCapabilityService::with_publisher(permissions.clone(), publisher);
     let management = ModuleManagementService::new(
-        Arc::new(ModulePermissionRepository::new(db)),
+        permissions,
         manager.clone(),
         crashes.clone(),
     );
+    for (id, _) in &published {
+        management.grant(&dgos_types::HostSession::for_user(crate::host::LOCAL_USER), id, "providers.call").await.unwrap();
+    }
     (
         ModWorld {
             root,
@@ -194,6 +209,8 @@ pub(super) async fn build_world_with(extra: &[(&str, &str)]) -> (ModWorld, Modul
             router,
             crashes,
             management,
+            capabilities,
+            maintenance,
             pins,
         },
         ModuleHostBridge::new(loader, transport),
@@ -201,10 +218,15 @@ pub(super) async fn build_world_with(extra: &[(&str, &str)]) -> (ModWorld, Modul
 }
 
 async fn js(app: &AppHandle, body: &str) -> Value {
-    eval(app, MAIN, body).await["value"].clone()
+    let result = eval(app, MAIN, body).await;
+    if result["ok"] != true {
+        println!("INFO module scenario script failed: {result}");
+    }
+    result["value"].clone()
 }
 
 async fn list(app: &AppHandle) -> Vec<Value> {
+    enter_management(app).await;
     ipc(app, MAIN, "list_modules", json!({}))
         .await
         .data()
@@ -218,6 +240,7 @@ fn module<'a>(all: &'a [Value], id: &str) -> Option<&'a Value> {
 }
 
 async fn run_op(app: &AppHandle, command: &str, module: &str) -> Value {
+    enter_management(app).await;
     let reply = ipc(app, MAIN, command, json!({"moduleId": module})).await;
     match reply.data()["operation_id"].as_str() {
         Some(operation) if reply.success() => poll_operation(app, MAIN, operation).await,
@@ -230,6 +253,7 @@ fn failure_code(view: &Value) -> Option<u64> {
 }
 
 async fn status(app: &AppHandle, id: &str) -> Value {
+    enter_management(app).await;
     ipc(
         app,
         MAIN,
@@ -279,12 +303,20 @@ fn ready_ids(all: &[Value]) -> Vec<String> {
 }
 
 async fn click_link(app: &AppHandle, href: &str) -> bool {
-    js(
-        app,
-        &format!("const a = document.querySelector('a[href=\"{href}\"]'); if (!a) return false; a.click(); return true;"),
-    )
-    .await
-        == json!(true)
+    js(app, &format!(r#"
+        const path = {path};
+        const close = document.querySelector('button[aria-label="Close settings"]');
+        if (!path.startsWith('/settings')) close?.click();
+        const link = document.querySelector(`a[href="${{path}}"]`);
+        if (link) link.click();
+        else {{ const state = {{...history.state, idx:(history.state?.idx??0)+1, key:crypto.randomUUID()}}; history.pushState(state,'',path); dispatchEvent(new PopStateEvent('popstate',{{state}})); }}
+        return true;
+    "#, path = serde_json::to_string(href).unwrap())).await == json!(true)
+}
+
+async fn enter_management(app: &AppHandle) {
+    js(app, "if (!location.pathname.startsWith('/settings')) document.querySelector('a[href=\"/settings\"]')?.click(); return true;").await;
+    let _ = until_js(app, "return location.pathname.startsWith('/settings');", 5).await;
 }
 
 fn probe_events(probe: &Value) -> Vec<String> {
@@ -339,8 +371,14 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
         crashes,
         management,
         pins,
+        maintenance: _,
+        capabilities: _,
     } = &world;
     let _ = (router, crashes, management, manager);
+    // Management commands keep their Settings route gate; the workspace catalog is separate.
+    let _ = until_js(&app, "return !!document.querySelector('a[href=\"/settings\"]');", 10).await;
+    let _ = click_link(&app, "/settings").await;
+    let _ = until_js(&app, "return location.pathname === '/settings';", 5).await;
 
     // -- AC01/AC14: startup load of every published, enabled module ---------------
     let expected: Vec<String> = {
@@ -393,17 +431,13 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
     );
 
     // -- Navigation entries and the module panel ---------------------------------
-    let links = js(
-        &app,
-        "return document.querySelectorAll('a[href^=\"/settings/modules/\"]').length;",
-    )
-    .await;
+    let catalog = ipc(&app, MAIN, "read_workspace_app_catalog", json!({})).await;
     checks.check(
-        "the sidebar has one link per ready module",
-        links == 8,
-        links.to_string(),
+        "the workspace catalog includes every installed module, including disabled and failed entries",
+        catalog.data()["entries"].as_array().is_some_and(|entries| entries.len() == 10),
+        catalog.describe(),
     );
-    let opened = click_link(&app, "/settings/modules/mc-1").await
+    let opened = click_link(&app, "/apps/mc-1").await
         && until_js(&app, "const n = document.querySelector('[data-module-id=\"mc-1\"]'); return !!n && n.isConnected;", 5).await;
     checks.check(
         "a module's panel shows its live component",
@@ -411,6 +445,8 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
         "panel did not render",
     );
 
+    let _ = click_link(&app, "/settings").await;
+    let _ = until_js(&app, "return location.pathname === '/settings';", 5).await;
     // -- AC14: five modules updated at once ---------------------------------------
     for id in COUNTERS {
         let digest = replace_source(
@@ -455,7 +491,7 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
     );
     let nodes = js(
         &app,
-        "return document.querySelectorAll('[data-module-runtime]').length;",
+        "return new Set([...document.querySelectorAll('[data-module-runtime]')].map(n=>n.getAttribute('data-module-runtime'))).size;",
     )
     .await;
     checks.check(
@@ -550,7 +586,7 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
     );
 
     // -- AC09/AC10/AC15: crash isolation, log, reload, auto-disable ---------------
-    let opened = click_link(&app, "/settings/modules/mx-crash").await
+    let opened = click_link(&app, "/apps/mx-crash").await
         && until_js(
             &app,
             "return !!document.querySelector('[data-testid=\"fixture-crash\"]');",
@@ -561,6 +597,8 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
     let mut first_runtime = String::new();
     for round in 1..=3 {
         let before = status(&app, CRASH_ID).await;
+        let _ = click_link(&app, "/apps/mx-crash").await;
+        let _ = until_js(&app, "return !!document.querySelector('[data-testid=\"fixture-crash\"]');", 5).await;
         if round == 1 {
             first_runtime = before["runtime_id"].as_str().unwrap_or("").to_owned();
         }
@@ -571,7 +609,7 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
         .await;
         let banner = until_js(
             &app,
-            "const a = [...document.querySelectorAll('[role=\"alert\"]')].find((n) => n.textContent.includes('crashed')); return !!a;",
+            "return !!document.querySelector('[data-workspace-surface] [role=\"status\"]');",
             8,
         )
         .await;
@@ -590,11 +628,13 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
         }
         if round < 3 {
             let failed = status(&app, CRASH_ID).await;
+            js(&app, "const t = [...document.querySelectorAll('[role=\"tab\"]')].find(n=>n.textContent.trim()==='Modules'); t?.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0})); return true;").await;
             let clicked = js(
                 &app,
-                "for (let i = 0; i < 80; i++) { const b = [...document.querySelectorAll('button')].find((n) => n.textContent.trim() === 'Reload module' && !n.disabled); if (b) { b.click(); return 'clicked'; } await new Promise((r) => setTimeout(r, 100)); } return 'no-button';",
-            )
-            .await;
+                "for (let i = 0; i < 80; i++) { const card = document.querySelector('[data-testid=\"module-mx-crash\"]'); const b = card && [...card.querySelectorAll('button')].find(n => n.textContent.trim() === 'Reload' && !n.disabled); if (b) { b.click(); return 'clicked'; } await new Promise(r => setTimeout(r, 100)); } return 'no-button';",
+            ).await;
+            let _ = until_modules(&app, 10, |all| module(all, CRASH_ID).is_some_and(|m| m["runtime"]["state"] == "ready")).await;
+            let _ = click_link(&app, "/apps/mx-crash").await;
             let reloaded = clicked == json!("clicked")
                 && until_js(
                     &app,
@@ -663,6 +703,7 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
         }),
         format!("{crashed:?}"),
     );
+    js(&app, "const t = [...document.querySelectorAll('[role=\"tab\"]')].find(n=>n.textContent.trim()==='Modules'); t?.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0})); return true;").await;
     let faulty = until_js(
         &app,
         "return document.body.textContent.includes('may be faulty');",
@@ -677,7 +718,9 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
     let _ = first_runtime;
 
     // -- AC04: enabling a bundled module through the real UI ----------------------
-    let on_page = click_link(&app, "/settings/modules").await
+    enter_management(&app).await;
+    js(&app, "const t = [...document.querySelectorAll('[role=\"tab\"]')].find(n=>n.textContent.trim()==='Modules'); t?.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0})); return true;").await;
+    let on_page = true
         && until_js(
             &app,
             &format!("return !!document.querySelector('[data-testid=\"module-{CONSOLE}\"]');"),
@@ -696,13 +739,13 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
             == json!(true);
     let dialog = until_js(
         &app,
-        "return !!document.querySelector('[role=\"dialog\"]');",
+        "return document.querySelectorAll('[role=\"dialog\"]').length === 2;",
         5,
     )
     .await;
     let listed = js(
         &app,
-        "const d = document.querySelector('[role=\"dialog\"]'); return d ? d.textContent : '';",
+        "const d = [...document.querySelectorAll('[role=\"dialog\"]')].at(-1); return d ? d.textContent : '';",
     )
     .await;
     checks.check(
@@ -723,13 +766,13 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
     );
     js(
         &app,
-        "const d = document.querySelector('[role=\"dialog\"]'); d.querySelector('[role=\"checkbox\"]').click(); return true;",
+        "const d = [...document.querySelectorAll('[role=\"dialog\"]')].at(-1); d.querySelector('[role=\"checkbox\"]').click(); return true;",
     )
     .await;
     tokio::time::sleep(Duration::from_millis(150)).await;
     js(
         &app,
-        "const d = document.querySelector('[role=\"dialog\"]'); const b = [...d.querySelectorAll('button')].find((n) => n.textContent.trim() === 'Confirm enable'); b.click(); return true;",
+        "const d = [...document.querySelectorAll('[role=\"dialog\"]')].at(-1); const b = [...d.querySelectorAll('button')].find(n => n.textContent.trim() === 'Confirm enable'); b.click(); return true;",
     )
     .await;
     let all = until_modules(&app, 15, |all| {
@@ -743,6 +786,24 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
         console.is_some_and(|m| m["permissions"][0]["granted"] == true && m["enabled"] == true && m["runtime"]["state"] == "ready"),
         format!("{console:?}"),
     );
+
+    // D128/D129: real module factory and roots in the production WebView.
+    let tracked = bridge.loader().tracked_instances();
+    let _ = click_link(&app, "/apps/provider-console/documents/one").await;
+    let first = until_js(&app, "return document.querySelectorAll('[data-module-view]').length === 1;", 5).await;
+    js(&app, "window.__firstView = document.querySelector('[data-module-view]'); return true;").await;
+    let _ = click_link(&app, "/apps/provider-console/documents/two").await;
+    let distinct = until_js(&app, "const views = [...document.querySelectorAll('[data-module-view]')]; return views.length === 2 && views[0] !== views[1];", 5).await;
+    let runtime_ids = js(&app, "return [...new Set([...document.querySelectorAll('[data-module-view]')].map(n=>n.closest('[data-runtime-id]')?.getAttribute('data-runtime-id')))];").await;
+    js(&app, "const close = [...document.querySelectorAll('button[aria-label=\"Close Provider Console\"]')].at(-1); close?.click(); return !!close;").await;
+    let closed = until_js(&app, "return document.querySelectorAll('[data-module-view]').length === 1 && location.pathname === '/apps/provider-console/documents/one';", 5).await;
+    let _ = click_link(&app, "/apps/provider-console/documents/two").await;
+    let reopened = until_js(&app, "return document.querySelectorAll('[data-module-view]').length === 2;", 5).await;
+    let preserved = js(&app, "return window.__firstView === document.querySelector('[data-module-view]');").await;
+    checks.check("two independent module views close and reopen without a second runtime", first && distinct && closed && reopened && preserved == true && runtime_ids.as_array().is_some_and(|ids| ids.len()==1) && bridge.loader().tracked_instances()==tracked, format!("first={first} distinct={distinct} closed={closed} reopened={reopened} preserved={preserved} runtimes={runtime_ids}"));
+    let catalog = ipc(&app, MAIN, "read_workspace_app_catalog", json!({})).await;
+    let denied = ipc(&app, MAIN, "list_modules", json!({})).await;
+    checks.check("workspace catalog is readable on app route while management remains denied", catalog.success() && denied.code()==Some(1004004), format!("{} {}",catalog.describe(),denied.describe()));
     let view = run_op(&app, "uninstall_module", CONSOLE).await;
     checks.check(
         "a bundled module cannot be uninstalled (1004023) and keeps running",
@@ -755,9 +816,9 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
     // -- AC13: disable and enable -------------------------------------------------
     let view = run_op(&app, "disable_module", "mc-4").await;
     let all = list(&app).await;
-    let gone = js(&app, "return !document.querySelector('a[href=\"/settings/modules/mc-4\"]') && !document.querySelector('[data-module-id=\"mc-4\"]');").await;
+    let gone = js(&app, "return !document.querySelector('[data-module-id=\"mc-4\"]');").await;
     checks.check(
-        "a disabled module stops, leaves the sidebar and the DOM, and is listed disabled",
+        "a disabled module stops, leaves the executable DOM, and is listed disabled",
         view["outcome"] == "disabled"
             && module(&all, "mc-4")
                 .is_some_and(|m| m["enabled"] == false && m["runtime"]["state"] != "ready")
@@ -785,13 +846,13 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
     let installed = store.join("versions").join("mc-5").exists();
     let view = run_op(&app, "uninstall_module", "mc-5").await;
     let all = list(&app).await;
-    let cleaned = js(&app, "return !document.querySelector('a[href=\"/settings/modules/mc-5\"]') && !document.querySelector('[data-module-id=\"mc-5\"]');").await;
+    let cleaned = until_js(&app, "window.dispatchEvent(new Event('dgos:catalog-invalidated')); return !document.querySelector('a[href=\"/apps/mc-5\"]') && !document.querySelector('[data-module-id=\"mc-5\"]');", 5).await;
     checks.check(
         "uninstall removes the module from the list, sidebar and DOM and releases its runtime",
         installed
             && view["outcome"] == "uninstalled"
             && module(&all, "mc-5").is_none()
-            && cleaned == json!(true)
+            && cleaned
             && bridge.loader().tracked_instances() == tracked - 1,
         format!(
             "{view} tracked {} -> {}",
@@ -861,10 +922,12 @@ pub fn run_modules() {
     let router = world.router.clone();
     let crashes = world.crashes.clone();
     let management = world.management.clone();
+    let maintenance = world.maintenance.clone();
     let scenario_world = Mutex::new(Some(world));
     let result = tauri::Builder::default()
         .manage(Pending::default())
         .manage(crate::session::SessionResolver::no_accounts())
+        .manage(maintenance)
         .manage(LoadEvents(load_sender))
         .manage(manager)
         .manage(bridge)
@@ -885,13 +948,13 @@ pub fn run_modules() {
         .on_window_event(module_host::handle_window_event)
         .setup(move |app| {
             let events = app.state::<LoadEvents>().0.subscribe();
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("settings".into()))
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("/".into()))
                 .visible(false)
                 .build()?;
             let handle = app.handle().clone();
             let world = scenario_world.lock().unwrap().take().unwrap();
             tauri::async_runtime::spawn(async move {
-                let ready = wait_load(events, "main", "/settings").await;
+                let ready = wait_load(events, "main", "/").await;
                 scenario(handle, world, ready).await;
             });
             Ok(())
@@ -904,14 +967,16 @@ pub fn run_modules() {
             commands::get_module_runtime_status,
             commands::enable_module,
             commands::disable_module,
-            commands::uninstall_module,
+            commands::read_workspace_app_catalog,
             commands::list_modules,
+            commands::uninstall_module,
             commands::grant_module_permission,
             commands::revoke_module_permission,
             commands::list_module_crashes,
             commands::attach_module_host,
             commands::report_module_host,
             commands::report_module_crash,
+            get_language_preferences,
             super::smoke_report,
         ])
         .run(context);

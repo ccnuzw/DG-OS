@@ -89,6 +89,7 @@ pub async fn create_account(
     if let Err(error) = host::account_window(&window) {
         return respond(Err(error));
     }
+    let _permit = match host::admit_activity(&app) { Ok(permit) => permit, Err(error) => return respond(Err(error)) };
     respond(async { accounts(&app)?.create(input).await }.await)
 }
 
@@ -101,6 +102,7 @@ pub async fn sign_in(
     if let Err(error) = host::account_window(&window) {
         return respond(Err(error));
     }
+    let _permit = match host::admit_activity(&app) { Ok(permit) => permit, Err(error) => return respond(Err(error)) };
     respond(async { accounts(&app)?.sign_in(input).await }.await)
 }
 
@@ -112,6 +114,7 @@ pub async fn sign_out(
     if let Err(error) = host::account_window(&window) {
         return respond(Err(error));
     }
+    let _permit = match host::admit_activity(&app) { Ok(permit) => permit, Err(error) => return respond(Err(error)) };
     respond(async { accounts(&app)?.sign_out().await }.await)
 }
 
@@ -124,6 +127,7 @@ pub async fn change_password(
     if let Err(error) = host::account_window(&window) {
         return respond(Err(error));
     }
+    let _permit = match host::admit_activity(&app) { Ok(permit) => permit, Err(error) => return respond(Err(error)) };
     respond(async { accounts(&app)?.change_password(input).await }.await)
 }
 
@@ -136,6 +140,7 @@ pub async fn delete_account(
     if let Err(error) = host::account_window(&window) {
         return respond(Err(error));
     }
+    let _permit = match host::admit_activity(&app) { Ok(permit) => permit, Err(error) => return respond(Err(error)) };
     respond(async { accounts(&app)?.delete(input).await }.await)
 }
 

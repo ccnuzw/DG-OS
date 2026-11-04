@@ -34,6 +34,8 @@ use tokio::sync::{broadcast, oneshot, watch};
 const WATCHDOG: Duration = Duration::from_secs(240);
 
 mod accounts;
+mod agents;
+pub use agents::run_agents;
 mod appearance;
 mod appearance_host;
 mod call;
