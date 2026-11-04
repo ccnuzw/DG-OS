@@ -64,11 +64,13 @@ impl ModuleAdmission for PinnedModuleAdmission {
 /// `(module_id, version, sha256)` of packages shipped with this build. Every
 /// entry must equal the digest the host recomputes from the shipped bundle
 /// (`release_gate`); the shape and artifact gates run in `cargo test`.
-pub(crate) const BUILTIN_PINS: &[(&str, &str, &str)] = &[(
-    "provider-console",
-    "1.0.0",
-    "v2:278d137aa113f188bfb33bab68f9bba09df4177d115281bf0e659bde0af05bd6",
-)];
+pub(crate) const BUILTIN_PINS: &[(&str, &str, &str)] = &[
+    (
+        "provider-console",
+        "1.0.0",
+        "v2:ae0042e02ee7ecab3348b4dde5a769131cdd2b113d7e68ebdfb23633199b00ea",
+    ),
+];
 
 #[cfg(test)]
 mod tests {

@@ -26,6 +26,11 @@ import {
   Tabs,
   Tooltip,
   toast,
+  Icon,
+  Popover,
+  ContextMenu,
+  DropdownMenu,
+  Slider,
 } from '@dgos/ui';
 import type { AlertOptions, ConfirmOptions, ToastType } from '@dgos/ui';
 import { omitStyle } from '@dgos/ui/lib/props';
@@ -135,6 +140,11 @@ export const moduleHostUi = Object.freeze({
   Divider: guard(Divider),
   Tabs: guardedTabs,
   Stack: guard(Stack),
+  Icon: guard(Icon),
+  Popover: guard(Popover),
+  ContextMenu: guard(ContextMenu),
+  DropdownMenu: guard(DropdownMenu),
+  Slider: guard(Slider),
   Modal: moduleModal,
   toast: moduleToast,
 });

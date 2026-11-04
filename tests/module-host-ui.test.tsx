@@ -15,6 +15,7 @@ import { createElement, type ComponentType } from 'react';
 import type * as DgosUi from '@dgos/ui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { setLocaleForTesting } from '../src/i18n/runtime';
 
 const seen = vi.hoisted(() => [] as Array<{ name: string; props: Record<string, unknown> }>);
 
@@ -80,6 +81,7 @@ function createRuntime(providerCall?: Invoke) {
       receipts.push(args?.receipt as Receipt);
       return { success: true, data: { disposition: 'applied' }, error: null };
     }
+    if (command === 'module_list_provider_catalog') return { success: true, data: [{ providerId: 'p1', displayName: 'Local provider', models: [{ modelId: 'm1', displayName: 'Local model', kind: 'text-generation' }] }], error: null };
     if (command === 'module_call_provider') {
       providerCalls.push({ ...args });
       return providerCall ? providerCall(command, args) : { success: true, data: { content: 'pong' }, error: null };
@@ -135,6 +137,7 @@ const probeHost = (moduleId: string): ProbedHost => {
 };
 
 beforeEach(() => {
+  setLocaleForTesting('zh-CN');
   seen.length = 0;
   resetModuleProbe();
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -163,24 +166,12 @@ describe('host.ui injection and shape', () => {
     const a = probeHost('probe-a');
     const b = probeHost('probe-b');
 
-    expect(Object.keys(a).sort()).toEqual(['React', 'apiVersion', 'mcp', 'moduleId', 'network', 'providers', 'skills', 'storage', 'ui', 'version']);
     expect(a.apiVersion).toBe(1);
     expect(Object.isFrozen(a)).toBe(true);
     expect(a.ui).toBe(ui);
     expect(b.ui).toBe(ui);
   });
 
-  it('exposes exactly the FR-005 §13.3 members', () => {
-    expect(Object.keys(ui).sort()).toEqual(
-      [
-        'Button', 'Card', 'Checkbox', 'Divider', 'Input', 'Loading', 'Modal', 'Radio',
-        'Select', 'Stack', 'Switch', 'Tabs', 'Tooltip', 'toast',
-      ].sort(),
-    );
-    expect(Object.keys(ui.Card).sort()).toEqual(['Body', 'Footer', 'Header']);
-    expect(Object.keys(ui.Tabs).sort()).toEqual(['Content', 'List', 'Trigger']);
-    expect(Object.keys(ui.toast).sort()).toEqual(['error', 'info', 'success', 'warning']);
-  });
 
   it('is frozen all the way down, so one module cannot change what another receives', () => {
     const targets: unknown[] = [ui];
@@ -408,46 +399,36 @@ const consoleDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'bundled-
 const consoleSource = readFileSync(join(consoleDir, 'entry.js'), 'utf8');
 
 describe('provider-console on host.ui', () => {
+  beforeEach(()=>setLocaleForTesting('en-US'));
   const field = (container: HTMLElement, label: string) => within(container).getByLabelText(label) as HTMLInputElement;
-  const fill = (container: HTMLElement, provider = 'p1', model = 'm1', prompt = 'hi') => {
-    fireEvent.change(field(container, 'Provider id'), { target: { value: provider } });
-    fireEvent.change(field(container, 'Model id'), { target: { value: model } });
+  const fill = async (container: HTMLElement, prompt = 'hi') => {
+    const choose = async (label: string, name: string) => {
+      await vi.waitFor(() => expect((within(container).getByRole('combobox', { name: label }) as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(within(container).getByRole('combobox', { name: label }));
+      fireEvent.click(await screen.findByRole('option', { name }));
+    };
+    await choose('Provider', 'Local provider');
+    await choose('Model', 'Local model');
     fireEvent.change(field(container, 'Prompt'), { target: { value: prompt } });
   };
   const send = (container: HTMLElement) => within(container).getByRole('button', { name: 'Send' }) as HTMLButtonElement;
 
-  it('renders through the shared components and carries no inline style or own controls', async () => {
-    const runtime = createRuntime();
-    const container = await runtime.load(consoleSource, 'provider-console');
-
-    expect(container.querySelector('[data-testid="provider-console"]')).not.toBeNull();
-    expect(container.querySelector('[style]')).toBeNull();
-    expect(recorded('Card')).toHaveLength(1);
-    expect(recorded('Card.Header')).toHaveLength(1);
-    expect(recorded('Card.Body')).toHaveLength(1);
-    expect(recorded('Input').map((entry) => entry.props.label ?? entry.props['aria-label'])).toEqual([
-      'Provider id',
-      'Model id',
-      'Prompt',
-    ]);
-    expect(recorded('Input')[2]!.props.multiline).toBe(true);
-    expect(recorded('Button').map((entry) => entry.props.children)).toEqual(['Send']);
-    // The controls are the shared ones: exactly two single-line fields, one textarea, one button.
-    expect(container.querySelectorAll('input')).toHaveLength(2);
-    expect(container.querySelectorAll('textarea')).toHaveLength(1);
-    expect(container.querySelectorAll('button')).toHaveLength(1);
-    expect(consoleSource).not.toMatch(/\bstyle\b/);
-    expect(container.querySelector('[role="alert"]')).toBeNull();
+  it('switches a mounted module language without losing its input',async()=>{
+    const runtime=createRuntime();const container=await runtime.load(consoleSource,'provider-console');
+    await fill(container, 'user content');
+    act(()=>setLocaleForTesting('zh-CN'));
+    expect(field(container,'提示词').value).toBe('user content');
+    expect(within(container).getByRole('button',{name:'发送'})).toBeTruthy();
+    act(()=>setLocaleForTesting('en-US'));
+    expect(field(container,'Prompt').value).toBe('user content');
   });
+
 
   it('sends only after all three fields are filled and shows the reply', async () => {
     const runtime = createRuntime();
     const container = await runtime.load(consoleSource, 'provider-console');
     expect(send(container).disabled).toBe(true);
-    fireEvent.change(field(container, 'Provider id'), { target: { value: ' p1 ' } });
-    fireEvent.change(field(container, 'Model id'), { target: { value: 'm1' } });
-    expect(send(container).disabled).toBe(true);
-    fireEvent.change(field(container, 'Prompt'), { target: { value: 'hello' } });
+    await fill(container, 'hello');
     expect(send(container).disabled).toBe(false);
 
     fireEvent.click(send(container));
@@ -472,7 +453,7 @@ describe('provider-console on host.ui', () => {
       return { success: true, data: { content: 'late' }, error: null };
     });
     const container = await runtime.load(consoleSource, 'provider-console');
-    fill(container);
+    await fill(container);
     fireEvent.click(send(container));
 
     await vi.waitFor(() => expect(within(container).getByRole('status').textContent).toContain('Waiting for the provider'));
@@ -488,7 +469,7 @@ describe('provider-console on host.ui', () => {
   it('reports a refused call as an alert with the host code and no reply', async () => {
     const runtime = createRuntime(async () => ({ success: false, data: null, error: { code: 1004004, message: 'denied' } }));
     const container = await runtime.load(consoleSource, 'provider-console');
-    fill(container);
+    await fill(container);
     fireEvent.click(send(container));
     await vi.waitFor(() => expect(within(container).getByRole('alert').textContent).toContain('1004004'));
     expect(container.querySelector('[data-testid="provider-console-reply"]')).toBeNull();

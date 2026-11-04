@@ -1,11 +1,12 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import App from '../src/App';
 import { isHostSettingsPath } from '../src/modules/hostRoutes';
 import { moduleRuntimeHost } from '../src/modules/moduleRuntimeHost';
 import type * as ModuleRuntimeHostModule from '../src/modules/moduleRuntimeHost';
 import { readFixture } from './helpers/moduleFixtures';
+import { resetLocaleForTesting, setLocaleForTesting } from '../src/i18n/runtime';
 
 const bridge = vi.hoisted(() => ({
   attachCalls: 0,
@@ -30,6 +31,7 @@ vi.mock('@tauri-apps/api/core', () => {
       return { success: true, data: { disposition: 'applied' }, error: null };
     }
     if (command === 'list_mcp_servers') return [];
+    if (command === 'read_workspace_app_catalog') return { success: true, data: { catalogRevision: 'fixture', entries: [{ moduleId: 'dgos.route', displayName: 'Route app', iconResourceId: null, layout: 'document', viewCapability: 'single', enabled: true, permissionState: 'granted', runtimeState: 'ready', crashed: false }] } };
     return null;
   }
   return { Channel, invoke };
@@ -71,7 +73,7 @@ vi.mock('../src/pages/SkillsManagement', async () => {
   const { createElement } = await import('react');
   return { default: () => createElement('div', null, 'Skills Page') };
 });
-vi.mock('../src/pages/Workbench', async () => {
+vi.mock('../src/components/chat/ChatWorkbench', async () => {
   const { createElement } = await import('react');
   return { default: () => createElement('div', null, 'Workbench Page') };
 });
@@ -88,8 +90,10 @@ function renderApp() {
   );
 }
 
-function navLink(name: string) {
-  return screen.getByRole('link', { name });
+function navLink(href: string) {
+  const link = screen.getAllByRole('link').find((item) => item.getAttribute('href') === href);
+  if (!link) throw new Error(`Navigation link not found: ${href}`);
+  return link;
 }
 
 beforeAll(() => {
@@ -99,6 +103,7 @@ afterAll(() => {
   Reflect.deleteProperty(window, '__TAURI_INTERNALS__');
 });
 beforeEach(() => {
+  setLocaleForTesting('zh-CN');
   window.history.replaceState(null, '', '/');
   bridge.reports.length = 0;
 });
@@ -111,6 +116,7 @@ afterEach(async () => {
     channel.onmessage({ kind: 'unload', ticket: `cleanup-${view.runtimeId}`, runtimeId: view.runtimeId, hookTimeoutMs: 100 });
   }
   await waitFor(() => expect(moduleRuntimeHost.getSnapshot()).toHaveLength(0));
+  resetLocaleForTesting();
 });
 
 describe('SPA navigation', () => {
@@ -119,7 +125,7 @@ describe('SPA navigation', () => {
     renderApp();
     const pushState = vi.spyOn(window.history, 'pushState');
 
-    fireEvent.click(navLink('Settings'));
+    fireEvent.click(navLink('/settings'));
 
     await screen.findByRole('tablist', { name: '系统设置' });
     expect(pushState).toHaveBeenCalledWith(expect.anything(), '', '/settings');
@@ -131,23 +137,20 @@ describe('SPA navigation', () => {
 
   it('attaches the module host exactly once across SPA navigation', async () => {
     renderApp();
-    fireEvent.click(navLink('Providers'));
-    await screen.findByText('Providers Page');
-    fireEvent.click(navLink('Settings'));
-    await screen.findByRole('tablist', { name: '系统设置' });
-    fireEvent.click(navLink('Workbench'));
+    const before = bridge.attachCalls;
+    fireEvent.click(navLink('/workbench'));
     await screen.findByText('Workbench Page');
-    fireEvent.click(navLink('Settings'));
+    fireEvent.click(navLink('/settings'));
     await screen.findByRole('tablist', { name: '系统设置' });
-
-    expect(bridge.attachCalls).toBe(1);
-    expect(bridge.channels).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }));
+    await screen.findByRole('link', { name: '技能中心' });
+    fireEvent.click(navLink('/skills'));
+    await screen.findByText('Skills Page');
+    expect(bridge.attachCalls).toBe(before);
   });
 
   it('keeps a loaded module alive across route changes and re-attaches the same container', async () => {
     renderApp();
-    fireEvent.click(navLink('Settings'));
-    await screen.findByRole('tablist', { name: '系统设置' });
     await waitFor(() => expect(bridge.channels).toHaveLength(1));
     const channel = bridge.channels[0];
 
@@ -161,11 +164,12 @@ describe('SPA navigation', () => {
       hookTimeoutMs: 500,
     });
 
-    // The module DOM only lives on its own panel; the sidebar entry leads there.
+    // Unpinned apps are opened through the live launcher directory.
     expect(screen.queryByTestId('module-slot')).toBeNull();
-    fireEvent.click(await screen.findByRole('link', { name: 'dgos.route' }));
+    fireEvent.click(screen.getByRole('button', { name: '应用', exact: true }));
+    fireEvent.click(await within(screen.getByRole('dialog', { name: '应用' })).findByRole('button', { name: 'Route app', exact: true }));
     const button = await screen.findByTestId('fixture-counter');
-    expect(window.location.pathname).toBe('/settings/modules/dgos.route');
+    expect(window.location.pathname).toBe('/apps/dgos.route');
     expect(screen.getByTestId('module-slot').getAttribute('data-runtime-id')).toBe('rt-route-1');
     await waitFor(() =>
       expect(bridge.reports).toContainEqual({ attachmentId: 'a1', ticket: 'route-load', receipt: { kind: 'loaded' } }),
@@ -174,15 +178,15 @@ describe('SPA navigation', () => {
     fireEvent.click(button);
     await waitFor(() => expect(button.textContent).toBe('count:1'));
 
-    fireEvent.click(navLink('Workbench'));
+    fireEvent.click(navLink('/workbench'));
     await screen.findByText('Workbench Page');
-    expect(screen.queryByTestId('module-slot')).toBeNull();
+    expect(screen.getByTestId('module-slot').closest('[hidden]')).not.toBeNull();
     const [view] = moduleRuntimeHost.getSnapshot();
     expect(moduleRuntimeHost.getSnapshot()).toHaveLength(1);
     expect(view.runtimeId).toBe('rt-route-1');
-    expect(view.container.parentNode).toBeNull();
+    expect(view.container.isConnected).toBe(true);
 
-    fireEvent.click(screen.getByRole('link', { name: 'dgos.route' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Route app/ }));
     const returned = await screen.findByTestId('fixture-counter');
     expect(returned).toBe(button);
     expect(returned.textContent).toBe('count:1');
@@ -192,21 +196,22 @@ describe('SPA navigation', () => {
     await waitFor(() => expect(moduleRuntimeHost.getSnapshot()).toHaveLength(0));
     expect(screen.queryByTestId('fixture-counter')).toBeNull();
     expect(screen.queryByTestId('module-slot')).toBeNull();
-    expect(screen.queryByRole('link', { name: 'dgos.route' })).toBeNull();
-    expect(screen.getByText('This module is not running')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Route app/ })).toBeTruthy();
+    expect(screen.getByText('应用当前不可用，请在应用管理中检查启用、授权和运行状态。')).toBeTruthy();
   });
 });
 
 describe('Settings route parity with the Rust gate (D037)', () => {
   it.each(['/settings', '/settings/', '/settings/sub', '/Settings', '/settings2', '/%73ettings', '/settings%2Fx', '/', '/workbench'])(
     'shows Settings for %s only when isHostSettingsPath accepts the raw pathname',
-    (pathname) => {
+    async (pathname) => {
       vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       window.history.pushState(null, '', pathname);
       const expected = isHostSettingsPath(window.location.pathname);
 
       renderApp();
 
+      await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
       expect(screen.queryByRole('tablist', { name: '系统设置' }) !== null).toBe(expected);
     },
   );

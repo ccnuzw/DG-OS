@@ -32,6 +32,7 @@ pub struct PublishedModule {
     pub integrity: String,
     pub official: bool,
     pub enabled: bool,
+    pub views: crate::ModuleViewContribution,
     /// Permission strings the manifest declares.
     pub declared: Vec<String>,
     /// Declared permissions the given user currently has granted.
@@ -56,7 +57,11 @@ impl ModulePublisher {
             .map_err(db_error)?;
         let mut published: Vec<_> = rows
             .into_iter()
-            .map(|row| PublishedModule {
+            .map(|row| Ok(PublishedModule {
+                views: row.manifest.get("views").cloned()
+                    .map(serde_json::from_value).transpose()
+                    .map_err(|_| ModulePackageError::Manifest("invalid view contribution".into()))?
+                    .unwrap_or_default(),
                 declared: row
                     .manifest
                     .get("permissions")
@@ -79,8 +84,8 @@ impl ModulePublisher {
                 integrity: row.integrity,
                 official: row.is_official,
                 enabled: row.is_enabled,
-            })
-            .collect();
+            }))
+            .collect::<Result<_, ModulePackageError>>()?;
         published.sort_by(|a, b| a.module_id.cmp(&b.module_id));
         Ok(published)
     }

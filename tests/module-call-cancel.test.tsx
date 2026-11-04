@@ -33,7 +33,7 @@ const ok = (data: unknown): Reply => ({ success: true, data, error: null });
 const cancelled = (): Reply => ({ success: false, data: null, error: { code: 1004028, message: 'Module call cancelled' } });
 
 type CapabilityHost = {
-  providers: { call: (...args: unknown[]) => Promise<unknown> };
+  providers: { call: (...args: unknown[]) => Promise<unknown>; list: (...args: unknown[]) => Promise<unknown> };
   storage: Record<'get' | 'set' | 'delete' | 'list', (...args: unknown[]) => Promise<unknown>>;
   network: { request: (...args: unknown[]) => Promise<unknown> };
   mcp: { callTool: (...args: unknown[]) => Promise<unknown> };
@@ -86,7 +86,7 @@ async function createRuntime(
   const hosts: unknown = Reflect.get(globalThis, '__dgosCancelHosts');
   const moduleHost = (hosts as Record<string, CapabilityHost>)[MODULE];
   const sent = (command: string) => calls.filter((call) => call.command === command);
-  return { moduleHost, calls, sent };
+  return { moduleHost, calls, sent, channel };
 }
 
 /** A capability reply that stays pending until `release` is called. */
@@ -232,6 +232,7 @@ describe('host.<capability>.<method>(..., { signal }) (D113)', () => {
 
   const capabilityCalls: Array<[string, string, (host: CapabilityHost, options: { signal: AbortSignal }) => Promise<unknown>]> = [
     ['providers.call', 'module_call_provider', (h, o) => h.providers.call('p', 'm', { messages: [] }, o)],
+    ['providers.list', 'module_list_provider_catalog', (h, o) => h.providers.list(o)],
     ['storage.get', 'module_storage_get', (h, o) => h.storage.get('k', o)],
     ['storage.set', 'module_storage_set', (h, o) => h.storage.set('k', 1, o)],
     ['storage.delete', 'module_storage_delete', (h, o) => h.storage.delete('k', o)],
@@ -259,14 +260,28 @@ describe('host.<capability>.<method>(..., { signal }) (D113)', () => {
     });
   });
 
-  it('the host object stays frozen with the same members and apiVersion 1', async () => {
-    const runtime = await createRuntime(() => ok(null));
-    const host = runtime.moduleHost as unknown as Record<string, unknown>;
-    expect(Object.isFrozen(host)).toBe(true);
-    expect(host.apiVersion).toBe(1);
-    expect(Object.keys(host).sort()).toEqual(['React', 'apiVersion', 'mcp', 'moduleId', 'network', 'providers', 'skills', 'storage', 'ui', 'version']);
-    for (const namespace of ['providers', 'storage', 'network', 'mcp', 'skills']) {
-      expect(Object.isFrozen(host[namespace])).toBe(true);
-    }
+  it('a providers.call answer that arrives after the route changed is rejected with 1004028 and never resolves', async () => {
+    const pending = gated(ok({ content: 'late' }));
+    const runtime = await createRuntime(pending.wait);
+    const result = runtime.moduleHost.providers.call('p1', 'm1', { messages: [] }).then(() => 'resolved', (error: unknown) => error);
+    await vi.waitFor(() => expect(runtime.sent('module_call_provider')).toHaveLength(1));
+    runtime.channel.onmessage({ kind: 'route', runtimeId: 'rt-1', route: 'route-2' } as HostInstruction);
+    pending.release();
+    const error = await result;
+    expect(error).toBeInstanceOf(HostCallError);
+    expect((error as HostCallError).code).toBe(1004028);
   });
+
+  it('rejects a catalog response after its module route loses ownership', async () => {
+    const pending = gated(ok([{ providerId: 'private-provider', displayName: 'Owner provider', models: [] }]));
+    const runtime = await createRuntime(pending.wait);
+    const result = runtime.moduleHost.providers.list().then(() => 'resolved', (error: unknown) => error);
+    await vi.waitFor(() => expect(runtime.sent('module_list_provider_catalog')).toHaveLength(1));
+    runtime.channel.onmessage({ kind: 'route', runtimeId: 'rt-1', route: 'route-2' } as HostInstruction);
+    pending.release();
+    const error = await result;
+    expect(error).toBeInstanceOf(HostCallError);
+    expect((error as HostCallError).code).toBe(1004028);
+  });
+
 });

@@ -112,6 +112,12 @@ pub(crate) fn manifest_canon(manifest: &ModuleManifest) -> Vec<u8> {
             }
         }
     }
+    // Absent contribution retains the published v2 encoding for single-root packages.
+    if let Some(views) = manifest.views {
+        put(&mut out, b"views");
+        put(&mut out, match views.layout { crate::ModuleViewLayout::Document => b"document", crate::ModuleViewLayout::FullBleed => b"full-bleed" });
+        put(&mut out, match views.capability { crate::ModuleViewCapability::Single => b"single", crate::ModuleViewCapability::Multiple => b"multiple" });
+    }
     out
 }
 

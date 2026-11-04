@@ -34,6 +34,20 @@ export interface ModuleSummary {
   recent_crashes: number;
 }
 
+export interface WorkspaceAppEntry {
+  moduleId: string;
+  displayName: string;
+  iconResourceId: string | null;
+  layout: 'document' | 'full-bleed';
+  viewCapability: 'single' | 'multiple';
+  enabled: boolean;
+  permissionState: 'granted' | 'pending' | 'denied';
+  runtimeState: RuntimeState;
+  crashed: boolean;
+}
+export interface WorkspaceAppCatalog { catalogRevision: string; entries: WorkspaceAppEntry[] }
+export const readWorkspaceAppCatalog = (): Promise<WorkspaceAppCatalog> => call('read_workspace_app_catalog');
+
 export type ModuleOperationKind = 'start' | 'stop' | 'update' | 'enable' | 'disable' | 'uninstall';
 export type ModuleOperationState = 'queued' | 'running' | 'succeeded' | 'failed';
 export type ModuleOperationOutcome =
@@ -126,6 +140,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
     const error = result?.error;
     throw new ModuleApiError(error?.code ?? 0, error?.message ?? 'The host rejected the request');
   }
+  if (['grant_module_permission', 'revoke_module_permission'].includes(command)) window.dispatchEvent(new Event('dgos:catalog-invalidated'));
   return result.data;
 }
 
@@ -174,7 +189,7 @@ export async function runOperation(command: ModuleLifecycleCommand, moduleId: st
   const deadline = Date.now() + OPERATION_TIMEOUT_MS;
   for (;;) {
     const view = await call<ModuleOperationView>('get_module_operation', { operationId });
-    if (view.state === 'succeeded' || view.state === 'failed') return view;
+    if (view.state === 'succeeded' || view.state === 'failed') { window.dispatchEvent(new Event('dgos:catalog-invalidated')); return view; }
     if (Date.now() >= deadline) {
       throw new ModuleApiError(0, 'The operation did not finish in time; check the module state and try again');
     }

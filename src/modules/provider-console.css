@@ -1,0 +1,10 @@
+.provider-console { min-width: 0; max-width: calc(1180rem / 14); margin-inline: auto; padding: var(--spacing-4) var(--spacing-5); color: var(--text-primary); container-type: inline-size; }
+.provider-console-header { padding-bottom: var(--spacing-3); margin-bottom: var(--spacing-4); border-bottom: 1px solid var(--border-subtle); }
+.provider-console h1 { margin: 0; font-size: var(--font-size-lg); font-weight: 600; }
+.provider-console-header p { color: var(--text-secondary); font-size: var(--font-size-sm); }
+.provider-console-columns { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: var(--spacing-5); }
+.provider-console-config, .provider-console-result { min-width: 0; }
+.provider-console-result { padding-left: var(--spacing-4); border-left: 1px solid var(--border-subtle); }
+.provider-console h2 { margin: 0 0 var(--spacing-3); font-size: var(--font-size-sm); font-weight: 600; }
+.provider-console pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+@container (max-width: 700px) { .provider-console-columns { grid-template-columns: minmax(0, 1fr); } .provider-console-result { border-left: 0; border-top: 1px solid var(--border-subtle); padding: var(--spacing-4) 0 0; } }
