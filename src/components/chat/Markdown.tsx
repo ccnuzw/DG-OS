@@ -17,7 +17,7 @@ import './Markdown.css';
 // marked's `Token` union has an open `Generic` member, so switching on `type` does not narrow it. The lexer guarantees
 // the shape that belongs to each `type`, which is why each case below names its token with a cast.
 
-const FOCUS = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring';
+const FOCUS = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus';
 const MAX_HIGHLIGHT_CHARS = 20000;
 const lowlight = createLowlight(common);
 
@@ -102,11 +102,11 @@ function CodeBlock({ lang, text }: { lang?: string; text: string }) {
   const label = lang?.trim().split(/\s+/)[0] ?? '';
   const highlighted = useMemo(() => highlight(label, text), [label, text]);
   return (
-    <div className="my-2 overflow-hidden rounded-md border border-border bg-secondary">
-      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-1 text-xs text-muted-foreground">
+    <div className="my-2 overflow-hidden rounded-md border border-border-subtle bg-surface-inset">
+      <div className="flex items-center justify-between gap-2 border-b border-border-subtle px-3 py-1 text-xs text-ink-secondary">
         <span className="min-w-0 wrap-anywhere">{label || t('chat.code')}</span>
         <span className="flex items-center gap-2">
-          <span role="status" className={cn('text-xs', state === 'failed' ? 'text-error-text' : 'text-success-text')}>{COPY_TEXT[state]}</span>
+          <span role="status" className={cn('text-xs', state === 'failed' ? 'text-status-error-text' : 'text-status-success-text')}>{COPY_TEXT[state]}</span>
           <Button size="sm" variant="ghost" onClick={() => copy(text)}>{t('chat.copyCode')}</Button>
         </span>
       </div>
@@ -204,7 +204,7 @@ function renderBlocks(tokens: readonly Token[]): ReactNode[] {
       }
       case 'blockquote': {
         const quote = token as Tokens.Blockquote;
-        return <blockquote key={index} className="m-0 my-2 border-l-4 border-border pl-3 text-muted-foreground">{renderBlocks(quote.tokens)}</blockquote>;
+        return <blockquote key={index} className="m-0 my-2 border-l-4 border-border-subtle pl-3 text-ink-secondary">{renderBlocks(quote.tokens)}</blockquote>;
       }
       case 'list': {
         const list = token as Tokens.List;
@@ -217,7 +217,7 @@ function renderBlocks(tokens: readonly Token[]): ReactNode[] {
         const table = token as Tokens.Table;
         const cell = (c: Tokens.TableCell, key: number, header: boolean) => {
           const Tag = header ? 'th' : 'td';
-          return <Tag key={key} className={cn('border border-border px-2 py-1', header && 'bg-secondary font-semibold', c.align ? ALIGN_CLASS[c.align] : 'text-left')}>{renderInline(c.tokens)}</Tag>;
+          return <Tag key={key} className={cn('border border-border-subtle px-2 py-1', header && 'bg-surface-inset font-semibold', c.align ? ALIGN_CLASS[c.align] : 'text-left')}>{renderInline(c.tokens)}</Tag>;
         };
         return (
           <div key={index} className="my-2 overflow-x-auto">
@@ -229,7 +229,7 @@ function renderBlocks(tokens: readonly Token[]): ReactNode[] {
         );
       }
       case 'hr':
-        return <hr key={index} className="my-3 border-border" />;
+        return <hr key={index} className="my-3 border-border-subtle" />;
       case 'html':
         // Raw HTML is shown as the characters the model wrote, never interpreted.
         return <p key={index} className="m-0 my-2 whitespace-pre-wrap font-mono text-xs wrap-anywhere">{token.raw.trimEnd()}</p>;

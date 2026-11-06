@@ -1,5 +1,5 @@
 import { useLocale as usePageLocale } from '../../i18n';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Link } from 'react-router-dom';
 import { Button, Card, Checkbox, Input, Loading, Select, Stack, StatusIcon, cn } from '@dgos/ui';
@@ -33,16 +33,16 @@ async function command<T>(name: string, args: Record<string, unknown>) {
 
 // Radix Select items cannot carry an empty value, so "nothing chosen" travels as this sentinel.
 const NONE = '__none__';
-const PARA = 'm-0 text-sm text-muted-foreground';
-const LINK = 'text-primary underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring';
-const FOCUS = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring';
-const PRE = cn('m-0 rounded-md bg-secondary p-4 text-sm whitespace-pre-wrap wrap-anywhere', FOCUS);
+const PARA = 'm-0 text-sm text-ink-secondary';
+const LINK = 'text-accent-default underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus';
+const FOCUS = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus';
+const PRE = cn('m-0 rounded-md bg-surface-inset p-4 text-sm whitespace-pre-wrap wrap-anywhere', FOCUS);
 
 function Notice({ tone, children }: { tone: 'error' | 'warning'; children: ReactNode }) {
   usePageLocale();
   return (
     <div role="alert" className={cn('flex items-start gap-2 rounded-md border-l-4 p-3 text-sm',
-      tone === 'error' ? 'border-error bg-error-bg text-error-text' : 'border-warning bg-warning-bg text-warning-text')}>
+      tone === 'error' ? 'border-status-error bg-status-error-surface text-status-error-text' : 'border-status-warning bg-status-warning-surface text-status-warning-text')}>
       <StatusIcon name={tone === 'error' ? 'error' : 'warning'} className="mt-0.5" />
       <p className="m-0 min-w-0 wrap-anywhere">{children}</p>
     </div>
@@ -72,7 +72,15 @@ export default function SingleTaskWorkbench() {
   const [toolsError, setToolsError] = useState<string | null>(null);
   const [toolsLoading, setToolsLoading] = useState(true);
   const [now, setNow] = useState(Date.now());
+  const [metadataWake, setMetadataWake] = useState(0);
+  const [modelsWake, setModelsWake] = useState(0);
+  const mounted = useRef(false);
+  const metadataFlight = useRef<{ reload: number; refresh: boolean } | null>(null);
+  const modelsFlight = useRef<{ reload: number; refresh: boolean } | null>(null);
+  const currentProvider = useRef(providerId);
+  currentProvider.current = providerId;
   const proposalHeading = useRef<HTMLHeadingElement>(null);
+  const lastProposalId = useRef<string | undefined>(undefined);
   const reportError = usePageError('Workbench');
   const report = useRef(reportError);
   useEffect(() => { report.current = reportError; }, [reportError]);
@@ -92,68 +100,129 @@ export default function SingleTaskWorkbench() {
   });
   const taskActive = toolTask?.record.task.status === 'running';
   const locked = running || !!runner.taskId || taskActive || cancelPending;
-  useEffect(() => { if (surfaceActive) setReload(value => value + 1); }, [surfaceActive]);
+  const currentActivity = useRef(surfaceActive);
+  currentActivity.current = surfaceActive;
+  const accountEpoch = runner.epoch;
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  useLayoutEffect(() => {
+    currentProvider.current = '';
+    setProviders([]); setSkills([]); setTools([]); setHistory([]);
+    setProviderId(''); setModelId(''); setSkillIds([]); setSelectedTools([]);
+    setGeneration({}); setWithoutSkill(false); setPrompt('');
+    setLoading(true); setToolsLoading(true);
+    setError(null); setToolsError(null); setHistoryError(null);
+  }, [accountEpoch]);
+  useLayoutEffect(() => {
+    setModels([]);
+    setModelsLoading(false);
+  }, [providerId, accountEpoch]);
 
+
+  const proposalId = toolTask?.proposal?.id;
+  const proposalExpiresAt = toolTask?.proposal?.expires_at;
+  useEffect(() => {
+    const isNewProposal = proposalId !== lastProposalId.current;
+    lastProposalId.current = proposalId;
+    if (isNewProposal && proposalId && taskActive && surfaceActive) proposalHeading.current?.focus();
+  }, [proposalId, taskActive, surfaceActive]);
+
+  useLayoutEffect(() => {
+    if (!surfaceActive || !taskActive || !proposalId || proposalExpiresAt === undefined) return;
+    const expiresAt = proposalExpiresAt * 1000;
+    let timer: number | undefined;
+    function updateCountdown() {
+      const currentTime = Date.now();
+      setNow(currentTime);
+      if (currentTime < expiresAt) timer = window.setTimeout(updateCountdown, Math.min(1000, expiresAt - currentTime));
+    }
+    updateCountdown();
+    return () => window.clearTimeout(timer);
+  }, [proposalId, proposalExpiresAt, surfaceActive, taskActive]);
 
   useEffect(() => {
-    if (!toolTask?.proposal) return;
-    setNow(Date.now());
-    if (surfaceActive) proposalHeading.current?.focus();
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [toolTask?.proposal?.id, surfaceActive]);
-
-  useEffect(() => {
-    let active = true;
+    if (!surfaceActive) {
+      if (metadataFlight.current) metadataFlight.current.refresh = true;
+      return;
+    }
+    if (metadataFlight.current) {
+      if (metadataFlight.current.reload !== reload) metadataFlight.current.refresh = true;
+      return;
+    }
+    const flight = { reload, refresh: false };
+    metadataFlight.current = flight;
+    const current = () => mounted.current && useTaskRunner.getState().epoch === accountEpoch;
+    setLoading(true);
     setToolsLoading(true);
-    // Keep explicit selections; the refreshed catalog validates them before the next run.
+    setError(null);
     setToolsError(null);
-    invoke<McpServer[]>('list_mcp_servers').then(async servers => {
-      const groups = await Promise.all(servers.filter(s => s.enabled && s.status === 'ready').map(async server => {
+    // Hiding preserves this result and requests at most one fresh snapshot after restoration.
+    const toolsRead = invoke<McpServer[]>('list_mcp_servers').then(async servers => {
+      if (!current()) return;
+      if (!currentActivity.current) { flight.refresh = true; return; }
+      const groups = await Promise.allSettled(servers.filter(s => s.enabled && s.status === 'ready').map(async server => {
         const listed = await invoke<McpTool[]>('list_mcp_tools', { serverId: server.id });
         return listed.map(tool => ({ ...tool, server_name: server.name }));
       }));
-      if (active) setTools(groups.flat());
-    }).catch(e => { if (active) { setTools([]); setToolsError(t('workbench.toolsUnavailable')); report.current(e); } })
-      .finally(() => { if (active) setToolsLoading(false); });
-    return () => { active = false; };
-  }, [reload]);
-
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    setError(null);
-    Promise.all([
+      const tools: AvailableTool[] = [];
+      for (const group of groups) {
+        if (group.status === 'rejected') throw group.reason;
+        tools.push(...group.value);
+      }
+      if (current()) setTools(tools);
+    }).catch(e => { if (current()) { setToolsError(t('workbench.toolsUnavailable')); report.current(e); } })
+      .finally(() => { if (current()) setToolsLoading(false); });
+    const configRead = Promise.allSettled([
       command<Provider[]>('list_providers', {}),
       invoke<Skill[]>('list_installed_skills', {}),
-    ]).then(([allProviders, allSkills]) => {
-      if (!active) return;
+    ]).then(([providerResult, skillResult]) => {
+      if (!current()) return;
+      if (providerResult.status === 'rejected') throw providerResult.reason;
+      if (skillResult.status === 'rejected') throw skillResult.reason;
+      const allProviders = providerResult.value;
+      const allSkills = skillResult.value;
       setProviders(allProviders.filter(p => p.enabled && p.credential_status === 'stored'));
       setSkills(allSkills.filter(s => s.enabled && s.call_type === 'content'));
-    }).catch(e => { if (active) { setError(t('workbench.loadFailed', { error: message(e) })); report.current(e); } })
-      .finally(() => { if (active) setLoading(false); });
-    invoke<TaskRecord[]>('list_workbench_tasks', {})
-      .then(records => { if (active) { setHistory(records); setHistoryError(null); } })
-      .catch(e => { if (active) { setHistoryError(t('workbench.historyUnavailable')); report.current(e); } });
-    return () => { active = false; };
-  }, [reload]);
+    }).catch(e => { if (current()) { setError(t('workbench.loadFailed', { error: message(e) })); report.current(e); } })
+      .finally(() => { if (current()) setLoading(false); });
+    const historyRead = invoke<TaskRecord[]>('list_workbench_tasks', {})
+      .then(records => { if (current()) { setHistory(records); setHistoryError(null); } })
+      .catch(e => { if (current()) { setHistoryError(t('workbench.historyUnavailable')); report.current(e); } });
+    void Promise.all([toolsRead, configRead, historyRead]).finally(() => {
+      metadataFlight.current = null;
+      if (mounted.current && currentActivity.current && (flight.refresh || useTaskRunner.getState().epoch !== accountEpoch)) setMetadataWake(value => value + 1);
+    });
+  }, [surfaceActive, reload, accountEpoch, metadataWake]);
 
   useEffect(() => {
-    let active = true;
-    setModels([]);
-    // A metadata refresh must not erase an otherwise valid selected model.
-    setModelsLoading(false);
-    if (!providerId) return;
+    if (!surfaceActive) {
+      if (modelsFlight.current) modelsFlight.current.refresh = true;
+      return;
+    }
+    if (!providerId || currentProvider.current !== providerId) return;
     setModelsLoading(true);
-    command<Model[]>('list_models', { providerId }).then(allModels => {
-      if (active) setModels(allModels.filter(m => m.model_type === 'text-generation' || m.model_type === 'chat'));
-    }).catch(e => { if (active) { setError(t('workbench.modelsFailed')); report.current(e); } })
-      .finally(() => { if (active) setModelsLoading(false); });
-    return () => { active = false; };
-  }, [providerId, reload]);
+    if (modelsFlight.current) {
+      if (modelsFlight.current.reload !== reload) modelsFlight.current.refresh = true;
+      return;
+    }
+    const flight = { reload, refresh: false };
+    modelsFlight.current = flight;
+    const current = () => mounted.current && useTaskRunner.getState().epoch === accountEpoch && currentProvider.current === providerId;
+    // Keep a successful same-provider snapshot while refreshing, including after a failure.
+    void command<Model[]>('list_models', { providerId }).then(allModels => {
+      if (current()) setModels(allModels.filter(m => m.provider_id === providerId && (m.model_type === 'text-generation' || m.model_type === 'chat')));
+    }).catch(e => { if (current()) { setError(t('workbench.modelsFailed')); report.current(e); } })
+      .finally(() => {
+        modelsFlight.current = null;
+        if (current()) setModelsLoading(false);
+        if (mounted.current && currentActivity.current && (flight.refresh || !current())) setModelsWake(value => value + 1);
+      });
+  }, [surfaceActive, providerId, reload, accountEpoch, modelsWake]);
 
   const bytes = new TextEncoder().encode(prompt).length;
-  const ready = !loading && !modelsLoading && !toolsLoading && providers.some(p => p.id === providerId)
+  const ready = !loading && !modelsLoading && !toolsLoading && !toolsError && providers.some(p => p.id === providerId)
     && models.some(m => m.model_id === modelId && m.provider_id === providerId) && prompt.trim() && bytes <= 16384
     && (skillIds.length ? skillIds.every(id => skills.some(s => s.skill_id === id)) : withoutSkill);
 
@@ -161,7 +230,9 @@ export default function SingleTaskWorkbench() {
     if (!ready || locked) return;
     const chosen = tools.filter(tool => selectedTools.includes(toolKey(tool)));
     if (chosen.length !== selectedTools.length) { setError(t('workbench.selectedToolsChanged')); return; }
+    const epoch = useTaskRunner.getState().epoch;
     await runner.run({ provider_id: providerId, model_id: modelId, prompt, skill_ids: skillIds, generation, allow_without_skill: !skillIds.length && withoutSkill }, chosen.map(tool => ({ server_id: tool.server_id, tool_name: tool.tool_name, schema_hash: tool.schema_hash })));
+    if (!mounted.current || useTaskRunner.getState().epoch !== epoch) return;
     const result = useTaskRunner.getState().outcome;
     if (result) setHistory(old => [result.record, ...old.filter(row => row.task.id !== result.record.task.id)].slice(0, 50));
   }
@@ -208,10 +279,10 @@ export default function SingleTaskWorkbench() {
                     <OrderedSkills skills={skills} selected={skillIds} onChange={ids => { setSkillIds(ids); setWithoutSkill(false); }} without={withoutSkill} onWithoutChange={setWithoutSkill} disabled={locked} />
                     <GenerationControls value={generation} onChange={setGeneration} model={models.find(m => m.model_id === modelId)} disabled={locked} />
                     <section aria-labelledby="tools-heading">
-                      <Card className="bg-background shadow-none">
+                      <Card className="bg-surface-canvas shadow-none">
                         <Card.Body>
                           <Stack gap={3}>
-                            <h3 id="tools-heading" className="m-0 text-base font-semibold">{t('workbench.tools')} <span className="font-normal text-muted-foreground">{t('workbench.toolCount', { selected: selectedTools.length, limit: 8 })}</span></h3>
+                            <h3 id="tools-heading" className="m-0 text-base font-semibold">{t('workbench.tools')} <span className="font-normal text-ink-secondary">{t('workbench.toolCount', { selected: selectedTools.length, limit: 8 })}</span></h3>
                             <p className={PARA}>{t('workbench.optionalTools')}</p>
                             {toolsLoading && <Loading label={t('workbench.loadingTools')} />}
                             {toolsError && <p className={PARA}>{toolsError}</p>}
@@ -222,13 +293,13 @@ export default function SingleTaskWorkbench() {
                               return <Checkbox key={key} className="max-w-full items-start wrap-anywhere" checked={checked}
                                 disabled={!checked && selectedTools.length >= 8}
                                 onChange={on => setSelectedTools(old => on ? [...old, key] : old.filter(k => k !== key))}
-                                 label={<span>{tool.server_name} / {tool.tool_name}<small className="mt-1 block text-xs text-muted-foreground">{tool.description || t('workbench.noDescription')}</small></span>} />;
+                                 label={<span>{tool.server_name} / {tool.tool_name}<small className="mt-1 block text-xs text-ink-secondary">{tool.description || t('workbench.noDescription')}</small></span>} />;
                             })}
                           </Stack>
                         </Card.Body>
                       </Card>
                     </section>
-                    <Input multiline label={t('workbench.taskInput')} rows={9} value={prompt} onChange={e => setPrompt(e.target.value)} className="resize-y leading-relaxed"
+                    <Input multiline label={t('workbench.taskInput')} rows={9} value={prompt} onChange={e => setPrompt(e.target.value)} className="type-reading resize-y"
                       placeholder={t('workbench.promptPlaceholder')} aria-describedby="input-budget" />
                     <p id="input-budget" className={PARA}>{formatNumber(bytes)} / {formatNumber(16_384)} {t('detail.inputBudget')}{selectedTools.length ? t('workbench.toolsIncluded') : ''} {t('detail.sentToProvider')}{selectedTools.length ? t('workbench.toolsExcluded') : t('workbench.noToolsSelected')}</p>
                     <div><Button type="submit" loading={running} disabled={!ready || locked}>{running ? t('workbench.running') : skillIds.length ? t('workbench.runWithSkill') : t('workbench.runWithoutSkill')}</Button></div>
@@ -252,9 +323,9 @@ export default function SingleTaskWorkbench() {
               {!outcome && <p className={PARA}>{t('workbench.noResult')}</p>}
               {outcome && <>
                 <p className="m-0 text-sm wrap-anywhere">{t('detail.task')}{outcome.record.task.id} · {outcome.record.task.status}</p>
-                {outcome.record.skills.map(s => <p key={s.version_id} className="m-0 font-mono text-xs text-muted-foreground wrap-anywhere">{t('detail.boundVersion')}{s.version_id}<br />{t('common.sha256')} {s.content_hash}</p>)}
+                {outcome.record.skills.map(s => <p key={s.version_id} className="m-0 font-mono text-xs text-ink-secondary wrap-anywhere">{t('detail.boundVersion')}{s.version_id}<br />{t('common.sha256')} {s.content_hash}</p>)}
                 {!outcome.record.skills.length && <p className={PARA}>{t('workbench.explicitNoSkill')}</p>}
-                {outcome.record.tools?.map(tool => <p key={JSON.stringify([tool.server_id, tool.tool_name])} className="m-0 font-mono text-xs text-muted-foreground wrap-anywhere">{t('detail.selectedTool')}{tool.tool_name}<br />{t('detail.server')}{tool.server_id}<br />{t('detail.schema')}{tool.schema_hash}</p>)}
+                {outcome.record.tools?.map(tool => <p key={JSON.stringify([tool.server_id, tool.tool_name])} className="m-0 font-mono text-xs text-ink-secondary wrap-anywhere">{t('detail.selectedTool')}{tool.tool_name}<br />{t('detail.server')}{tool.server_id}<br />{t('detail.schema')}{tool.schema_hash}</p>)}
                 {outcome.content && <div className="task-reading"><Markdown source={outcome.content} /></div>}
                 {outcome.audit_warning && <Notice tone="warning">{t('workbench.providerAuditWarning')}</Notice>}
                 {toolTask?.audit_warning && <Notice tone="warning">{t('workbench.providerToolAuditWarning')}</Notice>}
@@ -263,7 +334,7 @@ export default function SingleTaskWorkbench() {
           </Card.Body>
         </Card>
         {taskActive && toolTask?.proposal && <section className="mt-6" aria-labelledby="proposal-heading" aria-busy={running}>
-          <Card className="border-2 border-primary">
+          <Card className="border-2 border-accent-default">
             <Card.Body>
               <Stack gap={3}>
                 <h3 id="proposal-heading" ref={proposalHeading} tabIndex={-1} className={cn('m-0 text-base font-semibold', FOCUS)}>{t('workbench.reviewTool')}</h3>
@@ -288,11 +359,11 @@ export default function SingleTaskWorkbench() {
             <p className={PARA}>{t('workbench.historyPrivacy')}</p>
             {historyError && <Notice tone="error">{historyError}</Notice>}
             {!history.length && <p className={PARA}>{t('workbench.noSavedTasks')}</p>}
-            {!!history.length && <ul className="m-0 list-none p-0">{history.map(row => <li key={row.task.id} className="border-t border-border py-4 wrap-anywhere first:border-t-0 first:pt-0">
+            {!!history.length && <ul className="m-0 list-none p-0">{history.map(row => <li key={row.task.id} className="border-t border-border-subtle py-4 wrap-anywhere first:border-t-0 first:pt-0">
               <strong>{t('workbench.status')}: {row.task.status}</strong> · {row.task.model_id} · {formatDateTime(row.task.created_at * 1000)}
               <p className={cn(PARA, 'mt-1')}>{row.skills.map(s => s.version_id).join(', ') || t('workbench.noSkillHistory')}{row.task.error_code ? ` · ${row.task.error_code}` : ''}{row.task.total_tokens != null ? ` · ${t('workbench.tokenCount', { count: formatNumber(row.task.total_tokens) })}` : ''}</p>
               {!!row.tools?.length && <p className={cn(PARA, 'mt-1')}>{row.tools.map(tool => tool.tool_name).join(', ')} · {row.tools.length} {t('detail.toolReferences')}</p>}
-              <small className="mt-1 block text-xs text-muted-foreground">{row.task.id}</small>
+              <small className="mt-1 block text-xs text-ink-secondary">{row.task.id}</small>
             </li>)}</ul>}
           </Stack>
         </Card.Body>

@@ -9,7 +9,7 @@ import { FOCUS } from './ChatNotice';
 import { fetchModels, fetchProviders, fetchSkills } from './catalog';
 import { GenerationControls, OrderedSkills } from './GenerationControls';
 const UNSET = '__unset__';
-const LINK = cn('text-primary underline', FOCUS);
+const LINK = cn('text-accent-default underline', FOCUS);
 export const SKILL_SELECT_ID = 'chat-skill-select';
 const snapshot = (session: ChatSession): ChatTargetInput => ({ provider_id: session.provider_id, model_id: session.model_id, skill_ids: session.skills.map(s => s.skill_id), no_skill: session.no_skill_confirmed, generation: session.generation });
 export default function TargetBar({ session, skillRequest = 0 }: { session: ChatSession; skillRequest?: number }) {
@@ -39,8 +39,8 @@ export default function TargetBar({ session, skillRequest = 0 }: { session: Chat
   }, [open]);
   useEffect(() => {
     setTarget(useChatStore.getState().sessionTargetDrafts[session.id] ?? snapshot(session));
-    setStatus(null);
   }, [session]);
+  useEffect(() => { setStatus(null); }, [session.id]);
   useEffect(() => {
     let active = true;
     setModels([]);
@@ -60,8 +60,8 @@ export default function TargetBar({ session, skillRequest = 0 }: { session: Chat
     if (!error) { setSessionTargetDraft(session.id, null); setOpen(false); }
     setStatus(error ? { tone: 'error', text: error } : { tone: 'ok', text: t('chat.targetUpdated') });
   };
-  return <Popover label={t('chat.target')} side="top" align="start" open={open} onOpenChange={setOpen} trigger={<Button aria-label={t('chat.target')} variant="ghost" size="sm">{session.model_id ?? t('chat.selectModel')} · {session.skills.length} {t('chat.skill')}</Button>} content={<section aria-label={t('chat.target')} className="chat-target">
-    {loaded && !providers.length && <p className="m-0 text-sm text-muted-foreground">{t('chat.noProviderBefore')}<Link to="/settings/providers" className={LINK}>{t('chat.providerPage')}</Link> {t('chat.noProviderAfter')}</p>}
+  return <><Popover label={t('chat.target')} side="top" align="start" open={open} onOpenChange={setOpen} trigger={<Button aria-label={t('chat.target')} variant="ghost" size="sm">{session.model_id ?? t('chat.selectModel')} · {session.skills.length} {t('chat.skill')}</Button>} content={<section aria-label={t('chat.target')} className="chat-target">
+    {loaded && !providers.length && <p className="m-0 text-sm text-ink-secondary">{t('chat.noProviderBefore')}<Link to="/settings/providers" className={LINK}>{t('chat.providerPage')}</Link> {t('chat.noProviderAfter')}</p>}
     <Stack gap={3}>
       <Select label={t('chat.provider')} options={[{ value: UNSET, label: t('chat.selectProvider') }, ...providers.map(p => ({ value: p.id, label: p.name }))]} value={target.provider_id ?? UNSET} disabled={locked} onChange={v => patch({ provider_id: v === UNSET ? null : v, model_id: null })} />
       <Select label={t('chat.model')} options={[{ value: UNSET, label: t('chat.selectModel') }, ...models.map(m => ({ value: m.model_id, label: m.model_name }))]} value={target.model_id ?? UNSET} disabled={locked || !target.provider_id} onChange={v => patch({ model_id: v === UNSET ? null : v })} />
@@ -69,6 +69,6 @@ export default function TargetBar({ session, skillRequest = 0 }: { session: Chat
       <GenerationControls value={target.generation} onChange={generation => patch({ generation })} model={models.find(m => m.model_id === target.model_id)} disabled={locked} />
       <Button variant="secondary" disabled={locked || !ready || !dirty} loading={saving} onClick={() => void apply()}>{t('chat.applyTarget')}</Button>
     </Stack>
-    {status && <p role={status.tone === 'error' ? 'alert' : 'status'} className={cn('m-0 text-xs', status.tone === 'error' ? 'text-error-text' : 'text-success-text')}>{status.text}</p>}
-  </section>} />;
+    {status?.tone === 'error' && <p role="alert" className="m-0 text-xs text-status-error-text">{status.text}</p>}
+  </section>} /><span role="status" className={cn('text-xs text-status-success-text', status?.tone !== 'ok' && 'sr-only')}>{status?.tone === 'ok' ? status.text : ''}</span></>;
 }

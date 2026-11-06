@@ -5,7 +5,7 @@ const text = (value: Json | undefined) => typeof value === 'string' ? value : ''
 export function NativeValue({ value }: { value: Json | undefined }) {
   if (value === undefined || value === null) return null;
   if (Array.isArray(value)) return <div className="space-y-2">{value.map((entry, index) => <NativeValue key={index} value={entry} />)}</div>;
-  if (typeof value === 'object') return <dl className="min-w-0 space-y-1">{Object.entries(value).map(([key, entry]) => <div key={key}><dt className="text-xs text-muted-foreground">{key}</dt><dd className="m-0 pl-3"><NativeValue value={entry} /></dd></div>)}</dl>;
+  if (typeof value === 'object') return <dl className="min-w-0 space-y-1">{Object.entries(value).map(([key, entry]) => <div key={key}><dt className="text-xs text-ink-secondary">{key}</dt><dd className="m-0 pl-3"><NativeValue value={entry} /></dd></div>)}</dl>;
   return <pre className="type-code m-0 overflow-x-auto whitespace-pre-wrap break-words text-sm">{String(value)}</pre>;
 }
 // Only native protocol fields enter these views. Paths are metadata, never filesystem read handles.
@@ -14,17 +14,17 @@ export default function ExecutionDetails({ event }: { event: AgentEvent }) {
   const data = object(event.data);
   if (event.kind === 'turn/completed' || event.kind === 'result') {
     const status = ['completed', 'failed', 'cancelled'].includes(text(data.run_status)) ? text(data.run_status) : 'unknown';
-    return <section aria-label={t('execution.run')} className={`min-w-0 space-y-1 ${status === 'failed' ? 'text-destructive' : ''}`}><strong data-run-status={status}>{t(`execution.run_${status}`)}</strong><NativeValue value={data.native_status} /><NativeValue value={data.terminal_reason} /><NativeValue value={data.errors} /><small>{t('execution.source', { seq: event.seq })}</small></section>;
+    return <section aria-label={t('execution.run')} className={`min-w-0 space-y-1 ${status === 'failed' ? 'text-status-error' : ''}`}><strong data-run-status={status}>{t(`execution.run_${status}`)}</strong><NativeValue value={data.native_status} /><NativeValue value={data.terminal_reason} /><NativeValue value={data.errors} /><small>{t('execution.source', { seq: event.seq })}</small></section>;
   }
   if (event.kind === 'turn/plan/updated') {
     const plan = Array.isArray(data.plan) ? data.plan : [];
-    return <section aria-label={t('execution.plan')} className="min-w-0 space-y-2"><strong>{t('execution.plan')}</strong><ol className="list-decimal pl-5">{plan.map((value, index) => { const item = object(value); const status = text(item.status) === 'inProgress' ? 'in_progress' : text(item.status); return <li key={index} className="break-words"><span>{text(item.step)}</span> <span className="text-xs text-muted-foreground">{t(`execution.${['pending', 'in_progress', 'completed'].includes(status) ? status : 'unknown'}`)}</span></li>; })}</ol><small>{t('execution.source', { seq: event.seq })}</small></section>;
+    return <section aria-label={t('execution.plan')} className="min-w-0 space-y-2"><strong>{t('execution.plan')}</strong><ol className="list-decimal pl-5">{plan.map((value, index) => { const item = object(value); const status = text(item.status) === 'inProgress' ? 'in_progress' : text(item.status); return <li key={index} className="break-words"><span>{text(item.step)}</span> <span className="text-xs text-ink-secondary">{t(`execution.${['pending', 'in_progress', 'completed'].includes(status) ? status : 'unknown'}`)}</span></li>; })}</ol><small>{t('execution.source', { seq: event.seq })}</small></section>;
   }
   if (event.kind === 'turn/diff/updated') return <details open className="min-w-0"><summary>{t('execution.diff')}</summary><pre className="type-code overflow-x-auto whitespace-pre-wrap break-words">{event.text}</pre><small>{t('execution.source', { seq: event.seq })}</small></details>;
   if (['commandExecution', 'mcpToolCall', 'dynamicToolCall', 'webSearch', 'item/started', 'tool_progress'].includes(event.kind) && data.type !== 'fileChange') {
     const started = event.kind === 'item/started';
     const failed = data.status === 'failed' || data.success === false || (typeof data.exitCode === 'number' && data.exitCode !== 0) || Boolean(data.error);
-    return <section className={`min-w-0 space-y-2 border-l-2 border-border pl-3 ${failed ? 'text-destructive' : ''}`}>
+    return <section className={`min-w-0 space-y-2 border-l-2 border-border-subtle pl-3 ${failed ? 'text-status-error' : ''}`}>
       <strong>{text(data.tool) || text(data.tool_name) || text(data.type) || event.kind}</strong>
       <span className="ml-2 text-xs">{started ? t('execution.in_progress') : text(data.status) || (event.kind === 'tool_progress' ? t('execution.in_progress') : t('execution.unknown'))}</span>
       <NativeValue value={data.command} /><NativeValue value={data.cwd} /><NativeValue value={data.arguments} /><NativeValue value={data.query} /><NativeValue value={data.action} />
@@ -35,7 +35,7 @@ export default function ExecutionDetails({ event }: { event: AgentEvent }) {
       <small>{t('execution.source', { seq: event.seq })}</small>
     </section>;
   }
-  if ((event.kind === 'fileChange' || data.type === 'fileChange') && Array.isArray(data.changes)) return <section aria-label={t('execution.artifacts')} className="min-w-0 space-y-2"><strong>{t('execution.artifacts')}</strong><span className="ml-2 text-xs">{event.kind === 'item/started' ? t('execution.in_progress') : text(data.status) || t('execution.unknown')}</span><p className="text-xs text-muted-foreground">{t('execution.metadata')}</p>{data.changes.map((value, index) => { const change = object(value); const kind = object(change.kind); return <details key={index} open><summary className="break-all">{text(change.path)} · {text(kind.type) || text(change.kind)}</summary>{typeof change.diff === 'string' && <pre className="type-code overflow-x-auto whitespace-pre-wrap break-words">{change.diff}</pre>}</details>; })}<NativeValue value={data.error} /><small>{t('execution.source', { seq: event.seq })}</small></section>;
+  if ((event.kind === 'fileChange' || data.type === 'fileChange') && Array.isArray(data.changes)) return <section aria-label={t('execution.artifacts')} className="min-w-0 space-y-2"><strong>{t('execution.artifacts')}</strong><span className="ml-2 text-xs">{event.kind === 'item/started' ? t('execution.in_progress') : text(data.status) || t('execution.unknown')}</span><p className="text-xs text-ink-secondary">{t('execution.metadata')}</p>{data.changes.map((value, index) => { const change = object(value); const kind = object(change.kind); return <details key={index} open><summary className="break-all">{text(change.path)} · {text(kind.type) || text(change.kind)}</summary>{typeof change.diff === 'string' && <pre className="type-code overflow-x-auto whitespace-pre-wrap break-words">{change.diff}</pre>}</details>; })}<NativeValue value={data.error} /><small>{t('execution.source', { seq: event.seq })}</small></section>;
   if (event.kind === 'message') {
     const content = data.content;
     const blocks = Array.isArray(content) ? content : Array.isArray(object(data.message).content) ? object(data.message).content as Json[] : [];

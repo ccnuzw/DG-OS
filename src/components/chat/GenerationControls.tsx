@@ -12,8 +12,8 @@ export function GenerationControls({ value, onChange, disabled, model }: { value
     <Select label={t('generation.reasoning')} value={value.reasoning?.effort ?? '__default__'} disabled={disabled} options={['__default__','low','medium','high'].map(v => ({ value: v, label: t(`generation.${v === '__default__' ? 'default' : v === 'medium' ? 'effortMedium' : v}`) }))} onChange={v => patch({ reasoning: v === '__default__' ? null : { effort: v, ...(value.reasoning?.budget_tokens !== undefined ? { budget_tokens: value.reasoning.budget_tokens } : {}) } })} />
     <Input label={t('generation.reasoningBudget')} type="number" min={1} step={1} value={value.reasoning?.budget_tokens ?? ''} disabled={disabled} onChange={e => patch({ reasoning: e.target.value === '' ? (value.reasoning?.effort ? { effort: value.reasoning.effort } : null) : { ...value.reasoning, budget_tokens: Number(e.target.value) } })} />
     <Input label={t('generation.instruction')} multiline rows={3} value={value.instruction ?? ''} disabled={disabled} onChange={e => patch({ instruction: e.target.value })} />
-    <p className="m-0 text-xs text-muted-foreground">{t('generation.capabilityNotice')} {model?.max_output_tokens ? t('generation.outputLimit', { count: model.max_output_tokens }) : t('generation.unknownLimit')}</p>
-    <p className="m-0 text-xs text-muted-foreground">{t('generation.reasoningCapability', { state: t(`generation.${model?.capabilities?.reasoning ?? 'unknown'}`) })}</p>
+    <p className="m-0 text-xs text-ink-secondary">{t('generation.capabilityNotice')} {model?.max_output_tokens ? t('generation.outputLimit', { count: model.max_output_tokens }) : t('generation.unknownLimit')}</p>
+    <p className="m-0 text-xs text-ink-secondary">{t('generation.reasoningCapability', { state: t(`generation.${model?.capabilities?.reasoning ?? 'unknown'}`) })}</p>
   </Stack>;
 }
 export function OrderedSkills({ skills, selected, onChange, without, onWithoutChange, disabled, id }: { skills: Skill[]; selected: string[]; onChange: (ids: string[]) => void; without: boolean; onWithoutChange: (value: boolean) => void; disabled?: boolean; id?: string }) {
@@ -25,7 +25,7 @@ export function OrderedSkills({ skills, selected, onChange, without, onWithoutCh
       {skills.map(skill => <Checkbox key={skill.skill_id} checked={selected.includes(skill.skill_id)} label={`${skill.name} — v${skill.version}`} onChange={on => onChange(on ? [...selected, skill.skill_id] : selected.filter(id => id !== skill.skill_id))} />)}
       {selected.map((id, index) => <div key={id} className="flex min-w-0 flex-wrap items-center gap-2"><span className="min-w-0 grow wrap-anywhere">{index + 1}. {skills.find(s => s.skill_id === id)?.name ?? id}</span><Button size="sm" variant="ghost" disabled={disabled || index === 0} onClick={() => move(index, -1)} aria-label={`${t('generation.moveUp')} ${id}`}>{t('generation.moveUp')}</Button><Button size="sm" variant="ghost" disabled={disabled || index === selected.length - 1} onClick={() => move(index, 1)} aria-label={`${t('generation.moveDown')} ${id}`}>{t('generation.moveDown')}</Button><Button size="sm" variant="ghost" disabled={disabled} onClick={() => onChange(selected.filter(item => item !== id))}>{t('common.remove')}</Button></div>)}
       {!selected.length && <Checkbox label={t('chat.explicitNoSkill')} checked={without} onChange={onWithoutChange} />}
-      {selected.length > 1 && <p className="m-0 text-xs text-warning-text">{t('generation.combinationNotice')}</p>}
+      {selected.length > 1 && <p className="m-0 text-xs text-status-warning-text">{t('generation.combinationNotice')}</p>}
     </Stack>
   </fieldset>;
 }

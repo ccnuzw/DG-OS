@@ -2,12 +2,12 @@ import { t, useLocale as usePageLocale } from '../../i18n';
 import type { ReactNode } from 'react';
 import { Button, StatusIcon, cn } from '@dgos/ui';
 
-export const FOCUS = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring';
+export const FOCUS = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus';
 
 const TONE: Readonly<Record<'error' | 'warning' | 'info', string>> = {
-  error: 'border-error bg-error-bg text-error-text',
-  warning: 'border-warning bg-warning-bg text-warning-text',
-  info: 'border-info bg-info-bg text-info-text',
+  error: 'border-status-error bg-status-error-surface text-status-error-text',
+  warning: 'border-status-warning bg-status-warning-surface text-status-warning-text',
+  info: 'border-status-info bg-status-info-surface text-status-info-text',
 };
 
 export interface ChatNoticeProps {

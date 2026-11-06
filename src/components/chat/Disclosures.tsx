@@ -18,8 +18,8 @@ export const DISCLOSURES: readonly string[] = [
 export default function Disclosures() {
   usePageLocale();
   return (
-    <details className="chat-disclosures text-xs text-muted-foreground">
-      <summary className={cn('cursor-pointer font-medium text-foreground', FOCUS)}>{t('chat.privacy')}</summary>
+    <details className="chat-disclosures text-xs text-ink-secondary">
+      <summary className={cn('cursor-pointer font-medium text-ink-primary', FOCUS)}>{t('chat.privacy')}</summary>
       <ul className="m-0 mt-2 list-disc pl-5">
         {Array.from({ length: 6 }, (_, i) => `chat.disclosure${i + 1}`).map(key => <li key={key} className="my-0.5">{t(key)}</li>)}
       </ul>

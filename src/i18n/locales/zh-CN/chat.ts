@@ -5,6 +5,7 @@ export default {
   "chat.argsHelp": "。请核对下面的完整参数；工具可能修改数据或把数据发送到外部。",
   "chat.assistant": "助手",
   "chat.awaitingTool": "等待你确认工具调用…",
+  "chat.backToBottom": "回到底部",
   "chat.byteUnit": "字节（UTF-8）",
   "chat.cancel": "取消",
   "chat.chat": "对话",

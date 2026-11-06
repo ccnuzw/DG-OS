@@ -1,5 +1,5 @@
 import { t, useLocale as usePageLocale } from '../../i18n';
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Checkbox, Input, Loading, Popover, cn } from '@dgos/ui';
 import { MAX_MESSAGE_BYTES, MAX_TOOLS, useChatStore, utf8Bytes } from '../../stores/chatStore';
@@ -10,8 +10,22 @@ import { formatNumber } from '../../i18n';
 import Attachments from './Attachments';
 import VoiceCapture from './VoiceCapture';
 import './conversation.css';
+import { useSurfaceActive } from '../../workspace/SurfaceContext';
 
-const LINK = cn('text-primary underline', FOCUS);
+const LINK = cn('text-accent-default underline', FOCUS);
+
+// As in Modal, WebKit may reveal only the caret and retain an obsolete body scroll offset.
+function revealComposerControl(event: FocusEvent<HTMLDivElement>) {
+  const region = event.currentTarget, target = event.target;
+  requestAnimationFrame(() => {
+    if (!region.isConnected || document.activeElement !== target || !region.contains(target)) return;
+    const bounds = region.getBoundingClientRect(), field = target.getBoundingClientRect();
+    const top = bounds.top + region.clientTop + 4;
+    const bottom = bounds.top + region.clientTop + region.clientHeight - 4;
+    if (field.top < top || field.height > bottom - top) region.scrollTop += field.top - top;
+    else if (field.bottom > bottom) region.scrollTop += field.bottom - bottom;
+  });
+}
 
 interface ToolPickerProps {
   tools: ConnectedTool[] | null;
@@ -46,12 +60,12 @@ function ToolPicker({ tools, selected, disabled, onLoaded, onChange }: ToolPicke
       <Button size="sm" variant="ghost" disabled={disabled}>{t('chat.toolPicker', { count: selected.length, limit: MAX_TOOLS })}</Button>
     } content={
         <div className="chat-tool-menu flex flex-col gap-2 text-sm">
-          <p className="m-0 text-xs text-muted-foreground">{t('chat.toolContext')}</p>
-          <p className="m-0 text-xs text-muted-foreground">{t('chat.toolsHelp')}</p>
+          <p className="m-0 text-xs text-ink-secondary">{t('chat.toolContext')}</p>
+          <p className="m-0 text-xs text-ink-secondary">{t('chat.toolsHelp')}</p>
           {loading ? <Loading label={t('chat.loadingTools')} /> : null}
-          {failed ? <p className="m-0 text-xs text-muted-foreground">{t('chat.toolsFailed')}</p> : null}
+          {failed ? <p className="m-0 text-xs text-ink-secondary">{t('chat.toolsFailed')}</p> : null}
           {!loading && !failed && tools?.length === 0 ? (
-            <p className="m-0 text-xs text-muted-foreground">{t('chat.noToolsBefore')}<Link to="/mcp" className={LINK}>{t('chat.mcp')}</Link> {t('chat.noToolsAfter')}</p>
+            <p className="m-0 text-xs text-ink-secondary">{t('chat.noToolsBefore')}<Link to="/mcp" className={LINK}>{t('chat.mcp')}</Link> {t('chat.noToolsAfter')}</p>
           ) : null}
           {tools?.map(tool => {
             const key = toolKey(tool);
@@ -60,7 +74,7 @@ function ToolPicker({ tools, selected, disabled, onLoaded, onChange }: ToolPicke
               <Checkbox key={key} className="max-w-full items-start wrap-anywhere" checked={checked}
                 disabled={disabled || (!checked && selected.length >= MAX_TOOLS)}
                 onChange={on => onChange(on ? [...selected, key] : selected.filter(item => item !== key))}
-                label={<span>{tool.server_name} / {tool.tool_name}<small className="mt-1 block text-xs text-muted-foreground">{tool.description || t('chat.noDescription')}</small></span>} />
+                label={<span>{tool.server_name} / {tool.tool_name}<small className="mt-1 block text-xs text-ink-secondary">{tool.description || t('chat.noDescription')}</small></span>} />
             );
           })}
           {tools?.length ? <Button size="sm" variant="ghost" onClick={load} disabled={loading}>{t('chat.refreshTools')}</Button> : null}
@@ -72,6 +86,7 @@ function ToolPicker({ tools, selected, disabled, onLoaded, onChange }: ToolPicke
 export default function Composer() {
   usePageLocale();
   const session = useChatStore(state => state.activeSession);
+  const active = useSurfaceActive();
   const sessionId = session?.id ?? null;
   const stale = useChatStore(state => state.activeStale);
   const generation = useChatStore(state => state.generation);
@@ -93,6 +108,7 @@ export default function Composer() {
   const [skillRequest, setSkillRequest] = useState(0);
   const composing = useRef(false);
   const input = useRef<HTMLTextAreaElement>(null);
+  const form = useRef<HTMLFormElement>(null);
   const seenSent = useRef(lastSent.seq);
   const wasGenerating = useRef(false);
 
@@ -107,13 +123,14 @@ export default function Composer() {
   useEffect(() => {
     if (lastSent.seq === seenSent.current) return;
     seenSent.current = lastSent.seq;
-    if (sessionId) { setDraft(sessionId, ''); setSessionTools(sessionId, []); }
+    if (lastSent.sessionId) { setDraft(lastSent.sessionId, ''); setSessionTools(lastSent.sessionId, []); }
   }, [lastSent, sessionId, setDraft, setSessionTools]);
 
   useEffect(() => {
-    if (wasGenerating.current && !generating) input.current?.focus();
+    const focused = document.activeElement;
+    if (active && wasGenerating.current && !generating && (focused === document.body || (focused && form.current?.contains(focused)))) input.current?.focus({ preventScroll: true });
     wasGenerating.current = generating;
-  }, [generating]);
+  }, [active, generating]);
 
   useEffect(() => {
     if (actionCode !== 1006017) return;
@@ -149,28 +166,29 @@ export default function Composer() {
   };
 
   return (
-    <form aria-label={t('chat.sendForm')} className="chat-composer" onSubmit={event => { event.preventDefault(); submit(); }}>
+    <form ref={form} aria-label={t('chat.sendForm')} className="chat-composer" onSubmit={event => { event.preventDefault(); submit(); }}>
+      <div className="chat-composer-body" onFocusCapture={revealComposerControl}>
       {actionError ? <ChatNotice tone="error">{actionError}</ChatNotice> : null}
       {actionCode === 1006013 && !generating ? (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-muted-foreground">{t('chat.skillUnavailable')}</span>
+          <span className="text-xs text-ink-secondary">{t('chat.skillUnavailable')}</span>
           <Button size="sm" variant="secondary" onClick={() => setSkillRequest(value => value + 1)}>{t('chat.reselectSkill')}</Button>
         </div>
       ) : null}
       {actionCode === 1006017 ? (
-        <p className="m-0 text-xs text-muted-foreground">
+        <p className="m-0 text-xs text-ink-secondary">
           {generating ? t('chat.stopFirst') : t('chat.toolsCleared')}
         </p>
       ) : null}
-      {session && !hasTarget && !stale ? <p className="m-0 text-xs text-muted-foreground">{t('chat.chooseTarget')}</p> : null}
+      {session && !hasTarget && !stale ? <p className="m-0 text-xs text-ink-secondary">{t('chat.chooseTarget')}</p> : null}
       {session && !stale && !skillDecided ? (
         <div className="flex flex-wrap items-center gap-2">
-          <p id="chat-skill-hint" className="m-0 text-xs text-warning-text">
+          <p id="chat-skill-hint" className="m-0 text-xs text-status-warning-text">
             {t('chat.chooseSkillHelp')}</p>
           <Button size="sm" variant="secondary" onClick={() => setSkillRequest(value => value + 1)}>{t('chat.chooseSkill')}</Button>
         </div>
       ) : null}
-      {stale ? <p className="m-0 text-xs text-error-text">{t('chat.staleSend')}</p> : null}
+      {stale ? <p className="m-0 text-xs text-status-error-text">{t('chat.staleSend')}</p> : null}
       <Input
         ref={input}
         multiline
@@ -181,18 +199,21 @@ export default function Composer() {
         value={draft}
         disabled={!session || stale || generating}
         error={tooLong ? t('chat.tooLong') : undefined}
-        className="chat-composer-input"
+        className="type-reading chat-composer-input"
         onChange={event => { if (sessionId) setDraft(sessionId, event.target.value); }}
         onKeyDown={onKeyDown}
         onCompositionStart={() => { composing.current = true; }}
         onCompositionEnd={() => { composing.current = false; }}
       />
       {sessionId && <div className="chat-media-controls"><Attachments key={`assets:${sessionId}`} sessionId={sessionId} disabled={stale || generating || voiceBusy} onBusy={setAssetBusy} /><VoiceCapture key={`voice:${sessionId}`} sessionId={sessionId} disabled={stale || generating || assetBusy} onBusy={setVoiceBusy} /></div>}
+      </div>
       <div className="chat-composer-toolbar">
         {session ? <TargetBar session={session} skillRequest={skillRequest} /> : null}
         <ToolPicker key={pickerKey} tools={tools} selected={selectedTools} disabled={generating || !session || stale}
           onLoaded={setTools} onChange={keys => { if (sessionId) setSessionTools(sessionId, keys); }} />
-        <p id="chat-input-hint" className={cn('m-0 text-xs', tooLong ? 'text-error-text' : 'text-muted-foreground')}>
+      </div>
+      <div className="chat-composer-primary">
+        <p id="chat-input-hint" className={cn('m-0 text-xs', tooLong ? 'text-status-error-text' : 'text-ink-secondary')}>
           {formatNumber(bytes)} / {formatNumber(MAX_MESSAGE_BYTES)} {t('chat.byteUnit')}
         </p>
         {generating
