@@ -133,6 +133,7 @@ interface RegistrySnapshot {
 
 let registryRequest: Promise<void> | null = null;
 let initializationRequest: Promise<void> | null = null;
+let detailRequestSequence = 0;
 
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -254,15 +255,16 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
   },
 
   getSkillDetail: async (skillId: string) => {
+    const request = ++detailRequestSequence;
     set({ loading: true });
     try {
       const detail = await invoke<SkillDetail>('get_skill_detail', { skillId });
-      set({ selectedSkill: detail });
+      if (request === detailRequestSequence) set({ selectedSkill: detail });
     } catch (error) {
       console.error('Failed to get skill detail:', error);
       throw error;
     } finally {
-      set({ loading: false });
+      if (request === detailRequestSequence) set({ loading: false });
     }
   },
 

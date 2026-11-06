@@ -29,7 +29,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); clearToasts(); vi.restoreAllMocks(); });
 const show = () => {
-  const view = render(<MemoryRouter><Workbench /></MemoryRouter>);
+  const view = render(<MemoryRouter  future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Workbench /></MemoryRouter>);
   return view;
 };
 async function open(name: string) {

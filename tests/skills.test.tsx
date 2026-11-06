@@ -9,7 +9,7 @@ import SkillsManagement from '../src/pages/SkillsManagement';
 import { useSkillsStore } from '../src/stores/skillsStore';
 import { getToastSnapshot } from '../src/ui/feedback/toastStore';
 
-const render = (ui: React.ReactNode) => renderView(<MemoryRouter>{ui}</MemoryRouter>);
+const render = (ui: React.ReactNode) => renderView(<MemoryRouter  future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>{ui}</MemoryRouter>);
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 const mockedInvoke = vi.mocked(invoke);
 const initialState = useSkillsStore.getState();
