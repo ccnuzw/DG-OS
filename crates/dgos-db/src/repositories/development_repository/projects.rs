@@ -22,11 +22,16 @@ impl DevelopmentRepository {
     }
 
     /// Updates name, path, identity and archived state. A missing row for this owner is `project_not_found`.
-    /// A path change moves every session of the project to the new workspace in the same transaction.
+    /// Existing task/session evidence fixes the directory once work has started.
     pub async fn update_project(&self, project: &Project) -> Result<(), String> {
         require_owner(&project.owner)?;
         check_project_fields(&project.name, &project.path, &project.directory_identity)?;
         let txn = self.db.begin().await.map_err(db)?;
+        let previous = project_row(&txn, &project.owner, &project.id).await?;
+        if (previous.path != project.path || previous.directory_identity != project.directory_identity)
+            && fetch_one(&txn, "SELECT 1 AS found FROM development_agent_sessions WHERE owner=? AND project_id=? UNION ALL SELECT 1 FROM development_review_baselines WHERE owner=? AND project_id=? UNION ALL SELECT 1 FROM development_workspaces WHERE owner=? AND project_id=? LIMIT 1", vec![v(project.owner.clone()),v(project.id.clone()),v(project.owner.clone()),v(project.id.clone()),v(project.owner.clone()),v(project.id.clone())]).await?.is_some() {
+            return Err("workspace_immutable".into());
+        }
         let changed = execute(
             &txn,
             "UPDATE development_projects SET name=?,path=?,directory_identity=?,archived=?,last_opened_at=? WHERE owner=? AND id=?",
@@ -39,11 +44,6 @@ impl DevelopmentRepository {
             let _ = txn.rollback().await;
             return Err("project_not_found".into());
         }
-        execute(
-            &txn,
-            "UPDATE development_agent_sessions SET workspace=? WHERE owner=? AND project_id=?",
-            vec![v(project.path.clone()), v(project.owner.clone()), v(project.id.clone())],
-        ).await?;
         txn.commit().await.map_err(db)
     }
 
@@ -58,6 +58,10 @@ impl DevelopmentRepository {
             vec![v(owner), v(project_id), v(owner), v(project_id)],
         ).await?;
         execute(&txn, "DELETE FROM development_session_capabilities WHERE owner=? AND project_id=?", vec![v(owner), v(project_id)]).await?;
+        execute(&txn, "DELETE FROM development_handoffs WHERE owner=? AND project_id=?", vec![v(owner), v(project_id)]).await?;
+        execute(&txn, "DELETE FROM development_file_writes WHERE owner=? AND project_id=?", vec![v(owner), v(project_id)]).await?;
+        execute(&txn, "DELETE FROM development_task_workspaces WHERE owner=? AND project_id=?", vec![v(owner), v(project_id)]).await?;
+        execute(&txn, "DELETE FROM development_workspaces WHERE owner=? AND project_id=?", vec![v(owner), v(project_id)]).await?;
         execute(&txn, "UPDATE development_agent_sessions SET project_id=NULL,task_id=NULL WHERE owner=? AND project_id=?", vec![v(owner), v(project_id)]).await?;
         execute(&txn, "UPDATE development_project_operations SET project_id=NULL WHERE owner=? AND project_id=?", vec![v(owner), v(project_id)]).await?;
         execute(&txn, "DELETE FROM development_runs WHERE owner=? AND project_id=?", vec![v(owner), v(project_id)]).await?;

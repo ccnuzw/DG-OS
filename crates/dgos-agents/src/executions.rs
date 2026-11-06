@@ -62,10 +62,11 @@ impl AgentManager {
         }
         let task_id=record.task_id.clone().ok_or("task_not_found")?;
         let project_id=record.project_id.clone().ok_or("task_not_found")?;
-        let project=self.inner.repository.project(owner,&project_id).await?;
+        let project=self.task_project(owner,&task_id).await?;
         if project.archived { return Err("project_archived".into()); }
         crate::projects::validate_directory(&project).await?;
         let (_,backend)=self.owned(owner,id).await?;
+        self.validate_handoff_target(owner,id).await?;
         if backend.snapshot().await.status!="idle" { return Err("busy".into()); }
         self.capture_task_baseline(owner,&task_id).await?;
         // Baseline is immutable; the start marker must describe this send, not the first round.

@@ -17,6 +17,44 @@ pub async fn task(manager: &AgentManager, root: &Path) -> String {
     manager.save_development_task("alice", SaveTaskInput { id: None, project_id: project.id, goal: "Exercise native lifecycle".into(), requirements: "Keep ownership and shutdown semantics".into(), status: "todo".into() }, CancellationToken::new()).await.unwrap().id
 }
 
+/// Admit a newly written script before timing its protocol or process cleanup.
+/// macOS can hold the first shebang exec before userspace for several seconds
+/// when parallel tests create executables. The readiness branch must exit before
+/// starting descendants, writing markers, or consuming protocol input.
+#[cfg(unix)]
+pub(crate) async fn prepare_shell_fixture(path: &Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::write(path, format!("#!/bin/sh\nif [ \"${{1-}}\" = --dgos-fixture-ready ]; then exit 0; fi\n{body}")).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut child = tokio::process::Command::new(path)
+        .arg("--dgos-fixture-ready")
+        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+        .kill_on_drop(true).spawn().unwrap();
+    match tokio::time::timeout(std::time::Duration::from_secs(10), child.wait()).await {
+        Ok(Ok(status)) => assert!(status.success(), "shell fixture failed executable admission"),
+        failed => {
+            let _ = child.start_kill();
+            let reaped = tokio::time::timeout(std::time::Duration::from_secs(2), child.wait()).await;
+            panic!("shell fixture admission failed: {failed:?}; cleanup: {reaped:?}");
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn shell_fixture_preparation_does_not_run_its_protocol_or_side_effects() {
+    let root = std::env::temp_dir().join(format!("dgos-fixture-preparation-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    let executable = root.join("fixture");
+    let marker = root.join("started");
+    prepare_shell_fixture(&executable, &format!("printf started > '{}'\nprintf 'codex-cli 0.0.0\\n'\n", marker.display())).await;
+    assert!(!marker.exists());
+    let result = tokio::time::timeout(std::time::Duration::from_secs(3), crate::cli::probe(crate::cli::CliTool::Codex, executable.to_str())).await.unwrap();
+    assert_eq!(result.status, "available");
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "started");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct DiagnosticLog(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
 impl std::io::Write for DiagnosticLog {

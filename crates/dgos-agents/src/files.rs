@@ -12,10 +12,18 @@ pub const FILE_LIMIT: usize = 256 * 1024;
 pub const ENTRY_LIMIT: usize = 10_000;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ListFilesInput { pub project_id: String, pub path: String, pub query: String, pub include_ignored: bool }
+pub struct ListFilesInput { pub project_id: String, #[serde(default)] pub task_id: Option<String>, pub path: String, pub query: String, pub include_ignored: bool }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ReadFileInput { pub project_id: String, pub path: String }
+pub struct ReadFileInput { pub project_id: String, #[serde(default)] pub task_id: Option<String>, pub path: String }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileReferenceInput {
+    pub project_id: String, pub task_id: String, pub session_id: String,
+    pub path: String, pub mode: String, #[serde(default)] pub line: Option<u32>,
+}
+#[derive(Debug, Serialize)]
+pub struct FileReference { pub path: String, pub line: Option<u32> }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SaveFileInput {
@@ -163,7 +171,7 @@ pub(crate) fn scan(project: &Project, path: &str, recursive: bool, include: bool
 
 /// Atomic replacement prevents partial saves. External editors do not participate in
 /// admission: an OS-independent cross-process compare-and-swap is not promised.
-fn save_at(project: &Project, input: SaveFileInput, lease: &tokio_util::sync::CancellationToken) -> Result<FileView, String> {
+pub(crate) fn save_at(project: &Project, input: SaveFileInput, lease: &tokio_util::sync::CancellationToken) -> Result<FileView, String> {
     use std::io::Write;
     relative(&input.path, false)?;
     if sensitive(&input.path) { return Err("file_sensitive".into()); }
@@ -215,6 +223,91 @@ fn save_at(project: &Project, input: SaveFileInput, lease: &tokio_util::sync::Ca
     if result.is_err() { let _ = parent.remove_file(&temp); }
     result
 }
+impl AgentManager {
+    pub(crate) async fn file_project(&self, owner: &str, id: &str) -> Result<Project, String> {
+        self.ready().await?;
+        let project = self.inner.repository.project(owner, id).await?;
+        validate_directory(&project).await?;
+        Ok(project)
+    }
+    async fn file_context(&self, owner: &str, project_id: &str, task_id: Option<&str>) -> Result<Project, String> {
+        if let Some(task_id) = task_id {
+            let project = self.task_project(owner, task_id).await?;
+            if project.id != project_id { return Err("task_not_found".into()); }
+            Ok(project)
+        } else { self.file_project(owner, project_id).await }
+    }
+    pub async fn list_development_files(&self, owner: &str, input: ListFilesInput) -> Result<FileList, String> {
+        if input.query.len() > 512 { return Err("invalid_request".into()); }
+        let project = self.file_context(owner, &input.project_id, input.task_id.as_deref()).await?;
+        tokio::task::spawn_blocking(move || {
+            let mut list = scan(&project, &input.path, !input.query.is_empty(), input.include_ignored)?;
+            if !input.query.is_empty() { let q = input.query.to_lowercase(); list.entries.retain(|e| e.path.to_lowercase().contains(&q)); }
+            Ok(list)
+        }).await.map_err(|_| "file_access_denied".to_string())?
+    }
+    pub async fn read_development_file(&self, owner: &str, input: ReadFileInput) -> Result<FileView, String> {
+        let project = self.file_context(owner, &input.project_id, input.task_id.as_deref()).await?;
+        tokio::task::spawn_blocking(move || read_at(&open_root(&project)?, &input.path)).await.map_err(|_| "file_access_denied".to_string())?
+    }
+    /// Structured native event paths are hints, never editor paths or authority.
+    /// Resolve against the task's current directory and the originating session.
+    pub async fn resolve_development_file_reference(&self, owner: &str, input: FileReferenceInput) -> Result<FileReference, String> {
+        let _admission = self.inner.admission.lock().await;
+        let project = self.file_context(owner, &input.project_id, Some(&input.task_id)).await?;
+        let session = self.list(owner).await.into_iter().find(|s| s.id == input.session_id).ok_or("session_not_found")?;
+        if session.project_id.as_deref() != Some(input.project_id.as_str()) || session.task_id.as_deref() != Some(input.task_id.as_str()) || session.workspace != project.path { return Err("file_access_denied".into()); }
+        if input.path.len() > 4096 || input.path.contains(['\0', '\\']) { return Err("file_access_denied".into()); }
+        let candidate = Path::new(&input.path);
+        // Reject traversal before stripping an absolute prefix: normalization must
+        // not conceal a path that leaves and then re-enters the task directory.
+        if candidate.components().any(|c| matches!(c, Component::ParentDir | Component::CurDir)) { return Err("file_access_denied".into()); }
+        let path = if candidate.is_absolute() { candidate.strip_prefix(&project.path).map_err(|_| "file_access_denied")? } else { candidate };
+        let path = path.to_str().ok_or("file_access_denied")?.to_owned();
+        relative(&path, false)?;
+        let source = match input.mode.as_str() {
+            "file" => {
+                let view = self.read_development_file(owner, ReadFileInput { project_id: input.project_id, task_id: Some(input.task_id), path: path.clone() }).await?;
+                if let Some(reason) = view.reason { return Err(reason); }
+                view.text.ok_or("file_access_denied")?
+            },
+            "diff" => {
+                let diff = self.read_development_diff(owner, crate::review::DiffInput { task_id: input.task_id, path: path.clone() }).await?;
+                if let Some(reason) = diff.reason { return Err(reason); }
+                diff.after.or(diff.before).ok_or("file_not_found")?
+            },
+            _ => return Err("invalid_request".into()),
+        };
+        if input.line.is_some_and(|line| line == 0 || line as usize > source.lines().count().max(1)) { return Err("file_access_denied".into()); }
+        Ok(FileReference { path, line: input.line })
+    }
+    pub async fn save_development_file(&self, owner: &str, input: SaveFileInput, lease: tokio_util::sync::CancellationToken) -> Result<FileView, String> {
+        let _admission = self.inner.admission.lock().await;
+        self.ready().await?;
+        if lease.is_cancelled() { return Err("session_invalid".into()); }
+        let task = self.inner.repository.task(owner, &input.task_id).await?;
+        if task.project_id != input.project_id { return Err("task_not_found".into()); }
+        let project = self.task_project(owner, &input.task_id).await?;
+        if project.archived { return Err("project_archived".into()); }
+        self.workspace_available(&project.path, None).await?;
+        self.capture_task_baseline(owner, &input.task_id).await?;
+        let workspace = project.path.clone();
+        let task_id = input.task_id.clone();
+        let path = input.path.clone();
+        let before_hash = input.expected_hash.clone();
+        let result = tokio::task::spawn_blocking(move || save_at(&project, input, &lease)).await.map_err(|_| "file_save_unknown".to_string());
+        self.mark_development_mutation(&workspace).await;
+        let saved = result??;
+        if let Some(after_hash) = &saved.hash { self.inner.repository.save_host_file_ownership(owner, &task_id, &path, &before_hash, after_hash).await?; }
+        if let Some(mut observation) = self.inner.repository.review_observation(owner, &task_id).await? {
+            let mut recorded = saved.clone();
+            recorded.text = None;
+            observation["files"][&path] = serde_json::to_value(recorded).map_err(|_| "storage_failed")?;
+            self.inner.repository.save_review_observation(owner, &task_id, &observation).await?;
+        }
+        Ok(saved)
+    }
+}
 #[cfg(test)]
 mod save_tests {
     use super::*;
@@ -237,41 +330,5 @@ mod save_tests {
         assert_eq!(std::fs::read_to_string(path.join("nested/code.txt")).unwrap(), "after\n");
         assert_eq!(std::fs::read_dir(path.join("nested")).unwrap().count(), 1);
         std::fs::remove_dir_all(root).unwrap();
-    }
-}
-impl AgentManager {
-    pub(crate) async fn file_project(&self, owner: &str, id: &str) -> Result<Project, String> {
-        self.ready().await?;
-        let project = self.inner.repository.project(owner, id).await?;
-        validate_directory(&project).await?;
-        Ok(project)
-    }
-    pub async fn list_development_files(&self, owner: &str, input: ListFilesInput) -> Result<FileList, String> {
-        if input.query.len() > 512 { return Err("invalid_request".into()); }
-        let project = self.file_project(owner, &input.project_id).await?;
-        tokio::task::spawn_blocking(move || {
-            let mut list = scan(&project, &input.path, !input.query.is_empty(), input.include_ignored)?;
-            if !input.query.is_empty() { let q = input.query.to_lowercase(); list.entries.retain(|e| e.path.to_lowercase().contains(&q)); }
-            Ok(list)
-        }).await.map_err(|_| "file_access_denied".to_string())?
-    }
-    pub async fn read_development_file(&self, owner: &str, input: ReadFileInput) -> Result<FileView, String> {
-        let project = self.file_project(owner, &input.project_id).await?;
-        tokio::task::spawn_blocking(move || read_at(&open_root(&project)?, &input.path)).await.map_err(|_| "file_access_denied".to_string())?
-    }
-    pub async fn save_development_file(&self, owner: &str, input: SaveFileInput, lease: tokio_util::sync::CancellationToken) -> Result<FileView, String> {
-        let _admission = self.inner.admission.lock().await;
-        self.ready().await?;
-        if lease.is_cancelled() { return Err("session_invalid".into()); }
-        let task = self.inner.repository.task(owner, &input.task_id).await?;
-        if task.project_id != input.project_id { return Err("task_not_found".into()); }
-        let project = self.file_project(owner, &input.project_id).await?;
-        if project.archived { return Err("project_archived".into()); }
-        self.workspace_available(&project.path, None).await?;
-        self.capture_task_baseline(owner, &input.task_id).await?;
-        let workspace = project.path.clone();
-        let result = tokio::task::spawn_blocking(move || save_at(&project, input, &lease)).await.map_err(|_| "file_save_unknown".to_string());
-        self.mark_development_mutation(&workspace).await;
-        result?
     }
 }

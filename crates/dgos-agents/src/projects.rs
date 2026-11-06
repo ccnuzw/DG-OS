@@ -145,8 +145,7 @@ impl AgentManager {
         let _admission = self.inner.admission.lock().await;
         self.ready().await?; check_lease(&lease)?;
         let record = self.list(owner).await.into_iter().find(|r| r.id == input.session_id).ok_or("session_not_found")?;
-        let task = self.inner.repository.task(owner, &input.task_id).await?;
-        let project = self.inner.repository.project(owner, &task.project_id).await?;
+        let project = self.task_project(owner, &input.task_id).await?;
         if project.archived { return Err("project_archived".into()); }
         validate_directory(&project).await?;
         self.workspace_available(&record.workspace, None).await?;
@@ -157,6 +156,12 @@ impl AgentManager {
     pub async fn inspect_project(&self, owner: &str, id: &str) -> Result<ProjectInspection, String> {
         self.ready().await?;
         let project = self.inner.repository.project(owner, id).await?;
+        self.inspect_directory(project).await
+    }
+    pub(crate) async fn inspect_task_project(&self, owner: &str, task_id: &str) -> Result<ProjectInspection, String> {
+        self.inspect_directory(self.task_project(owner, task_id).await?).await
+    }
+    async fn inspect_directory(&self, project: Project) -> Result<ProjectInspection, String> {
         let mut view = ProjectInspection { path_state: "available".into(), kind: "unknown".into(), repository_root: None, branch: None, changes: vec![], truncated: false, error: None };
         let state = match tokio::fs::metadata(&project.path).await {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => "missing",

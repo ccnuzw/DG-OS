@@ -31,7 +31,7 @@ pub async fn open_agent_session(app: tauri::AppHandle, window: WebviewWindow, in
     let mut options = input.options;
     let preferences = app.state::<dgos_db::CliRepository>().get(context.user_id()).await?;
     options.executable = match input.engine { Engine::Codex => preferences.paths.codex, Engine::Claude => preferences.paths.claude };
-    app.state::<AgentManager>().open_with_capabilities(context.user_id(), input.engine, input.id, options, input.task_id, lease, input.capability_revision).await
+    app.state::<AgentManager>().open_with_capabilities(context.user_id(), input.engine, input.id, dgos_agents::capabilities::SessionCapabilities { options, revision: input.capability_revision }, input.task_id, lease).await
 }
 #[tauri::command]
 pub async fn get_agent_session(app: tauri::AppHandle, window: WebviewWindow, session_id: String) -> Result<OwnedSessionView, String> {

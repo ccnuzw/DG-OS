@@ -275,6 +275,21 @@ async fn ending_a_run_expires_pending_host_consent_without_external_dispatch() {
 }
 
 #[tokio::test]
+async fn closed_consent_receiver_is_not_listed_or_approved_before_async_cleanup() {
+    let f = Fixture::new("normal").await;
+    let request = f.gateway.call("closed-consent", "project_tool_0", json!({"text":"never dispatch"}));
+    let prompt = f.prompt().await;
+    let (answer, receiver) = tokio::sync::oneshot::channel();
+    drop(receiver);
+    f.service.confirmations.lock().await.get_mut(&prompt.id).unwrap().answer = answer;
+    assert!(f.service.pending_confirmations("alice", &f.chain.session.id).await.unwrap().is_empty());
+    assert_eq!(f.service.respond_confirmation("alice", &f.chain.session.id, &prompt.id, true).await.unwrap_err(), "request_expired");
+    assert_eq!(request.await.unwrap().error(), "confirmation_refused");
+    assert!(f.service.mcp.list_usage_logs("alice", Some(&f.server), None).await.unwrap().is_empty());
+    f.finish().await;
+}
+
+#[tokio::test]
 async fn previous_run_confirmation_cannot_authorize_the_next_run_in_the_same_session() {
     let f = Fixture::new("normal").await;
     let previous = f.gateway.call("previous-run", "project_tool_0", json!({"text":"previous arguments"}));
@@ -469,9 +484,9 @@ async fn saved_configuration_revisions_do_not_rewrite_existing_session_or_run_sn
     let run: CapabilitySnapshot = serde_json::from_str(&f.service.repository.run_capabilities("alice", &f.chain.run.id).await.unwrap().unwrap()).unwrap();
     assert_eq!(run.revision, 1);
     assert_eq!(run.configuration.mcp.len(), 1);
-    let conflict = f.service.prepare("alice", &f.chain.session.id, &f.chain.task.id, &f.chain.project, Engine::Codex, &options, Some(2), true, CancellationToken::new()).await;
+    let conflict = f.service.prepare(CapabilityPreparation { owner: "alice", session: &f.chain.session.id, task: &f.chain.task.id, project: &f.chain.project, engine: Engine::Codex, options: &options, revision: Some(2), restoring: true, lease: CancellationToken::new() }).await;
     assert!(matches!(&conflict, Err(reason) if reason == "capability_conflict"));
-    let (restored, launch) = f.service.prepare("alice", &f.chain.session.id, &f.chain.task.id, &f.chain.project, Engine::Codex, &options, None, true, CancellationToken::new()).await.unwrap();
+    let (restored, launch) = f.service.prepare(CapabilityPreparation { owner: "alice", session: &f.chain.session.id, task: &f.chain.task.id, project: &f.chain.project, engine: Engine::Codex, options: &options, revision: None, restoring: true, lease: CancellationToken::new() }).await.unwrap();
     assert_eq!(restored.revision, 1);
     assert_eq!(restored.configuration.mcp.len(), 1);
     let restored_gateway = HttpGateway { address: launch.mcp_url.unwrap().strip_prefix("http://").unwrap().strip_suffix("/mcp").unwrap().into(), bearer: launch.mcp_bearer.unwrap() };
@@ -480,11 +495,38 @@ async fn saved_configuration_revisions_do_not_rewrite_existing_session_or_run_sn
     let mut new_session = f.chain.session.clone();
     new_session.id = uuid::Uuid::new_v4().to_string();
     f.service.repository.save_session(&new_session).await.unwrap();
-    let forbidden = f.service.prepare("alice", &new_session.id, &f.chain.task.id, &f.chain.project, Engine::Codex, &options, Some(2), true, CancellationToken::new()).await;
+    let forbidden = f.service.prepare(CapabilityPreparation { owner: "alice", session: &new_session.id, task: &f.chain.task.id, project: &f.chain.project, engine: Engine::Codex, options: &options, revision: Some(2), restoring: true, lease: CancellationToken::new() }).await;
     assert!(matches!(&forbidden, Err(reason) if reason == "capability_conflict"), "restoring an unpinned native session must not gain managed capabilities");
-    let (fresh, _) = f.service.prepare("alice", &new_session.id, &f.chain.task.id, &f.chain.project, Engine::Codex, &options, Some(2), false, CancellationToken::new()).await.unwrap();
+    let (fresh, _) = f.service.prepare(CapabilityPreparation { owner: "alice", session: &new_session.id, task: &f.chain.task.id, project: &f.chain.project, engine: Engine::Codex, options: &options, revision: Some(2), restoring: false, lease: CancellationToken::new() }).await.unwrap();
     assert_eq!(fresh.revision, 2);
     assert!(fresh.configuration.mcp.is_empty());
     f.service.close_session(&new_session.id).await;
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn restart_keeps_revoked_epoch_and_never_restores_old_host_confirmation() {
+    let f = Fixture::new("normal").await;
+    let request = f.gateway.call("before-restart", "project_tool_0", json!({"text":"must not dispatch"}));
+    let prompt = f.prompt().await;
+    assert_eq!(f.service.revoke("alice", &f.chain.project.id).await.unwrap(), 1);
+    assert!(request.await.unwrap().json().get("error").is_some());
+    let restarted = ProjectCapabilities::new(
+        crate::test_support::repository(&f.root).await,
+        f.service.providers.clone(), f.service.skills.clone(), f.service.mcp.clone(), f.root.join("restarted-launches"),
+    );
+    assert_eq!(restarted.repository.capability_epoch("alice", &f.chain.project.id).await.unwrap(), 1);
+    assert_eq!(restarted.respond_confirmation("alice", &f.chain.session.id, &prompt.id, true).await.unwrap_err(), "session_not_found");
+    let saved = restarted.session_snapshot("alice", &f.chain.session.id).await.unwrap().unwrap();
+    assert_eq!(saved.permission_epoch, 0);
+    let options = SessionOptions { workspace: f.chain.project.path.clone(), resume_id: Some("saved-native".into()), executable: None, model: None, trust_workspace: true };
+    let restored = restarted.prepare(CapabilityPreparation {
+        owner: "alice", session: &f.chain.session.id, task: &f.chain.task.id, project: &f.chain.project,
+        engine: Engine::Codex, options: &options, revision: None, restoring: true, lease: CancellationToken::new(),
+    }).await;
+    assert!(matches!(restored, Err(error) if error == "capability_revoked"));
+    assert!(restarted.bindings.lock().await.is_empty());
+    assert!(restarted.confirmations.lock().await.is_empty());
+    assert!(f.service.mcp.list_usage_logs("alice", Some(&f.server), None).await.unwrap().is_empty());
     f.finish().await;
 }

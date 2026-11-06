@@ -67,10 +67,10 @@ impl AgentManager {
         let processes:Vec<_>=self.inner.host.lock().await.values().filter(|p|p.workspace==path).cloned().collect();
         for process in processes {process.state.lock().await.mutation_observed=true;}
     }
-    pub async fn read_development_commands(&self,owner:&str,project_id:&str)->Result<CommandCatalog,String> {
+    pub async fn read_development_commands(&self,owner:&str,task_id:&str)->Result<CommandCatalog,String> {
         self.ready().await?;
-        let project=self.file_project(owner,project_id).await?;
-        let commands=self.inner.repository.development_commands(owner,project_id).await?.into_iter().map(|v|serde_json::from_value(v).map_err(|_|"storage_failed".into())).collect::<Result<Vec<_>,String>>()?;
+        let project=self.task_project(owner,task_id).await?;
+        let commands=self.inner.repository.development_commands(owner,&project.id).await?.into_iter().map(|v|serde_json::from_value(v).map_err(|_|"storage_failed".into())).collect::<Result<Vec<_>,String>>()?;
         let discovered=tokio::task::spawn_blocking(move || {
             let root=crate::files::open_root(&project)?;
             let mut discovered=Vec::new();
@@ -84,13 +84,13 @@ impl AgentManager {
         }).await.map_err(|_|"file_access_denied")??;
         Ok(CommandCatalog{commands,discovered})
     }
-    pub async fn save_development_commands(&self,owner:&str,project_id:&str,commands:Vec<CommandConfiguration>)->Result<CommandCatalog,String> {
+    pub async fn save_development_commands(&self,owner:&str,task_id:&str,commands:Vec<CommandConfiguration>)->Result<CommandCatalog,String> {
         let _admission=self.inner.admission.lock().await;self.ready().await?;
-        let project=self.file_project(owner,project_id).await?;if project.archived {return Err("project_archived".into());}
+        let project=self.task_project(owner,task_id).await?;if project.archived {return Err("project_archived".into());}
         let mut ids=std::collections::BTreeSet::new();let mut encoded=Vec::new();
         for c in &commands {validate_command(&c.program,&c.args,&c.cwd,&c.env_refs)?;if c.name.trim().is_empty() || c.name.len()>200 || crate::executions::sanitize_text(&c.name)!=c.name || !ids.insert(&c.id) {return Err("invalid_command".into());}encoded.push((c.id.clone(),serde_json::to_string(c).map_err(|_|"invalid_command")?));}
-        self.inner.repository.save_development_commands(owner,project_id,&encoded).await?;
-        self.read_development_commands(owner,project_id).await
+        self.inner.repository.save_development_commands(owner,&project.id,&encoded).await?;
+        self.read_development_commands(owner,task_id).await
     }
     pub async fn start_development_process(&self,owner:&str,input:StartProcessInput,lease:CancellationToken)->Result<ProcessSnapshot,String> {
         let _admission=self.inner.admission.lock().await;self.ready().await?;
@@ -104,7 +104,7 @@ impl AgentManager {
         if !input.trust_workspace {return Err("workspace_untrusted".into());}
         if !matches!(input.kind.as_str(),"terminal"|"command"|"service") || (input.verification && input.kind!="command") || (input.kind=="service")!=input.readiness.is_some() {return Err("invalid_command".into());}
         if let Some(r)=&input.readiness {if r.port==0 || !r.path.starts_with('/') || r.path.starts_with("//") || r.path.len()>2048 || r.path.chars().any(|c|c.is_control() || c==' ' || c=='#') || !(100..=120000).contains(&r.timeout_ms) {return Err("invalid_readiness".into());}}
-        let task=self.inner.repository.task(owner,&input.task_id).await?;let project=self.file_project(owner,&task.project_id).await?;
+        let task=self.inner.repository.task(owner,&input.task_id).await?;let project=self.task_project(owner,&input.task_id).await?;
         if project.archived {return Err("project_archived".into());}
         if let Some(id)=&input.native_run_id {let native=self.inner.repository.run(owner,id).await?.ok_or("run_not_found")?;if native.source!="native_agent" || native.task_id!=input.task_id {return Err("run_not_found".into());}}
         self.workspace_available(&project.path,None).await?;
@@ -251,7 +251,10 @@ impl OwnedChild {
 impl Drop for OwnedChild {fn drop(&mut self){if !self.reaped {unsafe{libc::kill(-self.group,libc::SIGKILL);}let _=self.child.wait();}}}
 
 #[cfg(unix)]
-fn launch(input:&StartProcessInput,project:&dgos_db::development_repository::Project,process:&HostProcess)->Result<(OwnedChild,std::sync::mpsc::Receiver<Vec<u8>>,Vec<Vec<u8>>),String> {
+type ProcessLaunch = (OwnedChild, std::sync::mpsc::Receiver<Vec<u8>>, Vec<Vec<u8>>);
+
+#[cfg(unix)]
+fn launch(input:&StartProcessInput,project:&dgos_db::development_repository::Project,process:&HostProcess)->Result<ProcessLaunch,String> {
     use std::{io::Read,os::{fd::{FromRawFd,AsRawFd},unix::process::CommandExt},process::Stdio};
     // Capability-open cwd and pass the live directory descriptor through pre_exec.
     let root=crate::files::open_root(project)?;
@@ -285,7 +288,12 @@ fn launch(input:&StartProcessInput,project:&dgos_db::development_repository::Pro
     let group=child.id() as i32;
     let (tx,rx)=std::sync::mpsc::sync_channel(64);
     let mut readers:Vec<Box<dyn Read+Send>>=Vec::new();
-    if let Some(master)=master {readers.push(Box::new(master));}else{if let Some(out)=child.stdout.take(){readers.push(Box::new(out));}if let Some(err)=child.stderr.take(){readers.push(Box::new(err));}}
+    if let Some(master)=master {
+        readers.push(Box::new(master));
+    } else {
+        if let Some(out)=child.stdout.take(){readers.push(Box::new(out));}
+        if let Some(err)=child.stderr.take(){readers.push(Box::new(err));}
+    }
     for mut reader in readers {let tx=tx.clone();std::thread::spawn(move || {
         let mut buffer=[0u8;8192];let mut remaining=OUTPUT_LIMIT+1;
         loop {match reader.read(&mut buffer) {

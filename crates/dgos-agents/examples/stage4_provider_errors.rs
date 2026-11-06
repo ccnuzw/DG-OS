@@ -201,7 +201,7 @@ impl Harness {
     }
     async fn open(&self, engine: Engine, chain: &Chain, session: &str, revision: Option<i64>) -> Result<dgos_agents::OwnedSessionView> {
         let lease = CancellationToken::new();
-        let opening = self.agents.open_with_capabilities(OWNER, engine, session.into(), options(chain, engine, &self.root), Some(chain.task.clone()), lease.clone(), revision);
+        let opening = self.agents.open_with_capabilities(OWNER, engine, session.into(), dgos_agents::capabilities::SessionCapabilities { options: options(chain, engine, &self.root), revision }, Some(chain.task.clone()), lease.clone());
         tokio::pin!(opening);
         tokio::select! {
             result = &mut opening => result,

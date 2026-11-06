@@ -46,12 +46,12 @@ async fn saturated_output_retains_its_prefix_and_drains_to_actual_exit() {
 async fn command_receipts_isolation_configuration_and_restart_never_replay() {
     let(root,manager,project,task)=setup().await;
     let configured=CommandConfiguration{id:"check".into(),name:"Check".into(),program:"/bin/sh".into(),args:vec!["-c".into(),"exit 0".into()],cwd:String::new(),env_refs:BTreeMap::new()};
-    manager.save_development_commands("alice",&project,vec![configured]).await.unwrap();assert!(manager.read_development_commands("bob",&project).await.is_err());
+    manager.save_development_commands("alice",&task,vec![configured]).await.unwrap();assert!(manager.read_development_commands("bob",&task).await.is_err());
     let input=command(&task,"printf 'once\\n' >> invocations; printf 'result\\n'; exit 7");manager.start_development_process("alice",input.clone(),CancellationToken::new()).await.unwrap();
     assert!(manager.read_development_process("bob",&input.id).await.is_err());assert!(manager.write_development_terminal("bob",&input.id,"x".into()).await.is_err());
     let view=finished(&manager,&input.id).await;assert_eq!(view.exit_code,Some(7));assert_eq!(view.status,"failed");assert!(view.output.contains("result"));
     manager.start_development_process("alice",input.clone(),CancellationToken::new()).await.unwrap();let mut conflict=input.clone();conflict.args=vec!["-c".into(),"exit 0".into()];assert_eq!(manager.start_development_process("alice",conflict,CancellationToken::new()).await.unwrap_err(),"request_conflict");
-    let restarted=crate::test_support::manager(&root).await;let history=restarted.read_development_process("alice",&input.id).await.unwrap();assert_eq!(history.exit_code,Some(7));assert_eq!(restarted.read_development_commands("alice",&project).await.unwrap().commands.len(),1);assert_eq!(std::fs::read_to_string(root.join("code/invocations")).unwrap(),"once\n");
+    let restarted=crate::test_support::manager(&root).await;let history=restarted.read_development_process("alice",&input.id).await.unwrap();assert_eq!(history.exit_code,Some(7));assert_eq!(restarted.read_development_commands("alice",&task).await.unwrap().commands.len(),1);assert_eq!(std::fs::read_to_string(root.join("code/invocations")).unwrap(),"once\n");
     manager.update_project("alice",UpdateProjectInput{project_id:project.clone(),action:"unlink".into(),value:None},CancellationToken::new()).await.unwrap();assert!(manager.read_development_process("alice",&input.id).await.is_err());std::fs::remove_dir_all(root).unwrap();
 }
 #[cfg(unix)]
@@ -106,7 +106,7 @@ async fn simulated_restart_marks_live_history_unknown_without_replaying_or_claim
 async fn account_cleanup_preserves_other_account_child_and_environment_is_explicit() {
     let(root,manager,_,task)=setup().await;
     std::fs::write(root.join("code/package.json"),r#"{"scripts":{"test":"exit 0","--danger":"exit 1"}}"#).unwrap();std::fs::write(root.join("code/Cargo.toml"),"[package]\nname='sample'\nversion='0.1.0'\n").unwrap();
-    let project=manager.inner.repository.task("alice",&task).await.unwrap().project_id;let catalog=manager.read_development_commands("alice",&project).await.unwrap();assert!(catalog.discovered.iter().any(|c|c.id=="package:test"));assert!(catalog.discovered.iter().any(|c|c.id=="cargo:test"));assert!(!catalog.discovered.iter().any(|c|c.id=="package:--danger"));
+    let catalog=manager.read_development_commands("alice",&task).await.unwrap();assert!(catalog.discovered.iter().any(|c|c.id=="package:test"));assert!(catalog.discovered.iter().any(|c|c.id=="cargo:test"));assert!(!catalog.discovered.iter().any(|c|c.id=="package:--danger"));
     let input=command(&task,"printf 'alive\\n'; sleep 30");manager.start_development_process("alice",input.clone(),CancellationToken::new()).await.unwrap();until(&manager,&input.id,|v|v.output.contains("alive")).await;
     assert!(manager.cancel_user("bob").await);assert_eq!(manager.read_development_process("alice",&input.id).await.unwrap().status,"running");assert!(manager.cancel_user("alice").await);assert_eq!(manager.read_development_process("alice",&input.id).await.unwrap().status,"cancelled");
     let input=command(&task,"printf 'environment:%s\\n' \"${DGOS_UNREFERENCED_SECRET-unset}\"");manager.start_development_process("alice",input.clone(),CancellationToken::new()).await.unwrap();assert!(finished(&manager,&input.id).await.output.contains("environment:unset"));
@@ -143,7 +143,7 @@ async fn command_cleanup_includes_descendants_in_different_job_groups() {
     let gone=gone || {
         let mut info:libc::proc_bsdinfo=unsafe{std::mem::zeroed()};
         let n=unsafe{libc::proc_pidinfo(pid,libc::PROC_PIDTBSDINFO,0,(&mut info as *mut libc::proc_bsdinfo).cast(),std::mem::size_of_val(&info) as i32)};
-        n==std::mem::size_of_val(&info) as i32 && info.pbi_status==libc::SZOMB as u32
+        n==std::mem::size_of_val(&info) as i32 && info.pbi_status==libc::SZOMB
     };
     assert!(gone,"descendant in a separate job group kept executing");std::fs::remove_dir_all(root).unwrap();
 }
@@ -182,9 +182,95 @@ async fn environment_reference_values_never_enter_snapshots_or_durable_history()
 
 #[tokio::test]
 async fn known_credentials_are_rejected_in_command_names_and_working_directories() {
-    let(root,manager,project,_)=setup().await;
+    let(root,manager,_,task)=setup().await;
     let configuration=CommandConfiguration{id:"check".into(),name:"sk-private".into(),program:"/bin/sh".into(),args:vec![],cwd:String::new(),env_refs:BTreeMap::new()};
-    assert!(manager.save_development_commands("alice",&project,vec![configuration]).await.is_err());
+    assert!(manager.save_development_commands("alice",&task,vec![configuration]).await.is_err());
     assert_eq!(validate_command("/bin/sh",&[],"ghp_private",&BTreeMap::new()).unwrap_err(),"secret_argument_denied");
-    assert!(manager.read_development_commands("alice",&project).await.unwrap().commands.is_empty());std::fs::remove_dir_all(root).unwrap();
+    assert!(manager.read_development_commands("alice",&task).await.unwrap().commands.is_empty());std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sqlite_checkpoint_failure_reaps_owned_child_and_restart_does_not_replay() {
+    use dgos_db::sea_orm::ConnectionTrait;
+    let(root,manager,_,task)=setup().await;
+    let db=dgos_db::establish_connection(&format!("sqlite://{}?mode=rwc",root.join("metadata.sqlite").display())).await.unwrap();
+    db.execute_unprepared("CREATE TRIGGER deny_host_checkpoint BEFORE UPDATE ON development_runs WHEN NEW.engine='host' BEGIN SELECT RAISE(ABORT,'injected'); END").await.unwrap();
+    let input=command(&task,"printf 'once\\n' >> invocations; printf 'retained code\\n' > source.txt; printf '%s' $$ > child-pid; printf 'checkpoint output\\n'; sleep 30");
+    manager.start_development_process("alice",input.clone(),CancellationToken::new()).await.unwrap();
+    let watchers=std::mem::take(&mut *manager.inner.watchers.lock().await);
+    assert_eq!(watchers.len(),1);
+    for watcher in watchers {assert!(!tokio::time::timeout(Duration::from_secs(8),watcher).await.unwrap().unwrap());}
+    let pid=std::fs::read_to_string(root.join("code/child-pid")).unwrap().parse::<i32>().unwrap();
+    assert_ne!(unsafe{libc::kill(pid,0)},0,"storage failure left the owned command executing");
+    assert!(manager.inner.host.lock().await.is_empty());
+    assert_eq!(manager.inner.repository.run("alice",&input.id).await.unwrap().unwrap().status,"running");
+    db.execute_unprepared("DROP TRIGGER deny_host_checkpoint").await.unwrap();
+    let restarted=crate::test_support::manager(&root).await;
+    let history=restarted.read_development_process("alice",&input.id).await.unwrap();
+    assert_eq!(history.status,"unknown");assert_eq!(history.reason.as_deref(),Some("interrupted_by_restart"));assert!(history.preview_url.is_none());
+    assert_eq!(restarted.start_development_process("alice",input,CancellationToken::new()).await.unwrap().status,"unknown");
+    assert!(restarted.inner.host.lock().await.is_empty());
+    assert_eq!(std::fs::read_to_string(root.join("code/invocations")).unwrap(),"once\n");
+    assert_eq!(std::fs::read_to_string(root.join("code/source.txt")).unwrap(),"retained code\n");
+    assert_eq!(restarted.inner.repository.task("alice",&task).await.unwrap().status,"blocked");
+    assert!(manager.shutdown().await);assert!(restarted.shutdown().await);std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn task_worktree_catalog_and_execution_share_project_configuration_but_use_task_files() {
+    use crate::workspaces::SaveWorkspaceInput;
+    fn git(path:&std::path::Path,args:&[&str])->String {
+        let output=std::process::Command::new("git").current_dir(path).args(args).output().unwrap();
+        assert!(output.status.success(),"git {args:?}: {}",String::from_utf8_lossy(&output.stderr));
+        String::from_utf8(output.stdout).unwrap().trim().into()
+    }
+    fn scripts(path:&std::path::Path,label:&str) {
+        std::fs::write(path.join("package.json"),format!(r#"{{"scripts":{{"{label}":"printf '{label}\\n' > npm-executed"}}}}"#)).unwrap();
+        std::fs::write(path.join("Cargo.toml"),format!("[package]\nname='{label}'\nversion='0.1.0'\nedition='2021'\n[workspace]\n")).unwrap();
+        std::fs::create_dir_all(path.join("src")).unwrap();
+        std::fs::write(path.join("src/lib.rs"),format!("#[test]\nfn records_package_root() {{ std::fs::write(\"cargo-executed\", \"{label}\\n\").unwrap(); }}\n")).unwrap();
+    }
+    async fn run_configuration(manager:&AgentManager,task:&str,configuration:&CommandConfiguration) {
+        let mut input=command(task,"");input.program=configuration.program.clone();input.args=configuration.args.clone();input.cwd=configuration.cwd.clone();input.env_refs=configuration.env_refs.clone();
+        manager.start_development_process("alice",input.clone(),CancellationToken::new()).await.unwrap();
+        let view=finished(manager,&input.id).await;
+        assert_eq!(view.exit_code,Some(0),"{}: {:?}",configuration.id,view);
+    }
+    let(root,manager,project,original_task)=setup().await;let source=root.join("code");
+    scripts(&source,"original");git(&source,&["init","-b","main"]);git(&source,&["add","."]);
+    git(&source,&["-c","user.name=Fixture","-c","user.email=fixture@example.invalid","commit","-m","original scripts"]);
+    let base=git(&source,&["rev-parse","HEAD"]);
+    let task=manager.save_development_task("alice",SaveTaskInput{id:None,project_id:project.clone(),goal:"Run isolated scripts".into(),requirements:"Use task files".into(),status:"todo".into()},CancellationToken::new()).await.unwrap().id;
+    let target=root.join("task-worktree");
+    manager.save_development_workspaces("alice",SaveWorkspaceInput{request_id:uuid::Uuid::new_v4().to_string(),task_id:task.clone(),action:"create".into(),workspace_id:None,path:Some(target.to_string_lossy().into_owned()),branch:Some("task/scripts".into()),base_commit:Some(base),retain_branch:None},CancellationToken::new()).await.unwrap();
+    scripts(&target,"isolated");
+    let saved=CommandConfiguration{id:"saved".into(),name:"Saved project command".into(),program:"/bin/sh".into(),args:vec!["-c".into(),"cat source.txt > saved-executed".into()],cwd:String::new(),env_refs:BTreeMap::new()};
+    manager.save_development_commands("alice",&original_task,vec![saved.clone()]).await.unwrap();
+    let original=manager.read_development_commands("alice",&original_task).await.unwrap();
+    let isolated=manager.read_development_commands("alice",&task).await.unwrap();
+    for (catalog,present,absent) in [(&original,"package:original","package:isolated"),(&isolated,"package:isolated","package:original")] {
+        assert!(catalog.discovered.iter().any(|c|c.id==present));assert!(!catalog.discovered.iter().any(|c|c.id==absent));
+        assert!(catalog.discovered.iter().any(|c|c.id=="cargo:test"));
+        assert_eq!(serde_json::to_value(&catalog.commands).unwrap(),serde_json::json!([saved]));
+    }
+    std::fs::write(source.join("source.txt"),"original saved configuration\n").unwrap();
+    std::fs::write(target.join("source.txt"),"isolated saved configuration\n").unwrap();
+    for (task,catalog,path,label) in [(&original_task,&original,&source,"original"),(&task,&isolated,&target,"isolated")] {
+        for id in [format!("package:{label}"),"cargo:test".into()] {
+            run_configuration(&manager,task,catalog.discovered.iter().find(|c|c.id==id).unwrap()).await;
+        }
+        run_configuration(&manager,task,&catalog.commands[0]).await;
+        assert_eq!(std::fs::read_to_string(path.join("npm-executed")).unwrap(),format!("{label}\n"));
+        assert_eq!(std::fs::read_to_string(path.join("cargo-executed")).unwrap(),format!("{label}\n"));
+        assert_eq!(std::fs::read_to_string(path.join("saved-executed")).unwrap(),format!("{label} saved configuration\n"));
+    }
+    let mut updated=saved;updated.name="Updated from task worktree".into();
+    manager.save_development_commands("alice",&task,vec![updated.clone()]).await.unwrap();
+    let restarted=crate::test_support::manager(&root).await;
+    for task in [&original_task,&task] {
+        assert_eq!(serde_json::to_value(restarted.read_development_commands("alice",task).await.unwrap().commands).unwrap(),serde_json::json!([updated]));
+    }
+    assert!(manager.shutdown().await);assert!(restarted.shutdown().await);std::fs::remove_dir_all(root).unwrap();
 }

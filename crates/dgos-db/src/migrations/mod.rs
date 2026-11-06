@@ -36,6 +36,7 @@ mod m20261104_000026_project_tasks;
 mod m20261104_000027_executions_review;
 mod m20261104_000028_development_runtime;
 mod m20261104_000029_project_capabilities;
+mod m20261104_000030_task_workspaces;
 
 pub struct Migrator;
 
@@ -79,6 +80,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261104_000027_executions_review::Migration),
             Box::new(m20261104_000028_development_runtime::Migration),
             Box::new(m20261104_000029_project_capabilities::Migration),
+            Box::new(m20261104_000030_task_workspaces::Migration),
         ]
     }
 }
