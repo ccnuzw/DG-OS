@@ -293,6 +293,10 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
     println!("INFO webview {}", info["value"]);
     seed(&app, &mut checks).await;
     let window = app.get_webview_window(MAIN).expect("main window");
+    if std::env::var_os("DGOS_UI_MODAL_ONLY").is_some() {
+        super::ui_keys::modal_viewports(&app, &mut checks).await;
+        finish(checks, &world.root);
+    }
     if std::env::var_os("DGOS_UI_SHELL_ONLY").is_some() {
         super::ui_keys::shell(app.clone(), &mut checks).await;
         finish(checks, &world.root);
@@ -425,6 +429,7 @@ pub fn run_ui() {
         .manage(LoadEvents(load_sender))
         .manage(UiProbe(probe.clone()))
         .manage(dgos_db::DesktopRepository::new(probe.clone()))
+        .manage(dgos_db::CliRepository::new(probe.clone()))
         .manage(manager)
         .manage(bridge)
         .manage(router)
@@ -454,8 +459,8 @@ pub fn run_ui() {
             // 800x600 logical: the minimum window size in tauri.conf.json. Visible, so the renderer
             // lays out and paints as it does for a user.
             WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("/".into()))
-                .inner_size(800.0, 600.0)
-                .min_inner_size(800.0, 600.0)
+                .inner_size(if std::env::var_os("DGOS_UI_MODAL_ONLY").is_some() { 520.0 } else { 800.0 }, 600.0)
+                .min_inner_size(if std::env::var_os("DGOS_UI_MODAL_ONLY").is_some() { 520.0 } else { 800.0 }, 600.0)
                 .max_inner_size(800.0, 600.0)
                 .resizable(false)
                 .maximizable(false)
@@ -532,6 +537,8 @@ pub fn run_ui() {
             commands::report_module_crash,
             commands::get_appearance_preferences,
             commands::set_appearance_preferences,
+            commands::get_cli_preferences,
+            commands::set_cli_preferences,
             commands::enable_module,
             commands::disable_module,
             commands::uninstall_module,

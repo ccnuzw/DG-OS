@@ -3,10 +3,18 @@
 //!
 //! Default (`DGOS_PROJECT_ACCEPTANCE_ROOT` unset): both engines, one project task,
 //! handshake, snapshot and close through production IPC.
-//!
+//! `DGOS_AGENT_CLOSE_ONLY=1` selects a focused real-Codex surface close/cancel run, with no
+//! model-answer assertion; result-close-boundary.json records whether initial-open pending was observed.
 //! Acceptance: `DGOS_PROJECT_ACCEPTANCE_ROOT=<dir>` plus
-//! `DGOS_PROJECT_ACCEPTANCE_PHASE=first|restart|stage3-first|stage3-restart|stage4-ui`. `<dir>`
-//! holds the database, fixture projects and evidence shared by both processes.
+//! `DGOS_PROJECT_ACCEPTANCE_PHASE=first|restart|stage3-first|stage3-restart|stage4-ui|stage6-first|stage6-restart|terminal-activity|worktree-runtime`.
+//! `<dir>` holds the database, fixture projects and evidence shared by both processes.
+//! Stage6 requires a fresh directory under `/private/tmp` for its first phase; it persists
+//! `stage6-checkpoint.json` per action and model snapshots while waiting, stopping on failure.
+//! `terminal-activity` uses only /bin/sh PTYs and the production terminal UI; no CLI/provider run.
+//! Build the production dist first, then use a fresh root and the existing webview_smoke_agents test.
+//! Evidence: stage3-result-terminal-activity.json plus terminal-activity-checkpoint.json and IPC trace.
+//! `worktree-runtime` verifies actual task-worktree npm/Cargo execution, captures macOS editor
+//! open events with a temporary local application, and checks real IPC owner/lease rejection.
 //! The real CLIs, AccountService, SessionResolver, HostSessionPort and AgentManager run
 //! in production configuration. The main flow is driven in the shipped `main` WebView
 //! through its DOM (sign-in, project import, task, session start/send/close, task
@@ -70,6 +78,17 @@ fn record(ck: &mut Checks, ev: &mut Vec<Value>, name: &str, ok: bool, detail: im
     let detail = detail.to_string();
     ck.check(name, ok, &detail);
     ev.push(json!({"check": name, "ok": ok, "detail": detail}));
+    let phase = std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").unwrap_or_default();
+    if phase.starts_with("stage6-") || phase == "terminal-activity" {
+        if let Some(fx) = ck_stage6_root() {
+            let name = if phase == "terminal-activity" { "terminal-activity-checkpoint.json" } else { "stage6-checkpoint.json" };
+            fs::write(fx.join(name), serde_json::to_vec_pretty(&json!({"passed":ck.passed,"failed":ck.failed,"checks":ev})).expect("checkpoint JSON")).expect("acceptance checkpoint");
+        }
+    }
+}
+
+fn ck_stage6_root() -> Option<PathBuf> {
+    std::env::var_os("DGOS_PROJECT_ACCEPTANCE_ROOT").map(PathBuf::from)
 }
 
 fn value(reply: &Reply) -> Value {
@@ -99,7 +118,8 @@ async fn eval_long(app: &AppHandle, body: &str) -> Value {
         app.state::<Pending>().0.lock().unwrap().remove(&id);
         return json!({"ok": false, "error": "eval failed"});
     }
-    match tokio::time::timeout(STEP_TIMEOUT, receiver).await {
+    let timeout = if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| phase.starts_with("stage6-")) { Duration::from_secs(60) } else { STEP_TIMEOUT };
+    match tokio::time::timeout(timeout, receiver).await {
         Ok(Ok(payload)) => serde_json::from_str(&payload).unwrap_or(Value::Null),
         _ => {
             app.state::<Pending>().0.lock().unwrap().remove(&id);
@@ -112,15 +132,16 @@ async fn eval_long(app: &AppHandle, body: &str) -> Value {
 /// their shipped ids, labels and text.
 const DOM: &str = r##"
 const until = async (fn, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { try { const v = fn(); if (v) return v; } catch (e) {} await new Promise((r) => setTimeout(r, 50)); } return null; };
-const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const visible = (el) => !!el && el.isConnected && !el.closest('[hidden],[inert],[aria-hidden="true"]') && getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden' && el.getClientRects().length > 0;
+const $$ = (s, r = document) => [...r.querySelectorAll(s)].filter(el => !stage6UI || visible(el));
 const txt = (el) => ((el && el.textContent) || '').trim();
-const labelOf = (el) => { if (el.labels && el.labels[0]) return txt(el.labels[0]); const by = el.getAttribute('aria-labelledby'); if (by) return txt(document.getElementById(by)); return el.getAttribute('aria-label') || ''; };
-const tid = (id) => document.querySelector(`[data-testid="${id}"]`);
+const labelOf = (el) => { if (el.labels && el.labels[0]) { const label=el.labels[0].cloneNode(true); for(const control of label.querySelectorAll('input,textarea,select,button'))control.remove(); return txt(label); } const by = el.getAttribute('aria-labelledby'); if (by) return txt(document.getElementById(by)); return el.getAttribute('aria-label') || ''; };
+const tid = (id) => stage6UI ? $$('[data-testid]').find(el => el.getAttribute('data-testid') === id) : document.querySelector(`[data-testid="${id}"]`);
 const need = async (id, ms = 20000) => { const el = await until(() => tid(id), ms); if (!el) throw new Error('missing ' + id); return el; };
 const setInput = (f, v) => { const p = f.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(p, 'value').set.call(f, v); f.dispatchEvent(new Event('input', { bubbles: true })); };
 const fill = async (id, v) => { const el = await need(id); const f = el.matches('input,textarea') ? el : el.querySelector('input,textarea'); if (!f) throw new Error('no field in ' + id); setInput(f, v); return true; };
 const click = async (id) => { (await need(id)).click(); return true; };
-const btn = (t) => $$('button').find((b) => txt(b) === t && !b.disabled);
+const btn = (t) => $$('button', stage6UI ? ($$('.agent-workbench')[0] || document) : document).find((b) => txt(b) === t && !b.disabled);
 const items = (prefix) => $$(`[data-testid^="${prefix}"]`).map((e) => ({ id: e.getAttribute('data-testid').slice(prefix.length), text: txt(e) }));
 const itemFor = (prefix, text) => items(prefix).find((i) => i.text.includes(text));
 const isChecked = (c) => c.checked === true || c.getAttribute('aria-checked') === 'true';
@@ -129,7 +150,8 @@ const msgs = () => { const m = document.querySelector('.agent-messages'); return
 
 /// Evaluates one UI step: the shared helpers, then `A` (the arguments), then `body`.
 async fn ui(app: &AppHandle, args: Value, body: &str) -> Value {
-    eval_long(app, &format!("{DOM}\nconst A = {args};\n{body}")).await
+    let stage6 = std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| phase.starts_with("stage6-"));
+    eval_long(app, &format!("const stage6UI = {stage6};\n{DOM}\nconst A = {args};\n{body}")).await
 }
 
 fn ui_ok(reply: &Value) -> bool {
@@ -303,14 +325,14 @@ const start = await until(() => { const b=tid('dev-session-new-'+A.engine);retur
 if (!start) throw Error('new session disabled');
 start.click();
 const composer = await until(() => document.getElementById('agent-message'));
-return {ok: !!composer};
+return {ok: !!composer, alerts: $$('[role=alert]').map(txt), body: composer ? null : document.body.innerText};
 "#;
 
 const SEND: &str = r#"
 const composer = await until(() => document.getElementById('agent-message'));
 if (!composer) throw new Error('no composer');
 setInput(composer, A.text);
-await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+await new Promise(resolve => setTimeout(resolve, 50));
 const send = await until(() => btn('发送'));
 if (!send) throw new Error('no send button');
 send.click();
@@ -381,3 +403,13 @@ mod stage2;
 mod stage3;
 #[path = "agents_stage4.rs"]
 mod stage4;
+#[path = "agents_stage6.rs"]
+mod stage6;
+#[path = "agents_layout_round2.rs"]
+mod layout_round2;
+#[path = "agents_round3_terminal.rs"]
+mod round3_terminal;
+#[path = "agents_round3_workflows.rs"]
+mod round3_workflows;
+#[path = "agents_round4.rs"]
+mod round4;

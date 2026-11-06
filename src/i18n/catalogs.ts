@@ -1,3 +1,7 @@
+import enWorkbenchLayout from './locales/en-US/layout';
+import zhWorkbenchLayout from './locales/zh-CN/layout';
+import enWorkbenchNavigation from './locales/en-US/workbenchNavigation';
+import zhWorkbenchNavigation from './locales/zh-CN/workbenchNavigation';
 import enCapabilities from './locales/en-US/capabilities';
 import zhCapabilities from './locales/zh-CN/capabilities';
 import enDirect from './locales/en-US/direct';
@@ -16,6 +20,8 @@ import enCli from './locales/en-US/cli';
 import zhCli from './locales/zh-CN/cli';
 import enGeneration from './locales/en-US/generation';
 import zhGeneration from './locales/zh-CN/generation';
+import enDelivery from './locales/en-US/delivery';
+import zhDelivery from './locales/zh-CN/delivery';
 import en0 from './locales/en-US/about';
 import zh0 from './locales/zh-CN/about';
 import en1 from './locales/en-US/account';
@@ -66,8 +72,18 @@ import en23 from './locales/en-US/workbench';
 import zh23 from './locales/zh-CN/workbench';
 import en24 from './locales/en-US/dev';
 import zh24 from './locales/zh-CN/dev';
+import enTaskLaunch from './locales/en-US/taskLaunch';
+import zhTaskLaunch from './locales/zh-CN/taskLaunch';
+import enTaskReview from './locales/en-US/taskReview';
+import zhTaskReview from './locales/zh-CN/taskReview';
+import enRuntimeWorkflow from './locales/en-US/runtimeWorkflow';
+import zhRuntimeWorkflow from './locales/zh-CN/runtimeWorkflow';
+import enWorkflow from './locales/en-US/workflow';
+import zhWorkflow from './locales/zh-CN/workflow';
+import enTakeover from './locales/en-US/takeover';
+import zhTakeover from './locales/zh-CN/takeover';
 
 export const catalogs: Record<'zh-CN' | 'en-US', Record<string, string>> = {
-  'zh-CN': { ...zhCapabilities, ...zhDirect, ...zhReview, ...zhVoice, ...zhAssets, ...zhStorage, ...zhExecution, ...zhCli, ...zhGeneration, ...zh0, ...zh1, ...zh2, ...zh3, ...zh4, ...zh5, ...zh6, ...zh7, ...zh8, ...zh9, ...zh10, ...zh11, ...zh12, ...zh13, ...zh14, ...zh15, ...zh16, ...zh17, ...zh18, ...zh19, ...zh20, ...zh21, ...zh22, ...zh23, ...zh24 },
-  'en-US': { ...enCapabilities, ...enDirect, ...enReview, ...enVoice, ...enAssets, ...enStorage, ...enExecution, ...enCli, ...enGeneration, ...en0, ...en1, ...en2, ...en3, ...en4, ...en5, ...en6, ...en7, ...en8, ...en9, ...en10, ...en11, ...en12, ...en13, ...en14, ...en15, ...en16, ...en17, ...en18, ...en19, ...en20, ...en21, ...en22, ...en23, ...en24 },
+  'zh-CN': { ...zhWorkflow, ...zhTakeover, ...zhTaskReview, ...zhRuntimeWorkflow, ...zhWorkbenchLayout, ...zhWorkbenchNavigation, ...zhCapabilities, ...zhDirect, ...zhReview, ...zhVoice, ...zhAssets, ...zhStorage, ...zhExecution, ...zhCli, ...zhGeneration, ...zhDelivery, ...zh0, ...zh1, ...zh2, ...zh3, ...zh4, ...zh5, ...zh6, ...zh7, ...zh8, ...zh9, ...zh10, ...zh11, ...zh12, ...zh13, ...zh14, ...zh15, ...zh16, ...zh17, ...zh18, ...zh19, ...zh20, ...zh21, ...zh22, ...zh23, ...zh24, ...zhTaskLaunch },
+  'en-US': { ...enWorkflow, ...enTakeover, ...enTaskReview, ...enRuntimeWorkflow, ...enWorkbenchLayout, ...enWorkbenchNavigation, ...enCapabilities, ...enDirect, ...enReview, ...enVoice, ...enAssets, ...enStorage, ...enExecution, ...enCli, ...enGeneration, ...enDelivery, ...en0, ...en1, ...en2, ...en3, ...en4, ...en5, ...en6, ...en7, ...en8, ...en9, ...en10, ...en11, ...en12, ...en13, ...en14, ...en15, ...en16, ...en17, ...en18, ...en19, ...en20, ...en21, ...en22, ...en23, ...en24, ...enTaskLaunch },
 };

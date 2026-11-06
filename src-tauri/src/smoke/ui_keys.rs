@@ -1,7 +1,7 @@
 //! FR-005 Phase 8: physical-keyboard and overlay scenarios in the visible WKWebView.
 //!
-//! Keys are real `NSEvent`s (keyDown + keyUp) delivered with `-[NSWindow sendEvent:]` to the WKWebView, so
-//! WebKit runs its own default actions: Tab focus traversal, `:focus-visible`, Space/Enter activation of
+//! Keys are real `NSEvent`s (keyDown + keyUp) delivered through `-[NSApplication sendEvent:]` to the key
+//! window's responder, so WebKit runs its own default actions: Tab traversal, `:focus-visible`, Space/Enter activation of
 //! buttons. Nothing here dispatches DOM `KeyboardEvent`s or calls `.click()`/`.focus()` as a substitute for a
 //! key press, except where a step says so (starting a scenario from a known control).
 //!
@@ -10,7 +10,7 @@
 //! trigger through the frozen `host.ui` (no shipped page nests those).
 //!
 //! Not proven here: pointer clicks (hit-testing uses `elementFromPoint`, not a mouse event), VoiceOver, any
-//! other platform, reduced-motion behaviour.
+//! other platform. The focused modal geometry slice uses the production reduced-motion preference.
 
 use super::ui::{set_appearance, UiProbe, MAIN};
 use super::{eval, goto, Checks};
@@ -102,7 +102,9 @@ fn post(app: &AppHandle, key: Key, down: bool) -> bool {
                 isARepeat: Bool::NO,
                 keyCode: code
             ];
-            let _: () = msg_send![win, sendEvent: event];
+            // Route through NSApplication so currentEvent and WebKit's keyboard-input modality agree.
+            let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+            let _: () = msg_send![ns_app, sendEvent: event];
         })
         .is_ok()
 }
@@ -120,14 +122,33 @@ fn activate(app: &AppHandle) -> bool {
     let Some(window) = app.get_webview_window(MAIN) else {
         return false;
     };
-    let _ = window.set_focus();
+    let _ = window.show();
     window
         .with_webview(|webview| unsafe {
             let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
             let _: Bool = msg_send![ns_app, setActivationPolicy: 0isize];
+            // A Cargo test executable has no app-bundle activation handshake. Request foreground
+            // ownership through the running process as well as NSApplication before making its window key.
+            let process: *mut AnyObject = msg_send![class!(NSRunningApplication), currentApplication];
+            let _: Bool = msg_send![process, activateWithOptions: 3usize];
             let _: () = msg_send![ns_app, activateIgnoringOtherApps: Bool::YES];
             let win = webview.ns_window() as *mut AnyObject;
+            let _: () = msg_send![win, orderFrontRegardless];
+            let _: () = msg_send![win, makeMainWindow];
             let _: () = msg_send![win, makeKeyAndOrderFront: std::ptr::null_mut::<AnyObject>()];
+            let view = webview.inner() as *mut AnyObject;
+            let responder: *mut AnyObject = msg_send![win, firstResponder];
+            let in_view = if responder.is_null() { false } else {
+                let is_view: Bool = msg_send![responder, isKindOfClass: class!(NSView)];
+                is_view.as_bool() && {
+                    let descendant: Bool = msg_send![responder, isDescendantOf: view];
+                    descendant.as_bool()
+                }
+            };
+            // WKContentView owns editing and key modality; do not replace it on every key press.
+            if !in_view {
+                let _: Bool = msg_send![win, makeFirstResponder: view];
+            }
         })
         .is_ok()
 }
@@ -141,7 +162,7 @@ fn activate(_: &AppHandle) -> bool {
 /// page itself reports `document.hasFocus()`; if it never does, that is printed and the checks that depend
 /// on focus fail with `hasFocus:false` in their detail.
 #[cfg(target_os = "macos")]
-async fn prepare(app: &AppHandle) -> bool {
+pub(super) async fn prepare(app: &AppHandle) -> bool {
     use objc2::msg_send;
     use objc2::runtime::{AnyObject, Bool};
     let Some(window) = app.get_webview_window(MAIN) else {
@@ -150,11 +171,6 @@ async fn prepare(app: &AppHandle) -> bool {
     let mut focused = false;
     for _ in 0..12 {
         activate(app);
-        window.with_webview(|webview| unsafe {
-            let win=webview.ns_window() as *mut AnyObject;
-            let view=webview.inner() as *mut AnyObject;
-            let _:Bool=msg_send![win, makeFirstResponder:view];
-        }).ok();
         sleep(Duration::from_millis(300)).await;
         if truthy(app, "document.hasFocus()").await {
             focused = true;
@@ -162,23 +178,34 @@ async fn prepare(app: &AppHandle) -> bool {
         }
     }
     if !focused {
-        println!("INFO the page never reported document.hasFocus() after 12 activation attempts");
-    }
-    window
-        .with_webview(|webview| unsafe {
+        let (send, receive) = tokio::sync::oneshot::channel();
+        window.with_webview(move |webview| unsafe {
+            use objc2::class;
+            let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
             let win = webview.ns_window() as *mut AnyObject;
-            let view = webview.inner() as *mut AnyObject;
-            let _: Bool = msg_send![win, makeFirstResponder: view];
-        })
-        .is_ok()
+            let active: Bool = msg_send![ns_app, isActive];
+            let policy: isize = msg_send![ns_app, activationPolicy];
+            let key: Bool = msg_send![win, isKeyWindow];
+            let main: Bool = msg_send![win, isMainWindow];
+            let visible: Bool = msg_send![win, isVisible];
+            let responder: *mut AnyObject = msg_send![win, firstResponder];
+            let process: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+            let front: *mut AnyObject = msg_send![process, frontmostApplication];
+            let front_pid: i32 = if front.is_null() { 0 } else { msg_send![front, processIdentifier] };
+            let class_name = if responder.is_null() { "none".to_owned() } else { (&*responder).class().name().to_string_lossy().into_owned() };
+            let _ = send.send(json!({"appActive":active.as_bool(),"activationPolicy":policy,"keyWindow":key.as_bool(),"mainWindow":main.as_bool(),"visible":visible.as_bool(),"firstResponderClass":class_name,"frontmostPid":front_pid,"processPid":std::process::id()}));
+        }).ok();
+        println!("INFO native foreground preflight failed: {:?}", receive.await);
+    }
+    focused
 }
 
 #[cfg(not(target_os = "macos"))]
-async fn prepare(_: &AppHandle) -> bool {
+pub(super) async fn prepare(_: &AppHandle) -> bool {
     false
 }
 
-async fn key(app: &AppHandle, key: Key) {
+pub(super) async fn key(app: &AppHandle, key: Key) {
     // Re-asserts key status every time: an occluded or non-key window silently drops key events and
     // freezes animations.
     activate(app);
@@ -750,6 +777,150 @@ async fn gallery_dialog(app: &AppHandle, checks: &mut Checks) {
     );
 }
 
+/// Focused native layout checks; no route/theme matrix and no DOM keyboard-event substitutes.
+pub(super) async fn modal_viewports(app: &AppHandle, checks: &mut Checks) {
+    let window = app.get_webview_window(MAIN).expect("main window");
+    // Independent typography is persisted through the production appearance command, never injected CSS.
+    for (ui, reading, code, expected) in [(12,20,18,[13.0,20.0,18.0]), (16,20,18,[17.0,20.0,18.0]), (16,13,18,[17.0,13.0,18.0]), (16,13,12,[17.0,13.0,12.0])] {
+        let read = super::ipc(app, MAIN, "get_appearance_preferences", json!({})).await;
+        let mut snapshot = read.data()["snapshot"].clone();
+        let revision = snapshot.as_object_mut().and_then(|v| v.remove("revision"));
+        snapshot["density"] = json!(75);
+        snapshot["typography"]["uiSize"] = json!(ui);
+        snapshot["typography"]["readingSize"] = json!(reading);
+        snapshot["typography"]["codeSize"] = json!(code);
+        snapshot["typography"]["lineHeight"] = json!(2);
+        snapshot["effects"]["reducedMotion"] = json!("reduce");
+        let saved = super::ipc(app, MAIN, "set_appearance_preferences", json!({"snapshot":snapshot,"expectedRevision":revision})).await.success();
+        let loaded = open_gallery(app).await;
+        let measured = js(app, "return ['g-input-ui','g-input-reading','g-input-code'].map(id=>{const e=document.getElementById(id);return {size:parseFloat(css(e,'fontSize')),line:parseFloat(css(e,'lineHeight')),value:e.value};});").await;
+        let sizes = measured.as_array().map(|values| values.iter().zip(expected).all(|(v,w)| (v["size"].as_f64().unwrap_or(0.0)-w).abs()<0.05)).unwrap_or(false);
+        checks.check(&format!("Input independent UI{ui}/reading{reading}/code{code}"), saved && loaded && sizes && measured[1]["line"].as_f64() == Some(reading as f64 * 2.0) && measured[2]["line"].as_f64() == Some(code as f64 * 1.5), measured.to_string());
+    }
+    for value in ["zh", "en"] {
+        js(app, "document.getElementById('g-long-select').focus(); return true;").await;
+        if value == "en" {
+            key(app, Key::Enter).await;
+            js(app, "return !!(await until(()=>document.activeElement.getAttribute('role')==='option'));").await;
+            key(app, Key::Down).await;
+            key(app, Key::Enter).await;
+        }
+        let geometry = js(app, "const e=document.getElementById('g-long-select'),v=e.firstElementChild,full=document.getElementById(e.getAttribute('aria-describedby')); return {g:geo(e), h:e.clientHeight, valueH:v.getBoundingClientRect().height, overflow:e.scrollWidth>e.clientWidth+1, full:full?.textContent, title:e.title, ellipsis:css(v,'textOverflow'), white:css(v,'whiteSpace'), focus:document.activeElement===e};").await;
+        checks.check(&format!("Select long {value} @75% UI16: native selection, single line and full accessible value"), geometry["g"]["inside"] == true && geometry["overflow"] == false && geometry["ellipsis"] == "ellipsis" && geometry["white"] == "nowrap" && geometry["full"] == geometry["title"] && geometry["full"].as_str().unwrap_or("").starts_with(if value == "zh" { "中文" } else { "LongEnglish" }) && geometry["valueH"].as_f64().unwrap_or(999.0) <= geometry["h"].as_f64().unwrap_or(0.0)+1.0 && geometry["focus"] == true, geometry.to_string());
+    }
+    window.set_theme(Some(tauri::Theme::Light)).ok();
+    for (width, density) in [(520u32, 175u32), (800, 100), (800, 175)] {
+        let tag = format!("Modal {width}x600 @{density}%");
+        let resized = window.set_size(tauri::LogicalSize::new(width as f64, 600.0)).is_ok();
+        let saved = set_appearance(app, "light", density).await;
+        if !resized || !saved || !open_gallery(app).await {
+            checks.check(&tag, false, "window, appearance or gallery unavailable");
+            continue;
+        }
+        let opened = js(app, "document.getElementById('g-open-long-form').focus(); return document.activeElement.id === 'g-open-long-form';").await == true;
+        key(app, Key::Enter).await;
+        let found = js(app, "return !!(await until(() => document.getElementById('g-modal-form')));").await == true;
+        checks.check(&format!("{tag}: native Enter opens long form consumer"), opened && found, "g-modal-form");
+        if !found { continue; }
+        let settled = js(app, "return !!(await until(() => { const d=document.querySelector('[data-modal-kind]'); return root.dataset.reducedMotion === 'reduce' && css(d,'transform') === 'none' && css(d,'animationName') === 'none'; }));").await == true;
+        checks.check(&format!("{tag}: production reduced-motion preference settles geometry"), settled, "no active modal transform or animation");
+        let initial = js(app, r#"
+const d = document.querySelector('[data-modal-kind]');
+const body = d.querySelector('.ui-modal-body');
+const heading = d.querySelector('.ui-modal-heading');
+const footer = d.querySelector('.ui-modal-footer');
+const close = d.querySelector('button[aria-label="关闭"]');
+const hit = el => { const r = el.getBoundingClientRect(); return el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)); };
+const buttons = [...footer.querySelectorAll('button')];
+return { dialog:geo(d), heading:geo(heading), footer:geo(footer), close:geo(close), closeHit:hit(close),
+  rootPx:parseFloat(css(root,'fontSize')), density:root.dataset.density, initial:document.activeElement.id,
+  bodyScrolls:body.scrollHeight > body.clientHeight + 1, horizontal:d.scrollWidth > d.clientWidth + 1 || body.scrollWidth > body.clientWidth + 1,
+  footerHit:buttons.every(hit), footerRows:new Set(buttons.map(b => Math.round(b.getBoundingClientRect().top))).size,
+  titleClipped:heading.scrollWidth > heading.clientWidth + 1, pageScroll:root.scrollWidth > root.clientWidth + 1,
+  firstFont:parseFloat(css(document.getElementById('g-modal-first'),'fontSize')) };
+"#).await;
+        let unit = density as f64 / 100.0;
+        let nominal = 400.0 * unit;
+        let cap = (600.0 * unit).min(width as f64 - 32.0 * unit);
+        let actual_width = initial["dialog"]["w"].as_f64().unwrap_or(0.0);
+        checks.check(&format!("{tag}: viewport clamp, density retained, no horizontal overflow"),
+            initial["dialog"]["inside"] == true && initial["dialog"]["vw"].as_u64() == Some(width as u64)
+                && actual_width >= nominal.min(cap) - 1.0 && actual_width <= cap + 1.0
+                && initial["horizontal"] == false && initial["pageScroll"] == false
+                && initial["density"] == density.to_string()
+                && (initial["rootPx"].as_f64().unwrap_or(0.0) - 14.0 * unit).abs() < 0.05
+                && initial["firstFont"].as_f64().unwrap_or(0.0) >= 12.0,
+            initial.to_string());
+        checks.check(&format!("{tag}: title, close and wrapping footer reachable above long body"),
+            initial["heading"]["inside"] == true && initial["titleClipped"] == false
+                && initial["close"]["inside"] == true && initial["closeHit"] == true
+                && initial["footer"]["inside"] == true && initial["footerHit"] == true
+                && initial["bodyScrolls"] == true && initial["initial"] == "g-modal-first"
+                && (width != 520 || initial["footerRows"].as_u64().unwrap_or(0) > 1),
+            initial.to_string());
+
+        let reached = tab_until(app, "document.activeElement.id === 'g-modal-last'", 8, false).await;
+        let scrolled = js(app, r#"
+const d = document.querySelector('[data-modal-kind]'); const b = d.querySelector('.ui-modal-body');
+const last = document.getElementById('g-modal-last');
+await until(() => { const r=last.getBoundingClientRect(); const br=b.getBoundingClientRect(); return r.top >= br.top + 4 - 0.5 && r.bottom <= br.bottom - 4 + 0.5; }, 2000);
+const r = last.getBoundingClientRect(); const br = b.getBoundingClientRect();
+const close = d.querySelector('button[aria-label="关闭"]'); const cr = close.getBoundingClientRect();
+return { visible:r.top >= br.top - 1 && r.bottom <= br.bottom + 1, field:{top:r.top,bottom:r.bottom,height:r.height}, body:{top:br.top,bottom:br.bottom,height:br.height,clientHeight:b.clientHeight,scrollHeight:b.scrollHeight}, scrollTop:b.scrollTop,
+  focus:focusInfo(), cuts:ringCuts(), transform:css(d,'transform'),
+  panelScroll:d.scrollTop, footer:geo(d.querySelector('.ui-modal-footer')), close:geo(close),
+  closeHit:close.contains(document.elementFromPoint(cr.left + cr.width / 2,cr.top + cr.height / 2)) };
+"#).await;
+        checks.check(&format!("{tag}: physical Tab scrolls to final body field while footer and close remain reachable"),
+            reached && scrolled["visible"] == true && scrolled["scrollTop"].as_f64().unwrap_or(0.0) > 0.0
+                && scrolled["panelScroll"] == 0 && scrolled["footer"]["inside"] == true
+                && scrolled["close"]["inside"] == true && scrolled["closeHit"] == true
+                && ring_problem(&scrolled["focus"]).is_none()
+                && scrolled["cuts"].as_array().is_some_and(|cuts| cuts.is_empty()),
+            scrolled.to_string());
+
+        let combo = tab_until(app, "document.activeElement.getAttribute('role') === 'combobox'", 4, true).await;
+        key(app, Key::Enter).await;
+        let list = js(app, "return !!(await until(() => document.querySelector('[role=listbox]')));").await == true;
+        key(app, Key::Escape).await;
+        let nested = js(app, "await wait(300); return { dialog:!!document.querySelector('[data-modal-kind]'), list:!!document.querySelector('[role=listbox]'), role:document.activeElement.getAttribute('role') };").await;
+        checks.check(&format!("{tag}: nested Select Escape dismisses only its menu"),
+            combo && list && nested["dialog"] == true && nested["list"] == false && nested["role"] == "combobox", nested.to_string());
+
+        let confirm = tab_until(app, "document.activeElement.closest('.ui-modal-footer') && document.activeElement.textContent.trim() === 'Confirm reviewed request'", 8, false).await;
+        let focused = js(app, "const d=document.querySelector('[data-modal-kind]'); return {inside:d.contains(document.activeElement) && geo(document.activeElement).inside,focus:focusInfo(),cuts:ringCuts()};").await;
+        checks.check(&format!("{tag}: native footer focus ring is visible and unclipped"), confirm && focused["inside"] == true && ring_problem(&focused["focus"]).is_none() && focused["cuts"].as_array().is_some_and(|cuts| cuts.is_empty()), focused.to_string());
+        key(app, Key::Enter).await;
+        let busy = js(app, "return !!(await until(() => document.querySelector('.ui-modal-footer [aria-busy=true]')));").await == true;
+        key(app, Key::Escape).await;
+        let protected = js(app, "const d=document.querySelector('[data-modal-kind]'); return !!d && d.querySelector('button[aria-label=\"关闭\"]').disabled && [...d.querySelectorAll('.ui-modal-footer button')].some(b => b.disabled);").await == true;
+        checks.check(&format!("{tag}: native footer confirmation stays open and guards Escape/close while busy"), confirm && focused["inside"] == true && busy && protected, "pending native confirmation");
+        let release = tab_until(app, "document.activeElement.id === 'g-modal-release'", 6, true).await;
+        key(app, Key::Enter).await;
+        let closed = js(app, "return !!(await until(() => !document.querySelector('[data-modal-kind]')));").await == true;
+        checks.check(&format!("{tag}: resolving the async action closes and restores opener focus"),
+            release && closed && truthy(app, "document.activeElement.id === 'g-open-long-form'").await, "native body release");
+
+        // The short production consumer must also retain its nominal fit width and dismissal semantics.
+        if ready(app, "/providers").await {
+            let trigger = "const row=await until(() => [...document.querySelectorAll('.provider-list-item[role=group]')].find(x => x.getAttribute('aria-label')?.includes('Provider-with-an-extremely-long'))); const b=row && [...row.querySelectorAll('button[aria-label]')].find(x => x.getAttribute('aria-label').includes('删除')); b?.focus(); return !!b && document.activeElement === b;";
+            if open_expect(app, checks, &format!("{tag} Provider"), trigger, "删除 Provider？").await {
+                js(app, "return !!(await until(() => css(document.querySelector('[data-modal-kind]'),'transform') === 'none'));").await;
+                let production = js(app, "const d=document.querySelector('[data-modal-kind]'); return {g:geo(d),scroll:d.scrollWidth>d.clientWidth+1,footer:geo(d.querySelector('.ui-modal-footer'))};").await;
+                let w = production["g"]["w"].as_f64().unwrap_or(0.0);
+                checks.check(&format!("{tag}: actual Provider delete confirm fits"), production["g"]["inside"] == true && production["scroll"] == false && production["footer"]["inside"] == true && w >= nominal.min(cap)-1.0 && w <= cap+1.0, production.to_string());
+                key(app, Key::Escape).await;
+                checks.check(&format!("{tag}: Provider Escape keeps the seeded provider"), dialog_gone(app).await && provider_present(app).await == Some(true), "production command read-back");
+            } else {
+                checks.check(&format!("{tag}: production Provider consumer available"), false, "seeded provider row or accessible delete button missing");
+            }
+        } else {
+            checks.check(&format!("{tag}: production Provider route loads"), false, "route unavailable");
+        }
+    }
+    set_appearance(app, "light", 100).await;
+}
+
 /// Dialog and Toast geometry at one density (the dialog is opened with a real Enter on the focused opener).
 async fn density_geometry(app: &AppHandle, checks: &mut Checks, density: u32) {
     set_appearance(app, "light", density).await;
@@ -1099,10 +1270,8 @@ async fn ring_walk(app: &AppHandle, checks: &mut Checks, tag: &str) {
     );
 }
 
-/// FR-007 FO-2: the Settings tab bar scrolls sideways, and a scroller clips its content at the padding box in both
-/// axes, which used to cut the bottom of every tab's focus ring. With physical keys (Tab into the bar, Home, then
-/// Right through all seven tabs) each focused tab must show a full ring: computed style as `ring_problem`, and no
-/// ancestor that clips cuts the ring box. 175% is where the bar overflows and the later tabs must scroll into view.
+/// FR-007: the vertical category list uses manual activation. Native Home/Down must visit all eight
+/// categories without navigating; every focused tab retains an unclipped ring at each density.
 async fn settings_tab_rings(app: &AppHandle, checks: &mut Checks) {
     for density in [75, 100, 175] {
         let tag = format!("Settings tabs @{density}%");
@@ -1124,11 +1293,22 @@ async fn settings_tab_rings(app: &AppHandle, checks: &mut Checks) {
             );
             continue;
         }
-        key(app, Key::Home).await;
         let (mut seen, mut bad) = (vec![], vec![]);
-        for step in 0..7 {
-            if step > 0 {
-                key(app, Key::Right).await;
+        for step in 0..8 {
+            if !prepare(app).await {
+                bad.push(format!("step {step}: native window could not regain focus"));
+                break;
+            }
+            key(app, if step == 0 { Key::Home } else { Key::Down }).await;
+            // A foreground application change between key delivery and measurement invalidates
+            // WebKit's keyboard modality. Regain focus and resend this idempotent key before measuring.
+            if !truthy(app, "document.hasFocus()").await {
+                if !prepare(app).await {
+                    bad.push(format!("step {step}: native window lost focus before measurement"));
+                    break;
+                }
+                key(app, Key::Home).await;
+                for _ in 0..step { key(app, Key::Down).await; }
             }
             let info = js(app, "return { ...focusInfo(), cuts: ringCuts() };").await;
             let label = info["label"].as_str().unwrap_or("?").to_owned();
@@ -1141,16 +1321,17 @@ async fn settings_tab_rings(app: &AppHandle, checks: &mut Checks) {
         }
         let want = [
             "Provider",
-            "技能中心",
-            "MCP 管理",
             "模块",
             "外观",
             "关于",
             "局域网协同",
+            "账户",
+            "CLI 工具",
+            "存储",
         ];
         checks.check(
-            &format!("{tag}: Home then Right visits the seven tabs in order"),
-            seen == want,
+            &format!("{tag}: Home then Down visits the eight tabs without activating them"),
+            seen == want && truthy(app, "location.pathname === '/settings/about'").await,
             seen.join(" > "),
         );
         checks.check(
@@ -1287,7 +1468,7 @@ async fn p7_leftovers(app: &AppHandle, checks: &mut Checks) {
 }
 
 const DLG: &str = r#"
-const dlg = () => document.querySelector('[role="dialog"]');
+const dlg = () => [...document.querySelectorAll('[data-modal-kind][role="dialog"]')].at(-1);
 const dlgTitle = () => { const d = dlg(); const t = d && document.getElementById(d.getAttribute('aria-labelledby')); return t ? t.textContent.trim() : null; };
 const dlgState = () => { const d = dlg(); return d ? { title: dlgTitle(), inside: d.contains(document.activeElement), focus: lbl(document.activeElement), buttons: [...d.querySelectorAll('button')].map((b) => lbl(b)) } : null; };
 const nameInput = () => { const l = [...document.querySelectorAll('label')].find((x) => x.textContent.trim().startsWith('名称')); return l && l.control; };
@@ -1328,7 +1509,7 @@ async fn dialog_gone(app: &AppHandle) -> bool {
 /// Move focus to the dialog button named `label` with physical Tab presses.
 async fn tab_to_dialog_button(app: &AppHandle, label: &str) -> bool {
     let pred = format!(
-        "(() => {{ const d = document.querySelector('[role=\"dialog\"]'); return !!d && d.contains(document.activeElement) && lbl(document.activeElement) === {label:?}; }})()"
+        "(() => {{ const d = [...document.querySelectorAll('[data-modal-kind][role=\"dialog\"]')].at(-1); return !!d && d.contains(document.activeElement) && lbl(document.activeElement) === {label:?}; }})()"
     );
     truthy(app, &pred).await || tab_until(app, &pred, 5, false).await
 }
@@ -1502,7 +1683,73 @@ async fn confirm_dialogs(app: &AppHandle, checks: &mut Checks) {
     }
 }
 
-/// Phase 4 only: shipped shell, real catalog/module and native Escape/Tab, without the density matrix.
+/// Narrow the native window. DOM only seeds a draft and establishes the starting control;
+/// opening, selecting, cancelling and confirming use NSEvents.
+async fn settings_narrow_menu(app: &AppHandle, checks: &mut Checks) {
+    let resized = app.get_webview_window(MAIN).is_some_and(|window| {
+        window.set_min_size(Some(tauri::LogicalSize::new(520.0, 600.0))).is_ok()
+            && window.set_size(tauri::LogicalSize::new(520.0, 600.0)).is_ok()
+    });
+    let loaded = set_appearance(app, "light", 100).await && ready(app, "/").await;
+    let entry = js(app, "const e=document.querySelector('a[href=\"/settings\"]'); e?.focus(); return e === document.activeElement;").await == true;
+    key(app, Key::Enter).await;
+    let menu = tab_until(app, "document.activeElement.getAttribute('role') === 'combobox' && !!document.activeElement.closest('.workspace-settings-select')", 12, false).await;
+    let geometry = js(app, "const e=document.querySelector('.workspace-settings-select [role=combobox]'); return {width:innerWidth,menu:geo(e),tabsHidden:!document.querySelector('.workspace-settings-navigation').getClientRects().length,focus:focusInfo(),cuts:ringCuts()};").await;
+    checks.check("settings 520px: native Tab reaches the sole visible category control",
+        resized && loaded && entry && menu && geometry["width"].as_f64().unwrap_or(999.0) <= 560.0
+            && geometry["tabsHidden"] == true && geometry["menu"]["inside"] == true
+            && ring_problem(&geometry["focus"]).is_none()
+            && geometry["cuts"].as_array().is_some_and(|cuts| cuts.is_empty()), geometry.to_string());
+    if !menu { return; }
+    key(app, Key::Enter).await;
+    key(app, Key::Home).await;
+    for _ in 0..6 { key(app, Key::Down).await; }
+    key(app, Key::Enter).await;
+    let selected = js(app, r#"
+const input=await until(() => location.pathname==='/settings/cli' && document.querySelector('.cli-tool-row input:not([disabled])'));
+const menu=document.querySelector('.workspace-settings-select [role=combobox]');
+return {loaded:!!input,focus:document.activeElement===menu,value:menu.textContent};
+"#).await;
+    checks.check("settings narrow menu: native selection opens CLI and returns to selector",
+        selected["loaded"] == true && selected["focus"] == true && selected["value"].as_str().unwrap_or("").contains("CLI"), selected.to_string());
+    if selected["loaded"] != true { return; }
+    let drafted = js(app, r#"
+const input=document.querySelector('.cli-tool-row input');
+window.__settingsKeyboardDraft=input;
+Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'/tmp/dgos-keyboard-unsaved');
+input.dispatchEvent(new Event('input',{bubbles:true}));
+return !!(await until(() => [...document.querySelectorAll('.cli-settings-actions button')].some(e=>e.textContent.trim()==='保存' && !e.disabled)));
+"#).await == true;
+    key(app, Key::Enter).await;
+    key(app, Key::Home).await;
+    for _ in 0..3 { key(app, Key::Down).await; }
+    key(app, Key::Enter).await;
+    let prompt = truthy(app, "document.querySelector('[data-modal-kind=confirm]') && location.pathname==='/settings/cli'").await;
+    key(app, Key::Escape).await;
+    let cancelled = js(app, r#"
+await until(() => !document.querySelector('[data-modal-kind=confirm]'));
+const menu=document.querySelector('.workspace-settings-select [role=combobox]');
+return {draft:window.__settingsKeyboardDraft?.isConnected && window.__settingsKeyboardDraft.value==='/tmp/dgos-keyboard-unsaved',path:location.pathname,focus:document.activeElement===menu,value:menu.textContent};
+"#).await;
+    checks.check("settings narrow menu: native Escape cancels leave and restores category focus",
+        drafted && prompt && cancelled["draft"] == true && cancelled["path"] == "/settings/cli"
+            && cancelled["focus"] == true && cancelled["value"].as_str().unwrap_or("").contains("CLI"), cancelled.to_string());
+    key(app, Key::Enter).await;
+    key(app, Key::Home).await;
+    for _ in 0..3 { key(app, Key::Down).await; }
+    key(app, Key::Enter).await;
+    let discard = tab_to_dialog_button(app, "放弃并关闭").await;
+    key(app, Key::Enter).await;
+    let confirmed = js(app, "await until(() => location.pathname==='/settings/about' && !document.querySelector('[data-modal-kind=confirm]')); return {path:location.pathname,focus:document.activeElement===document.querySelector('.workspace-settings-select [role=combobox]')};").await;
+    checks.check("settings narrow menu: native discard changes category without losing selector focus",
+        discard && confirmed["path"] == "/settings/about" && confirmed["focus"] == true, confirmed.to_string());
+    key(app, Key::Escape).await;
+    let closed = js(app, "await until(() => !document.querySelector('.workspace-settings-dialog')); await wait(100); return {path:location.pathname,focus:document.activeElement?.getAttribute('href')};").await;
+    checks.check("settings narrow menu: native Escape closes overlay and restores settings entry",
+        closed["path"] == "/" && closed["focus"] == "/settings", closed.to_string());
+}
+
+/// Shipped shell/module, native key navigation, and settings viewport/density regressions.
 pub(super) async fn shell(app: AppHandle, checks: &mut Checks) {
     checks.check("shell native window ready", prepare(&app).await, "WKWebView first responder");
     key(&app, Key::Tab).await;
@@ -1541,6 +1788,38 @@ return {open:!!dialog,background:window.__shellModule?.isConnected,width:dialog?
     key(&app, Key::Escape).await;
     let returned = js(&app, "await until(() => !document.querySelector('.workspace-settings-dialog')); return {same:document.querySelector('#g-open') === window.__shellModule,focus:document.activeElement?.getAttribute('href'),path:location.pathname};").await;
     checks.check("shell settings Escape returns same module", returned["same"] == true && returned["path"] == "/apps/p8-gallery", returned.to_string());
+    let guarded = js(&app, r#"
+const clickText = (selector, text) => [...document.querySelectorAll(selector)].find(e => e.textContent.trim() === text)?.click();
+document.querySelector('a[href="/settings"]').click();
+await until(() => document.querySelector('.workspace-settings-categories'));
+const cli = [...document.querySelectorAll('.workspace-settings-category')].find(e => e.textContent.trim() === 'CLI 工具');
+cli?.dispatchEvent(new MouseEvent('mousedown', {bubbles:true,button:0}));
+const input = await until(() => [...document.querySelectorAll('.cli-tool-row input')].find(e => !e.disabled));
+if (!input) return {error:'CLI did not load'};
+const original = input.value;
+Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '/tmp/dgos-ui-stage3-unsaved');
+input.dispatchEvent(new Event('input', {bubbles:true}));
+await until(() => [...document.querySelectorAll('.settings-actions button')].some(e => !e.disabled && e.textContent.trim() === '保存'));
+const about = [...document.querySelectorAll('.workspace-settings-category')].find(e => e.textContent.trim() === '关于');
+about?.dispatchEvent(new MouseEvent('mousedown', {bubbles:true,button:0}));
+const prompt = await until(() => document.querySelector('[data-modal-kind="confirm"]'));
+if (!prompt) return {error:'category guard absent',path:location.pathname};
+clickText('[data-modal-kind="confirm"] button', '取消');
+await until(() => !document.querySelector('[data-modal-kind="confirm"]'));
+const kept = location.pathname === '/settings/cli' && input.value === '/tmp/dgos-ui-stage3-unsaved';
+clickText('.workspace-settings-header button', '关闭设置');
+await until(() => document.querySelector('[data-modal-kind="confirm"]'));
+clickText('[data-modal-kind="confirm"] button', '取消');
+await until(() => !document.querySelector('[data-modal-kind="confirm"]'));
+const cancelled = location.pathname === '/settings/cli' && input.isConnected;
+clickText('.workspace-settings-header button', '关闭设置');
+await until(() => document.querySelector('[data-modal-kind="confirm"]'));
+clickText('[data-modal-kind="confirm"] button', '放弃并关闭');
+const returned = !!(await until(() => !document.querySelector('.workspace-settings-dialog') && location.pathname === '/apps/p8-gallery'));
+return {kept,cancelled,returned,same:document.querySelector('#g-open') === window.__shellModule,original};
+"#).await;
+    checks.check("shell category leave cancels without losing CLI draft", guarded["kept"] == true, guarded.to_string());
+    checks.check("shell settings close cancels then returns after a single discard", guarded["cancelled"] == true && guarded["returned"] == true && guarded["same"] == true, guarded.to_string());
     let command = js(&app, "const trigger=document.querySelector('.workspace-tab-actions button[title*=Ctrl]'); trigger.focus(); trigger.click(); return !!(await until(() => document.querySelector('.workspace-command input') === document.activeElement));").await;
     checks.check("shell command autofocus", command == true, command.to_string());
     key(&app, Key::Escape).await;
@@ -1550,4 +1829,58 @@ return {open:!!dialog,background:window.__shellModule?.isConnected,width:dialog?
     checks.check("shell focus mode native Escape restores rail", focus == true && truthy(&app, "document.querySelector('.workspace-rail')").await, focus.to_string());
     let closed = js(&app, "document.querySelector('.workspace-tab-close').click(); return !!(await until(() => !document.querySelector('[data-workspace-tab]') && location.pathname === '/'));").await;
     checks.check("shell closes workspace and returns home", closed == true, closed.to_string());
+    settings_tab_rings(&app, checks).await;
+    // Exercise the production scroll owner and native traversal in wide and narrow windows.
+    for (width, density) in [(800u32, 75u32), (800, 175), (520, 75), (520, 175)] {
+        let resized = app.get_webview_window(MAIN).is_some_and(|window| {
+            window.set_min_size(Some(tauri::LogicalSize::new(520.0, 600.0))).is_ok()
+                && window.set_size(tauri::LogicalSize::new(width as f64, 600.0)).is_ok()
+        });
+        let read = super::ipc(&app, MAIN, "get_appearance_preferences", json!({})).await;
+        let mut snapshot = read.data()["snapshot"].clone();
+        let revision = snapshot.as_object_mut().and_then(|value| value.remove("revision"));
+        snapshot["density"] = json!(density);
+        snapshot["typography"]["uiSize"] = json!(16);
+        snapshot["typography"]["codeSize"] = json!(18);
+        snapshot["effects"]["reducedMotion"] = json!("reduce");
+        let saved = super::ipc(&app, MAIN, "set_appearance_preferences", json!({"snapshot":snapshot,"expectedRevision":revision})).await.success();
+        let loaded = ready(&app, "/settings/cli").await;
+        let initial = js(&app, r#"
+const input = await until(() => document.querySelector('.cli-tool-row input:not([disabled])'));
+if (!input) return {error:'CLI did not load'};
+input.focus();
+const panel = document.querySelector('[data-settings-category="cli"]');
+const body = document.querySelector('.cli-settings-body');
+const footer = document.querySelector('.cli-settings-actions');
+return {body:geo(body),footer:geo(footer),panelScroll:panel.scrollHeight>panel.clientHeight+1,
+  horizontal:root.scrollWidth>root.clientWidth+1 || body.scrollWidth>body.clientWidth+1,
+  close:geo(document.querySelector('.workspace-settings-header button'))};
+"#).await;
+        checks.check(&format!("settings CLI {width}px @{density}% UI16/code18: one body scroll and reachable actions"),
+            resized && saved && loaded && initial["horizontal"] == false && initial["panelScroll"] == false
+                && initial["body"]["inside"] == true && initial["footer"]["inside"] == true
+                && initial["close"]["inside"] == true, initial.to_string());
+        let reached = tab_until(&app, "document.activeElement === [...document.querySelectorAll('.cli-tool-row input')].at(-1)", 20, false).await;
+        let last = js(&app, r#"
+const body = document.querySelector('.cli-settings-body');
+const input = document.activeElement; const r=input.getBoundingClientRect(); const b=body.getBoundingClientRect();
+return {visible:r.top>=b.top+3.5 && r.bottom<=b.bottom-3.5,scrollTop:body.scrollTop,focus:focusInfo(),cuts:ringCuts()};
+"#).await;
+        checks.check(&format!("settings CLI {width}px @{density}%: native Tab reveals final path and focus ring"),
+            reached && last["visible"] == true && ring_problem(&last["focus"]).is_none()
+                && last["cuts"].as_array().is_some_and(|cuts| cuts.is_empty()), last.to_string());
+        let action = tab_until(&app, "!!document.activeElement.closest('.cli-settings-actions')", 6, false).await;
+        let footer = js(&app, "return {visible:geo(document.activeElement).inside,focus:focusInfo(),cuts:ringCuts()};").await;
+        checks.check(&format!("settings CLI {width}px @{density}%: native Tab reaches footer with unclipped focus"),
+            action && footer["visible"] == true && ring_problem(&footer["focus"]).is_none()
+                && footer["cuts"].as_array().is_some_and(|cuts| cuts.is_empty()), footer.to_string());
+        key(&app, Key::Escape).await;
+        checks.check(&format!("settings CLI {width}px @{density}%: native Escape closes clean deep link"),
+            truthy(&app, "!document.querySelector('.workspace-settings-dialog') && location.pathname==='/'").await, "clean deep link returns home");
+    }
+    settings_narrow_menu(&app, checks).await;
+    if let Some(window) = app.get_webview_window(MAIN) {
+        window.set_size(tauri::LogicalSize::new(800.0, 600.0)).ok();
+        window.set_min_size(Some(tauri::LogicalSize::new(800.0, 600.0))).ok();
+    }
 }

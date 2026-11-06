@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>xterm offscreen accessibility reproduction</title>
+  <link rel="stylesheet" href="/node_modules/@xterm/xterm/css/xterm.css">
+</head>
+<body>
+  <h1>xterm offscreen accessibility reproduction</h1>
+  <p>Run with the repository Vite server and open /tests/fixtures/terminal-accessibility.html. This dependency-only probe samples every layer and preserves failures; it does not exercise a screen reader.</p>
+  <button id="run" type="button">Run focused reproduction</button>
+  <pre id="result" aria-live="polite">Not run</pre>
+  <script src="/node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="./terminal-accessibility-probe.js"></script>
+  <script type="module">
+    const button = document.getElementById('run');
+    const workflow = new URLSearchParams(location.search).get('workflow') === 'round3';
+    if (workflow) {
+      document.title = 'Round3 production workflow fault coverage';
+      document.querySelector('h1').textContent = 'Round3 production workflow fault coverage';
+      document.querySelector('p').textContent = 'Run the production-component fixture with deterministic IPC faults. Add scenario=capability-roundtrip, stale-capabilities, cleanup-failure, stale-review-unknown, or host-native-approvals; scenario=all is the default. Add hold=1 for a static final-surface capture.';
+      button.textContent = 'Run Round3 workflow scenarios';
+    }
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      document.getElementById('result').textContent = 'Sampling…';
+      if (workflow) {
+        try {
+          const result = await (await import('./workflow-round3-application.tsx')).runWorkflowRound3Probe();
+          globalThis.workflowRound3Result = result;
+          document.getElementById('result').textContent = JSON.stringify(result, null, 2);
+        } catch (error) {
+          globalThis.workflowRound3Result = { passed: false, error: String(error.stack ?? error) };
+          document.getElementById('result').textContent = JSON.stringify(globalThis.workflowRound3Result, null, 2);
+        } finally { button.disabled = false; }
+        return;
+      }
+      try {
+        const first = 'P'.repeat(148) + '\r\nMARK\r\nTICK:1\r\n';
+        const application = new URLSearchParams(location.search).has('application');
+        const result = application
+          ? await (await import('./terminal-accessibility-application.tsx')).runApplicationProbe()
+          : await globalThis.runTerminalAccessibilityProbe({ Terminal: globalThis.Terminal, snapshots: [first, first + 'TICK:2\r\n'] });
+        globalThis.terminalAccessibilityResult = result;
+        document.getElementById('result').textContent = JSON.stringify(result, null, 2);
+      } catch (error) {
+        document.getElementById('result').textContent = String(error.stack ?? error);
+      } finally { button.disabled = false; }
+    });
+  </script>
+</body>
+</html>

@@ -27,6 +27,7 @@ use tokio::sync::RwLock;
 pub fn run() {
     // Initialize logging
     logging::init();
+    let mut shutdown_started = false;
 
     module_host::install(tauri::Builder::default())
         .plugin(tauri_plugin_opener::init())
@@ -489,6 +490,9 @@ pub fn run() {
             commands::classify_agent_session,
             commands::list_development_files,
             commands::read_development_file,
+            commands::resolve_development_file_reference,
+            commands::read_development_takeover,
+            commands::close_development_takeover,
             commands::read_development_review,
             commands::read_development_diff,
             commands::save_development_file,
@@ -509,6 +513,14 @@ pub fn run() {
             commands::get_development_session_capabilities,
             commands::list_development_capability_confirmations,
             commands::respond_development_capability_confirmation,
+            commands::read_development_workspaces,
+            commands::save_development_workspaces,
+            commands::read_development_git,
+            commands::execute_development_git,
+            commands::reconcile_development_git,
+            commands::prepare_development_handoff,
+            commands::list_development_handoffs,
+            commands::accept_development_handoff,
             commands::advance_chat_tool_turn,
             // MCP commands
             commands::list_mcp_servers,
@@ -589,8 +601,10 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
-            if let tauri::RunEvent::ExitRequested { .. } = event {
+        .run(move |app, event| {
+            // macOS menu Quit can deliver Exit without ExitRequested.
+            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) && !shutdown_started {
+                shutdown_started = true;
                 if let Some(resolver) = app.try_state::<Arc<session::SessionResolver>>() {
                     resolver.close_agents();
                 }

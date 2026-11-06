@@ -32,6 +32,23 @@ pub fn run_agents() {
             let resolver = app.state::<Arc<SessionResolver>>().inner().clone();
             let stage4_ui = std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| phase == "stage4-ui");
             let mcp = if stage4_ui { tauri::async_runtime::block_on(super::stage4::install(&handle, app.state::<Fx>().inner())) } else { Arc::new(McpManager::new(db.clone())) };
+            if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| phase.starts_with("stage6-") || matches!(phase.as_str(), "terminal-activity" | "worktree-runtime" | "layout-round2" | "terminal-round3" | "workflows-round3" | "round4-native" | "round4-pending-fixture")) || std::env::var_os("DGOS_AGENT_CLOSE_ONLY").is_some() {
+                let fx = app.state::<Fx>();
+                let skills = Arc::new(tokio::sync::RwLock::new(dgos_skills::SkillsManager::new(db.clone(), fx.root.join("skills"))));
+                let capabilities = tauri::async_runtime::block_on(async {
+                    dgos_agents::capabilities::ProjectCapabilities::new(
+                        DevelopmentRepository::new(db.clone()),
+                        dgos_providers::ProviderManager::new(&format!("sqlite://{}?mode=rwc", fx.root.join("dgos.db").display())).await.expect("stage6 providers"),
+                        skills.clone(),
+                        mcp.clone(), fx.root.join("capability-material"))
+                });
+                app.state::<AgentManager>().install_capabilities(capabilities.clone());
+                app.manage(capabilities);
+                app.manage(skills);
+            }
+            if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| matches!(phase.as_str(), "layout-round2" | "terminal-round3" | "workflows-round3" | "round4-native" | "round4-pending-fixture")) {
+                tauri::async_runtime::block_on(super::layout_round2::install(app));
+            }
             let accounts = tauri::async_runtime::block_on(async {
                 let ports = AccountPorts::new(&db, Arc::new(HostSessionPort::new(resolver, mcp, handle.clone())));
                 let service = AccountService::new(db, ports);
@@ -47,7 +64,13 @@ pub fn run_agents() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(|invoke| {
+            if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| matches!(phase.as_str(), "layout-round2" | "terminal-round3" | "workflows-round3" | "round4-native" | "round4-pending-fixture"))
+                && matches!(invoke.message.command(), "set_appearance_preferences" | "recover_appearance_preferences" | "read_workspace_app_catalog") {
+                let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![commands::set_appearance_preferences, commands::recover_appearance_preferences, commands::read_workspace_app_catalog];
+                return handler(invoke);
+            }
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
             commands::get_account_state, commands::create_account, commands::sign_in, commands::sign_out,
             commands::get_appearance_preferences, commands::get_language_preferences, commands::set_language_preferences,
             commands::get_desktop_preferences, commands::set_desktop_preferences,
@@ -56,6 +79,8 @@ pub fn run_agents() {
             commands::update_development_project, commands::inspect_development_project,
             commands::save_development_task, commands::select_development_context, commands::classify_agent_session,
             commands::list_development_files, commands::read_development_file,
+            commands::resolve_development_file_reference,
+            commands::read_development_takeover, commands::close_development_takeover,
             commands::read_development_review, commands::read_development_diff, commands::list_development_runs,
             commands::save_development_file, commands::read_development_commands, commands::save_development_commands,
             commands::start_development_process, commands::read_development_process, commands::list_development_processes,
@@ -65,10 +90,15 @@ pub fn run_agents() {
             commands::revoke_development_capabilities, commands::read_development_capability_catalog,
             commands::get_development_session_capabilities, commands::list_development_capability_confirmations,
             commands::respond_development_capability_confirmation,
+            commands::read_development_workspaces, commands::save_development_workspaces,
+            commands::read_development_git, commands::execute_development_git, commands::reconcile_development_git,
+            commands::prepare_development_handoff, commands::list_development_handoffs, commands::accept_development_handoff,
             commands::list_agent_sessions, commands::open_agent_session, commands::get_agent_session,
             commands::send_agent_message, commands::respond_agent_request, commands::interrupt_agent_session,
             commands::close_agent_session, super::super::smoke_report,
-        ])
+            ];
+            handler(invoke)
+        })
         .build(context).expect("acceptance app");
     let exit_code = std::sync::Arc::new(std::sync::atomic::AtomicI32::new(3));
     let captured = exit_code.clone();
