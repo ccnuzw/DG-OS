@@ -46,6 +46,8 @@ pub struct ProviderManager {
     /// `credentials_lock` was held. Built with the default connect timeout, which is the only
     /// one `create_adapter` uses.
     http: Option<reqwest::Client>,
+    /// Separate shared pool for local providers; loopback never traverses a system proxy.
+    direct_http: Option<reqwest::Client>,
     /// Process-wide VACUUM gate. Each call and each stream holds a permit until its usage record is written.
     gate: MaintenanceGate,
 }
@@ -61,6 +63,7 @@ impl Clone for ProviderManager {
             vault: self.vault.clone(),
             credentials_lock: self.credentials_lock.clone(),
             http: self.http.clone(),
+            direct_http: self.direct_http.clone(),
             gate: self.gate.clone(),
         }
     }
@@ -92,6 +95,7 @@ impl ProviderManager {
             vault,
             credentials_lock: Arc::new(Mutex::new(())),
             http: crate::transport::http_client(AdapterOptions::default().connect_timeout),
+            direct_http: crate::transport::direct_http_client(AdapterOptions::default().connect_timeout),
             gate: MaintenanceGate::new(),
         })
     }
@@ -974,9 +978,10 @@ impl ProviderManager {
             workspace_id: normalized.workspace_id.clone(),
             ..Default::default()
         };
+        let client = if crate::transport::loopback_endpoint(&normalized.base_url) { &self.direct_http } else { &self.http };
         let adapter: Arc<dyn ProviderAdapter> = if normalized.provider_type == PROTOCOL_ANTHROPIC {
             Arc::new(AnthropicAdapter::with_client(
-                self.http.clone(),
+                client.clone(),
                 normalized.base_url,
                 config.api_key.clone(),
                 retry_config,
@@ -985,7 +990,7 @@ impl ProviderManager {
             ))
         } else {
             Arc::new(OpenAIAdapter::with_client(
-                self.http.clone(),
+                client.clone(),
                 normalized.base_url,
                 config.api_key.clone(),
                 retry_config,

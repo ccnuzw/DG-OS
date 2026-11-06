@@ -84,16 +84,52 @@ pub struct Transport {
     downgradable: &'static [&'static str],
 }
 
+/// Secure Transport lazily initializes CoreFoundation bundle preferences on its first context.
+/// That synchronous work can scan the executable's directory for seconds and cannot be
+/// interrupted by the connector's async timeout. Keep it in client construction instead.
+#[cfg(target_os = "macos")]
+fn initialize_native_tls() -> Option<()> {
+    use security_framework::secure_transport::{SslConnectionType, SslContext, SslProtocolSide};
+    use std::sync::LazyLock;
+
+    static INITIALIZED: LazyLock<bool> = LazyLock::new(|| {
+        SslContext::new(SslProtocolSide::CLIENT, SslConnectionType::STREAM).is_ok()
+    });
+    INITIALIZED.then_some(())
+}
+
 /// The one way an HTTP client is built: redirects are never followed, so a 3xx is final and the
 /// credential only goes to the configured host (B01-68). `None` only if the TLS backend failed to
 /// initialise. Building one can stall for seconds (one build took about 3.1 s on macOS), so the
 /// manager builds it once and shares it; a `reqwest::Client` clone shares its connection pool.
 pub(crate) fn http_client(connect_timeout: Duration) -> Option<Client> {
+    #[cfg(target_os = "macos")]
+    initialize_native_tls()?;
     Client::builder()
         .redirect(redirect::Policy::none())
         .connect_timeout(connect_timeout)
         .build()
         .ok()
+}
+
+/// Loopback is a local service boundary, never an upstream proxy destination.
+/// Keep remote/system-proxy transport unchanged; private LAN addresses are not loopback.
+pub(crate) fn loopback_endpoint(base_url: &str) -> bool {
+    reqwest::Url::parse(base_url.trim()).is_ok_and(|url| {
+        url.host_str().is_some_and(|host| {
+            host.eq_ignore_ascii_case("localhost")
+                || host
+                    .trim_matches(['[', ']'])
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        })
+    })
+}
+
+pub(crate) fn direct_http_client(connect_timeout: Duration) -> Option<Client> {
+    #[cfg(target_os = "macos")]
+    initialize_native_tls()?;
+    Client::builder().no_proxy().redirect(redirect::Policy::none()).connect_timeout(connect_timeout).build().ok()
 }
 
 impl Transport {
@@ -106,7 +142,7 @@ impl Transport {
         profile: &'static Profile,
         downgradable: &'static [&'static str],
     ) -> Self {
-        let client = http_client(options.connect_timeout);
+        let client = if loopback_endpoint(&base_url) { direct_http_client(options.connect_timeout) } else { http_client(options.connect_timeout) };
         Self::with_client(
             client,
             base_url,
@@ -261,5 +297,15 @@ impl Transport {
         read_limited(response, self.options.max_body_bytes)
             .await
             .map(Some)
+    }
+}
+
+#[cfg(test)]
+mod routing_tests {
+    use super::loopback_endpoint;
+    #[test]
+    fn loopback_routing_does_not_bypass_proxy_for_private_or_similar_named_hosts() {
+        for url in ["http://127.0.0.1:1", "http://127.13.2.3", "https://[::1]", "http://LOCALHOST:1"] { assert!(loopback_endpoint(url), "{url}"); }
+        for url in ["http://10.0.0.1", "http://192.168.1.1", "https://localhost.example", "http://127.0.0.1.example", "https://api.example", "invalid"] { assert!(!loopback_endpoint(url), "{url}"); }
     }
 }
