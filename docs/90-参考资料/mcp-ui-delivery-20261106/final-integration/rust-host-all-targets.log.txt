@@ -1,0 +1,16 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+    Checking dgos-types v0.1.0 (<repo>/crates/dgos-types)
+   Compiling dgos-modules v0.1.0 (<repo>/crates/dgos-modules)
+   Compiling dgos v0.1.0 (<repo>/src-tauri)
+    Checking dgos-db v0.1.0 (<repo>/crates/dgos-db)
+    Checking dgos-mcp v0.1.0 (<repo>/crates/dgos-mcp)
+    Checking dgos-providers v0.1.0 (<repo>/crates/dgos-providers)
+    Checking dgos-skills v0.1.0 (<repo>/crates/dgos-skills)
+    Checking dgos-workbench v0.1.0 (<repo>/crates/dgos-workbench)
+    Checking dgos-agents v0.1.0 (<repo>/crates/dgos-agents)
+    Checking dgos-application v0.1.0 (<repo>/crates/dgos-application)
+    Checking dgos-lan v0.1.0 (<repo>/crates/dgos-lan)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 31s

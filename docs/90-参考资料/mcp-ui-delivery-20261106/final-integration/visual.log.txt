@@ -1,0 +1,9 @@
+
+> dgos@0.1.0 test:ui-visual
+> node scripts/ui-preview-visual.mjs
+
+PASS controls-long-select: 0 pixels differ
+PASS modal-narrow: 0 pixels differ
+PASS settings-category-focus: 0 pixels differ
+PASS chat-narrow-composer: 0 pixels differ
+PASS chat-narrow-approval: 0 pixels differ

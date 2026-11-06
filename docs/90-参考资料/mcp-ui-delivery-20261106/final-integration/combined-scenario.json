@@ -1,0 +1,15 @@
+{
+  "source": "Chromium production App and components with isolated memory IPC double",
+  "path": "unknown receipt -> settings overlay -> close settings -> original receipt retained",
+  "observed": {
+    "receipt": true,
+    "unknown": true,
+    "reconcile": 0,
+    "writes": 0
+  },
+  "limits": [
+    "No native process or Git side effects",
+    "Initial tab.run evaluated another realm; direct page-global helper used",
+    "Close control selected by visible text after DOM inspection"
+  ]
+}

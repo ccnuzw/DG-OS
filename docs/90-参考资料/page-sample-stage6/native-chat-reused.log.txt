@@ -1,0 +1,21 @@
+   Compiling dgos v0.1.0 (<repo>/src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 32.81s
+     Running tests/webview_smoke_chat.rs (target/debug/deps/webview_smoke_chat-d9e323002d6fae7c)
+INFO chat-layout executable Ok("<repo>/target/debug/deps/webview_smoke_chat-d9e323002d6fae7c")
+PASS [13] production chat session prepared
+INFO chat-layout resources {"currentLayout":true,"inlineStyles":[],"observedUrls":["tauri://localhost/assets/ChatWorkbench-fdvFpGVT.css","tauri://localhost/assets/Markdown-Bkx2sZfh.css","tauri://localhost/assets/SurfaceContext-DJgSS4fB.css","tauri://localhost/assets/index-CbKy_SxR.css","tauri://localhost/assets/index-cjf9ht0I.js"],"origin":"tauri://localhost","resources":[{"bytes":6185,"sha256":"6fac512f9b7c7ae93a6f684db33c7386d3433bf596594be1c6ab817a9ebaae47","url":"tauri://localhost/assets/ChatWorkbench-fdvFpGVT.css"},{"bytes":991,"sha256":"dfae49ac61979405eb381a92242e982a1084f15710ddea045eff6846c74d9410","url":"tauri://localhost/assets/Markdown-Bkx2sZfh.css"},{"bytes":998,"sha256":"a2389bf71884a41e70d8fd181d866a59a8ea129de814c43a86029a5faacdc08b","url":"tauri://localhost/assets/SurfaceContext-DJgSS4fB.css"},{"bytes":67609,"sha256":"e0f3d7e735eb5ed0a5c321af34c0c12a9e739b330715b6aea00641a810c22c43","url":"tauri://localhost/assets/index-CbKy_SxR.css"},{"bytes":352551,"sha256":"e4d8ca85c9868426c11c6c594129c372dff0c42fe53995fa9177eb80597d0bcb","url":"tauri://localhost/assets/index-cjf9ht0I.js"}],"ua":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)","unhashedUrls":[],"url":"tauri://localhost/workbench"}
+PASS [13] current chat layout and resource URL/SHA-256 provenance (expected origin enforced when set)
+PASS [13] real native window resized to 800 × 600 logical pixels
+PASS [13] 800px window / supported maximum text sizes: long message and draft scroll independently; primary action stays visible
+PASS [13] streaming while reading history preserves scroll and outside focus; stop and back-to-bottom remain visible
+PASS [13] explicit back-to-bottom reaches the current stream
+PASS [13] completion does not steal focus from the workspace tab
+PASS [13] visible stop action returns focus to its own composer
+PASS [13] approval scroll, fixed actions, settings coverage and return focus
+PASS [13] native keyboard responder ready
+PASS [13] native Enter edits title and Escape restores rename focus
+PASS [13] native Tab reaches delete Modal and Escape restores its opener
+PASS [13] narrow native chat / 175% geometry and enlarged text retains reachable input without horizontal overflow
+PASS [13] narrow native target popup opens and closes with restored focus
+PASS [13] narrow enlarged-text approval retains scrollable parameters and visible decision/stop actions
+SMOKE RESULT: 15 passed, 0 failed

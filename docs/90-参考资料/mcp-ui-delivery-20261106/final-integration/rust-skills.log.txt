@@ -1,0 +1,49 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling dgos-types v0.1.0 (<repo>/crates/dgos-types)
+   Compiling dgos-db v0.1.0 (<repo>/crates/dgos-db)
+   Compiling dgos-skills v0.1.0 (<repo>/crates/dgos-skills)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 36.52s
+     Running tests/bundled_catalog.rs (target/debug/deps/bundled_catalog-95e78b436e274110)
+
+running 11 tests
+test ac23_rejects_symlinks_and_oversized_resources ... ok
+test ac23_rejects_tampered_metadata_and_unsupported_resources ... ok
+test ac23_rejects_path_traversal_and_changed_catalog ... ok
+test skill_usage_provenance_migration_preserves_historical_rows ... ok
+test ac23_snapshot_parent_symlinks_cannot_redirect_publication ... ok
+test migration_keeps_legacy_rows_and_old_data_is_not_executed ... ok
+test ac16_offline_initialization_search_and_safe_preview ... ok
+test content_preparation_records_host_provenance_without_content_payload ... ok
+test pinned_package_ignores_catalog_latest_but_rejects_changed_user_version ... ok
+test ac23_tampered_snapshot_is_not_loaded_or_replaced_on_restart ... ok
+test ac19_initialization_preserves_disabled_user_state_and_user_isolation ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.36s
+
+     Running tests/package_install.rs (target/debug/deps/package_install-457a0eeb5b1ec15e)
+
+running 6 tests
+test pinned_package_load_returns_verified_files_and_requires_current_enabled_version ... ok
+test local_package_preview_confirm_and_workbench_read_are_atomic ... ok
+test pinned_package_loader_rejects_modified_snapshot_bytes ... ok
+test uninstall_is_user_scoped_and_retains_immutable_package_files ... ok
+test external_skill_uninstall_removes_only_user_state_and_preserves_published_content ... ok
+test uninstall_refuses_an_active_task_and_succeeds_after_task_finishes ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.60s
+
+     Running tests/package_validation.rs (target/debug/deps/package_validation-e9b370331985d834)
+
+running 6 tests
+test rejects_binary_content_and_multiple_roots ... ok
+test validates_minimal_external_package_and_generates_import_identity ... ok
+test selects_one_skill_from_a_github_style_repository_archive ... ok
+test accepts_wrapped_root_with_manifest_and_license ... ok
+test external_manifest_cannot_claim_official_identity_or_source ... ok
+test rejects_missing_entry_unsafe_paths_and_executable_files ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

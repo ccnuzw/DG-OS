@@ -1,0 +1,303 @@
+{
+  "schema": 1,
+  "slice": "G09-provider-transport",
+  "recordedAt": "2026-11-06T09:44:01.117Z",
+  "head": "d7422a51964086f084f2429d5d769468fce53f30",
+  "readiness": {
+    "implementation": "Static review found loopback/client-pool/TLS-prewarm behavior consistent with current Provider specification; no concrete functional regression identified.",
+    "delivery": "Ready for parent final targeted verification and evidence archival; current-source test success is not claimed.",
+    "blockers": [
+      "Current transport.rs has a small unverified source delta; parent must run final targeted checks once all slices land.",
+      "Historical proxy/NO_PROXY and placement timing outputs partly live only in original session transcripts; preserve referenced evidence during parent archive.",
+      "proxy_diagnostic.rs was created as a temporary diagnostic, not established as a maintained example. Preserve others’ file in worktree; do not silently treat as maintained product delivery."
+    ],
+    "noChecksRun": true
+  },
+  "changes": [
+    {
+      "path": "crates/dgos-providers/src/transport.rs",
+      "location": "loopback_endpoint, current lines118-126",
+      "reason": "Existing added routing expression needlessly allocated a second owned host String after URL parsing; borrow host_str inside parsed URL lifetime instead.",
+      "behavior": "Same parse/trim/localhost/IP-loopback classification. No proxy, TLS, timeout, retry or error semantics change.",
+      "beforeSha256": "d5bc04f1eb2521fc8aeaff260d05e38eed60c542488debc99cee9290db013bae",
+      "afterSha256": "3ea1e9741dd74f47f206c2c73a6b1ca2bd9fc513dbacd8dca2a0eeb20479be18",
+      "scopeLimit": "No further optimization, reformatting or feature additions."
+    }
+  ],
+  "sourceFiles": [
+    {
+      "path": "Cargo.toml",
+      "bytes": 1370,
+      "sha256": "ca50f909385493dfe5639abbe792c5fe647df161f872fddb0fff533b8717151b"
+    },
+    {
+      "path": "Cargo.lock",
+      "bytes": 190222,
+      "sha256": "1d913599529a11be084aca2a613b4fc951c74889c402cc6c2c162ebec4b51ac9"
+    },
+    {
+      "path": "crates/dgos-providers/Cargo.toml",
+      "bytes": 1001,
+      "sha256": "1cfdf42dd3d0bc75a00b4e500c7dbd2bfb059e8aecd17bbf6922425b867265fe"
+    },
+    {
+      "path": "crates/dgos-providers/src/manager.rs",
+      "bytes": 43639,
+      "sha256": "53dd440630f626b6638cd564186fd56e096812cab4b140f7e5e798463074bce7"
+    },
+    {
+      "path": "crates/dgos-providers/src/transport.rs",
+      "bytes": 12329,
+      "sha256": "3ea1e9741dd74f47f206c2c73a6b1ca2bd9fc513dbacd8dca2a0eeb20479be18"
+    },
+    {
+      "path": "crates/dgos-providers/tests/provider_connection_tests.rs",
+      "bytes": 13607,
+      "sha256": "2b1d9f9afc483148031b5b408d6dcd780d36bd0d5cc4ac5a3d62b6b0e044bfdf"
+    },
+    {
+      "path": "crates/dgos-providers/tests/timeouts.rs",
+      "bytes": 22160,
+      "sha256": "ba39ec1aaebba3904492006d5fcf2178792323dc0df7c1233bf4a6a6465db1d7"
+    },
+    {
+      "path": "crates/dgos-providers/tests/shared_client.rs",
+      "bytes": 3404,
+      "sha256": "cf5b8317cdf8277043caa1905d06bf0ff06c3bfac4698c8a792e6b7596c17f20"
+    },
+    {
+      "path": "crates/dgos-providers/examples/proxy_diagnostic.rs",
+      "bytes": 646,
+      "sha256": "25e0793fa68e410813c56ed589349a79db861da4c8b83572eb2218c371d47ee9"
+    },
+    {
+      "path": "docs/03-功能规格/V1/01-底层能力/01-Provider适配框架.md",
+      "bytes": 132258,
+      "sha256": "bc0b02797850ce8f1d860d182e7f557a88ac8d3248c46c8c29b75c15437e2036"
+    },
+    {
+      "path": "docs/02-产品与版本/当前版本/V1-实现状态.md",
+      "bytes": 765293,
+      "sha256": "a2b9dd0063ce37a8d72274cae5791f702483d12ae476ccd81f7713d4f4955cfe"
+    }
+  ],
+  "snapshotLimits": [
+    "Source hashes captured after this edit; V1-实现状态.md changed concurrently between first and second hash snapshots, so parent must recapture its final hash. No shared docs edited here.",
+    "All five initial G09 code/example hashes matched delivery-groups.json recorded snapshot before the small transport delta. That inventory snapshot does not itself prove source identity at the November4 test invocation.",
+    "Original verification has binary names and chronological code edits but no complete source hash manifest at test time; historical results cannot be promoted to exact current-source success.",
+    "Cargo.lock is clean in scoped git status/diff and already lists security-framework3.7.0 in dgos-providers dependencies; no new lockfile edit necessary."
+  ],
+  "staticFindings": [
+    {
+      "path": "crates/dgos-providers/src/manager.rs",
+      "lines": "44-50,55-67,90-99,965-1001",
+      "finding": "Manager constructs and clones two shared pools; validated normalized endpoint selects direct pool for both protocols. No per-call client reconstruction introduced."
+    },
+    {
+      "path": "crates/dgos-providers/src/transport.rs",
+      "lines": "87-113,115-133,136-145",
+      "finding": "Both client builders invoke macOS-only one-time SslContext creation before building, disallow redirects, retain connect timeout; direct builder uses no_proxy and remote builder retains default proxy behavior. Temporary context drops after is_ok; bool LazyLock avoids retained TLS context/thread/runtime."
+    },
+    {
+      "path": "crates/dgos-providers/tests/provider_connection_tests.rs",
+      "lines": "89-97,276-290,354-368",
+      "finding": "Original NetworkError/error1000000 assertions unchanged; proxy regression isolates environment in child processes rather than mutating concurrent runner. Both protocols covered; it does not exercise remote/LAN proxy forwarding or manager-specific pool wiring."
+    },
+    {
+      "path": "crates/dgos-providers/src/transport.rs",
+      "lines": "routing_tests",
+      "finding": "Routing classification covers localhost case, IPv4 loopback range, IPv6 loopback, private LAN exclusion and deceptively similar hostnames. No DNS-based loopback classification."
+    },
+    {
+      "path": "crates/dgos-providers/tests/shared_client.rs",
+      "finding": "Existing integration target exercises manager loopback connection reuse; necessary final check alongside new routing regression."
+    }
+  ],
+  "docDisposition": {
+    "spec": "docs/03-功能规格/V1/01-底层能力/01-Provider适配框架.md:169-171 defines current loopback/direct versus remote/LAN proxy policy and macOS initialization boundary.",
+    "historical": "V1-实现状态.md:455 remains historical stage4 failure: two refused-loopback assertions received actual HTTP502/UpstreamServerError; proxy cause then unproven. Do not rewrite history as success.",
+    "current": "V1-实现状态.md:417 and423 record later causal diagnostics and final14/14+20/20. These supersede outstanding stage4 failures for the transport slice, without claiming all Rust tests pass.",
+    "parentUpdate": "Parent may append current G09 closure/evidence linkage in shared authoritative status; retain historical failure paragraph. No shared docs edits performed."
+  },
+  "historicalEvidence": [
+    {
+      "kind": "proxy-root-cause",
+      "rawPath": "<home>/.omp/agent/sessions/-Progame-DG-OS/2026-11-04T13-38-16-829Z_01a1a6c8-247d-73ad-8023-78d788fd8c81/7.bash-original.log",
+      "lines": "56-58",
+      "command": "cargo run --offline --manifest-path /tmp/dgos-proxy-diagnostic/Cargo.toml --target-dir <repo>/target",
+      "result": [
+        "direct=false status=502",
+        "direct=true connect=true timeout=false",
+        "no_proxy_present=false uppercase_present=false"
+      ],
+      "completedAt": "2026-11-04T13:51:22.282Z",
+      "limit": "Actual HTTP502 remains upstream error; direct connection refusal demonstrates proxy-routing difference. Diagnostic uses raw reqwest rather than Provider manager."
+    },
+    {
+      "kind": "proxy-standalone-repeat",
+      "rawPath": "<home>/.omp/agent/sessions/-Progame-DG-OS/2026-11-04T13-38-16-829Z_01a1a6c8-247d-73ad-8023-78d788fd8c81/37.bash-original.log",
+      "lines": "108-113",
+      "result": "Independent temporary Cargo project again default502 versus direct connection refused; no bypass variables."
+    },
+    {
+      "kind": "no-proxy-child-process-contrast",
+      "rawPath": "<home>/.omp/agent/sessions/-Progame-DG-OS/2026-11-04T13-38-16-829Z_01a1a6c8-247d-73ad-8023-78d788fd8c81.jsonl",
+      "lines": "276-278,749",
+      "locators": [
+        "call_63eb18219b264ab98ad6bfd4dece06ff / result17aa31ec",
+        "call_8805efd8287c4a7c83c58f826bc7fdc7 / result99bafe11",
+        "call_a6384aa515a24763bb0b317a50aff3ea / resultd3a99834"
+      ],
+      "results": [
+        "NO_PROXY=* and no_proxy=* still default502 (variables present).",
+        "NO_PROXY=127.0.0.1 and no_proxy=127.0.0.1: both default/direct connect=true timeout=false.",
+        "Explicit localhost,127.0.0.1,::1 list: both default/direct connect=true timeout=false."
+      ],
+      "limit": "Do not claim wildcard bypass worked or that mutating already initialized system-proxy matcher was proven reliable."
+    },
+    {
+      "kind": "pre-fix-expanded-regression",
+      "rawPath": "<home>/.omp/agent/sessions/-Progame-DG-OS/2026-11-04T13-38-16-829Z_01a1a6c8-247d-73ad-8023-78d788fd8c81/19.bash-original.log",
+      "lines": "335-341,638-682",
+      "command": "cargo test --offline -p dgos-agents -p dgos-db -p dgos-providers --no-fail-fast",
+      "result": "Provider lib123 passed; timeouts18 passed2 failed with9.098860917s/9.707018791s; overall command exit101 and Agents failure. Lib123 predates TLS fix.",
+      "completedAt": "2026-11-04T14:14:57.509Z"
+    },
+    {
+      "kind": "pre-fix-timeout-repeat",
+      "rawPath": "<home>/.omp/agent/sessions/-Progame-DG-OS/2026-11-04T13-38-16-829Z_01a1a6c8-247d-73ad-8023-78d788fd8c81/59.bash-original.log",
+      "lines": "25-48",
+      "result": "timeouts18 passed2 failed;8.682333209s/8.077521709s. Preserved historical failure, not rerun here."
+    },
+    {
+      "kind": "macos-direct-sample",
+      "rawPath": "<home>/.omp/agent/sessions/-Progame-DG-OS/2026-11-04T13-38-16-829Z_01a1a6c8-247d-73ad-8023-78d788fd8c81/64.bash.log",
+      "lines": "1-20,120-143",
+      "command": "sample 24133 2 1",
+      "observedAt": "2026-11-04T22:50:09.087+08:00",
+      "result": "1119 samples SSLCreateContext/CoreFoundation bundle discovery,1043 __getdirentries64; synchronous native TLS work in connector path.",
+      "limit": "Original /tmp sample file deleted; raw session64.bash.log survives. artifact://64 is session-local and not resolvable in current session, use absolute log path."
+    },
+    {
+      "kind": "tls-location-and-prewarm-control",
+      "rawPath": "<home>/.omp/agent/sessions/-Progame-DG-OS/2026-11-04T13-38-16-829Z_01a1a6c8-247d-73ad-8023-78d788fd8c81/TimeoutRoot.jsonl",
+      "lines": "212,230-232,263",
+      "results": [
+        {
+          "message": "c87b1637",
+          "at": "2026-11-04T14:49:38.817Z",
+          "result": "/tmp/dgos-timeout-current: built1.397791ms; elapsed301.769ms Err(Timeout)"
+        },
+        {
+          "message": "9cfb1272",
+          "at": "2026-11-04T14:51:24.651Z",
+          "result": "Same probe copied to target/debug/deps: built1.59175ms; a single poll5.90664725s; elapsed5.908227292s Err(Timeout)"
+        },
+        {
+          "message": "b7a36c49",
+          "at": "2026-11-04T14:54:12.031Z",
+          "result": "After prewarm: construction12.498538625s; request302.701958ms Err(Timeout)"
+        }
+      ],
+      "limit": "Probe sources/binaries explicitly removed in original session. Timing evidence is historical raw transcript, not current benchmark. Cost moved to once-per-process construction, not eliminated."
+    },
+    {
+      "kind": "post-fix-focused-regressions",
+      "rawPath": "<home>/.omp/agent/sessions/-Progame-DG-OS/2026-11-04T13-38-16-829Z_01a1a6c8-247d-73ad-8023-78d788fd8c81/86.bash-original.log",
+      "lines": "1-49",
+      "command": "cargo test --offline -p dgos-providers --test timeouts --test provider_connection_tests",
+      "startedAt": "2026-11-04T14:55:53.787Z",
+      "completedAt": "2026-11-04T14:57:40.547Z",
+      "result": "provider_connection_tests14 passed0 failed22.78s; timeouts20 passed0 failed9.80s",
+      "invocation": {
+        "transcript": "<home>/.omp/agent/sessions/-Progame-DG-OS/2026-11-04T13-38-16-829Z_01a1a6c8-247d-73ad-8023-78d788fd8c81.jsonl",
+        "lines": "971-972,1013",
+        "tool": "call_75d1f4e49f8145b7a36da92651d8fdc0",
+        "completion": "0066daad / bg_54"
+      },
+      "limits": [
+        "Local mock HTTP/TLS stalls and synthetic credentials.",
+        "No full workspace Rust test success.",
+        "Does not cover current tiny transport source delta or arbitrary provider/system combinations."
+      ]
+    }
+  ],
+  "rawEvidenceHashes": [
+    {
+      "path": "<home>/.omp/agent/sessions/-Progame-DG-OS/2026-11-04T13-38-16-829Z_01a1a6c8-247d-73ad-8023-78d788fd8c81/7.bash-original.log",
+      "bytes": 2105,
+      "sha256": "decec3802ffc2564131b9b82f0c1b9bfe3e857289670090886c425aea11a47d3"
+    },
+    {
+      "path": "<home>/.omp/agent/sessions/-Progame-DG-OS/2026-11-04T13-38-16-829Z_01a1a6c8-247d-73ad-8023-78d788fd8c81/37.bash-original.log",
+      "bytes": 3694,
+      "sha256": "45fda6c2d0e01bf911f1d5ef8747a9cd066169f3732000343630322b4a6bcaac"
+    },
+    {
+      "path": "<home>/.omp/agent/sessions/-Progame-DG-OS/2026-11-04T13-38-16-829Z_01a1a6c8-247d-73ad-8023-78d788fd8c81/19.bash-original.log",
+      "bytes": 54182,
+      "sha256": "7fa905ccdb86576454b9e61e0c878580c06dd18b3542c38f3ce8da782f933c9a"
+    },
+    {
+      "path": "<home>/.omp/agent/sessions/-Progame-DG-OS/2026-11-04T13-38-16-829Z_01a1a6c8-247d-73ad-8023-78d788fd8c81/59.bash-original.log",
+      "bytes": 2755,
+      "sha256": "d7ab4ad1dbb16c9a849f1dca3cab13ef6189f1bd7ce878c2fe5db034f9a779de"
+    },
+    {
+      "path": "<home>/.omp/agent/sessions/-Progame-DG-OS/2026-11-04T13-38-16-829Z_01a1a6c8-247d-73ad-8023-78d788fd8c81/64.bash.log",
+      "bytes": 126839,
+      "sha256": "8aeaea2f2ff8d4d0e6030ade50330d0dd8f51ffa4852f1ca67c8dffba23bfeea"
+    },
+    {
+      "path": "<home>/.omp/agent/sessions/-Progame-DG-OS/2026-11-04T13-38-16-829Z_01a1a6c8-247d-73ad-8023-78d788fd8c81/86.bash-original.log",
+      "bytes": 3300,
+      "sha256": "9be38716d74ab4175ea0ba71a21b3122b1ffc9a7777433cde16f7090eea3cc63"
+    }
+  ],
+  "diagnosticDisposition": {
+    "path": "crates/dgos-providers/examples/proxy_diagnostic.rs",
+    "gitState": "untracked;646bytes;unchanged by this assignment",
+    "sha256": "25e0793fa68e410813c56ed589349a79db861da4c8b83572eb2218c371d47ee9",
+    "provenance": {
+      "transcript": "<home>/.omp/agent/sessions/-Progame-DG-OS/2026-11-04T13-38-16-829Z_01a1a6c8-247d-73ad-8023-78d788fd8c81.jsonl",
+      "line": 166,
+      "message": "32765e3b",
+      "tool": "call_65ea6c57e5394bc096765ed63456d7b8",
+      "at": "2026-11-04T13:44:46.577Z",
+      "wording": [
+        "Creating temporary smoke example",
+        "Probing child environment",
+        "Creating comparative transport diagnostic"
+      ]
+    },
+    "conclusion": "Task-owned historical temporary diagnostic; no deliberate maintained-example decision established. It is useful raw-proxy evidence and contains no credentials, but is not regression coverage.",
+    "action": "Preserve untouched in worktree per ownership rule. Parent may archive as historical diagnostic and explicitly exclude from eventual curated maintained G09 source delivery; do not delete or silently claim maintained status.",
+    "survivingStandaloneSource": "<tmp>/dgos-proxy-diagnostic/src/main.rs",
+    "limits": "Closed ephemeral port can theoretically be rebound after listener drop; diagnostic output is environment-specific and not a deterministic regression test."
+  },
+  "necessaryCommands": [
+    {
+      "command": "cargo test --offline -p dgos-providers --lib --test provider_connection_tests --test timeouts --test shared_client",
+      "purpose": "One parent-run focused batch covers routing matcher, manager integration/credentials, environment-proxy credential bypass, connection/request/stream deadlines, and shared loopback pool. Historical failures have fixes; do not run just to reconfirm old failures.",
+      "status": "NOT RUN by this worker"
+    },
+    {
+      "command": "cargo check --offline -p dgos-providers --examples",
+      "purpose": "Only if proxy_diagnostic.rs is deliberately retained as maintained example; compile-only covers example integration without issuing proxy probes.",
+      "status": "Conditional; NOT RUN"
+    },
+    {
+      "command": "cargo check --offline --workspace --all-targets",
+      "purpose": "Parent final global compile coverage if already part of integration gate; avoid duplicating if parent uses it.",
+      "status": "Parent-owned; NOT RUN"
+    }
+  ],
+  "atomicDeliveryRequirements": [
+    "Deliver manager.rs,transport.rs,Cargo.toml,provider_connection_tests.rs and Provider spec policy together; either full current files or coordinated final snapshot, not isolated no_proxy or prewarm hunk.",
+    "Cargo.lock already includes correct dependency and is clean; do not manufacture unrelated lock change.",
+    "Preserve timeouts.rs assertions and error semantics: actual HTTP5xx remains upstream error, failed connection remains NetworkError.",
+    "Keep G09 independent of UI/MCP acceptance, but include shared final status/change-log linkage once under G13 owner.",
+    "Record final source hashes and raw final test output after all peers finish; do not equate historical34 passes or pre-fixlib123 with final current whole-tree Rust success.",
+    "Preserve untracked diagnostic and all other owners’ work; no staging,commit,push,merge,service cleanup or5197 changes performed."
+  ]
+}

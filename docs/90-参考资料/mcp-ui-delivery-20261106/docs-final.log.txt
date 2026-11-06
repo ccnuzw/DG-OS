@@ -1,0 +1,6 @@
+
+> dgos@0.1.0 docs:check
+> node scripts/docs-tools.mjs check
+
+
+检查 105 份文档、15 个功能、134 条决策：0 个错误，0 个警告，0 条提示

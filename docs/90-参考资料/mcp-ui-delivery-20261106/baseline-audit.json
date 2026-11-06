@@ -1,0 +1,37 @@
+{
+  "checkedAt": "2026-11-06T07:19:05.511Z",
+  "files": [
+    {
+      "path": "tools/ui-preview/visual/baseline/chat-narrow-approval.png",
+      "bytes": 76168,
+      "sha256": "84ab78f41aeb0fefd871084d7543b1b6ce37a8b05e23e80f089bd90c49957273"
+    },
+    {
+      "path": "tools/ui-preview/visual/baseline/chat-narrow-composer.png",
+      "bytes": 95419,
+      "sha256": "6dfba45b0a0e4f1f5252d156d126ca55077f6e63d28a8659e4f1aa0c485b6452"
+    },
+    {
+      "path": "tools/ui-preview/visual/baseline/controls-long-select.png",
+      "bytes": 152374,
+      "sha256": "1a57cea5a923400d794257935c3d1c2e199582df4a7882d50c8f320f052956c5"
+    },
+    {
+      "path": "tools/ui-preview/visual/baseline/manifest.json",
+      "bytes": 4945,
+      "sha256": "f04efabbaf6f1ff6c495e7bd1c9ddee0982e0b48e34e7c8f8cf97894be4aa9b6"
+    },
+    {
+      "path": "tools/ui-preview/visual/baseline/modal-narrow.png",
+      "bytes": 63769,
+      "sha256": "2de34c3c6e20beb29be2857bc3ac6a4a1b7492f81fc440a9e5b7bbbdf4c3d0f4"
+    },
+    {
+      "path": "tools/ui-preview/visual/baseline/settings-category-focus.png",
+      "bytes": 122919,
+      "sha256": "9060106dd9112c216f301b3d178e3caa52786f7eaa3c4e05fd5a80eda234936c"
+    }
+  ],
+  "allMatchStage6": true,
+  "unchangedPreview": true
+}

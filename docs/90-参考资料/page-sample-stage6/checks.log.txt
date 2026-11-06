@@ -1,0 +1,451 @@
+COMMAND npm test
+EXIT 0
+
+> dgos@0.1.0 test
+> vitest run
+
+
+ RUN  v5.0.5 <repo>
+
+stderr | tests/provider-management.test.tsx > Provider failure reporting > shows registry text in a toast when the connection test fails with a known code
+[dgos] error { code: 1001002, where: 'ProviderManagement' }
+
+stderr | tests/provider-management.test.tsx > Provider failure reporting > blocks with a dialog for a severe code and never echoes the host message
+[dgos] error { code: 1001015, where: 'ProviderManagement' }
+
+stderr | tests/provider-management.test.tsx > Provider store failures reach the unified error handling > toggle: a known code shows its registry text once and keeps the inline alert
+Provider error: raw host detail that must stay off screen
+[dgos] error { code: 1001003, where: 'ProviderManagement' }
+
+stderr | tests/provider-management.test.tsx > Provider store failures reach the unified error handling > toggle: the error action opens the Provider list only when a router and the route exist
+Provider error: raw host detail that must stay off screen
+[dgos] error { code: 1001003, where: 'ProviderManagement' }
+
+stderr | tests/provider-management.test.tsx > Provider store failures reach the unified error handling > update: a coded failure shows the registry text and the form keeps its draft
+Provider error: raw host detail that must stay off screen
+[dgos] error { code: 1001002, where: 'ProviderManagement' }
+
+stderr | tests/provider-management.test.tsx > Provider store failures reach the unified error handling > credential migration: the blocking dialog appears for the severe code
+Provider error: raw host detail that must stay off screen
+[dgos] error { code: 1001015, where: 'ProviderManagement' }
+
+stderr | tests/provider-management.test.tsx > Provider store failures reach the unified error handling > a later success does not report a stale failure
+Provider error: raw host detail that must stay off screen
+[dgos] error { code: 1001003, where: 'ProviderManagement' }
+
+stderr | tests/provider-management.test.tsx > Provider store failures reach the unified error handling > loading the list: a coded failure shows its registry text once
+Provider error: raw host detail that must stay off screen
+[dgos] error { code: 1001015, where: 'ProviderManagement' }
+
+stderr | tests/skills-workbench.test.tsx > AC22 reports a rejected skill without sending a fallback or showing stale output
+[dgos] error { code: null, where: 'Workbench' }
+
+stderr | tests/module-management.test.tsx > Module management list > says the previous version was restored when an update fails
+[dgos] error { code: 1004013, where: 'ModuleManagement' }
+
+stderr | tests/provider-management.test.tsx > Provider list controls > reordering with the move buttons (D098 item 5) > keeps the host order and reports once when the host rejects the order
+Provider error: raw host detail that must stay off screen
+[dgos] error { code: 1001003, where: 'ProviderManagement' }
+
+stderr | tests/module-management.test.tsx > Module management list > warns that an incompatible module needs a newer or older host
+[dgos] error { code: 1004022, where: 'ModuleManagement' }
+
+stderr | tests/provider-management.test.tsx > Connection test diagnostics (AC37) > shows an actionable hint for 1001002 next to the host message
+[dgos] error { code: 1001002, where: 'ProviderManagement' }
+
+stderr | tests/provider-management.test.tsx > Connection test diagnostics (AC37) > shows an actionable hint for 1001019 next to the host message
+[dgos] error { code: 1001019, where: 'ProviderManagement' }
+
+stderr | tests/provider-management.test.tsx > Connection test diagnostics (AC37) > shows an actionable hint for 1001025 next to the host message
+[dgos] error { code: 1001025, where: 'ProviderManagement' }
+
+stderr | tests/provider-management.test.tsx > Connection test diagnostics (AC37) > shows an actionable hint for 1001023 next to the host message
+[dgos] error { code: 1001023, where: 'ProviderManagement' }
+
+stderr | tests/mcp-management.test.tsx > keeps a call running when cancellation fails and does not pretend that it stopped
+[dgos] error { code: null, where: 'McpManagement' }
+
+stderr | tests/provider-management.test.tsx > Connection test diagnostics (AC37) > shows only the host message for a code without a hint
+[dgos] error { code: 1001014, where: 'ProviderManagement' }
+
+stderr | tests/module-management.test.tsx > Module management list > shows the host message and code for a failed permission change
+[dgos] error { code: 1004004, where: 'ModuleManagement' }
+
+stderr | tests/provider-management.test.tsx > Services without a model list endpoint (AC17) > asks for a model name on 1001020 and then tests with probeModel
+[dgos] error { code: 1001020, where: 'ProviderManagement' }
+
+stderr | tests/provider-management.test.tsx > Services without a model list endpoint (AC17) > shows the host message instead of looping when 1001020 returns although a model name was entered
+[dgos] error { code: 1001020, where: 'ProviderManagement' }
+
+stderr | tests/provider-management.test.tsx > Services without a model list endpoint (AC17) > shows the host message instead of looping when 1001020 returns although a model name was entered
+[dgos] error { code: 1001020, where: 'ProviderManagement' }
+
+stderr | tests/provider-management.test.tsx > Services without a model list endpoint (AC17) > clears the model name when the base URL changes
+[dgos] error { code: 1001020, where: 'ProviderManagement' }
+
+stderr | tests/module-management.test.tsx > Module management list > does not start the module when a grant fails, still attempts the other grants, and names the failure
+[dgos] error { code: 1004004, where: 'ModuleManagement' }
+
+stderr | tests/provider-management.test.tsx > Services without a model list endpoint (AC17) > passes probeModel on create after a create attempt reports 1001020
+Provider error: raw host detail that must stay off screen
+[dgos] error { code: 1001020, where: 'ProviderManagement' }
+
+stderr | tests/single-task-metadata-activity.test.tsx > keeps the previous configuration, models, tools and history after failed refresh and retries on restore
+[dgos] error { code: null, where: 'Workbench' }
+[dgos] error { code: null, where: 'Workbench' }
+
+stderr | tests/single-task-metadata-activity.test.tsx > keeps the previous configuration, models, tools and history after failed refresh and retries on restore
+[dgos] error { code: null, where: 'Workbench' }
+[dgos] error { code: null, where: 'Workbench' }
+
+stderr | tests/provider-management.test.tsx > Services without a model list endpoint (AC17) > tests a saved provider by id with probeModel once one is entered
+[dgos] error { code: 1001020, where: 'ProviderManagement' }
+
+stderr | tests/module-management.test.tsx > Module management list > starts the module with Reload after the failed grant is retried, even though stop finds no runtime
+[dgos] error { code: 1004004, where: 'ModuleManagement' }
+
+stderr | tests/module-management.test.tsx > Module management list > still reports a stop failure other than not_running and does not start
+[dgos] error { code: 1004007, where: 'ModuleManagement' }
+
+ ✓ tests/single-task-metadata-activity.test.tsx (10 tests) 5168ms
+   ✓ does no presentation reads on inactive mount and starts one snapshot on activation 464ms
+   ✓ starts one initial snapshot under StrictMode without invalidating it during effect replay 351ms
+   ✓ joins slow metadata across repeated restores and refreshes and accepts the response while inactive 666ms
+   ✓ defers tool discovery that would start after becoming inactive until restoration 333ms
+   ✓ joins same-provider model reads and keeps their valid response across inactivity 1264ms
+   ✓ performs one trailing latest snapshot when slow metadata and models span repeated restores 676ms
+   ✓ coalesces slow provider switches to the latest target and excludes cross-provider models 475ms
+   ✓ keeps the previous configuration, models, tools and history after failed refresh and retries on restore 488ms
+   ✓ clears account-owned metadata and rejects old-account responses before reading the replacement account 377ms
+stderr | tests/provider-management.test.tsx > Manual models (AC17) > reports a rejected add through the unified error path and keeps the typed id
+[dgos] error { code: 1001020, where: 'ProviderManagement' }
+
+ ✓ tests/design-check.test.tsx (21 tests) 7728ms
+   ✓ violating fixtures are reported (AC11, AC12) (5)
+     ✓ reports exactly the expected file:line and rule 981ms
+   ✓ npm run design:check exit code and output (AC11, AC12) (2)
+     ✓ exits non-zero and prints file:line with the rule name for a violation 1366ms
+     ✓ exits zero for the clean fixture 1400ms
+   ✓ this repository (1)
+     ✓ passes under the committed baseline 3085ms
+stderr | tests/module-management.test.tsx > Module management list > shows an empty permission log and reports a failed permission log request like other notices
+[dgos] error { code: 1004024, where: 'ModuleManagement' }
+
+ ✓ tests/agent-workbench.test.tsx (14 tests) 6095ms
+   ✓ agent sessions (5)
+     ✓ requires workspace trust before creating a runtime 612ms
+     ✓ shows the selected task worktree after context settlement 692ms
+     ✓ keeps the host session alive when its page unmounts 584ms
+     ✓ retains unsent text on submission failure and does not retry 748ms
+     ✓ returns a Claude denial without translating it to a Codex decision 593ms
+   ✓ clears the Agent running marker when development is hidden (tab mounted: true, surface active: false) 435ms
+   ✓ clears the Agent running marker when development is hidden (tab mounted: false, surface active: true) 311ms
+   ✓ tracks a successful host start acknowledged after leaving the development tab, then clears its running marker 327ms
+   ✓ counts native and host requests in code view, navigates to review and expires revoked or closed requests 523ms
+   ✓ offers other-task requests as navigation only and reads fresh host state after navigation 372ms
+ ✓ tests/module-management.test.tsx (22 tests) 6199ms
+   ✓ Module management list (20)
+     ✓ renders every module with version, badges, runtime state, permissions and crash count 824ms
+     ✓ is reachable from the sidebar and from the Modules tab of the Settings shell 909ms
+     ✓ asks for a confirmation before enabling, then enables, grants and starts in order 396ms
+     ✓ hides Uninstall for official modules and confirms it for the others 439ms
+     ✓ AC11 updates a module from the Settings modules tab and shows the new version 369ms
+     ✓ starts the module with Reload after the failed grant is retried, even though stop finds no runtime 308ms
+ ✓ tests/provider-management.test.tsx (44 tests) 6635ms
+   ✓ Provider form lifecycle (2)
+     ✓ clears the old cache after endpoint save and keeps the new saved baseline 535ms
+   ✓ Manual models (AC17) (5)
+     ✓ adds a manual model with and without a kind and shows both rows 304ms
+stderr | tests/mcp-management.test.tsx > retains a rejected configuration draft and synchronously rejects a second save
+[dgos] error { code: null, where: 'McpManagement' }
+
+stderr | tests/mcp-refresh-activity.test.tsx > pauses page reads while hidden or covered and resumes all selected snapshots without losing local filters
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ✓ tests/mcp-management.test.tsx (38 tests) 7551ms
+   ✓ persists explicit remote plaintext consent and resets it whenever the endpoint changes 874ms
+   ✓ loads only selected server tools and supports keyboard-operable selection 303ms
+   ✓ allows incomplete argv editing but rejects malformed JSON without saving 329ms
+   ✓ edits the clicked server rather than the previously selected server and persists auto-connect 486ms
+   ✓ requires explicit review and confirmation and sends exactly the reviewed parameters once 392ms
+   ✓ closing an inspector without consent does not call tools and restores focus 311ms
+stdout | tests/development-runtime-activity.test.tsx > pauses idle history and detail while covered, resumes with latest output and preserves a failed snapshot
+runtime 4000ms visible then hidden { history: 5, detail: 6 } { history: 0, detail: 0 }
+
+ ✓ tests/skills-workbench.test.tsx (17 tests) 7698ms
+   ✓ AC20 sends only the explicitly selected skill and shows the exact bound version 1316ms
+   ✓ AC22 requires explicit confirmation to run without a skill 768ms
+   ✓ AC22 reports a rejected skill without sending a fallback or showing stale output 727ms
+   ✓ AC21 regression prevents duplicate sends while a request is running 642ms
+   ✓ text task cancellation uses the host text-task command and does not replay 373ms
+   ✓ AC35 shows failed task audit and never presents it as model success 379ms
+   ✓ MCP selection is explicit and approval sends only the host proposal ID 397ms
+   ✓ MCP reject stops the task without approving or presenting success 511ms
+   ✓ MCP unknown external result is explicit and never presented as success 384ms
+   ✓ MCP task keeps its proposal and does not cancel when the view unmounts 390ms
+   ✓ MCP cancellation clears the proposal and explains that external effects are not undone 446ms
+   ✓ failure reporting through the unified handler (3)
+     ✓ a cancellation the host cannot confirm reports its error 315ms
+ ✓ tests/settings-shell.test.tsx (30 tests) 8523ms
+   ✓ default entry (B07-15) (1)
+     ✓ opens on an overview with no tab selected and makes no host call of its own 753ms
+   ✓ tab navigation (B07-01) (10)
+     ✓ the Provider tab opens /settings/providers and its page, and only that tab is selected 432ms
+     ✓ the 外观 tab opens /settings/appearance and its page, and only that tab is selected 633ms
+     ✓ the 局域网协同 tab opens /settings/lan and its page, and only that tab is selected 430ms
+     ✓ a direct load of /settings/appearance opens on the 外观 tab 380ms
+   ✓ local UI state across tabs (B07-16) (2)
+     ✓ keeps an unsaved Provider form when switching to another tab and back 336ms
+     ✓ keeps the Skills search text and does not reload the library 731ms
+   ✓ settings leave boundaries (8)
+     ✓ returns a cancelled menu leave confirmation to the category selector and preserves selection 379ms
+     ✓ restores the settings entry after cancelling and then confirming a dirty overlay close 336ms
+     ✓ keeps a dirty appearance preview when category navigation is cancelled 386ms
+     ✓ guards only the unmounted category while a dirty Provider stays alive 356ms
+   ✓ management through product navigation (5)
+     ✓ AC03 adds a Provider from the Provider tab and lists it 308ms
+stderr | tests/module-host-routing.test.tsx > SPA navigation > updates a hidden module dirty marker and checks the document again when closing
+Attempted to synchronously unmount a root while React was already rendering. React cannot finish unmounting the root until the current render has completed, which may lead to a race condition.
+
+stderr | tests/module-host-routing.test.tsx > SPA navigation > keeps a dirty document on cancel or failed save, and closes only after successful save
+Attempted to synchronously unmount a root while React was already rendering. React cannot finish unmounting the root until the current render has completed, which may lead to a race condition.
+
+ ✓ tests/module-host-routing.test.tsx (16 tests) 2774ms
+   ✓ SPA navigation (6)
+     ✓ opens Settings through pushState without a page load 447ms
+     ✓ attaches the module host exactly once across SPA navigation 452ms
+     ✓ keeps a loaded module alive across route changes and re-attaches the same container 439ms
+     ✓ updates a hidden module dirty marker and checks the document again when closing 676ms
+ ✓ tests/accounts.test.tsx (19 tests) 2360ms
+   ✓ gate (6)
+     ✓ reads the state first and shows a retryable error panel instead of the app when the read fails 317ms
+   ✓ first launch (no_accounts) (4)
+     ✓ the account page offers the first-account form while skipped; creating reloads 382ms
+ ✓ tests/development-runtime-activity.test.tsx (44 tests) 2820ms
+   ✓ pauses idle history and detail while covered, resumes with latest output and preserves a failed snapshot 378ms
+ ✓ tests/lan-settings.test.tsx (38 tests) 1665ms
+ ✓ tests/provider-vendors.test.tsx (13 tests) 1879ms
+   ✓ Vendor selection (AC16) (5)
+     ✓ lists exactly the vendors the host returned, including one the renderer has never heard of 311ms
+ ✓ tests/mcp-refresh-activity.test.tsx (40 tests) 3715ms
+   ✓ pauses page reads while hidden or covered and resumes all selected snapshots without losing local filters 353ms
+ ✓ tests/module-runtime-host.test.tsx (47 tests) 4809ms
+ ✓ tests/app-shell.test.tsx (13 tests) 1889ms
+   ✓ navigation (10)
+     ✓ keeps command destinations and focus labels current across locale and layout changes 431ms
+     ✓ keeps chat draft status on its mounted surface across navigation and clears it when the draft clears 431ms
+stdout | tests/single-task-approval-activity.test.tsx > measures countdown presentation commits while hidden and stops after expiry
+single-task approval presentation commits {
+  mode: 'hidden',
+  activeCommits: 1,
+  hiddenCommits: 0,
+  expiredCommits: 0
+}
+
+stderr | tests/appearance-settings.test.tsx > appearance draft transaction > restores confirmed global appearance on failure while preserving a retryable draft
+[dgos] error { code: 1000000, where: 'appearance' }
+
+stdout | tests/single-task-approval-activity.test.tsx > measures countdown presentation commits while covered and stops after expiry
+single-task approval presentation commits {
+  mode: 'covered',
+  activeCommits: 1,
+  hiddenCommits: 0,
+  expiredCommits: 0
+}
+
+ ✓ tests/single-task-approval-activity.test.tsx (8 tests) 1484ms
+   ✓ focuses an approval arriving on the active surface once and preserves exact host approval dispatch 446ms
+   ✓ tracks replacement proposal deadlines while focusing only each new active approval 306ms
+ ✓ tests/appearance-settings.test.tsx (5 tests) 1153ms
+   ✓ appearance draft transaction (5)
+     ✓ previews without writing and cancel restores confirmed appearance 491ms
+ ✓ tests/skills-center.test.tsx (12 tests) 1315ms
+ ✓ tests/module-call-cancel.test.tsx (18 tests) 1832ms
+ ✓ tests/module-host-ui.test.tsx (19 tests) 1375ms
+ ✓ tests/chat-workbench.test.tsx (67 tests) 13105ms
+   ✓ sessions (8)
+     ✓ returns focus to rename after Escape without losing the conversation draft 493ms
+     ✓ returns focus to rename after cancel without losing the conversation draft 325ms
+     ✓ isolates drafts and unsaved capability targets between open session tabs 986ms
+     ✓ closing a running session requires confirmation and preserves accepted input content 338ms
+     ✓ session list pages by cursor and stops at the 300-node cap 2893ms
+   ✓ undecided skill (2)
+     ✓ blocks sending until a skill or an explicit no-skill is applied, then sends 327ms
+   ✓ keyset paging windows (1)
+     ✓ older pages are loaded by before_seq, the window stops at 200 and 回到最新 re-anchors 1355ms
+   ✓ microphone cancellation (6)
+     ✓ handles transcription unmount without losing or leaking a draft 414ms
+ ✓ tests/lan-remote.test.tsx (39 tests) 1365ms
+ ✓ tests/ui-controls.test.tsx (111 tests) 1153ms
+ ✓ tests/ui-overlays.test.tsx (46 tests) 1609ms
+ ✓ tests/doc-browser.test.tsx (12 tests) 1119ms
+stderr | tests/development-drafts.test.tsx > retains capability edits across reload, tab unmount, project/task changes and clears them on account reset
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ✓ tests/skills.test.tsx (8 tests) 940ms
+ ✓ tests/ui-errors.test.tsx (30 tests) 1065ms
+ ✓ tests/development-drafts.test.tsx (7 tests) 920ms
+   ✓ retains blank and edited task fields through task/project selection and same-object reload, then confirms discard accurately 354ms
+ ✓ tests/development-runtime-workflows.test.tsx (6 tests) 770ms
+   ✓ exposes catalog and explicit actions while configuration is closed; selecting a script only fills the retained draft 300ms
+ ✓ tests/task-launch.test.tsx (6 tests) 966ms
+   ✓ creates one task/session, prevents double click, and retains IDs through acknowledged failure and manager return 486ms
+ ✓ tests/cli-settings.test.tsx (8 tests) 682ms
+ ✓ tests/workspaceShell.test.tsx (14 tests) 531ms
+ ✓ tests/development-terminal-activity.test.tsx (17 tests) 790ms
+ ✓ tests/chat-reading-layout.test.tsx (7 tests) 522ms
+ ✓ tests/development-delivery.test.tsx (3 tests) 414ms
+ ✓ tests/development-task-review.test.tsx (22 tests) 596ms
+stderr | tests/pending-workspace-close.test.tsx > keeps the new Settings destination and its focus when a pending close finishes
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ✓ tests/radix-jsdom.test.tsx (7 tests) 430ms
+ ✓ tests/chat-approval-activity.test.tsx (14 tests) 623ms
+ ✓ tests/pending-workspace-close.test.tsx (5 tests) 556ms
+stderr | tests/development-review-boundaries.test.tsx > drops an old account capability catalog instead of offering its providers
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ✓ tests/chat-markdown.test.tsx (28 tests) 483ms
+ ✓ tests/development-review-boundaries.test.tsx (7 tests) 471ms
+ ✓ tests/module-mcp-confirm.test.tsx (10 tests) 444ms
+ ✓ tests/development-editor.test.tsx (6 tests) 394ms
+ ✓ tests/release-build.test.tsx (20 tests) 43ms
+ ✓ tests/react-version.test.tsx (22 tests) 24ms
+ ✓ tests/design-tokens.test.tsx (12 tests) 15ms
+ ✓ tests/desktop-preferences.test.tsx (4 tests) 265ms
+ ✓ tests/appearance.test.tsx (12 tests) 110ms
+ ✓ tests/agent-close-boundaries.test.tsx (4 tests) 506ms
+   ✓ confirms an initial pending Agent connection and keeps its surface until the host close settles 500ms
+ ✓ tests/ui-feedback.test.tsx (25 tests) 682ms
+   ✓ Toast display (AC08) (7)
+     ✓ the icon is decorative and the type is carried by role and text, not by colour alone 327ms
+ ✓ tests/surface-context.test.tsx (2 tests) 21ms
+ ✓ tests/ui-page-patterns.test.tsx (6 tests) 222ms
+ ✓ tests/providers.test.tsx (12 tests) 18ms
+ ✓ tests/agent-output-references.test.tsx (7 tests) 200ms
+ ✓ tests/productWorkspace.test.tsx (24 tests) 6ms
+ ✓ tests/phase3-lifecycle.test.tsx (4 tests) 8ms
+ ✓ tests/i18n-runtime.test.tsx (5 tests) 5ms
+
+ Test Files  58 passed (58)
+      Tests  1127 passed (1127)
+   Start at  14:45:38
+   Duration  20.83s (tests 66%, environment 20%, import 11%, transform 3%)
+
+    Isolate  58 workers spawned · ~714ms startup each (spawn + environment, per file)
+             at least ~3.88s faster with isolate: false — reuses workers across files instead of one per file
+
+
+COMMAND npm run build
+EXIT 0
+
+> dgos@0.1.0 build
+> npm run tokens:check && npm run deps:check && npm run skills:check && npm run design:check && tsc && vite build && npm run build:lan
+
+
+> dgos@0.1.0 tokens:check
+> node scripts/tokens-build.mjs --check
+
+Static themes match the runtime kernel: five presets × light/dark.
+
+> dgos@0.1.0 deps:check
+> node scripts/react-version.mjs
+
+react and react-dom installed versions match package-lock.json and package.json.
+
+> dgos@0.1.0 skills:check
+> node scripts/skills-catalog.mjs
+
+Validated 6 bundled skills (hashes match).
+
+> dgos@0.1.0 design:check
+> node scripts/design-check.mjs
+
+R4 px 报告（不阻断）：9 处，src/workspace/workspace.css 7，src/ui/components/patterns.css 2
+design:check 通过
+vite v8.3.5 building client environment for production...
+transforming...
+✓ 2616 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                 0.74 kB │ gzip:   0.38 kB
+dist/assets/SkillsManagement-DbG9kWJe.css       0.85 kB │ gzip:   0.39 kB
+dist/assets/workbench-B7sV5fsz.css              0.97 kB │ gzip:   0.46 kB
+dist/assets/Markdown-Bkx2sZfh.css               0.99 kB │ gzip:   0.30 kB
+dist/assets/SurfaceContext-DJgSS4fB.css         0.99 kB │ gzip:   0.44 kB
+dist/assets/McpManagement-DRpFbjEP.css          3.26 kB │ gzip:   0.95 kB
+dist/assets/DevelopmentTerminal-BrP-ENHg.css    3.93 kB │ gzip:   1.01 kB
+dist/assets/ChatWorkbench-fdvFpGVT.css          6.18 kB │ gzip:   1.63 kB
+dist/assets/SettingsShell-CsNKIZgE.css          6.83 kB │ gzip:   1.58 kB
+dist/assets/AgentWorkbench-gaCMfWLI.css        24.38 kB │ gzip:   3.97 kB
+dist/assets/index-CbKy_SxR.css                 67.60 kB │ gzip:  11.93 kB
+dist/assets/resourceState-BuVcfayg.js           0.39 kB │ gzip:   0.17 kB
+dist/assets/GenerationControls-BzzgrrhV.js      3.31 kB │ gzip:   1.28 kB
+dist/assets/SingleTaskWorkbench-CJqSfkoc.js    14.93 kB │ gzip:   4.76 kB
+dist/assets/SkillsManagement-jSjktOQA.js       21.38 kB │ gzip:   5.61 kB
+dist/assets/McpManagement-DOKtXUYd.js          28.56 kB │ gzip:   7.90 kB
+dist/assets/ChatWorkbench-CpZXlizs.js          40.42 kB │ gzip:  11.46 kB
+dist/assets/SettingsShell-BwRVLT-A.js          82.14 kB │ gzip:  20.54 kB
+dist/assets/AgentWorkbench-Ds4KtERc.js        185.58 kB │ gzip:  44.70 kB
+dist/assets/Markdown-BQTid6qA.js              217.15 kB │ gzip:  68.23 kB
+dist/assets/DevelopmentTerminal-BsLh1jzn.js   337.97 kB │ gzip:  85.34 kB
+dist/assets/index-Bof5Fo5E.js                 352.55 kB │ gzip: 108.07 kB
+dist/assets/SurfaceContext-BvM20oeE.js        507.04 kB │ gzip: 155.85 kB
+
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 599ms
+
+> dgos@0.1.0 build:lan
+> vite build --config vite.lan.config.ts
+
+vite v8.3.5 building client environment for production...
+transforming...
+✓ 43 modules transformed.
+rendering chunks...
+computing gzip size...
+dist-lan/index.html                   0.49 kB │ gzip:  0.32 kB
+dist-lan/assets/style-BSsGJyIC.css   25.02 kB │ gzip:  5.31 kB
+dist-lan/assets/index-BFon1byp.js   284.38 kB │ gzip: 89.09 kB
+
+✓ built in 215ms
+
+COMMAND npm run check:ui-preview
+EXIT 0
+
+> dgos@0.1.0 check:ui-preview
+> tsc -p tools/ui-preview/tsconfig.json
+
+
+COMMAND npm run i18n:check:strict
+EXIT 0
+
+> dgos@0.1.0 i18n:check:strict
+> node scripts/check-i18n.mjs --strict
+
+i18n: 1989 keys, 84 language-domain resources, 254 source files.
+Language keys, interpolation parameters, loader coverage and static callers passed.
+
+COMMAND npm run test:ui-visual
+EXIT 0
+
+> dgos@0.1.0 test:ui-visual
+> node scripts/ui-preview-visual.mjs
+
+PASS controls-long-select: 0 pixels differ
+PASS modal-narrow: 0 pixels differ
+PASS settings-category-focus: 0 pixels differ
+PASS chat-narrow-composer: 0 pixels differ
+PASS chat-narrow-approval: 0 pixels differ
+
+COMMAND node --require <evidence-tmp>/environment-drift.cjs scripts/ui-preview-visual.mjs
+EXIT 2
+ENVIRONMENT_DRIFT: ENVIRONMENT_DRIFT: browser binary/version, OS, font raster, Node, viewport matrix or capture settings differ. Do not re-accept across environments; record and review a new candidate.
+

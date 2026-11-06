@@ -1,0 +1,111 @@
+{
+  "ok": true,
+  "value": {
+    "active": {
+      "class": "cursor-pointer py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus",
+      "label": null,
+      "rect": {
+        "bottom": 425.5,
+        "height": 39.5,
+        "right": 712,
+        "width": 641,
+        "x": 71,
+        "y": 386
+      },
+      "tag": "SUMMARY"
+    },
+    "at": "2026-11-06T08:17:59.410Z",
+    "body": "D\nOverview\nResources\nApps\nMCP management\nMCP Management\n\nOnly connect servers you trust. Local processes run with your operating-system permissions.\n\nAdd MCP server\nRefresh status\nYour servers · Official SDK Echo\nOfficial SDK Echo\n\nhttp · Connected\n\nEdit\nDelete\nHTTP authentication\nToken configured\n\nOnly an opaque reference is stored in DGOS. Tokens are never returned to this page. Rotation or removal disconnects the server.\n\nBearer token\nStore token\nRemove token\nOfficial SDK Echo tools\nDescriptions do not grant permissions\nRefresh tools\necho\nEcho synthetic compatibility data\necho\nInspect / call\nRecent use\nRefresh usage\n\nParameters and output are never stored. Pending, interrupted, cancelled or timeout can mean the external result is unknown. Check it before retrying; no automatic replay occurs.\n\nSUCCESS\necho\n5 ms\nNov 6, 2026 at 4:16 PM\nConnection history\necho\nEcho synthetic compatibility data\nOfficial SDK Echo / TOOL INSPECTOR\nClose\n\nServer descriptions and schemas are untrusted data, not host permissions.\n\nInput schema\nOutput schema\n\nSchema6786cc243ed0 · DiscoveredNov 6, 2026 at 4:16 PM\n\nConfirm external operation\n\nServer: Official SDK Echo · Tool:echo\n\n{\n  \"text\": \"LongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValue\"\n}\n\nThis tool can read, change or send data outside DGOS. Only continue if you trust this server and understand these exact arguments. The result is shown in memory, not saved in the usage log.\n\nBack to arguments\nConfirm and call tool",
+    "density": "175",
+    "dialogs": [
+      {
+        "rect": {
+          "bottom": 840,
+          "height": 812,
+          "right": 772,
+          "width": 744,
+          "x": 28,
+          "y": 28
+        },
+        "text": "echoEcho synthetic compatibility dataOfficial SDK Echo / TOOL INSPECTORCloseServer descriptions and schemas are untrusted data, not host permissions.Input schema{\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"text\"\n  ],\n  \"type\": \"object\"\n}Output schema{\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"text\"\n  ],\n  \"type\": \"object\"\n}Schema6786cc243ed0 · DiscoveredNov 6, 2026 at 4:16 PMConfirm external operationServer: Official SDK Echo · Tool:echo{\n  \"text\": \"LongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValueLongJSONValue\"\n}This tool can read, change or send data outside DGOS. Only continue if you trust this server and understand these exact arguments. The result is shown in memory, not saved in the usage log.Back to argumentsConfirm and call tool"
+      }
+    ],
+    "hasFocus": true,
+    "inputs": [
+      {
+        "disabled": false,
+        "label": "Search servers",
+        "rect": {
+          "bottom": 0,
+          "height": 0,
+          "right": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "type": "text",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "label": "Bearer token",
+        "rect": {
+          "bottom": 463.25,
+          "height": 49,
+          "right": 544.34375,
+          "width": 404.34375,
+          "x": 140,
+          "y": 414.25
+        },
+        "type": "password",
+        "value": "[redacted]"
+      }
+    ],
+    "ok": true,
+    "rows": [
+      {
+        "pressed": "false",
+        "rect": {
+          "bottom": 0,
+          "height": 0,
+          "right": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "text": "MCP-SLOW-SAVED-Astdio · Disconnected"
+      },
+      {
+        "pressed": "false",
+        "rect": {
+          "bottom": 0,
+          "height": 0,
+          "right": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "text": "MCPLongURLABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ReadOnlyConfighttp · Disconnected"
+      },
+      {
+        "pressed": "true",
+        "rect": {
+          "bottom": 0,
+          "height": 0,
+          "right": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "text": "Official SDK Echohttp · Connected"
+      }
+    ],
+    "theme": "dark",
+    "url": "tauri://localhost/mcp",
+    "viewport": {
+      "height": 868,
+      "width": 800
+    },
+    "visibility": "visible"
+  }
+}

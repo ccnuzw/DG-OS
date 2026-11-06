@@ -1,0 +1,115 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling dgos-providers v0.1.0 (<repo>/crates/dgos-providers)
+   Compiling dgos-agents v0.1.0 (<repo>/crates/dgos-agents)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3m 04s
+     Running unittests src/lib.rs (target/debug/deps/dgos_agents-df368cafd7e53923)
+
+running 98 tests
+test capabilities::tests::ending_a_run_expires_pending_host_consent_without_external_dispatch ... ok
+test capabilities::tests::closed_consent_receiver_is_not_listed_or_approved_before_async_cleanup ... ok
+test capabilities::tests::http_authentication_precedes_parsing_and_unselected_tools_never_dispatch ... ok
+test capabilities::tests::duplicate_http_request_ids_cannot_create_two_host_prompts_or_dispatches ... ok
+test capabilities::tests::each_http_call_requires_fresh_host_consent_and_preserves_provenance ... ok
+test capabilities::tests::confirmations_and_bearers_cannot_cross_account_project_session_or_run ... ok
+test capabilities::tests::http_disconnect_does_not_replay_a_dispatched_side_effect ... ok
+test claude_session::tests::failed_result_retains_native_details_and_actual_errors ... ok
+test claude_session::tests::native_abort_allows_next_turn_without_hiding_engine_failures ... ok
+test cli::tests::installed_node_codex_probe_diagnostic ... ignored, requires installed Node and Codex; emits fixed-field phase diagnostics
+test capabilities::tests::dispatched_request_cancellation_is_unknown_and_never_automatically_replayed ... ok
+test capabilities::tests::ending_a_dispatched_run_drains_remote_cancellation_and_retains_one_audit ... ok
+test cli::tests::version_line_must_match_the_tool_shape ... ok
+test capabilities::tests::epoch_revocation_is_live_and_lease_cancellation_stops_pending_authority ... ok
+test capabilities::tests::mcp_disconnect_cancels_once_and_does_not_reconnect_or_replay ... ok
+test codex_session::tests::managed_mcp_rejects_unknown_terminal_and_unselected_states ... ok
+test capabilities::tests::restart_keeps_revoked_epoch_and_never_restores_old_host_confirmation ... ok
+test codex_session::tests::preserves_command_failure_and_native_error ... ok
+test codex_session::tests::suppresses_only_current_echo_and_preserves_repeated_history ... ok
+test diagnostics::tests::unknown_errors_never_become_log_fields ... ok
+test executions::tests::persistence_redacts_auth_secrets_without_destroying_command_results ... ok
+test capabilities::tests::previous_run_confirmation_cannot_authorize_the_next_run_in_the_same_session ... ok
+test capabilities::tests::schema_refresh_invalidates_the_prompt_and_pinned_tool_before_dispatch ... ok
+test file_review_tests::file_access_is_scoped_ignored_bounded_and_symlink_safe ... ok
+test file_review_tests::baseline_is_immutable_and_external_edits_and_deletions_are_reviewable ... ok
+test file_review_tests::event_file_references_require_task_session_bounds_and_safe_text ... ok
+test files::save_tests::capability_save_replaces_only_the_expected_regular_file ... ok
+test file_review_tests::save_checks_read_version_account_and_preserves_external_content ... ok
+test codex_session::tests::managed_gateway_readiness_wait_is_cancelled_without_a_reply ... ok
+test capabilities::tests::saved_configuration_revisions_do_not_rewrite_existing_session_or_run_snapshots ... ok
+test codex_session::tests::managed_plugin_mcp_is_disabled_before_gateway_becomes_ready ... ok
+test file_review_tests::large_project_metadata_returns_incomplete_review_instead_of_storage_failure ... ok
+test capabilities::tests::revoking_or_cancelling_a_dispatched_lease_drains_once_without_replay ... ok
+test git::tests::discard_requires_persisted_save_ownership_and_preserves_index ... ok
+test git::tests::restart_reconciliation_reads_index_without_replaying_mutation ... ok
+test git::tests::truncated_output_is_never_a_complete_git_version ... ok
+test git::tests::active_service_blocks_same_directory_and_sibling_repository_mutation ... ok
+test git::tests::unresolved_stage_after_restart_remains_unknown_and_duplicate_never_stages ... ok
+test git::tests::empty_index_finishes_pending_merge_with_exact_parents_but_rejects_ordinary_empty_commit ... ok
+test git::tests::hooks_filters_and_unsafe_remotes_cannot_execute_project_programs ... ok
+test project_tests::database_commit_failure_leaves_legacy_and_all_rows_unimported ... ok
+test handoffs::tests::handoff_links_latest_source_run_and_keeps_recent_context_after_restart ... ok
+test handoffs::tests::revoked_handoff_and_failed_reserved_launch_never_gain_fresh_authority_on_restart ... ok
+Initialized empty Git repository in /private/var/folders/7m/254clr5n0v79vzrk4d0843mr0000gn/T/dgos-project-boundary-7130f35a-1922-43f4-b8f5-ddbac4e30b36/source/.git/
+[main (root-commit) 680a79e] base
+ 1 file changed, 1 insertion(+)
+ create mode 100644 tracked.txt
+test git::tests::literal_paths_stale_review_and_unstage_preserve_worktree ... ok
+test project_tests::directory_replacement_requires_relocation_and_unlink_preserves_code ... ok
+test project_tests::failed_clone_and_revoked_create_preserve_disk_and_report_operations ... ok
+test git::tests::dirty_switch_rejects_and_merge_conflicts_remain_reviewable_until_explicit_commit ... ok
+test cli::tests::real_executable_probe_distinguishes_failures_and_bounds_output ... ok
+test runtime::tests::bounded_output_keeps_the_prefix_of_the_chunk_crossing_the_limit ... ok
+test project_tests::legacy_migration_failure_preserves_bytes_and_rejects_admission ... ok
+test git::tests::explicit_stage_full_index_confirmation_receipt_replay_and_nonforce_push ... ok
+test project_tests::git_import_keeps_dirty_state_and_clone_preserves_source ... ok
+test runtime::tests::known_credentials_are_rejected_in_command_names_and_working_directories ... ok
+test cli::tests::version_probe_cleans_process_group_on_timeout_cancellation_and_success ... ok
+test runtime::tests::environment_reference_values_never_enter_snapshots_or_durable_history ... ok
+test runtime::tests::private_key_and_auth_output_stay_redacted_at_every_chunk_boundary ... ok
+test runtime::tests::command_receipts_isolation_configuration_and_restart_never_replay ... ok
+test recovery_tests::native_crash_and_missing_history_preserve_task_code_receipt_and_expire_approval ... ok
+test recovery_tests::sqlite_run_admission_failure_sends_nothing_and_keeps_task_and_code ... ok
+test runtime::tests::redaction_spans_reads_and_bounded_partial_tokens_do_not_leak ... ok
+test runtime::tests::resolved_environment_values_are_redacted_including_whitespace_and_partial_suffixes ... ok
+test runtime::tests::account_cleanup_preserves_other_account_child_and_environment_is_explicit ... ok
+test runtime::tests::command_cleanup_includes_descendants_in_different_job_groups ... ok
+test runtime::tests::lease_revocation_stops_descendant_and_blocks_agent_and_project_mutation ... ok
+test recovery_tests::sqlite_terminal_write_failure_recovers_unknown_without_replay_or_old_approval ... ok
+test runtime::tests::real_pty_input_resize_and_explicit_exit_are_bound_to_instance ... ok
+test runtime::tests::readiness_rejects_unrelated_http_listener_after_preflight ... ok
+test runtime::tests::simulated_restart_marks_live_history_unknown_without_replaying_or_claiming_child ... ok
+test session::executable_tests::explicit_cli_requires_executable_file_and_allows_install_symlink ... ok
+test session::pending_tests::repeated_native_request_replaces_payload_without_duplicate_controls ... ok
+test runtime::tests::signalled_verification_without_exit_code_is_unknown_and_persisted ... ok
+test runtime::tests::sqlite_checkpoint_failure_reaps_owned_child_and_restart_does_not_replay ... ok
+test runtime::tests::service_conflict_never_kills_other_listener_and_readiness_failure_cleans_owned_process ... ok
+test runtime::tests::ready_requires_http_and_only_ready_has_loopback_preview ... ok
+test shutdown_tests::codex_handshake_diagnostics_cover_success_rejection_and_lease_cancellation ... ok
+test shutdown_tests::shutdown_reaps_a_resuming_child_without_late_admission ... ok
+test shutdown_tests::shutdown_reaps_an_unregistered_connecting_child ... ok
+test session_tests::unix::codex_approval_interrupt_resume_and_owner_isolation ... ok
+test shutdown_tests::shutdown_rejects_an_inflight_send_and_reaps_its_process ... ok
+test takeover::tests::cancelled_waiting_admission_and_close_failure_never_release_write_guard ... ok
+test cli::tests::probe_diagnostics_distinguish_stdout_exit_and_spawn_failures ... ok
+test takeover::tests::foreign_exact_directory_is_redacted_and_never_closed ... ok
+test takeover::tests::closes_only_actual_task_directory_preserving_other_directory_and_account ... ok
+test takeover::tests::revoked_epoch_reopened_generation_and_replaced_directory_reject_old_confirmation ... ok
+test runtime::tests::periodic_snapshot_observes_mutation_and_retains_it_after_restore ... ok
+test takeover::tests::host_occupancy_is_preserved_and_unconfirmed_close_is_denied ... ok
+test test_support::shell_fixture_preparation_does_not_run_its_protocol_or_side_effects ... ok
+test takeover::tests::same_directory_session_from_another_owned_task_can_be_closed ... ok
+test workspaces::tests::branch_names_cannot_be_options_or_revision_expressions ... ok
+test workspaces::lifecycle_tests::ignored_valuable_contents_block_managed_cleanup_until_user_removes_them ... ok
+test workspaces::lifecycle_tests::dirty_original_isolated_binding_freezes_and_managed_remove_preserves_branch ... ok
+test workspaces::lifecycle_tests::imported_workspace_cleanup_is_refused_and_preserves_user_files ... ok
+test runtime::tests::saturated_output_retains_its_prefix_and_drains_to_actual_exit ... ok
+test workspaces::lifecycle_tests::workspace_receipts_survive_read_restart_and_reconcile_without_replaying_actions ... ok
+test workspaces::lifecycle_tests::managed_cleanup_requires_retained_branch_to_contain_workspace_head ... ok
+test runtime::tests::verification_tracks_stable_stale_incomplete_and_reverted_manual_mutation ... ok
+test workspaces::lifecycle_tests::managed_cleanup_rejects_live_services_in_workspace_and_shared_repository ... ok
+test runtime::tests::task_worktree_catalog_and_execution_share_project_configuration_but_use_task_files ... ok
+
+test result: ok. 97 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 26.00s
+

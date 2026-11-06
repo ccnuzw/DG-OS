@@ -1,0 +1,11 @@
+   Compiling dgos v0.1.0 (<repo>/src-tauri)
+error[E0282]: type annotations needed
+   --> src-tauri/src/smoke/mcp_page.rs:127:5
+    |
+127 |     tauri::generate_handler![list_mcp_servers, get_mcp_server_config, update_mcp_server, refresh_mcp_tools, list_mcp_tools, list_mcp_usage_logs, list_mcp_connection_logs](in...
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot infer type
+    |
+    = note: this error originates in the macro `tauri::generate_handler` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+For more information about this error, try `rustc --explain E0282`.
+error: could not compile `dgos` (lib) due to 1 previous error

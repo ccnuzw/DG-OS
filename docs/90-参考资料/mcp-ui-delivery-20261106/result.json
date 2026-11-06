@@ -1,0 +1,17 @@
+{
+  "executable": "<repo>/target/debug/deps/webview_smoke_mcp-56399f9a4388c644",
+  "failed": [],
+  "fault_evidence": "smoke IPC rejects read before production dispatch; one real update gated before dispatch; one real refresh published before deliberate receipt loss",
+  "input": "synthesized native NSEvent keyDown/keyUp via NSApplication; known focus/text and pointer shortcuts use DOM",
+  "layout_fixture": "SYNTHETIC_LAYOUT_ONLY long connection event; disabled example.invalid URL is config-only; no network request",
+  "limits": [
+    "not physical typing or real mouse hit testing",
+    "not VoiceOver or other platforms",
+    "in-memory credential vault, not OS keychain",
+    "not real disk/network failure",
+    "new B editor is prohibited until A save settles; after-settlement B draft is checked, no fabricated overlapping editor"
+  ],
+  "passed": 219,
+  "pid": 40187,
+  "source": "production dist in visible macOS WKWebView; real isolated SQLite/McpManager/official SDK and filesystem"
+}

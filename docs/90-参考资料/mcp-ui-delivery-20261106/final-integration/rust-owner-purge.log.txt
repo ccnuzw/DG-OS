@@ -1,0 +1,28 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling dgos-db v0.1.0 (<repo>/crates/dgos-db)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 20.50s
+     Running unittests src/lib.rs (target/debug/deps/dgos_db-a5afdd828ee0a148)
+
+running 1 test
+test repositories::development_repository::tests::account_purge_cleans_workspace_children_and_counts_orphans_without_touching_files ... FAILED
+
+failures:
+
+---- repositories::development_repository::tests::account_purge_cleans_workspace_children_and_counts_orphans_without_touching_files stdout ----
+
+thread 'repositories::development_repository::tests::account_purge_cleans_workspace_children_and_counts_orphans_without_touching_files' (10281745) panicked at crates/dgos-db/src/repositories/development_repository/tests.rs:61:2:
+assertion `left == right` failed: seven metadata rows for each non-default owner
+  left: 16
+ right: 14
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    repositories::development_repository::tests::account_purge_cleans_workspace_children_and_counts_orphans_without_touching_files
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 108 filtered out; finished in 0.09s
+
+error: test failed, to rerun pass `-p dgos-db --lib`

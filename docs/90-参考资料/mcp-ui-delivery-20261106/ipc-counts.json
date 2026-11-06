@@ -1,0 +1,9 @@
+{
+  "get_mcp_server_config": 19,
+  "list_mcp_connection_logs": 39,
+  "list_mcp_servers": 43,
+  "list_mcp_tools": 40,
+  "list_mcp_usage_logs": 41,
+  "refresh_mcp_tools": 1,
+  "update_mcp_server": 1
+}

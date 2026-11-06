@@ -1,0 +1,20 @@
+{
+  "server": {
+    "auto_connect": false,
+    "enabled": true,
+    "http": null,
+    "name": "MCP-SLOW-SAVED-A",
+    "stdio": {
+      "args": [
+        "/private/tmp/dgos-mcp-official/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js",
+        "<local-evidence>/native-current-dist"
+      ],
+      "cwd": null,
+      "executable": "node"
+    },
+    "transport": "stdio"
+  },
+  "source": "real manager after one gated real production update",
+  "update_after": 1,
+  "update_before": 0
+}

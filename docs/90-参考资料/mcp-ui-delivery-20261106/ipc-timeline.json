@@ -1,0 +1,5993 @@
+[
+  {
+    "at_ms": 1793953004960,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953005356,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953005356,
+    "command": "list_mcp_servers",
+    "detail": {
+      "production_handler_called": false
+    },
+    "phase": "smoke_pre_dispatch_rejection"
+  },
+  {
+    "at_ms": 1793953005819,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "production shell loads English from isolated host"
+  },
+  {
+    "at_ms": 1793953006131,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953006131,
+    "command": "list_mcp_servers",
+    "detail": {
+      "production_handler_called": false
+    },
+    "phase": "smoke_pre_dispatch_rejection"
+  },
+  {
+    "at_ms": 1793953006142,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953006144,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "initial server read failure is visible without empty success"
+  },
+  {
+    "at_ms": 1793953006655,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953006705,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "explicit retry recovers real server catalog"
+  },
+  {
+    "at_ms": 1793953006707,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953006707,
+    "command": "list_mcp_servers",
+    "detail": {
+      "production_handler_called": false
+    },
+    "phase": "smoke_pre_dispatch_rejection"
+  },
+  {
+    "at_ms": 1793953006759,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "failed refresh retains old server rows and announces stale content"
+  },
+  {
+    "at_ms": 1793953007283,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953007334,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "server refresh failure recovers explicitly"
+  },
+  {
+    "at_ms": 1793953007338,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953007338,
+    "command": "list_mcp_tools",
+    "detail": {
+      "production_handler_called": false
+    },
+    "phase": "smoke_pre_dispatch_rejection"
+  },
+  {
+    "at_ms": 1793953007339,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953007339,
+    "command": "list_mcp_usage_logs",
+    "detail": {
+      "production_handler_called": false
+    },
+    "phase": "smoke_pre_dispatch_rejection"
+  },
+  {
+    "at_ms": 1793953007339,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953007339,
+    "command": "list_mcp_connection_logs",
+    "detail": {
+      "production_handler_called": false
+    },
+    "phase": "smoke_pre_dispatch_rejection"
+  },
+  {
+    "at_ms": 1793953007387,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "initial selected detail reads fail visibly"
+  },
+  {
+    "at_ms": 1793953007880,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953007880,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953007880,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953007931,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "detail retry restores genuine tools logs and connections"
+  },
+  {
+    "at_ms": 1793953008021,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953008065,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953008066,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "usage refresh reads real confirmed echo audit"
+  },
+  {
+    "at_ms": 1793953008239,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /"
+  },
+  {
+    "at_ms": 1793953008250,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953008250,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953008250,
+    "command": "list_mcp_tools",
+    "detail": {
+      "production_handler_called": false
+    },
+    "phase": "smoke_pre_dispatch_rejection"
+  },
+  {
+    "at_ms": 1793953008251,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953008251,
+    "command": "list_mcp_usage_logs",
+    "detail": {
+      "production_handler_called": false
+    },
+    "phase": "smoke_pre_dispatch_rejection"
+  },
+  {
+    "at_ms": 1793953008251,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953008251,
+    "command": "list_mcp_connection_logs",
+    "detail": {
+      "production_handler_called": false
+    },
+    "phase": "smoke_pre_dispatch_rejection"
+  },
+  {
+    "at_ms": 1793953008423,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953008425,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "failed detail refresh keeps old tools usage and connection content"
+  },
+  {
+    "at_ms": 1793953008924,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953008924,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953008924,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953008975,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "detail refresh read failures recover"
+  },
+  {
+    "at_ms": 1793953008980,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953008980,
+    "command": "get_mcp_server_config",
+    "detail": {
+      "production_handler_called": false
+    },
+    "phase": "smoke_pre_dispatch_rejection"
+  },
+  {
+    "at_ms": 1793953009028,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "edit configuration first read failure freezes blank fields"
+  },
+  {
+    "at_ms": 1793953009524,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953009574,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "configuration retry restores real HTTP config"
+  },
+  {
+    "at_ms": 1793953009627,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "close unchanged config"
+  },
+  {
+    "at_ms": 1793953009629,
+    "command": "refresh_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953009637,
+    "command": "refresh_mcp_tools",
+    "detail": {
+      "server_id": "e55fb26c-131e-4aee-8210-34e3be541e11",
+      "success": true,
+      "tool_count": 1
+    },
+    "phase": "real_handler_settled"
+  },
+  {
+    "at_ms": 1793953009637,
+    "command": "refresh_mcp_tools",
+    "detail": {
+      "real_handler_succeeded": true
+    },
+    "phase": "smoke_receipt_lost_after_publication"
+  },
+  {
+    "at_ms": 1793953009681,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "real discovery publication with lost receipt stays unconfirmed"
+  },
+  {
+    "at_ms": 1793953010230,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953010232,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "read saved tools does not certify discovery success"
+  },
+  {
+    "at_ms": 1793953010238,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953010338,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "edit saved config does not certify discovery success"
+  },
+  {
+    "at_ms": 1793953010514,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /"
+  },
+  {
+    "at_ms": 1793953010524,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953010524,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953010525,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953010525,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953010697,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953010699,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "inactive return and read refresh do not replay discovery"
+  },
+  {
+    "at_ms": 1793953011005,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "establish known row focus for native list selection"
+  },
+  {
+    "at_ms": 1793953011014,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953011014,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953011014,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953011252,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Enter selects actual MCP server row"
+  },
+  {
+    "at_ms": 1793953011254,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "establish real tool opener focus"
+  },
+  {
+    "at_ms": 1793953011500,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Enter opens production tool Modal with focus inside"
+  },
+  {
+    "at_ms": 1793953011746,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Tab keeps focus trapped in tool Modal"
+  },
+  {
+    "at_ms": 1793953011993,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Tab keeps focus trapped in tool Modal"
+  },
+  {
+    "at_ms": 1793953012240,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Tab keeps focus trapped in tool Modal"
+  },
+  {
+    "at_ms": 1793953012487,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Tab keeps focus trapped in tool Modal"
+  },
+  {
+    "at_ms": 1793953012734,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Tab keeps focus trapped in tool Modal"
+  },
+  {
+    "at_ms": 1793953012979,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Tab keeps focus trapped in tool Modal"
+  },
+  {
+    "at_ms": 1793953013225,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Tab keeps focus trapped in tool Modal"
+  },
+  {
+    "at_ms": 1793953013471,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Tab keeps focus trapped in tool Modal"
+  },
+  {
+    "at_ms": 1793953013719,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Tab keeps focus trapped in tool Modal"
+  },
+  {
+    "at_ms": 1793953013965,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Tab keeps focus trapped in tool Modal"
+  },
+  {
+    "at_ms": 1793953014212,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Tab keeps focus trapped in tool Modal"
+  },
+  {
+    "at_ms": 1793953014458,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Tab keeps focus trapped in tool Modal"
+  },
+  {
+    "at_ms": 1793953014705,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Tab keeps focus trapped in tool Modal"
+  },
+  {
+    "at_ms": 1793953014952,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Tab keeps focus trapped in tool Modal"
+  },
+  {
+    "at_ms": 1793953015199,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Tab keeps focus trapped in tool Modal"
+  },
+  {
+    "at_ms": 1793953015357,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953015445,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Tab keeps focus trapped in tool Modal"
+  },
+  {
+    "at_ms": 1793953016202,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Escape closes tool Modal and returns exact opener focus"
+  },
+  {
+    "at_ms": 1793953016205,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "establish editor opener focus"
+  },
+  {
+    "at_ms": 1793953016216,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953016451,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Enter opens real editor and selects transport starting focus"
+  },
+  {
+    "at_ms": 1793953016698,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Space opens editor Select"
+  },
+  {
+    "at_ms": 1793953017188,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native End Enter changes transport to HTTP"
+  },
+  {
+    "at_ms": 1793953017191,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "focus cancel before native dirty-form Modal"
+  },
+  {
+    "at_ms": 1793953017437,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native editor cancel opens discard Modal"
+  },
+  {
+    "at_ms": 1793953017685,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Escape preserves editor draft and returns cancel focus"
+  },
+  {
+    "at_ms": 1793953017931,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "focus explicit discard choice"
+  },
+  {
+    "at_ms": 1793953018179,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native explicit discard closes editor"
+  },
+  {
+    "at_ms": 1793953018407,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "create server form draft through actual input handler"
+  },
+  {
+    "at_ms": 1793953018589,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /"
+  },
+  {
+    "at_ms": 1793953018601,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953018601,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953018601,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953018601,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953018773,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953018776,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "MCP configuration draft survives inactive work surface"
+  },
+  {
+    "at_ms": 1793953018966,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /settings/appearance"
+  },
+  {
+    "at_ms": 1793953018980,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953018980,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953018980,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953018980,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953019021,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "close settings overlay with actual control"
+  },
+  {
+    "at_ms": 1793953019206,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953019209,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "MCP configuration draft survives inactive work surface"
+  },
+  {
+    "at_ms": 1793953019262,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "surface close requests unsaved confirmation"
+  },
+  {
+    "at_ms": 1793953020041,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "surface close cancellation retains same configuration draft"
+  },
+  {
+    "at_ms": 1793953020146,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "surface explicit discard removes only target MCP surface"
+  },
+  {
+    "at_ms": 1793953020154,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953020331,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953020334,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "discarded surface reopens without old draft"
+  },
+  {
+    "at_ms": 1793953020339,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953020339,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953020339,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953020518,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953020570,
+    "command": "update_mcp_server",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953020570,
+    "command": "update_mcp_server",
+    "detail": {
+      "production_handler_called": false,
+      "server_id": "6c7a777d-cc4c-4d9d-8124-73f256f216a0"
+    },
+    "phase": "smoke_gate_entered"
+  },
+  {
+    "at_ms": 1793953020621,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "begin gated real save for server A"
+  },
+  {
+    "at_ms": 1793953020626,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953020627,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953020627,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953020675,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "select B during pending A save without replacing the saving editor"
+  },
+  {
+    "at_ms": 1793953021185,
+    "command": "update_mcp_server",
+    "detail": {
+      "server_id": "6c7a777d-cc4c-4d9d-8124-73f256f216a0"
+    },
+    "phase": "smoke_gate_released"
+  },
+  {
+    "at_ms": 1793953021190,
+    "command": "update_mcp_server",
+    "detail": {
+      "success": true
+    },
+    "phase": "real_handler_settled"
+  },
+  {
+    "at_ms": 1793953021237,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "late A save receipt never steals B selection"
+  },
+  {
+    "at_ms": 1793953021243,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953021295,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "new B draft created only after A receipt remains intact"
+  },
+  {
+    "at_ms": 1793953021472,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /"
+  },
+  {
+    "at_ms": 1793953021484,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953021484,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953021484,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953021484,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953021656,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953021659,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "B draft survives subsequent asynchronous presentation reads"
+  },
+  {
+    "at_ms": 1793953021764,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "discard B draft explicitly"
+  },
+  {
+    "at_ms": 1793953021767,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "seed unsaved Bearer sentinel"
+  },
+  {
+    "at_ms": 1793953021940,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /"
+  },
+  {
+    "at_ms": 1793953021952,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953021952,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953021952,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953021953,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953022122,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953022126,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "inactive work surface clears unsaved Bearer"
+  },
+  {
+    "at_ms": 1793953022129,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "seed Bearer before settings overlay"
+  },
+  {
+    "at_ms": 1793953022321,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /settings/appearance"
+  },
+  {
+    "at_ms": 1793953022337,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953022337,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953022337,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953022337,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953022375,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "close settings after Bearer deactivation"
+  },
+  {
+    "at_ms": 1793953022556,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953022559,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "settings overlay inactivity clears unsaved Bearer"
+  },
+  {
+    "at_ms": 1793953022609,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953022914,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953023072,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "production appearance bootstrap applies saved host snapshot"
+  },
+  {
+    "at_ms": 1793953023236,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953023239,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "MCP hydrates after production reload"
+  },
+  {
+    "at_ms": 1793953023403,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": false,
+          "density": "100",
+          "documentScrollWidth": 1440,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 1440,
+            "width": 1252,
+            "x": 188,
+            "y": 33
+          },
+          "pageClientWidth": 1252,
+          "pageScrollWidth": 1252,
+          "pageWidth": 1252,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 604.5,
+            "height": 487,
+            "right": 651.453125,
+            "width": 417.453125,
+            "x": 234,
+            "y": 117.5
+          },
+          "surface": "list",
+          "theme": "light",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 1440
+          }
+        }
+      }
+    },
+    "phase": "wide or compact server list wraps long names"
+  },
+  {
+    "at_ms": 1793953023907,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953023908,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953023908,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953024086,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953024310,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": false,
+          "density": "100",
+          "documentScrollWidth": 1440,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 1440,
+            "width": 1252,
+            "x": 188,
+            "y": 33
+          },
+          "pageClientWidth": 1235,
+          "pageScrollWidth": 1235,
+          "pageWidth": 1252,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 666.5,
+            "height": 536,
+            "right": 1372.484375,
+            "width": 704.53125,
+            "x": 667.953125,
+            "y": 130.5
+          },
+          "surface": "form",
+          "theme": "light",
+          "uiFont": "12px",
+          "urlLength": 374,
+          "viewport": {
+            "height": 868,
+            "width": 1440
+          }
+        }
+      }
+    },
+    "phase": "actual long URL config is editable without page overflow"
+  },
+  {
+    "at_ms": 1793953024866,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "close unchanged long URL form"
+  },
+  {
+    "at_ms": 1793953024871,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953024871,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953024871,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953025093,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": false,
+          "density": "100",
+          "documentScrollWidth": 1440,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 1440,
+            "width": 1252,
+            "x": 188,
+            "y": 33
+          },
+          "pageClientWidth": 1235,
+          "pageScrollWidth": 1235,
+          "pageWidth": 1252,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 1245,
+            "height": 1127.5,
+            "right": 1385.484375,
+            "width": 730.53125,
+            "x": 654.953125,
+            "y": 117.5
+          },
+          "surface": "detail",
+          "theme": "light",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 1440
+          }
+        }
+      }
+    },
+    "phase": "detail shows long diagnostic log without page overflow"
+  },
+  {
+    "at_ms": 1793953025861,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": false,
+          "density": "100",
+          "documentScrollWidth": 1440,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 1440,
+            "width": 1252,
+            "x": 188,
+            "y": 33
+          },
+          "pageClientWidth": 1235,
+          "pageScrollWidth": 1235,
+          "pageWidth": 1252,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 824.75,
+            "height": 781.5,
+            "right": 1019.984375,
+            "width": 599.984375,
+            "x": 420,
+            "y": 43.25
+          },
+          "surface": "modal",
+          "theme": "light",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 1440
+          }
+        }
+      }
+    },
+    "phase": "long JSON tool Modal fits native viewport"
+  },
+  {
+    "at_ms": 1793953026599,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "long JSON Modal closes without dispatch"
+  },
+  {
+    "at_ms": 1793953026663,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953026967,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953027124,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "production appearance bootstrap applies saved host snapshot"
+  },
+  {
+    "at_ms": 1793953027286,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953027290,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "MCP hydrates after production reload"
+  },
+  {
+    "at_ms": 1793953027453,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "100",
+          "documentScrollWidth": 800,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 800,
+            "width": 746,
+            "x": 54,
+            "y": 33
+          },
+          "pageClientWidth": 746,
+          "pageScrollWidth": 746,
+          "pageWidth": 746,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 586,
+            "height": 428.5,
+            "right": 780,
+            "width": 706,
+            "x": 74,
+            "y": 157.5
+          },
+          "surface": "list",
+          "theme": "light",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 800
+          }
+        }
+      }
+    },
+    "phase": "wide or compact server list wraps long names"
+  },
+  {
+    "at_ms": 1793953027942,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953027943,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953027943,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953028121,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953028335,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "100",
+          "documentScrollWidth": 800,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 800,
+            "width": 746,
+            "x": 54,
+            "y": 33
+          },
+          "pageClientWidth": 729,
+          "pageScrollWidth": 729,
+          "pageWidth": 746,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 744,
+            "height": 554,
+            "right": 750,
+            "width": 663,
+            "x": 87,
+            "y": 190
+          },
+          "surface": "form",
+          "theme": "light",
+          "uiFont": "12px",
+          "urlLength": 374,
+          "viewport": {
+            "height": 868,
+            "width": 800
+          }
+        }
+      }
+    },
+    "phase": "actual long URL config is editable without page overflow"
+  },
+  {
+    "at_ms": 1793953028866,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "close unchanged long URL form"
+  },
+  {
+    "at_ms": 1793953029046,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953029046,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953029047,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953029261,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "100",
+          "documentScrollWidth": 800,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 800,
+            "width": 746,
+            "x": 54,
+            "y": 33
+          },
+          "pageClientWidth": 729,
+          "pageScrollWidth": 729,
+          "pageWidth": 746,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 1324.5,
+            "height": 1167,
+            "right": 763,
+            "width": 689,
+            "x": 74,
+            "y": 157.5
+          },
+          "surface": "detail",
+          "theme": "light",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 800
+          }
+        }
+      }
+    },
+    "phase": "detail shows long diagnostic log without page overflow"
+  },
+  {
+    "at_ms": 1793953030020,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "100",
+          "documentScrollWidth": 800,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 800,
+            "width": 746,
+            "x": 54,
+            "y": 33
+          },
+          "pageClientWidth": 729,
+          "pageScrollWidth": 729,
+          "pageWidth": 746,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 824.75,
+            "height": 781.5,
+            "right": 699.984375,
+            "width": 599.984375,
+            "x": 100,
+            "y": 43.25
+          },
+          "surface": "modal",
+          "theme": "light",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 800
+          }
+        }
+      }
+    },
+    "phase": "long JSON tool Modal fits native viewport"
+  },
+  {
+    "at_ms": 1793953030755,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "long JSON Modal closes without dispatch"
+  },
+  {
+    "at_ms": 1793953030813,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953031117,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953031270,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "production appearance bootstrap applies saved host snapshot"
+  },
+  {
+    "at_ms": 1793953031436,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953031440,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "MCP hydrates after production reload"
+  },
+  {
+    "at_ms": 1793953031603,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "100",
+          "documentScrollWidth": 520,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 520,
+            "width": 466,
+            "x": 54,
+            "y": 33
+          },
+          "pageClientWidth": 466,
+          "pageScrollWidth": 466,
+          "pageWidth": 466,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 725.5,
+            "height": 548.5,
+            "right": 508,
+            "width": 442,
+            "x": 66,
+            "y": 177
+          },
+          "surface": "list",
+          "theme": "light",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 520
+          }
+        }
+      }
+    },
+    "phase": "wide or compact server list wraps long names"
+  },
+  {
+    "at_ms": 1793953032085,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953032085,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953032085,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953032263,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953032477,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "100",
+          "documentScrollWidth": 520,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 520,
+            "width": 466,
+            "x": 54,
+            "y": 33
+          },
+          "pageClientWidth": 449,
+          "pageScrollWidth": 449,
+          "pageWidth": 466,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 690.5,
+            "height": 572,
+            "right": 478,
+            "width": 399,
+            "x": 79,
+            "y": 118.5
+          },
+          "surface": "form",
+          "theme": "light",
+          "uiFont": "12px",
+          "urlLength": 374,
+          "viewport": {
+            "height": 868,
+            "width": 520
+          }
+        }
+      }
+    },
+    "phase": "actual long URL config is editable without page overflow"
+  },
+  {
+    "at_ms": 1793953033013,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "close unchanged long URL form"
+  },
+  {
+    "at_ms": 1793953033180,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953033180,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953033180,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953033397,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "100",
+          "documentScrollWidth": 520,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 520,
+            "width": 466,
+            "x": 54,
+            "y": 33
+          },
+          "pageClientWidth": 449,
+          "pageScrollWidth": 449,
+          "pageWidth": 466,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 1433,
+            "height": 1400,
+            "right": 491,
+            "width": 425,
+            "x": 66,
+            "y": 33
+          },
+          "surface": "detail",
+          "theme": "light",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 520
+          }
+        }
+      }
+    },
+    "phase": "detail shows long diagnostic log without page overflow"
+  },
+  {
+    "at_ms": 1793953034138,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "100",
+          "documentScrollWidth": 520,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 520,
+            "width": 466,
+            "x": 54,
+            "y": 33
+          },
+          "pageClientWidth": 449,
+          "pageScrollWidth": 449,
+          "pageWidth": 466,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 834.5,
+            "height": 801,
+            "right": 504,
+            "width": 488,
+            "x": 16,
+            "y": 33.5
+          },
+          "surface": "modal",
+          "theme": "light",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 520
+          }
+        }
+      }
+    },
+    "phase": "long JSON tool Modal fits native viewport"
+  },
+  {
+    "at_ms": 1793953034860,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "long JSON Modal closes without dispatch"
+  },
+  {
+    "at_ms": 1793953034920,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953035225,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953035374,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "production appearance bootstrap applies saved host snapshot"
+  },
+  {
+    "at_ms": 1793953035540,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953035545,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "MCP hydrates after production reload"
+  },
+  {
+    "at_ms": 1793953035706,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 1440,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 1440,
+            "width": 1111,
+            "x": 329,
+            "y": 57.75
+          },
+          "pageClientWidth": 1094,
+          "pageScrollWidth": 1094,
+          "pageWidth": 1111,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 916.75,
+            "height": 662.5,
+            "right": 1388,
+            "width": 1024,
+            "x": 364,
+            "y": 254.25
+          },
+          "surface": "list",
+          "theme": "light",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 1440
+          }
+        }
+      }
+    },
+    "phase": "wide or compact server list wraps long names"
+  },
+  {
+    "at_ms": 1793953036211,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953036211,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953036211,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953036392,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953036606,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 1440,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 1440,
+            "width": 1111,
+            "x": 329,
+            "y": 57.75
+          },
+          "pageClientWidth": 1094,
+          "pageScrollWidth": 1094,
+          "pageWidth": 1111,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 952.25,
+            "height": 799,
+            "right": 1366,
+            "width": 980,
+            "x": 386,
+            "y": 153.25
+          },
+          "surface": "form",
+          "theme": "light",
+          "uiFont": "16px",
+          "urlLength": 374,
+          "viewport": {
+            "height": 868,
+            "width": 1440
+          }
+        }
+      }
+    },
+    "phase": "actual long URL config is editable without page overflow"
+  },
+  {
+    "at_ms": 1793953037154,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "close unchanged long URL form"
+  },
+  {
+    "at_ms": 1793953037325,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953037325,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953037326,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953037557,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 1440,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 1440,
+            "width": 1111,
+            "x": 329,
+            "y": 57.75
+          },
+          "pageClientWidth": 1094,
+          "pageScrollWidth": 1094,
+          "pageWidth": 1111,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 1853.25,
+            "height": 1796,
+            "right": 1388,
+            "width": 1024,
+            "x": 364,
+            "y": 57.25
+          },
+          "surface": "detail",
+          "theme": "light",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 1440
+          }
+        }
+      }
+    },
+    "phase": "detail shows long diagnostic log without page overflow"
+  },
+  {
+    "at_ms": 1793953038319,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 1440,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 1440,
+            "width": 1111,
+            "x": 329,
+            "y": 57.75
+          },
+          "pageClientWidth": 1094,
+          "pageScrollWidth": 1094,
+          "pageWidth": 1111,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 840,
+            "height": 812,
+            "right": 1244.984375,
+            "width": 1049.984375,
+            "x": 195,
+            "y": 28
+          },
+          "surface": "modal",
+          "theme": "light",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 1440
+          }
+        }
+      }
+    },
+    "phase": "long JSON tool Modal fits native viewport"
+  },
+  {
+    "at_ms": 1793953039055,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "long JSON Modal closes without dispatch"
+  },
+  {
+    "at_ms": 1793953039113,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953039418,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953039576,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "production appearance bootstrap applies saved host snapshot"
+  },
+  {
+    "at_ms": 1793953039739,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953039744,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "MCP hydrates after production reload"
+  },
+  {
+    "at_ms": 1793953039907,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 800,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 800,
+            "width": 746,
+            "x": 54,
+            "y": 57.75
+          },
+          "pageClientWidth": 729,
+          "pageScrollWidth": 729,
+          "pageWidth": 746,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 993.25,
+            "height": 713.5,
+            "right": 748,
+            "width": 659,
+            "x": 89,
+            "y": 279.75
+          },
+          "surface": "list",
+          "theme": "light",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 800
+          }
+        }
+      }
+    },
+    "phase": "wide or compact server list wraps long names"
+  },
+  {
+    "at_ms": 1793953040394,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953040394,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953040394,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953040567,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953040781,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 800,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 800,
+            "width": 746,
+            "x": 54,
+            "y": 57.75
+          },
+          "pageClientWidth": 729,
+          "pageScrollWidth": 729,
+          "pageWidth": 746,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 1077.25,
+            "height": 898,
+            "right": 726,
+            "width": 615,
+            "x": 111,
+            "y": 179.25
+          },
+          "surface": "form",
+          "theme": "light",
+          "uiFont": "16px",
+          "urlLength": 374,
+          "viewport": {
+            "height": 868,
+            "width": 800
+          }
+        }
+      }
+    },
+    "phase": "actual long URL config is editable without page overflow"
+  },
+  {
+    "at_ms": 1793953041317,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "close unchanged long URL form"
+  },
+  {
+    "at_ms": 1793953041483,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953041484,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953041484,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953041698,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 800,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 800,
+            "width": 746,
+            "x": 54,
+            "y": 57.75
+          },
+          "pageClientWidth": 729,
+          "pageScrollWidth": 729,
+          "pageWidth": 746,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 2239.25,
+            "height": 2181.5,
+            "right": 748,
+            "width": 659,
+            "x": 89,
+            "y": 57.75
+          },
+          "surface": "detail",
+          "theme": "light",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 800
+          }
+        }
+      }
+    },
+    "phase": "detail shows long diagnostic log without page overflow"
+  },
+  {
+    "at_ms": 1793953042444,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 800,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 800,
+            "width": 746,
+            "x": 54,
+            "y": 57.75
+          },
+          "pageClientWidth": 729,
+          "pageScrollWidth": 729,
+          "pageWidth": 746,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 840,
+            "height": 812,
+            "right": 772,
+            "width": 744,
+            "x": 28,
+            "y": 28
+          },
+          "surface": "modal",
+          "theme": "light",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 800
+          }
+        }
+      }
+    },
+    "phase": "long JSON tool Modal fits native viewport"
+  },
+  {
+    "at_ms": 1793953043167,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "long JSON Modal closes without dispatch"
+  },
+  {
+    "at_ms": 1793953043219,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953043524,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953043682,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "production appearance bootstrap applies saved host snapshot"
+  },
+  {
+    "at_ms": 1793953043849,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953043855,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "MCP hydrates after production reload"
+  },
+  {
+    "at_ms": 1793953044014,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 520,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 520,
+            "width": 466,
+            "x": 54,
+            "y": 57.75
+          },
+          "pageClientWidth": 449,
+          "pageScrollWidth": 449,
+          "pageWidth": 466,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 1177.75,
+            "height": 898,
+            "right": 482,
+            "width": 407,
+            "x": 75,
+            "y": 279.75
+          },
+          "surface": "list",
+          "theme": "light",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 520
+          }
+        }
+      }
+    },
+    "phase": "wide or compact server list wraps long names"
+  },
+  {
+    "at_ms": 1793953044495,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953044495,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953044496,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953044675,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953044890,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 520,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 520,
+            "width": 466,
+            "x": 54,
+            "y": 57.75
+          },
+          "pageClientWidth": 449,
+          "pageScrollWidth": 449,
+          "pageWidth": 466,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 1223.25,
+            "height": 1018.5,
+            "right": 460,
+            "width": 363,
+            "x": 97,
+            "y": 204.75
+          },
+          "surface": "form",
+          "theme": "light",
+          "uiFont": "16px",
+          "urlLength": 374,
+          "viewport": {
+            "height": 868,
+            "width": 520
+          }
+        }
+      }
+    },
+    "phase": "actual long URL config is editable without page overflow"
+  },
+  {
+    "at_ms": 1793953045423,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "close unchanged long URL form"
+  },
+  {
+    "at_ms": 1793953045591,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953045591,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953045592,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953045810,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 520,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 520,
+            "width": 466,
+            "x": 54,
+            "y": 57.75
+          },
+          "pageClientWidth": 449,
+          "pageScrollWidth": 449,
+          "pageWidth": 466,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 2671.75,
+            "height": 2614,
+            "right": 482,
+            "width": 407,
+            "x": 75,
+            "y": 57.75
+          },
+          "surface": "detail",
+          "theme": "light",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 520
+          }
+        }
+      }
+    },
+    "phase": "detail shows long diagnostic log without page overflow"
+  },
+  {
+    "at_ms": 1793953046553,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 520,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 520,
+            "width": 466,
+            "x": 54,
+            "y": 57.75
+          },
+          "pageClientWidth": 449,
+          "pageScrollWidth": 449,
+          "pageWidth": 466,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 840,
+            "height": 812,
+            "right": 492,
+            "width": 464,
+            "x": 28,
+            "y": 28
+          },
+          "surface": "modal",
+          "theme": "light",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 520
+          }
+        }
+      }
+    },
+    "phase": "long JSON tool Modal fits native viewport"
+  },
+  {
+    "at_ms": 1793953047272,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "long JSON Modal closes without dispatch"
+  },
+  {
+    "at_ms": 1793953047331,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953047637,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953047791,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "production appearance bootstrap applies saved host snapshot"
+  },
+  {
+    "at_ms": 1793953047957,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953047962,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "MCP hydrates after production reload"
+  },
+  {
+    "at_ms": 1793953048123,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": false,
+          "density": "100",
+          "documentScrollWidth": 1440,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 1440,
+            "width": 1252,
+            "x": 188,
+            "y": 33
+          },
+          "pageClientWidth": 1252,
+          "pageScrollWidth": 1252,
+          "pageWidth": 1252,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 604.5,
+            "height": 487,
+            "right": 651.453125,
+            "width": 417.453125,
+            "x": 234,
+            "y": 117.5
+          },
+          "surface": "list",
+          "theme": "dark",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 1440
+          }
+        }
+      }
+    },
+    "phase": "wide or compact server list wraps long names"
+  },
+  {
+    "at_ms": 1793953048640,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953048640,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953048640,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953048813,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953049027,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": false,
+          "density": "100",
+          "documentScrollWidth": 1440,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 1440,
+            "width": 1252,
+            "x": 188,
+            "y": 33
+          },
+          "pageClientWidth": 1235,
+          "pageScrollWidth": 1235,
+          "pageWidth": 1252,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 666.5,
+            "height": 536,
+            "right": 1372.484375,
+            "width": 704.53125,
+            "x": 667.953125,
+            "y": 130.5
+          },
+          "surface": "form",
+          "theme": "dark",
+          "uiFont": "12px",
+          "urlLength": 374,
+          "viewport": {
+            "height": 868,
+            "width": 1440
+          }
+        }
+      }
+    },
+    "phase": "actual long URL config is editable without page overflow"
+  },
+  {
+    "at_ms": 1793953049576,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "close unchanged long URL form"
+  },
+  {
+    "at_ms": 1793953049583,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953049584,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953049584,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953049794,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": false,
+          "density": "100",
+          "documentScrollWidth": 1440,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 1440,
+            "width": 1252,
+            "x": 188,
+            "y": 33
+          },
+          "pageClientWidth": 1235,
+          "pageScrollWidth": 1235,
+          "pageWidth": 1252,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 1245,
+            "height": 1127.5,
+            "right": 1385.484375,
+            "width": 730.53125,
+            "x": 654.953125,
+            "y": 117.5
+          },
+          "surface": "detail",
+          "theme": "dark",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 1440
+          }
+        }
+      }
+    },
+    "phase": "detail shows long diagnostic log without page overflow"
+  },
+  {
+    "at_ms": 1793953050561,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": false,
+          "density": "100",
+          "documentScrollWidth": 1440,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 1440,
+            "width": 1252,
+            "x": 188,
+            "y": 33
+          },
+          "pageClientWidth": 1235,
+          "pageScrollWidth": 1235,
+          "pageWidth": 1252,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 824.75,
+            "height": 781.5,
+            "right": 1019.984375,
+            "width": 599.984375,
+            "x": 420,
+            "y": 43.25
+          },
+          "surface": "modal",
+          "theme": "dark",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 1440
+          }
+        }
+      }
+    },
+    "phase": "long JSON tool Modal fits native viewport"
+  },
+  {
+    "at_ms": 1793953051327,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "long JSON Modal closes without dispatch"
+  },
+  {
+    "at_ms": 1793953051386,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953051691,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953051848,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "production appearance bootstrap applies saved host snapshot"
+  },
+  {
+    "at_ms": 1793953052024,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953052029,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "MCP hydrates after production reload"
+  },
+  {
+    "at_ms": 1793953052189,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "100",
+          "documentScrollWidth": 800,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 800,
+            "width": 746,
+            "x": 54,
+            "y": 33
+          },
+          "pageClientWidth": 746,
+          "pageScrollWidth": 746,
+          "pageWidth": 746,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 586,
+            "height": 428.5,
+            "right": 780,
+            "width": 706,
+            "x": 74,
+            "y": 157.5
+          },
+          "surface": "list",
+          "theme": "dark",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 800
+          }
+        }
+      }
+    },
+    "phase": "wide or compact server list wraps long names"
+  },
+  {
+    "at_ms": 1793953052696,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953052697,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953052697,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953052876,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953053090,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "100",
+          "documentScrollWidth": 800,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 800,
+            "width": 746,
+            "x": 54,
+            "y": 33
+          },
+          "pageClientWidth": 729,
+          "pageScrollWidth": 729,
+          "pageWidth": 746,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 744,
+            "height": 554,
+            "right": 750,
+            "width": 663,
+            "x": 87,
+            "y": 190
+          },
+          "surface": "form",
+          "theme": "dark",
+          "uiFont": "12px",
+          "urlLength": 374,
+          "viewport": {
+            "height": 868,
+            "width": 800
+          }
+        }
+      }
+    },
+    "phase": "actual long URL config is editable without page overflow"
+  },
+  {
+    "at_ms": 1793953053667,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "close unchanged long URL form"
+  },
+  {
+    "at_ms": 1793953053838,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953053838,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953053838,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953054052,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "100",
+          "documentScrollWidth": 800,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 800,
+            "width": 746,
+            "x": 54,
+            "y": 33
+          },
+          "pageClientWidth": 729,
+          "pageScrollWidth": 729,
+          "pageWidth": 746,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 1324.5,
+            "height": 1167,
+            "right": 763,
+            "width": 689,
+            "x": 74,
+            "y": 157.5
+          },
+          "surface": "detail",
+          "theme": "dark",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 800
+          }
+        }
+      }
+    },
+    "phase": "detail shows long diagnostic log without page overflow"
+  },
+  {
+    "at_ms": 1793953054802,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "100",
+          "documentScrollWidth": 800,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 800,
+            "width": 746,
+            "x": 54,
+            "y": 33
+          },
+          "pageClientWidth": 729,
+          "pageScrollWidth": 729,
+          "pageWidth": 746,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 824.75,
+            "height": 781.5,
+            "right": 699.984375,
+            "width": 599.984375,
+            "x": 100,
+            "y": 43.25
+          },
+          "surface": "modal",
+          "theme": "dark",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 800
+          }
+        }
+      }
+    },
+    "phase": "long JSON tool Modal fits native viewport"
+  },
+  {
+    "at_ms": 1793953055526,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "long JSON Modal closes without dispatch"
+  },
+  {
+    "at_ms": 1793953055582,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953055887,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953056043,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "production appearance bootstrap applies saved host snapshot"
+  },
+  {
+    "at_ms": 1793953056207,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953056213,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "MCP hydrates after production reload"
+  },
+  {
+    "at_ms": 1793953056373,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "100",
+          "documentScrollWidth": 520,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 520,
+            "width": 466,
+            "x": 54,
+            "y": 33
+          },
+          "pageClientWidth": 466,
+          "pageScrollWidth": 466,
+          "pageWidth": 466,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 725.5,
+            "height": 548.5,
+            "right": 508,
+            "width": 442,
+            "x": 66,
+            "y": 177
+          },
+          "surface": "list",
+          "theme": "dark",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 520
+          }
+        }
+      }
+    },
+    "phase": "wide or compact server list wraps long names"
+  },
+  {
+    "at_ms": 1793953056861,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953056862,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953056862,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953057038,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953057252,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "100",
+          "documentScrollWidth": 520,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 520,
+            "width": 466,
+            "x": 54,
+            "y": 33
+          },
+          "pageClientWidth": 449,
+          "pageScrollWidth": 449,
+          "pageWidth": 466,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 690.5,
+            "height": 572,
+            "right": 478,
+            "width": 399,
+            "x": 79,
+            "y": 118.5
+          },
+          "surface": "form",
+          "theme": "dark",
+          "uiFont": "12px",
+          "urlLength": 374,
+          "viewport": {
+            "height": 868,
+            "width": 520
+          }
+        }
+      }
+    },
+    "phase": "actual long URL config is editable without page overflow"
+  },
+  {
+    "at_ms": 1793953057789,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "close unchanged long URL form"
+  },
+  {
+    "at_ms": 1793953057970,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953057970,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953057970,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953058186,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "100",
+          "documentScrollWidth": 520,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 520,
+            "width": 466,
+            "x": 54,
+            "y": 33
+          },
+          "pageClientWidth": 449,
+          "pageScrollWidth": 449,
+          "pageWidth": 466,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 1433,
+            "height": 1400,
+            "right": 491,
+            "width": 425,
+            "x": 66,
+            "y": 33
+          },
+          "surface": "detail",
+          "theme": "dark",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 520
+          }
+        }
+      }
+    },
+    "phase": "detail shows long diagnostic log without page overflow"
+  },
+  {
+    "at_ms": 1793953058936,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "100",
+          "documentScrollWidth": 520,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 835,
+            "right": 520,
+            "width": 466,
+            "x": 54,
+            "y": 33
+          },
+          "pageClientWidth": 449,
+          "pageScrollWidth": 449,
+          "pageWidth": 466,
+          "rootFont": "14px",
+          "scope": {
+            "bottom": 834.5,
+            "height": 801,
+            "right": 504,
+            "width": 488,
+            "x": 16,
+            "y": 33.5
+          },
+          "surface": "modal",
+          "theme": "dark",
+          "uiFont": "12px",
+          "viewport": {
+            "height": 868,
+            "width": 520
+          }
+        }
+      }
+    },
+    "phase": "long JSON tool Modal fits native viewport"
+  },
+  {
+    "at_ms": 1793953059680,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "long JSON Modal closes without dispatch"
+  },
+  {
+    "at_ms": 1793953059745,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953060050,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953060207,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "production appearance bootstrap applies saved host snapshot"
+  },
+  {
+    "at_ms": 1793953060377,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953060384,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "MCP hydrates after production reload"
+  },
+  {
+    "at_ms": 1793953060544,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 1440,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 1440,
+            "width": 1111,
+            "x": 329,
+            "y": 57.75
+          },
+          "pageClientWidth": 1094,
+          "pageScrollWidth": 1094,
+          "pageWidth": 1111,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 916.75,
+            "height": 662.5,
+            "right": 1388,
+            "width": 1024,
+            "x": 364,
+            "y": 254.25
+          },
+          "surface": "list",
+          "theme": "dark",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 1440
+          }
+        }
+      }
+    },
+    "phase": "wide or compact server list wraps long names"
+  },
+  {
+    "at_ms": 1793953061048,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953061048,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953061049,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953061221,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953061435,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 1440,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 1440,
+            "width": 1111,
+            "x": 329,
+            "y": 57.75
+          },
+          "pageClientWidth": 1094,
+          "pageScrollWidth": 1094,
+          "pageWidth": 1111,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 952.25,
+            "height": 799,
+            "right": 1366,
+            "width": 980,
+            "x": 386,
+            "y": 153.25
+          },
+          "surface": "form",
+          "theme": "dark",
+          "uiFont": "16px",
+          "urlLength": 374,
+          "viewport": {
+            "height": 868,
+            "width": 1440
+          }
+        }
+      }
+    },
+    "phase": "actual long URL config is editable without page overflow"
+  },
+  {
+    "at_ms": 1793953061996,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "close unchanged long URL form"
+  },
+  {
+    "at_ms": 1793953062167,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953062167,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953062167,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953062382,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 1440,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 1440,
+            "width": 1111,
+            "x": 329,
+            "y": 57.75
+          },
+          "pageClientWidth": 1094,
+          "pageScrollWidth": 1094,
+          "pageWidth": 1111,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 1853.25,
+            "height": 1796,
+            "right": 1388,
+            "width": 1024,
+            "x": 364,
+            "y": 57.25
+          },
+          "surface": "detail",
+          "theme": "dark",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 1440
+          }
+        }
+      }
+    },
+    "phase": "detail shows long diagnostic log without page overflow"
+  },
+  {
+    "at_ms": 1793953063152,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 1440,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 1440,
+            "width": 1111,
+            "x": 329,
+            "y": 57.75
+          },
+          "pageClientWidth": 1094,
+          "pageScrollWidth": 1094,
+          "pageWidth": 1111,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 840,
+            "height": 812,
+            "right": 1244.984375,
+            "width": 1049.984375,
+            "x": 195,
+            "y": 28
+          },
+          "surface": "modal",
+          "theme": "dark",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 1440
+          }
+        }
+      }
+    },
+    "phase": "long JSON tool Modal fits native viewport"
+  },
+  {
+    "at_ms": 1793953063906,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "long JSON Modal closes without dispatch"
+  },
+  {
+    "at_ms": 1793953063973,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953064277,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953064436,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "production appearance bootstrap applies saved host snapshot"
+  },
+  {
+    "at_ms": 1793953064603,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953064610,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "MCP hydrates after production reload"
+  },
+  {
+    "at_ms": 1793953064786,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 800,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 800,
+            "width": 746,
+            "x": 54,
+            "y": 57.75
+          },
+          "pageClientWidth": 729,
+          "pageScrollWidth": 729,
+          "pageWidth": 746,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 993.25,
+            "height": 713.5,
+            "right": 748,
+            "width": 659,
+            "x": 89,
+            "y": 279.75
+          },
+          "surface": "list",
+          "theme": "dark",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 800
+          }
+        }
+      }
+    },
+    "phase": "wide or compact server list wraps long names"
+  },
+  {
+    "at_ms": 1793953065290,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953065290,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953065290,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953065463,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953065677,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 800,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 800,
+            "width": 746,
+            "x": 54,
+            "y": 57.75
+          },
+          "pageClientWidth": 729,
+          "pageScrollWidth": 729,
+          "pageWidth": 746,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 1077.25,
+            "height": 898,
+            "right": 726,
+            "width": 615,
+            "x": 111,
+            "y": 179.25
+          },
+          "surface": "form",
+          "theme": "dark",
+          "uiFont": "16px",
+          "urlLength": 374,
+          "viewport": {
+            "height": 868,
+            "width": 800
+          }
+        }
+      }
+    },
+    "phase": "actual long URL config is editable without page overflow"
+  },
+  {
+    "at_ms": 1793953066217,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "close unchanged long URL form"
+  },
+  {
+    "at_ms": 1793953066388,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953066388,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953066388,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953066603,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 800,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 800,
+            "width": 746,
+            "x": 54,
+            "y": 57.75
+          },
+          "pageClientWidth": 729,
+          "pageScrollWidth": 729,
+          "pageWidth": 746,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 2239.25,
+            "height": 2181.5,
+            "right": 748,
+            "width": 659,
+            "x": 89,
+            "y": 57.75
+          },
+          "surface": "detail",
+          "theme": "dark",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 800
+          }
+        }
+      }
+    },
+    "phase": "detail shows long diagnostic log without page overflow"
+  },
+  {
+    "at_ms": 1793953067347,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 800,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 800,
+            "width": 746,
+            "x": 54,
+            "y": 57.75
+          },
+          "pageClientWidth": 729,
+          "pageScrollWidth": 729,
+          "pageWidth": 746,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 840,
+            "height": 812,
+            "right": 772,
+            "width": 744,
+            "x": 28,
+            "y": 28
+          },
+          "surface": "modal",
+          "theme": "dark",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 800
+          }
+        }
+      }
+    },
+    "phase": "long JSON tool Modal fits native viewport"
+  },
+  {
+    "at_ms": 1793953068076,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "long JSON Modal closes without dispatch"
+  },
+  {
+    "at_ms": 1793953068133,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953068437,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953068594,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "production appearance bootstrap applies saved host snapshot"
+  },
+  {
+    "at_ms": 1793953068760,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953068768,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "MCP hydrates after production reload"
+  },
+  {
+    "at_ms": 1793953068927,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 520,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 520,
+            "width": 466,
+            "x": 54,
+            "y": 57.75
+          },
+          "pageClientWidth": 449,
+          "pageScrollWidth": 449,
+          "pageWidth": 466,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 1177.75,
+            "height": 898,
+            "right": 482,
+            "width": 407,
+            "x": 75,
+            "y": 279.75
+          },
+          "surface": "list",
+          "theme": "dark",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 520
+          }
+        }
+      }
+    },
+    "phase": "wide or compact server list wraps long names"
+  },
+  {
+    "at_ms": 1793953069424,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953069424,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953069424,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953069605,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953069819,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 520,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 520,
+            "width": 466,
+            "x": 54,
+            "y": 57.75
+          },
+          "pageClientWidth": 449,
+          "pageScrollWidth": 449,
+          "pageWidth": 466,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 1223.25,
+            "height": 1018.5,
+            "right": 460,
+            "width": 363,
+            "x": 97,
+            "y": 204.75
+          },
+          "surface": "form",
+          "theme": "dark",
+          "uiFont": "16px",
+          "urlLength": 374,
+          "viewport": {
+            "height": 868,
+            "width": 520
+          }
+        }
+      }
+    },
+    "phase": "actual long URL config is editable without page overflow"
+  },
+  {
+    "at_ms": 1793953070363,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "close unchanged long URL form"
+  },
+  {
+    "at_ms": 1793953070547,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953070548,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953070548,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953070761,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 520,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 520,
+            "width": 466,
+            "x": 54,
+            "y": 57.75
+          },
+          "pageClientWidth": 449,
+          "pageScrollWidth": 449,
+          "pageWidth": 466,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 2671.75,
+            "height": 2614,
+            "right": 482,
+            "width": 407,
+            "x": 75,
+            "y": 57.75
+          },
+          "surface": "detail",
+          "theme": "dark",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 520
+          }
+        }
+      }
+    },
+    "phase": "detail shows long diagnostic log without page overflow"
+  },
+  {
+    "at_ms": 1793953071528,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "compact": true,
+          "density": "175",
+          "documentScrollWidth": 520,
+          "horizontal": [],
+          "modalFits": true,
+          "ok": true,
+          "page": {
+            "bottom": 868,
+            "height": 810.25,
+            "right": 520,
+            "width": 466,
+            "x": 54,
+            "y": 57.75
+          },
+          "pageClientWidth": 449,
+          "pageScrollWidth": 449,
+          "pageWidth": 466,
+          "rootFont": "24.5px",
+          "scope": {
+            "bottom": 840,
+            "height": 812,
+            "right": 492,
+            "width": 464,
+            "x": 28,
+            "y": 28
+          },
+          "surface": "modal",
+          "theme": "dark",
+          "uiFont": "16px",
+          "viewport": {
+            "height": 868,
+            "width": 520
+          }
+        }
+      }
+    },
+    "phase": "long JSON tool Modal fits native viewport"
+  },
+  {
+    "at_ms": 1793953072248,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "long JSON Modal closes without dispatch"
+  },
+  {
+    "at_ms": 1793953072305,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953072609,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953072767,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "production appearance bootstrap applies saved host snapshot"
+  },
+  {
+    "at_ms": 1793953072943,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953072951,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "MCP hydrates after production reload"
+  },
+  {
+    "at_ms": 1793953072962,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953072962,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953072962,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953073130,
+    "command": "get_mcp_server_config",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953073179,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "focus server editor before native resize"
+  },
+  {
+    "at_ms": 1793953073240,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native shrink retains visible editor and valid focus"
+  },
+  {
+    "at_ms": 1793953073772,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "compact back returns focus to server search"
+  },
+  {
+    "at_ms": 1793953073830,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "compact resume restores editor detail focus"
+  },
+  {
+    "at_ms": 1793953073895,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native grow restores both columns with original editor"
+  },
+  {
+    "at_ms": 1793953073953,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "close resize editor"
+  },
+  {
+    "at_ms": 1793953073961,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "focus existing work-surface menu opener"
+  },
+  {
+    "at_ms": 1793953074213,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Enter opens surface menu at current MCP entry"
+  },
+  {
+    "at_ms": 1793953074464,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Home navigates surface menu"
+  },
+  {
+    "at_ms": 1793953074717,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "native Escape returns surface menu focus to opener"
+  },
+  {
+    "at_ms": 1793953074777,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953075083,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953075240,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "production appearance bootstrap applies saved host snapshot"
+  },
+  {
+    "at_ms": 1793953075411,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793953075418,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "MCP hydrates after production reload"
+  },
+  {
+    "at_ms": 1793953075596,
+    "command": "list_mcp_tools",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953075597,
+    "command": "list_mcp_usage_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953075597,
+    "command": "list_mcp_connection_logs",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793953075913,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "prepare long modal for independent scroll and focus checks"
+  },
+  {
+    "at_ms": 1793953076078,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "footer": {
+            "bottom": 797,
+            "height": 49,
+            "right": 729,
+            "width": 202.53125,
+            "x": 526.46875,
+            "y": 748
+          },
+          "json": {
+            "height": 418,
+            "top": 785,
+            "total": 1203
+          },
+          "ok": true,
+          "outer": {
+            "height": 599,
+            "top": 457,
+            "total": 1056
+          },
+          "pageTop": 222
+        }
+      }
+    },
+    "phase": "modal and JSON scroll independently while footer stays reachable"
+  },
+  {
+    "at_ms": 1793953076485,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "clips": [
+            {
+              "bottom": 724,
+              "height": 599,
+              "right": 733,
+              "width": 666,
+              "x": 67,
+              "y": 125
+            }
+          ],
+          "ok": true,
+          "outline": "2px solid rgb(221, 181, 118)",
+          "rect": {
+            "bottom": 358,
+            "height": 39.5,
+            "right": 712,
+            "width": 641,
+            "x": 71,
+            "y": 318.5
+          },
+          "shadow": "none",
+          "target": "SUMMARY"
+        }
+      }
+    },
+    "phase": "native modal focus has visible ring and unclipped control"
+  },
+  {
+    "at_ms": 1793953076902,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "clips": [
+            {
+              "bottom": 724,
+              "height": 599,
+              "right": 733,
+              "width": 666,
+              "x": 67,
+              "y": 125
+            }
+          ],
+          "ok": true,
+          "outline": "2px solid rgb(221, 181, 118)",
+          "rect": {
+            "bottom": 425.5,
+            "height": 39.5,
+            "right": 712,
+            "width": 641,
+            "x": 71,
+            "y": 386
+          },
+          "shadow": "none",
+          "target": "SUMMARY"
+        }
+      }
+    },
+    "phase": "native modal focus has visible ring and unclipped control"
+  },
+  {
+    "at_ms": 1793953077319,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "clips": [
+            {
+              "bottom": 801,
+              "height": 57,
+              "right": 733,
+              "width": 666,
+              "x": 67,
+              "y": 744
+            }
+          ],
+          "ok": true,
+          "outline": "2px solid rgb(221, 181, 118)",
+          "rect": {
+            "bottom": 797,
+            "height": 49,
+            "right": 512.46875,
+            "width": 190.25,
+            "x": 322.21875,
+            "y": 748
+          },
+          "shadow": "none",
+          "target": "BUTTON"
+        }
+      }
+    },
+    "phase": "native modal focus has visible ring and unclipped control"
+  },
+  {
+    "at_ms": 1793953077735,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "clips": [
+            {
+              "bottom": 801,
+              "height": 57,
+              "right": 733,
+              "width": 666,
+              "x": 67,
+              "y": 744
+            }
+          ],
+          "ok": true,
+          "outline": "2px solid rgb(221, 181, 118)",
+          "rect": {
+            "bottom": 797,
+            "height": 49,
+            "right": 729,
+            "width": 202.53125,
+            "x": 526.46875,
+            "y": 748
+          },
+          "shadow": "none",
+          "target": "BUTTON"
+        }
+      }
+    },
+    "phase": "native modal focus has visible ring and unclipped control"
+  },
+  {
+    "at_ms": 1793953078153,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "clips": [],
+          "ok": true,
+          "outline": "2px solid rgb(221, 181, 118)",
+          "rect": {
+            "bottom": 106,
+            "height": 56,
+            "right": 750,
+            "width": 56,
+            "x": 694,
+            "y": 50
+          },
+          "shadow": "none",
+          "target": "BUTTON"
+        }
+      }
+    },
+    "phase": "native modal focus has visible ring and unclipped control"
+  },
+  {
+    "at_ms": 1793953078568,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "clips": [
+            {
+              "bottom": 724,
+              "height": 599,
+              "right": 733,
+              "width": 666,
+              "x": 67,
+              "y": 125
+            }
+          ],
+          "ok": true,
+          "outline": "2px solid rgb(221, 181, 118)",
+          "rect": {
+            "bottom": 238.5,
+            "height": 56,
+            "right": 712,
+            "width": 87.921875,
+            "x": 624.078125,
+            "y": 182.5
+          },
+          "shadow": "none",
+          "target": "BUTTON"
+        }
+      }
+    },
+    "phase": "native modal focus has visible ring and unclipped control"
+  },
+  {
+    "at_ms": 1793953078986,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "clips": [
+            {
+              "bottom": 724,
+              "height": 599,
+              "right": 733,
+              "width": 666,
+              "x": 67,
+              "y": 125
+            }
+          ],
+          "ok": true,
+          "outline": "2px solid rgb(221, 181, 118)",
+          "rect": {
+            "bottom": 358,
+            "height": 39.5,
+            "right": 712,
+            "width": 641,
+            "x": 71,
+            "y": 318.5
+          },
+          "shadow": "none",
+          "target": "SUMMARY"
+        }
+      }
+    },
+    "phase": "native modal focus has visible ring and unclipped control"
+  },
+  {
+    "at_ms": 1793953079402,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "clips": [
+            {
+              "bottom": 724,
+              "height": 599,
+              "right": 733,
+              "width": 666,
+              "x": 67,
+              "y": 125
+            }
+          ],
+          "ok": true,
+          "outline": "2px solid rgb(221, 181, 118)",
+          "rect": {
+            "bottom": 425.5,
+            "height": 39.5,
+            "right": 712,
+            "width": 641,
+            "x": 71,
+            "y": 386
+          },
+          "shadow": "none",
+          "target": "SUMMARY"
+        }
+      }
+    },
+    "phase": "native modal focus has visible ring and unclipped control"
+  },
+  {
+    "at_ms": 1793953080139,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "supplemental modal closes without dispatch"
+  }
+]

@@ -1,0 +1,45 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling dgos-providers v0.1.0 (<repo>/crates/dgos-providers)
+   Compiling dgos v0.1.0 (<repo>/src-tauri)
+   Compiling dgos-workbench v0.1.0 (<repo>/crates/dgos-workbench)
+   Compiling dgos-agents v0.1.0 (<repo>/crates/dgos-agents)
+   Compiling dgos-application v0.1.0 (<repo>/crates/dgos-application)
+   Compiling dgos-lan v0.1.0 (<repo>/crates/dgos-lan)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 25s
+     Running tests/webview_smoke_chat.rs (target/debug/deps/webview_smoke_chat-4c98ed17dd8b960c)
+PASS [12] desktop opens through production shell
+PASS [12] desktop preference saves through UI and survives a new renderer lifecycle
+PASS [12] model and generation controls save before send
+PASS [12] production Channel renders loopback partial
+PASS [12] running chat preserves draft, selection and scroll across theme cancel/apply
+PASS [12] live generation refuses database maintenance
+PASS [12] saved controls and ordered skills reach loopback exactly once
+PASS [12] resource navigation and focus restore preserve original work surface
+PASS [12] module starts with explicit host permission
+PASS [12] enabled module reaches ready runtime
+PASS [12] real Provider catalog and independent module views preserve the first draft
+PASS [12] tool configuration and approval execute one controlled MCP round trip
+PASS [12] stop-and-close waits for the persisted interrupted terminal
+PASS [12] reopening the saved conversation restores its real message history
+PASS [12] real installed Node version probe
+PASS [12] controlled text asset imports previews removes and becomes unavailable
+PASS [12] real host transcription validates and sends controlled multipart to loopback
+PASS [12] storage preview cancellation preserves isolated data
+PASS [12] storage confirms real cleanup and refreshes without cross-account deletion
+PASS [12] idle isolated database executes confirmed VACUUM
+PASS [11] two real accounts created
+PASS [11] old-owner chat created
+PASS [11] CLI version, account CAS save and readback use production IPC
+PASS [11] production Agent process starts
+PASS [11] chat, task and module run together
+PASS [11] failed authentication preserves all running work and draft
+PASS [11] production account menu switches and reloads
+PASS [11] switching cancels old tasks and isolates new owner data
+PASS [11] new account cannot read old Agent
+PASS [11] new account page contains no old views or drafts
+PASS [11] sign-out gates commands and same-owner relogin cannot revive old lease
+INFO phase6 external service boundary: loopback HTTP and isolated SQLite; no microphone or vendor evidence
+SMOKE RESULT: 31 passed, 0 failed

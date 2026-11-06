@@ -1,0 +1,15 @@
+   Compiling dgos v0.1.0 (<repo>/src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 29.61s
+     Running tests/webview_smoke_mcp.rs (target/debug/deps/webview_smoke_mcp-56399f9a4388c644)
+INFO MCP page retained evidence <local-evidence>/native-final
+PASS production shell loads English from isolated host
+FAIL navigate /mcp: {"error":"harness timeout","ok":false}
+FAIL MCP page journey completes: navigate /mcp: {"error":"harness timeout","ok":false}
+PASS failure native screenshot retained
+PASS shipped dist asset identity recorded
+PASS owned MCP sessions shut down
+SMOKE RESULT: 4 passed, 2 failed; retained MCP page evidence <local-evidence>/native-final
+error: test failed, to rerun pass `-p dgos --test webview_smoke_mcp`
+
+Caused by:
+  process didn't exit successfully: `<repo>/target/debug/deps/webview_smoke_mcp-56399f9a4388c644 --nocapture` (exit status: 1)

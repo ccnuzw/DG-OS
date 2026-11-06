@@ -1,0 +1,348 @@
+{
+  "environment": {
+    "schema": 1,
+    "browser": {
+      "product": "Chrome/157.0.8103.38",
+      "revision": "@a733b5afbb3ba618844ff8876b89ad1a774b2f18",
+      "jsVersion": "15.7.112.23",
+      "sha256": "dd871aadc6a91a704083748e997f74ab71fa2f51a91fc0df0329188ea2c9f368"
+    },
+    "os": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "release": "27.0.0",
+      "version": "Darwin Kernel Version 27.0.0: Tue Aug 11 21:22:49 PDT 2026; root:xnu-13432.1.9~1/RELEASE_ARM64_T6000",
+      "productVersion": "27.0.1"
+    },
+    "node": "v22.23.0",
+    "flags": [
+      "--headless=new",
+      "--remote-debugging-port=0",
+      "--remote-debugging-address=127.0.0.1",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-background-networking",
+      "--disable-component-update",
+      "--disable-sync",
+      "--disable-extensions",
+      "--hide-scrollbars",
+      "--force-device-scale-factor=1",
+      "--force-color-profile=srgb",
+      "--lang=en-US",
+      "--window-size=1280,900",
+      "about:blank"
+    ],
+    "deviceScaleFactor": 1,
+    "timezone": "UTC",
+    "locale": "en-US",
+    "colorProfile": "srgb",
+    "fonts": [
+      {
+        "family": "-apple-system",
+        "widths": [
+          404.19970703125,
+          250
+        ],
+        "rasterSha256": "8c77b3e1bea9ab0da76150509792fefb609459d9db3083e423538f817ac01cf1"
+      },
+      {
+        "family": "BlinkMacSystemFont",
+        "widths": [
+          383.58135986328125,
+          250
+        ],
+        "rasterSha256": "eaa6c42ee170cf8f5f9be5b73aa22584b8bede2429a604a2014db13277cf953c"
+      },
+      {
+        "family": "sans-serif",
+        "widths": [
+          404.19970703125,
+          250
+        ],
+        "rasterSha256": "8c77b3e1bea9ab0da76150509792fefb609459d9db3083e423538f817ac01cf1"
+      },
+      {
+        "family": "monospace",
+        "widths": [
+          457.55859375,
+          250
+        ],
+        "rasterSha256": "69793f61d346375bd3465c54afef72a9ae676f4a3f6ec84cffc0cbf90b3fb4a1"
+      },
+      {
+        "family": "\"SF Mono\"",
+        "widths": [
+          404.19970703125,
+          250
+        ],
+        "rasterSha256": "8c77b3e1bea9ab0da76150509792fefb609459d9db3083e423538f817ac01cf1"
+      },
+      {
+        "family": "Monaco",
+        "widths": [
+          456.07421875,
+          250
+        ],
+        "rasterSha256": "b4a766ac0a466b07c1b09228da669ada119e044034d810b599beeafe150b8771"
+      }
+    ],
+    "clock": 1793966400000,
+    "comparison": {
+      "threshold": 0.1,
+      "maxDifferentRatio": 0.0001,
+      "includeAA": true
+    },
+    "cases": [
+      {
+        "id": "controls-long-select",
+        "scenario": "controls",
+        "width": 1280,
+        "height": 900,
+        "locale": "zh-CN",
+        "theme": "light",
+        "density": 75,
+        "uiSize": 16,
+        "readingSize": 20,
+        "codeSize": 18
+      },
+      {
+        "id": "modal-narrow",
+        "scenario": "modal",
+        "width": 520,
+        "height": 700,
+        "locale": "en-US",
+        "theme": "dark",
+        "density": 175,
+        "uiSize": 16,
+        "readingSize": 20,
+        "codeSize": 18
+      },
+      {
+        "id": "settings-category-focus",
+        "scenario": "settings",
+        "width": 1280,
+        "height": 900,
+        "locale": "en-US",
+        "theme": "light",
+        "density": 175,
+        "uiSize": 16,
+        "readingSize": 20,
+        "codeSize": 18
+      },
+      {
+        "id": "chat-narrow-composer",
+        "scenario": "chat",
+        "width": 520,
+        "height": 700,
+        "locale": "zh-CN",
+        "theme": "dark",
+        "density": 100,
+        "uiSize": 16,
+        "readingSize": 20,
+        "codeSize": 18
+      },
+      {
+        "id": "chat-narrow-approval",
+        "scenario": "chat-approval",
+        "width": 520,
+        "height": 700,
+        "locale": "en-US",
+        "theme": "light",
+        "density": 75,
+        "uiSize": 16,
+        "readingSize": 20,
+        "codeSize": 18
+      }
+    ],
+    "imageTools": {
+      "pngjsSha256": "e02cecbd36327829758386dc3f0ca4a36a2339ccb5d5e824ca3556e2c3f89726",
+      "pixelmatchSha256": "972e5a5387dde3b6d85ab77337d59ebafca988bf220145caa4b27dc742134dc5"
+    }
+  },
+  "passed": true,
+  "reports": [
+    {
+      "id": "controls-long-select",
+      "passed": true,
+      "geometry": {
+        "fonts": {
+          "ui": {
+            "size": "17px",
+            "family": "-apple-system, \"system-ui\", \"Segoe UI\", Roboto, sans-serif",
+            "lineHeight": "25.5px"
+          },
+          "reading": {
+            "size": "20px",
+            "family": "-apple-system, \"system-ui\", \"Segoe UI\", Roboto, sans-serif",
+            "lineHeight": "35px"
+          },
+          "code": {
+            "size": "18px",
+            "family": "\"SF Mono\", Monaco, \"Cascadia Code\", monospace",
+            "lineHeight": "27px"
+          }
+        },
+        "select": {
+          "menu": {
+            "x": 25,
+            "y": 575,
+            "width": 1230,
+            "height": 146,
+            "top": 575,
+            "right": 1255,
+            "bottom": 721,
+            "left": 25
+          },
+          "option": {
+            "width": 1222,
+            "height": 34.5
+          },
+          "options": 4,
+          "longest": "针对包含中文、English 和长路径的混合内容使用独立的阅读与代码字号"
+        }
+      },
+      "pixels": {
+        "different": 0,
+        "total": 1152000,
+        "ratio": 0,
+        "dimensionsMatch": true,
+        "pass": true
+      },
+      "actual": "<repo>/tools/ui-preview/visual/results/controls-long-select.actual.png",
+      "diff": "<repo>/tools/ui-preview/visual/results/controls-long-select.diff.png"
+    },
+    {
+      "id": "modal-narrow",
+      "passed": true,
+      "geometry": {
+        "dialog": {
+          "x": 28,
+          "y": 28,
+          "width": 464,
+          "height": 644,
+          "top": 28,
+          "right": 492,
+          "bottom": 672,
+          "left": 28
+        },
+        "active": "preview-modal-name"
+      },
+      "pixels": {
+        "different": 0,
+        "total": 364000,
+        "ratio": 0,
+        "dimensionsMatch": true,
+        "pass": true
+      },
+      "actual": "<repo>/tools/ui-preview/visual/results/modal-narrow.actual.png",
+      "diff": "<repo>/tools/ui-preview/visual/results/modal-narrow.diff.png"
+    },
+    {
+      "id": "settings-category-focus",
+      "passed": true,
+      "geometry": {
+        "focus": "Storage",
+        "rect": {
+          "x": 155,
+          "y": 600,
+          "width": 230.46875,
+          "height": 56,
+          "top": 600,
+          "right": 385.46875,
+          "bottom": 656,
+          "left": 155
+        },
+        "scrollTop": 0
+      },
+      "pixels": {
+        "different": 0,
+        "total": 1152000,
+        "ratio": 0,
+        "dimensionsMatch": true,
+        "pass": true
+      },
+      "actual": "<repo>/tools/ui-preview/visual/results/settings-category-focus.actual.png",
+      "diff": "<repo>/tools/ui-preview/visual/results/settings-category-focus.diff.png"
+    },
+    {
+      "id": "chat-narrow-composer",
+      "passed": true,
+      "geometry": {
+        "input": {
+          "x": 80,
+          "y": 409,
+          "width": 414,
+          "height": 113,
+          "top": 409,
+          "right": 494,
+          "bottom": 522,
+          "left": 80
+        },
+        "action": "发送"
+      },
+      "pixels": {
+        "different": 0,
+        "total": 364000,
+        "ratio": 0,
+        "dimensionsMatch": true,
+        "pass": true
+      },
+      "actual": "<repo>/tools/ui-preview/visual/results/chat-narrow-composer.actual.png",
+      "diff": "<repo>/tools/ui-preview/visual/results/chat-narrow-composer.diff.png"
+    },
+    {
+      "id": "chat-narrow-approval",
+      "passed": true,
+      "geometry": {
+        "input": {
+          "x": 73.75,
+          "y": 510.8125,
+          "width": 426.5,
+          "height": 111,
+          "top": 510.8125,
+          "right": 500.25,
+          "bottom": 621.8125,
+          "left": 73.75
+        },
+        "action": "Stop generating",
+        "approval": [
+          {
+            "label": "Approve this call",
+            "rect": {
+              "x": 68,
+              "y": 396,
+              "width": 146.9375,
+              "height": 27.5,
+              "top": 396,
+              "right": 214.9375,
+              "bottom": 423.5,
+              "left": 68
+            }
+          },
+          {
+            "label": "Reject and stop",
+            "rect": {
+              "x": 220.9375,
+              "y": 396,
+              "width": 140.984375,
+              "height": 27.5,
+              "top": 396,
+              "right": 361.921875,
+              "bottom": 423.5,
+              "left": 220.9375
+            }
+          }
+        ]
+      },
+      "pixels": {
+        "different": 0,
+        "total": 364000,
+        "ratio": 0,
+        "dimensionsMatch": true,
+        "pass": true
+      },
+      "actual": "<repo>/tools/ui-preview/visual/results/chat-narrow-approval.actual.png",
+      "diff": "<repo>/tools/ui-preview/visual/results/chat-narrow-approval.diff.png"
+    }
+  ]
+}

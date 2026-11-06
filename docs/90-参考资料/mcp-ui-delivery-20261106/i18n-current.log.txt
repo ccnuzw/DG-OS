@@ -1,0 +1,6 @@
+
+> dgos@0.1.0 i18n:check:strict
+> node scripts/check-i18n.mjs --strict
+
+i18n: 1989 keys, 84 language-domain resources, 254 source files.
+Language keys, interpolation parameters, loader coverage and static callers passed.
