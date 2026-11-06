@@ -1,0 +1,67 @@
+{
+  "evidence": "<local-evidence>/compatibility-audit.json",
+  "sourceAnchors": [
+    "src/ui/styles.css:10",
+    "src/ui/tailwind.css:10",
+    "src/ui/tokens/scale.css:95",
+    "src/modules/moduleHostUi.ts:1",
+    "src/modules/moduleRuntimeHost.ts:258",
+    "crates/dgos-modules/src/admission.rs:67"
+  ],
+  "publicCss": {
+    "retainedLegacyColors": true,
+    "retainedUtilities": [
+      "text-muted-foreground",
+      "text-error-text",
+      "bg-background",
+      "text-foreground",
+      "bg-card",
+      "bg-popover",
+      "bg-primary",
+      "bg-secondary",
+      "bg-muted",
+      "bg-accent",
+      "bg-destructive",
+      "border-input",
+      "ring-ring",
+      "outline-ring",
+      "h-7",
+      "h-9",
+      "w-7",
+      "w-9"
+    ],
+    "retainedInheritedVariables": [
+      "--tab-height-workspace",
+      "--tab-height-session",
+      "--page-gap",
+      "--section-gap",
+      "--content-gap",
+      "--font-family-base",
+      "--font-family-mono"
+    ],
+    "builtUtilityAndLegacyGeometryPresence": "Parent audit confirms checked utilities and five legacy geometry variables remain in current production CSS",
+    "unusedAssessment": "Search found five legacy geometry aliases only at their declarations; they are explicitly published D067 inherited exports and must not be deleted based on first-party nonuse"
+  },
+  "moduleUiBridge": {
+    "sha256": "4e18d64e5f38c653345894ff19d5e3353a3fd421ed25cd9c2f10684908b8f865",
+    "unchangedFromStage6": true,
+    "publicPropsAndApiVersion": "Retained; internal overlay ownership context is not exposed through host.ui"
+  },
+  "bundledProviderConsole": {
+    "version": "1.0.0",
+    "manifestDigest": "d508692aa1bca94857c50971439c686d0cd88783e047e9a4a588872a6c0ec464",
+    "builtinPin": "v2:d508692aa1bca94857c50971439c686d0cd88783e047e9a4a588872a6c0ec464",
+    "agreement": "Manifest and Rust pin agree by static inspection; no digest recomputation executed by investigator",
+    "boundary": "Same-version different-digest installed packages must not be silently overwritten"
+  },
+  "productionPreviewLeakScan": {
+    "assets": 26,
+    "markers": [
+      "__preview",
+      "preview-only",
+      "frame.html",
+      "ui-preview"
+    ],
+    "hits": []
+  }
+}

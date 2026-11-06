@@ -64,24 +64,23 @@ async fn snapshot(project: dgos_db::development_repository::Project) -> Result<B
 }
 impl AgentManager {
     async fn review_snapshot(&self, owner: &str, task_id: &str) -> Result<Baseline, String> {
-        let task = self.inner.repository.task(owner, task_id).await?;
-        let project = self.file_project(owner, &task.project_id).await?;
+        let project = self.task_project(owner, task_id).await?;
         snapshot(project).await
     }
     /// Called under manager admission before the first native send, never recaptures.
     pub(crate) async fn capture_task_baseline(&self, owner: &str, task_id: &str) -> Result<String, String> {
+        self.ensure_task_workspace(owner, task_id).await?;
         if let Some(value) = self.inner.repository.review_baseline(owner, task_id).await? {
             let baseline: Baseline = serde_json::from_value(value).map_err(|_| "storage_failed")?;
             return Ok(baseline.fingerprint);
         }
-        let task = self.inner.repository.task(owner, task_id).await?;
         let mut baseline = self.review_snapshot(owner, task_id).await?;
         for record in self.list(owner).await.into_iter().filter(|r| r.task_id.as_deref() == Some(task_id)) {
             if let Ok(view) = self.snapshot(owner, &record.id).await {
                 if view.view.events.iter().any(|e| matches!(e.kind.as_str(), "userMessage" | "agentMessage" | "message")) { baseline.baseline_late = true; }
             }
         }
-        let inspection = self.inspect_project(owner, &task.project_id).await?;
+        let inspection = self.inspect_task_project(owner, task_id).await?;
         if inspection.error.is_some() || inspection.truncated { baseline.truncated = true; }
         baseline.initial_changes = inspection.changes;
         let fingerprint = baseline.fingerprint.clone();
@@ -149,8 +148,7 @@ impl AgentManager {
     }
     pub async fn read_development_diff(&self, owner: &str, input: DiffInput) -> Result<FileDiff, String> {
         files::relative(&input.path, false)?;
-        let task = self.inner.repository.task(owner, &input.task_id).await?;
-        let project = self.file_project(owner, &task.project_id).await?;
+        let project = self.task_project(owner, &input.task_id).await?;
         let path = input.path.clone();
         let after = tokio::task::spawn_blocking(move || {
             match files::read_at(&files::open_root(&project)?, &path) {

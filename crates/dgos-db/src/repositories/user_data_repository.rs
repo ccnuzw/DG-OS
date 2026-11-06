@@ -63,7 +63,7 @@ impl UserDataDomain {
     /// Tables keyed by `owner`, purged with the workbench domain and included in orphan accounting.
     pub fn owner_tables(self) -> &'static [&'static str] {
         match self {
-            UserDataDomain::Workbench => &["development_run_capabilities", "development_session_capabilities", "development_capability_heads", "development_capability_revisions", "development_selection", "development_commands", "development_runs", "development_review_observations", "development_review_baselines", "development_agent_sessions", "development_project_operations", "development_tasks", "development_projects"],
+            UserDataDomain::Workbench => &["development_handoffs", "development_file_writes", "development_task_workspaces", "development_workspaces", "development_run_capabilities", "development_session_capabilities", "development_capability_heads", "development_capability_revisions", "development_selection", "development_commands", "development_runs", "development_review_observations", "development_review_baselines", "development_agent_sessions", "development_project_operations", "development_tasks", "development_projects"],
             _ => &[],
         }
     }
@@ -211,6 +211,10 @@ fn statements(domain: UserDataDomain) -> &'static [&'static str] {
     match domain {
         UserDataDomain::Chat => &[],
         UserDataDomain::Workbench => &[
+            "DELETE FROM development_handoffs WHERE owner = ?1",
+            "DELETE FROM development_file_writes WHERE owner = ?1",
+            "DELETE FROM development_task_workspaces WHERE owner = ?1",
+            "DELETE FROM development_workspaces WHERE owner = ?1",
             "DELETE FROM development_run_capabilities WHERE owner = ?1",
             "DELETE FROM development_session_capabilities WHERE owner = ?1",
             "DELETE FROM development_capability_heads WHERE owner = ?1",

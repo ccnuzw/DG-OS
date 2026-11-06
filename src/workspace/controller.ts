@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { initialWorkspaceState, type LayoutSnapshot, type WorkspaceState, type WorkspaceSurface } from './model';
 import { reduce, type WorkspaceAction, type ReduceOutcome } from './reducer';
 
-export interface SurfaceStatus { dirty?: boolean; running?: boolean }
+export interface SurfaceStatus { dirty?: boolean; running?: boolean; runningLabel?: string }
 export interface WorkspaceController {
   getSnapshot(): WorkspaceState;
   subscribe(listener: () => void): () => void;
@@ -75,8 +75,10 @@ export function createWorkspaceController(): WorkspaceController {
       if (owners.size) statusOwners.set(id, owners); else statusOwners.delete(id);
       const dirty = [...owners.values()].some(value => value.dirty);
       const running = [...owners.values()].some(value => value.running);
-      if (statuses[id]?.dirty === dirty && statuses[id]?.running === running) return;
-      statuses = { ...statuses, [id]: { dirty, running } };
+      const labels = [...owners.values()].filter(value => value.running).map(value => value.runningLabel);
+      const runningLabel = labels.length && labels.every(Boolean) ? [...new Set(labels)].join(' · ') : undefined;
+      if (statuses[id]?.dirty === dirty && statuses[id]?.running === running && statuses[id]?.runningLabel === runningLabel) return;
+      statuses = { ...statuses, [id]: { dirty, running, ...(runningLabel ? { runningLabel } : {}) } };
       for (const listener of statusListeners) listener();
     },
     getSurfaceStatuses: () => statuses,

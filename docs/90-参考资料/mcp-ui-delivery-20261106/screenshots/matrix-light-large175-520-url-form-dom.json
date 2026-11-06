@@ -1,0 +1,153 @@
+{
+  "ok": true,
+  "value": {
+    "active": {
+      "class": "mcp-server-detail",
+      "label": "MCP Management",
+      "rect": {
+        "bottom": 2667.75,
+        "height": 2610,
+        "right": 482,
+        "width": 407,
+        "x": 75,
+        "y": 57.75
+      },
+      "tag": "SECTION"
+    },
+    "at": "2026-11-06T08:17:24.896Z",
+    "body": "D\nOverview\nResources\nApps\nMCP management\nMCP Management\n\nOnly connect servers you trust. Local processes run with your operating-system permissions.\n\nAdd MCP server\nRefresh status\nYour servers · MCPLongURLABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ReadOnlyConfig\nEdit MCPLongURLABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ReadOnlyConfig\nNo secrets in server configs\nName\nTransport\nHTTP endpoint\nServer URL\n\nPrefer HTTPS or exact localhost. Changing the URL removes its previous credential binding and plaintext consent.\n\nEnable server\nConnect automatically on app startup\n\nSaving never launches a process or connects immediately. Auto-connect is off by default.\n\nSave changes\nCancel\nMCPLongURLABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ReadOnlyConfig\n\nhttp · Disconnected\n\nEdit\nDelete\nHTTP authentication\nNo token\n\nOnly an opaque reference is stored in DGOS. Tokens are never returned to this page. Rotation or removal disconnects the server.\n\nBearer token\nStore token\nMCPLongURLABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ReadOnlyConfig tools\nDescriptions do not grant permissions\nRefresh tools\n\nConnect the server to discover tools.\n\nRecent use\nRefresh usage\n\nParameters and output are never stored. Pending, interrupted, cancelled or timeout can mean the external result is unknown. Check it before retrying; no automatic replay occurs.\n\nNo calls recorded for this server.\n\nConnection history",
+    "density": "175",
+    "dialogs": [],
+    "hasFocus": true,
+    "inputs": [
+      {
+        "disabled": false,
+        "label": "Search servers",
+        "rect": {
+          "bottom": 0,
+          "height": 0,
+          "right": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "type": "text",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "label": "Name",
+        "rect": {
+          "bottom": 525.25,
+          "height": 49,
+          "right": 411,
+          "width": 265,
+          "x": 146,
+          "y": 476.25
+        },
+        "type": "text",
+        "value": "MCPLongURLABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ReadOnlyConfig"
+      },
+      {
+        "disabled": false,
+        "label": "Server URL",
+        "rect": {
+          "bottom": 744.25,
+          "height": 49,
+          "right": 411,
+          "width": 265,
+          "x": 146,
+          "y": 695.25
+        },
+        "type": "text",
+        "value": "https://example.invalid/longURLsegmentABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789longURLsegmentABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789longURLsegmentABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789longURLsegmentABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789longURLsegmentABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789longURLsegmentABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789longURLsegmentABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+      },
+      {
+        "disabled": false,
+        "rect": {
+          "bottom": 1125.25,
+          "height": 28,
+          "right": 146,
+          "width": 28,
+          "x": 118,
+          "y": 1097.25
+        },
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "disabled": false,
+        "rect": {
+          "bottom": 1192.75,
+          "height": 28,
+          "right": 146,
+          "width": 28,
+          "x": 118,
+          "y": 1164.75
+        },
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "disabled": false,
+        "label": "Bearer token",
+        "rect": {
+          "bottom": 1756.25,
+          "height": 49,
+          "right": 431,
+          "width": 305,
+          "x": 126,
+          "y": 1707.25
+        },
+        "type": "password",
+        "value": "[redacted]"
+      }
+    ],
+    "ok": true,
+    "rows": [
+      {
+        "pressed": "false",
+        "rect": {
+          "bottom": 0,
+          "height": 0,
+          "right": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "text": "MCP-SLOW-SAVED-Astdio · Disconnected"
+      },
+      {
+        "pressed": "true",
+        "rect": {
+          "bottom": 0,
+          "height": 0,
+          "right": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "text": "MCPLongURLABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ReadOnlyConfighttp · Disconnected"
+      },
+      {
+        "pressed": "false",
+        "rect": {
+          "bottom": 0,
+          "height": 0,
+          "right": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "text": "Official SDK Echohttp · Connected"
+      }
+    ],
+    "theme": "light",
+    "url": "tauri://localhost/mcp",
+    "viewport": {
+      "height": 868,
+      "width": 520
+    },
+    "visibility": "visible"
+  }
+}

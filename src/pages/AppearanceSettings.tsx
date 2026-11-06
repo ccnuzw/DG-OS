@@ -70,7 +70,7 @@ export default function AppearanceSettings() {
       <Select label={t('appearance.sidebar')} disabled={blocked} value={draft.effects.sidebarTreatment} options={['solid','soft'].map(value=>({value,label:t(`appearance.sidebar.${value}`)}))} onChange={value=>change(next=>{next.effects.sidebarTreatment=value as 'solid'|'soft';})}/>
     </Stack></section>
     <section className="appearance-section" aria-label={t('appearance.preview')}><h2 className="settings-section-title">{t('appearance.preview')}</h2><div className="flex flex-wrap gap-3"><Button>{t('appearance.primaryButton')}</Button><Button variant="secondary">{t('appearance.secondaryButton')}</Button></div><p className="type-reading">{t('appearance.previewReading')}</p><pre className="type-code overflow-x-auto">{t('appearance.previewCode')}</pre></section>
-    {state.error?<p role="alert" className="text-sm text-error-text">{t(state.error==='revision_conflict'?'appearance.error.conflict':`appearance.error.${['invalid','failed','unconfirmed','corrupt','unsupported_schema'].includes(state.phase)?state.phase:'failed'}`)}</p>:null}
+    {state.error?<p role="alert" className="text-sm text-status-error-text">{t(state.error==='revision_conflict'?'appearance.error.conflict':`appearance.error.${['invalid','failed','unconfirmed','corrupt','unsupported_schema'].includes(state.phase)?state.phase:'failed'}`)}</p>:null}
     <div className="settings-actions">
       <Button variant="secondary" disabled={busy} onClick={()=>controller.cancel()}>{t('appearance.cancelPreview')}</Button>
       <Button loading={busy} disabled={blocked||!['drafting','failed'].includes(state.phase)} onClick={()=>void controller.apply()}>{t('appearance.apply')}</Button>

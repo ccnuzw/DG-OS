@@ -713,7 +713,7 @@ describe('independent document views (D129)', () => {
         const h = host.React.createElement;
         return { Component: () => null, openView: ({ documentId }) => ({
           Component: () => { const [n, set] = host.React.useState(0); return h('button', { onClick: () => set(n+1) }, documentId + ':' + n); },
-          beforeClose: () => ({ dirty: true, canSave: true }), save: () => false,
+          beforeClose: () => ({ dirty: documentId === 'doc-a', canSave: true }), save: () => false,
         }) };
       }`,
     }));
@@ -722,12 +722,15 @@ describe('independent document views (D129)', () => {
     const b = await h.host.openView('rt-1', 'b', 'doc-b');
     expect(a.container).not.toBe(b.container);
     expect(await h.host.openView('rt-1', 'duplicate', 'doc-a')).toBe(a);
+    expect(await h.host.prepareViewClose('rt-1', 'a')).toEqual({ dirty: true, canSave: true });
+    expect(await h.host.prepareViewClose('rt-1', 'b')).toEqual({ dirty: false, canSave: true });
     a.container.querySelector('button')!.click();
     await vi.waitFor(() => expect(a.container.textContent).toBe('doc-a:1'));
     expect(b.container.textContent).toBe('doc-b:0');
     expect(await h.host.saveView('rt-1', 'a')).toBe(false);
     h.host.closeView('rt-1', 'a');
     expect(b.container.textContent).toBe('doc-b:0');
+    expect(await h.host.prepareViewClose('rt-1', 'b')).toEqual({ dirty: false, canSave: true });
     expect(h.host.getSnapshot()[0].runtimeId).toBe('rt-1');
     const reopened = await h.host.openView('rt-1', 'a', 'doc-a');
     expect(reopened.container).not.toBe(a.container);
@@ -793,5 +796,29 @@ describe('independent document views (D129)', () => {
     gate.resolve(true);
     await expect(saved).resolves.toBe(false);
     expect(reopened.container).not.toBe(old.container);
+  });
+
+  it('blocks an old close preparation after its document is closed and reopened', async () => {
+    const h = await attachedHarness();
+    const gate = Promise.withResolvers<{ dirty: boolean }>();
+    hooksControl().seenReact = gate.promise;
+    h.send(loadInstruction('counter.js', {
+      views: { layout: 'document', capability: 'multiple' },
+      source: `export default function createModule() {
+        return { Component: () => null, openView: () => ({ Component: () => null,
+          beforeClose: () => globalThis.__dgosHooks.seenReact }) };
+      }`,
+    }));
+    await h.waitForReceipts(1);
+    const old = await h.host.openView('rt-1', 'a', 'doc-a');
+    const prepared = h.host.prepareViewClose('rt-1', 'a');
+    h.host.closeView('rt-1', 'a');
+    const reopened = await h.host.openView('rt-1', 'a', 'doc-a');
+    gate.resolve({ dirty: false });
+    await expect(prepared).resolves.toEqual({ dirty: false, blocked: true });
+    expect(reopened.container).not.toBe(old.container);
+    await expect(h.host.prepareViewClose('rt-1', 'a')).resolves.toEqual({ dirty: false });
+    h.send(unloadInstruction());
+    await h.waitForReceipts(2);
   });
 });

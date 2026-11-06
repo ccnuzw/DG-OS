@@ -1,0 +1,3155 @@
+{
+  "schema": 1,
+  "artifact": "docs/90-参考资料/mcp-ui-delivery-20261106/delivery-groups.json",
+  "artifactWrittenByInvestigator": false,
+  "blockingCapability": "Investigator has read/grep/glob/search/ask tools only; parent must persist this JSON. No repository files were changed.",
+  "head": "d7422a51964086f084f2429d5d769468fce53f30",
+  "inventoryBasis": {
+    "snapshot": "verification.json and finalDirtyFiles below; historical initial snapshot retained in local evidence",
+    "gitStatusEvidence": "artifact://1",
+    "gitNumstatEvidence": "artifact://5",
+    "patchEvidence": "artifact://15",
+    "trackedModified": 233,
+    "untrackedIndividualFiles": 102,
+    "untrackedCollapsedEntriesReportedByParent": 78,
+    "totalInitialDirtyFiles": 335,
+    "staged": 0,
+    "assignmentGranularity": "whole-file",
+    "assignmentRule": "Every dirty file at final capture belongs to exactly one group.files array; archive directory rule belongs only to G13. References in attribution/evidence are not additional assignments.",
+    "completenessLimit": "Initial read-only semantic review plus parent shared-file diff inspection; final exact path coverage is mechanically checked. Parallel edits remain separate, hashes identify snapshots.",
+    "notExecuted": [
+      "git add",
+      "git commit",
+      "git push",
+      "git merge",
+      "baseline record or accept",
+      "deletion"
+    ],
+    "artifactWrittenByParent": true,
+    "completeness": "Final dirty paths assigned once; whole-file review buckets. Shared integration files require atomic integration with introducing groups; no independently buildable intermediate-commit claim."
+  },
+  "recommendedOrder": [
+    "G01-design-system-and-consumers",
+    "G02-resource-state-and-skills",
+    "G03-workspace-and-module-lifecycle",
+    "G04-settings-sample",
+    "G05-chat-sample",
+    "G06-mcp-page-sample",
+    "G07-agent-host-and-storage",
+    "G08-agent-product-ui",
+    "G09-provider-transport",
+    "G10-adjacent-host-privacy-and-toolchain",
+    "G11-integrated-native-regressions",
+    "G12-preview-and-visual-baseline",
+    "G13-integrated-delivery-records"
+  ],
+  "groups": [
+    {
+      "id": "G01-design-system-and-consumers",
+      "owner": "UI",
+      "title": "Semantic colors, geometry, typography and shared control boundaries",
+      "dependsOn": [],
+      "commitReadiness": "Final frontend1128/build/visual5 pass; public module CSS/host.ui exports retained.",
+      "notes": [
+        "Includes mechanically migrated Provider/account/LAN/page consumers; their CSS changes are UI ownership, not Provider transport ownership.",
+        "Keeps D067 public inherited variables, legacy utility outputs and host.ui compatibility.",
+        "Bundled provider-console entry, manifest digest and Rust admission pin must move atomically."
+      ],
+      "files": [
+        "bundled-modules/provider-console/1.0.0/entry.js",
+        "bundled-modules/provider-console/1.0.0/manifest.json",
+        "crates/dgos-modules/src/admission.rs",
+        "eslint.config.mjs",
+        "stylelint.config.mjs",
+        "index.html",
+        "scripts/design-check.mjs",
+        "scripts/design-check/html-scan.mjs",
+        "scripts/design-check/scope.mjs",
+        "scripts/design-check/eslint-semantic-colors.mjs",
+        "scripts/design-check/semantic-colors.mjs",
+        "scripts/design-check/stylelint-semantic-colors.mjs",
+        "src/accounts/AccountGate.tsx",
+        "src/accounts/AccountMenu.tsx",
+        "src/accounts/AuthShell.tsx",
+        "src/accounts/WelcomePage.tsx",
+        "src/components/McpConnectionNotice.tsx",
+        "src/components/ProviderForm.tsx",
+        "src/components/ProviderList.tsx",
+        "src/features/settings/storage/StorageSettings.tsx",
+        "src/index.css",
+        "src/lan/remote/App.tsx",
+        "src/lan/remote/ChatView.tsx",
+        "src/lan/remote/MessageItem.tsx",
+        "src/lan/remote/NewSessionForm.tsx",
+        "src/lan/remote/PairingView.tsx",
+        "src/lan/remote/classes.ts",
+        "src/lan/remote/lan.css",
+        "src/modules/ModuleMcpConfirm.tsx",
+        "src/pages/AboutSettings.tsx",
+        "src/pages/AccountSettings.tsx",
+        "src/pages/AppearanceSettings.tsx",
+        "src/pages/Desktop.css",
+        "src/pages/Desktop.tsx",
+        "src/pages/LanSettings.tsx",
+        "src/pages/ModuleManagement.tsx",
+        "src/pages/ProviderManagement.tsx",
+        "src/ui/components/Button.tsx",
+        "src/ui/components/Card.tsx",
+        "src/ui/components/Checkbox.tsx",
+        "src/ui/components/Divider.tsx",
+        "src/ui/components/ErrorPage.tsx",
+        "src/ui/components/Field.tsx",
+        "src/ui/components/Input.tsx",
+        "src/ui/components/Loading.tsx",
+        "src/ui/components/Menu.tsx",
+        "src/ui/components/Modal.tsx",
+        "src/ui/components/Popover.tsx",
+        "src/ui/components/RadioGroup.tsx",
+        "src/ui/components/Select.tsx",
+        "src/ui/components/Slider.tsx",
+        "src/ui/components/Switch.tsx",
+        "src/ui/components/Tabs.tsx",
+        "src/ui/components/ToastViewport.tsx",
+        "src/ui/components/Tooltip.tsx",
+        "src/ui/lib/focus.ts",
+        "src/ui/styles.css",
+        "src/ui/tailwind.css",
+        "src/ui/tokens/colors.css",
+        "src/ui/tokens/density.css",
+        "src/ui/tokens/geometry.css",
+        "src/ui/tokens/scale.css",
+        "tests/design-check.test.tsx",
+        "tests/fixtures/design-check/clean/index.html",
+        "tests/fixtures/design-check/clean/src/clean.css",
+        "tests/fixtures/design-check/clean/src/clean.tsx",
+        "tests/fixtures/design-check/clean/src/ui/tokens/colors.css",
+        "tests/fixtures/design-check/violations/src/focus-ring.tsx",
+        "tests/ui-controls.test.tsx",
+        "tests/ui-overlays.test.tsx",
+        "docs/03-功能规格/V1/01-底层能力/05-统一设计系统.md",
+        "docs/03-功能规格/V2/03-产品设计/外观主题与作用域设计.md"
+      ]
+    },
+    {
+      "id": "G02-resource-state-and-skills",
+      "owner": "UI",
+      "title": "Read freshness, retained data and resource page presentation",
+      "dependsOn": [
+        "G01-design-system-and-consumers"
+      ],
+      "commitReadiness": "Final frontend suite and affected Skills23/workbench targets pass.",
+      "notes": [
+        "resourceState is read metadata only; resource data remains with its existing store.",
+        "MCP and development consumers are assigned as whole files to their own groups and depend on this group."
+      ],
+      "files": [
+        "src/resourceState.ts",
+        "src/ui/components/PagePatterns.tsx",
+        "src/ui/components/patterns.css",
+        "src/ui/index.ts",
+        "src/pages/SkillsManagement.tsx",
+        "src/stores/skillsStore.ts",
+        "src/i18n/locales/en-US/patterns.ts",
+        "src/i18n/locales/zh-CN/patterns.ts",
+        "tests/ui-page-patterns.test.tsx",
+        "tests/skills-center.test.tsx",
+        "tests/skills-workbench.test.tsx",
+        "tests/skills.test.tsx"
+      ]
+    },
+    {
+      "id": "G03-workspace-and-module-lifecycle",
+      "owner": "UI",
+      "title": "App composition, navigation, activity and guarded surface closing",
+      "dependsOn": [
+        "G01-design-system-and-consumers"
+      ],
+      "commitReadiness": "Final frontend, static IPC182 and controlled native media/account31 pass.",
+      "notes": [
+        "App.tsx is owned here in full: navigation extraction, ModuleSurface assembly, settings overlay and visible/active propagation belong together.",
+        "ModuleSurface is lifecycle code, not an unused temporary component.",
+        "Preserves asynchronous document identity and close guard ownership."
+      ],
+      "files": [
+        "src/modules/ModuleSurface.tsx",
+        "src/modules/moduleRuntimeHost.ts",
+        "src/workspace/AppShell.tsx",
+        "src/workspace/SurfaceContext.tsx",
+        "src/workspace/TabBar.tsx",
+        "src/workspace/WorkspaceTools.tsx",
+        "src/workspace/closeCoordinator.ts",
+        "src/workspace/controller.ts",
+        "src/workspace/shell.css",
+        "src/workspace/useAppCatalog.ts",
+        "src/workspace/useWorkspaceTabs.ts",
+        "src/workspace/navigation.tsx",
+        "src/workspace/useAppActions.ts",
+        "tests/app-shell.test.tsx",
+        "tests/module-host-routing.test.tsx",
+        "tests/module-management.test.tsx",
+        "tests/module-runtime-host.test.tsx",
+        "tests/pending-workspace-close.test.tsx",
+        "tests/surface-context.test.tsx",
+        "tests/workspaceShell.test.tsx"
+      ]
+    },
+    {
+      "id": "G04-settings-sample",
+      "owner": "UI",
+      "title": "Stage2 settings/CLI sample and stage4 focus/accessibility fixes",
+      "dependsOn": [
+        "G01-design-system-and-consumers",
+        "G03-workspace-and-module-lifecycle"
+      ],
+      "commitReadiness": "Final frontend/build/visual pass; historical settings42 raw-log limitation retained.",
+      "notes": [
+        "SettingsOverlay and workspace.css contain shell compatibility plus sample layout/focus changes; assign their entire diffs here.",
+        "Full settings business W7 is outside the accepted sample evidence."
+      ],
+      "files": [
+        "src/pages/SettingsShell.tsx",
+        "src/pages/CliSettings.tsx",
+        "src/pages/settings-content.css",
+        "src/workspace/SettingsOverlay.tsx",
+        "src/workspace/workspace.css",
+        "src/i18n/locales/en-US/cli.ts",
+        "src/i18n/locales/zh-CN/cli.ts",
+        "tests/settings-shell.test.tsx",
+        "tests/cli-settings.test.tsx"
+      ]
+    },
+    {
+      "id": "G05-chat-sample",
+      "owner": "UI",
+      "title": "Chat layout, activity projection, draft continuity and accessibility",
+      "dependsOn": [
+        "G01-design-system-and-consumers",
+        "G03-workspace-and-module-lifecycle",
+        "G04-settings-sample"
+      ],
+      "commitReadiness": "Final frontend/build/visual and current controlled native media/account31 pass.",
+      "notes": [
+        "Includes token consumers plus stage3 layout and stage4 focus/status changes in the same production files.",
+        "TargetBar success feedback and single approval/status projection belong to chat, not Agent lifecycle.",
+        "Chat-specific 720px reading/input columns must not be applied to development workbench."
+      ],
+      "files": [
+        "src/components/chat/Attachments.tsx",
+        "src/components/chat/ChatNotice.tsx",
+        "src/components/chat/ChatWorkbench.tsx",
+        "src/components/chat/Composer.tsx",
+        "src/components/chat/Disclosures.tsx",
+        "src/components/chat/ExecutionDetails.tsx",
+        "src/components/chat/GenerationControls.tsx",
+        "src/components/chat/Markdown.css",
+        "src/components/chat/Markdown.tsx",
+        "src/components/chat/MessageList.tsx",
+        "src/components/chat/SessionSidebar.tsx",
+        "src/components/chat/TargetBar.tsx",
+        "src/components/chat/VoiceCapture.tsx",
+        "src/components/chat/conversation.css",
+        "src/i18n/locales/en-US/chat.ts",
+        "src/i18n/locales/zh-CN/chat.ts",
+        "src/pages/workbench/SingleTaskWorkbench.tsx",
+        "src/pages/workbench/workbench.css",
+        "tests/chat-workbench.test.tsx",
+        "tests/chat-approval-activity.test.tsx",
+        "tests/chat-reading-layout.test.tsx",
+        "tests/single-task-approval-activity.test.tsx",
+        "tests/single-task-metadata-activity.test.tsx"
+      ]
+    },
+    {
+      "id": "G06-mcp-page-sample",
+      "owner": "UI-MCP",
+      "title": "MCP state consumers and stage1 list/detail production sample",
+      "dependsOn": [
+        "G01-design-system-and-consumers",
+        "G02-resource-state-and-skills",
+        "G03-workspace-and-module-lifecycle"
+      ],
+      "commitReadiness": "Scoped production WKWebView219/219 retained with its original loaded assets; final frontend/build pass, no duplicate matrix run.",
+      "notes": [
+        "McpManagement and mcpStore include activity, read freshness, operation receipts and sample layout; keep whole-file ownership here.",
+        "Read saved tools and discover are distinct operations; unknown discover must not be replayed.",
+        "No known page failure was established at assignment start; historical timeouts are not an explanation for the omitted acceptance."
+      ],
+      "files": [
+        "src/pages/McpManagement.tsx",
+        "src/pages/McpManagement.css",
+        "src/stores/mcpStore.ts",
+        "src/i18n/locales/en-US/mcp.ts",
+        "src/i18n/locales/zh-CN/mcp.ts",
+        "tests/mcp-management.test.tsx",
+        "tests/mcp-refresh-activity.test.tsx",
+        "docs/03-功能规格/V2/03-产品设计/09-产品设计与UI改版.md",
+        "src-tauri/src/smoke/mcp.rs",
+        "src-tauri/src/smoke/mcp_page.rs",
+        "src-tauri/src/smoke/mcp_page.js",
+        "src-tauri/tests/webview_smoke_mcp.rs"
+      ]
+    },
+    {
+      "id": "G07-agent-host-and-storage",
+      "owner": "Agent",
+      "title": "Agent project/worktree, delivery, takeover and runtime host contracts",
+      "dependsOn": [],
+      "commitReadiness": "Default concurrent agents97 passed/1 ignored; DB109 including new four-table owner purge regression passed.",
+      "notes": [
+        "Separate parallel Agent implementation from UI sample completion.",
+        "The new 000030 migration is included; previously executed migrations must not be edited.",
+        "Shared host registration and contract checker are assigned here once; Agent callsites and command modules must move atomically.",
+        "Later concurrent cli.rs and test_support.rs changes are outside the initial 335-file snapshot and listed separately."
+      ],
+      "files": [
+        "crates/dgos-agents/examples/stage4_acceptance.rs",
+        "crates/dgos-agents/examples/stage4_provider_errors.rs",
+        "crates/dgos-agents/examples/stage5_acceptance.rs",
+        "crates/dgos-agents/src/capabilities.rs",
+        "crates/dgos-agents/src/capabilities/gateway.rs",
+        "crates/dgos-agents/src/capabilities/tests.rs",
+        "crates/dgos-agents/src/claude_session.rs",
+        "crates/dgos-agents/src/codex_session.rs",
+        "crates/dgos-agents/src/executions.rs",
+        "crates/dgos-agents/src/file_review_tests.rs",
+        "crates/dgos-agents/src/files.rs",
+        "crates/dgos-agents/src/lib.rs",
+        "crates/dgos-agents/src/manager.rs",
+        "crates/dgos-agents/src/project_tests.rs",
+        "crates/dgos-agents/src/projects.rs",
+        "crates/dgos-agents/src/review.rs",
+        "crates/dgos-agents/src/runtime.rs",
+        "crates/dgos-agents/src/runtime/tests.rs",
+        "crates/dgos-agents/src/git.rs",
+        "crates/dgos-agents/src/git/operations.rs",
+        "crates/dgos-agents/src/git/reconcile.rs",
+        "crates/dgos-agents/src/git/tests.rs",
+        "crates/dgos-agents/src/handoffs.rs",
+        "crates/dgos-agents/src/handoffs/tests.rs",
+        "crates/dgos-agents/src/recovery_tests.rs",
+        "crates/dgos-agents/src/takeover.rs",
+        "crates/dgos-agents/src/takeover/tests.rs",
+        "crates/dgos-agents/src/workspaces.rs",
+        "crates/dgos-db/src/migrations/mod.rs",
+        "crates/dgos-db/src/migrations/m20261104_000030_task_workspaces.rs",
+        "crates/dgos-db/src/repositories/development_repository/mod.rs",
+        "crates/dgos-db/src/repositories/development_repository/projects.rs",
+        "crates/dgos-db/src/repositories/development_repository/sessions.rs",
+        "crates/dgos-db/src/repositories/development_repository/tests.rs",
+        "crates/dgos-db/src/repositories/development_repository/handoffs.rs",
+        "crates/dgos-db/src/repositories/development_repository/workspaces.rs",
+        "src-tauri/src/commands/agents.rs",
+        "src-tauri/src/commands/development_capabilities.rs",
+        "src-tauri/src/commands/development_review.rs",
+        "src-tauri/src/commands/development_runtime.rs",
+        "src-tauri/src/commands/development_delivery.rs",
+        "src-tauri/src/commands/development_takeover.rs",
+        "docs/02-产品与版本/后续版本/V7-编程项目工作台方案草案.md",
+        "docs/02-产品与版本/后续版本/V7-项目任务基础技术契约.md",
+        "crates/dgos-agents/src/cli.rs",
+        "crates/dgos-agents/src/test_support.rs"
+      ]
+    },
+    {
+      "id": "G08-agent-product-ui",
+      "owner": "Agent",
+      "title": "Agent workbench product interactions, runtime receipts and layout",
+      "dependsOn": [
+        "G01-design-system-and-consumers",
+        "G02-resource-state-and-skills",
+        "G03-workspace-and-module-lifecycle",
+        "G07-agent-host-and-storage"
+      ],
+      "commitReadiness": "Historical14 failures reconciled by semantic assertions; final full frontend1128 passed. Native round4 442 and pending25 retained as separately identified evidence.",
+      "notes": [
+        "Whole-file assignment deliberately retains embedded token, activity and resource-state consumer hunks in Agent-owned files.",
+        "i18n catalogs.ts registration changes are Agent domains: delivery/layout/workbenchNavigation/taskLaunch/taskReview/runtimeWorkflow/workflow/takeover.",
+        "The 60-pass/14-fail result is an intermediate snapshot, not a permanent final failure claim after concurrent edits.",
+        "Do not repair parallel Agent implementation or weaken its tests as part of MCP acceptance."
+      ],
+      "files": [
+        "src/components/development/CapabilitySnapshotView.tsx",
+        "src/components/development/DevelopmentRuntime.tsx",
+        "src/components/development/DevelopmentTerminal.tsx",
+        "src/components/development/FileEditor.tsx",
+        "src/components/development/HostCapabilityConfirmations.tsx",
+        "src/components/development/ProjectCapabilities.tsx",
+        "src/components/development/ProjectPanel.tsx",
+        "src/components/development/ProjectReview.tsx",
+        "src/components/development/SessionPanel.tsx",
+        "src/components/development/TaskPanel.tsx",
+        "src/components/development/UnclassifiedPanel.tsx",
+        "src/components/development/development.css",
+        "src/components/development/AgentOutputReferences.tsx",
+        "src/components/development/DeliveryPanel.tsx",
+        "src/components/development/ManualTakeover.tsx",
+        "src/components/development/TaskLaunch.tsx",
+        "src/components/development/TaskReview.tsx",
+        "src/components/development/WorkbenchLayout.tsx",
+        "src/components/development/eventOutputReferences.ts",
+        "src/components/development/workbench-layout.css",
+        "src/components/development/workbenchLocations.ts",
+        "src/pages/workbench/AgentConversation.tsx",
+        "src/pages/workbench/AgentConversation.css",
+        "src/pages/workbench/AgentWorkbench.tsx",
+        "src/stores/agentRunnerStore.ts",
+        "src/stores/developmentEditor.ts",
+        "src/stores/developmentReview.ts",
+        "src/stores/developmentRuntime.ts",
+        "src/stores/developmentStore.ts",
+        "src/stores/developmentDelivery.ts",
+        "src/stores/developmentDrafts.ts",
+        "src/stores/developmentTakeover.ts",
+        "src/stores/hostError.ts",
+        "src/i18n/locales/en-US/agent.ts",
+        "src/i18n/locales/zh-CN/agent.ts",
+        "src/i18n/locales/en-US/dev.ts",
+        "src/i18n/locales/zh-CN/dev.ts",
+        "src/i18n/locales/en-US/direct.ts",
+        "src/i18n/locales/zh-CN/direct.ts",
+        "src/i18n/locales/en-US/delivery.ts",
+        "src/i18n/locales/zh-CN/delivery.ts",
+        "src/i18n/locales/en-US/layout.ts",
+        "src/i18n/locales/zh-CN/layout.ts",
+        "src/i18n/locales/en-US/runtimeWorkflow.ts",
+        "src/i18n/locales/zh-CN/runtimeWorkflow.ts",
+        "src/i18n/locales/en-US/takeover.ts",
+        "src/i18n/locales/zh-CN/takeover.ts",
+        "src/i18n/locales/en-US/taskLaunch.ts",
+        "src/i18n/locales/zh-CN/taskLaunch.ts",
+        "src/i18n/locales/en-US/taskReview.ts",
+        "src/i18n/locales/zh-CN/taskReview.ts",
+        "src/i18n/locales/en-US/workbenchNavigation.ts",
+        "src/i18n/locales/zh-CN/workbenchNavigation.ts",
+        "src/i18n/locales/en-US/workflow.ts",
+        "src/i18n/locales/zh-CN/workflow.ts",
+        "tests/agent-close-boundaries.test.tsx",
+        "tests/agent-workbench.test.tsx",
+        "tests/development-editor.test.tsx",
+        "tests/development-review-boundaries.test.tsx",
+        "tests/agent-output-references.test.tsx",
+        "tests/development-delivery.test.tsx",
+        "tests/development-drafts.test.tsx",
+        "tests/development-runtime-activity.test.tsx",
+        "tests/development-runtime-workflows.test.tsx",
+        "tests/development-task-review.test.tsx",
+        "tests/development-terminal-activity.test.tsx",
+        "tests/task-launch.test.tsx",
+        "tests/fixtures/workflow-round3-application.tsx"
+      ]
+    },
+    {
+      "id": "G09-provider-transport",
+      "owner": "Provider",
+      "title": "Loopback direct transport and macOS TLS initialization",
+      "dependsOn": [],
+      "commitReadiness": "Final providers lib/all tests exit0; historical diagnostics14/timeouts20 and TLS evidence provenance retained separately.",
+      "notes": [
+        "Loopback uses a separate shared direct client; non-loopback remote/private LAN endpoints retain system/environment proxy behavior.",
+        "Existing response/error semantics, no-redirect behavior and request deadlines remain part of the contract.",
+        "proxy_diagnostic.rs is a diagnostic candidate requiring owner disposition before submission; do not delete it here."
+      ],
+      "files": [
+        "crates/dgos-providers/Cargo.toml",
+        "crates/dgos-providers/src/manager.rs",
+        "crates/dgos-providers/src/transport.rs",
+        "crates/dgos-providers/tests/provider_connection_tests.rs",
+        "crates/dgos-providers/examples/proxy_diagnostic.rs",
+        "docs/03-功能规格/V1/01-底层能力/01-Provider适配框架.md"
+      ]
+    },
+    {
+      "id": "G10-adjacent-host-privacy-and-toolchain",
+      "owner": "Parallel-host-and-test-maintenance",
+      "title": "Adjacent privacy, payload bounds, logging and compatibility maintenance",
+      "dependsOn": [],
+      "commitReadiness": "DB109/LAN auth20 plus chat/service/websocket, Skills23, workbench targets, logging5 and host all-targets pass; transcription cancellation/size and macOS13 runtime not covered.",
+      "notes": [
+        "Do not fold these backend/security-related changes into a visual-only commit.",
+        "Whole-file ownership here is a delivery bucket, not a claim that all changes share one author.",
+        "tests/doc-browser.test.tsx adjusts the emulator harness; generated browser assets are not dirty in the captured status."
+      ],
+      "files": [
+        "crates/dgos-db/src/appearance_tests.rs",
+        "crates/dgos-db/src/lib.rs",
+        "crates/dgos-db/src/repositories/user_data_repository.rs",
+        "crates/dgos-lan/tests/auth.rs",
+        "crates/dgos-lan/tests/common/mod.rs",
+        "crates/dgos-skills/src/content_manager.rs",
+        "crates/dgos-skills/src/content_package.rs",
+        "crates/dgos-workbench/src/assets.rs",
+        "crates/dgos-workbench/src/chat.rs",
+        "crates/dgos-workbench/tests/chat_skill.rs",
+        "src-tauri/src/chat_media.rs",
+        "src-tauri/src/commands/chat_assets.rs",
+        "src-tauri/src/logging.rs",
+        "src-tauri/tauri.conf.json",
+        "tests/accounts.test.tsx",
+        "tests/appearance-settings.test.tsx",
+        "tests/doc-browser.test.tsx",
+        "tests/lan-settings.test.tsx",
+        "tests/ui-errors.test.tsx"
+      ]
+    },
+    {
+      "id": "G11-integrated-native-regressions",
+      "owner": "Integration-with-domain-owners",
+      "title": "Shared application integration, registrations and native regression harnesses",
+      "dependsOn": [
+        "G01-design-system-and-consumers",
+        "G03-workspace-and-module-lifecycle",
+        "G04-settings-sample",
+        "G05-chat-sample",
+        "G07-agent-host-and-storage",
+        "G08-agent-product-ui"
+      ],
+      "commitReadiness": "Static IPC182, bundle integrity and final build pass; shared registration/native drivers remain atomic with consumers.",
+      "notes": [
+        "ui_keys.rs interleaves shared control, Modal, shell/CLI and accessibility scenarios; retain one integrated file assignment rather than duplicate it across sample groups.",
+        "agents_stage3.rs includes runtime and xterm diagnostic layers; do not label its complete diff as UI accessibility only.",
+        "Terminal dependency/application probes are intentional retained diagnostic assets with real callers.",
+        "Review groups may require atomic integration hunks or combining introducing consumer groups; not a claim that intermediate whole-file commits build."
+      ],
+      "files": [
+        "src-tauri/src/smoke/agents.rs",
+        "src-tauri/src/smoke/agents_launch.rs",
+        "src-tauri/src/smoke/agents_scenario.rs",
+        "src-tauri/src/smoke/agents_stage3.rs",
+        "src-tauri/src/smoke/agents_layout_round2.rs",
+        "src-tauri/src/smoke/agents_round3_terminal.rs",
+        "src-tauri/src/smoke/agents_round3_workflows.rs",
+        "src-tauri/src/smoke/agents_round4.rs",
+        "src-tauri/src/smoke/agents_stage6.rs",
+        "src-tauri/src/smoke/chat.rs",
+        "src-tauri/src/smoke/modules.rs",
+        "src-tauri/src/smoke/ui.rs",
+        "src-tauri/src/smoke/ui_keys.rs",
+        "src-tauri/tests/webview_smoke_ui.rs",
+        "tests/fixtures/modules/p8-gallery.js",
+        "tests/fixtures/terminal-accessibility-application.tsx",
+        "tests/fixtures/terminal-accessibility-probe.js",
+        "tests/fixtures/terminal-accessibility.html",
+        "src/App.tsx",
+        "src/i18n/catalogs.ts",
+        "package.json",
+        "package-lock.json",
+        "src-tauri/src/commands/mod.rs",
+        "src-tauri/src/lib.rs",
+        "scripts/check-host-contracts.mjs"
+      ]
+    },
+    {
+      "id": "G12-preview-and-visual-baseline",
+      "owner": "UI-preview",
+      "title": "Stage5 isolated developer preview, visual runner and reviewed baselines",
+      "dependsOn": [
+        "G01-design-system-and-consumers",
+        "G02-resource-state-and-skills",
+        "G03-workspace-and-module-lifecycle",
+        "G04-settings-sample",
+        "G05-chat-sample"
+      ],
+      "commitReadiness": "Preview types and visual5 pass, accepted baselines unchanged.",
+      "notes": [
+        "package diff is five added lines, lock diff is 25 added lines: three preview scripts and pngjs/pixelmatch dev dependencies; current xterm dependencies are not newly introduced by this package diff.",
+        "Production Tauri imports remain real; alias substitution exists only in preview Vite configuration.",
+        "Baseline is five PNGs plus environment/hash manifest; candidate/results stay ignored.",
+        "Keep the user's existing port 5197 service."
+      ],
+      "files": [
+        "scripts/ui-preview-visual.mjs",
+        "tools/ui-preview/ComponentScenes.tsx",
+        "tools/ui-preview/frame.html",
+        "tools/ui-preview/frame.tsx",
+        "tools/ui-preview/host.ts",
+        "tools/ui-preview/index.html",
+        "tools/ui-preview/preview.css",
+        "tools/ui-preview/shell.tsx",
+        "tools/ui-preview/tsconfig.json",
+        "tools/ui-preview/vite.config.ts",
+        "tools/ui-preview/visual/.gitignore",
+        "tools/ui-preview/visual/cases.mjs",
+        "tools/ui-preview/visual/probes.mjs",
+        "tools/ui-preview/visual/baseline/chat-narrow-approval.png",
+        "tools/ui-preview/visual/baseline/chat-narrow-composer.png",
+        "tools/ui-preview/visual/baseline/controls-long-select.png",
+        "tools/ui-preview/visual/baseline/manifest.json",
+        "tools/ui-preview/visual/baseline/modal-narrow.png",
+        "tools/ui-preview/visual/baseline/settings-category-focus.png",
+        "docs/01-项目概览/工程与本地环境.md"
+      ]
+    },
+    {
+      "id": "G13-integrated-delivery-records",
+      "owner": "Integration",
+      "title": "Authoritative implementation state, shared changelog and stage6 evidence archive",
+      "dependsOn": [
+        "G01-design-system-and-consumers",
+        "G02-resource-state-and-skills",
+        "G03-workspace-and-module-lifecycle",
+        "G04-settings-sample",
+        "G05-chat-sample",
+        "G06-mcp-page-sample",
+        "G07-agent-host-and-storage",
+        "G08-agent-product-ui",
+        "G09-provider-transport",
+        "G10-adjacent-host-privacy-and-toolchain",
+        "G11-integrated-native-regressions",
+        "G12-preview-and-visual-baseline"
+      ],
+      "commitReadiness": "Final integration evidence and authoritative status recorded; docs result recorded separately.",
+      "notes": [
+        "Whole-file ownership avoids duplicate assignment of mixed UI/Agent/Provider evidence hunks.",
+        "Historical stage6 JSON remains historical evidence; do not rewrite it to imply new native acceptance.",
+        "No generated documentation browser assets are part of this dirty snapshot.",
+        "mcp-ui-delivery-20261106/** is an exclusive directory assignment for all final archive assets, including manifest itself; no other group may claim them.",
+        "final-integration/** inherits the existing exclusive archive rule; no duplicated explicit path assignment."
+      ],
+      "files": [
+        "docs/02-产品与版本/当前版本/V1-实现状态.md",
+        "docs/06-决策记录/V1-文档变更记录.md",
+        "docs/90-参考资料/page-sample-stage6/checks.log.txt",
+        "docs/90-参考资料/page-sample-stage6/historical-checkpoints.json",
+        "docs/90-参考资料/page-sample-stage6/manifest.json",
+        "docs/90-参考资料/page-sample-stage6/native-chat-reused.log.txt",
+        "docs/90-参考资料/page-sample-stage6/verification.json",
+        "docs/90-参考资料/page-sample-stage6/visual-report.json"
+      ],
+      "directoryRules": [
+        "docs/90-参考资料/mcp-ui-delivery-20261106/**"
+      ]
+    }
+  ],
+  "sharedFileAttribution": [
+    {
+      "path": "package.json",
+      "assignedGroup": "G11-integrated-native-regressions",
+      "observedDiffSize": "+5/-0",
+      "attribution": "dev:ui, check:ui-preview, test:ui-visual; pixelmatch 7.1.0 and pngjs 7.0.0 dev dependencies"
+    },
+    {
+      "path": "package-lock.json",
+      "assignedGroup": "G11-integrated-native-regressions",
+      "observedDiffSize": "+25/-0",
+      "attribution": "Preview image-comparison dependency closure"
+    },
+    {
+      "path": "src/i18n/catalogs.ts",
+      "assignedGroup": "G11-integrated-native-regressions",
+      "observedDiffSize": "+18/-2",
+      "attribution": "Agent delivery/layout/navigation/task/runtime/takeover domain imports and catalog spreads; existing chat/CLI/MCP imports are not newly attributable to page sample work"
+    },
+    {
+      "path": "src/App.tsx",
+      "assignedGroup": "G11-integrated-native-regressions",
+      "observedDiffSize": "+18/-115",
+      "attribution": "Navigation/action extraction, ModuleSurface composition, visible versus active scope and settings overlay assembly"
+    },
+    {
+      "path": "src-tauri/src/commands/mod.rs",
+      "assignedGroup": "G11-integrated-native-regressions",
+      "observedDiffSize": "+4/-0",
+      "attribution": "development_delivery and development_takeover module declarations and exports"
+    },
+    {
+      "path": "src-tauri/src/lib.rs",
+      "assignedGroup": "G11-integrated-native-regressions",
+      "observedDiffSize": "+16/-2",
+      "attribution": "Agent development command registration plus independent Agent shutdown cleanup"
+    },
+    {
+      "path": "scripts/check-host-contracts.mjs",
+      "assignedGroup": "G11-integrated-native-regressions",
+      "observedDiffSize": "+25/-5",
+      "attribution": "Development delivery/takeover and file-reference command checks; whole file retained atomically"
+    },
+    {
+      "path": "src-tauri/src/smoke/ui_keys.rs",
+      "assignedGroup": "G11-integrated-native-regressions",
+      "observedDiffSize": "+369/-36",
+      "attribution": "Mixed shared-control/Modal, shell/CLI and native focus scenarios; do not assign the same file to several commits"
+    },
+    {
+      "path": "src-tauri/src/smoke/agents_stage3.rs",
+      "assignedGroup": "G11-integrated-native-regressions",
+      "observedDiffSize": "+379/-3",
+      "attribution": "Agent runtime acceptance plus xterm dependency/application diagnostic layers"
+    },
+    {
+      "path": "src/components/development/DevelopmentRuntime.tsx",
+      "assignedGroup": "G08-agent-product-ui",
+      "attribution": "Activity/read freshness, durable operation receipts, draft identity and Agent product layout overlap in one large actual diff; avoid unsupported hunk-level independent commit claims"
+    },
+    {
+      "path": "docs/02-产品与版本/当前版本/V1-实现状态.md",
+      "assignedGroup": "G13-integrated-delivery-records",
+      "observedDiffSize": "+397/-0",
+      "attribution": "UI architecture/activity/state/token work; page samples 1-6; parallel Agent rounds; Provider diagnostics; authoritative evidence maintained together",
+      "anchors": [
+        "15: stage6 integrated sample",
+        "30: Agent product round3",
+        "47: stage5 preview",
+        "59: stage4 accessibility",
+        "75: stage3 chat",
+        "90: Agent round2",
+        "104: Agent round1",
+        "118: stage2 settings",
+        "130: MCP stage1",
+        "141: UI integration",
+        "154: shared component boundaries",
+        "169: non-color tokens",
+        "206: semantic colors",
+        "220: runtime state",
+        "240: operation state",
+        "254: resource read state",
+        "273: Agent project stage6",
+        "304: terminal activity",
+        "324: refresh activity",
+        "340: approval activity",
+        "355: UI responsibility boundaries"
+      ]
+    },
+    {
+      "path": "docs/06-决策记录/V1-文档变更记录.md",
+      "assignedGroup": "G13-integrated-delivery-records",
+      "observedDiffSize": "+21/-0",
+      "attribution": "Token sections at lines5-18, Agent worktree contract near line23, Provider loopback rule at line24; one integrated doc assignment"
+    }
+  ],
+  "stage6Reuse": {
+    "source": "docs/90-参考资料/page-sample-stage6/verification.json",
+    "inspectedSourceEntries": 412,
+    "inspectedSourceSha256": "21fe37ae437ded17c6a07632ce3980464823a2302046a6282f011004c9779fd5",
+    "recordedResults": {
+      "frontend": "58 files, 1127/1127",
+      "build": "passed main and LAN",
+      "strictI18n": "1989 keys / 84 resources / 254 source files",
+      "previewTypes": "passed",
+      "visual": "5 scenarios, zero differing pixels"
+    },
+    "currentInitialComparison": {
+      "changedCount": 10,
+      "unchangedCount": 402,
+      "changedOwner": "Agent",
+      "deltaEvidence": "<local-evidence>/stage6-source-delta.json",
+      "changedPaths": [
+        "src/components/development/DeliveryPanel.tsx",
+        "src/components/development/DevelopmentRuntime.tsx",
+        "src/components/development/FileEditor.tsx",
+        "src/components/development/HostCapabilityConfirmations.tsx",
+        "src/components/development/ManualTakeover.tsx",
+        "src/components/development/development.css",
+        "src/components/development/workbench-layout.css",
+        "src/pages/workbench/AgentConversation.tsx",
+        "src/pages/workbench/AgentWorkbench.tsx",
+        "tests/development-editor.test.tsx"
+      ]
+    },
+    "validReuse": [
+      "Unchanged settings/CLI and chat production component paths retain historical browser interaction evidence at the same evidence level.",
+      "Unchanged shared controls and preview sources support source-scoped reuse of stage6 preview/visual evidence.",
+      "Five PNGs plus manifest exactly match recorded stage6 baseline hashes.",
+      "Stage4 chat native 15/15 retains archived raw final log and path/resource-scoped historical value.",
+      "Stage4 settings 42/42 remains reported historical evidence only; raw successful log is missing.",
+      "Existing MCP W4 12/12 remains compatibility evidence and need not be rerun for this assignment."
+    ],
+    "invalidReuse": [
+      "Stage6 1127/1127 is not current whole-tree frontend success after Agent source changes.",
+      "Stage6 build is historical; parent has separately observed a current build pass.",
+      "Native whole-tree success cannot be inferred from unchanged chat/settings component hashes when entry/shared generated assets differ.",
+      "Terminal accessibility historical evidence cannot be upgraded after terminal test/reproducer changes.",
+      "Stage6 does not contain completed MCP native page acceptance.",
+      "Frontend source snapshot does not cover all changed Rust/privacy/Provider implementation."
+    ],
+    "parentObservedNewChecks": {
+      "build": "passed, parent observed",
+      "mcpAndCloseRegressions": "4 files, 85/85, parent observed",
+      "agentIntermediate": {
+        "command": "npx vitest run tests/development-editor.test.tsx tests/development-delivery.test.tsx tests/development-runtime-activity.test.tsx tests/development-runtime-workflows.test.tsx tests/agent-workbench.test.tsx",
+        "result": "5 files, 60 passed, 14 failed",
+        "failedFiles": {
+          "tests/development-delivery.test.tsx": 2,
+          "tests/development-runtime-activity.test.tsx": 12
+        },
+        "failureShape": "Operation receipt text assertions no longer match rendered combined text",
+        "log": "<local-evidence>/changed-agent-integration.log.txt",
+        "boundary": "Parallel owner is changing these files; preserve this result as its exact intermediate snapshot, not final status and not an MCP blocker"
+      },
+      "finalBuild": {
+        "label": "build-final-after-agent-drift",
+        "command": "npm run build",
+        "start": "2026-11-06T08:13:50.488Z",
+        "end": "2026-11-06T08:13:58.684Z",
+        "code": 0,
+        "signal": null,
+        "log": "<local-evidence>/build-final-after-agent-drift.log.txt"
+      },
+      "currentNative": {
+        "label": "native-current-dist",
+        "command": "cargo test --offline -p dgos --features mcp-smoke --test webview_smoke_mcp -- --nocapture",
+        "start": "2026-11-06T08:15:55.101Z",
+        "end": "2026-11-06T08:18:00.189Z",
+        "code": 0,
+        "signal": null,
+        "log": "<local-evidence>/native-current-dist.log.txt"
+      },
+      "nativeResult": {
+        "executable": "<repo>/target/debug/deps/webview_smoke_mcp-56399f9a4388c644",
+        "failed": [],
+        "fault_evidence": "smoke IPC rejects read before production dispatch; one real update gated before dispatch; one real refresh published before deliberate receipt loss",
+        "input": "synthesized native NSEvent keyDown/keyUp via NSApplication; known focus/text and pointer shortcuts use DOM",
+        "layout_fixture": "SYNTHETIC_LAYOUT_ONLY long connection event; disabled example.invalid URL is config-only; no network request",
+        "limits": [
+          "not physical typing or real mouse hit testing",
+          "not VoiceOver or other platforms",
+          "in-memory credential vault, not OS keychain",
+          "not real disk/network failure",
+          "new B editor is prohibited until A save settles; after-settlement B draft is checked, no fabricated overlapping editor"
+        ],
+        "passed": 219,
+        "pid": 40187,
+        "source": "production dist in visible macOS WKWebView; real isolated SQLite/McpManager/official SDK and filesystem"
+      }
+    }
+  },
+  "concurrentChangesOutsideInitialAssignments": {
+    "source": "<local-evidence>/concurrent-source-delta.json",
+    "newlyDirtyPathsObservedAfterInitialSnapshot": [
+      {
+        "path": "crates/dgos-agents/src/cli.rs",
+        "recommendedGroup": "G07-agent-host-and-storage"
+      },
+      {
+        "path": "crates/dgos-agents/src/test_support.rs",
+        "recommendedGroup": "G07-agent-host-and-storage"
+      },
+      {
+        "path": "src-tauri/src/smoke/mcp.rs",
+        "recommendedGroup": "G06-mcp-page-sample",
+        "note": "Sibling native acceptance work; record final driver and evidence files when landed"
+      }
+    ],
+    "existingInitialDirtyFilesAlsoChanged": [
+      "crates/dgos-agents/src/codex_session.rs",
+      "crates/dgos-agents/src/diagnostics.rs",
+      "src-tauri/src/smoke/agents_round4.rs",
+      "src/pages/workbench/AgentWorkbench.tsx",
+      "tests/development-delivery.test.tsx",
+      "tests/development-editor.test.tsx",
+      "tests/development-runtime-activity.test.tsx"
+    ],
+    "finalizationRequirement": "Resolved: final status has no unassigned or duplicate file claims; current source hashes in final-integration/verification.json."
+  },
+  "compatibilityAudit": {
+    "evidence": "<local-evidence>/compatibility-audit.json",
+    "sourceAnchors": [
+      "src/ui/styles.css:10",
+      "src/ui/tailwind.css:10",
+      "src/ui/tokens/scale.css:95",
+      "src/modules/moduleHostUi.ts:1",
+      "src/modules/moduleRuntimeHost.ts:258",
+      "crates/dgos-modules/src/admission.rs:67"
+    ],
+    "publicCss": {
+      "retainedLegacyColors": true,
+      "retainedUtilities": [
+        "text-muted-foreground",
+        "text-error-text",
+        "bg-background",
+        "text-foreground",
+        "bg-card",
+        "bg-popover",
+        "bg-primary",
+        "bg-secondary",
+        "bg-muted",
+        "bg-accent",
+        "bg-destructive",
+        "border-input",
+        "ring-ring",
+        "outline-ring",
+        "h-7",
+        "h-9",
+        "w-7",
+        "w-9"
+      ],
+      "retainedInheritedVariables": [
+        "--tab-height-workspace",
+        "--tab-height-session",
+        "--page-gap",
+        "--section-gap",
+        "--content-gap",
+        "--font-family-base",
+        "--font-family-mono"
+      ],
+      "builtUtilityAndLegacyGeometryPresence": "Parent audit confirms checked utilities and five legacy geometry variables remain in current production CSS",
+      "unusedAssessment": "Search found five legacy geometry aliases only at their declarations; they are explicitly published D067 inherited exports and must not be deleted based on first-party nonuse"
+    },
+    "moduleUiBridge": {
+      "sha256": "4e18d64e5f38c653345894ff19d5e3353a3fd421ed25cd9c2f10684908b8f865",
+      "unchangedFromStage6": true,
+      "publicPropsAndApiVersion": "Retained; internal overlay ownership context is not exposed through host.ui"
+    },
+    "bundledProviderConsole": {
+      "version": "1.0.0",
+      "manifestDigest": "d508692aa1bca94857c50971439c686d0cd88783e047e9a4a588872a6c0ec464",
+      "builtinPin": "v2:d508692aa1bca94857c50971439c686d0cd88783e047e9a4a588872a6c0ec464",
+      "agreement": "Manifest and Rust pin agree by static inspection; no digest recomputation executed by investigator",
+      "boundary": "Same-version different-digest installed packages must not be silently overwritten"
+    },
+    "productionPreviewLeakScan": {
+      "assets": 26,
+      "markers": [
+        "__preview",
+        "preview-only",
+        "frame.html",
+        "ui-preview"
+      ],
+      "hits": []
+    }
+  },
+  "visualBaseline": {
+    "evidence": "<local-evidence>/baseline-audit.json",
+    "allMatchStage6": true,
+    "previewSourceUnchanged": true,
+    "acceptedFiles": 6,
+    "environment": {
+      "chrome": "157.0.8103.38",
+      "node": "v22.23.0",
+      "osProductVersion": "27.0.1",
+      "arch": "arm64",
+      "dpr": 1,
+      "timezone": "UTC",
+      "fontRasterIdentityRecorded": true
+    },
+    "workflow": {
+      "compare": "Default; writes ignored results, does not update baseline",
+      "record": "Writes candidates only",
+      "accept": "Explicit promotion after review and environment/hash checks",
+      "environmentDriftExitCode": 2
+    },
+    "coverageLimit": "Five representative preview scenarios; no theme/platform/native-zoom/accessibility manual full matrix"
+  },
+  "suspicionsAndDisposition": [
+    {
+      "kind": "diagnostic-candidate",
+      "path": "crates/dgos-providers/examples/proxy_diagnostic.rs",
+      "finding": "Small standalone default-proxy versus no_proxy closed-loopback-port diagnostic; prints only connection/timeout/status classification",
+      "action": "Keep untouched; Provider owner decides whether to retain as maintained example or exclude from eventual submission",
+      "deleted": false
+    },
+    {
+      "kind": "intentional-retained-probe",
+      "paths": [
+        "tests/fixtures/terminal-accessibility.html",
+        "tests/fixtures/terminal-accessibility-probe.js",
+        "tests/fixtures/terminal-accessibility-application.tsx"
+      ],
+      "finding": "Documented retained xterm failure reproducer; probe JS is also consumed by native agents_stage3 diagnostic",
+      "action": "Retain with failure/evidence limits; do not describe as a product workaround or screen-reader test",
+      "deleted": false
+    },
+    {
+      "kind": "intentional-browser-fixture",
+      "path": "tests/fixtures/workflow-round3-application.tsx",
+      "finding": "Referenced from terminal-accessibility.html workflow=round3 branch; explicitly refuses native bridge and uses deterministic IPC double",
+      "action": "Agent owner retains and documents purpose; not an unused file",
+      "deleted": false
+    },
+    {
+      "kind": "ignored-cache-and-build-output",
+      "paths": [
+        "node_modules/",
+        "target/",
+        "dist/",
+        "dist-lan/",
+        ".herdr-team/",
+        ".vitest/",
+        "tools/ui-preview/visual/candidate/",
+        "tools/ui-preview/visual/results/"
+      ],
+      "finding": "Not part of captured dirty submission inventory; visual candidate/results explicitly ignored",
+      "action": "Do not stage or delete; preserve user resources"
+    },
+    {
+      "kind": "credential-scan",
+      "evidence": "<local-evidence>/dirty-sensitive-scan.json",
+      "scope": "337 dirty text files at scan time, <=3MB, binary excluded",
+      "realCredentialFindings": 0,
+      "syntheticHits": [
+        {
+          "path": "crates/dgos-agents/src/executions.rs:216",
+          "classification": "Synthetic URL user:pass@example.test sanitizer regression"
+        },
+        {
+          "path": "crates/dgos-agents/src/runtime/tests.rs:161",
+          "classification": "Synthetic private-key header/chunk-redaction test; no actual key data"
+        }
+      ],
+      "limit": "Pattern scan is scoped evidence, not a proof that every possible secret format or binary asset is clean"
+    },
+    {
+      "kind": "public-unused-export",
+      "paths": [
+        "src/ui/tokens/scale.css:95",
+        "src/ui/styles.css:10",
+        "src/ui/tailwind.css:10"
+      ],
+      "finding": "Published compatibility outputs remain intentionally retained despite absent first-party callers",
+      "action": "Retain; repository nonuse does not authorize public-contract removal"
+    }
+  ],
+  "preservedRisks": [
+    "Native media 31/31 covers controlled loopback success and account lifecycle, not transcription reload/destroy cancellation or 25 MiB size boundaries.",
+    "macOS minimum version declaration is not macOS13 runtime proof.",
+    "MCP219 and Agent442/pending25 retain their own loaded-asset identities; final build is newer and is not claimed as a rerun of those matrices.",
+    "No physical keyboard/mouse, VoiceOver, native OS IME, cross-platform or release acceptance.",
+    "Retained xterm offscreen accessibility defect and historical module/PTY root-cause limits."
+  ],
+  "recommendations": [
+    "Use whole-file grouping for interwoven Agent consumers, shared smoke and shared documentation; do not invent clean independent hunk commits.",
+    "Keep Agent and Provider owner review separate from UI sample acceptance; their failures do not become MCP blockers.",
+    "Keep bundle entry, manifest and admission pin atomic.",
+    "Do not rerun already valid unchanged UI paths merely to replace historical evidence; report path-scoped reuse and current integration separately.",
+    "Do not submit, stage, push, merge, delete diagnostics or replace/stop the user 5197 service."
+  ],
+  "snapshotAt": "2026-11-06T09:55:02.850Z",
+  "finalSourceDrift": [
+    "crates/dgos-db/src/repositories/development_repository/tests.rs"
+  ],
+  "finalDirtyFiles": [
+    {
+      "status": " M",
+      "path": "bundled-modules/provider-console/1.0.0/entry.js",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "bundled-modules/provider-console/1.0.0/manifest.json",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/examples/stage4_acceptance.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/examples/stage4_provider_errors.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/src/capabilities.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/src/capabilities/gateway.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/src/capabilities/tests.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/src/claude_session.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/src/cli.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/src/codex_session.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/src/executions.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/src/file_review_tests.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/src/files.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/src/lib.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/src/manager.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/src/project_tests.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/src/projects.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/src/review.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/src/runtime.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/src/runtime/tests.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-agents/src/test_support.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-db/src/appearance_tests.rs",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-db/src/lib.rs",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-db/src/migrations/mod.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-db/src/repositories/development_repository/mod.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-db/src/repositories/development_repository/projects.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-db/src/repositories/development_repository/sessions.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-db/src/repositories/development_repository/tests.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-db/src/repositories/user_data_repository.rs",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-lan/tests/auth.rs",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-lan/tests/common/mod.rs",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-modules/src/admission.rs",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-providers/Cargo.toml",
+      "group": "G09-provider-transport"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-providers/src/manager.rs",
+      "group": "G09-provider-transport"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-providers/src/transport.rs",
+      "group": "G09-provider-transport"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-providers/tests/provider_connection_tests.rs",
+      "group": "G09-provider-transport"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-skills/src/content_manager.rs",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-skills/src/content_package.rs",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-workbench/src/assets.rs",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-workbench/src/chat.rs",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "crates/dgos-workbench/tests/chat_skill.rs",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "docs/01-项目概览/工程与本地环境.md",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": " M",
+      "path": "docs/02-产品与版本/后续版本/V7-编程项目工作台方案草案.md",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "docs/02-产品与版本/后续版本/V7-项目任务基础技术契约.md",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "docs/02-产品与版本/当前版本/V1-实现状态.md",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": " M",
+      "path": "docs/03-功能规格/V1/01-底层能力/01-Provider适配框架.md",
+      "group": "G09-provider-transport"
+    },
+    {
+      "status": " M",
+      "path": "docs/03-功能规格/V1/01-底层能力/05-统一设计系统.md",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "docs/03-功能规格/V2/03-产品设计/09-产品设计与UI改版.md",
+      "group": "G06-mcp-page-sample"
+    },
+    {
+      "status": " M",
+      "path": "docs/03-功能规格/V2/03-产品设计/外观主题与作用域设计.md",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "docs/06-决策记录/V1-文档变更记录.md",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": " M",
+      "path": "eslint.config.mjs",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "index.html",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "package-lock.json",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": " M",
+      "path": "package.json",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": " M",
+      "path": "scripts/check-host-contracts.mjs",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": " M",
+      "path": "scripts/design-check.mjs",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "scripts/design-check/html-scan.mjs",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "scripts/design-check/scope.mjs",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/chat_media.rs",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/commands/agents.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/commands/chat_assets.rs",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/commands/development_capabilities.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/commands/development_review.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/commands/development_runtime.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/commands/mod.rs",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/lib.rs",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/logging.rs",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/smoke/agents.rs",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/smoke/agents_launch.rs",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/smoke/agents_scenario.rs",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/smoke/agents_stage3.rs",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/smoke/chat.rs",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/smoke/mcp.rs",
+      "group": "G06-mcp-page-sample"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/smoke/modules.rs",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/smoke/ui.rs",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/src/smoke/ui_keys.rs",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/tauri.conf.json",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/tests/webview_smoke_mcp.rs",
+      "group": "G06-mcp-page-sample"
+    },
+    {
+      "status": " M",
+      "path": "src-tauri/tests/webview_smoke_ui.rs",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": " M",
+      "path": "src/App.tsx",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": " M",
+      "path": "src/accounts/AccountGate.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/accounts/AccountMenu.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/accounts/AuthShell.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/accounts/WelcomePage.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/components/McpConnectionNotice.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/components/ProviderForm.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/components/ProviderList.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/components/chat/Attachments.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/components/chat/ChatNotice.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/components/chat/ChatWorkbench.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/components/chat/Composer.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/components/chat/Disclosures.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/components/chat/ExecutionDetails.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/components/chat/GenerationControls.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/components/chat/Markdown.css",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/components/chat/Markdown.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/components/chat/MessageList.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/components/chat/SessionSidebar.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/components/chat/TargetBar.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/components/chat/VoiceCapture.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/components/chat/conversation.css",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/components/development/CapabilitySnapshotView.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/components/development/DevelopmentRuntime.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/components/development/DevelopmentTerminal.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/components/development/FileEditor.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/components/development/HostCapabilityConfirmations.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/components/development/ProjectCapabilities.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/components/development/ProjectPanel.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/components/development/ProjectReview.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/components/development/SessionPanel.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/components/development/TaskPanel.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/components/development/UnclassifiedPanel.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/components/development/development.css",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/features/settings/storage/StorageSettings.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/i18n/catalogs.ts",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": " M",
+      "path": "src/i18n/locales/en-US/agent.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/i18n/locales/en-US/chat.ts",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/i18n/locales/en-US/cli.ts",
+      "group": "G04-settings-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/i18n/locales/en-US/dev.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/i18n/locales/en-US/direct.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/i18n/locales/en-US/mcp.ts",
+      "group": "G06-mcp-page-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/i18n/locales/en-US/patterns.ts",
+      "group": "G02-resource-state-and-skills"
+    },
+    {
+      "status": " M",
+      "path": "src/i18n/locales/zh-CN/agent.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/i18n/locales/zh-CN/chat.ts",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/i18n/locales/zh-CN/cli.ts",
+      "group": "G04-settings-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/i18n/locales/zh-CN/dev.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/i18n/locales/zh-CN/direct.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/i18n/locales/zh-CN/mcp.ts",
+      "group": "G06-mcp-page-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/i18n/locales/zh-CN/patterns.ts",
+      "group": "G02-resource-state-and-skills"
+    },
+    {
+      "status": " M",
+      "path": "src/index.css",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/lan/remote/App.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/lan/remote/ChatView.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/lan/remote/MessageItem.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/lan/remote/NewSessionForm.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/lan/remote/PairingView.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/lan/remote/classes.ts",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/lan/remote/lan.css",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/modules/ModuleMcpConfirm.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/modules/moduleRuntimeHost.ts",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/AboutSettings.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/AccountSettings.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/AppearanceSettings.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/CliSettings.tsx",
+      "group": "G04-settings-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/Desktop.css",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/Desktop.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/LanSettings.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/McpManagement.css",
+      "group": "G06-mcp-page-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/McpManagement.tsx",
+      "group": "G06-mcp-page-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/ModuleManagement.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/ProviderManagement.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/SettingsShell.tsx",
+      "group": "G04-settings-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/SkillsManagement.tsx",
+      "group": "G02-resource-state-and-skills"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/settings-content.css",
+      "group": "G04-settings-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/workbench/AgentConversation.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/workbench/AgentWorkbench.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/workbench/SingleTaskWorkbench.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/pages/workbench/workbench.css",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/stores/agentRunnerStore.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/stores/developmentEditor.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/stores/developmentReview.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/stores/developmentRuntime.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/stores/developmentStore.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/stores/hostError.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "src/stores/mcpStore.ts",
+      "group": "G06-mcp-page-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/stores/skillsStore.ts",
+      "group": "G02-resource-state-and-skills"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/Button.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/Card.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/Checkbox.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/Divider.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/ErrorPage.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/Field.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/Input.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/Loading.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/Menu.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/Modal.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/PagePatterns.tsx",
+      "group": "G02-resource-state-and-skills"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/Popover.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/RadioGroup.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/Select.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/Slider.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/Switch.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/Tabs.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/ToastViewport.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/Tooltip.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/components/patterns.css",
+      "group": "G02-resource-state-and-skills"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/index.ts",
+      "group": "G02-resource-state-and-skills"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/lib/focus.ts",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/styles.css",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/tailwind.css",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/tokens/colors.css",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/tokens/density.css",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/tokens/geometry.css",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/ui/tokens/scale.css",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "src/workspace/AppShell.tsx",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": " M",
+      "path": "src/workspace/SettingsOverlay.tsx",
+      "group": "G04-settings-sample"
+    },
+    {
+      "status": " M",
+      "path": "src/workspace/SurfaceContext.tsx",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": " M",
+      "path": "src/workspace/TabBar.tsx",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": " M",
+      "path": "src/workspace/WorkspaceTools.tsx",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": " M",
+      "path": "src/workspace/closeCoordinator.ts",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": " M",
+      "path": "src/workspace/controller.ts",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": " M",
+      "path": "src/workspace/shell.css",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": " M",
+      "path": "src/workspace/useAppCatalog.ts",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": " M",
+      "path": "src/workspace/useWorkspaceTabs.ts",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": " M",
+      "path": "src/workspace/workspace.css",
+      "group": "G04-settings-sample"
+    },
+    {
+      "status": " M",
+      "path": "stylelint.config.mjs",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "tests/accounts.test.tsx",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "tests/agent-close-boundaries.test.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "tests/agent-workbench.test.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "tests/app-shell.test.tsx",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": " M",
+      "path": "tests/appearance-settings.test.tsx",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "tests/chat-workbench.test.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": " M",
+      "path": "tests/cli-settings.test.tsx",
+      "group": "G04-settings-sample"
+    },
+    {
+      "status": " M",
+      "path": "tests/design-check.test.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "tests/development-editor.test.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "tests/development-review-boundaries.test.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": " M",
+      "path": "tests/doc-browser.test.tsx",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "tests/fixtures/design-check/clean/index.html",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "tests/fixtures/design-check/clean/src/clean.css",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "tests/fixtures/design-check/clean/src/clean.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "tests/fixtures/design-check/clean/src/ui/tokens/colors.css",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "tests/fixtures/design-check/violations/src/focus-ring.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "tests/fixtures/modules/p8-gallery.js",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": " M",
+      "path": "tests/lan-settings.test.tsx",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "tests/mcp-management.test.tsx",
+      "group": "G06-mcp-page-sample"
+    },
+    {
+      "status": " M",
+      "path": "tests/module-host-routing.test.tsx",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": " M",
+      "path": "tests/module-management.test.tsx",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": " M",
+      "path": "tests/module-runtime-host.test.tsx",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": " M",
+      "path": "tests/settings-shell.test.tsx",
+      "group": "G04-settings-sample"
+    },
+    {
+      "status": " M",
+      "path": "tests/skills-center.test.tsx",
+      "group": "G02-resource-state-and-skills"
+    },
+    {
+      "status": " M",
+      "path": "tests/skills-workbench.test.tsx",
+      "group": "G02-resource-state-and-skills"
+    },
+    {
+      "status": " M",
+      "path": "tests/skills.test.tsx",
+      "group": "G02-resource-state-and-skills"
+    },
+    {
+      "status": " M",
+      "path": "tests/ui-controls.test.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "tests/ui-errors.test.tsx",
+      "group": "G10-adjacent-host-privacy-and-toolchain"
+    },
+    {
+      "status": " M",
+      "path": "tests/ui-overlays.test.tsx",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": " M",
+      "path": "tests/ui-page-patterns.test.tsx",
+      "group": "G02-resource-state-and-skills"
+    },
+    {
+      "status": " M",
+      "path": "tests/workspaceShell.test.tsx",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": "??",
+      "path": "crates/dgos-agents/examples/stage5_acceptance.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": "??",
+      "path": "crates/dgos-agents/src/git.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": "??",
+      "path": "crates/dgos-agents/src/git/operations.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": "??",
+      "path": "crates/dgos-agents/src/git/reconcile.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": "??",
+      "path": "crates/dgos-agents/src/git/tests.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": "??",
+      "path": "crates/dgos-agents/src/handoffs.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": "??",
+      "path": "crates/dgos-agents/src/handoffs/tests.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": "??",
+      "path": "crates/dgos-agents/src/recovery_tests.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": "??",
+      "path": "crates/dgos-agents/src/takeover.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": "??",
+      "path": "crates/dgos-agents/src/takeover/tests.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": "??",
+      "path": "crates/dgos-agents/src/workspaces.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": "??",
+      "path": "crates/dgos-db/src/migrations/m20261104_000030_task_workspaces.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": "??",
+      "path": "crates/dgos-db/src/repositories/development_repository/handoffs.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": "??",
+      "path": "crates/dgos-db/src/repositories/development_repository/workspaces.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": "??",
+      "path": "crates/dgos-providers/examples/proxy_diagnostic.rs",
+      "group": "G09-provider-transport"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/asset-identity.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/baseline-audit.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/build-final-after-agent-drift.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/changed-agent-integration.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/compatibility-audit.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/delivery-groups.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/docs-final.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/failures/native-after-macro-fix.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/failures/native-final-asset-identity.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/failures/native-final-failure.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/failures/native-final-failure.png",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/failures/native-final-ipc-timeline.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/failures/native-final.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/failures/native-first-asset-identity.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/failures/native-first-execution.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/failures/native-first-failure.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/failures/native-first-failure.png",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/failures/native-first-ipc-timeline.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/failures/native-first.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/agent-review.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/build-assets.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/build.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/bundle-integrity.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/combined-scenario.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/contracts.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/docs-final-integration.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/frontend-full.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/host-review.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/i18n.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/native-media.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/preview-types.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/provider-review.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/rust-agents.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/rust-db.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/rust-host-all-targets.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/rust-host-privacy.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/rust-lan-auth.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/rust-lan-consumers.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/rust-owner-purge-final.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/rust-owner-purge.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/rust-providers.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/rust-skills.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/rust-workbench.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/verification.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/visual.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/i18n-current.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/ipc-counts.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/ipc-timeline.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/manifest.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/mcp-regressions.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/native-current-dist.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/preview-types-current.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/result.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/detail-refresh-failures-retain-capture.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/detail-refresh-failures-retain-dom.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/detail-refresh-failures-retain.png",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/discovery-unconfirmed-capture.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/discovery-unconfirmed-dom.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/discovery-unconfirmed.png",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/initial-read-failure-capture.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/initial-read-failure-dom.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/initial-read-failure.png",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/matrix-dark-large175-800-json-modal-capture.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/matrix-dark-large175-800-json-modal-dom.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/matrix-dark-large175-800-json-modal.png",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/matrix-light-default100-1440-list-capture.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/matrix-light-default100-1440-list-dom.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/matrix-light-default100-1440-list.png",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/matrix-light-large175-520-url-form-capture.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/matrix-light-large175-520-url-form-dom.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/matrix-light-large175-520-url-form.png",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/native-scroll-focus-dark-large175-800-capture.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/native-scroll-focus-dark-large175-800-dom.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/native-scroll-focus-dark-large175-800.png",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/slow-save-A-selected-B-before-receipt-capture.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/slow-save-A-selected-B-before-receipt-dom.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/slow-save-A-selected-B-before-receipt.png",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/surface-close-cancel-capture.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/surface-close-cancel-dom.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/screenshots/surface-close-cancel.png",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/shell-host-scope.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/slow-save-host-readback.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/verification.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/page-sample-stage6/checks.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/page-sample-stage6/historical-checkpoints.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/page-sample-stage6/manifest.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/page-sample-stage6/native-chat-reused.log.txt",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/page-sample-stage6/verification.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/page-sample-stage6/visual-report.json",
+      "group": "G13-integrated-delivery-records"
+    },
+    {
+      "status": "??",
+      "path": "scripts/design-check/eslint-semantic-colors.mjs",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": "??",
+      "path": "scripts/design-check/semantic-colors.mjs",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": "??",
+      "path": "scripts/design-check/stylelint-semantic-colors.mjs",
+      "group": "G01-design-system-and-consumers"
+    },
+    {
+      "status": "??",
+      "path": "scripts/ui-preview-visual.mjs",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "src-tauri/src/commands/development_delivery.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": "??",
+      "path": "src-tauri/src/commands/development_takeover.rs",
+      "group": "G07-agent-host-and-storage"
+    },
+    {
+      "status": "??",
+      "path": "src-tauri/src/smoke/agents_layout_round2.rs",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": "??",
+      "path": "src-tauri/src/smoke/agents_round3_terminal.rs",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": "??",
+      "path": "src-tauri/src/smoke/agents_round3_workflows.rs",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": "??",
+      "path": "src-tauri/src/smoke/agents_round4.rs",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": "??",
+      "path": "src-tauri/src/smoke/agents_stage6.rs",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": "??",
+      "path": "src-tauri/src/smoke/mcp_page.js",
+      "group": "G06-mcp-page-sample"
+    },
+    {
+      "status": "??",
+      "path": "src-tauri/src/smoke/mcp_page.rs",
+      "group": "G06-mcp-page-sample"
+    },
+    {
+      "status": "??",
+      "path": "src/components/development/AgentOutputReferences.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/components/development/DeliveryPanel.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/components/development/ManualTakeover.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/components/development/TaskLaunch.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/components/development/TaskReview.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/components/development/WorkbenchLayout.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/components/development/eventOutputReferences.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/components/development/workbench-layout.css",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/components/development/workbenchLocations.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/i18n/locales/en-US/delivery.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/i18n/locales/en-US/layout.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/i18n/locales/en-US/runtimeWorkflow.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/i18n/locales/en-US/takeover.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/i18n/locales/en-US/taskLaunch.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/i18n/locales/en-US/taskReview.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/i18n/locales/en-US/workbenchNavigation.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/i18n/locales/en-US/workflow.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/i18n/locales/zh-CN/delivery.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/i18n/locales/zh-CN/layout.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/i18n/locales/zh-CN/runtimeWorkflow.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/i18n/locales/zh-CN/takeover.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/i18n/locales/zh-CN/taskLaunch.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/i18n/locales/zh-CN/taskReview.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/i18n/locales/zh-CN/workbenchNavigation.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/i18n/locales/zh-CN/workflow.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/modules/ModuleSurface.tsx",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": "??",
+      "path": "src/pages/workbench/AgentConversation.css",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/resourceState.ts",
+      "group": "G02-resource-state-and-skills"
+    },
+    {
+      "status": "??",
+      "path": "src/stores/developmentDelivery.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/stores/developmentDrafts.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/stores/developmentTakeover.ts",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "src/workspace/navigation.tsx",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": "??",
+      "path": "src/workspace/useAppActions.ts",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": "??",
+      "path": "tests/agent-output-references.test.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "tests/chat-approval-activity.test.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": "??",
+      "path": "tests/chat-reading-layout.test.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": "??",
+      "path": "tests/development-delivery.test.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "tests/development-drafts.test.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "tests/development-runtime-activity.test.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "tests/development-runtime-workflows.test.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "tests/development-task-review.test.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "tests/development-terminal-activity.test.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "tests/fixtures/terminal-accessibility-application.tsx",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": "??",
+      "path": "tests/fixtures/terminal-accessibility-probe.js",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": "??",
+      "path": "tests/fixtures/terminal-accessibility.html",
+      "group": "G11-integrated-native-regressions"
+    },
+    {
+      "status": "??",
+      "path": "tests/fixtures/workflow-round3-application.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "tests/mcp-refresh-activity.test.tsx",
+      "group": "G06-mcp-page-sample"
+    },
+    {
+      "status": "??",
+      "path": "tests/pending-workspace-close.test.tsx",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": "??",
+      "path": "tests/single-task-approval-activity.test.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": "??",
+      "path": "tests/single-task-metadata-activity.test.tsx",
+      "group": "G05-chat-sample"
+    },
+    {
+      "status": "??",
+      "path": "tests/surface-context.test.tsx",
+      "group": "G03-workspace-and-module-lifecycle"
+    },
+    {
+      "status": "??",
+      "path": "tests/task-launch.test.tsx",
+      "group": "G08-agent-product-ui"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/ComponentScenes.tsx",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/frame.html",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/frame.tsx",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/host.ts",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/index.html",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/preview.css",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/shell.tsx",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/tsconfig.json",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/visual/.gitignore",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/visual/baseline/chat-narrow-approval.png",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/visual/baseline/chat-narrow-composer.png",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/visual/baseline/controls-long-select.png",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/visual/baseline/manifest.json",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/visual/baseline/modal-narrow.png",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/visual/baseline/settings-category-focus.png",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/visual/cases.mjs",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/visual/probes.mjs",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "tools/ui-preview/vite.config.ts",
+      "group": "G12-preview-and-visual-baseline"
+    },
+    {
+      "status": "??",
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/final-integration/workspace.json",
+      "group": "G13-integrated-delivery-records"
+    }
+  ],
+  "finalCoverage": {
+    "at": "2026-11-06T13:02:03.269Z",
+    "explicitFileClaims": 340,
+    "archiveExclusiveOwner": "G13-integrated-delivery-records",
+    "unassigned": [],
+    "duplicates": [],
+    "initialPathsRemoved": [],
+    "staged": 0,
+    "trackedModified": 236,
+    "untrackedIndividualFiles": 187,
+    "preArchiveDirtyFiles": 397,
+    "finalInventory": "final-integration/workspace.json",
+    "dirtyFiles": 424
+  }
+}

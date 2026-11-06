@@ -1,4 +1,10 @@
 export default {
+  'agent.sendShortcut': '⌘ / Ctrl + Enter 发送', 'agent.sendEmpty': '输入消息后即可发送。', 'agent.sendBusy': '请等待当前操作完成。',
+  'agent.sendWaiting': '请先回应待处理请求。', 'agent.sendRunning': '智能体正在执行。发送新消息前请先中断当前任务。', 'agent.sendUnavailable': '当前运行未就绪。请恢复会话或选择已就绪的会话后发送。',
+  'agent.latest': '跳到最新消息', 'agent.rawEvents': '查看原生事件（{count}）', 'agent.allowSession': '允许本次会话',
+  'agent.references': '工具输出引用', 'agent.openFile': '打开文件', 'agent.openDiff': '查看差异', 'agent.openRun': '查看关联运行',
+  'agent.referenceUnresolved': '无法安全解析此工具位置，请查看原生事件详情。', 'agent.referenceUnavailable': '此引用在当前任务中不可用，请检查路径、行号及访问限制。',
+  'agent.referenceRunUnavailable': '当前任务中找不到关联运行，请查看原生事件详情。',
   'agent.engine.codex': 'Codex', 'agent.engine.claude': 'Claude',
   'agent.you': '你', 'agent.assistant': '智能体', 'agent.finished': '本轮结果', 'agent.activity': '工具与进度',
   'agent.truncated': '这里只显示最近的会话内容；完整历史由本机智能体保存。',

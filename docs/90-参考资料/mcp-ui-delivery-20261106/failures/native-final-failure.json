@@ -1,0 +1,51 @@
+{
+  "dom": {
+    "ok": true,
+    "value": {
+      "active": {
+        "class": "bg-surface-canvas text-ink-primary",
+        "label": null,
+        "rect": {
+          "bottom": 868,
+          "height": 868,
+          "right": 1440,
+          "width": 1440,
+          "x": 0,
+          "y": 0
+        },
+        "tag": "BODY"
+      },
+      "at": "2026-11-06T08:07:28.348Z",
+      "body": "D\nMy workspace\nOverview\nDesktop\nAI sessions\nResources\nSkills\nMCP management\nApps\nApps\nSettings\nCollapse\nMCP management\nFocus\nMCP Management\n\nOnly connect servers you trust. Local processes run with your operating-system permissions.\n\nAdd MCP server\nRefresh status\nYour servers\n0\nSearch servers\nConnection filter\nAll servers\nLoading servers…\n\nSelect a server to view its tools and activity.",
+      "density": "100",
+      "dialogs": [],
+      "hasFocus": false,
+      "inputs": [
+        {
+          "disabled": false,
+          "label": "Search servers",
+          "rect": {
+            "bottom": 200.5,
+            "height": 28,
+            "right": 651.453125,
+            "width": 417.453125,
+            "x": 234,
+            "y": 172.5
+          },
+          "type": "text",
+          "value": ""
+        }
+      ],
+      "ok": true,
+      "rows": [],
+      "theme": "light",
+      "url": "tauri://localhost/mcp",
+      "viewport": {
+        "height": 868,
+        "width": 1440
+      },
+      "visibility": "hidden"
+    }
+  },
+  "error": "navigate /mcp: {\"error\":\"harness timeout\",\"ok\":false}"
+}

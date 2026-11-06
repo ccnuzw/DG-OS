@@ -27,7 +27,6 @@ export interface AppShellProps {
   onUnpinModule?: (moduleId: string) => void;
   onMovePin?: (moduleId: string, direction: -1 | 1) => void;
   onDragModule?: (moduleId: string | null) => void;
-  accountLabel?: string;
   railFooter?: ReactNode;
   settingsEntry?: NavEntry;
   tabs: TabBarProps;
@@ -40,7 +39,7 @@ function NavButton({ entry, collapsed }: { entry: NavEntry; collapsed: boolean }
   return <NavLink to={entry.to} end={entry.end} caseSensitive title={entry.label} aria-label={entry.label} onClick={event => { if (entry.run && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); entry.run(); } }} data-tone={entry.tone ?? 'neutral'} className={({ isActive }) => cn('workspace-nav-item', collapsed && 'is-collapsed', isActive && 'is-active')}><span className="workspace-nav-icon">{entry.icon}</span>{collapsed ? null : <span className="workspace-nav-label">{entry.label}</span>}</NavLink>;
 }
 
-export function AppShell({ navEntries, navGroups = [], pinnedEntries = [], collapsed = false, autoCollapsed = false, onToggleCollapsed, onOpenLauncher, onPinModule, onUnpinModule, onMovePin, onDragModule, accountLabel, railFooter, settingsEntry, tabs, railHidden = false, draggingModuleId = null, children }: AppShellProps) {
+export function AppShell({ navEntries, navGroups = [], pinnedEntries = [], collapsed = false, autoCollapsed = false, onToggleCollapsed, onOpenLauncher, onPinModule, onUnpinModule, onMovePin, onDragModule, railFooter, settingsEntry, tabs, railHidden = false, draggingModuleId = null, children }: AppShellProps) {
   const { t } = useLocale();
   const drop = (event: React.DragEvent, index?: number) => {
     if (!draggingModuleId) return;
@@ -65,7 +64,6 @@ export function AppShell({ navEntries, navGroups = [], pinnedEntries = [], colla
       <footer className="workspace-rail-footer">
         {settingsEntry ? <NavButton entry={settingsEntry} collapsed={collapsed} /> : null}
         {railFooter ? <div className="workspace-account-footer" data-collapsed={collapsed}>{railFooter}</div> : null}
-        {accountLabel ? <span className="workspace-account-label" title={accountLabel}>{collapsed ? accountLabel.slice(0, 1) : accountLabel}</span> : null}
         {onToggleCollapsed ? <Button variant="ghost" size="xxs" iconOnly={collapsed} disabled={autoCollapsed} onClick={onToggleCollapsed} aria-expanded={!collapsed} aria-label={collapsed ? t('shell.expand') : t('shell.collapse')} title={autoCollapsed ? t('shell.autoCollapsed') : collapsed ? t('shell.expand') : t('shell.collapse')} className="workspace-collapse"><CollapseGlyph className={cn('size-3.5', collapsed && 'rotate-180')} />{collapsed ? null : <span>{t('shell.collapseShort')}</span>}</Button> : null}
       </footer>
     </aside>}

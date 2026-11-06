@@ -1,0 +1,788 @@
+{
+  "schema": 1,
+  "slice": "host",
+  "group": "G10-adjacent-host-privacy-and-toolchain",
+  "reviewedAt": "2026-11-06T09:08:30.003586+00:00",
+  "inventoryHead": "d7422a51964086f084f2429d5d769468fce53f30",
+  "scope": {
+    "assignedFiles": 19,
+    "reviewMethod": "Read complete actual git diff (artifact://76), then affected source contracts and existing regression implementations. No source edits; no builds, tests, formatters, linters, staging, commits, pushes, merges or service changes. Port 5197 untouched.",
+    "diffCommand": "git diff -- crates/dgos-db/src/appearance_tests.rs crates/dgos-db/src/lib.rs crates/dgos-db/src/repositories/user_data_repository.rs crates/dgos-lan/tests/auth.rs crates/dgos-lan/tests/common/mod.rs crates/dgos-skills/src/content_manager.rs crates/dgos-skills/src/content_package.rs crates/dgos-workbench/src/assets.rs crates/dgos-workbench/src/chat.rs crates/dgos-workbench/tests/chat_skill.rs src-tauri/src/chat_media.rs src-tauri/src/commands/chat_assets.rs src-tauri/src/logging.rs src-tauri/tauri.conf.json tests/accounts.test.tsx tests/appearance-settings.test.tsx tests/doc-browser.test.tsx tests/lan-settings.test.tsx tests/ui-errors.test.tsx",
+    "rawPatch": "artifact://76",
+    "sourceFiles": [
+      {
+        "path": "crates/dgos-db/src/appearance_tests.rs",
+        "bytes": 11805,
+        "sha256": "5d46b119dec1a22088f0af517ccd816a5a001ce04b2366364d526f0fac1ac428",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": null,
+        "matchesStage6Source": null
+      },
+      {
+        "path": "crates/dgos-db/src/lib.rs",
+        "bytes": 1903,
+        "sha256": "7f1a9371d73b85fd47a1df752c09c5a4eeb7e11a395ade82a5701adc5bea0ef3",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": null,
+        "matchesStage6Source": null
+      },
+      {
+        "path": "crates/dgos-db/src/repositories/user_data_repository.rs",
+        "bytes": 12070,
+        "sha256": "c7b022db3ae89dbff8ce0271f33b5c894218a22dabc2f1e0321fcd99d2df6129",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": null,
+        "matchesStage6Source": null
+      },
+      {
+        "path": "crates/dgos-lan/tests/auth.rs",
+        "bytes": 26077,
+        "sha256": "40b6e9e621cee9b98f6bd03cbeccec055f1a907dc9eb8ce69e968098c1681d99",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": null,
+        "matchesStage6Source": null
+      },
+      {
+        "path": "crates/dgos-lan/tests/common/mod.rs",
+        "bytes": 17670,
+        "sha256": "d185e189b069044605827d0fed166623655cd7526adbc48380746792fcb019b3",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": null,
+        "matchesStage6Source": null
+      },
+      {
+        "path": "crates/dgos-skills/src/content_manager.rs",
+        "bytes": 20524,
+        "sha256": "a3918e134bbed789047d00c038d65bfa1e8340b022eaa1e534d272f41be30a11",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": null,
+        "matchesStage6Source": null
+      },
+      {
+        "path": "crates/dgos-skills/src/content_package.rs",
+        "bytes": 8512,
+        "sha256": "d011a8f3490409237e989dd3016b0882606a2d0384b5cfe16928ff75cf13c049",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": null,
+        "matchesStage6Source": null
+      },
+      {
+        "path": "crates/dgos-workbench/src/assets.rs",
+        "bytes": 10432,
+        "sha256": "6138c4f8ae5652dc92cedd3953632abde4bafa5f02258d115fec0dc236e63631",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": null,
+        "matchesStage6Source": null
+      },
+      {
+        "path": "crates/dgos-workbench/src/chat.rs",
+        "bytes": 79315,
+        "sha256": "14bd422f06041a961555074b1fca3827d3eab51ccc49e4f75804b63e8d1a4e11",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": null,
+        "matchesStage6Source": null
+      },
+      {
+        "path": "crates/dgos-workbench/tests/chat_skill.rs",
+        "bytes": 16096,
+        "sha256": "4ac899f49d5fb3b4611194ae2b2cc7bf311c0d4be739290c44a9410e5d13652c",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": null,
+        "matchesStage6Source": null
+      },
+      {
+        "path": "src-tauri/src/chat_media.rs",
+        "bytes": 1421,
+        "sha256": "cfa0bb65995b6d29d574fa56136a6beb6ea2039f0c5999d5bed7a78e5d732458",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": null,
+        "matchesStage6Source": null
+      },
+      {
+        "path": "src-tauri/src/commands/chat_assets.rs",
+        "bytes": 5186,
+        "sha256": "13c0844f5258efbf45d11c968edf08fc6861e4e981792411e47e6a0e445223bb",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": null,
+        "matchesStage6Source": null
+      },
+      {
+        "path": "src-tauri/src/logging.rs",
+        "bytes": 10241,
+        "sha256": "80a04fe74f292cbbb6f7864ec59606d90f1dddc9920251098789f68047b434c3",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": null,
+        "matchesStage6Source": null
+      },
+      {
+        "path": "src-tauri/tauri.conf.json",
+        "bytes": 1008,
+        "sha256": "5b6b23409d04a90f023f8411e6794ac35c7649a8feff7ded32d7172a1dbd21c3",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": null,
+        "matchesStage6Source": null
+      },
+      {
+        "path": "tests/accounts.test.tsx",
+        "bytes": 18708,
+        "sha256": "a85e90caf6720bdef10facb5a613f198a8644d951d64a09ee5c4e50ec81fcfb4",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": "a85e90caf6720bdef10facb5a613f198a8644d951d64a09ee5c4e50ec81fcfb4",
+        "matchesStage6Source": true
+      },
+      {
+        "path": "tests/appearance-settings.test.tsx",
+        "bytes": 4567,
+        "sha256": "f80013293eb2450a33b2507eaa4d0d0a719d18baf87bee6ca1fd40e8c065dba8",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": "f80013293eb2450a33b2507eaa4d0d0a719d18baf87bee6ca1fd40e8c065dba8",
+        "matchesStage6Source": true
+      },
+      {
+        "path": "tests/doc-browser.test.tsx",
+        "bytes": 7835,
+        "sha256": "91db40931da86923d22ed2a35bfbd9f7fc1fc640fd2b33c9ddb78438261c976a",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": "91db40931da86923d22ed2a35bfbd9f7fc1fc640fd2b33c9ddb78438261c976a",
+        "matchesStage6Source": true
+      },
+      {
+        "path": "tests/lan-settings.test.tsx",
+        "bytes": 26067,
+        "sha256": "5200f05e51db73aaef55e5c0f7373543e73dc5f990665720a36e00293e8b8e99",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": "5200f05e51db73aaef55e5c0f7373543e73dc5f990665720a36e00293e8b8e99",
+        "matchesStage6Source": true
+      },
+      {
+        "path": "tests/ui-errors.test.tsx",
+        "bytes": 22034,
+        "sha256": "e0c4de05b9865340438043b9e3706ef79758ade17c6d785623545f483ae7e12a",
+        "matchesDeliveryInventory": true,
+        "stage6RecordedSha256": "e0c4de05b9865340438043b9e3706ef79758ade17c6d785623545f483ae7e12a",
+        "matchesStage6Source": true
+      }
+    ]
+  },
+  "readiness": {
+    "state": "Source review complete; ready for parent batched targeted verification, not a current backend test-pass claim.",
+    "provenDefectsFound": [],
+    "filesEdited": [],
+    "sourceDriftFromDeliveryInventory": [],
+    "blockers": [],
+    "evidenceGaps": [
+      "No archived raw G10 backend run output located; V1 implementation-status records historical LAN auth 20/20 and logging 5/5, but report-level evidence is not current raw execution.",
+      "Historical combined dgos-workbench/dgos-skills command timed out at 300 seconds; skills 39 tests were reported complete, workbench incomplete. Do not call that combined run a pass.",
+      "Existing user_scope_tests registry guard covers user_id columns only, not owner columns; existing development purge tests do not seed all four newly registered owner tables. Static SQL/FK review supports correct deletion order but lacks a dedicated all-four-table purge/orphan regression.",
+      "No direct Transcriptions unit tests exist; phase6 native media scenario covers successful transcription, not reload/destroy cancellation or the 25 MiB boundary.",
+      "minimumSystemVersion=13.0 is a bundle declaration, not evidence of operation on macOS 13.0."
+    ]
+  },
+  "existingEvidence": [
+    {
+      "id": "historical-frontend",
+      "level": "archived raw historical jsdom/mock-host execution plus matching test-file hashes",
+      "paths": [
+        "docs/90-参考资料/page-sample-stage6/checks.log.txt:220",
+        "docs/90-参考资料/page-sample-stage6/checks.log.txt:227",
+        "docs/90-参考资料/page-sample-stage6/checks.log.txt:260",
+        "docs/90-参考资料/page-sample-stage6/checks.log.txt:282",
+        "docs/90-参考资料/page-sample-stage6/checks.log.txt:288",
+        "docs/90-参考资料/page-sample-stage6/verification.json"
+      ],
+      "result": {
+        "accounts": 19,
+        "appearanceSettings": 5,
+        "docBrowser": 12,
+        "lanSettings": 38,
+        "uiErrors": 30
+      },
+      "limit": "All five G10 test files exactly match stage6 source hashes. This supports source-scoped reuse only; App/shared dependencies have parallel changes and no current whole-tree pass is inferred."
+    },
+    {
+      "id": "historical-backend",
+      "level": "historical report only; raw output not located",
+      "paths": [
+        "docs/02-产品与版本/当前版本/V1-实现状态.md:435"
+      ],
+      "reported": "LAN auth 20 passed; host logging privacy 5 passed; workspace cargo check passed; skills 39 completed before combined skills/workbench 300-second timeout; workbench result incomplete."
+    },
+    {
+      "id": "historical-media",
+      "level": "historical report only for native phase6",
+      "paths": [
+        "docs/02-产品与版本/当前版本/V1-实现状态.md:3180",
+        "docs/02-产品与版本/当前版本/V1-实现状态.md:3181",
+        "docs/02-产品与版本/当前版本/V1-实现状态.md:3188"
+      ],
+      "reported": "db/workbench libs 108 passed; four workbench integration groups 44 passed; DGOS_CHAT_SMOKE_ONLY=12 native journey 31/31. Loopback Provider/transcription, controlled CLI and isolated SQLite; no physical microphone/external service proof."
+    },
+    {
+      "id": "raw-native-layout",
+      "level": "archived raw historical native layout only",
+      "paths": [
+        "docs/90-参考资料/page-sample-stage6/native-chat-reused.log.txt:5",
+        "docs/90-参考资料/page-sample-stage6/native-chat-reused.log.txt:21"
+      ],
+      "result": "15/15 block 13 layout/focus checks; no asset-bound, transcription-cancellation, logging or account-purge coverage."
+    },
+    {
+      "id": "historical-macos",
+      "level": "historical report only",
+      "paths": [
+        "docs/02-产品与版本/当前版本/V1-实现状态.md:316"
+      ],
+      "reported": "arm64 app bundle declares minimum macOS 13.0; explicitly not macOS 13.0 machine validation."
+    }
+  ],
+  "checksForParent": [
+    {
+      "id": "R1",
+      "command": "cargo test --offline -p dgos-db --lib",
+      "purpose": "Appearance tests, user_scope_tests and development repository/capability tests including migrations and owner purge baseline.",
+      "currentStatus": "not run by this worker"
+    },
+    {
+      "id": "R2",
+      "command": "cargo test --offline -p dgos-lan --test auth --test chat --test service --test websocket",
+      "purpose": "Shared no_proxy Env harness consumers; auth target includes host admission child with all environment proxy variables set and zero proxy hits.",
+      "currentStatus": "not run by this worker"
+    },
+    {
+      "id": "R3",
+      "command": "cargo test --offline -p dgos-skills --test bundled_catalog --test package_install --test package_validation",
+      "purpose": "Typed package return and every affected bundled pin/public validator consumer, including external install compatibility.",
+      "currentStatus": "not run by this worker"
+    },
+    {
+      "id": "R4",
+      "command": "cargo test --offline -p dgos-workbench --lib --test chat_generation --test chat_skill --test chat_tools --test chat_redaction",
+      "purpose": "ContextAssembly argument preservation in send/regenerate/test helper; tool reserve, controls, attachment replay and redaction compatibility.",
+      "currentStatus": "not run by this worker",
+      "limit": "chat_redaction uses its own historical EnvFilter.and(Targets) fixture; it does not invoke the new host LogFilter. R5 is required for host callsite privacy."
+    },
+    {
+      "id": "R5",
+      "command": "cargo test --offline -p dgos --lib logging::tests::",
+      "purpose": "All five production LogFilter tests, including specific targets, invalid spec fallback, dynamic app span, positive leak control and 32 rounds of simultaneous uncapped/capped/fallback dispatchers. Do not serialize these internal threads away.",
+      "currentStatus": "not run by this worker"
+    },
+    {
+      "id": "R6",
+      "command": "cargo check --offline -p dgos --all-targets",
+      "purpose": "Compile host command arithmetic, media values iteration, package/type refactors and native integration callsites; check is not an execution or macOS minimum-runtime claim.",
+      "currentStatus": "not run by this worker"
+    },
+    {
+      "id": "F1",
+      "command": "npx vitest run tests/accounts.test.tsx tests/appearance-settings.test.tsx tests/doc-browser.test.tsx tests/lan-settings.test.tsx tests/ui-errors.test.tsx",
+      "purpose": "Current App/settings/router/mock-host integration and jsdom viewer lifecycle/hash assertions. Parent may include these in the single broader frontend batch.",
+      "currentStatus": "not run by this worker"
+    },
+    {
+      "id": "H1",
+      "command": "DGOS_CHAT_SMOKE_ONLY=12 cargo test --offline -p dgos --features webview-smoke --test webview_smoke_chat -- --nocapture",
+      "purpose": "Existing actual native media journey: asset import/preview/remove then transcription multipart to loopback; also end-to-end ordered Skills/generation controls.",
+      "currentStatus": "not run by this worker",
+      "prerequisites": "Use parent final rebuilt embedded production dist, isolated test data and actual WKWebView. Inspect resource provenance. Run once in native batch if claiming current host media behavior.",
+      "implementation": "src-tauri/src/smoke/chat.rs:2014 and src-tauri/src/smoke/phase6.rs:160",
+      "limit": "Existing scenario does not cover max-size or reload/destroy transcription cancellation."
+    }
+  ],
+  "mapping": [
+    {
+      "path": "crates/dgos-db/src/appearance_tests.rs",
+      "changeIntent": "Default field-reassignment lint maintenance in two existing tests. Dark mode and density150 values remain identical; concurrent winner and migration/restore assertions unchanged.",
+      "contract": "Appearance CAS yields one commit and winner snapshot; failed migration restores DB/files before forward upgrade.",
+      "directSourceEvidence": [
+        "crates/dgos-db/src/appearance_tests.rs:15-22",
+        "crates/dgos-db/src/appearance_tests.rs:63-105"
+      ],
+      "existingExecutionEvidence": [
+        "historical-backend"
+      ],
+      "requiredTargetedChecks": [
+        "R1"
+      ],
+      "readinessAndLimits": "Equivalent test setup; no added behavior."
+    },
+    {
+      "path": "crates/dgos-db/src/lib.rs",
+      "changeIntent": "Update QUIET_LOG_TARGETS documentation from independent filter intersection to host subscriber-local dynamic callsite checks. No constant or executable code changes.",
+      "contract": "sea_orm/sqlx below warn never emit database bound data regardless of RUST_LOG specifics.",
+      "directSourceEvidence": [
+        "crates/dgos-db/src/lib.rs:27-33",
+        "src-tauri/src/logging.rs:31-73"
+      ],
+      "existingExecutionEvidence": [
+        "historical-backend"
+      ],
+      "requiredTargetedChecks": [
+        "R5",
+        "R6"
+      ],
+      "readinessAndLimits": "Documentation accurately follows production host filter; older workbench redaction fixture still uses intersection, so it is not new host-filter evidence."
+    },
+    {
+      "path": "crates/dgos-db/src/repositories/user_data_repository.rs",
+      "changeIntent": "Register development_handoffs/file_writes/task_workspaces/workspaces for owner orphan accounting and prepend their scoped DELETE statements.",
+      "contract": "Idempotent account deletion removes owned development metadata before parent tasks/projects; Bob data retained; orphan accounting includes new owner tables; no filesystem deletion.",
+      "directSourceEvidence": [
+        "crates/dgos-db/src/repositories/user_data_repository.rs:63-66",
+        "crates/dgos-db/src/repositories/user_data_repository.rs:138-165",
+        "crates/dgos-db/src/repositories/user_data_repository.rs:214-230",
+        "crates/dgos-db/src/migrations/m20261104_000030_task_workspaces.rs:20-47",
+        "crates/dgos-db/src/repositories/development_repository/tests.rs:29-34",
+        "crates/dgos-db/src/user_scope_tests.rs:145-173"
+      ],
+      "existingExecutionEvidence": [
+        "historical-backend"
+      ],
+      "requiredTargetedChecks": [
+        "R1"
+      ],
+      "readinessAndLimits": "SQL deletion order matches new FKs; dedicated all-four owner-table purge/orphan behavior remains unexercised in located tests; see owner-purge-orphan."
+    },
+    {
+      "path": "crates/dgos-lan/tests/auth.rs",
+      "changeIntent": "Add child-process host admission regression under HTTP/HTTPS/ALL upper/lowercase proxy settings and empty NO_PROXY.",
+      "contract": "Only child environment mutates; existing peer/Host/Origin gate scenario must pass via loopback, proxy hit count zero; 60s timeout and kill_on_drop bound child lifetime.",
+      "directSourceEvidence": [
+        "crates/dgos-lan/tests/auth.rs:573-672"
+      ],
+      "existingExecutionEvidence": [
+        "historical-backend"
+      ],
+      "requiredTargetedChecks": [
+        "R2"
+      ],
+      "readinessAndLimits": "Test only; no LAN production behavior changed. Child --exact name matches existing top-level function."
+    },
+    {
+      "path": "crates/dgos-lan/tests/common/mod.rs",
+      "changeIntent": "Construct common fixture reqwest client with no_proxy.",
+      "contract": "Host header overrides exercise admission against the bound loopback socket rather than route through environment proxy. Shared client consumers need LAN auth/chat/service/websocket regression.",
+      "directSourceEvidence": [
+        "crates/dgos-lan/tests/common/mod.rs:300-305",
+        "crates/dgos-lan/tests/auth.rs:588-638"
+      ],
+      "existingExecutionEvidence": [
+        "historical-backend"
+      ],
+      "requiredTargetedChecks": [
+        "R2"
+      ],
+      "readinessAndLimits": "Fixture isolation does not establish production remote proxy policy."
+    },
+    {
+      "path": "crates/dgos-skills/src/content_manager.rs",
+      "changeIntent": "Destructure new ValidatedContentPackage named fields for bundled pinned package loading.",
+      "contract": "Same validated metadata/bytes consumed, snapshot identity check and verified file handling retained; no new clone/copy.",
+      "directSourceEvidence": [
+        "crates/dgos-skills/src/content_manager.rs:264-271",
+        "crates/dgos-skills/tests/bundled_catalog.rs:68-103"
+      ],
+      "existingExecutionEvidence": [
+        "historical-backend"
+      ],
+      "requiredTargetedChecks": [
+        "R3",
+        "R6"
+      ],
+      "readinessAndLimits": "Named-struct conversion must land atomically with content_package; all validate_package_files callers inspected."
+    },
+    {
+      "path": "crates/dgos-skills/src/content_package.rs",
+      "changeIntent": "Replace three-element tuple with ValidatedContentPackage {metadata,files,file_manifest}, update both return and public validator destructuring.",
+      "contract": "Required files, official metadata rules, SHA-256 hash verification and immutable manifest remain; body/license owned bytes moved out without additional copy.",
+      "directSourceEvidence": [
+        "crates/dgos-skills/src/content_package.rs:121-191",
+        "crates/dgos-skills/tests/bundled_catalog.rs:208-270"
+      ],
+      "existingExecutionEvidence": [
+        "historical-backend"
+      ],
+      "requiredTargetedChecks": [
+        "R3",
+        "R6"
+      ],
+      "readinessAndLimits": "Internal type refactor, no validation branch change; historical combined command timeout is not full current Skills/workbench evidence."
+    },
+    {
+      "path": "crates/dgos-workbench/src/assets.rs",
+      "changeIntent": "Use char-array filename separator pattern and integer div_ceil for maximum base64 length.",
+      "contract": "Same slash/backslash basename, whitespace/control/255-char validation, 8MiB image predecode ceiling and postdecode MIME/size checks.",
+      "directSourceEvidence": [
+        "crates/dgos-workbench/src/assets.rs:95-142",
+        "crates/dgos-workbench/src/assets.rs:197-209",
+        "crates/dgos-workbench/tests/chat_generation.rs:1618-1665"
+      ],
+      "existingExecutionEvidence": [
+        "historical-media"
+      ],
+      "requiredTargetedChecks": [
+        "R4"
+      ],
+      "readinessAndLimits": "Arithmetic equivalent for positive fixed MAX_IMAGE_BYTES. Existing integration covers controlled imports/ownership/replay, not exact8MiB maximum or both separator cases."
+    },
+    {
+      "path": "crates/dgos-workbench/src/chat.rs",
+      "changeIntent": "Group nine assemble_assets arguments into borrowed ContextAssembly in send, regenerate and cfg(test) assemble helper.",
+      "contract": "Policy, reserve, ordered Skills, history/current text, model window/generation and current/history assets preserve values and lifetimes. Context budget, whole-turn eviction, guidance roles and image replay unchanged; wrapper adds no heap allocation.",
+      "directSourceEvidence": [
+        "crates/dgos-workbench/src/chat.rs:880-896",
+        "crates/dgos-workbench/src/chat.rs:1048-1064",
+        "crates/dgos-workbench/src/chat.rs:1550-1568",
+        "crates/dgos-workbench/src/chat.rs:1588-1687",
+        "crates/dgos-workbench/src/chat.rs:1848-1943",
+        "crates/dgos-workbench/tests/chat_generation.rs:1618-1665"
+      ],
+      "existingExecutionEvidence": [
+        "historical-media"
+      ],
+      "requiredTargetedChecks": [
+        "R4",
+        "H1"
+      ],
+      "readinessAndLimits": "All three changed callsites inspected; existing Vec allocation predates refactor and is unchanged."
+    },
+    {
+      "path": "crates/dgos-workbench/tests/chat_skill.rs",
+      "changeIntent": "Use lexical scope instead of explicit drop for request-body MutexGuard before next awaited session create.",
+      "contract": "Same wire order, max_tokens4096, reasoning high and guidance assertions; guard provably ends before await.",
+      "directSourceEvidence": [
+        "crates/dgos-workbench/tests/chat_skill.rs:428-450"
+      ],
+      "existingExecutionEvidence": [
+        "historical-media"
+      ],
+      "requiredTargetedChecks": [
+        "R4"
+      ],
+      "readinessAndLimits": "No assertion removal."
+    },
+    {
+      "path": "src-tauri/src/chat_media.rs",
+      "changeIntent": "Iterate HashMap.values instead of ignoring keys during cancel_owner.",
+      "contract": "Every transcription owned by matching window is cancelled; other owner entries unchanged, poison recovery and registry semantics retained.",
+      "directSourceEvidence": [
+        "src-tauri/src/chat_media.rs:8-23",
+        "src-tauri/src/module_host.rs:474-496"
+      ],
+      "existingExecutionEvidence": [
+        "historical-media"
+      ],
+      "requiredTargetedChecks": [
+        "R6",
+        "H1"
+      ],
+      "readinessAndLimits": "Mechanical equivalent; no direct unit test found and H1 does not exercise cancellation hook. See transcription-lifecycle-boundary."
+    },
+    {
+      "path": "src-tauri/src/commands/chat_assets.rs",
+      "changeIntent": "Replace audio base64 upper bound arithmetic with typed usize.div_ceil.",
+      "contract": "Same encoded predecode admission: request id1..128 bytes; max encoded ceil(25MiB/3)*4. Provider rejects decoded audio >25MiB before network dispatch. Host account/lease/MIME/cancel flow unchanged.",
+      "directSourceEvidence": [
+        "src-tauri/src/commands/chat_assets.rs:39-67",
+        "crates/dgos-providers/src/transcription.rs:10-15",
+        "src-tauri/src/smoke/phase6.rs:160-170"
+      ],
+      "existingExecutionEvidence": [
+        "historical-media"
+      ],
+      "requiredTargetedChecks": [
+        "R6",
+        "H1"
+      ],
+      "readinessAndLimits": "No new size policy. No exact-boundary host test located."
+    },
+    {
+      "path": "src-tauri/src/logging.rs",
+      "changeIntent": "Replace EnvFilter.and(Targets) with production LogFilter enforcing cap before user verbosity and Interest::sometimes for subscriber-local decisions; forward EnvFilter dynamic span callbacks; strengthen/add tests.",
+      "contract": "Concurrent uncapped subscriber cannot cause cached database trace/span bound-value disclosure. App trace/dynamic field verbosity remains functional; db warnings preserved; invalid spec defaults info.",
+      "directSourceEvidence": [
+        "src-tauri/src/logging.rs:31-90",
+        "src-tauri/src/logging.rs:123-245"
+      ],
+      "existingExecutionEvidence": [
+        "historical-backend"
+      ],
+      "requiredTargetedChecks": [
+        "R5",
+        "R6"
+      ],
+      "readinessAndLimits": "Five tests cover direct privacy, positive control, fallback, unconditional-interest rejection and 32 concurrent dispatcher rounds. Requires R5 actual production filter; stage6 excludes this Rust source."
+    },
+    {
+      "path": "src-tauri/tauri.conf.json",
+      "changeIntent": "Declare macOS minimumSystemVersion13.0 alongside existing Info.plist.",
+      "contract": "Packaged app declares supported minimum OS13.0, existing bundle resources and build hooks unchanged.",
+      "directSourceEvidence": [
+        "src-tauri/tauri.conf.json:26-29"
+      ],
+      "existingExecutionEvidence": [
+        "historical-macos"
+      ],
+      "requiredTargetedChecks": [
+        "R6"
+      ],
+      "readinessAndLimits": "No evidence of actual minimum-OS run. Parent release metadata check needed only if claiming rebuilt package identity."
+    },
+    {
+      "path": "tests/accounts.test.tsx",
+      "changeIntent": "Enable both React Router v7 future flags on existing MemoryRouter harness; compact JSX only.",
+      "contract": "Account gate/create/signin/delete/switch behaviors and assertions unchanged; opt in transition and relative-splat semantics.",
+      "directSourceEvidence": [
+        "tests/accounts.test.tsx:62-69"
+      ],
+      "existingExecutionEvidence": [
+        "historical-frontend"
+      ],
+      "requiredTargetedChecks": [
+        "F1"
+      ],
+      "readinessAndLimits": "Historical19/19 with identical test hash; shared App/account integration can drift."
+    },
+    {
+      "path": "tests/appearance-settings.test.tsx",
+      "changeIntent": "Enable both future flags on all three MemoryRouter render sites.",
+      "contract": "Preview/cancel/failure persistence, unmount restore and deferred navigation until save settles still exercised.",
+      "directSourceEvidence": [
+        "tests/appearance-settings.test.tsx:23",
+        "tests/appearance-settings.test.tsx:50-57"
+      ],
+      "existingExecutionEvidence": [
+        "historical-frontend"
+      ],
+      "requiredTargetedChecks": [
+        "F1"
+      ],
+      "readinessAndLimits": "Historical5/5 identical hash."
+    },
+    {
+      "path": "tests/doc-browser.test.tsx",
+      "changeIntent": "Use HTTP emulator origin with real Unicode file pathname; await natural jsdom load before manual script eval and one DOMContentLoaded; collect runtime errors; assert view and reader/doc hashes.",
+      "contract": "Avoid jsdom30 file-URL history limitation and duplicate initial handlers without modifying real offline viewer. All six views navigate with correct fragments and no runtime errors.",
+      "directSourceEvidence": [
+        "tests/doc-browser.test.tsx:40-75",
+        "tests/doc-browser.test.tsx:142-151"
+      ],
+      "existingExecutionEvidence": [
+        "historical-frontend"
+      ],
+      "requiredTargetedChecks": [
+        "F1"
+      ],
+      "readinessAndLimits": "Historical12/12 identical hash; HTTP jsdom cannot prove real file:// history in supported browsers. No browser assets changed in G10."
+    },
+    {
+      "path": "tests/lan-settings.test.tsx",
+      "changeIntent": "Enable both future flags in three router render sites; compact JSX only.",
+      "contract": "LAN status/retry/confirmation, device identity interpolation and polling tests unchanged.",
+      "directSourceEvidence": [
+        "tests/lan-settings.test.tsx:140-148",
+        "tests/lan-settings.test.tsx:224-231",
+        "tests/lan-settings.test.tsx:582-589"
+      ],
+      "existingExecutionEvidence": [
+        "historical-frontend"
+      ],
+      "requiredTargetedChecks": [
+        "F1"
+      ],
+      "readinessAndLimits": "Historical38/38 identical hash; mock host does not prove LAN network/device auth."
+    },
+    {
+      "path": "tests/ui-errors.test.tsx",
+      "changeIntent": "Enable both future flags for three real-App route table tests.",
+      "contract": "Unknown routes show404 and return-home works; unknown settings path keeps Settings handling.",
+      "directSourceEvidence": [
+        "tests/ui-errors.test.tsx:429-453"
+      ],
+      "existingExecutionEvidence": [
+        "historical-frontend"
+      ],
+      "requiredTargetedChecks": [
+        "F1"
+      ],
+      "readinessAndLimits": "Historical30/30 identical hash; real App dependency changes require parent final batch."
+    }
+  ],
+  "crossGroupDependencies": [
+    {
+      "group": "G07-agent-host-and-storage",
+      "paths": [
+        "crates/dgos-db/src/migrations/m20261104_000030_task_workspaces.rs",
+        "crates/dgos-db/src/migrations/mod.rs",
+        "crates/dgos-db/src/repositories/development_repository/tests.rs",
+        "crates/dgos-db/src/repositories/development_repository/workspaces.rs",
+        "crates/dgos-db/src/repositories/development_repository/handoffs.rs",
+        "src-tauri/src/lib.rs"
+      ],
+      "contract": "New four owner-table purge entries must be delivered atomically with 000030 schema and its registered migrations; host registration/managed media state are shared integration. G10 is not independently buildable against a schema without these tables."
+    },
+    {
+      "group": "G05-chat-sample",
+      "paths": [
+        "src/components/chat/Attachments.tsx",
+        "src/components/chat/VoiceCapture.tsx",
+        "src/stores/chatStore.ts",
+        "tests/chat-workbench.test.tsx"
+      ],
+      "contract": "Frontend controlled asset IDs, explicit transcription and cancellation consume existing host APIs. G10 changes only equivalent iteration/arithmetic/parameter packaging, not UI or new media capabilities."
+    },
+    {
+      "group": "G11-integrated-native-regressions",
+      "paths": [
+        "src-tauri/src/smoke/chat.rs",
+        "src-tauri/src/smoke/phase6.rs",
+        "src-tauri/src/module_host.rs",
+        "src-tauri/tests/webview_smoke_chat.rs"
+      ],
+      "contract": "Phase6 runtime success scenario and page reload/window destruction hooks are outside G10 ownership; existing native block13 layout evidence is insufficient for media or privacy."
+    },
+    {
+      "group": "G01/G03/G04 shared UI/settings integration",
+      "paths": [
+        "src/App.tsx",
+        "src/accounts/AccountGate.tsx",
+        "src/pages/SettingsShell.tsx",
+        "src/pages/LanSettings.tsx",
+        "src/pages/AppearanceSettings.tsx",
+        "src/ui",
+        "package.json",
+        "package-lock.json"
+      ],
+      "contract": "Matching test-file hashes are not a current App consumer pass after shared dependencies change. React Router v6 future flags are harness configuration. jsdom30/Vitest5/Node Promise.withResolvers remain installed toolchain requirements."
+    },
+    {
+      "group": "G09-provider-transport",
+      "paths": [
+        "crates/dgos-providers/src/transport.rs",
+        "crates/dgos-providers/src/manager.rs",
+        "crates/dgos-providers/src/transcription.rs"
+      ],
+      "contract": "LAN test no_proxy change is a fixture correction, not production Provider transport proof. Transcription currently uses shared provider http client and rejects decoded audio >25 MiB before dispatch. Do not conflate G09 proxy/TLS evidence with G10 auth or logging."
+    },
+    {
+      "group": "G13-integrated-delivery-records",
+      "paths": [
+        "docs/02-产品与版本/当前版本/V1-实现状态.md",
+        "docs/90-参考资料/产品文档浏览器.html",
+        "docs/90-参考资料/产品文档浏览器-文档数据.js"
+      ],
+      "contract": "Parent owns final status/docs/source hashes and generated-doc consistency. No docs edited by this worker."
+    }
+  ],
+  "additionalHostScenarios": [
+    {
+      "id": "owner-purge-orphan",
+      "need": "Needed to raise the new four owner-table behavior from static review to direct behavioral evidence; existing tests are partial.",
+      "procedure": "In isolated migrated SQLite seed Alice and Bob projects/tasks/sessions, original or imported workspaces, task bindings, file-write ownership and handoff rows using valid foreign keys. Insert account records, assert orphan_count includes rows whose owner has no account (also default-user no-account exemption). Purge Workbench for Alice twice; assert all four Alice table counts zero, Bob counts unchanged, PRAGMA foreign_key_check empty and no workspace filesystem deletion.",
+      "exactEntryPoints": [
+        "UserDataRepository::purge(UserDataDomain::Workbench, owner)",
+        "UserDataRepository::orphan_count",
+        "crates/dgos-db/src/migrations/m20261104_000030_task_workspaces.rs:20-47"
+      ],
+      "commandAvailability": "No current dedicated all-four-table test exists. Do not claim R1 alone proves this scenario; parent can record gap or authorize/add a focused regression."
+    },
+    {
+      "id": "transcription-lifecycle-boundary",
+      "need": "Only required for a stronger current lifecycle/boundary host claim; G10 diff itself is behavior-equivalent.",
+      "procedure": "Use isolated host and gated loopback transcription; begin for one owner then page reload/destroy and observe cancellation with no late transcript returned. Another owner token remains live. Explicit cancel/finish returns interrupted; next request can begin. Valid signed audio at 25 MiB accepted at admission, 25 MiB+1 rejected before upstream hit; encoded text over ceil(25MiB/3)*4 rejected before decoding.",
+      "source": "src-tauri/src/chat_media.rs:8-23; src-tauri/src/module_host.rs:474-496; src-tauri/src/commands/chat_assets.rs:42-65; crates/dgos-providers/src/transcription.rs:15",
+      "commandAvailability": "H1 covers successful transcription only; no dedicated current lifecycle/boundary native test found."
+    },
+    {
+      "id": "macos-minimum",
+      "need": "Release platform acceptance only, not a G10 local coding blocker.",
+      "procedure": "Inspect rebuilt application Info.plist LSMinimumSystemVersion=13.0 and Mach-O deployment metadata; actual launch on macOS13 hardware/VM is separate and currently unknown.",
+      "commandAvailability": "Parent-owned release verification; no release build requested/executed in this slice."
+    }
+  ],
+  "coverage": {
+    "expected": [
+      "crates/dgos-db/src/appearance_tests.rs",
+      "crates/dgos-db/src/lib.rs",
+      "crates/dgos-db/src/repositories/user_data_repository.rs",
+      "crates/dgos-lan/tests/auth.rs",
+      "crates/dgos-lan/tests/common/mod.rs",
+      "crates/dgos-skills/src/content_manager.rs",
+      "crates/dgos-skills/src/content_package.rs",
+      "crates/dgos-workbench/src/assets.rs",
+      "crates/dgos-workbench/src/chat.rs",
+      "crates/dgos-workbench/tests/chat_skill.rs",
+      "src-tauri/src/chat_media.rs",
+      "src-tauri/src/commands/chat_assets.rs",
+      "src-tauri/src/logging.rs",
+      "src-tauri/tauri.conf.json",
+      "tests/accounts.test.tsx",
+      "tests/appearance-settings.test.tsx",
+      "tests/doc-browser.test.tsx",
+      "tests/lan-settings.test.tsx",
+      "tests/ui-errors.test.tsx"
+    ],
+    "mapped": [
+      "crates/dgos-db/src/appearance_tests.rs",
+      "crates/dgos-db/src/lib.rs",
+      "crates/dgos-db/src/repositories/user_data_repository.rs",
+      "crates/dgos-lan/tests/auth.rs",
+      "crates/dgos-lan/tests/common/mod.rs",
+      "crates/dgos-skills/src/content_manager.rs",
+      "crates/dgos-skills/src/content_package.rs",
+      "crates/dgos-workbench/src/assets.rs",
+      "crates/dgos-workbench/src/chat.rs",
+      "crates/dgos-workbench/tests/chat_skill.rs",
+      "src-tauri/src/chat_media.rs",
+      "src-tauri/src/commands/chat_assets.rs",
+      "src-tauri/src/logging.rs",
+      "src-tauri/tauri.conf.json",
+      "tests/accounts.test.tsx",
+      "tests/appearance-settings.test.tsx",
+      "tests/doc-browser.test.tsx",
+      "tests/lan-settings.test.tsx",
+      "tests/ui-errors.test.tsx"
+    ],
+    "missing": [],
+    "extra": [],
+    "uniqueMappedFiles": 19
+  },
+  "supportingSourceHashes": [
+    {
+      "path": "docs/90-参考资料/page-sample-stage6/checks.log.txt",
+      "sha256": "445b87ca67d4891d149620f0c925d7b711fc5a743e2d66985e3d2da75828959c"
+    },
+    {
+      "path": "docs/90-参考资料/page-sample-stage6/verification.json",
+      "sha256": "c26e84cc9dfeae4d0c0f3af754044f636f9778938da213e5ee88c63dea41de05"
+    },
+    {
+      "path": "docs/90-参考资料/page-sample-stage6/native-chat-reused.log.txt",
+      "sha256": "02fe71d4ed5ce9a7a63a4be3e8962546ca27a47636709fc49c86ab6c95ec8cae"
+    },
+    {
+      "path": "docs/90-参考资料/mcp-ui-delivery-20261106/delivery-groups.json",
+      "sha256": "557e54fd8e72c7bb89b9c4a5b1e0c4c1f4dae6455ad4c80ec8e970b17d1c617b"
+    },
+    {
+      "path": "crates/dgos-db/src/migrations/m20261104_000030_task_workspaces.rs",
+      "sha256": "d0c4e64533a482ca1e41afdebdf92ac85cb3ca50861d932685b7909435b96f56"
+    },
+    {
+      "path": "crates/dgos-providers/src/transcription.rs",
+      "sha256": "5b15ce2b4b15df6c769a85c52ade2594e61eabf8821b95daf44af69aba57072e"
+    },
+    {
+      "path": "src-tauri/src/smoke/phase6.rs",
+      "sha256": "62b34579cc0cb2e6214768c8b6a196987b3cc92bd409173743fd53a2cb1d8696"
+    },
+    {
+      "path": "crates/dgos-workbench/tests/chat_generation.rs",
+      "sha256": "bc66c87d41fe31c711486fdf9576ab3bf7fd5af3e64199efc0615c9407579090"
+    },
+    {
+      "path": "crates/dgos-skills/tests/bundled_catalog.rs",
+      "sha256": "b4e269fb258b8f02fb31b545047df7a0888307435201cefc27359b9e8f264e40"
+    }
+  ]
+}

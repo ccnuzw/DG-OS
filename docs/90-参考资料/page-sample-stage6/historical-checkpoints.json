@@ -1,0 +1,31 @@
+{
+  "mcp": {
+    "sourceSession": "01a1aab4-e7c9-75ca-a803-4df7665daacd",
+    "status": "blocked/incomplete",
+    "actual": "Existing W4 compatibility smoke 12/12, docs writeback only",
+    "notPerformed": [
+      "WKWebView narrow/wide reflow",
+      "native keyboard focus",
+      "edit draft roundtrip",
+      "window close cancel/confirm",
+      "new desktop screenshots"
+    ],
+    "knownStop": "After documentation and docs checks; promised smoke extension not implemented",
+    "unknown": "Why execution stopped; no failed page acceptance assertion or external blocker recorded",
+    "next": "Complete original native page acceptance on identified production resource snapshot; do not restart automatically"
+  },
+  "settingsNative": {
+    "sourceSession": "01a1a0fd-6223-7006-976e-8cd0601f7cb9",
+    "message": "b3de52e3",
+    "reported": "42/42 settings WKWebView, rebuilt host",
+    "rawSuccessLog": "Not found in currently retained stage4 directory; run-42.txt is earlier 40/42 failure and is not promoted",
+    "sourceHashComparison": "See verification.json nativeReuse.sourceHashes",
+    "boundary": "Historical delivered report plus unchanged component hashes, not a new native run"
+  },
+  "chatNative": {
+    "source": "/tmp/dgos-a11y-stage4-evidence/chat-native-final.txt",
+    "result": "15/15",
+    "archive": "native-chat-reused.log.txt",
+    "boundary": "Reused path evidence; entry JS changed, CSS hashes identical; not current native whole tree"
+  }
+}

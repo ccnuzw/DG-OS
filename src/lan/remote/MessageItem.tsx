@@ -29,19 +29,19 @@ export function MessageItem({ message, live, failure, canRegenerate, onRegenerat
       <div
         className={cn(
           'max-w-full rounded-lg px-3 py-2 type-reading',
-          mine ? 'bg-surface-inset text-foreground' : 'text-foreground',
+          mine ? 'bg-surface-inset text-ink-primary' : 'text-ink-primary',
         )}
       >
         {generating && live?.reasoning ? (
-          <details className="mb-2 text-sm text-muted-foreground">
+          <details className="mb-2 text-sm text-ink-secondary">
             <summary>{t('remote.thinking')}</summary>
             <p className="whitespace-pre-wrap break-words">{live.reasoning}</p>
           </details>
         ) : null}
         {content ? <p className="whitespace-pre-wrap break-words">{content}</p> : null}
-        {generating && !content ? <p className="text-muted-foreground">{t('remote.thinkingEllipsis')}</p> : null}
+        {generating && !content ? <p className="text-ink-secondary">{t('remote.thinkingEllipsis')}</p> : null}
       </div>
-      <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-2 text-sm text-ink-secondary">
         {generating ? <span>{t('remote.generating')}</span> : null}
         {generating && taskId ? (
           <Button size="sm" variant="secondary" onClick={() => onCancel(taskId)}>
@@ -49,7 +49,7 @@ export function MessageItem({ message, live, failure, canRegenerate, onRegenerat
           </Button>
         ) : null}
         {message.status === 'interrupted' || message.status === 'failed' ? (
-          <span role="status" className="text-error-text">
+          <span role="status" className="text-status-error-text">
             {failedMessageText(message.status, failure?.errorCode ?? message.error_code, failure?.providerCode ?? null)}
           </span>
         ) : null}

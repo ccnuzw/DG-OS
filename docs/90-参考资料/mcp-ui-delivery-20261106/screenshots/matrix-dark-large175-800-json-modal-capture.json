@@ -1,0 +1,7 @@
+{
+  "path": "<local-evidence>/native-current-dist/matrix-dark-large175-800-json-modal.png",
+  "pid": 40187,
+  "source": "actual NSWindow.windowNumber, screencapture -x -o -l",
+  "success": true,
+  "window_number": 7968
+}

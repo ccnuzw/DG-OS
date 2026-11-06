@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { readWorkspaceAppCatalog, type WorkspaceAppCatalog } from '../modules/moduleApi';
+import { readWorkspaceAppCatalog, type WorkspaceAppCatalog, type WorkspaceAppEntry } from '../modules/moduleApi';
 import { useModuleInstances } from '../modules/ModuleSlots';
+
+export const appUsable = (entry: WorkspaceAppEntry) => entry.enabled && entry.permissionState === 'granted' && entry.runtimeState === 'ready' && !entry.crashed;
 
 export function useAppCatalog(pathname: string) {
   const [catalog, setCatalog] = useState<WorkspaceAppCatalog | null>(null);

@@ -61,12 +61,10 @@ const callsOf = (command: string) => host.calls.filter(([name]) => name === comm
 
 function renderApp(path = '/') {
   return render(
-    <MemoryRouter initialEntries={[path]}>
-      <AccountGate>
-        <App />
-      </AccountGate>
-      <ToastViewport />
-    </MemoryRouter>,
+    <MemoryRouter initialEntries={[path]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><AccountGate>
+      <App />
+    </AccountGate>
+    <ToastViewport /></MemoryRouter>,
   );
 }
 

@@ -6,6 +6,10 @@
 //! database or credential store. The page is the shipped `dist/` in a visible
 //! WKWebView; all management, confirmation, tool and recovery actions go
 //! through production Tauri commands.
+//!
+//! `DGOS_MCP_SMOKE_MODE=page` selects the independent production-page acceptance
+//! journey in mcp_page.rs. It retains its fresh /tmp evidence root and does not
+//! repeat W4. Omit the variable (or use `w4`) for the original compatibility run.
 
 use super::{eval, finish, ipc, wait_load, Checks, LoadEvents, Pending};
 use crate::commands;
@@ -23,6 +27,9 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::broadcast;
+
+#[path = "mcp_page.rs"]
+mod page;
 
 const USER: &str = "default-user";
 const MAIN: &str = "main";
@@ -74,6 +81,7 @@ struct Fixture {
     filesystem_id: String,
     http_id: String,
     sdk_child: Mutex<Option<Child>>,
+    db: dgos_db::sea_orm::DatabaseConnection,
 }
 
 async fn official_http(prefix: &str) -> (Child, String) {
@@ -113,9 +121,12 @@ async fn build_fixture(maintenance: dgos_db::MaintenanceGate, resolver: Arc<crat
     let prefix = std::env::var("DGOS_OFFICIAL_MCP_SDK_PREFIX").map_err(|_| {
         "set DGOS_OFFICIAL_MCP_SDK_PREFIX to the isolated official SDK install".to_owned()
     })?;
-    let root = std::env::temp_dir().join(format!("dgos-mcp-w4-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    let root = if page::selected() { page::root()? } else {
+        let root = std::env::temp_dir().join(format!("dgos-mcp-w4-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+        root
+    };
     std::fs::write(root.join("acceptance.txt"), "DGOS-FR003-W4\n").map_err(|e| e.to_string())?;
     let db_url = format!("sqlite://{}?mode=rwc", root.join("dgos.db").display());
     let db = dgos_db::establish_connection(&db_url)
@@ -193,6 +204,7 @@ async fn build_fixture(maintenance: dgos_db::MaintenanceGate, resolver: Arc<crat
         filesystem_id: fs_server.id,
         http_id: http_server.id,
         sdk_child: Mutex::new(Some(sdk_child)),
+        db,
     })
 }
 
@@ -444,6 +456,10 @@ async fn scenario(app: AppHandle, fixture: Fixture) {
 }
 
 pub fn run_mcp() {
+    if std::env::var("DGOS_MCP_SMOKE_MODE").is_ok_and(|mode| mode != "page" && mode != "w4") {
+        eprintln!("DGOS_MCP_SMOKE_MODE must be page or w4");
+        std::process::exit(1);
+    }
     std::thread::spawn(|| {
         std::thread::sleep(SMOKE_WATCHDOG);
         println!("SMOKE RESULT: watchdog expired");
@@ -460,6 +476,7 @@ pub fn run_mcp() {
         }
     };
     let manager = fixture.manager.clone();
+    let db = fixture.db.clone();
     let (load_sender, _) = broadcast::channel(64);
     let mut context = tauri::generate_context!();
     context.config_mut().app.windows.clear();
@@ -467,6 +484,11 @@ pub fn run_mcp() {
     let fixture_for_setup = fixture_cell.clone();
     let result = tauri::Builder::default()
         .manage(Pending::default())
+        .manage(page::Control::default())
+        .manage(dgos_db::AppearanceRepository::new(db.clone()))
+        .manage(dgos_db::HostSettingsRepository::new(db.clone()))
+        .manage(dgos_db::DesktopRepository::new(db.clone()))
+        .manage(dgos_db::CliRepository::new(db))
         .manage(maintenance)
         .manage(resolver)
         .manage(LoadEvents(load_sender))
@@ -483,23 +505,33 @@ pub fn run_mcp() {
             }
         })
         .setup(move |app| {
+            let fixture = fixture_for_setup.lock().unwrap().take().unwrap();
+            if page::selected() { tauri::async_runtime::block_on(page::install(app, &fixture)); }
             let events = app.state::<LoadEvents>().0.subscribe();
             // Start at the root asset; BrowserRouter navigation below exercises the
             // same route transition used by the shipped app (and avoids relying
             // on custom-protocol fallback behavior for a deep-link at startup).
             WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("/".into()))
-                .inner_size(1000.0, 760.0)
+                .inner_size(if page::selected() {1440.0}else{1000.0}, if page::selected() {900.0}else{760.0})
                 .visible(true)
                 .build()?;
             let handle = app.handle().clone();
-            let fixture = fixture_for_setup.lock().unwrap().take().unwrap();
             tauri::async_runtime::spawn(async move {
                 let _ = wait_load(events, MAIN, "/").await;
-                scenario(handle, fixture).await;
+                if page::selected() { page::run(handle, fixture).await; }
+                else { scenario(handle, fixture).await; }
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(|invoke| {
+            if page::selected() && matches!(invoke.message.command(), "read_workspace_app_catalog" | "attach_module_host" | "report_module_host" | "report_module_crash") {
+                let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![commands::read_workspace_app_catalog, commands::attach_module_host, commands::report_module_host, commands::report_module_crash];
+                return handler(invoke);
+            }
+            if page::selected() && matches!(invoke.message.command(), "list_mcp_servers" | "get_mcp_server_config" | "update_mcp_server" | "refresh_mcp_tools" | "list_mcp_tools" | "list_mcp_usage_logs" | "list_mcp_connection_logs") {
+                return page::handle(invoke);
+            }
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
             commands::list_mcp_servers,
             commands::get_mcp_server_config,
             commands::create_mcp_server,
@@ -517,8 +549,15 @@ pub fn run_mcp() {
             commands::clear_mcp_bearer_token,
             commands::list_mcp_usage_logs,
             commands::list_mcp_connection_logs,
+            commands::get_appearance_preferences, commands::set_appearance_preferences,
+            commands::recover_appearance_preferences,
+            commands::get_language_preferences, commands::set_language_preferences,
+            commands::get_desktop_preferences, commands::set_desktop_preferences,
+            commands::get_cli_preferences, commands::set_cli_preferences,
             super::smoke_report,
-        ])
+            ];
+            handler(invoke)
+        })
         .run(context);
     if let Err(error) = result {
         println!("SMOKE RESULT: tauri failed to run: {error}");

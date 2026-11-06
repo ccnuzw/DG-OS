@@ -189,7 +189,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn version_probe_cleans_process_group_on_timeout_cancellation_and_success() {
-        use std::{os::unix::fs::PermissionsExt, time::Duration};
+        use std::time::Duration;
         for outcome in ["timeout", "cancel", "available"] {
             let root = std::env::temp_dir().join(format!("dgos-cli-descendants-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir(&root).unwrap();
@@ -201,8 +201,7 @@ mod tests {
                 "/bin/sleep 30 &"
             };
             let tail = if outcome == "available" { "exit 0" } else { "wait" };
-            std::fs::write(&path, format!("#!/bin/sh\n{body}\nprintf '%s %s\\n' \"$$\" \"$!\" > '{}'\n{tail}\n", pids.display())).unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            crate::test_support::prepare_shell_fixture(&path, &format!("{body}\nprintf '%s %s\\n' \"$$\" \"$!\" > '{}'\n{tail}\n", pids.display())).await;
             let task = tokio::spawn(async move { super::probe(CliTool::Codex, path.to_str()).await });
             let ids: Vec<i32> = tokio::time::timeout(Duration::from_secs(3), async {
                 loop {

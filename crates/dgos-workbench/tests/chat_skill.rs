@@ -437,14 +437,15 @@ async fn ordered_pins_and_controls_survive_session_read_and_reach_stream_request
     assert_eq!(saved.generation, chosen.generation);
     assert_eq!(saved.skills.iter().map(|s| s.skill_id.as_str()).collect::<Vec<_>>(), vec![second, SKILL]);
     assert!(matches!(turn(&fx, &created.id, "summarize").await.unwrap(), ChatEvent::Done { .. }));
-    let bodies = fx.seen.lock().unwrap();
-    let wire = bodies.last().unwrap();
-    assert_eq!(wire["max_tokens"], 4096);
-    assert_eq!(wire["reasoning_effort"], "high");
-    assert!(wire["messages"][1]["content"].as_str().unwrap().contains(second));
-    assert!(wire["messages"][2]["content"].as_str().unwrap().contains(SKILL));
-    assert!(wire["messages"][3]["content"].as_str().unwrap().contains("session guidance marker"));
-    drop(bodies);
+    {
+        let bodies = fx.seen.lock().unwrap();
+        let wire = bodies.last().unwrap();
+        assert_eq!(wire["max_tokens"], 4096);
+        assert_eq!(wire["reasoning_effort"], "high");
+        assert!(wire["messages"][1]["content"].as_str().unwrap().contains(second));
+        assert!(wire["messages"][2]["content"].as_str().unwrap().contains(SKILL));
+        assert!(wire["messages"][3]["content"].as_str().unwrap().contains("session guidance marker"));
+    }
     chosen.skill_ids.push(SKILL.into());
     assert!(matches!(fx.chat.create_session(&fx.providers, &fx.skills, ALICE, CreateChatSessionInput { target: Some(chosen) }).await, Err(ChatError::InvalidMessageContent)));
 }

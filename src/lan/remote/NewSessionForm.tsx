@@ -72,7 +72,7 @@ export function NewSessionForm({ api, onCreated }: NewSessionFormProps) {
   return (
     <form className="flex flex-col gap-4 p-4" onSubmit={(event) => void submit(event)}>
       {targets && providers.length === 0 ? (
-        <p role="status" className="text-muted-foreground">
+        <p role="status" className="text-ink-secondary">
           {t('remote.noModel')}
         </p>
       ) : null}
@@ -117,9 +117,9 @@ export function NewSessionForm({ api, onCreated }: NewSessionFormProps) {
           ))}
         </select>
       </label>
-      <p className="text-sm text-muted-foreground">{t('remote.fixedTarget')}</p>
+      <p className="text-sm text-ink-secondary">{t('remote.fixedTarget')}</p>
       {error ? (
-        <p role="alert" className="text-sm text-error-text">
+        <p role="alert" className="text-sm text-status-error-text">
           {error}
         </p>
       ) : null}

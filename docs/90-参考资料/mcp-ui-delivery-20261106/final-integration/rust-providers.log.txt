@@ -1,0 +1,499 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling dgos-types v0.1.0 (<repo>/crates/dgos-types)
+   Compiling dgos-db v0.1.0 (<repo>/crates/dgos-db)
+   Compiling dgos-providers v0.1.0 (<repo>/crates/dgos-providers)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 54s
+     Running unittests src/lib.rs (target/debug/deps/dgos_providers-8d01045d19f892b3)
+
+running 123 tests
+test adapters::anthropic::tests::cursor_is_percent_encoded ... ok
+test adapters::anthropic::tests::stop_reasons_and_usage_are_normalised ... ok
+test adapters::anthropic::tests::requests_that_cannot_be_expressed_are_refused_locally ... ok
+test adapters::anthropic::tests::malformed_tool_arguments_are_refused_instead_of_sent ... ok
+test adapters::openai::tests::profiles_choose_the_token_limit_name ... ok
+test adapters::anthropic::tests::tool_response_must_agree_with_its_stop_reason ... ok
+test adapters::anthropic::tests::reasoning_is_mapped_per_profile_and_budget_must_leave_room ... ok
+test adapters::anthropic::tests::system_is_lifted_and_same_role_messages_merge ... ok
+test adapters::openai::tests::only_the_fields_the_upstream_sent_go_back_on_the_assistant_message ... ok
+test adapters::anthropic::tests::structured_output_uses_the_native_format_or_a_system_instruction ... ok
+test adapters::anthropic::tests::model_items_use_only_documented_fields ... ok
+test adapters::anthropic::tests::tool_round_places_thinking_first_then_text_then_tool_use_then_the_result ... ok
+test adapters::openai::tests::usage_without_counts_is_zero_and_flagged_but_partial_usage_is_kept ... ok
+test adapters::anthropic::tests::tool_response_keeps_thinking_blocks_and_stringifies_the_input ... ok
+test adapters::openai::tests::temperature_is_serialised_in_its_shortest_form ... ok
+test adapters::openai::tests::reasoning_fields_are_kept_by_name_and_displayed_without_encrypted_parts ... ok
+test classify::tests::classify_anthropic_models_are_always_text_generation_by_protocol ... ok
+test classify::tests::classify_embedding_models ... ok
+test classify::tests::classify_keeps_audio_preview_chat_models_in_text_generation ... ok
+test classify::tests::classify_image_generation_models ... ok
+test classify::tests::classify_is_case_insensitive ... ok
+test classify::tests::classify_defaults_chat_models_to_text_generation ... ok
+test classify::tests::classify_moderation_is_not_turned_into_chat_by_omni ... ok
+test classify::tests::classify_reasoning_hint_follows_the_id_and_never_applies_to_other_kinds ... ok
+test classify::tests::classify_a_saved_remote_list_carries_kind_source_and_streaming ... ok
+test classify::tests::classify_requires_a_left_boundary_so_tts_inside_a_word_does_not_match ... ok
+test classify::tests::classify_rerank_wins_over_embedding_by_rule_order ... ok
+test classify::tests::classify_speech_synthesis_models ... ok
+test classify::tests::classify_strips_the_path_prefix_before_matching ... ok
+test classify::tests::classify_transcription_models_are_not_audio_generation ... ok
+test classify::tests::classify_treats_vision_models_as_text_generation_with_a_vision_hint ... ok
+test classify::tests::classify_video_generation_models ... ok
+test adapters::openai::tests::test_classify_model ... ok
+test credential_tests::cli_launch_tests::launch_never_echoes_a_vault_error_or_reads_legacy_plaintext ... ok
+test credential_tests::cli_launch_tests::provider_types_produce_only_unverified_protocol_candidates ... ok
+test credential_tests::anthropic_reasoning_and_structured_output_keep_thinking_out_of_the_usage_rows ... ok
+test credential_tests::anthropic_creation_follows_pages_strips_v1_and_never_returns_the_key ... ok
+test credential_tests::cli_launch_tests::launch_never_falls_forward_after_credential_rotation_or_missing_vault_entry ... ok
+test credential_tests::anthropic_max_tokens_comes_from_the_request_then_the_model_row_then_the_profile ... ok
+test credential_tests::cli_launch_tests::launch_binds_owner_revision_model_and_normalized_base_without_protocol_claims ... ok
+test credential_tests::anthropic_stream_interrupted_by_an_error_event_writes_one_failure_record ... ok
+test credential_tests::anthropic_stream_writes_one_success_record_with_tokens_from_the_events ... ok
+test credential_tests::cli_launch_tests::launch_rejects_non_text_models_and_rechecks_endpoint_policy ... ok
+test credential_tests::insecure_endpoints_are_rejected_on_save_and_before_any_call ... ok
+test credential_tests::invalid_api_key_on_create_is_1001002_and_leaves_nothing_behind ... ok
+test credential_tests::cli_launch_tests::launch_detects_external_rotation_and_revocation_during_vault_read ... ok
+test credential_tests::invalid_vendor_or_option_on_create_is_rejected_without_request_provider_or_credential ... ok
+test credential_tests::local_plain_http_endpoints_are_saved_normalised ... ok
+test credential_tests::invalid_vendor_or_option_on_update_is_rejected_and_the_saved_provider_is_untouched ... ok
+test credential_tests::locked_vault_leaves_migration_pending_and_normal_retry_completes ... ok
+test credential_tests::manual_models_work_for_a_service_without_a_model_list ... ok
+test credential_tests::invalid_submitted_model_id_is_rejected_before_any_network_call ... ok
+test credential_tests::normal_create_rotate_endpoint_and_delete_use_vault_references ... ok
+test credential_tests::normal_metadata_edit_preserves_binding_and_saved_connection_uses_vault ... ok
+test credential_tests::model_cache_is_cleared_only_by_credential_rotation_or_endpoint_change ... ok
+test credential_tests::normal_model_refresh_advances_snapshot_and_bound_call_uses_saved_revision ... ok
+test credential_tests::openai_compatible_gets_no_max_tokens_from_the_manager ... ok
+test credential_tests::normal_upgrade_migrates_legacy_row_once_and_retains_metadata ... ok
+test credential_tests::openai_structured_output_is_validated_and_the_usage_row_records_the_outcome ... ok
+test credential_tests::legacy_provider_without_vendor_id_is_created_and_called_as_before ... ok
+test credential_tests::provider_delete_after_usage_removes_consumer_access_with_account_boundary ... ok
+test credential_tests::renderer_models_recomputed ... ok
+test credential_tests::retry_keys_coexist_with_vendor_id_and_drive_the_retry_count ... ok
+test credential_tests::invalid_probe_model_or_rejected_model_list_never_reaches_the_probe_request ... ok
+test credential_tests::startup_finishes_staged_unreferenced_credential_cleanup ... ok
+test credential_tests::stream_that_ends_without_usage_is_recorded_as_usage_unknown_not_as_zero ... ok
+test endpoint::tests::endpoint_policy_accepts_https_and_normalises_the_trailing_slash ... ok
+test endpoint::tests::endpoint_policy_allows_plain_http_for_loopback_and_private_literals ... ok
+test endpoint::tests::endpoint_policy_blocks_a_saved_insecure_config_before_any_request ... ok
+test endpoint::tests::endpoint_policy_rejects_every_scheme_other_than_http_and_https ... ok
+test endpoint::tests::endpoint_policy_rejects_plain_http_for_public_hosts_unless_opted_in ... ok
+test manager::tests::cancellable_stream_emits_one_interruption_without_replay ... ok
+test credential_tests::stream_rejected_before_it_starts_is_recorded_once_with_the_upstream_code ... ok
+test retry::tests::retry_classification_never_retries_permanent_failures_and_keeps_their_code ... ok
+test credential_tests::stream_failure_after_output_is_recorded_once_as_interrupted ... ok
+test retry::tests::retry_classification_terminal_failures_are_not_retried_even_when_transient ... ok
+test retry::tests::retry_classification_waits_for_the_smaller_of_retry_after_and_max_delay ... ok
+test retry::tests::retry_classification_without_configured_retries_keeps_the_original_code ... ok
+test retry::tests::test_calculate_backoff ... ok
+test retry::tests::test_no_retry_on_invalid_api_key ... ok
+test credential_tests::streaming_call_rejects_a_stale_provider_revision_before_dispatch ... ok
+test retry::tests::test_retry_success_after_failures ... ok
+test retry::tests::test_retry_success_on_first_attempt ... ok
+test sse::tests::sse_decodes_several_events_from_one_packet ... ok
+test sse::tests::sse_does_not_count_comment_keep_alives_against_the_event_limit ... ok
+test sse::tests::sse_joins_multi_line_data_with_newlines ... ok
+test sse::tests::sse_keeps_a_multibyte_character_split_across_packets_intact ... ok
+test sse::tests::sse_rejects_invalid_utf8_and_oversized_events ... ok
+test sse::tests::sse_reports_input_that_ends_inside_an_event ... ok
+test sse::tests::sse_returns_events_completed_before_a_bad_event_together_with_the_error ... ok
+test sse::tests::sse_skips_comments_and_events_without_data ... ok
+test sse::tests::sse_strips_a_leading_byte_order_mark_once ... ok
+test sse::tests::sse_treats_a_trailing_bare_cr_as_the_final_terminator ... ok
+test sse::tests::sse_yields_the_same_events_for_every_byte_split ... ok
+test retry::tests::test_retry_exhausted ... ok
+test structured::tests::accepts_a_conforming_answer_and_returns_the_parsed_object ... ok
+test structured::tests::instruction_names_json_and_carries_the_schema ... ok
+test structured::tests::refuses_unusable_formats_before_any_request ... ok
+test structured::tests::rejects_empty_non_json_and_non_conforming_answers ... ok
+test upstream::tests::carries_retry_after_without_changing_the_class ... ok
+test transport::routing_tests::loopback_routing_does_not_bypass_proxy_for_private_or_similar_named_hosts ... ok
+test upstream::tests::downgrades_remove_a_parameter_or_swap_the_token_limit_name ... ok
+test upstream::tests::classifies_statuses_into_the_registered_codes ... ok
+test upstream::tests::names_a_downgrade_only_for_allowed_parameters_the_request_carries ... ok
+test upstream::tests::parses_retry_after_seconds_only ... ok
+test upstream::tests::recognises_context_length_by_code_type_or_wording ... ok
+test upstream::tests::splits_429_into_quota_exhaustion_and_rate_limiting ... ok
+test vendor::tests::legacy_providers_without_vendor_id_are_inferred_from_the_host ... ok
+test vendor::tests::anthropic_base_url_loses_a_pasted_v1_suffix ... ok
+test vendor::tests::profile_does_not_choose_the_target_host ... ok
+test vendor::tests::profile_follows_the_host_by_whole_labels ... ok
+test vendor::tests::reasoning_mapping_per_profile ... ok
+test vendor::tests::sampling_rules_follow_the_profile ... ok
+test vendor::tests::vendor_and_option_validation_rejects_with_the_registered_classes ... ok
+test vendor::tests::vendor_list_exposes_public_fields_only ... ok
+test credential_tests::stream_dropped_early_is_recorded_once_as_interrupted ... ok
+test retry::tests::retry_classification_retries_transient_failures_then_reports_exhaustion ... ok
+test credential_tests::stream_usage_is_recorded_once_with_the_reported_tokens ... ok
+test credential_tests::missing_model_list_without_a_probe_model_saves_nothing ... ok
+test credential_tests::vendor_id_can_change_on_update_without_touching_credential_or_models ... ok
+test manager::transcription::tests::transcription_requires_owner_and_model_and_never_retries_unknown_results ... ok
+test credential_tests::valid_vendor_and_adapter_combinations_save_and_use_their_own_wire_protocol ... ok
+test credential_tests::probe_response_decides_whether_a_service_without_a_model_list_is_saved ... ok
+
+test result: ok. 123 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.98s
+
+     Running tests/anthropic_adapter.rs (target/debug/deps/anthropic_adapter-0e64fcd29093352a)
+
+running 49 tests
+test models_401_is_invalid_api_key_without_echoing_the_body ... ok
+test headers_official_profile_sends_only_bearer_and_new_version ... ok
+test headers_generic_profile_sends_bearer_x_api_key_and_old_version ... ok
+test models_404_on_a_later_page_is_an_invalid_response ... ok
+test models_404_on_first_page_is_an_error_and_probe_without_model_is_not_supported ... ok
+test headers_are_sent_on_model_list_requests ... ok
+test rejects_no_messages_and_system_only_conversations ... ok
+test rejects_conversation_ending_with_assistant ... ok
+test rejects_first_message_assistant ... ok
+test models_cursor_cycle_is_bounded ... ok
+test rejects_reasoning_levels_without_a_mapping_on_the_generic_profile ... ok
+test models_missing_or_empty_last_id_stops_the_paging ... ok
+test rejects_reasoning_levels_without_a_mapping_on_the_official_profile ... ok
+test rejects_system_message_that_is_not_first ... ok
+test rejects_temperature_on_the_official_profile ... ok
+test rejects_streaming_with_response_format ... ok
+test headers_workspace_id_is_sent_only_under_the_official_profile ... ok
+test rejects_thinking_budget_that_leaves_no_room_for_the_answer ... ok
+test rejects_tool_conversations_the_protocol_cannot_express ... ok
+test models_repeated_last_id_stops_the_paging ... ok
+test models_two_pages_are_followed_with_after_id_and_merged ... ok
+test sync_multiple_system_messages_all_end_up_in_the_top_level_system ... ok
+test rejects_temperature_on_official_but_generic_profile_sends_the_same_request ... ok
+test sync_cache_tokens_are_part_of_the_prompt_tokens ... ok
+test sync_alternating_turns_stay_separate_messages ... ok
+test sync_request_golden_system_on_top_and_user_messages_merged ... ok
+test sync_missing_or_empty_usage_is_zero_and_flagged_unknown ... ok
+test sync_request_uses_the_given_max_tokens_and_sends_no_optional_keys ... ok
+test headers_auth_style_override_replaces_the_profile_default ... ok
+test sync_thinking_blocks_fill_reasoning_and_never_the_content ... ok
+test sync_pause_turn_and_unknown_stop_reasons_are_errors_without_retry ... ok
+test sync_text_blocks_are_joined_and_unknown_blocks_are_skipped ... ok
+test rejects_response_format_with_a_bad_name_schema_or_kind ... ok
+test tools_invalid_history_arguments_are_request_not_supported_without_a_request ... ok
+test tools_empty_call_arguments_are_sent_as_an_empty_input_object ... ok
+test tools_final_answer_has_text_and_no_calls ... ok
+test thinking_budget_below_max_tokens_is_sent_on_the_generic_profile ... ok
+test tools_response_reasoning_blocks_are_kept_verbatim ... ok
+test sync_response_without_a_content_array_is_invalid_and_not_retried ... ok
+test tools_text_and_tool_use_are_both_kept ... ok
+test tools_reasoning_round_trip_replays_the_blocks_in_the_next_request ... ok
+test tools_thinking_blocks_come_first_and_unchanged_in_the_assistant_turn ... ok
+test tools_tool_results_come_before_other_blocks_of_the_user_turn ... ok
+test tools_tool_use_block_becomes_a_function_call_with_compact_json_arguments ... ok
+test tools_request_golden_maps_history_tools_and_tool_choice ... ok
+test sync_stop_reasons_map_to_host_finish_reasons ... ok
+test base_url_trailing_v1_is_normalised_for_messages_and_models ... ok
+test tools_tool_use_without_input_has_empty_object_arguments ... ok
+test tools_stop_reason_and_content_mismatch_is_an_error_without_a_call ... ok
+
+test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.59s
+
+     Running tests/anthropic_stream.rs (target/debug/deps/anthropic_stream-b29ab584d376d704)
+
+running 12 tests
+test bad_request_before_the_stream_starts_is_rejected_without_a_retry ... ok
+test a_stream_without_any_usage_ends_with_usage_none ... ok
+test full_exchange_yields_ordered_text_then_one_terminal_chunk_with_the_last_usage ... ok
+test ending_after_the_stop_reason_without_message_stop_still_completes ... ok
+test comments_unknown_events_and_unknown_delta_types_are_ignored_without_chunks ... ok
+test unauthorized_before_the_stream_starts_is_an_error_not_a_chunk ... ok
+test ending_before_any_stop_reason_is_exactly_one_interruption ... ok
+test stream_request_sets_stream_true_lifts_system_and_defaults_max_tokens ... ok
+test stop_reasons_map_to_the_host_finish_reasons ... ok
+test overloaded_before_the_stream_starts_reports_max_retries_after_a_failed_retry ... ok
+test rate_limit_before_the_stream_starts_is_retried_once_then_streams ... ok
+test split_packets_and_grouped_events_give_the_same_result_as_one_packet ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.30s
+
+     Running tests/concurrent_call_tests.rs (target/debug/deps/concurrent_call_tests-025d11ae57468739)
+
+running 2 tests
+test concurrent_calls_openai_compatible_are_not_queued ... ok
+test concurrent_calls_anthropic_are_not_queued ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.24s
+
+     Running tests/connection_probe.rs (target/debug/deps/connection_probe-34d7f6ed5ff53056)
+
+running 10 tests
+test anthropic_probe_model_id_of_exactly_255_chars_is_still_probed ... ok
+test anthropic_probe_under_the_official_profile_sends_bearer_only_and_the_official_version ... ok
+test anthropic_model_list_success_is_true_without_any_probe_request ... ok
+test anthropic_probe_sends_exactly_one_minimal_messages_request_after_a_404_or_405_model_list ... ok
+test probe_is_not_sent_when_the_model_list_works_or_no_model_name_was_given ... ok
+test probe_sends_exactly_one_max_tokens_16_request_after_a_404_model_list ... ok
+test anthropic_without_a_usable_probe_model_is_request_not_supported_and_sends_no_post ... ok
+test probe_failures_are_reported_with_their_own_codes_and_not_retried ... ok
+test anthropic_probe_counts_any_2xx_as_success_whatever_the_body_is ... ok
+test anthropic_probe_failures_are_classified_not_true_and_not_retried ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.75s
+
+     Running tests/error_mapping.rs (target/debug/deps/error_mapping-4ada36e3bc2da023)
+
+running 9 tests
+test error_mapping_names_only_the_callers_own_model_for_404 ... ok
+test anthropic_error_mapping_names_only_the_callers_own_model_for_404 ... ok
+test anthropic_error_bodies_that_are_not_json_still_map_by_status ... ok
+test anthropic_non_retryable_statuses_are_not_retried_even_with_retries_on ... ok
+test error_mapping_covers_twelve_outcomes_for_synchronous_calls ... ok
+test error_mapping_covers_twelve_outcomes_for_stream_start ... ok
+test anthropic_error_mapping_covers_twelve_outcomes_for_stream_start ... ok
+test anthropic_error_mapping_covers_twelve_outcomes_for_synchronous_calls ... ok
+test anthropic_error_mapping_holds_under_the_official_profile_too ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.61s
+
+     Running tests/openai_adapter.rs (target/debug/deps/openai_adapter-84b033ac91d5842d)
+
+running 13 tests
+test passthrough_streaming_with_response_format_is_refused_on_both_profiles ... ok
+test passthrough_official_profile_rejects_temperature_with_active_reasoning ... ok
+test passthrough_official_profile_uses_max_completion_tokens ... ok
+test passthrough_official_profile_sends_temperature_without_reasoning ... ok
+test passthrough_tool_body_generic_profile ... ok
+test passthrough_official_profile_sends_reasoning_without_temperature ... ok
+test passthrough_generic_profile_sends_temperature_and_reasoning_effort_unchanged ... ok
+test passthrough_tool_body_official_profile ... ok
+test passthrough_official_profile_sends_temperature_with_effort_none ... ok
+test passthrough_non_chat_model_id_is_not_blocked_by_the_host ... ok
+test passthrough_upstream_error_text_never_reaches_the_error_message ... ok
+test passthrough_generic_profile_hands_any_effort_string_to_the_upstream ... ok
+test passthrough_non_streaming_response_format_is_sent_on_both_profiles ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.51s
+
+     Running tests/param_downgrade.rs (target/debug/deps/param_downgrade-fe4951967c86b4e0)
+
+running 16 tests
+test an_unnamed_400_is_rejected_without_a_downgrade ... ok
+test a_parameter_outside_the_whitelist_is_rejected_at_once_without_a_retry ... ok
+test anthropic_a_tool_choice_name_on_a_request_without_it_does_not_trigger_a_downgrade ... ok
+test a_whitelisted_name_the_request_does_not_carry_does_not_trigger_a_downgrade ... ok
+test a_call_is_downgraded_at_most_once ... ok
+test anthropic_a_second_rejection_is_final_and_leaks_nothing ... ok
+test anthropic_tool_choice_downgrade_also_works_under_the_official_profile ... ok
+test anthropic_max_tokens_is_required_and_never_downgraded ... ok
+test anthropic_stream_never_sends_stream_options_and_a_400_naming_it_is_not_downgraded ... ok
+test a_downgrade_is_not_remembered_by_the_next_call ... ok
+test max_tokens_and_max_completion_tokens_trade_places ... ok
+test parallel_tool_calls_rejected_in_the_message_only_is_found_and_errors_stay_clean ... ok
+test stream_options_rejection_is_dropped_and_the_stream_succeeds ... ok
+test tool_choice_rejection_is_dropped_and_the_tool_call_succeeds ... ok
+test anthropic_tool_choice_rejection_is_dropped_once_and_the_call_succeeds ... ok
+test parallel_tool_calls_named_alone_is_dropped_keeping_tool_choice_and_is_not_persisted ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.87s
+
+     Running tests/provider_connection_tests.rs (target/debug/deps/provider_connection_tests-de0c87b170ef93d1)
+
+running 14 tests
+test connection_diagnostics_report_a_refused_connection_as_a_network_error ... ok
+test anthropic_a_refused_connection_is_a_network_error_not_ok_false ... ok
+test anthropic_invalid_api_key_is_reported_for_a_401_model_list_and_is_final ... ok
+test anthropic_official_profile_authenticates_with_bearer_only ... ok
+test anthropic_a_redirected_probe_is_invalid_and_never_followed_either ... ok
+test connection_test_succeeds_on_a_model_list_and_never_returns_false ... ok
+test invalid_api_key_is_reported_for_a_401_model_list ... ok
+test connection_diagnostics_treat_404_and_405_as_a_missing_model_list ... ok
+test connection_diagnostics_map_each_failure_to_its_registered_code ... ok
+test anthropic_a_missing_model_list_asks_for_a_model_or_runs_the_probe ... ok
+test anthropic_a_redirect_is_invalid_and_the_second_host_is_never_contacted ... ok
+test anthropic_connection_diagnostics_map_each_model_list_failure_to_its_code ... ok
+test anthropic_connection_test_succeeds_on_a_model_list_and_never_returns_false ... ok
+test loopback_diagnostics_never_send_credentials_to_an_environment_proxy ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.36s
+
+     Running tests/reasoning.rs (target/debug/deps/reasoning-6ef7f30073d603c4)
+
+running 26 tests
+test anthropic_redacted_thinking_gives_no_reasoning_and_keeps_the_content ... ok
+test anthropic_omitted_or_empty_thinking_text_gives_no_reasoning ... ok
+test anthropic_stream_requests_carry_the_reasoning_mapping_too ... ok
+test anthropic_thinking_block_becomes_reasoning_and_text_blocks_become_content ... ok
+test generic_anthropic_explicit_budget_wins_over_effort ... ok
+test anthropic_stream_maps_thinking_to_reasoning_and_drops_signatures ... ok
+test official_anthropic_refuses_levels_without_an_effort_mapping ... ok
+test anthropic_without_reasoning_sends_no_thinking_or_output_config ... ok
+test generic_anthropic_refuses_levels_it_cannot_map_without_a_request ... ok
+test generic_anthropic_maps_effort_to_a_fixed_thinking_budget ... ok
+test openai_refuses_a_reasoning_request_without_an_effort ... ok
+test generic_anthropic_refuses_a_budget_that_leaves_no_room_for_the_answer ... ok
+test openai_reads_reasoning_content_and_keeps_it_out_of_content ... ok
+test openai_reasoning_details_show_text_and_summary_but_never_encrypted_parts ... ok
+test openai_reads_the_reasoning_field_variant ... ok
+test openai_stream_reasoning_details_show_text_only ... ok
+test openai_stream_separates_reasoning_from_content_without_empty_chunks ... ok
+test openai_stream_request_carries_the_effort_too ... ok
+test openai_without_reasoning_sends_no_reasoning_fields ... ok
+test official_anthropic_uses_adaptive_thinking_and_output_config_effort ... ok
+test openai_without_reasoning_fields_has_no_reasoning ... ok
+test anthropic_stream_reasoning_split_inside_a_multibyte_character ... ok
+test openai_effort_goes_upstream_unchanged_without_a_host_side_list ... ok
+test openai_stream_reasoning_split_inside_a_multibyte_character ... ok
+test openai_stream_split_packets_keep_order_and_lose_nothing ... ok
+test anthropic_stream_split_packets_keep_order_and_lose_nothing ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.80s
+
+     Running tests/redirects.rs (target/debug/deps/redirects-b07864eba5b5bd4a)
+
+running 5 tests
+test stream_redirect_is_invalid_not_retried_and_not_followed ... ok
+test model_list_redirect_is_invalid_and_never_followed ... ok
+test synchronous_call_redirect_is_invalid_not_retried_and_not_followed ... ok
+test the_key_goes_only_to_the_configured_host ... ok
+test every_redirect_status_is_final ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.91s
+
+     Running tests/retry_classification.rs (target/debug/deps/retry_classification-20356ade0ecdcaa1)
+
+running 12 tests
+test retry_classification_never_retries_or_replays_a_stream_that_already_produced_output ... ok
+test anthropic_retry_classification_never_retries_or_replays_a_stream_that_already_produced_output ... ok
+test retry_classification_does_not_retry_400_or_exhausted_quota ... ok
+test anthropic_retry_classification_does_not_retry_400_or_exhausted_quota ... ok
+test anthropic_retry_classification_retries_a_stream_that_fails_before_any_event ... ok
+test retry_classification_retries_a_stream_that_fails_before_any_event ... ok
+test retry_classification_503_is_retried_until_it_succeeds ... ok
+test anthropic_retry_classification_reports_max_retries_only_after_a_retry_also_failed ... ok
+test retry_classification_reports_max_retries_only_after_a_retry_also_failed ... ok
+test anthropic_retry_classification_503_and_529_are_retried_until_it_succeeds ... ok
+test anthropic_retry_classification_429_waits_for_the_smaller_of_retry_after_and_max_delay ... ok
+test retry_classification_429_waits_for_the_smaller_of_retry_after_and_max_delay ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.35s
+
+     Running tests/retry_delays.rs (target/debug/deps/retry_delays-81a58d23193299ef)
+
+running 4 tests
+test retry_delays_default_policy_waits_1s_2s_4s_across_three_retries ... ok
+test retry_delays_stop_growing_at_max_delay ... ok
+test retry_delays_openai_adapter_retries_a_500_three_times_with_doubling_waits ... ok
+test retry_delays_anthropic_adapter_retries_a_500_three_times_with_doubling_waits ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.68s
+
+     Running tests/shared_client.rs (target/debug/deps/shared_client-5c97454546c04030)
+
+running 1 test
+test adapters_from_one_manager_share_a_client_and_its_connections ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.81s
+
+     Running tests/stream_call_tests.rs (target/debug/deps/stream_call_tests-df47b9ab8c27ffc7)
+
+running 17 tests
+test sse_decoding_ends_on_an_unparseable_event_without_dropping_earlier_text ... ok
+test mid_stream_anthropic_event_over_the_size_limit_is_an_interruption ... ok
+test mid_stream_anthropic_error_event_with_a_bare_kind_payload_is_an_interruption ... ok
+test mid_stream_anthropic_error_event_after_partial_output_is_one_interruption ... ok
+test mid_stream_event_over_the_size_limit_is_an_interruption ... ok
+test mid_stream_anthropic_error_event_with_only_an_error_object_is_an_interruption ... ok
+test mid_stream_error_events_end_the_stream_once_with_stream_interrupted ... ok
+test stream_call_fails_before_streaming_with_the_normalised_error ... ok
+test stream_call_html_instead_of_events_is_an_interruption_not_empty_success ... ok
+test stream_call_delivers_ordered_deltas_then_one_terminal_chunk_with_usage ... ok
+test stream_call_reports_no_usage_as_none_rather_than_inventing_zeros ... ok
+test mid_stream_anthropic_non_json_data_is_an_interruption_not_a_dropped_event ... ok
+test stream_call_without_a_done_marker_completes_when_a_finish_reason_was_seen ... ok
+test mid_stream_disconnect_keeps_received_text_and_reports_one_interruption ... ok
+test mid_stream_anthropic_disconnect_keeps_received_text_and_reports_one_interruption ... ok
+test sse_decoding_keeps_a_multibyte_character_split_between_packets ... ok
+test sse_decoding_handles_split_packets_comments_and_empty_choice_usage_blocks ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.95s
+
+     Running tests/structured_output.rs (target/debug/deps/structured_output-44b8f89229523e58)
+
+running 15 tests
+test official_anthropic_keeps_existing_system_text_untouched ... ok
+test generic_anthropic_without_a_system_message_gets_the_instruction_alone ... ok
+test official_anthropic_uses_output_config_format_and_adds_no_system_text ... ok
+test generic_anthropic_puts_the_schema_and_json_in_the_system_string ... ok
+test official_anthropic_merges_format_with_reasoning_effort_in_output_config ... ok
+test streaming_with_a_response_format_is_refused_without_a_request ... ok
+test unusable_formats_are_refused_locally_without_a_request ... ok
+test conforming_answer_is_parsed_and_the_raw_text_stays_in_content ... ok
+test conforming_answer_with_surrounding_whitespace_is_accepted ... ok
+test name_of_exactly_64_characters_is_accepted ... ok
+test requests_without_response_format_do_not_carry_one ... ok
+test invalid_answer_is_final_while_transport_failures_still_retry ... ok
+test upstream_400_on_the_format_is_rejected_after_exactly_one_request ... ok
+test openai_sends_response_format_json_schema_and_strict_only_when_set ... ok
+test non_conforming_answers_fail_with_structured_output_invalid_and_one_request ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.33s
+
+     Running tests/timeouts.rs (target/debug/deps/timeouts-91dcf1dd6c26f1e1)
+
+running 20 tests
+test anthropic_model_list_that_answers_within_the_limit_succeeds ... ok
+test a_stream_that_never_sends_a_byte_times_out_without_retrying ... ok
+test a_synchronous_call_is_bounded_by_the_request_deadline ... ok
+test anthropic_idle_stream_times_out_once_keeping_what_arrived_and_is_not_retried ... ok
+test a_stream_that_stops_after_the_headers_times_out_without_a_retry ... ok
+test an_idle_stream_times_out_once_keeping_what_arrived_and_is_not_retried ... ok
+test anthropic_family_defaults_match_the_spec_numbers ... ok
+test anthropic_stream_that_never_sends_a_byte_times_out_without_retrying ... ok
+test anthropic_model_list_that_answers_too_slowly_times_out_without_waiting_for_it ... ok
+test anthropic_stream_that_stops_after_the_headers_times_out_without_a_retry ... ok
+test anthropic_synchronous_call_is_bounded_by_the_request_deadline ... ok
+test openai_model_list_that_answers_within_the_limit_succeeds ... ok
+test anthropic_ping_events_reset_the_idle_timer ... ok
+test anthropic_connect_that_never_completes_fails_within_the_connect_timeout ... ok
+test a_stream_outlives_the_non_streaming_deadline_when_events_keep_coming ... ok
+test keep_alive_comments_reset_the_idle_timer ... ok
+test openai_model_list_that_answers_too_slowly_times_out_without_waiting_for_it ... ok
+test anthropic_stream_outlives_the_non_streaming_deadline_when_events_keep_coming ... ok
+test openai_connect_that_never_completes_fails_within_the_connect_timeout ... ok
+test openai_family_defaults_match_the_spec_numbers ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.15s
+
+     Running tests/tolerant_reader.rs (target/debug/deps/tolerant_reader-b587f63a9ca9fb34)
+
+running 25 tests
+test a_body_over_the_size_limit_is_invalid_and_not_retried ... ok
+test anthropic_empty_content_array_is_an_empty_string_not_an_error ... ok
+test anthropic_model_list_limit_applies_across_pages_and_stops_fetching ... ok
+test anthropic_a_repeated_cursor_ends_the_listing_instead_of_looping ... ok
+test anthropic_model_lists_keep_only_valid_unique_ids_and_ignore_unknown_fields ... ok
+test anthropic_model_lists_are_truncated_at_the_configured_limit ... ok
+test anthropic_missing_or_empty_usage_is_zero_and_flagged_unknown_without_a_retry ... ok
+test anthropic_pages_are_followed_with_after_id_and_duplicates_across_pages_dropped ... ok
+test anthropic_unknown_block_types_and_top_level_fields_are_ignored ... ok
+test anthropic_pause_turn_and_unknown_stop_reasons_are_an_error_and_not_retried ... ok
+test anthropic_an_invalid_or_missing_later_page_makes_the_whole_list_invalid ... ok
+test list_models_saved_kinds_come_from_the_rules_and_streaming_follows_the_kind ... ok
+test anthropic_usage_sums_the_three_input_counters_and_keeps_a_lone_output_counter ... ok
+test model_lists_are_truncated_at_the_configured_limit ... ok
+test anthropic_known_stop_reasons_map_and_a_missing_one_counts_as_stop ... ok
+test model_lists_keep_only_valid_unique_ids_and_ignore_unknown_fields ... ok
+test missing_usage_empty_choices_unknown_fields_and_finish_reason_are_accepted ... ok
+test partial_usage_keeps_what_was_sent_and_computes_a_missing_total ... ok
+test anthropic_model_lists_that_are_not_a_data_array_are_invalid_after_one_request ... ok
+test malformed_bodies_are_provider_response_invalid_and_tried_exactly_once ... ok
+test model_lists_that_are_not_a_data_array_are_invalid ... ok
+test finish_reasons_and_null_content_are_normalised ... ok
+test anthropic_malformed_bodies_are_provider_response_invalid_and_tried_exactly_once ... ok
+test a_chunked_body_without_content_length_is_bounded_too ... ok
+test anthropic_a_body_over_the_size_limit_is_invalid_and_not_retried ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.77s
+
+     Running tests/tool_chat.rs (target/debug/deps/tool_chat-19cc138c352baf6c)
+
+running 3 tests
+test unsupported_tool_api_fails_without_text_fallback_or_retry ... ok
+test incomplete_tool_response_is_rejected_without_retry ... ok
+test tool_wire_preserves_correlation_and_nullable_assistant_content ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.97s
+

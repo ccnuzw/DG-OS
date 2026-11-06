@@ -1,0 +1,28 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv5.0.5 [39m[90m<repo>[39m
+
+ [32m✓[39m tests/surface-context.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+[90mstderr[2m | tests/pending-workspace-close.test.tsx[2m > [22m[2mkeeps the new Settings destination and its focus when a pending close finishes
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/mcp-refresh-activity.test.tsx[2m > [22m[2mpauses page reads while hidden or covered and resumes all selected snapshots without losing local filters
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/pending-workspace-close.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 380[2mms[22m[39m
+[90mstderr[2m | tests/mcp-management.test.tsx[2m > [22m[2mkeeps a call running when cancellation fails and does not pretend that it stopped
+[22m[39m[dgos] error { code: [1mnull[22m, where: [32m'McpManagement'[39m }
+
+ [32m✓[39m tests/mcp-refresh-activity.test.tsx [2m([22m[2m40 tests[22m[2m)[22m[33m 2013[2mms[22m[39m
+[90mstderr[2m | tests/mcp-management.test.tsx[2m > [22m[2mretains a rejected configuration draft and synchronously rejects a second save
+[22m[39m[dgos] error { code: [1mnull[22m, where: [32m'McpManagement'[39m }
+
+ [32m✓[39m tests/mcp-management.test.tsx [2m([22m[2m38 tests[22m[2m)[22m[33m 2964[2mms[22m[39m
+   [33m[2m✓[22m[39m persists explicit remote plaintext consent and resets it whenever the endpoint changes[33m 390[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m4 passed[39m[22m[90m (4)[39m
+[2m      Tests [22m [1m[32m85 passed[39m[22m[90m (85)[39m
+[2m   Start at [22m 15:11:19
+[2m   Duration [22m 3.85s[2m (tests 66%, environment 21%, import 10%, transform 3%)[22m
+

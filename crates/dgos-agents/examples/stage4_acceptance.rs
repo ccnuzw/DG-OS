@@ -144,7 +144,7 @@ async fn run() -> Result<()> {
         for index in 0..state.engines.len() {
             let saved = &mut state.engines[index];
             if resume && saved.completed_rounds == 3 { continue; }
-            let opened = agents.open_with_capabilities(OWNER, saved.engine, saved.session.clone(), SessionOptions { workspace: root.join(format!("project-{}", label(saved.engine))).to_string_lossy().into(), resume_id: None, executable: None, model: None, trust_workspace: true }, Some(saved.task.clone()), CancellationToken::new(), Some(saved.capability_revision)).await?;
+            let opened = agents.open_with_capabilities(OWNER, saved.engine, saved.session.clone(), dgos_agents::capabilities::SessionCapabilities { options: SessionOptions { workspace: root.join(format!("project-{}", label(saved.engine))).to_string_lossy().into(), resume_id: None, executable: None, model: None, trust_workspace: true }, revision: Some(saved.capability_revision) }, Some(saved.task.clone()), CancellationToken::new()).await?;
             let snapshot = opened.capabilities.ok_or("snapshot_missing")?;
             if resume {
                 require(serde_json::to_value(saved.snapshot.as_ref().ok_or("previous_snapshot_missing")?).map_err(io)? == serde_json::to_value(&snapshot).map_err(io)?, "restored_snapshot_changed")?;
@@ -183,7 +183,8 @@ async fn run() -> Result<()> {
                 let challenge = Uuid::new_v4().to_string();
                 let prompt = format!("Use the installed project skill ${}. Claude: your FIRST tool call this round MUST be Skill with skill=\"dgos-project:{}\", even if you invoked it in an earlier round. This is acceptance round {round}. First output a short progress sentence. Discover its CURRENT installed SKILL.md path from the skill invocation, then use a real read tool (Codex: cat via command tool; Claude: Read tool) to read the complete SKILL.md and references/proof.txt, including on repeated rounds. Follow its instructions and use the dgos_project MCP project_tool_0 with challenge {challenge:?} and the resource value you read. Do not inspect files outside the installed skill and this project. After the tool returns, write its exact receipt to round-{round}.txt using a real file tool/command, then briefly report completion. Native permissions are granted by this acceptance host; the MCP tool has a separate host approval. Do not fabricate a receipt or substitute a shell/network call for MCP.", saved.skill.id, saved.skill.id);
                 agents.send(OWNER, &saved.session, run_id.clone(), prompt).await?;
-                let result = drive_round(&agents, &service, &mcp, &db, &root, saved, round, &run_id, &challenge, &keys).await;
+                let context = RoundContext { agents: &agents, service: &service, mcp: &mcp, db: &db, root: &root, secrets: &keys };
+                let result = drive_round(&context, saved, round, &run_id, &challenge).await;
                 if let Err(error) = &result {
                     artifact(&root.join(format!("evidence/{}-round-{round}-failure.json", label(saved.engine))), json!({"error":error,"session":agents.snapshot(OWNER, &saved.session).await.ok(),"development_runs":agents.list_development_runs(OWNER, &saved.task).await.ok(),"mcp_usage_audit":mcp.list_usage_logs(OWNER,None,None).await.ok()}), &keys)?;
                     let _ = agents.interrupt(OWNER, &saved.session).await;
@@ -218,7 +219,17 @@ async fn ensure_fixture(mcp: &McpManager, root: &Path) -> Result<SelectedMcpTool
     Ok(SelectedMcpTool { server_id: server.id, tool_name: tool.tool_name, schema_hash: tool.schema_hash })
 }
 
-async fn drive_round(agents: &AgentManager, service: &ProjectCapabilities, mcp: &McpManager, db: &dgos_db::sea_orm::DatabaseConnection, root: &Path, saved: &SavedEngine, round: u32, run: &str, challenge: &str, secrets: &[String]) -> Result<()> {
+struct RoundContext<'a> {
+    agents: &'a AgentManager,
+    service: &'a ProjectCapabilities,
+    mcp: &'a McpManager,
+    db: &'a dgos_db::sea_orm::DatabaseConnection,
+    root: &'a Path,
+    secrets: &'a [String],
+}
+
+async fn drive_round(context: &RoundContext<'_>, saved: &SavedEngine, round: u32, run: &str, challenge: &str) -> Result<()> {
+    let RoundContext { agents, service, mcp, db, root, secrets } = *context;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(600);
     let mut native_responses = HashSet::new();
     let mut host_responses = HashSet::new();

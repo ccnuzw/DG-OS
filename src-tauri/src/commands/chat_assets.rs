@@ -39,7 +39,7 @@ pub struct TranscriptionResult { text: String }
 pub async fn transcribe_chat_audio(app: tauri::AppHandle, window: WebviewWindow, input: TranscriptionInput) -> CommandResponse<TranscriptionResult> {
     let result = async {
         let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun)?;
-        if input.request_id.is_empty() || input.request_id.len() > 128 || input.base64.len() > (25 * 1024 * 1024 + 2) / 3 * 4 { return Err(DgosError::ProviderRequestRejected); }
+        if input.request_id.is_empty() || input.request_id.len() > 128 || input.base64.len() > (25_usize * 1024 * 1024).div_ceil(3) * 4 { return Err(DgosError::ProviderRequestRejected); }
         let _permit = app.state::<dgos_db::MaintenanceGate>().admit().map_err(|_| DgosError::ProviderRequestRejected)?;
         let (session, lease) = app.state::<std::sync::Arc<crate::session::SessionResolver>>().agent_session()?;
         if session.user_id() != context.user_id() { return Err(DgosError::SessionInvalid); }

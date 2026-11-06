@@ -71,15 +71,16 @@ impl DevelopmentRepository {
         if changed == 0 { Err("session_not_found".into()) } else { Ok(()) }
     }
 
-    /// Attaches an unclassified native session to a task of the same owner. The session workspace
-    /// must equal the project path exactly. Already classified sessions are not reassigned.
+    /// Attaches an unclassified native session to its task's bound directory.
+    /// Already classified sessions are not reassigned.
     pub async fn classify(&self, owner: &str, session_id: &str, task_id: &str) -> Result<(), String> {
         let session = session_row(&self.db, owner, session_id).await?;
         if session.task_id.is_some() || session.project_id.is_some() { return Err("invalid_task".into()); }
         let task = task_row(&self.db, owner, task_id).await?;
         let project = project_row(&self.db, owner, &task.project_id).await?;
         if project.archived { return Err("project_archived".into()); }
-        if project.path != session.workspace { return Err("invalid_task".into()); }
+        let workspace = self.task_workspace(owner, task_id).await?.map(|w| w.path).unwrap_or_else(|| project.path.clone());
+        if workspace != session.workspace { return Err("invalid_task".into()); }
         let changed = execute(
             &self.db,
             "UPDATE development_agent_sessions SET project_id=?,task_id=? WHERE owner=? AND id=? AND project_id IS NULL AND task_id IS NULL",

@@ -139,11 +139,9 @@ const lastArgs = (command: string) => host.calls.filter((call) => call.command =
 
 async function openPage() {
   render(
-    <MemoryRouter initialEntries={['/settings/lan']}>
-      <LanSettings />
-      <ToastViewport />
-      <ModalHost />
-    </MemoryRouter>,
+    <MemoryRouter initialEntries={['/settings/lan']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><LanSettings />
+    <ToastViewport />
+    <ModalHost /></MemoryRouter>,
   );
   await screen.findByRole('heading', { name: '局域网协同' });
   await screen.findByRole('switch', { name: '启用局域网协同' });
@@ -226,10 +224,8 @@ describe('status', () => {
   it('offers a retry when the first read fails, with one error Toast', async () => {
     host.failStatus = 1;
     render(
-      <MemoryRouter>
-        <LanSettings />
-        <ToastViewport />
-      </MemoryRouter>,
+      <MemoryRouter  future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><LanSettings />
+      <ToastViewport /></MemoryRouter>,
     );
 
     expect(await screen.findByText('无法读取局域网协同状态。')).toBeTruthy();
@@ -586,7 +582,7 @@ describe('secrets and polling', () => {
 
 it('shows English confirmation copy and preserves device identity in interpolation',async()=>{
   setLocaleForTesting('en-US');host.devices=[device(1)];
-  render(<MemoryRouter><LanSettings/><ModalHost/></MemoryRouter>);
+  render(<MemoryRouter  future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><LanSettings/><ModalHost/></MemoryRouter>);
   const table=await screen.findByRole('table',{name:'Connected devices'});
   fireEvent.click(await within(table).findByRole('button',{name:'Disconnect iPhone 1'}));
   const prompt=await screen.findByRole('dialog',{name:'Disconnect device?'});

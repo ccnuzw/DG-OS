@@ -57,7 +57,7 @@ export function App({ initialCode = null }: AppProps) {
 
   if (view.kind === 'boot') {
     return (
-      <main className="flex flex-1 items-center justify-center p-6 text-muted-foreground" role="status">
+      <main className="flex flex-1 items-center justify-center p-6 text-ink-secondary" role="status">
         {t('remote.connecting')}
       </main>
     );

@@ -12,6 +12,10 @@ mod diagnostics;
 pub mod files;
 pub mod review;
 pub mod runtime;
+pub mod workspaces;
+pub mod git;
+pub mod handoffs;
+pub mod takeover;
 pub use manager::{AgentManager, OwnedSessionView, SessionRecord};
 pub use executions::RunRecord;
 pub use session::{Engine, PendingRequest, SessionEvent, SessionOptions, SessionView};
@@ -25,3 +29,5 @@ mod test_support;
 mod project_tests;
 #[cfg(test)]
 mod file_review_tests;
+#[cfg(test)]
+mod recovery_tests;

@@ -1,6 +1,6 @@
 // Style-compliance rules R1 (no inline styles), R2 (no hard-coded colours / Tailwind arbitrary values) and
 // R5 (no outline removal without a focus-visible style), D068 and AC24.
-// Only `no-restricted-syntax` is enabled: this config is a design gate, not a general lint profile.
+// Restricted syntax and the semantic-colour rule form a design gate, not a general lint profile.
 // Each message starts with its rule id; scripts/design-check.mjs prints that id next to `file:line`.
 import tseslint from 'typescript-eslint';
 import {
@@ -15,8 +15,9 @@ import {
   TAILWIND_ARBITRARY_VARIANT,
   TAILWIND_BRACKET_TOKEN,
 } from './scripts/design-check/patterns.mjs';
-import { IGNORE_GLOBS, SCRIPT_GLOBS, TOKEN_GLOBS } from './scripts/design-check/scope.mjs';
+import { COLOR_DEFINITION_GLOBS, IGNORE_GLOBS, SCRIPT_GLOBS, TOKEN_GLOBS } from './scripts/design-check/scope.mjs';
 import { themeWriterRule } from './scripts/design-check/theme-writer.mjs';
+import { semanticColorsRule } from './scripts/design-check/eslint-semantic-colors.mjs';
 
 const R1 = 'R1 禁止内联样式';
 const R2 = 'R2 禁止硬编码颜色';
@@ -77,14 +78,14 @@ const tailwindArbitrary = [
 
 const focusRing = text(OUTLINE_WITHOUT_FOCUS_VISIBLE).map((selector) => ({
   selector,
-  message: `${R5}：outline-none 没有配对的 focus-visible: 样式。改用 focus-visible:outline-2 focus-visible:outline-ring 之类（AC24）`,
+  message: `${R5}：outline-none 没有配对的 focus-visible: 样式。改用 focus-visible:outline-2 focus-visible:outline-border-focus 之类（AC24）`,
 }));
 
 const restricted = [...inlineStyle, ...hardCodedColor, ...tailwindArbitrary, ...focusRing];
 const restrictedNoColor = [...inlineStyle, ...tailwindArbitrary, ...focusRing];
 
 export default [
-  { ignores: IGNORE_GLOBS },
+  { ignores: IGNORE_GLOBS, plugins: { dgos: { rules: { 'theme-writer': themeWriterRule, 'semantic-colors': semanticColorsRule } } } },
   {
     files: SCRIPT_GLOBS,
     languageOptions: {
@@ -93,7 +94,7 @@ export default [
     },
     // A disable comment must not be a way around the gate; the check also reports the attempt (see design-check.mjs).
     linterOptions: { noInlineConfig: true, reportUnusedDisableDirectives: 'off' },
-    rules: { 'no-restricted-syntax': ['error', ...restricted] },
+    rules: { 'no-restricted-syntax': ['error', ...restricted], 'dgos/semantic-colors': 'error' },
   },
   {
     // AC12 exception: token definitions may spell colours. Inline styles and arbitrary values stay forbidden.
@@ -101,8 +102,12 @@ export default [
     rules: { 'no-restricted-syntax': ['error', ...restrictedNoColor] },
   },
   {
+    files: COLOR_DEFINITION_GLOBS,
+    rules: { 'dgos/semantic-colors': ['error', { allowComputed: true }] },
+  },
+  {
     files: ['src/ui/theme/apply.ts'],
-    plugins: { dgos: { rules: { 'theme-writer': themeWriterRule } } },
+    // The shared plugin registration above also owns the narrowly allowed theme writer.
     rules: {
       'no-restricted-syntax': ['error', ...restricted.filter(rule => !rule.selector.startsWith('MemberExpression[computed='))],
       'dgos/theme-writer': 'error',

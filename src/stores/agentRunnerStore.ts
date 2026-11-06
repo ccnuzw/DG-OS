@@ -36,7 +36,7 @@ export const useAgentRunner = create<AgentRunnerState>((set, get) => {
       if (ticket !== attempt || epoch !== get().epoch) return;
       if (get().session?.id === id && get().session?.status === 'closed' && value.status !== 'closed') return;
       set({ session: value, live: track(get().live, value) });
-    } catch (error) { if (ticket === attempt && epoch === get().epoch) set({ error: hostCode(error) }); }
+    } catch (error) { if (ticket === attempt && epoch === get().epoch) set({ error: hostCode(error), session: get().session ? { ...get().session!, pending: [] } : null }); }
     if (ticket === attempt && epoch === get().epoch && get().session?.status !== 'closed') timer = window.setTimeout(() => void poll(id, ticket, epoch), 600);
   };
   return {
@@ -70,10 +70,11 @@ export const useAgentRunner = create<AgentRunnerState>((set, get) => {
     async action(command, args) {
       const epoch = get().epoch;
       const ticket = attempt;
-      const input = args.input as { session_id?: unknown } | undefined;
+      const input = args.input as { session_id?: unknown; request_id?: unknown } | undefined;
       const target = input?.session_id ?? args.sessionId;
       // A callback retained by an old conversation cannot send input or approve requests for the new projection.
       if (command !== 'close_agent_session' && (typeof target !== 'string' || target !== get().selected || target !== get().session?.id)) return false;
+      if (command === 'respond_agent_request' && (get().session?.status === 'closed' || !get().session?.pending.some(item => item.id === input?.request_id))) return false;
       set({ error: null });
       try {
         const result = await invoke(command, args);

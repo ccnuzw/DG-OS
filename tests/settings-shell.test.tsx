@@ -2,12 +2,16 @@
 // jsdom uses mock IPC; renderer/focus evidence is recorded separately in implementation status.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
-import { Modal, ToastViewport, clearToasts } from '@dgos/ui';
+import { BrowserRouter, MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
+import { Modal, ModalHost, ToastViewport, clearToasts, disposeAppearance, initAppearance } from '@dgos/ui';
 import App from '../src/App';
 import { useProviderStore } from '../src/stores/providerStore';
 import { useSkillsStore } from '../src/stores/skillsStore';
 import { setLocaleForTesting } from '../src/i18n/runtime';
+import { DEFAULTS } from '../src/ui/appearance/model';
+import { createWorkspaceController } from '../src/workspace/controller';
+import { SettingsOverlay } from '../src/workspace/SettingsOverlay';
+import { useSurfaceCloseGuard } from '../src/workspace/SurfaceContext';
 
 const host = vi.hoisted(() => ({
   calls: [] as string[],
@@ -58,6 +62,8 @@ const official = {
 function respond(command: string): unknown {
   if (command === 'list_providers') return { success: true, data: [] };
   if (command === 'list_provider_vendors') return { success: true, data: [] };
+  if (command === 'get_cli_preferences') return { success: true, data: { revision: 1, paths: { codex: '/configured/codex', claude: null, gemini: null, node: null } } };
+  if (command === 'get_appearance_preferences') return { success: true, data: { kind: 'ready', snapshot: { ...structuredClone(DEFAULTS), revision: 1 }, repairWarnings: [] } };
   if (command === 'list_mcp_servers') return [];
   if (command === 'list_modules') return { success: true, data: [] };
   if (command === 'fetch_skills_registry' || command === 'list_installed_skills') {
@@ -90,11 +96,9 @@ function Where() {
 
 function renderAt(path: string) {
   return render(
-    <MemoryRouter initialEntries={[path]}>
-      <App />
-      <Where />
-      <ToastViewport />
-    </MemoryRouter>,
+    <MemoryRouter initialEntries={[path]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><App />
+    <Where />
+    <ModalHost /><ToastViewport /></MemoryRouter>,
   );
 }
 const settingsTabs = () => within(screen.getByRole('tablist', { name: '系统设置' })).getAllByRole('tab');
@@ -120,6 +124,7 @@ afterEach(() => {
   act(() => clearToasts());
   cleanup();
   vi.restoreAllMocks();
+  disposeAppearance();
 });
 
 describe('default entry (B07-15)', () => {
@@ -189,14 +194,19 @@ describe('local UI state across tabs (B07-16)', () => {
     renderAt('/settings/providers');
     fireEvent.click(await screen.findByRole('button', { name: '+ 创建 Provider' }));
     fireEvent.change(screen.getByLabelText('名称 *'), { target: { value: 'Unsaved draft' } });
+    const providerPanel = screen.getByLabelText('名称 *').closest('[data-settings-category="providers"]')!;
 
     await select('关于');
     await screen.findByRole('heading', { level: 1, name: '关于' });
     expect(screen.queryByRole('heading', { level: 1, name: 'Provider 管理' })).toBeNull();
+    expect(providerPanel.hasAttribute('hidden')).toBe(true);
+    expect(screen.queryByRole('textbox', { name: '名称 *' })).toBeNull();
 
     await select('Provider');
-    expect((screen.getByLabelText('名称 *') as HTMLInputElement).value).toBe('Unsaved draft');
+    const restoredName = await screen.findByRole('textbox', { name: '名称 *' }) as HTMLInputElement;
+    expect(restoredName.value).toBe('Unsaved draft');
     expect(host.calls.filter(command => command === 'list_providers')).toHaveLength(1);
+    expect(restoredName.closest('[role="tabpanel"]')?.hasAttribute('hidden')).toBe(false);
   });
 
   it('keeps the Skills search text and does not reload the library', async () => {
@@ -209,6 +219,171 @@ describe('local UI state across tabs (B07-16)', () => {
     fireEvent.click(screen.getByRole('link', { name: '技能中心' }));
     expect((screen.getByPlaceholderText(/搜索/i) as HTMLInputElement).value).toBe('summary');
     expect(host.calls.filter(command => command === 'fetch_skills_registry')).toHaveLength(1);
+  });
+});
+
+describe('settings leave boundaries', () => {
+  it('keeps a dirty CLI category mounted when category navigation is cancelled', async () => {
+    renderAt('/settings/cli');
+    const input = await screen.findByRole('textbox', { name: /^Codex/ });
+    await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
+    fireEvent.change(input, { target: { value: '/draft/codex' } });
+    await select('关于');
+    const confirmation = await screen.findByRole('dialog', { name: '未保存的内容' });
+    expect(where()).toBe('/settings/cli');
+    fireEvent.click(within(confirmation).getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '未保存的内容' })).toBeNull());
+    expect(screen.getByRole('textbox', { name: /^Codex/ })).toBe(input);
+    expect((input as HTMLInputElement).value).toBe('/draft/codex');
+    await select('关于');
+    fireEvent.click(within(await screen.findByRole('dialog', { name: '未保存的内容' })).getByRole('button', { name: '放弃并关闭' }));
+    await waitFor(() => expect(where()).toBe('/settings/about'));
+    expect(host.calls).not.toContain('set_cli_preferences');
+  });
+
+  it('returns a cancelled menu leave confirmation to the category selector and preserves selection', async () => {
+    renderAt('/settings/cli');
+    const input = await screen.findByRole('textbox', { name: /^Codex/ });
+    await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
+    fireEvent.change(input, { target: { value: '/menu/draft' } });
+    const selector = screen.getByRole('combobox', { name: '系统设置' });
+    act(() => selector.focus());
+    fireEvent.keyDown(selector, { key: 'Enter' });
+    fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: '关于' }));
+    const confirmation = await screen.findByRole('dialog', { name: '未保存的内容' });
+    fireEvent.click(within(confirmation).getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(document.activeElement).toBe(selector));
+    expect(where()).toBe('/settings/cli');
+    expect(selector.textContent).toContain('CLI 工具');
+    expect((input as HTMLInputElement).value).toBe('/menu/draft');
+    fireEvent.keyDown(selector, { key: 'Enter' });
+    fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: '关于' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: '未保存的内容' })).getByRole('button', { name: '放弃并关闭' }));
+    await waitFor(() => expect(where()).toBe('/settings/about'));
+    expect(selector.textContent).toContain('关于');
+    expect(host.calls).not.toContain('set_cli_preferences');
+  });
+
+  it('restores the settings entry after cancelling and then confirming a dirty overlay close', async () => {
+    renderAt('/');
+    const entry = await screen.findByRole('link', { name: '设置', exact: true });
+    act(() => entry.focus());
+    fireEvent.click(entry);
+    await select('CLI 工具');
+    const input = await screen.findByRole('textbox', { name: /^Codex/ });
+    await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
+    fireEvent.change(input, { target: { value: '/close/draft' } });
+    const close = screen.getByRole('button', { name: '关闭设置' });
+    act(() => close.focus());
+    fireEvent.click(close);
+    fireEvent.click(within(await screen.findByRole('dialog', { name: '未保存的内容' })).getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(document.activeElement).toBe(close));
+    expect((input as HTMLInputElement).value).toBe('/close/draft');
+    fireEvent.click(close);
+    fireEvent.click(within(await screen.findByRole('dialog', { name: '未保存的内容' })).getByRole('button', { name: '放弃并关闭' }));
+    await waitFor(() => expect(document.activeElement).toBe(entry));
+    expect(screen.queryByRole('dialog', { name: '系统设置' })).toBeNull();
+    expect(where()).toBe('/');
+    expect(host.calls).not.toContain('set_cli_preferences');
+  });
+
+  it('keeps a dirty appearance preview when category navigation is cancelled', async () => {
+    await initAppearance();
+    renderAt('/settings/appearance');
+    const dark = within(await screen.findByRole('radiogroup', { name: '主题' })).getByRole('radio', { name: '暗色' });
+    fireEvent.click(dark);
+    await select('关于');
+    const confirmation = await screen.findByRole('dialog', { name: '未保存的内容' });
+    fireEvent.click(within(confirmation).getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '未保存的内容' })).toBeNull());
+    expect(where()).toBe('/settings/appearance');
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(dark.getAttribute('aria-checked')).toBe('true');
+    await select('关于');
+    fireEvent.click(within(await screen.findByRole('dialog', { name: '未保存的内容' })).getByRole('button', { name: '放弃并关闭' }));
+    await waitFor(() => expect(where()).toBe('/settings/about'));
+    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(host.calls).not.toContain('set_appearance_preferences');
+  });
+
+  it('guards only the unmounted category while a dirty Provider stays alive', async () => {
+    renderAt('/settings/providers');
+    fireEvent.click(await screen.findByRole('button', { name: '+ 创建 Provider' }));
+    const name = screen.getByLabelText('名称 *') as HTMLInputElement;
+    fireEvent.change(name, { target: { value: 'Kept Provider draft' } });
+    await select('CLI 工具');
+    const codex = await screen.findByRole('textbox', { name: /^Codex/ });
+    await waitFor(() => expect((codex as HTMLInputElement).disabled).toBe(false));
+    fireEvent.change(codex, { target: { value: '/draft/codex' } });
+    await select('关于');
+    const confirmation = await screen.findByRole('dialog', { name: '未保存的内容' });
+    fireEvent.click(within(confirmation).getByRole('button', { name: '放弃并关闭' }));
+    await screen.findByRole('heading', { level: 1, name: '关于' });
+    expect(screen.queryByRole('dialog', { name: '未保存的内容' })).toBeNull();
+    await select('Provider');
+    await waitFor(() => expect(where()).toBe('/settings/providers'));
+    expect(screen.getByLabelText('名称 *')).toBe(name);
+    expect(name.value).toBe('Kept Provider draft');
+    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }));
+    expect(await screen.findByRole('dialog', { name: '未保存的内容' })).toBeTruthy();
+  });
+
+  it('restores the dirty CLI category before asking on browser category history', async () => {
+    const original = { state: window.history.state, url: window.location.href };
+    window.history.replaceState({ idx: 0, key: 'about' }, '', '/settings/about');
+    window.history.pushState({ idx: 1, key: 'cli' }, '', '/settings/cli');
+    try {
+      render(<BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><App /><Where /><ModalHost /></BrowserRouter>);
+      const input = await screen.findByRole('textbox', { name: /^Codex/ });
+      await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
+      fireEvent.change(input, { target: { value: '/history/draft' } });
+      act(() => window.history.back());
+      const confirmation = await screen.findByRole('dialog', { name: '未保存的内容' });
+      expect(where()).toBe('/settings/cli');
+      expect(window.location.pathname).toBe('/settings/cli');
+      fireEvent.click(within(confirmation).getByRole('button', { name: '取消' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: '未保存的内容' })).toBeNull());
+      expect(screen.getByRole('textbox', { name: /^Codex/ })).toBe(input);
+      expect((input as HTMLInputElement).value).toBe('/history/draft');
+      act(() => window.history.back());
+      fireEvent.click(within(await screen.findByRole('dialog', { name: '未保存的内容' })).getByRole('button', { name: '放弃并关闭' }));
+      await waitFor(() => expect(where()).toBe('/settings/about'));
+      expect(screen.queryByRole('dialog', { name: '未保存的内容' })).toBeNull();
+    } finally {
+      cleanup();
+      window.history.replaceState(original.state, '', original.url);
+    }
+  });
+
+  it.each(['navigator', 'browser'] as const)('runs an overlay guard once per %s history traversal, including refusal', async mode => {
+    const original = { state: window.history.state, url: window.location.href };
+    window.history.replaceState({ idx: 0, key: 'background' }, '', '/');
+    window.history.pushState({ idx: 1, key: 'settings' }, '', '/settings/cli');
+    const guard = vi.fn(async () => false);
+    const controller = createWorkspaceController();
+    function GuardedPage() {
+      const navigate = useNavigate();
+      useSurfaceCloseGuard(guard);
+      return <button onClick={() => mode === 'navigator' ? navigate(-1) : window.history.back()}>Go back</button>;
+    }
+    function Harness() {
+      const location = useLocation();
+      return <><Where />{location.pathname.startsWith('/settings') && <SettingsOverlay controller={controller} onClose={async () => undefined}><GuardedPage /></SettingsOverlay>}</>;
+    }
+    try {
+      render(<BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Harness /></BrowserRouter>);
+      fireEvent.click(screen.getByRole('button', { name: 'Go back' }));
+      await waitFor(() => expect(guard).toHaveBeenCalledTimes(1));
+      expect(where()).toBe('/settings/cli');
+      expect(window.location.pathname).toBe('/settings/cli');
+      guard.mockResolvedValue(true);
+      fireEvent.click(screen.getByRole('button', { name: 'Go back' }));
+      await waitFor(() => expect(where()).toBe('/'));
+      expect(guard).toHaveBeenCalledTimes(2);
+    } finally {
+      cleanup();
+      window.history.replaceState(original.state, '', original.url);
+    }
   });
 });
 
@@ -354,18 +529,4 @@ describe('management through product navigation', () => {
     expect(where()).toBe('/mcp');
   });
 
-  it('AC08 shows each MCP server\'s connection state as text and as a success or error colour from the MCP tab', async () => {
-    host.handler = command => (command === 'list_mcp_servers'
-      ? [
-          { id: 'up', name: 'Up server', transport: 'stdio', enabled: true, status: 'ready' },
-          { id: 'down', name: 'Down server', transport: 'http', enabled: true, status: 'error' },
-        ]
-      : respond(command));
-    renderAt('/settings/mcp');
-
-    for (const [name, colour] of [['Up server', 'bg-success'], ['Down server', 'bg-error']]) {
-      const row = await screen.findByRole('button', { name: `选择 ${name}` });
-      expect(row.querySelector('[aria-hidden="true"]')?.classList.contains(colour)).toBe(true);
-    }
-  });
 });

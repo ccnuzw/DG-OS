@@ -20,12 +20,12 @@ export default function McpConnectionNotice() {
   return <aside
     role="alert"
     aria-label={t('mcp.recoveryAria')}
-    className="flex flex-wrap items-center justify-between gap-4 border-b border-warning bg-warning-bg px-6 py-3 text-sm text-warning-text"
+    className="flex flex-wrap items-center justify-between gap-4 border-b border-status-warning bg-status-warning-surface px-6 py-3 text-sm text-status-warning-text"
   >
      <div className="grid min-w-0 gap-1 wrap-anywhere"><strong>{t('mcp.recoveryStopped')}</strong><span>{t('mcp.recoveryHelp', { name: unavailable.map(server => server.name).join(', ') })}</span></div>
     <Link
       to="/mcp"
-      className="shrink-0 font-bold underline focus-visible:outline-2 focus-visible:outline-focus-ring"
+      className="shrink-0 font-bold underline focus-visible:outline-2 focus-visible:outline-border-focus"
     >{t('mcp.manageConnections')}</Link>
   </aside>;
 }

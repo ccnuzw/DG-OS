@@ -45,10 +45,10 @@ export default function ProviderList({
     <aside className="provider-list">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-           <h2 className="m-0 text-sm font-medium text-foreground">{t('nav.providers')}</h2>
+           <h2 className="m-0 text-sm font-medium text-ink-primary">{t('nav.providers')}</h2>
         </div>
         <span
-          className="inline-flex min-w-8 items-center justify-center rounded-full bg-secondary px-2 py-1 text-sm font-semibold text-foreground"
+          className="inline-flex min-w-8 items-center justify-center rounded-full bg-surface-inset px-2 py-1 text-sm font-semibold text-ink-primary"
           aria-label={t('provider.count', { count: providers.length })}
         >
           {providers.length}
@@ -57,9 +57,9 @@ export default function ProviderList({
 
       <Stack gap={3}>
         {providers.length === 0 && (
-          <div className="flex flex-col items-center gap-1 rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            <span aria-hidden="true" className="text-xl font-semibold text-foreground">+</span>
-             <strong className="text-foreground">{t('provider.emptyTitle')}</strong>
+          <div className="flex flex-col items-center gap-1 rounded-lg border border-dashed border-border-subtle p-6 text-center text-sm text-ink-secondary">
+            <span aria-hidden="true" className="text-xl font-semibold text-ink-primary">+</span>
+             <strong className="text-ink-primary">{t('provider.emptyTitle')}</strong>
              <span>{t('provider.emptyText')}</span>
           </div>
         )}
@@ -72,7 +72,7 @@ export default function ProviderList({
               className={cn(
                 'provider-list-item',
                 selected && 'is-selected',
-                !provider.enabled && 'text-muted-foreground',
+                !provider.enabled && 'text-ink-secondary',
               )}
               role="group" aria-label={provider.name}
             >
@@ -80,7 +80,7 @@ export default function ProviderList({
                 <div className="flex min-w-0 items-center gap-2">
                   <h3 className="m-0 min-w-0 wrap-anywhere text-sm font-medium"><button type="button" className="provider-select" onClick={() => onSelect(provider)}>{provider.name}</button></h3>
                   {selected && hasUnsavedChanges && (
-                    <span role="img" aria-label={t('detail.unsaved')} title={t('detail.unsaved')} className="text-error-text">
+                    <span role="img" aria-label={t('detail.unsaved')} title={t('detail.unsaved')} className="text-status-error-text">
                       ●
                     </span>
                   )}
@@ -180,7 +180,7 @@ export default function ProviderList({
                 <span
                   className={cn(
                     'shrink-0 rounded-full px-2 py-1 text-xs font-semibold',
-                    provider.enabled ? 'bg-success-bg text-success-text' : 'bg-secondary text-secondary-foreground',
+                    provider.enabled ? 'bg-status-success-surface text-status-success-text' : 'bg-surface-inset text-ink-primary',
                   )}
                 >
                    {provider.enabled ? t('common.enabled') : t('common.disabled')}
@@ -189,7 +189,7 @@ export default function ProviderList({
 
               <div className="flex items-center justify-between gap-3">
                 <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="wrap-anywhere text-xs text-muted-foreground">
+                  <span className="wrap-anywhere text-xs text-ink-secondary">
                     {!provider.enabled
                       ? t('provider.excluded')
                       : provider.credential_status === 'migration_required'

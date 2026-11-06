@@ -68,7 +68,7 @@ pub(crate) const BUILTIN_PINS: &[(&str, &str, &str)] = &[
     (
         "provider-console",
         "1.0.0",
-        "v2:ae0042e02ee7ecab3348b4dde5a769131cdd2b113d7e68ebdfb23633199b00ea",
+        "v2:d508692aa1bca94857c50971439c686d0cd88783e047e9a4a588872a6c0ec464",
     ),
 ];
 

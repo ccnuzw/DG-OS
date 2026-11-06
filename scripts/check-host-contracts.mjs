@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { checkReactVersions } from './react-version.mjs';
 
 // Static contract checks supplement compilation; they do not prove WebView isolation.
-const files = ['provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'chat_assets', 'agents', 'development_review', 'development_runtime', 'development_capabilities', 'desktop', 'cli', 'storage', 'modules', 'module_host', 'module_capabilities', 'appearance', 'accounts', 'lan', 'locale'];
+const files = ['provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'chat_assets', 'agents', 'development_review', 'development_runtime', 'development_takeover', 'development_capabilities', 'development_delivery', 'desktop', 'cli', 'storage', 'modules', 'module_host', 'module_capabilities', 'appearance', 'accounts', 'lan', 'locale'];
 // FR-010 / interface contract §14.8: the eight LAN host commands. Exact parameter lists; no user
 // id, caller, session token or access code. Every one enters through the Settings caller with
 // `Capability::LanManage`, which `allows` grants to Settings only.
@@ -137,7 +137,7 @@ const chatExactParams = new Map([
 let commands = 0;
 for (const file of files) {
   const source = readFileSync(new URL(`../src-tauri/src/commands/${file}.rs`, import.meta.url), 'utf8');
-  const handlers = [...source.matchAll(/#\[tauri::command\]\s+pub (?:async )?fn (\w+)\(([\s\S]*?)\) -> [\s\S]*?\{([\s\S]*?)(?=\n#\[|\npub struct |\n#\[cfg|$)/g)];
+  const handlers = [...source.matchAll(/#\[tauri::command\]\s+pub (?:async )?fn (\w+)\(([\s\S]*?)\)\s*->\s*[\s\S]*?\{([\s\S]*?)(?=\n#\[|\npub struct |\n#\[cfg|$)/g)];
   assert.ok(handlers.length, `${file}: no command handlers checked`);
   for (const [, name, args, body] of handlers) {
     assert.match(args, /window:\s*WebviewWindow/, `${name}: host window context is required`);
@@ -271,7 +271,7 @@ for (const file of files) {
       } else assert.match(body, /host::module_session\(\s*&window,/, `${name}: missing host entry gate`);
     } else {
       assert.doesNotMatch(args, /\b(?:user_id|module_id|caller)\s*:/, `${name}: identity belongs to the host`);
-      if (!['development_runtime', 'development_capabilities'].includes(file)) assert.match(body, /host::context\(\s*&window,/, `${name}: missing host entry gate`);
+      if (!['development_runtime', 'development_capabilities', 'development_takeover'].includes(file)) assert.match(body, /host::context\(\s*&window,/, `${name}: missing host entry gate`);
       const exact = providerExactParams.get(name);
       if (file === 'provider_commands' && exact) {
         const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
@@ -310,7 +310,7 @@ for (const file of files) {
         assert.match(body, /host::context\(\s*&window,\s*BuiltinCaller::Settings,\s*Capability::SkillsManage\s*\)/, `${name}: Skills Batch B commands use the Settings SkillsManage gate`);
       }
       if (file === 'development_review') {
-        const expected = ['list_development_files', 'read_development_file', 'read_development_diff'].includes(name) ? ['app', 'window', 'input']
+        const expected = ['list_development_files', 'read_development_file', 'read_development_diff', 'resolve_development_file_reference'].includes(name) ? ['app', 'window', 'input']
           : ['read_development_review', 'list_development_runs'].includes(name) ? ['app', 'window', 'task_id'] : null;
         assert.ok(expected, `${name}: unrecognized review command`);
         const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
@@ -319,9 +319,21 @@ for (const file of files) {
         assert.match(body, /agent_session\(\)/, `${name}: review account lease`);
         assert.match(body, /lease\.is_cancelled\(\)/, `${name}: review revoked lease`);
       }
+      if (file === 'development_takeover') {
+        assert.ok(['read_development_takeover', 'close_development_takeover'].includes(name), `${name}: unrecognized takeover command`);
+        const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
+        assert.deepEqual([...names].sort(), ['app', 'input', 'window'], `${name}: takeover parameter allow-list`);
+        const caller = source.match(/\nfn caller\([\s\S]*?\n\}/)?.[0];
+        assert.ok(caller, `${name}: shared caller gate required`);
+        assert.match(caller, /host::context\(window,\s*BuiltinCaller::Workbench,\s*Capability::TasksRun/, `${name}: takeover host gate`);
+        assert.match(caller, /agent_session\(\)/, `${name}: takeover account lease`);
+        assert.match(caller, /session\.user_id\(\) != context\.user_id\(\) \|\| lease\.is_cancelled\(\)/, `${name}: takeover owner and lease`);
+        assert.match(body, /caller\(&app, &window\)/, `${name}: takeover caller gate`);
+        assert.match(body, /lease\.is_cancelled\(\)/, `${name}: revoked lease after await`);
+      }
       if (file === 'development_runtime') {
         const expected = ['save_development_file','save_development_commands','start_development_process'].includes(name) || ['write_development_terminal','resize_development_terminal'].includes(name) ? ['app','window','input']
-          : ['read_development_commands','read_development_process','list_development_processes','stop_development_process'].includes(name) ? ['app','window', name === 'read_development_commands' ? 'project_id' : name === 'list_development_processes' ? 'task_id' : 'id']
+          : ['read_development_commands','read_development_process','list_development_processes','stop_development_process'].includes(name) ? ['app','window', ['read_development_commands', 'list_development_processes'].includes(name) ? 'task_id' : 'id']
             : name === 'open_development_external' ? ['app','window','input'] : null;
         assert.ok(expected, `${name}: unrecognized development runtime command`);
         const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
@@ -347,6 +359,14 @@ for (const file of files) {
         assert.match(capabilityCaller ?? '', /host::context\(\s*window,\s*BuiltinCaller::Workbench,\s*Capability::TasksRun/, `${name}: project capability host gate`);
         assert.match(capabilityCaller, /session\.user_id\(\) != context\.user_id\(\) \|\| lease\.is_cancelled\(\)/, `${name}: project capability account lease`);
         assert.match(body, /caller\(\s*&app,\s*&window\)\?/, `${name}: project capability caller required`);
+      }
+      if (file === 'development_delivery') {
+        const expected = ['read_development_git','list_development_handoffs'].includes(name) ? ['app','window','task_id'] : ['app','window','input'];
+        const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
+        assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: delivery parameter allow-list`);
+        assert.match(body, /agent_session\(\)/, `${name}: delivery account lease`);
+        assert.match(body, /session\.user_id\(\)\s*!=\s*context\.user_id\(\)/, `${name}: delivery owner agreement`);
+        assert.match(body, /lease\.is_cancelled\(\)/, `${name}: delivery revoked lease`);
       }
       if (file === 'agents') {
         const expected = ['open_agent_session', 'send_agent_message', 'respond_agent_request', 'create_development_project', 'update_development_project', 'save_development_task', 'select_development_context', 'classify_agent_session'].includes(name)

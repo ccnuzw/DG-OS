@@ -46,8 +46,8 @@ export default function AboutSettings() {
   }, [read]);
 
   return (
-    <div className="settings-content settings-sections text-foreground">
-      <h1 className="m-0 text-lg font-semibold text-foreground">{t('about.title')}</h1>
+    <div className="settings-content settings-sections text-ink-primary">
+      <h1 className="m-0 text-lg font-semibold text-ink-primary">{t('about.title')}</h1>
       <Card>
         <Card.Header>
           <h2 className="m-0 text-base font-semibold">{t('about.version')}</h2>
@@ -55,24 +55,24 @@ export default function AboutSettings() {
         <Card.Body>
           {load.state === 'loading' && <Loading label={t('about.loading')} />}
           {load.state === 'failed' && (
-            <div role="alert" className="flex flex-wrap items-center justify-between gap-3 text-error-text">
+            <div role="alert" className="flex flex-wrap items-center justify-between gap-3 text-status-error-text">
               <p className="m-0">{t('about.readFailed')}</p>
               <Button variant="secondary" onClick={() => void read()}>{t('system.retry')}</Button>
             </div>
           )}
           {load.state === 'ready' && (
             <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-2">
-              <dt className="text-muted-foreground">{t('about.app')}</dt>
+              <dt className="text-ink-secondary">{t('about.app')}</dt>
               <dd className="m-0 wrap-anywhere">{load.info.name}</dd>
-              <dt className="text-muted-foreground">{t('about.version')}</dt>
+              <dt className="text-ink-secondary">{t('about.version')}</dt>
               <dd className="m-0 wrap-anywhere">{load.info.version}</dd>
-              <dt className="text-muted-foreground">{t('about.runtime')}</dt>
+              <dt className="text-ink-secondary">{t('about.runtime')}</dt>
               <dd className="m-0 wrap-anywhere">{load.info.tauriVersion}</dd>
             </dl>
           )}
         </Card.Body>
       </Card>
-      <p className="m-0 text-sm text-muted-foreground">
+      <p className="m-0 text-sm text-ink-secondary">
          {t('about.unavailable')}
       </p>
     </div>

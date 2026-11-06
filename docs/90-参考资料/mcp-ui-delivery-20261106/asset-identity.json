@@ -1,0 +1,51 @@
+{
+  "ok": true,
+  "value": {
+    "ok": true,
+    "resources": [
+      {
+        "bytes": 748,
+        "sha256": "eefc8a5c1aa2fda3d477e2d99d991a3b565100857d69c61565f9eaab7ae46ff1",
+        "url": "tauri://localhost/"
+      },
+      {
+        "bytes": 352537,
+        "sha256": "186692d9897b17f6bef6154f5a6df2b51d853d46ea56fba6fffacc9471e33bf7",
+        "url": "tauri://localhost/assets/index-UkhUL8fN.js"
+      },
+      {
+        "bytes": 507054,
+        "sha256": "d923c324cb8fa8ee09725c581c7b79979db45334ebbe69f2fd646596d75de174",
+        "url": "tauri://localhost/assets/SurfaceContext-CFkt36wN.js"
+      },
+      {
+        "bytes": 391,
+        "sha256": "3b372733b6f06748d7b353797ec2c39965ea27bdf10b101f39db0a2efdaf5791",
+        "url": "tauri://localhost/assets/resourceState-BuVcfayg.js"
+      },
+      {
+        "bytes": 998,
+        "sha256": "a2389bf71884a41e70d8fd181d866a59a8ea129de814c43a86029a5faacdc08b",
+        "url": "tauri://localhost/assets/SurfaceContext-DJgSS4fB.css"
+      },
+      {
+        "bytes": 67609,
+        "sha256": "e0f3d7e735eb5ed0a5c321af34c0c12a9e739b330715b6aea00641a810c22c43",
+        "url": "tauri://localhost/assets/index-CbKy_SxR.css"
+      },
+      {
+        "bytes": 28564,
+        "sha256": "e7cbc2165896b903defab1c231eb07e426920b1e0b1166fe8639d2676c47ca4f",
+        "url": "tauri://localhost/assets/McpManagement-wKMYJig3.js"
+      },
+      {
+        "bytes": 3267,
+        "sha256": "aa8886024cd6728765ba6ffc87f511c7a05c93ef6c5219e02bf08290362b1f35",
+        "url": "tauri://localhost/assets/McpManagement-DRpFbjEP.css"
+      }
+    ],
+    "source": "embedded production dist only; freshly fetched same-origin resource hashes; no preview or dev override",
+    "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+    "url": "tauri://localhost/mcp"
+  }
+}

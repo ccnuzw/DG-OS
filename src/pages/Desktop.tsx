@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button, EmptyState, Icon } from '@dgos/ui';
 import { useChatStore } from '../stores/chatStore';
 import { useLocale, formatDateTime } from '../i18n';
-import { appUsable } from '../workspace/WorkspaceTools';
+import { appUsable } from '../workspace/useAppCatalog';
 import type { WorkspaceAppEntry } from '../modules/moduleApi';
 import './Desktop.css';
 import { useDesktopPreferences } from '../workspace/desktopPreferences';

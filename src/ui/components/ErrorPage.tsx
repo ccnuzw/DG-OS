@@ -37,11 +37,11 @@ export function ErrorPage({ kind = 'not-found', onHome, onRetry }: ErrorPageProp
   return (
     <section
       data-error-kind={kind}
-      className="flex min-h-full min-w-0 flex-col items-center justify-center gap-3 bg-surface-canvas p-5 text-center text-foreground"
+      className="flex min-h-full min-w-0 flex-col items-center justify-center gap-3 bg-surface-canvas p-5 text-center text-ink-primary"
     >
-      <StatusIcon name={copy.icon} className={`size-8 ${copy.icon === 'error' ? 'text-error-text' : 'text-warning-text'}`} />
+      <StatusIcon name={copy.icon} className={`size-8 ${copy.icon === 'error' ? 'text-status-error-text' : 'text-status-warning-text'}`} />
       <h1 className="m-0 text-lg font-semibold">{copy.code ? `${copy.code} ${copy.title}` : copy.title}</h1>
-      <p className="m-0 max-w-prose text-sm text-muted-foreground">{copy.message}</p>
+      <p className="m-0 max-w-prose text-sm text-ink-secondary">{copy.message}</p>
       <div className="flex flex-wrap justify-center gap-2">
         {onRetry ? (
           <Button variant="secondary" onClick={onRetry}>

@@ -1,5 +1,6 @@
 import type { FormEventHandler, KeyboardEvent, ReactNode } from 'react';
 import { useLocale } from '../../i18n';
+import type { ResourceViewState } from '../../resourceState';
 import { cn } from '../lib/cn';
 import { Button } from './Button';
 import { Card } from './Card';
@@ -22,9 +23,9 @@ export function SectionHeader({ title, description, eyebrow, actions, as: Headin
   return (
     <header className={cn('flex min-w-0 flex-wrap items-start justify-between gap-3', className)}>
       <div className="min-w-0 max-w-prose">
-        {eyebrow ? <p className="mb-1 break-words text-xs font-medium text-primary">{eyebrow}</p> : null}
-        <Heading className="break-words text-lg font-semibold leading-tight text-foreground">{title}</Heading>
-        {description ? <p className="mt-1 break-words text-sm leading-relaxed text-muted-foreground">{description}</p> : null}
+        {eyebrow ? <p className="mb-1 break-words text-xs font-medium text-accent-default">{eyebrow}</p> : null}
+        <Heading className="break-words text-lg font-semibold leading-tight text-ink-primary">{title}</Heading>
+        {description ? <p className="mt-1 break-words text-sm leading-relaxed text-ink-secondary">{description}</p> : null}
       </div>
       {actions ? <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{actions}</div> : null}
     </header>
@@ -45,8 +46,8 @@ const STATUS_CLASSES: Record<StatusBadgeStatus, string> = {
   warning: 'border-status-warning-surface bg-status-warning-surface text-status-warning-text',
   error: 'border-status-error-surface bg-status-error-surface text-status-error-text',
   info: 'border-status-info-surface bg-status-info-surface text-status-info-text',
-  neutral: 'border-border-subtle bg-surface-inset text-text-secondary-role',
-  loading: 'border-border-subtle bg-surface-inset text-text-secondary-role',
+  neutral: 'border-border-subtle bg-surface-inset text-ink-secondary',
+  loading: 'border-border-subtle bg-surface-inset text-ink-secondary',
 };
 
 export interface StatusBadgeProps {
@@ -113,9 +114,9 @@ export interface EmptyStateProps {
 export function EmptyState({ title, description, action, icon, className }: EmptyStateProps) {
   return (
     <div className={cn('flex min-w-0 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border-subtle bg-surface-inset p-6 text-center', className)}>
-      {icon ? <div className="text-text-tertiary">{icon}</div> : null}
-      <p className="max-w-prose break-words font-medium text-foreground">{title}</p>
-      {description ? <p className="max-w-prose break-words text-sm leading-relaxed text-muted-foreground">{description}</p> : null}
+      {icon ? <div className="text-ink-tertiary">{icon}</div> : null}
+      <p className="max-w-prose break-words font-medium text-ink-primary">{title}</p>
+      {description ? <p className="max-w-prose break-words text-sm leading-relaxed text-ink-secondary">{description}</p> : null}
       {action ? <div className="mt-2 flex max-w-full flex-wrap justify-center gap-2">{action}</div> : null}
     </div>
   );
@@ -195,21 +196,35 @@ export function ResourceLayout({ list, detail, listLabel, detailLabel, className
 }
 
 type ResourceStateProps = {
-  loading?: boolean;
+  state: ResourceViewState;
   loadingLabel?: ReactNode;
-  empty?: boolean;
   emptyContent?: ReactNode;
-  error?: boolean;
   errorContent?: ReactNode;
   retry?: ReactNode;
 };
 
-function ResourceState({ loading, loadingLabel, empty, emptyContent, error, errorContent, retry, children }: ResourceStateProps & { children?: ReactNode }) {
+function ResourceState({ state, loadingLabel, emptyContent, errorContent, retry, children }: ResourceStateProps & { children?: ReactNode }) {
   const { t } = useLocale();
-  if (loading) return <Loading label={loadingLabel ?? t('common.loading')} className="p-4" />;
-  if (error) return errorContent ?? <Notice tone="error" action={retry}>{t('patterns.loadFailed')}</Notice>;
-  if (empty) return emptyContent ?? <EmptyState title={t('patterns.empty')} />;
-  return children;
+  const refresh = state.status === 'ready' ? state.refresh : undefined;
+  const error = state.status === 'error' ? state.error
+    : refresh?.status === 'error' || refresh?.status === 'refreshing' ? refresh.error : undefined;
+  return (
+    <>
+      <>
+        {state.status === 'idle' ? <Notice tone="info" action={retry}>{t('patterns.notChecked')}</Notice> : null}
+        {state.status === 'loading' ? <Loading label={loadingLabel ?? t('patterns.loading')} className="p-4" /> : null}
+        {refresh?.status === 'refreshing' ? <Notice tone="info">{t('patterns.refreshing')} {t('patterns.showingPrevious')}</Notice> : null}
+        {refresh?.status === 'stale' ? <Notice tone="warning" action={retry}>{t('patterns.showingPrevious')} {t('patterns.notChecked')}</Notice> : null}
+        {error !== undefined ? (
+          <Notice tone="error" title={state.status === 'ready' ? t('patterns.refreshFailed') : t('patterns.loadFailed')} action={retry}>
+            {errorContent ?? error}
+            {state.status === 'ready' ? <p>{t('patterns.showingPrevious')}</p> : null}
+          </Notice>
+        ) : null}
+      </>
+      {state.status === 'ready' ? state.empty ? emptyContent ?? <EmptyState title={t('patterns.empty')} /> : children : null}
+    </>
+  );
 }
 
 export interface ResourceListProps extends ResourceStateProps {
@@ -270,13 +285,13 @@ export function ResourceCard({ children, title, description, status, actions, on
       data-read-only={readOnly || undefined}
       onClick={interactive ? onSelect : undefined}
       onKeyDown={handleKeyDown}
-      className={cn('min-w-0 overflow-hidden', interactive && 'cursor-pointer transition-colors hover:border-primary focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring', disabled && 'opacity-disabled', className)}
+      className={cn('min-w-0 overflow-hidden', interactive && 'cursor-pointer transition-colors hover:border-accent-default focus-visible:border-accent-default focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus', disabled && 'opacity-disabled', className)}
     >
       {title || status || actions ? (
         <Card.Header className="resource-card-header grid min-w-0 items-start gap-2 border-0 px-3 py-2">
           {title ? <p className="min-w-0 break-words text-sm font-medium">{title}</p> : null}
           {status ? <div className="max-w-full">{status}</div> : null}
-          {description ? <p className="col-span-2 break-words text-sm font-normal leading-relaxed text-muted-foreground">{description}</p> : null}
+          {description ? <p className="col-span-2 break-words text-sm font-normal leading-relaxed text-ink-secondary">{description}</p> : null}
           {actions ? <div className="col-span-2 flex max-w-full flex-wrap gap-2" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>{actions}</div> : null}
         </Card.Header>
       ) : null}
@@ -295,7 +310,7 @@ export interface FixedActionBarProps {
 export function FixedActionBar({ children, status, label, className }: FixedActionBarProps) {
   return (
     <div aria-label={label} className={cn('sticky bottom-0 z-sticky flex min-w-0 flex-wrap items-center justify-between gap-3 border-t border-border-subtle bg-surface-panel px-4 py-3', className)}>
-      <div className="min-w-0 flex-1 break-words text-sm text-muted-foreground">{status}</div>
+      <div className="min-w-0 flex-1 break-words text-sm text-ink-secondary">{status}</div>
       <div className="flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2">{children}</div>
     </div>
   );

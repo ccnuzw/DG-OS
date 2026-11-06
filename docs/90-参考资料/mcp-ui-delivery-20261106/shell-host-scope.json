@@ -1,0 +1,20 @@
+{
+  "account_gate": "existing smoke no-account-command fallback; SessionResolver::no_accounts uses default-user",
+  "catalog": {
+    "ok": true,
+    "value": {
+      "data": {
+        "catalogRevision": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "entries": []
+      },
+      "error": null,
+      "success": true
+    }
+  },
+  "registered": "production desktop/CLI/appearance/locale preferences, empty ModuleManagementService and ModuleHostBridge over this same temporary DB",
+  "uncovered": "Provider/chat/skills/Agent management and non-appearance settings categories are not installed or certified",
+  "window_widths": {
+    "1440": "wide desktop",
+    "520": "stress below the public 800px minimum window; tests content response only"
+  }
+}

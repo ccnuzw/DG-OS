@@ -9,6 +9,8 @@ import { TabBar } from '../src/workspace/TabBar';
 import type { WorkspaceSurface } from '../src/workspace/model';
 import { useWorkspaceTabs } from '../src/workspace/useWorkspaceTabs';
 import { resetLocaleForTesting, setLocaleForTesting } from '../src/i18n';
+import { WorkspaceTools, Launcher, type NavigationAction } from '../src/workspace/WorkspaceTools';
+import type { WorkspaceAppEntry } from '../src/modules/moduleApi';
 
 // vitest runs without globals here, so Testing Library's auto-cleanup does not run by itself.
 afterEach(() => {
@@ -31,6 +33,30 @@ const appSurface = (title: string): WorkspaceSurface => ({
   viewId: title,
   documentId: null,
   title,
+});
+
+describe('live command and launcher inputs', () => {
+  it('keeps a command selected by identity and recovers when that command disappears', () => {
+    const run = vi.fn();
+    const action = (id: string): NavigationAction => ({ id, label: id, group: 'apps', icon: null, run: () => run(id) });
+    const first = action('first'), second = action('second'), last = action('last');
+    const { rerender } = render(<WorkspaceTools open actions={[first, second, last]} onClose={() => {}} />);
+    fireEvent.mouseEnter(screen.getByRole('option', { name: 'second' }));
+    rerender(<WorkspaceTools open actions={[second, last]} onClose={() => {}} />);
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' });
+    expect(run).toHaveBeenLastCalledWith('second');
+    rerender(<WorkspaceTools open actions={[last]} onClose={() => {}} />);
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' });
+    expect(run).toHaveBeenLastCalledWith('last');
+  });
+
+  it('lets a pinned app be unpinned by keyboard after permission is revoked', () => {
+    const entry: WorkspaceAppEntry = { moduleId: 'revoked', displayName: 'Revoked app', iconResourceId: null, layout: 'document', viewCapability: 'single', enabled: true, permissionState: 'denied', runtimeState: 'ready', crashed: false };
+    const onUnpin = vi.fn();
+    render(<Launcher open query="" catalog={[entry]} loading={false} error={false} pinnedIds={[entry.moduleId]} activeDrag={null} notice="" onRetry={() => {}} onManage={() => {}} onQuery={() => {}} onClose={() => {}} onOpen={() => {}} onPin={() => {}} onUnpin={onUnpin} onMove={() => {}} onDragStart={() => {}} onDragEnd={() => {}} />);
+    fireEvent.keyDown(screen.getAllByRole('button', { name: /^Revoked app/ }).find(button => button.getAttribute('aria-disabled') === 'true')!, { key: 'p' });
+    expect(onUnpin).toHaveBeenCalledWith('revoked');
+  });
 });
 
 describe('TabBar (AC15)', () => {
@@ -104,14 +130,13 @@ describe('TabBar (AC15)', () => {
 
 describe('AppShell (AC15, AC17)', () => {
   function Router({ children }: { children: ReactNode }) {
-    return <MemoryRouter initialEntries={['/workbench']}>{children}</MemoryRouter>;
+    return <MemoryRouter initialEntries={['/workbench']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>{children}</MemoryRouter>;
   }
   const baseProps = {
     navEntries: [
       { id: 'desktop', label: '桌面总览', to: '/', end: true, icon: <span /> },
       { id: 'ai', label: 'AI 会话', to: '/workbench', icon: <span /> },
     ],
-    accountLabel: '本地用户',
     tabs: { ...tabProps, surfaces: [aiSurface], activeSurfaceId: 'ai' },
     children: <div>工作区内容</div>,
   };
@@ -151,11 +176,6 @@ describe('AppShell (AC15, AC17)', () => {
     expect(screen.getByRole('tab', { name: /AI 会话/ })).toBeTruthy();
   });
 
-  it('renders pinned apps in their own group', () => {
-    render(<AppShell {...baseProps} pinnedEntries={[{ id: 'canvas', label: '无限画布', to: '/settings/modules/canvas', icon: <span /> }]} />, { wrapper: Router });
-    expect(screen.getByText('应用')).toBeTruthy();
-    expect(screen.getByRole('link', { name: '无限画布' }).getAttribute('href')).toBe('/settings/modules/canvas');
-  });
 });
 
 describe('workspace route projection (D120, D124)', () => {
@@ -180,7 +200,7 @@ describe('workspace route projection (D120, D124)', () => {
 
   it('retains singleton tabs and AI identity across routes, including special surfaces', () => {
     setLocaleForTesting('zh-CN');
-    render(<MemoryRouter initialEntries={['/workbench']}><Workspace /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={['/workbench']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Workspace /></MemoryRouter>);
     fireEvent.click(screen.getByRole('link', { name: 'Skills' }));
     expect(screen.getAllByRole('tab')).toHaveLength(2);
     expect(screen.getByRole('status', { name: 'AI identity' }).textContent).toBe('ai');
@@ -198,7 +218,7 @@ describe('workspace route projection (D120, D124)', () => {
 
   it('closes inactive tabs without navigating, selects a neighbour, and returns home after the last close', async () => {
     setLocaleForTesting('zh-CN');
-    render(<MemoryRouter initialEntries={['/workbench']}><Workspace /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={['/workbench']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Workspace /></MemoryRouter>);
     fireEvent.click(screen.getByRole('link', { name: 'Skills' }));
     fireEvent.click(screen.getByRole('link', { name: 'MCP' }));
     fireEvent.click(screen.getByRole('button', { name: '关闭 技能中心' }));

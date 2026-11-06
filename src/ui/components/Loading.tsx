@@ -24,9 +24,9 @@ export function Loading(props: LoadingProps) {
       {...rest}
       aria-label={hasVisibleLabel(label) ? undefined : ariaLabel}
       role="status"
-      className={cn('inline-flex items-center gap-2 text-sm text-muted-foreground', className)}
+      className={cn('inline-flex items-center gap-2 text-sm text-ink-secondary', className)}
     >
-      <Spinner className={cn('text-primary', SPINNER_SIZE[size])} />
+      <Spinner className={cn('text-accent-default', SPINNER_SIZE[size])} />
       {hasVisibleLabel(label) ? <span>{label}</span> : null}
     </div>
   );

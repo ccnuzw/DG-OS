@@ -1,0 +1,76 @@
+[
+  {
+    "at_ms": 1793952417776,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793952417872,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793952417872,
+    "command": "list_mcp_servers",
+    "detail": {
+      "production_handler_called": false
+    },
+    "phase": "smoke_pre_dispatch_rejection"
+  },
+  {
+    "at_ms": 1793952418330,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "production shell loads English from isolated host"
+  },
+  {
+    "at_ms": 1793952418641,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793952418641,
+    "command": "list_mcp_servers",
+    "detail": {
+      "production_handler_called": false
+    },
+    "phase": "smoke_pre_dispatch_rejection"
+  },
+  {
+    "at_ms": 1793952448334,
+    "command": "page_step",
+    "detail": {
+      "passed": false,
+      "result": {
+        "error": "harness timeout",
+        "ok": false
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793952448338,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793952448338,
+    "command": "list_mcp_servers",
+    "detail": {
+      "production_handler_called": false
+    },
+    "phase": "smoke_pre_dispatch_rejection"
+  }
+]

@@ -9,7 +9,7 @@ export interface Project { id: string; owner: string; name: string; path: string
 export interface DevelopmentTask { id: string; owner: string; project_id: string; goal: string; requirements: string; status: TaskStatus; created_at: number }
 export interface DevelopmentSession { id: string; owner: string; engine: Engine; native_id: string | null; workspace: string; executable: string | null; model: string | null; project_id: string | null; task_id: string | null }
 export interface Selection { project_id: string | null; task_id: string | null; session_id: string | null }
-export interface ProjectOperation { id: string; owner: string; kind: 'create' | 'clone'; path: string; status: 'pending' | 'succeeded' | 'failed' | 'unknown'; project_id: string | null }
+export interface ProjectOperation { id: string; owner: string; kind: string; path: string; status: 'pending' | 'succeeded' | 'failed' | 'unknown'; project_id: string | null }
 export type PathState = 'available' | 'missing' | 'changed' | 'inaccessible';
 export interface ProjectInspection { path_state: PathState; kind: 'directory' | 'git' | 'unknown'; repository_root: string | null; branch: string | null; changes: string[]; truncated: boolean; error: string | null }
 export interface CreateProjectInput { kind: 'import' | 'create' | 'clone'; name: string; path: string; source: string | null }

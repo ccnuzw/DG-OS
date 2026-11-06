@@ -17,3 +17,23 @@
   }
 }
 .resource-card-header { grid-template-columns: minmax(0, 1fr) auto; }
+
+/* Modal keeps its nominal 400–600px fit width until the inset viewport is narrower. */
+.ui-modal-panel {
+  width: fit-content;
+  min-width: min(calc(400rem / 14), 100%);
+  max-width: min(calc(600rem / 14), 100%);
+  overflow-y: auto;
+}
+
+/* Body children retain their intrinsic height; only the body scrollport shrinks. */
+/* A full 2px outline plus 2px offset must fit inside each clipped scrollport. */
+.ui-modal-body, .ui-modal-footer { padding: 4px; margin: -4px; }
+.ui-modal-body { scroll-padding-block: 4px; }
+.ui-modal-body :focus-visible, .ui-modal-footer :focus-visible { scroll-margin-block: 4px; }
+.ui-modal-body > * { flex-shrink: 0; }
+.ui-modal-heading { max-height: 25dvh; overflow-y: auto; }
+.ui-modal-heading > svg { flex-shrink: 0; }
+.ui-modal-footer { max-height: 35dvh; overflow-y: auto; }
+.ui-modal-footer > * { min-width: 0; max-width: 100%; }
+.ui-modal-footer button { height: auto; min-height: max(var(--control-height-compact), calc(1lh + 2px)); max-width: 100%; white-space: normal; overflow-wrap: anywhere; }

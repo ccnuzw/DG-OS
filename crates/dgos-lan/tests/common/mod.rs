@@ -300,7 +300,8 @@ pub async fn env_with_spa(spa: Option<SpaFiles>) -> Env {
         audit,
         core,
         addr,
-        http: reqwest::Client::new(),
+        // Host overrides exercise admission on this socket, never an environment proxy.
+        http: reqwest::Client::builder().no_proxy().build().unwrap(),
         dir,
     }
 }

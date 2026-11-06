@@ -323,20 +323,20 @@ export function ChatView({ api, session, streamUrl, createSocket = defaultSocket
       </header>
 
       {streamEnd ? (
-        <div role="status" className="flex items-center justify-between gap-2 bg-warning-bg px-3 py-2 text-warning-text">
+        <div role="status" className="flex items-center justify-between gap-2 bg-status-warning-surface px-3 py-2 text-status-warning-text">
           <span>{streamEnd.kind === 'replaced' ? replacedText() : hostStoppedText()}</span>
           <Button size="sm" variant="secondary" onClick={reconnect}>
             {t('remote.reconnect')}
           </Button>
         </div>
       ) : streamStatus === 'reconnecting' ? (
-        <div role="status" className="bg-warning-bg px-3 py-2 text-warning-text">
+        <div role="status" className="bg-status-warning-surface px-3 py-2 text-status-warning-text">
           {t('remote.reconnecting')}
         </div>
       ) : null}
 
       {notice ? (
-        <p role="alert" className="bg-error-bg px-3 py-2 text-error-text">
+        <p role="alert" className="bg-status-error-surface px-3 py-2 text-status-error-text">
           {notice}
         </p>
       ) : null}
@@ -355,19 +355,19 @@ export function ChatView({ api, session, streamUrl, createSocket = defaultSocket
 
       {panel === 'list' ? (
         <ul className="flex-1 overflow-y-auto" aria-label={t('remote.sessionListButton')}>
-          {state.sessions.length === 0 ? <li className="p-4 text-muted-foreground">{t('remote.noSessions')}</li> : null}
+          {state.sessions.length === 0 ? <li className="p-4 text-ink-secondary">{t('remote.noSessions')}</li> : null}
           {state.sessions.map((item) => (
             <li key={item.id}>
               <button
                 type="button"
                 className={cn(
-                  'flex w-full flex-col items-start gap-1 border-b border-border px-4 py-3 text-left enabled:hover:bg-accent',
-                  item.id === activeId ? 'bg-accent' : '',
+                  'flex w-full flex-col items-start gap-1 border-b border-border-subtle px-4 py-3 text-left enabled:hover:bg-surface-hover',
+                  item.id === activeId ? 'bg-surface-selection-neutral' : '',
                 )}
                 onClick={() => selectSession(item.id)}
               >
                 <span className="w-full truncate text-base font-medium">{sessionLabel(item)}</span>
-                <span className="w-full truncate text-sm text-muted-foreground">
+                <span className="w-full truncate text-sm text-ink-secondary">
                   {item.model_id ?? ''} · {formatTime(item.updated_at)}
                 </span>
               </button>
@@ -379,7 +379,7 @@ export function ChatView({ api, session, streamUrl, createSocket = defaultSocket
       {panel === 'chat' ? (
         <>
           <div ref={scrollRef} onScroll={onScroll} className="remote-reading flex-1 overflow-y-auto px-3 py-4">
-            {!activeId ? <p className="text-muted-foreground">{t('remote.selectSession')}</p> : null}
+            {!activeId ? <p className="text-ink-secondary">{t('remote.selectSession')}</p> : null}
             {olderCursor !== null && olderCursor !== undefined ? (
               <div className="mb-4 flex justify-center">
                 <Button size="sm" variant="secondary" loading={loadingMore} onClick={() => void loadEarlier()}>
@@ -421,7 +421,7 @@ export function ChatView({ api, session, streamUrl, createSocket = defaultSocket
           ) : null}
         </>
       ) : null}
-      <footer className="border-t border-border px-3 py-1 text-xs text-text-tertiary">
+      <footer className="border-t border-border-subtle px-3 py-1 text-xs text-ink-tertiary">
         {session.device_label} · {session.short_id}
       </footer>
     </div>

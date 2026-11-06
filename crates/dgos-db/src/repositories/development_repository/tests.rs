@@ -11,7 +11,7 @@ async fn historical_classification_selection_and_relocation_keep_one_owned_chain
  let (_,repo)=setup().await; let p=project("alice","/tmp/code"); let q=project("alice","/tmp/other"); let b=project("bob","/tmp/bob");
  for p in [&p,&q,&b] { repo.insert_project(p).await.unwrap(); }
  let t=task(&p); let other=task(&q); for t in [&t,&other] {repo.save_task(t).await.unwrap();}
- let historical=session("alice",&p.path); repo.initialize_legacy(&[historical.clone()]).await.unwrap(); repo.initialize_legacy(&[historical.clone()]).await.unwrap();
+ let historical=session("alice",&p.path); repo.initialize_legacy(std::slice::from_ref(&historical)).await.unwrap(); repo.initialize_legacy(std::slice::from_ref(&historical)).await.unwrap();
  assert!(repo.workspace("alice").await.unwrap().sessions[0].task_id.is_none());
  assert!(repo.classify("bob",&historical.id,&t.id).await.is_err()); assert!(repo.classify("alice",&historical.id,&other.id).await.is_err());
  repo.classify("alice",&historical.id,&t.id).await.unwrap();
@@ -20,8 +20,8 @@ async fn historical_classification_selection_and_relocation_keep_one_owned_chain
  assert!(repo.select("bob",&selection).await.is_err());
  assert!(repo.select("alice",&Selection{project_id:Some(q.id.clone()),..selection.clone()}).await.is_err());
  assert_eq!(repo.selection("alice").await.unwrap(),selection);
- let mut moved=repo.project("alice",&p.id).await.unwrap(); moved.path="/tmp/moved".into(); repo.update_project(&moved).await.unwrap();
- let current=repo.workspace("alice").await.unwrap().sessions.remove(0); assert_eq!(current.workspace,moved.path); assert_eq!(current.native_id,historical.native_id);
+ let mut moved=repo.project("alice",&p.id).await.unwrap(); moved.path="/tmp/moved".into(); assert_eq!(repo.update_project(&moved).await.unwrap_err(),"workspace_immutable");
+ let current=repo.workspace("alice").await.unwrap().sessions.remove(0); assert_eq!(current.workspace,p.path); assert_eq!(current.native_id,historical.native_id);
  let mut stolen=current.clone(); stolen.task_id=Some(other.id); stolen.project_id=Some(q.id); assert!(repo.save_session(&stolen).await.is_err());
  repo.unlink_project("alice",&p.id).await.unwrap(); let after=repo.workspace("alice").await.unwrap(); let row=&after.sessions[0]; assert!(row.task_id.is_none()&&row.project_id.is_none()); assert_eq!(row.native_id,historical.native_id); assert_eq!(after.selection,Selection::default()); assert!(after.tasks.iter().all(|task|task.project_id!=p.id));
 }
@@ -32,6 +32,48 @@ async fn account_purge_removes_development_metadata_only_for_owner() {
  let users=UserDataRepository::new(db); users.purge(UserDataDomain::Workbench,"alice").await.unwrap(); users.purge(UserDataDomain::Workbench,"alice").await.unwrap();
  let removed=repo.workspace("alice").await.unwrap();assert!(removed.projects.is_empty()&&removed.tasks.is_empty()&&removed.sessions.is_empty());assert_eq!(removed.selection,Selection::default());
  let retained=repo.workspace("bob").await.unwrap();assert_eq!(retained.projects[0].id,b.id);assert_eq!(retained.tasks[0].project_id,b.id);assert_eq!(retained.sessions[0].project_id.as_deref(),Some(b.id.as_str()));
+}
+
+#[tokio::test]
+async fn account_purge_cleans_workspace_children_and_counts_orphans_without_touching_files() {
+ let (db,repo)=setup().await;
+ let dir=tempfile::tempdir().unwrap();
+ let sentinel=dir.path().join("retained.txt");
+ std::fs::write(&sentinel,b"user workspace").unwrap();
+ let users=UserDataRepository::new(db.clone());
+ for owner in ["alice","bob","default-user"] {
+  let p=project(owner,dir.path().to_str().unwrap());
+  repo.insert_project(&p).await.unwrap();
+  let t=task(&p);repo.save_task(&t).await.unwrap();
+  let w=StoredWorkspace{id:id(),owner:owner.into(),project_id:p.id.clone(),path:p.path.clone(),directory_identity:"owned-directory".into(),common_dir:None,common_identity:None,kind:"original".into(),created_operation:None,base_commit:None};
+  repo.insert_workspace(&w).await.unwrap();repo.bind_task_workspace(owner,&t.id,&w.id).await.unwrap();
+  let mut s=session(owner,&p.path);s.project_id=Some(p.id.clone());s.task_id=Some(t.id.clone());repo.save_session(&s).await.unwrap();
+  repo.save_review_baseline(owner,&t.id,&serde_json::json!({"files":{"retained.txt":{"hash":"before"}}})).await.unwrap();
+  repo.save_host_file_ownership(owner,&t.id,"retained.txt","before","after").await.unwrap();
+  execute(&db,"INSERT INTO development_handoffs(id,owner,project_id,task_id,source_session_id,target_engine,permission_epoch,summary,fingerprint,created_at) VALUES(?,?,?,?,?,'claude',1,'handoff','fingerprint',1)",vec![v(id()),v(owner),v(p.id),v(t.id),v(s.id)]).await.unwrap();
+ }
+ let tables=["development_workspaces","development_task_workspaces","development_file_writes","development_handoffs"];
+ let before=users.orphan_count().await.unwrap();
+ for table in tables {
+  let row=fetch_one(&db,&format!("SELECT COUNT(*) AS n FROM {table} WHERE owner='alice'"),vec![]).await.unwrap().unwrap();
+  assert_eq!(row.try_get::<i64>("","n").unwrap(),1,"{table}");
+ }
+ assert_eq!(before,16,"eight metadata rows per non-default owner, including the review baseline");
+ crate::UserRepository::new(db.clone()).insert(crate::NewUser{id:"bob",username:"bob",username_key:"bob",password_hash:"$argon2id$x",now:1}).await.unwrap();
+ assert_eq!(users.orphan_count().await.unwrap(),16,"Alice and now-orphaned default-user rows");
+ users.purge(UserDataDomain::Workbench,"alice").await.unwrap();
+ assert_eq!(users.purge(UserDataDomain::Workbench,"alice").await.unwrap(),0);
+ for table in tables {
+  let rows=fetch(&db,&format!("SELECT owner FROM {table}"),vec![]).await.unwrap();
+  assert_eq!(rows.len(),2,"{table}");
+  let mut owners=rows.iter().map(|r|r.try_get::<String>("","owner").unwrap()).collect::<Vec<_>>();owners.sort();
+  assert_eq!(owners,vec!["bob","default-user"],"{table}");
+ }
+ assert_eq!(users.orphan_count().await.unwrap(),8);
+ users.purge(UserDataDomain::Workbench,"default-user").await.unwrap();
+ assert_eq!(users.orphan_count().await.unwrap(),0);
+ assert!(fetch(&db,"PRAGMA foreign_key_check",vec![]).await.unwrap().is_empty());
+ assert_eq!(std::fs::read(&sentinel).unwrap(),b"user workspace");
 }
 
 #[tokio::test]
@@ -95,4 +137,29 @@ async fn runtime_migration_preserves_existing_native_runs_and_ownership() {
  let retained=repo.run("alice",&r.id).await.unwrap().unwrap();assert_eq!(retained.source,"native_agent");assert_eq!(retained.session_id,Some(s.id));assert_eq!(retained.status,"completed");assert_eq!(retained.summary,"native summary");assert_eq!(retained.fingerprint,"after");assert_eq!(retained.start_fingerprint,"before");assert!(retained.runtime.is_none());assert!(repo.run("bob",&r.id).await.unwrap().is_none());
  let mut host=run(&t,&session("alice",&p.path));host.engine="host".into();host.source="host_command".into();host.session_id=None;host.runtime=Some("{}".into());repo.start_run(&host).await.unwrap();assert_eq!(repo.runs("alice",&t.id).await.unwrap().len(),2);
  assert!(fetch(&db,"PRAGMA foreign_key_check",vec![]).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn workspace_bindings_are_owned_and_freeze_after_baseline_or_session() {
+ let (_,repo)=setup().await;let p=project("alice","/tmp/workspace-original");let other=project("bob","/tmp/workspace-foreign");repo.insert_project(&p).await.unwrap();repo.insert_project(&other).await.unwrap();let t=task(&p);repo.save_task(&t).await.unwrap();
+ let w=StoredWorkspace{id:id(),owner:"alice".into(),project_id:p.id.clone(),path:"/tmp/workspace-one".into(),directory_identity:"one".into(),common_dir:Some("/tmp/common".into()),common_identity:Some("common".into()),kind:"imported".into(),created_operation:None,base_commit:None};let second=StoredWorkspace{id:id(),path:"/tmp/workspace-two".into(),..w.clone()};for w in [&w,&second] {repo.insert_workspace(w).await.unwrap();}
+ assert!(repo.bind_task_workspace("bob",&t.id,&w.id).await.is_err());repo.bind_task_workspace("alice",&t.id,&w.id).await.unwrap();assert_eq!(repo.task_workspace("alice",&t.id).await.unwrap(),Some(w.clone()));
+ repo.save_review_baseline("alice",&t.id,&serde_json::json!({"files":{}})).await.unwrap();assert_eq!(repo.bind_task_workspace("alice",&t.id,&second.id).await.unwrap_err(),"workspace_immutable");repo.bind_task_workspace("alice",&t.id,&w.id).await.unwrap();
+ let fresh=task(&p);repo.save_task(&fresh).await.unwrap();let mut s=session("alice",&p.path);s.project_id=Some(p.id.clone());s.task_id=Some(fresh.id.clone());repo.save_session(&s).await.unwrap();assert_eq!(repo.bind_task_workspace("alice",&fresh.id,&w.id).await.unwrap_err(),"workspace_immutable");
+ repo.unlink_project("alice",&p.id).await.unwrap();assert!(repo.workspace_by_id("alice",&w.id).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn host_file_ownership_requires_baseline_continuity_and_never_recovers_after_external_change() {
+ let (_,repo)=setup().await;let p=project("alice","/tmp/ownership");repo.insert_project(&p).await.unwrap();let t=task(&p);repo.save_task(&t).await.unwrap();repo.save_review_baseline("alice",&t.id,&serde_json::json!({"files":{"code":{"hash":"base"},"dirty":{"hash":"dirty-base"}},"initial_changes":[" M dirty"]})).await.unwrap();
+ repo.save_host_file_ownership("alice",&t.id,"code","base","saved-1").await.unwrap();assert_eq!(repo.host_file_ownership("alice",&t.id,"code").await.unwrap().unwrap()["valid"],true);
+ repo.save_host_file_ownership("alice",&t.id,"code","saved-1","saved-2").await.unwrap();assert_eq!(repo.host_file_ownership("alice",&t.id,"code").await.unwrap().unwrap()["valid"],true);
+ repo.save_host_file_ownership("alice",&t.id,"code","external","saved-3").await.unwrap();repo.save_host_file_ownership("alice",&t.id,"code","saved-3","saved-4").await.unwrap();assert_eq!(repo.host_file_ownership("alice",&t.id,"code").await.unwrap().unwrap()["valid"],false);
+ repo.save_host_file_ownership("alice",&t.id,"dirty","dirty-base","changed").await.unwrap();assert_eq!(repo.host_file_ownership("alice",&t.id,"dirty").await.unwrap().unwrap()["valid"],false);assert!(repo.host_file_ownership("bob",&t.id,"code").await.is_err());
+}
+
+#[tokio::test]
+async fn workspace_migration_preserves_legacy_receipts_and_recovers_git_intent() {
+ let db=crate::establish_connection("sqlite::memory:").await.unwrap();let count=Migrator::migrations().iter().position(|m|m.name()=="m20261104_000029_project_capabilities").unwrap()+1;Migrator::up(&db,Some(count as u32)).await.unwrap();let repo=DevelopmentRepository::new(db.clone());
+ let op=ProjectOperation{id:id(),owner:"alice".into(),kind:"create".into(),path:"/tmp/old-receipt".into(),status:"pending".into(),project_id:None};repo.start_operation(&op).await.unwrap();Migrator::up(&db,None).await.unwrap();assert_eq!(repo.git_operation("alice",&op.id).await.unwrap().unwrap()["kind"],"create");repo.recover_operations().await.unwrap();assert_eq!(repo.git_operation("alice",&op.id).await.unwrap().unwrap()["status"],"unknown");assert!(fetch(&db,"PRAGMA foreign_key_check",vec![]).await.unwrap().is_empty());
 }

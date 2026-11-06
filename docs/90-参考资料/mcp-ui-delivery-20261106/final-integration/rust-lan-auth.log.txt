@@ -1,0 +1,39 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling dgos-types v0.1.0 (<repo>/crates/dgos-types)
+   Compiling dgos-db v0.1.0 (<repo>/crates/dgos-db)
+   Compiling dgos-mcp v0.1.0 (<repo>/crates/dgos-mcp)
+   Compiling dgos-skills v0.1.0 (<repo>/crates/dgos-skills)
+   Compiling dgos-providers v0.1.0 (<repo>/crates/dgos-providers)
+   Compiling dgos-workbench v0.1.0 (<repo>/crates/dgos-workbench)
+   Compiling dgos-lan v0.1.0 (<repo>/crates/dgos-lan)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 36s
+     Running tests/auth.rs (target/debug/deps/auth-ae4607ad79997a11)
+
+running 20 tests
+test host_admission_reaches_loopback_with_an_environment_proxy ... ok
+test locale_bootstrap_is_public_but_returns_only_locale_metadata ... ok
+test logout_of_an_expired_session_is_recorded_as_its_expiry ... ok
+test an_expired_code_is_1010005_and_then_gone ... ok
+test a_valid_code_pairs_once_and_sets_an_httponly_strict_cookie ... ok
+test codes_are_case_and_dash_insensitive_and_wrong_codes_are_rejected ... ok
+test a_session_used_from_another_ip_is_revoked ... ok
+test logout_and_host_disconnect_revoke_and_clear_the_cookie ... ok
+test a_device_on_a_new_ip_loses_its_old_session_before_the_limit_check ... ok
+test only_whitelisted_routes_exist_and_errors_have_no_cors ... ok
+test pairing_is_limited_per_ip_and_globally_with_retry_after ... ok
+test peer_host_and_origin_are_checked_before_anything_else ... ok
+test sessions_expire_after_30_idle_minutes_or_12_hours_without_renewal ... ok
+test sessions_follow_the_issuing_desktop_user ... ok
+test the_ninth_device_is_refused_without_consuming_the_code ... ok
+test transport_errors_are_empty_400_413_415 ... ok
+test the_same_device_re_pairs_at_the_limit_and_keeps_its_session_on_a_wrong_code ... ok
+test the_sweep_removes_expired_sessions_and_codes ... ok
+test the_spa_is_served_without_a_session_with_a_strict_csp ... ok
+test ten_failures_void_the_code_and_a_new_code_voids_the_old_one ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.00s
+

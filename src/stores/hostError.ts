@@ -17,6 +17,14 @@ export const HOST_CODES: readonly string[] = [
   'skill_unavailable', 'mcp_unavailable', 'schema_changed', 'adapter_unavailable', 'cli_version_changed', 'confirmation_expired', 'confirmation_not_found',
   'request_expired', 'run_not_active',
   'skill_load_failed', 'provider_load_failed',
+  'invalid_handoff', 'handoff_limit', 'handoff_already_accepted', 'handoff_stale',
+  'workspace_immutable', 'workspace_not_found', 'not_git_repository', 'invalid_branch', 'invalid_commit', 'invalid_request',
+  'git_review_stale', 'git_review_incomplete', 'git_full_index_confirmation_required', 'git_preexisting_staged_confirmation_required', 'git_push_trust_required',
+  'git_unmerged', 'git_worktree_dirty', 'git_detached_head', 'git_unborn_head', 'git_required_filter', 'git_url_rewrite_unsupported', 'unsafe_git_config', 'unsafe_git_remote',
+  'invalid_git_remote', 'invalid_git_ref', 'invalid_git_paths', 'invalid_commit_message', 'git_special_entry', 'git_index_hidden_files', 'git_workspace_not_root', 'git_non_utf8_path', 'git_invalid_output', 'git_unknown',
+  'discard_confirmation_required', 'baseline_missing', 'baseline_changed', 'baseline_incomplete', 'discard_preexisting_changes', 'discard_index_changed', 'discard_ownership_uncertain', 'discard_external_change', 'discard_partial_failure',
+  'repository_busy', 'operation_not_found', 'invalid_git_operation',
+  'foreign_workspace', 'workspace_remove_refused', 'workspace_in_use', 'workspace_dirty', 'invalid_operation',
 ];
 
 export function hostCode(error: unknown): string {

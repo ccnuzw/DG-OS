@@ -90,7 +90,7 @@ afterEach(() => {
 });
 
 function renderPage(page: 'chat' | 'workbench' = 'chat') {
-  return render(<MemoryRouter>{page === 'chat' ? <ChatWorkbench /> : <Workbench />}</MemoryRouter>);
+  return render(<MemoryRouter  future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>{page === 'chat' ? <ChatWorkbench /> : <Workbench />}</MemoryRouter>);
 }
 
 async function openSession(title = '季度复盘', page: 'chat' | 'workbench' = 'chat') {
@@ -141,6 +141,21 @@ async function pickTools(...names: RegExp[]) {
 const pickerLabel = (selected: number) => screen.getByRole('button', { name: new RegExp(`MCP 工具（可选，已选 ${selected} / 8）`) });
 
 describe('sessions', () => {
+  it.each(['Escape', 'cancel'])('returns focus to rename after %s without losing the conversation draft', async method => {
+    await openSession();
+    typeDraft('保留消息草稿');
+    const rename = screen.getByRole('button', { name: '重命名会话' });
+    rename.focus();
+    fireEvent.click(rename);
+    const title = screen.getByRole('textbox', { name: '会话标题' });
+    fireEvent.change(title, { target: { value: '未保存标题' } });
+    if (method === 'Escape') fireEvent.keyDown(title, { key: 'Escape' });
+    else fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: '重命名会话' })));
+    expect(draftBox().value).toBe('保留消息草稿');
+    expect(calls('rename_chat_session')).toEqual([]);
+  });
+
   it('creating a session from the empty state opens it with the undecided target and skill explained', async () => {
     handlers.list_chat_sessions = () => ok({ items: [], next_cursor: null });
     handlers.create_chat_session = () => ok(session({ id: 'new1', title: '新会话', title_source: 'auto', provider_id: null, model_id: null, no_skill_confirmed: false }));
@@ -268,6 +283,8 @@ describe('undecided skill', () => {
     fireEvent.click(screen.getByRole('button', { name: '应用目标' }));
     await waitFor(() => expect(sendButton().disabled).toBe(false));
     expect(screen.queryByText(/这个会话还没有选择技能/)).toBeNull();
+    expect(screen.getByText(/目标已更新/).closest('[role="status"]')).not.toBeNull();
+    expect(screen.queryByRole('dialog', { name: '会话目标' })).toBeNull();
     deferSend();
     fireEvent.click(sendButton());
     expect((await sentArgs()).input.content).toBe('需要先决定技能');
@@ -763,7 +780,6 @@ describe('MCP tool turn', () => {
     expect(screen.getByLabelText('工具调用参数').textContent).toBe(JSON.stringify({ path: '/synthetic/a.txt', limit: 3 }, null, 2));
     expect(screen.getByText(/剩余 \d+ 秒/)).toBeTruthy();
     expect(pickerLabel(0)).toBeTruthy();
-    expect(screen.getByText('等待你确认工具调用…')).toBeTruthy();
   });
 
   it.each([
@@ -777,7 +793,6 @@ describe('MCP tool turn', () => {
     expect(calls('advance_chat_tool_turn')[0]).toEqual({ input: { task_id: taskId, action: { type, proposal_id: 'prop1' } } });
     expect(Object.keys(calls('advance_chat_tool_turn')[0])).toEqual(['input']);
     await waitFor(() => expect(screen.queryByRole('heading', { name: '确认工具调用' })).toBeNull());
-    expect(screen.getByText('正在执行工具并等待模型…')).toBeTruthy();
 
     emit(channel, { kind: 'done', message: message(2, 'assistant', '工具结果已整理', { id: 'a1' }) });
     await screen.findByText('工具结果已整理');

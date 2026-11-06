@@ -1,0 +1,2396 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv5.0.5 [39m[90m<repo>[39m
+
+[90mstdout[2m | tests/development-runtime-activity.test.tsx[2m > [22m[2mpauses idle history and detail while covered, resumes with latest output and preserves a failed snapshot
+[22m[39mruntime 4000ms visible then hidden { history: [33m5[39m, detail: [33m6[39m } { history: [33m0[39m, detail: [33m0[39m }
+
+ [31m❯[39m tests/development-delivery.test.tsx [2m([22m[2m3 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[32m 263[2mms[22m[39m
+[31m   [31m×[31m persists identity before IPC, survives disposal and receipt loss, then keeps reconciliation on reentry[39m[32m 158[2mms[22m[39m
+[31m   [31m×[31m restores workspace receipts and isolates unknown identities by account and task[39m[32m 28[2mms[22m[39m
+   [32m✓[39m permits full-index confirmed empty-diff merges and blocks ordinary empty commits[32m 77[2mms[22m[39m
+ [32m✓[39m tests/development-editor.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[32m 273[2mms[22m[39m
+ [32m✓[39m tests/development-runtime-workflows.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 468[2mms[22m[39m
+ [31m❯[39m tests/development-runtime-activity.test.tsx [2m([22m[2m44 tests[22m[2m | [22m[31m12 failed[39m[2m)[22m[33m 1346[2mms[22m[39m
+   [32m✓[39m pauses idle history and detail while covered, resumes with latest output and preserves a failed snapshot[32m 253[2mms[22m[39m
+   [32m✓[39m coalesces manual history reads and rejects late task and account snapshots[32m 136[2mms[22m[39m
+   [32m✓[39m accepts an owned detail while inactive, bounds quick switching and discards a different process response[32m 80[2mms[22m[39m
+   [32m✓[39m reads after a mutation even when an earlier history snapshot is still in flight[32m 1[2mms[22m[39m
+   [32m✓[39m rejects an old account detail and bounds slow catalog restoration to one follow-up read[32m 29[2mms[22m[39m
+   [32m✓[39m keeps a stop acknowledgement when an older detail finishes afterwards[32m 24[2mms[22m[39m
+   [32m✓[39m never confirms empty history before a successful read and offers retry after first failure[32m 22[2mms[22m[39m
+   [32m✓[39m keeps selection, draft and last-known output through refresh failure until a successful retry[32m 41[2mms[22m[39m
+   [32m✓[39m shows a retryable first detail failure without inventing output or clearing history[32m 18[2mms[22m[39m
+   [32m✓[39m rejects a detail response belonging to a different target[32m 15[2mms[22m[39m
+   [32m✓[39m resumes with retained output and draft while the refresh is slow without starting another process[32m 19[2mms[22m[39m
+   [32m✓[39m retries the command catalog independently from successful history and detail reads[32m 27[2mms[22m[39m
+   [32m✓[39m explains invalid runtime fields next to inputs before dispatching[32m 20[2mms[22m[39m
+[31m   [31m×[31m retains an owned start receipt across unmount and separates a failed history read[39m[32m 16[2mms[22m[39m
+[31m   [31m×[31m keeps a changed command draft and selection when a hidden save completes[39m[32m 40[2mms[22m[39m
+[31m   [31m×[31m keeps an unknown start blocked and reconciles only its original process ID[39m[32m 15[2mms[22m[39m
+[31m   [31m×[31m reports a definite rejected save and preserves the editable draft[39m[32m 21[2mms[22m[39m
+[31m   [31m×[31m does not confirm a running stop acknowledgement or repeat the stop while checking[39m[32m 24[2mms[22m[39m
+[31m   [31m×[31m does not confirm a cleanup_pending stop acknowledgement or repeat the stop while checking[39m[32m 23[2mms[22m[39m
+[31m   [31m×[31m does not confirm a unknown stop acknowledgement or repeat the stop while checking[39m[32m 21[2mms[22m[39m
+   [32m✓[39m keeps a late start receipt on the original task and removes it at the account boundary[32m 19[2mms[22m[39m
+[31m   [31m×[31m confirms a committed save by catalog after a post-write error without resending it[39m[32m 18[2mms[22m[39m
+   [32m✓[39m takes the runtime operation lock synchronously before React can rerender[32m 0[2mms[22m[39m
+   [32m✓[39m validates environment references and each service readiness field without sending a start[32m 35[2mms[22m[39m
+[31m   [31m×[31m keeps a slow stop receipt after process selection changes without replacing the new detail[39m[32m 11[2mms[22m[39m
+   [32m✓[39m drops a pending operation receipt if the original account ends before acknowledgement[32m 0[2mms[22m[39m
+   [32m✓[39m preserves task-wide exclusion between save and stop and project-wide catalog exclusion[32m 0[2mms[22m[39m
+[31m   [31m×[31m does not replay a retained catalog receipt over a fresh catalog after remount[39m[32m 11[2mms[22m[39m
+[31m   [31m×[31m keeps a mismatched start acknowledgement unknown without projecting its output[39m[32m 12[2mms[22m[39m
+[31m   [31m×[31m retains an unmatched save as unknown and retries only the catalog read[39m[32m 17[2mms[22m[39m
+   [32m✓[39m converges a nonterminal stop from background history without resending it[32m 19[2mms[22m[39m
+   [32m✓[39m does not infer a terminal unknown process from its finished timestamp[32m 11[2mms[22m[39m
+   [32m✓[39m keeps acceptance separate from a later launch failure and distinguishes confirmed exits[32m 30[2mms[22m[39m
+   [32m✓[39m rejects pre-stop reads and wrong-project terminal snapshots until a new matching read[32m 0[2mms[22m[39m
+   [32m✓[39m retains the host exited outcome when a history record disappears[32m 32[2mms[22m[39m
+   [32m✓[39m retains the host failed outcome when a history record disappears[32m 31[2mms[22m[39m
+   [32m✓[39m retains the host cancelled outcome when a history record disappears[32m 29[2mms[22m[39m
+   [32m✓[39m retains the host unknown outcome when a history record disappears[32m 32[2mms[22m[39m
+   [32m✓[39m retains the host cleanup_pending outcome when a history record disappears[32m 30[2mms[22m[39m
+   [32m✓[39m retains command drafts across internal unmount and task changes without carrying trust to another target[32m 82[2mms[22m[39m
+   [32m✓[39m selects a new accepted start unless the user changed process while waiting (false)[32m 13[2mms[22m[39m
+   [32m✓[39m selects a new accepted start unless the user changed process while waiting (true)[32m 17[2mms[22m[39m
+   [32m✓[39m does not reuse an old context detail when returning to the same process[32m 17[2mms[22m[39m
+   [32m✓[39m merges a late save into the original task draft and updates that command after returning[32m 33[2mms[22m[39m
+ [32m✓[39m tests/agent-workbench.test.tsx [2m([22m[2m14 tests[22m[2m)[22m[33m 1832[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 14 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/development-delivery.test.tsx[2m > [22mpersists identity before IPC, survives disposal and receipt loss, then keeps reconciliation on reentry
+[31m[1mTestingLibraryElementError[22m[39m: Unable to find an element with the text: delivery.operation.unknown · 69b44cc5-3d69-41bb-83ad-3dd9c942c407. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div />[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"dev-review-stack"[39m
+      [33mdata-testid[39m=[32m"dev-delivery"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"dev-review-toolbar"[39m
+      [36m>[39m
+        [36m<h3[39m
+          [33mclass[39m=[32m"m-0 text-sm"[39m
+        [36m>[39m
+          [0mdelivery.title[0m
+        [36m</h3>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+          [33mtype[39m=[32m"button"[39m
+        [36m>[39m
+          [0mreview.refresh[0m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"delivery.workspaces"[39m
+        [33mclass[39m=[32m"dev-panel"[39m
+      [36m>[39m
+        [36m<h4[39m
+          [33mclass[39m=[32m"m-0 text-xs font-semibold"[39m
+        [36m>[39m
+          [0mdelivery.workspaces[0m
+        [36m</h4>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"m-0 break-all text-xs"[39m
+        [36m>[39m
+          [0m/task-worktree[0m
+        [36m</p>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"dev-evidence-warning"[39m
+        [36m>[39m
+          [0mdelivery.cleanCopyWarning[0m
+        [36m</p>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+            [33mfor[39m=[32m"_r_9_"[39m
+          [36m>[39m
+            [0mdelivery.directory[0m
+          [36m</label>[39m
+          [36m<input[39m
+            [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+            [33mid[39m=[32m"_r_9_"[39m
+            [33mtype[39m=[32m"text"[39m
+            [33mvalue[39m=[32m""[39m
+          [36m/>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+            [33mfor[39m=[32m"_r_a_"[39m
+          [36m>[39m
+            [0mdelivery.branch[0m
+          [36m</label>[39m
+          [36m<input[39m
+            [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+            [33mid[39m=[32m"_r_a_"[39m
+            [33mtype[39m=[32m"text"[39m
+            [33mvalue[39m=[32m""[39m
+          [36m/>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+            [33mfor[39m=[32m"_r_b_"[39m
+          [36m>[39m
+            [0mdelivery.baseCommit[0m
+          [36m</label>[39m
+          [36m<input[39m
+            [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+            [33mid[39m=[32m"_r_b_"[39m
+            [33mtype[39m=[32m"text"[39m
+            [33mvalue[39m=[32m""[39m
+          [36m/>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+            [33mfor[39m=[32m"_r_c_"[39m
+          [36m>[39m
+            [0mdelivery.retainBranch[0m
+          [36m</label>[39m
+          [36m<input[39m
+            [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+            [33mid[39m=[32m"_r_c_"[39m
+            [33mtype[39m=[32m"text"[39m
+            [33mvalue[39m=[32m""[39m
+          [36m/>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex flex-wrap gap-2"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-0 border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus bg-accent-default text-accent-on enabled:hover:bg-accent-hover enabled:active:bg-accent-active h-(--control-height-compact) px-3 text-sm"[39m
+            [33mdisabled[39m=[32m""[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mdelivery.create[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 te...
+[90m [2m❯[22m Object.getElementError node_modules/@testing-library/dom/dist/config.js:[2m37:19[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m76:38[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m52:17[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m95:19[22m[39m
+[36m [2m❯[22m tests/development-delivery.test.tsx:[2m41:45[22m[39m
+    [90m 39|[39m  const first = await show(); fireEvent.click(screen.getByRole('checkbo…
+    [90m 40|[39m  first.unmount(); await act(async () => { deferred.reject('IPC disconn…
+    [90m 41|[39m  const second = await show(); expect(screen.getByText(`delivery.operat…
+    [90m   |[39m                                             [31m^[39m
+    [90m 42|[39m  fireEvent.click(screen.getByRole('button', { name: 'delivery.reconcil…
+    [90m 43|[39m  expect(useDevelopment.getState().operations[0].status).toBe('succeede…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/14]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/development-delivery.test.tsx[2m > [22mrestores workspace receipts and isolates unknown identities by account and task
+[31m[1mTestingLibraryElementError[22m[39m: Unable to find an element with the text: delivery.operation.unknown · 641ef826-f42d-4118-b26a-427ef555befe. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"dev-review-stack"[39m
+      [33mdata-testid[39m=[32m"dev-delivery"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"dev-review-toolbar"[39m
+      [36m>[39m
+        [36m<h3[39m
+          [33mclass[39m=[32m"m-0 text-sm"[39m
+        [36m>[39m
+          [0mdelivery.title[0m
+        [36m</h3>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+          [33mtype[39m=[32m"button"[39m
+        [36m>[39m
+          [0mreview.refresh[0m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"delivery.workspaces"[39m
+        [33mclass[39m=[32m"dev-panel"[39m
+      [36m>[39m
+        [36m<h4[39m
+          [33mclass[39m=[32m"m-0 text-xs font-semibold"[39m
+        [36m>[39m
+          [0mdelivery.workspaces[0m
+        [36m</h4>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"m-0 break-all text-xs"[39m
+        [36m>[39m
+          [0m/task-worktree[0m
+        [36m</p>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"dev-evidence-warning"[39m
+        [36m>[39m
+          [0mdelivery.cleanCopyWarning[0m
+        [36m</p>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+            [33mfor[39m=[32m"_r_i_"[39m
+          [36m>[39m
+            [0mdelivery.directory[0m
+          [36m</label>[39m
+          [36m<input[39m
+            [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+            [33mid[39m=[32m"_r_i_"[39m
+            [33mtype[39m=[32m"text"[39m
+            [33mvalue[39m=[32m""[39m
+          [36m/>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+            [33mfor[39m=[32m"_r_j_"[39m
+          [36m>[39m
+            [0mdelivery.branch[0m
+          [36m</label>[39m
+          [36m<input[39m
+            [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+            [33mid[39m=[32m"_r_j_"[39m
+            [33mtype[39m=[32m"text"[39m
+            [33mvalue[39m=[32m""[39m
+          [36m/>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+            [33mfor[39m=[32m"_r_k_"[39m
+          [36m>[39m
+            [0mdelivery.baseCommit[0m
+          [36m</label>[39m
+          [36m<input[39m
+            [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+            [33mid[39m=[32m"_r_k_"[39m
+            [33mtype[39m=[32m"text"[39m
+            [33mvalue[39m=[32m""[39m
+          [36m/>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+            [33mfor[39m=[32m"_r_l_"[39m
+          [36m>[39m
+            [0mdelivery.retainBranch[0m
+          [36m</label>[39m
+          [36m<input[39m
+            [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+            [33mid[39m=[32m"_r_l_"[39m
+            [33mtype[39m=[32m"text"[39m
+            [33mvalue[39m=[32m""[39m
+          [36m/>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex flex-wrap gap-2"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-0 border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus bg-accent-default text-accent-on enabled:hover:bg-accent-hover enabled:active:bg-accent-active h-(--control-height-compact) px-3 text-sm"[39m
+            [33mdisabled[39m=[32m""[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mdelivery.create[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+        ...
+[90m [2m❯[22m Object.getElementError node_modules/@testing-library/dom/dist/config.js:[2m37:19[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m76:38[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m52:17[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m95:19[22m[39m
+[36m [2m❯[22m tests/development-delivery.test.tsx:[2m50:43[22m[39m
+    [90m 48|[39m it('restores workspace receipts and isolates unknown identities by acc…
+    [90m 49|[39m  const id = crypto.randomUUID(); localStorage.setItem('dgos.delivery.r…
+    [90m 50|[39m  const view = await show(); expect(screen.getByText(`delivery.operatio…
+    [90m   |[39m                                           [31m^[39m
+    [90m 51|[39m  expect((screen.getByRole('button', { name: 'delivery.stage' }) as HTM…
+    [90m 52|[39m  view.rerender(<DeliveryPanel {...props} taskId="other" />); await act…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/14]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/development-runtime-activity.test.tsx[2m > [22mretains an owned start receipt across unmount and separates a failed history read
+[31m[1mTestingLibraryElementError[22m[39m: Unable to find an element with the text: direct.operation.start.pending. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33maria-label[39m=[32m"direct.title"[39m
+      [33mclass[39m=[32m"dev-review-stack"[39m
+      [33mdata-testid[39m=[32m"dev-development-runtime"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"direct.operation.receipts"[39m
+        [33mclass[39m=[32m"dev-review-stack"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-receipts"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-review-stack"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"dev-feedback dev-feedback-info"[39m
+            [33mrole[39m=[32m"status"[39m
+          [36m>[39m
+            [0mdirect.title[0m
+            [0m: [0m
+            [0mdirect.operation.start.pending[0m
+          [36m</p>[39m
+          [36m<details[39m
+            [33mclass[39m=[32m"dev-technical-details"[39m
+          [36m>[39m
+            [36m<summary>[39m
+              [0magent.details[0m
+            [36m</summary>[39m
+            [36m<code>[39m
+              [0mfdb89d17-a84c-4213-bd09-18d72793cc45[0m
+            [36m</code>[39m
+          [36m</details>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"min-w-0 overflow-hidden rounded-md bg-surface-panel p-3"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-command-catalog"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.savedCommands[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.newCommand[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.discovered[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.chooseDiscovered[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 text-xs text-ink-secondary"[39m
+      [36m>[39m
+        [0mdirect.discoveryHint[0m
+      [36m</p>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 break-all text-xs"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-draft-summary"[39m
+      [36m>[39m
+        [0m["echo"][0m
+        [0m · [0m
+        [0mreview.cwd[0m
+        [0m: [0m
+        [0m.[0m
+      [36m</p>[39m
+      [36m<form[39m
+        [33mclass[39m=[32m"dev-form"[39m
+        [33mnovalidate[39m=[32m""[39m
+      [36m>[39m
+        [36m<details[39m
+          [33mclass[39m=[32m"dev-runtime-configuration"[39m
+          [33mdata-testid[39m=[32m"dev-runtime-configuration"[39m
+        [36m>[39m
+          [36m<summary>[39m
+            [0mruntimeWorkflow.configuration[0m
+          [36m</summary>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"dev-review-stack"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-review-toolbar"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_2a_"[39m
+                [36m>[39m
+                  [0mdirect.editorApplication[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_2a_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+                [33mdisabled[39m=[32m""[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0mdirect.openEditor[0m
+              [36m</button>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-command-catalog"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_2b_"[39m
+                [36m>[39m
+                  [0mdirect.commandName[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_2b_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<label[39m
+                [33mclass[39m=[32m"dev-field"[39m
+              [36m>[39m
+                [0mdirect.kind[0m
+                [36m<select[39m
+                  [33mdata-testid[39m=[32m"dev-process-kind"[39m
+                [36m>[39m
+                  [36m<option[39m
+                    [33mvalue[39m=[32m"command"[39m
+                  [36m>[39m
+                    [0mdirect.command[0m
+                  [36m</option>[39m
+                  [36m<option[39m
+...
+[90m [2m❯[22m Object.getElementError node_modules/@testing-library/dom/dist/config.js:[2m37:19[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m76:38[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m52:17[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m95:19[22m[39m
+[36m [2m❯[22m tests/development-runtime-activity.test.tsx:[2m232:17[22m[39m
+    [90m230|[39m   fireEvent.click(screen.getByTestId('dev-process-trust'));
+    [90m231|[39m   fireEvent.click(screen.getByTestId('dev-process-start'));
+    [90m232|[39m   expect(screen.getByText('direct.operation.start.pending')).toBeTruth…
+    [90m   |[39m                 [31m^[39m
+    [90m233|[39m   fireEvent.click(screen.getByTestId('dev-process-start'));
+    [90m234|[39m   expect(calls('start_development_process')).toBe(1);
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/14]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/development-runtime-activity.test.tsx[2m > [22mkeeps a changed command draft and selection when a hidden save completes
+[31m[1mTestingLibraryElementError[22m[39m: Unable to find an element with the text: direct.operation.save.succeeded. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33maria-label[39m=[32m"direct.title"[39m
+      [33mclass[39m=[32m"dev-review-stack"[39m
+      [33mdata-testid[39m=[32m"dev-development-runtime"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"direct.operation.receipts"[39m
+        [33mclass[39m=[32m"dev-review-stack"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-receipts"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-review-stack"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"dev-feedback dev-feedback-success"[39m
+            [33mrole[39m=[32m"status"[39m
+          [36m>[39m
+            [0mOriginal[0m
+            [0m: [0m
+            [0mdirect.operation.save.succeeded[0m
+          [36m</p>[39m
+          [36m<details[39m
+            [33mclass[39m=[32m"dev-technical-details"[39m
+          [36m>[39m
+            [36m<summary>[39m
+              [0magent.details[0m
+            [36m</summary>[39m
+            [36m<code>[39m
+              [0m8580e380-f0a6-4a59-a84e-2a0d84871baf[0m
+            [36m</code>[39m
+          [36m</details>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"min-w-0 overflow-hidden rounded-md bg-surface-panel p-3"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-command-catalog"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.savedCommands[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.newCommand[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.discovered[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.chooseDiscovered[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 text-xs text-ink-secondary"[39m
+      [36m>[39m
+        [0mdirect.discoveryHint[0m
+      [36m</p>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 break-all text-xs"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-draft-summary"[39m
+      [36m>[39m
+        [0m["echo"][0m
+        [0m · [0m
+        [0mreview.cwd[0m
+        [0m: [0m
+        [0m.[0m
+      [36m</p>[39m
+      [36m<form[39m
+        [33mclass[39m=[32m"dev-form"[39m
+        [33mnovalidate[39m=[32m""[39m
+      [36m>[39m
+        [36m<details[39m
+          [33mclass[39m=[32m"dev-runtime-configuration"[39m
+          [33mdata-testid[39m=[32m"dev-runtime-configuration"[39m
+          [33mopen[39m=[32m""[39m
+        [36m>[39m
+          [36m<summary>[39m
+            [0mruntimeWorkflow.configuration[0m
+          [36m</summary>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"dev-review-stack"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-review-toolbar"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_2g_"[39m
+                [36m>[39m
+                  [0mdirect.editorApplication[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_2g_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+                [33mdisabled[39m=[32m""[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0mdirect.openEditor[0m
+              [36m</button>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-command-catalog"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_2h_"[39m
+                [36m>[39m
+                  [0mdirect.commandName[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_2h_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m"New draft"[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<label[39m
+                [33mclass[39m=[32m"dev-field"[39m
+              [36m>[39m
+                [0mdirect.kind[0m
+                [36m<select[39m
+                  [33mdata-testid[39m=[32m"dev-process-kind"[39m
+                [36m>[39m
+                  [36m<option[39m
+                    [33mvalue[39m=[32m"command"[39m
+                  [36m>[39m
+                    [0mdirect.command[0m
+                  [36m</op...
+[90m [2m❯[22m Object.getElementError node_modules/@testing-library/dom/dist/config.js:[2m37:19[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m76:38[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m52:17[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m95:19[22m[39m
+[36m [2m❯[22m tests/development-runtime-activity.test.tsx:[2m258:17[22m[39m
+    [90m256|[39m   await view.activity(true);
+    [90m257|[39m   expect((screen.getByRole('textbox', { name: 'direct.commandName' }) …
+    [90m258|[39m   expect(screen.getByText('direct.operation.save.succeeded')).toBeTrut…
+    [90m   |[39m                 [31m^[39m
+    [90m259|[39m });
+    [90m260|[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/14]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/development-runtime-activity.test.tsx[2m > [22mkeeps an unknown start blocked and reconciles only its original process ID
+[31m[1mTestingLibraryElementError[22m[39m: Unable to find an element with the text: direct.operation.start.unknown. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33maria-label[39m=[32m"direct.title"[39m
+      [33mclass[39m=[32m"dev-review-stack"[39m
+      [33mdata-testid[39m=[32m"dev-development-runtime"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"direct.operation.receipts"[39m
+        [33mclass[39m=[32m"dev-review-stack"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-receipts"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-review-stack"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"dev-feedback dev-feedback-info"[39m
+            [33mrole[39m=[32m"alert"[39m
+          [36m>[39m
+            [0mdirect.title[0m
+            [0m: [0m
+            [0mdirect.operation.start.unknown[0m
+          [36m</p>[39m
+          [36m<details[39m
+            [33mclass[39m=[32m"dev-technical-details"[39m
+          [36m>[39m
+            [36m<summary>[39m
+              [0magent.details[0m
+            [36m</summary>[39m
+            [36m<code>[39m
+              [0m27bd0c55-3c2e-4300-af03-2e0c8a345171[0m
+            [36m</code>[39m
+          [36m</details>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"m-0 text-xs text-ink-secondary"[39m
+          [36m>[39m
+            [0mdev.error.process_not_found[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mdirect.operation.confirm[0m
+          [36m</button>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"m-0 text-xs text-ink-secondary"[39m
+          [36m>[39m
+            [0mdirect.operation.notFound[0m
+          [36m</p>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"min-w-0 overflow-hidden rounded-md bg-surface-panel p-3"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-command-catalog"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.savedCommands[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.newCommand[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.discovered[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.chooseDiscovered[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 text-xs text-ink-secondary"[39m
+      [36m>[39m
+        [0mdirect.discoveryHint[0m
+      [36m</p>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 break-all text-xs"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-draft-summary"[39m
+      [36m>[39m
+        [0m["echo"][0m
+        [0m · [0m
+        [0mreview.cwd[0m
+        [0m: [0m
+        [0m.[0m
+      [36m</p>[39m
+      [36m<form[39m
+        [33mclass[39m=[32m"dev-form"[39m
+        [33mnovalidate[39m=[32m""[39m
+      [36m>[39m
+        [36m<details[39m
+          [33mclass[39m=[32m"dev-runtime-configuration"[39m
+          [33mdata-testid[39m=[32m"dev-runtime-configuration"[39m
+          [33mopen[39m=[32m""[39m
+        [36m>[39m
+          [36m<summary>[39m
+            [0mruntimeWorkflow.configuration[0m
+          [36m</summary>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"dev-review-stack"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-review-toolbar"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_2m_"[39m
+                [36m>[39m
+                  [0mdirect.editorApplication[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_2m_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+                [33mdisabled[39m=[32m""[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0mdirect.openEditor[0m
+              [36m</button>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-command-catalog"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_2n_"[39m
+                [36m>[39m
+                  [0mdirect.commandName[0m
+                [36m</label>[39m
+                [3...
+[90m [2m❯[22m Object.getElementError node_modules/@testing-library/dom/dist/config.js:[2m37:19[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m76:38[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m52:17[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m95:19[22m[39m
+[36m [2m❯[22m tests/development-runtime-activity.test.tsx:[2m273:17[22m[39m
+    [90m271|[39m   fireEvent.change(screen.getByTestId('dev-process-program'), { target…
+    [90m272|[39m   fireEvent.click(screen.getByTestId('dev-process-start')); await flus…
+    [90m273|[39m   expect(screen.getByText('direct.operation.start.unknown')).toBeTruth…
+    [90m   |[39m                 [31m^[39m
+    [90m274|[39m   fireEvent.click(screen.getByTestId('dev-process-start')); expect(cal…
+    [90m275|[39m   visible = true; fireEvent.click(screen.getByRole('button', { name: '…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/14]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/development-runtime-activity.test.tsx[2m > [22mreports a definite rejected save and preserves the editable draft
+[31m[1mTestingLibraryElementError[22m[39m: Unable to find an element with the text: direct.operation.save.failed. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33maria-label[39m=[32m"direct.title"[39m
+      [33mclass[39m=[32m"dev-review-stack"[39m
+      [33mdata-testid[39m=[32m"dev-development-runtime"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"direct.operation.receipts"[39m
+        [33mclass[39m=[32m"dev-review-stack"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-receipts"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-review-stack"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"dev-feedback dev-feedback-error"[39m
+            [33mrole[39m=[32m"alert"[39m
+          [36m>[39m
+            [0mKeep me[0m
+            [0m: [0m
+            [0mdirect.operation.save.failed[0m
+          [36m</p>[39m
+          [36m<details[39m
+            [33mclass[39m=[32m"dev-technical-details"[39m
+          [36m>[39m
+            [36m<summary>[39m
+              [0magent.details[0m
+            [36m</summary>[39m
+            [36m<code>[39m
+              [0mf8c5924b-e52a-4ff2-9257-ea1f8d5196f8[0m
+            [36m</code>[39m
+          [36m</details>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"m-0 text-xs text-ink-secondary"[39m
+          [36m>[39m
+            [0mdev.error.invalid_command[0m
+          [36m</p>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"min-w-0 overflow-hidden rounded-md bg-surface-panel p-3"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-command-catalog"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.savedCommands[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.newCommand[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.discovered[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.chooseDiscovered[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 text-xs text-ink-secondary"[39m
+      [36m>[39m
+        [0mdirect.discoveryHint[0m
+      [36m</p>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 break-all text-xs"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-draft-summary"[39m
+      [36m>[39m
+        [0m["echo"][0m
+        [0m · [0m
+        [0mreview.cwd[0m
+        [0m: [0m
+        [0m.[0m
+      [36m</p>[39m
+      [36m<form[39m
+        [33mclass[39m=[32m"dev-form"[39m
+        [33mnovalidate[39m=[32m""[39m
+      [36m>[39m
+        [36m<details[39m
+          [33mclass[39m=[32m"dev-runtime-configuration"[39m
+          [33mdata-testid[39m=[32m"dev-runtime-configuration"[39m
+          [33mopen[39m=[32m""[39m
+        [36m>[39m
+          [36m<summary>[39m
+            [0mruntimeWorkflow.configuration[0m
+          [36m</summary>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"dev-review-stack"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-review-toolbar"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_2s_"[39m
+                [36m>[39m
+                  [0mdirect.editorApplication[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_2s_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+                [33mdisabled[39m=[32m""[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0mdirect.openEditor[0m
+              [36m</button>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-command-catalog"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_2t_"[39m
+                [36m>[39m
+                  [0mdirect.commandName[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_2t_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m"Keep me"[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<label[39m
+                [33mclass[39m=[32m"dev-field"[39m
+              [36m>[39m
+                [0mdirect.kind[0m
+                [36m<select[39m
+                  [33mdata-testid[39m=[32m"dev-process-kind"[39m
+                [36m>[39m
+              ...
+[90m [2m❯[22m Object.getElementError node_modules/@testing-library/dom/dist/config.js:[2m37:19[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m76:38[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m52:17[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m95:19[22m[39m
+[36m [2m❯[22m tests/development-runtime-activity.test.tsx:[2m286:17[22m[39m
+    [90m284|[39m   invoke.mockRejectedValue('invalid_command');
+    [90m285|[39m   fireEvent.click(screen.getByRole('button', { name: 'direct.saveComma…
+    [90m286|[39m   expect(screen.getByText('direct.operation.save.failed')).toBeTruthy(…
+    [90m   |[39m                 [31m^[39m
+    [90m287|[39m   expect((screen.getByRole('textbox', { name: 'direct.commandName' }) …
+    [90m288|[39m });
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/14]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/development-runtime-activity.test.tsx[2m > [22mdoes not confirm a running stop acknowledgement or repeat the stop while checking
+[31m[1mTestingLibraryElementError[22m[39m: Unable to find an element with the text: direct.operation.stop.succeeded. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33maria-label[39m=[32m"direct.title"[39m
+      [33mclass[39m=[32m"dev-review-stack"[39m
+      [33mdata-testid[39m=[32m"dev-development-runtime"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"direct.operation.receipts"[39m
+        [33mclass[39m=[32m"dev-review-stack"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-receipts"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-review-stack"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"dev-feedback dev-feedback-success"[39m
+            [33mrole[39m=[32m"status"[39m
+          [36m>[39m
+            [0mecho[0m
+            [0m: [0m
+            [0mdirect.operation.stop.succeeded[0m
+          [36m</p>[39m
+          [36m<details[39m
+            [33mclass[39m=[32m"dev-technical-details"[39m
+          [36m>[39m
+            [36m<summary>[39m
+              [0magent.details[0m
+            [36m</summary>[39m
+            [36m<code>[39m
+              [0mrun[0m
+            [36m</code>[39m
+          [36m</details>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"min-w-0 overflow-hidden rounded-md bg-surface-panel p-3"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-command-catalog"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.savedCommands[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.newCommand[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.discovered[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.chooseDiscovered[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 text-xs text-ink-secondary"[39m
+      [36m>[39m
+        [0mdirect.discoveryHint[0m
+      [36m</p>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 break-all text-xs"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-draft-summary"[39m
+      [36m>[39m
+        [0mruntimeWorkflow.chooseCommand[0m
+        [0m · [0m
+        [0mreview.cwd[0m
+        [0m: [0m
+        [0m.[0m
+      [36m</p>[39m
+      [36m<form[39m
+        [33mclass[39m=[32m"dev-form"[39m
+        [33mnovalidate[39m=[32m""[39m
+      [36m>[39m
+        [36m<details[39m
+          [33mclass[39m=[32m"dev-runtime-configuration"[39m
+          [33mdata-testid[39m=[32m"dev-runtime-configuration"[39m
+          [33mopen[39m=[32m""[39m
+        [36m>[39m
+          [36m<summary>[39m
+            [0mruntimeWorkflow.configuration[0m
+          [36m</summary>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"dev-review-stack"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-review-toolbar"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_32_"[39m
+                [36m>[39m
+                  [0mdirect.editorApplication[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_32_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+                [33mdisabled[39m=[32m""[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0mdirect.openEditor[0m
+              [36m</button>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-command-catalog"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_33_"[39m
+                [36m>[39m
+                  [0mdirect.commandName[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_33_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<label[39m
+                [33mclass[39m=[32m"dev-field"[39m
+              [36m>[39m
+                [0mdirect.kind[0m
+                [36m<select[39m
+                  [33mdata-testid[39m=[32m"dev-process-kind"[39m
+                [36m>[39m
+                  [36m<option[39m
+                    [33mvalue[39m=[32m"command"[39m
+                  [36m>[39m
+                    [0mdirect.command[0m
+                  [36m</option>[39m
+              ...
+[90m [2m❯[22m Object.getElementError node_modules/@testing-library/dom/dist/config.js:[2m37:19[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m76:38[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m52:17[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m95:19[22m[39m
+[36m [2m❯[22m tests/development-runtime-activity.test.tsx:[2m311:17[22m[39m
+    [90m309|[39m   fireEvent.click(screen.getByTestId('dev-process-stop')); expect(call…
+    [90m310|[39m   stopped = true; fireEvent.click(screen.getByRole('button', { name: '…
+    [90m311|[39m   expect(screen.getByText('direct.operation.stop.succeeded')).toBeTrut…
+    [90m   |[39m                 [31m^[39m
+    [90m312|[39m   expect(calls('stop_development_process')).toBe(1);
+    [90m313|[39m });
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/14]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/development-runtime-activity.test.tsx[2m > [22mdoes not confirm a cleanup_pending stop acknowledgement or repeat the stop while checking
+[31m[1mTestingLibraryElementError[22m[39m: Unable to find an element with the text: direct.operation.stop.succeeded. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33maria-label[39m=[32m"direct.title"[39m
+      [33mclass[39m=[32m"dev-review-stack"[39m
+      [33mdata-testid[39m=[32m"dev-development-runtime"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"direct.operation.receipts"[39m
+        [33mclass[39m=[32m"dev-review-stack"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-receipts"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-review-stack"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"dev-feedback dev-feedback-success"[39m
+            [33mrole[39m=[32m"status"[39m
+          [36m>[39m
+            [0mecho[0m
+            [0m: [0m
+            [0mdirect.operation.stop.succeeded[0m
+          [36m</p>[39m
+          [36m<details[39m
+            [33mclass[39m=[32m"dev-technical-details"[39m
+          [36m>[39m
+            [36m<summary>[39m
+              [0magent.details[0m
+            [36m</summary>[39m
+            [36m<code>[39m
+              [0mrun[0m
+            [36m</code>[39m
+          [36m</details>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"min-w-0 overflow-hidden rounded-md bg-surface-panel p-3"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-command-catalog"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.savedCommands[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.newCommand[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.discovered[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.chooseDiscovered[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 text-xs text-ink-secondary"[39m
+      [36m>[39m
+        [0mdirect.discoveryHint[0m
+      [36m</p>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 break-all text-xs"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-draft-summary"[39m
+      [36m>[39m
+        [0mruntimeWorkflow.chooseCommand[0m
+        [0m · [0m
+        [0mreview.cwd[0m
+        [0m: [0m
+        [0m.[0m
+      [36m</p>[39m
+      [36m<form[39m
+        [33mclass[39m=[32m"dev-form"[39m
+        [33mnovalidate[39m=[32m""[39m
+      [36m>[39m
+        [36m<details[39m
+          [33mclass[39m=[32m"dev-runtime-configuration"[39m
+          [33mdata-testid[39m=[32m"dev-runtime-configuration"[39m
+          [33mopen[39m=[32m""[39m
+        [36m>[39m
+          [36m<summary>[39m
+            [0mruntimeWorkflow.configuration[0m
+          [36m</summary>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"dev-review-stack"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-review-toolbar"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_38_"[39m
+                [36m>[39m
+                  [0mdirect.editorApplication[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_38_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+                [33mdisabled[39m=[32m""[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0mdirect.openEditor[0m
+              [36m</button>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-command-catalog"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_39_"[39m
+                [36m>[39m
+                  [0mdirect.commandName[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_39_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<label[39m
+                [33mclass[39m=[32m"dev-field"[39m
+              [36m>[39m
+                [0mdirect.kind[0m
+                [36m<select[39m
+                  [33mdata-testid[39m=[32m"dev-process-kind"[39m
+                [36m>[39m
+                  [36m<option[39m
+                    [33mvalue[39m=[32m"command"[39m
+                  [36m>[39m
+                    [0mdirect.command[0m
+                  [36m</option>[39m
+              ...
+[90m [2m❯[22m Object.getElementError node_modules/@testing-library/dom/dist/config.js:[2m37:19[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m76:38[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m52:17[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m95:19[22m[39m
+[36m [2m❯[22m tests/development-runtime-activity.test.tsx:[2m311:17[22m[39m
+    [90m309|[39m   fireEvent.click(screen.getByTestId('dev-process-stop')); expect(call…
+    [90m310|[39m   stopped = true; fireEvent.click(screen.getByRole('button', { name: '…
+    [90m311|[39m   expect(screen.getByText('direct.operation.stop.succeeded')).toBeTrut…
+    [90m   |[39m                 [31m^[39m
+    [90m312|[39m   expect(calls('stop_development_process')).toBe(1);
+    [90m313|[39m });
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/14]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/development-runtime-activity.test.tsx[2m > [22mdoes not confirm a unknown stop acknowledgement or repeat the stop while checking
+[31m[1mTestingLibraryElementError[22m[39m: Unable to find an element with the text: direct.operation.stop.succeeded. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33maria-label[39m=[32m"direct.title"[39m
+      [33mclass[39m=[32m"dev-review-stack"[39m
+      [33mdata-testid[39m=[32m"dev-development-runtime"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"direct.operation.receipts"[39m
+        [33mclass[39m=[32m"dev-review-stack"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-receipts"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-review-stack"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"dev-feedback dev-feedback-success"[39m
+            [33mrole[39m=[32m"status"[39m
+          [36m>[39m
+            [0mecho[0m
+            [0m: [0m
+            [0mdirect.operation.stop.succeeded[0m
+          [36m</p>[39m
+          [36m<details[39m
+            [33mclass[39m=[32m"dev-technical-details"[39m
+          [36m>[39m
+            [36m<summary>[39m
+              [0magent.details[0m
+            [36m</summary>[39m
+            [36m<code>[39m
+              [0mrun[0m
+            [36m</code>[39m
+          [36m</details>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"min-w-0 overflow-hidden rounded-md bg-surface-panel p-3"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-command-catalog"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.savedCommands[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.newCommand[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.discovered[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.chooseDiscovered[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 text-xs text-ink-secondary"[39m
+      [36m>[39m
+        [0mdirect.discoveryHint[0m
+      [36m</p>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 break-all text-xs"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-draft-summary"[39m
+      [36m>[39m
+        [0mruntimeWorkflow.chooseCommand[0m
+        [0m · [0m
+        [0mreview.cwd[0m
+        [0m: [0m
+        [0m.[0m
+      [36m</p>[39m
+      [36m<form[39m
+        [33mclass[39m=[32m"dev-form"[39m
+        [33mnovalidate[39m=[32m""[39m
+      [36m>[39m
+        [36m<details[39m
+          [33mclass[39m=[32m"dev-runtime-configuration"[39m
+          [33mdata-testid[39m=[32m"dev-runtime-configuration"[39m
+          [33mopen[39m=[32m""[39m
+        [36m>[39m
+          [36m<summary>[39m
+            [0mruntimeWorkflow.configuration[0m
+          [36m</summary>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"dev-review-stack"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-review-toolbar"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_3e_"[39m
+                [36m>[39m
+                  [0mdirect.editorApplication[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_3e_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+                [33mdisabled[39m=[32m""[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0mdirect.openEditor[0m
+              [36m</button>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-command-catalog"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_3f_"[39m
+                [36m>[39m
+                  [0mdirect.commandName[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_3f_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<label[39m
+                [33mclass[39m=[32m"dev-field"[39m
+              [36m>[39m
+                [0mdirect.kind[0m
+                [36m<select[39m
+                  [33mdata-testid[39m=[32m"dev-process-kind"[39m
+                [36m>[39m
+                  [36m<option[39m
+                    [33mvalue[39m=[32m"command"[39m
+                  [36m>[39m
+                    [0mdirect.command[0m
+                  [36m</option>[39m
+              ...
+[90m [2m❯[22m Object.getElementError node_modules/@testing-library/dom/dist/config.js:[2m37:19[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m76:38[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m52:17[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m95:19[22m[39m
+[36m [2m❯[22m tests/development-runtime-activity.test.tsx:[2m311:17[22m[39m
+    [90m309|[39m   fireEvent.click(screen.getByTestId('dev-process-stop')); expect(call…
+    [90m310|[39m   stopped = true; fireEvent.click(screen.getByRole('button', { name: '…
+    [90m311|[39m   expect(screen.getByText('direct.operation.stop.succeeded')).toBeTrut…
+    [90m   |[39m                 [31m^[39m
+    [90m312|[39m   expect(calls('stop_development_process')).toBe(1);
+    [90m313|[39m });
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/14]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/development-runtime-activity.test.tsx[2m > [22mconfirms a committed save by catalog after a post-write error without resending it
+[31m[1mTestingLibraryElementError[22m[39m: Unable to find an element with the text: direct.operation.save.succeeded. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33maria-label[39m=[32m"direct.title"[39m
+      [33mclass[39m=[32m"dev-review-stack"[39m
+      [33mdata-testid[39m=[32m"dev-development-runtime"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"direct.operation.receipts"[39m
+        [33mclass[39m=[32m"dev-review-stack"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-receipts"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-review-stack"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"dev-feedback dev-feedback-success"[39m
+            [33mrole[39m=[32m"status"[39m
+          [36m>[39m
+            [0mCommitted[0m
+            [0m: [0m
+            [0mdirect.operation.save.succeeded[0m
+          [36m</p>[39m
+          [36m<details[39m
+            [33mclass[39m=[32m"dev-technical-details"[39m
+          [36m>[39m
+            [36m<summary>[39m
+              [0magent.details[0m
+            [36m</summary>[39m
+            [36m<code>[39m
+              [0me98139ec-73c0-43d2-a651-b5f2ffd92fd8[0m
+            [36m</code>[39m
+          [36m</details>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"min-w-0 overflow-hidden rounded-md bg-surface-panel p-3"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-command-catalog"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.savedCommands[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.newCommand[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"e98139ec-73c0-43d2-a651-b5f2ffd92fd8"[39m
+              [36m>[39m
+                [0mCommitted[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.discovered[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.chooseDiscovered[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 text-xs text-ink-secondary"[39m
+      [36m>[39m
+        [0mdirect.discoveryHint[0m
+      [36m</p>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 break-all text-xs"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-draft-summary"[39m
+      [36m>[39m
+        [0m["echo"][0m
+        [0m · [0m
+        [0mreview.cwd[0m
+        [0m: [0m
+        [0m.[0m
+      [36m</p>[39m
+      [36m<form[39m
+        [33mclass[39m=[32m"dev-form"[39m
+        [33mnovalidate[39m=[32m""[39m
+      [36m>[39m
+        [36m<details[39m
+          [33mclass[39m=[32m"dev-runtime-configuration"[39m
+          [33mdata-testid[39m=[32m"dev-runtime-configuration"[39m
+          [33mopen[39m=[32m""[39m
+        [36m>[39m
+          [36m<summary>[39m
+            [0mruntimeWorkflow.configuration[0m
+          [36m</summary>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"dev-review-stack"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-review-toolbar"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_3q_"[39m
+                [36m>[39m
+                  [0mdirect.editorApplication[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_3q_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+                [33mdisabled[39m=[32m""[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0mdirect.openEditor[0m
+              [36m</button>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-command-catalog"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_3r_"[39m
+                [36m>[39m
+                  [0mdirect.commandName[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_3r_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m"Committed"[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<label[39m
+                [33mclass[39m=[32m"dev-field"[39m
+              [36m>[39m
+                [0mdirect.kind[0m
+                [36m<select[39m
+                  [33mdata-testid[39m=[32m"dev-process-kind"[39m
+            ...
+[90m [2m❯[22m Object.getElementError node_modules/@testing-library/dom/dist/config.js:[2m37:19[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m76:38[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m52:17[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m95:19[22m[39m
+[36m [2m❯[22m tests/development-runtime-activity.test.tsx:[2m349:17[22m[39m
+    [90m347|[39m   fireEvent.change(screen.getByTestId('dev-process-program'), { target…
+    [90m348|[39m   fireEvent.click(screen.getByRole('button', { name: 'direct.saveComma…
+    [90m349|[39m   expect(screen.getByText('direct.operation.save.succeeded')).toBeTrut…
+    [90m   |[39m                 [31m^[39m
+    [90m350|[39m   expect(calls('save_development_commands')).toBe(1);
+    [90m351|[39m });
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/14]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/development-runtime-activity.test.tsx[2m > [22mkeeps a slow stop receipt after process selection changes without replacing the new detail
+[31m[1mTestingLibraryElementError[22m[39m: Unable to find an element with the text: direct.operation.stop.pending. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33maria-label[39m=[32m"direct.title"[39m
+      [33mclass[39m=[32m"dev-review-stack"[39m
+      [33mdata-testid[39m=[32m"dev-development-runtime"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"direct.operation.receipts"[39m
+        [33mclass[39m=[32m"dev-review-stack"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-receipts"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-review-stack"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"dev-feedback dev-feedback-info"[39m
+            [33mrole[39m=[32m"status"[39m
+          [36m>[39m
+            [0mdirect.title[0m
+            [0m: [0m
+            [0mdirect.operation.stop.pending[0m
+          [36m</p>[39m
+          [36m<details[39m
+            [33mclass[39m=[32m"dev-technical-details"[39m
+          [36m>[39m
+            [36m<summary>[39m
+              [0magent.details[0m
+            [36m</summary>[39m
+            [36m<code>[39m
+              [0mrun[0m
+            [36m</code>[39m
+          [36m</details>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"min-w-0 overflow-hidden rounded-md bg-surface-panel p-3"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-command-catalog"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.savedCommands[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.newCommand[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.discovered[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.chooseDiscovered[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 text-xs text-ink-secondary"[39m
+      [36m>[39m
+        [0mdirect.discoveryHint[0m
+      [36m</p>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 break-all text-xs"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-draft-summary"[39m
+      [36m>[39m
+        [0mruntimeWorkflow.chooseCommand[0m
+        [0m · [0m
+        [0mreview.cwd[0m
+        [0m: [0m
+        [0m.[0m
+      [36m</p>[39m
+      [36m<form[39m
+        [33mclass[39m=[32m"dev-form"[39m
+        [33mnovalidate[39m=[32m""[39m
+      [36m>[39m
+        [36m<details[39m
+          [33mclass[39m=[32m"dev-runtime-configuration"[39m
+          [33mdata-testid[39m=[32m"dev-runtime-configuration"[39m
+          [33mopen[39m=[32m""[39m
+        [36m>[39m
+          [36m<summary>[39m
+            [0mruntimeWorkflow.configuration[0m
+          [36m</summary>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"dev-review-stack"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-review-toolbar"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_4b_"[39m
+                [36m>[39m
+                  [0mdirect.editorApplication[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_4b_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+                [33mdisabled[39m=[32m""[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0mdirect.openEditor[0m
+              [36m</button>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-command-catalog"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_4c_"[39m
+                [36m>[39m
+                  [0mdirect.commandName[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_4c_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<label[39m
+                [33mclass[39m=[32m"dev-field"[39m
+              [36m>[39m
+                [0mdirect.kind[0m
+                [36m<select[39m
+                  [33mdata-testid[39m=[32m"dev-process-kind"[39m
+                [36m>[39m
+                  [36m<option[39m
+                    [33mvalue[39m=[32m"command"[39m
+                  [36m>[39m
+                    [0mdirect.command[0m
+                  [36m</option>[39m
+           ...
+[90m [2m❯[22m Object.getElementError node_modules/@testing-library/dom/dist/config.js:[2m37:19[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m76:38[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m52:17[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m95:19[22m[39m
+[36m [2m❯[22m tests/development-runtime-activity.test.tsx:[2m391:17[22m[39m
+    [90m389|[39m   show(); await flush();
+    [90m390|[39m   fireEvent.click(screen.getByTestId('dev-process-stop'));
+    [90m391|[39m   expect(screen.getByText('direct.operation.stop.pending')).toBeTruthy…
+    [90m   |[39m                 [31m^[39m
+    [90m392|[39m   fireEvent.click(screen.getByTestId('dev-process-stop')); expect(call…
+    [90m393|[39m   fireEvent.click(screen.getByTestId('dev-process-history-second')); a…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/14]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/development-runtime-activity.test.tsx[2m > [22mdoes not replay a retained catalog receipt over a fresh catalog after remount
+[31m[1mTestingLibraryElementError[22m[39m: Unable to find an element with the text: direct.operation.save.succeeded. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33maria-label[39m=[32m"direct.title"[39m
+      [33mclass[39m=[32m"dev-review-stack"[39m
+      [33mdata-testid[39m=[32m"dev-development-runtime"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"direct.operation.receipts"[39m
+        [33mclass[39m=[32m"dev-review-stack"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-receipts"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-review-stack"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"dev-feedback dev-feedback-success"[39m
+            [33mrole[39m=[32m"status"[39m
+          [36m>[39m
+            [0mOld name[0m
+            [0m: [0m
+            [0mdirect.operation.save.succeeded[0m
+          [36m</p>[39m
+          [36m<details[39m
+            [33mclass[39m=[32m"dev-technical-details"[39m
+          [36m>[39m
+            [36m<summary>[39m
+              [0magent.details[0m
+            [36m</summary>[39m
+            [36m<code>[39m
+              [0msaved[0m
+            [36m</code>[39m
+          [36m</details>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"min-w-0 overflow-hidden rounded-md bg-surface-panel p-3"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-command-catalog"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.savedCommands[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.newCommand[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"saved"[39m
+              [36m>[39m
+                [0mFresh external name[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.discovered[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.chooseDiscovered[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 text-xs text-ink-secondary"[39m
+      [36m>[39m
+        [0mdirect.discoveryHint[0m
+      [36m</p>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 break-all text-xs"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-draft-summary"[39m
+      [36m>[39m
+        [0mruntimeWorkflow.chooseCommand[0m
+        [0m · [0m
+        [0mreview.cwd[0m
+        [0m: [0m
+        [0m.[0m
+      [36m</p>[39m
+      [36m<form[39m
+        [33mclass[39m=[32m"dev-form"[39m
+        [33mnovalidate[39m=[32m""[39m
+      [36m>[39m
+        [36m<details[39m
+          [33mclass[39m=[32m"dev-runtime-configuration"[39m
+          [33mdata-testid[39m=[32m"dev-runtime-configuration"[39m
+          [33mopen[39m=[32m""[39m
+        [36m>[39m
+          [36m<summary>[39m
+            [0mruntimeWorkflow.configuration[0m
+          [36m</summary>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"dev-review-stack"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-review-toolbar"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_4h_"[39m
+                [36m>[39m
+                  [0mdirect.editorApplication[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_4h_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+                [33mdisabled[39m=[32m""[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0mdirect.openEditor[0m
+              [36m</button>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-command-catalog"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_4i_"[39m
+                [36m>[39m
+                  [0mdirect.commandName[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_4i_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<label[39m
+                [33mclass[39m=[32m"dev-field"[39m
+              [36m>[39m
+                [0mdirect.kind[0m
+                [36m<select[39m
+                  [33mdata-testid[39m=[32m"dev-process-kind"[39m
+                [36m>[39m
+                  [36m<o...
+[90m [2m❯[22m Object.getElementError node_modules/@testing-library/dom/dist/config.js:[2m37:19[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m76:38[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m52:17[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m95:19[22m[39m
+[36m [2m❯[22m tests/development-runtime-activity.test.tsx:[2m431:17[22m[39m
+    [90m429|[39m   expect(screen.getByRole('option', { name: 'Fresh external name' })).…
+    [90m430|[39m   expect(screen.queryByRole('option', { name: 'Old name' })).toBeNull(…
+    [90m431|[39m   expect(screen.getByText('direct.operation.save.succeeded')).toBeTrut…
+    [90m   |[39m                 [31m^[39m
+    [90m432|[39m });
+    [90m433|[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/14]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/development-runtime-activity.test.tsx[2m > [22mkeeps a mismatched start acknowledgement unknown without projecting its output
+[31m[1mTestingLibraryElementError[22m[39m: Unable to find an element with the text: direct.operation.start.unknown. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33maria-label[39m=[32m"direct.title"[39m
+      [33mclass[39m=[32m"dev-review-stack"[39m
+      [33mdata-testid[39m=[32m"dev-development-runtime"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"direct.operation.receipts"[39m
+        [33mclass[39m=[32m"dev-review-stack"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-receipts"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-review-stack"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"dev-feedback dev-feedback-info"[39m
+            [33mrole[39m=[32m"alert"[39m
+          [36m>[39m
+            [0mdirect.title[0m
+            [0m: [0m
+            [0mdirect.operation.start.unknown[0m
+          [36m</p>[39m
+          [36m<details[39m
+            [33mclass[39m=[32m"dev-technical-details"[39m
+          [36m>[39m
+            [36m<summary>[39m
+              [0magent.details[0m
+            [36m</summary>[39m
+            [36m<code>[39m
+              [0m248238df-e31f-4e12-b33e-1e589db9e9b1[0m
+            [36m</code>[39m
+          [36m</details>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"m-0 text-xs text-ink-secondary"[39m
+          [36m>[39m
+            [0mdirect.targetMismatch[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mdirect.operation.confirm[0m
+          [36m</button>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"min-w-0 overflow-hidden rounded-md bg-surface-panel p-3"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-command-catalog"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.savedCommands[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.newCommand[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.discovered[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.chooseDiscovered[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 text-xs text-ink-secondary"[39m
+      [36m>[39m
+        [0mdirect.discoveryHint[0m
+      [36m</p>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 break-all text-xs"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-draft-summary"[39m
+      [36m>[39m
+        [0m["echo"][0m
+        [0m · [0m
+        [0mreview.cwd[0m
+        [0m: [0m
+        [0m.[0m
+      [36m</p>[39m
+      [36m<form[39m
+        [33mclass[39m=[32m"dev-form"[39m
+        [33mnovalidate[39m=[32m""[39m
+      [36m>[39m
+        [36m<details[39m
+          [33mclass[39m=[32m"dev-runtime-configuration"[39m
+          [33mdata-testid[39m=[32m"dev-runtime-configuration"[39m
+          [33mopen[39m=[32m""[39m
+        [36m>[39m
+          [36m<summary>[39m
+            [0mruntimeWorkflow.configuration[0m
+          [36m</summary>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"dev-review-stack"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-review-toolbar"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_4n_"[39m
+                [36m>[39m
+                  [0mdirect.editorApplication[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_4n_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+                [33mdisabled[39m=[32m""[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0mdirect.openEditor[0m
+              [36m</button>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-command-catalog"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_4o_"[39m
+                [36m>[39m
+                  [0mdirect.commandName[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondar...
+[90m [2m❯[22m Object.getElementError node_modules/@testing-library/dom/dist/config.js:[2m37:19[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m76:38[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m52:17[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m95:19[22m[39m
+[36m [2m❯[22m tests/development-runtime-activity.test.tsx:[2m439:17[22m[39m
+
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/14]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/development-runtime-activity.test.tsx[2m > [22mretains an unmatched save as unknown and retries only the catalog read
+[31m[1mTestingLibraryElementError[22m[39m: Unable to find an element with the text: direct.operation.save.unknown. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33maria-label[39m=[32m"direct.title"[39m
+      [33mclass[39m=[32m"dev-review-stack"[39m
+      [33mdata-testid[39m=[32m"dev-development-runtime"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"direct.operation.receipts"[39m
+        [33mclass[39m=[32m"dev-review-stack"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-receipts"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-review-stack"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"dev-feedback dev-feedback-info"[39m
+            [33mrole[39m=[32m"alert"[39m
+          [36m>[39m
+            [0mUnconfirmed[0m
+            [0m: [0m
+            [0mdirect.operation.save.unknown[0m
+          [36m</p>[39m
+          [36m<details[39m
+            [33mclass[39m=[32m"dev-technical-details"[39m
+          [36m>[39m
+            [36m<summary>[39m
+              [0magent.details[0m
+            [36m</summary>[39m
+            [36m<code>[39m
+              [0m2d5b6d84-c66e-4be4-bfdd-28a7c6c1e16c[0m
+            [36m</code>[39m
+          [36m</details>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0mdirect.operation.confirm[0m
+          [36m</button>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"min-w-0 overflow-hidden rounded-md bg-surface-panel p-3"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"dev-command-catalog"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.savedCommands[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.newCommand[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+          [36m<label[39m
+            [33mclass[39m=[32m"dev-field"[39m
+          [36m>[39m
+            [0mdirect.discovered[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m""[39m
+              [36m>[39m
+                [0mdirect.chooseDiscovered[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 text-xs text-ink-secondary"[39m
+      [36m>[39m
+        [0mdirect.discoveryHint[0m
+      [36m</p>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"m-0 break-all text-xs"[39m
+        [33mdata-testid[39m=[32m"dev-runtime-draft-summary"[39m
+      [36m>[39m
+        [0m["echo"][0m
+        [0m · [0m
+        [0mreview.cwd[0m
+        [0m: [0m
+        [0m.[0m
+      [36m</p>[39m
+      [36m<form[39m
+        [33mclass[39m=[32m"dev-form"[39m
+        [33mnovalidate[39m=[32m""[39m
+      [36m>[39m
+        [36m<details[39m
+          [33mclass[39m=[32m"dev-runtime-configuration"[39m
+          [33mdata-testid[39m=[32m"dev-runtime-configuration"[39m
+          [33mopen[39m=[32m""[39m
+        [36m>[39m
+          [36m<summary>[39m
+            [0mruntimeWorkflow.configuration[0m
+          [36m</summary>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"dev-review-stack"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-review-toolbar"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_4t_"[39m
+                [36m>[39m
+                  [0mdirect.editorApplication[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-compact) border-edge-control"[39m
+                  [33mid[39m=[32m"_r_4t_"[39m
+                  [33mtype[39m=[32m"text"[39m
+                  [33mvalue[39m=[32m""[39m
+                [36m/>[39m
+              [36m</div>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm"[39m
+                [33mdisabled[39m=[32m""[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0mdirect.openEditor[0m
+              [36m</button>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"dev-command-catalog"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex w-full flex-col gap-1"[39m
+              [36m>[39m
+                [36m<label[39m
+                  [33mclass[39m=[32m"text-sm font-medium text-ink-primary"[39m
+                  [33mfor[39m=[32m"_r_4u_"[39m
+                [36m>[39m
+                  [0mdirect.commandName[0m
+                [36m</label>[39m
+                [36m<input[39m
+                  [33mclass[39m=[32m"control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary placeholder:text-ink-secondary disabled:cursor-not-allowed disabled:opacity-disabled focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus font-sans text-sm h-(--control-height-c...
+[90m [2m❯[22m Object.getElementError node_modules/@testing-library/dom/dist/config.js:[2m37:19[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m76:38[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m52:17[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m95:19[22m[39m
+[36m [2m❯[22m tests/development-runtime-activity.test.tsx:[2m457:17[22m[39m
+    [90m455|[39m   fireEvent.change(screen.getByTestId('dev-process-program'), { target…
+    [90m456|[39m   fireEvent.click(screen.getByRole('button', { name: 'direct.saveComma…
+    [90m457|[39m   expect(screen.getByText('direct.operation.save.unknown')).toBeTruthy…
+    [90m   |[39m                 [31m^[39m
+    [90m458|[39m   expect(screen.queryByText('direct.operation.save.failed')).toBeNull(…
+    [90m459|[39m   fireEvent.click(screen.getByRole('button', { name: 'direct.saveComma…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/14]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m3 passed[39m[22m[90m (5)[39m
+[2m      Tests [22m [1m[31m14 failed[39m[22m[2m | [22m[1m[32m60 passed[39m[22m[90m (74)[39m
+[2m   Start at [22m 15:13:43
+[2m   Duration [22m 3.28s[2m (tests 42%, environment 31%, import 18%, transform 8%)[22m
+

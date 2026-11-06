@@ -7,7 +7,7 @@ export function AuthShell({ title, children }: { title: string; children: ReactN
     <div className="flex min-h-screen w-full items-center justify-center bg-surface-canvas p-5">
       <Card className="w-full max-w-112 border-border-subtle bg-surface-panel shadow-none">
         <Card.Header className="border-border-subtle">
-          <h1 className="m-0 text-lg font-semibold text-foreground">{title}</h1>
+          <h1 className="m-0 text-lg font-semibold text-ink-primary">{title}</h1>
         </Card.Header>
         <Card.Body>
           <Stack gap={4}>{children}</Stack>
@@ -19,7 +19,7 @@ export function AuthShell({ title, children }: { title: string; children: ReactN
 
 export function InlineError({ children }: { children: ReactNode }) {
   return (
-    <p role="alert" className="m-0 text-sm text-error-text">
+    <p role="alert" className="m-0 text-sm text-status-error-text">
       {children}
     </p>
   );

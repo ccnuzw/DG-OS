@@ -1,0 +1,18 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling dgos v0.1.0 (<repo>/src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3m 52s
+     Running unittests src/lib.rs (target/debug/deps/dgos_lib-e39e3c64ab78d1a6)
+
+running 5 tests
+test logging::tests::privacy_decisions_are_never_cached_as_unconditional_interest ... ok
+test logging::tests::an_invalid_spec_falls_back_to_info_with_the_cap_intact ... ok
+test logging::tests::without_the_cap_the_same_filter_would_log_database_values ... ok
+test logging::tests::a_trace_filter_cannot_lift_the_database_cap ... ok
+test logging::tests::concurrent_uncapped_subscribers_cannot_enable_private_callsites ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 39 filtered out; finished in 0.01s
+

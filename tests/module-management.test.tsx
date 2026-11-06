@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastViewport, clearToasts } from '@dgos/ui';
 import App from '../src/App';
+// Resolve the real lazy page before assertions; cold Vitest transforms are fixture setup.
+import '../src/pages/SettingsShell';
 
 interface Call {
   command: string;

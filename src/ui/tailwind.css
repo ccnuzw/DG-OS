@@ -7,47 +7,56 @@
  * Tailwind emits the declaration and the result is a self-referencing, invalid custom property.
  */
 
-/* Shadcn semantic colour names -> FR-005 tokens. These exist only as utility names (bg-background, ...);
-   no bare --background/--primary variables exist at runtime. See FR-005 §4.7 for the full table. */
+/* Published FR-005 utility contract: retained for external/installed modules (D067).
+   First-party consumers use the role entrypoints below; this block owns no colour values. */
 @theme inline {
-  --color-background: var(--color-bg-primary);
+  --color-background: var(--surface-canvas);
   /* Navigation rail surface (V2-FR-009 baseline); only bg-rail exists as a utility name. */
-  --color-rail: var(--color-bg-rail);
-  --color-foreground: var(--color-text-primary);
-  --color-card: var(--color-bg-secondary);
-  --color-card-foreground: var(--color-text-primary);
-  --color-popover: var(--color-bg-primary);
-  --color-popover-foreground: var(--color-text-primary);
-  --color-primary-foreground: var(--color-on-primary);
-  --color-secondary: var(--color-bg-tertiary);
-  --color-secondary-foreground: var(--color-text-primary);
-  --color-muted: var(--color-bg-secondary);
-  --color-muted-foreground: var(--color-text-secondary);
-  --color-accent: var(--color-bg-tertiary);
-  --color-accent-foreground: var(--color-text-primary);
-  --color-destructive: var(--color-error);
-  --color-destructive-foreground: var(--color-on-error);
-  --color-input: var(--color-border-control);
-  --color-ring: var(--color-focus-ring);
+  --color-rail: var(--surface-rail);
+  --color-foreground: var(--text-primary);
+  --color-card: var(--surface-panel);
+  --color-card-foreground: var(--text-primary);
+  --color-popover: var(--surface-canvas);
+  --color-popover-foreground: var(--text-primary);
+  --color-primary-foreground: var(--accent-on);
+  --color-secondary: var(--surface-inset);
+  --color-secondary-foreground: var(--text-primary);
+  --color-muted: var(--surface-panel);
+  --color-muted-foreground: var(--text-secondary);
+  --color-accent: var(--surface-inset);
+  --color-accent-foreground: var(--text-primary);
+  --color-destructive: var(--status-error);
+  --color-destructive-foreground: var(--status-error-on);
+  --color-input: var(--border-control);
+  --color-ring: var(--border-focus);
 
-  /* V2 semantic roles. Existing V1 utilities remain valid; these names make page patterns self-describing. */
+  /* Consumer roles: inline substitution adds no second runtime palette. */
   --color-surface-canvas: var(--surface-canvas);
   --color-surface-rail: var(--surface-rail);
   --color-surface-panel: var(--surface-panel);
   --color-surface-card: var(--surface-card);
   --color-surface-inset: var(--surface-inset);
   --color-surface-control: var(--surface-control);
+  --color-surface-field: var(--surface-field);
+  --color-surface-control-hover: var(--surface-control-hover);
+  --color-surface-selection-neutral: var(--surface-selection-neutral);
   --color-surface-selected: var(--surface-selected);
   --color-surface-hover: var(--surface-hover);
   --color-surface-active: var(--surface-active);
   --color-border-subtle: var(--border-subtle);
+  --color-edge-control: var(--border-control);
   --color-border-focus: var(--border-focus);
-  --color-text-primary-role: var(--text-primary);
-  --color-text-secondary-role: var(--text-secondary);
-  --color-text-tertiary-role: var(--text-tertiary);
+  --color-border-divider: var(--border-divider);
+  --color-ink-primary: var(--text-primary);
+  --color-ink-secondary: var(--text-secondary);
+  --color-ink-tertiary: var(--text-tertiary);
+  --color-ink-disabled: var(--text-disabled);
   --color-accent-default: var(--accent-default);
   --color-accent-hover: var(--accent-hover);
   --color-accent-active: var(--accent-active);
+  --color-accent-on: var(--accent-on);
+  --color-status-error-on: var(--status-error-on);
+  --color-overlay-scrim: var(--overlay-scrim);
   --color-status-success: var(--status-success);
   --color-status-warning: var(--status-warning);
   --color-status-error: var(--status-error);
@@ -65,9 +74,9 @@
   --color-surface-reading: var(--surface-reading);
   --color-surface-content: var(--surface-content);
   --color-surface-code: var(--surface-code);
-  --color-text-reading: var(--text-reading);
-  --color-text-content: var(--text-content);
-  --color-text-code: var(--text-code);
+  --color-ink-reading: var(--text-reading);
+  --color-ink-content: var(--text-content);
+  --color-ink-code: var(--text-code);
   --z-layer-base: var(--z-index-base);
   --z-layer-shell: var(--z-index-shell);
   --z-layer-sticky: var(--z-index-sticky);
@@ -80,13 +89,13 @@
   --font-mono: var(--font-family-code);
 
   --text-xs: var(--font-size-xs);
-  --text-xs--line-height: var(--line-height-normal);
+  --text-xs--line-height: var(--line-height-ui);
   --text-sm: var(--font-size-sm);
-  --text-sm--line-height: var(--line-height-normal);
+  --text-sm--line-height: var(--line-height-ui);
   --text-base: var(--font-size-base);
-  --text-base--line-height: var(--line-height-normal);
+  --text-base--line-height: var(--line-height-ui);
   --text-lg: var(--font-size-lg);
-  --text-lg--line-height: var(--line-height-normal);
+  --text-lg--line-height: var(--line-height-ui);
   --text-xl: var(--font-size-xl);
   --text-xl--line-height: var(--line-height-tight);
   --text-2xl: var(--font-size-2xl);
@@ -192,6 +201,7 @@ html[data-sidebar-treatment="soft"] .bg-surface-rail {
     font-size: max(var(--font-size-min), var(--font-size-code));
     line-height: var(--line-height-code);
   }
+  /* Nominal geometry may shrink with density; one current text line plus two border pixels must fit. */
   .control-text-fit {
     min-height: calc(1lh + 2px);
   }

@@ -1,0 +1,568 @@
+{
+  "schema": 1,
+  "purpose": "MCP production page local acceptance and cumulative UI delivery review; authoritative conclusions live only in V1 implementation status",
+  "head": "d7422a51964086f084f2429d5d769468fce53f30",
+  "sourceSha256": "5921cb3f7455aabb9c5bfde9eda0eeb70d52b6f7a3cc5713523d79dcbd27fca1",
+  "nativeResult": {
+    "passed": 219,
+    "failed": 0
+  },
+  "checks": {
+    "build": {
+      "label": "build-final-after-agent-drift",
+      "command": "npm run build",
+      "start": "2026-11-06T08:13:50.488Z",
+      "end": "2026-11-06T08:13:58.684Z",
+      "code": 0,
+      "signal": null,
+      "log": "<local-evidence>/build-final-after-agent-drift.log.txt"
+    },
+    "mcp": {
+      "label": "mcp-regressions",
+      "command": "npx vitest run tests/mcp-management.test.tsx tests/mcp-refresh-activity.test.tsx tests/surface-context.test.tsx tests/pending-workspace-close.test.tsx",
+      "start": "2026-11-06T07:11:19.150Z",
+      "end": "2026-11-06T07:11:23.439Z",
+      "code": 0,
+      "signal": null,
+      "log": "<local-evidence>/mcp-regressions.log.txt"
+    },
+    "i18n": {
+      "label": "i18n-current",
+      "command": "npm run i18n:check:strict",
+      "start": "2026-11-06T07:23:39.591Z",
+      "end": "2026-11-06T07:23:40.373Z",
+      "code": 0,
+      "signal": null,
+      "log": "<local-evidence>/i18n-current.log.txt"
+    },
+    "preview": {
+      "label": "preview-types-current",
+      "command": "npm run check:ui-preview",
+      "start": "2026-11-06T07:23:39.591Z",
+      "end": "2026-11-06T07:23:44.287Z",
+      "code": 0,
+      "signal": null,
+      "log": "<local-evidence>/preview-types-current.log.txt"
+    },
+    "docs": {
+      "label": "docs-final",
+      "command": "npm run docs:check",
+      "start": "2026-11-06T08:21:06.375Z",
+      "end": "2026-11-06T08:21:07.031Z",
+      "code": 0,
+      "signal": null,
+      "log": "<local-evidence>/docs-final.log.txt"
+    },
+    "whitespace": {
+      "command": "git diff --check -- src-tauri/src/smoke/mcp.rs src-tauri/src/smoke/mcp_page.rs src-tauri/src/smoke/mcp_page.js src-tauri/tests/webview_smoke_mcp.rs docs/02-产品与版本/当前版本/V1-实现状态.md",
+      "code": 0
+    }
+  },
+  "archiveFiles": [
+    {
+      "file": "asset-identity.json",
+      "sha256": "d72eac863185842b0eda45aa0f1a9edcb8cf2c23df90f439a16b67f89779970f",
+      "bytes": 1844
+    },
+    {
+      "file": "baseline-audit.json",
+      "sha256": "ec6b03d6bcc00ec2bb68757161a7811b6bcfbc9d88da183e4f7f767d23202219",
+      "bytes": 1260
+    },
+    {
+      "file": "build-final-after-agent-drift.log.txt",
+      "sha256": "c951aa78dbeeda0c13db1f96bbbe5c1875d1d93e489a9df977406324a7d0365f",
+      "bytes": 3420
+    },
+    {
+      "file": "changed-agent-integration.log.txt",
+      "sha256": "3f5d7cf72f2a2d7da1300d2d488f3fb9bd862d0f5f85401dd7f215f443b8e686",
+      "bytes": 126166
+    },
+    {
+      "file": "compatibility-audit.json",
+      "sha256": "5b0e1df03b1bc826b5238086df8c312a03d8a74bd449da599a0d84d557c3aa95",
+      "bytes": 2222
+    },
+    {
+      "file": "delivery-groups.json",
+      "sha256": "3012aabc6be88c38a747f4aef466af285c38d82a5cc8d819c111791261506268",
+      "bytes": 109937
+    },
+    {
+      "file": "docs-final.log.txt",
+      "sha256": "124bcf8e0888834ba96c223f269346d76c4dc38c943f8604f787478ad4fa6019",
+      "bytes": 157
+    },
+    {
+      "file": "failures/native-after-macro-fix.log.txt",
+      "sha256": "2ff1c0cd278fc97c0203c625f55d9988747d4aa4ba70d25699a1ff4ac7a96fdc",
+      "bytes": 784
+    },
+    {
+      "file": "failures/native-final-asset-identity.json",
+      "sha256": "840731a0cd45fac05f134c2973bff0793524e4e3191dba66567e0db76b12d1a3",
+      "bytes": 1844
+    },
+    {
+      "file": "failures/native-final-failure.json",
+      "sha256": "958e6f0df1ae96221df8971da566a7194c951febd9e1482cdcc7b9279efd2d8d",
+      "bytes": 1527
+    },
+    {
+      "file": "failures/native-final-failure.png",
+      "sha256": "9e77b4fa50db7a78da909fa7d688926d45d76c3553f00744787e7426cf224c6c",
+      "bytes": 108310
+    },
+    {
+      "file": "failures/native-final-ipc-timeline.json",
+      "sha256": "514566d85ed5fd3d37bdade84899980042fb1da101b0c4c6d7b9c0f7a471c6f0",
+      "bytes": 1491
+    },
+    {
+      "file": "failures/native-final.log.txt",
+      "sha256": "750ec4602d95786cf127ee6d5c0584bd08b8c1001e3dfb02b320b2fccef17ecb",
+      "bytes": 891
+    },
+    {
+      "file": "failures/native-first-asset-identity.json",
+      "sha256": "fb37472b8daa7ae68db09b09c16698481f08d14ab9399c6775b17098807313c6",
+      "bytes": 1844
+    },
+    {
+      "file": "failures/native-first-execution.log.txt",
+      "sha256": "ac5b09c35d13d7c8fe6a26cba77a1f133ba6a4d353fc57e96d627d8751a44896",
+      "bytes": 992
+    },
+    {
+      "file": "failures/native-first-failure.json",
+      "sha256": "48185460414b8bf01bd3dea17b2875ae691a66d07fbfcbe89c78d2a8622621ff",
+      "bytes": 3065
+    },
+    {
+      "file": "failures/native-first-failure.png",
+      "sha256": "aea4531f2656c075401bef4fe6e7f24a692f3cdf0037ba199d78bebc976fbca8",
+      "bytes": 428073
+    },
+    {
+      "file": "failures/native-first-ipc-timeline.json",
+      "sha256": "0b55abe337ef0b56ca3ffebb56d6fc7b3c11257693fc6176ec2e7c89a8385260",
+      "bytes": 1314
+    },
+    {
+      "file": "failures/native-first.log.txt",
+      "sha256": "8b3d5853ffa8b9b6f3d93cb5da9d9456adffa664ce4e3236fe2074902d023a32",
+      "bytes": 9858
+    },
+    {
+      "file": "final-integration/agent-review.json",
+      "sha256": "9bebd12176704f30a05cf05b55b64759d483b8e20204110a1da96c11b894f6a1",
+      "bytes": 46057
+    },
+    {
+      "file": "final-integration/build-assets.json",
+      "sha256": "725389e934f2e29823d531d49e824129913ca610b08f7072b84b422aa38fbd4b",
+      "bytes": 4611
+    },
+    {
+      "file": "final-integration/build.log.txt",
+      "sha256": "bd0918f12be3ab99940f38acf496f00329a568f1374a783e0c66f9145ebb5543",
+      "bytes": 3421
+    },
+    {
+      "file": "final-integration/bundle-integrity.log.txt",
+      "sha256": "58d2df0cb761328f9b160eb6b78640db3013dac84f30a0461907bb472c011eff",
+      "bytes": 33
+    },
+    {
+      "file": "final-integration/combined-scenario.json",
+      "sha256": "9a742d8e9b15266cf70083625f8bfdd2fe0ae7ed3d5cf93bda0ec1afa9848d95",
+      "bytes": 492
+    },
+    {
+      "file": "final-integration/contracts.log.txt",
+      "sha256": "3dd60142571e35c3e7f1fdc4d9c80e32192d1cae6d5398f4df3292465add1eb1",
+      "bytes": 162
+    },
+    {
+      "file": "final-integration/docs-final-integration.log.txt",
+      "sha256": "124bcf8e0888834ba96c223f269346d76c4dc38c943f8604f787478ad4fa6019",
+      "bytes": 157
+    },
+    {
+      "file": "final-integration/frontend-full.log.txt",
+      "sha256": "de7d094e01280a7bca217c61fafc95ff0246678601a2a0baf7c6426e0383a846",
+      "bytes": 26964
+    },
+    {
+      "file": "final-integration/host-review.json",
+      "sha256": "ce5ddb505de26c619dc5dcb885fa4ef5a51fa1d74942c356882de941ac8efca6",
+      "bytes": 39007
+    },
+    {
+      "file": "final-integration/i18n.log.txt",
+      "sha256": "c2fcb2deb274f93cb6ded41292f7966b1865f7ba674ca515bb5c80404516b753",
+      "bytes": 221
+    },
+    {
+      "file": "final-integration/native-media.log.txt",
+      "sha256": "156a74d942bd44bfd641ea2d169083a4035c00954e3fd19b022d04d95d4134dc",
+      "bytes": 2854
+    },
+    {
+      "file": "final-integration/preview-types.log.txt",
+      "sha256": "584776caa4c06116ddf434b15465f06e3508b96f1138a543639da6ba842a90c2",
+      "bytes": 72
+    },
+    {
+      "file": "final-integration/provider-review.json",
+      "sha256": "8139dc9a1c712720aa1b704c1f1bfbd2318ba532de54834029b31ff11f3f2f67",
+      "bytes": 17661
+    },
+    {
+      "file": "final-integration/rust-agents.log.txt",
+      "sha256": "7060b80abcc6c41e069a1cdeb526938158557694097a804fd49e67dbc449118e",
+      "bytes": 10374
+    },
+    {
+      "file": "final-integration/rust-db.log.txt",
+      "sha256": "8da676a3e302edd06d2938829e01e849f37d15a012c958040695ba0ff9afd5e6",
+      "bytes": 11230
+    },
+    {
+      "file": "final-integration/rust-host-all-targets.log.txt",
+      "sha256": "0259efd83c5513ee88e275c1b9a4b77b7877c35fdb3b140133f1c506fed67b71",
+      "bytes": 929
+    },
+    {
+      "file": "final-integration/rust-host-privacy.log.txt",
+      "sha256": "7b4c7429aff779d88df8899047ec555270dd4323eeff72fd4fe8363a925f9afa",
+      "bytes": 996
+    },
+    {
+      "file": "final-integration/rust-lan-auth.log.txt",
+      "sha256": "1784c93e424e6e04f87d4a5e1ba86f8827533af5f06773926e086c89bf231c3a",
+      "bytes": 2272
+    },
+    {
+      "file": "final-integration/rust-lan-consumers.log.txt",
+      "sha256": "e7e4a45f383a9314d34661627333355378ae3fff7b3380b867b8be9392f8b33e",
+      "bytes": 2363
+    },
+    {
+      "file": "final-integration/rust-owner-purge-final.log.txt",
+      "sha256": "01c564745673146a7d3db7aa935b48c130da300486a8e993ecbe9f54a2701145",
+      "bytes": 11048
+    },
+    {
+      "file": "final-integration/rust-owner-purge.log.txt",
+      "sha256": "42f79becce08808694d44770d0cbe14ad4e43bff4e7939760b21d9379d2c7ec7",
+      "bytes": 1439
+    },
+    {
+      "file": "final-integration/rust-providers.log.txt",
+      "sha256": "085069afdd4ba6257edc33d8ad4691d05d19dca20ccb545c3ba3cfcb4b508e83",
+      "bytes": 34038
+    },
+    {
+      "file": "final-integration/rust-skills.log.txt",
+      "sha256": "dbd66b1613796e2bd10c584a99bf74a041875963e56fbdba4bfa7d47a62e032f",
+      "bytes": 2721
+    },
+    {
+      "file": "final-integration/rust-workbench.log.txt",
+      "sha256": "5e6003fe8e82d2ac6adc93251d48c0c90cfd62d8c21fd5750767ddfc38e5c157",
+      "bytes": 5811
+    },
+    {
+      "file": "final-integration/verification.json",
+      "sha256": "f93c60a0749e6f0f417612a83e1e20a6d9e4c9df1915e05c5d5ee516da003e5d",
+      "bytes": 218414
+    },
+    {
+      "file": "final-integration/visual.log.txt",
+      "sha256": "6b263af986b589e1c5e021f45c72aeb13ab75411826e9cbfb2083cbd4f64e778",
+      "bytes": 277
+    },
+    {
+      "file": "final-integration/workspace.json",
+      "sha256": "208f0621e3ba5337f3f0ec94c4c0edf6ed08bd178e8f7c5bb3303576e2204bda",
+      "bytes": 61442
+    },
+    {
+      "file": "i18n-current.log.txt",
+      "sha256": "c2fcb2deb274f93cb6ded41292f7966b1865f7ba674ca515bb5c80404516b753",
+      "bytes": 221
+    },
+    {
+      "file": "ipc-counts.json",
+      "sha256": "0365123c6ef6478a7efeed0c239c509730a13f3eb12e67bbca4ad844b1f495e3",
+      "bytes": 198
+    },
+    {
+      "file": "ipc-timeline.json",
+      "sha256": "0731278b096bbe49fe40b920f3c6530c5b9a6263cc2c2adcf4e64d6b5a1d976d",
+      "bytes": 125950
+    },
+    {
+      "file": "mcp-regressions.log.txt",
+      "sha256": "2da21754f0dfd1514a57102590a9a25f92c4e26ade3d0b4993743052a322e9de",
+      "bytes": 2798
+    },
+    {
+      "file": "native-current-dist.log.txt",
+      "sha256": "7292be29b377fa782b6424a85320691c1eb74fe37f05e55f0a80618770203fc9",
+      "bytes": 10762
+    },
+    {
+      "file": "preview-types-current.log.txt",
+      "sha256": "584776caa4c06116ddf434b15465f06e3508b96f1138a543639da6ba842a90c2",
+      "bytes": 72
+    },
+    {
+      "file": "result.json",
+      "sha256": "ab7a6a876619da29ddc992a1b69ca1039bb02de5691b9abd28fd818520f57541",
+      "bytes": 998
+    },
+    {
+      "file": "screenshots/detail-refresh-failures-retain-capture.json",
+      "sha256": "9265dec8c5f050a7e3df2d8d3856551b18e3c27471f4d19edfb4bdc21af07f02",
+      "bytes": 215
+    },
+    {
+      "file": "screenshots/detail-refresh-failures-retain-dom.json",
+      "sha256": "905764fefc59efe568b93a83876409fb0a3b85ac2f991e3aba060127e62fbadf",
+      "bytes": 4857
+    },
+    {
+      "file": "screenshots/detail-refresh-failures-retain.png",
+      "sha256": "b904cb06b619f98b8259f44ab01aedf6084cb3ab62805dcb2b8f425ad59772cf",
+      "bytes": 599760
+    },
+    {
+      "file": "screenshots/discovery-unconfirmed-capture.json",
+      "sha256": "3b8d3b78ed3d73d96119883461b052fd49727c502e7e796b7176862371e0009a",
+      "bytes": 206
+    },
+    {
+      "file": "screenshots/discovery-unconfirmed-dom.json",
+      "sha256": "90855d44001a2c23ffa728601bafd070a7c58408920131ab4f98a64f69fa369a",
+      "bytes": 3950
+    },
+    {
+      "file": "screenshots/discovery-unconfirmed.png",
+      "sha256": "bb7cfa99d767c7e627d3f9b6de63791e4f9bdcde76ea7013a510bb161922999b",
+      "bytes": 603530
+    },
+    {
+      "file": "screenshots/initial-read-failure-capture.json",
+      "sha256": "25851dab614e3ec7531c1d3d79ff786d6f18fc40e6b0d623b50a6c3684a732f0",
+      "bytes": 205
+    },
+    {
+      "file": "screenshots/initial-read-failure-dom.json",
+      "sha256": "48d769a771948043a19d6acb2fc8fa2017debafe560546a215fb65e9c12048e5",
+      "bytes": 1426
+    },
+    {
+      "file": "screenshots/initial-read-failure.png",
+      "sha256": "d6a08c15f8b5ba95d050186d63e2ce48386e3b2241b21f909c9d4af104887c06",
+      "bytes": 287057
+    },
+    {
+      "file": "screenshots/matrix-dark-large175-800-json-modal-capture.json",
+      "sha256": "9298377137f26a5371c7ca61524d38ef9e2e42c1cf9802461a90f4d5fde0cf3a",
+      "bytes": 220
+    },
+    {
+      "file": "screenshots/matrix-dark-large175-800-json-modal-dom.json",
+      "sha256": "84b63cab241c59724b265a9cd3cffbd2840aa52e0319f96e8172a21699c0bbab",
+      "bytes": 7861
+    },
+    {
+      "file": "screenshots/matrix-dark-large175-800-json-modal.png",
+      "sha256": "ed5217fa1217863aa0e132225c6084bc01287b5a798d8ae35f3e10d55cbba3b7",
+      "bytes": 270882
+    },
+    {
+      "file": "screenshots/matrix-light-default100-1440-list-capture.json",
+      "sha256": "cc5c9651d0a4c2a28948ad39ff9c3a5910ab9ff638c29341961a18cdaffa0fc1",
+      "bytes": 218
+    },
+    {
+      "file": "screenshots/matrix-light-default100-1440-list-dom.json",
+      "sha256": "d86f66341a435d214fc09d1510d60b3af4e591bb47dde6158ff8a368f3e129d4",
+      "bytes": 2478
+    },
+    {
+      "file": "screenshots/matrix-light-default100-1440-list.png",
+      "sha256": "3b761dc64b1d35b4a6cecaf436f4d4b193227ed892b3a69f94c1dd3d63355fef",
+      "bytes": 359649
+    },
+    {
+      "file": "screenshots/matrix-light-large175-520-url-form-capture.json",
+      "sha256": "a9b2b7fdad9f0938247421022a854029029a59f65bcfd9283236642379c3e8db",
+      "bytes": 219
+    },
+    {
+      "file": "screenshots/matrix-light-large175-520-url-form-dom.json",
+      "sha256": "fc5143753ace4cd63dbea637dee3ac025e56001fa0544c58b094b61b57961bd5",
+      "bytes": 5137
+    },
+    {
+      "file": "screenshots/matrix-light-large175-520-url-form.png",
+      "sha256": "2d6f4eead7f502d7d538e0bb28d9b920b324a03be022c0fca0b14206ac724851",
+      "bytes": 280338
+    },
+    {
+      "file": "screenshots/native-scroll-focus-dark-large175-800-capture.json",
+      "sha256": "8eedba35e01b6fff00342b3ca76a6b593fdc1c81637a95a911288eb67190c03e",
+      "bytes": 222
+    },
+    {
+      "file": "screenshots/native-scroll-focus-dark-large175-800-dom.json",
+      "sha256": "549fb826477be00c1cf538e40d4f8db4f8199802c0ad6d0a2e86a73e3bdd4a01",
+      "bytes": 8765
+    },
+    {
+      "file": "screenshots/native-scroll-focus-dark-large175-800.png",
+      "sha256": "51e66de3eafdc55042a3bb6a71458bfd2d47f3ed7a8871cca0454ba7b1504915",
+      "bytes": 286591
+    },
+    {
+      "file": "screenshots/slow-save-A-selected-B-before-receipt-capture.json",
+      "sha256": "8cf22cb9f57ff66fb78f5e421a7d1caed35c9c17aec2b105c271d81b20c64e9a",
+      "bytes": 222
+    },
+    {
+      "file": "screenshots/slow-save-A-selected-B-before-receipt-dom.json",
+      "sha256": "6103d7e522ea586b53c007f31fc764cde584ddb6d724e168cb7746d4016ff376",
+      "bytes": 6354
+    },
+    {
+      "file": "screenshots/slow-save-A-selected-B-before-receipt.png",
+      "sha256": "ef87951afc31bda25cd69992a8ec70a9a3679105d9dad37602be6987a540e4e8",
+      "bytes": 550430
+    },
+    {
+      "file": "screenshots/surface-close-cancel-capture.json",
+      "sha256": "a4286ad6376e6c44ff9d36fab887a7bb62b9204e7a6f75428c29b0e43752c3a6",
+      "bytes": 205
+    },
+    {
+      "file": "screenshots/surface-close-cancel-dom.json",
+      "sha256": "c6f3a63b483b9939b28cf0ec1dbec230955f73fe2e9df944c07876c1b81c632e",
+      "bytes": 11169
+    },
+    {
+      "file": "screenshots/surface-close-cancel.png",
+      "sha256": "a6e4cb0a25caf6f8a18392a00ca53035851d5c2946a863ef4dfd56705db778dd",
+      "bytes": 576227
+    },
+    {
+      "file": "shell-host-scope.json",
+      "sha256": "b07d0668435f6da57682515cc1db6cf24315261d8cd4a939f5deca70c474d31d",
+      "bytes": 775
+    },
+    {
+      "file": "slow-save-host-readback.json",
+      "sha256": "076dba8b060fc22e01e3ee02938177d895e13eb71e30b2c0c50e3d291b158ff8",
+      "bytes": 503
+    },
+    {
+      "file": "verification.json",
+      "sha256": "ee7ae6b7b5ec00e107f51ef4ca49f6fc62cf7a9b4f075feee24e83cc36028c9c",
+      "bytes": 88592
+    }
+  ],
+  "redaction": "Absolute home/repository/evidence paths replaced; only controlled SDK/filesystem output, synthetic layout content and source identity retained; passwords omitted/redacted; no database, vault, dependencies, cache or real user MCP config archived.",
+  "limits": [
+    "not physical typing or real mouse hit testing",
+    "not VoiceOver or other platforms",
+    "in-memory credential vault, not OS keychain",
+    "not real disk/network failure",
+    "new B editor is prohibited until A save settles; after-settlement B draft is checked, no fabricated overlapping editor"
+  ],
+  "workspace": {
+    "at": "2026-11-06T13:02:03.269Z",
+    "dirtyFiles": 424,
+    "trackedModified": 236,
+    "untrackedIndividualFiles": 187,
+    "staged": 0,
+    "unassigned": [],
+    "duplicates": [],
+    "inventory": "final-integration/workspace.json"
+  },
+  "services": {
+    "preservedPreview": {
+      "port": 5197,
+      "pid": 62661
+    },
+    "ownedMcpAndSdkProcessesRemaining": [],
+    "otherServices": "untouched"
+  },
+  "archiveRedaction": {
+    "textCredentialPatternHits": 0,
+    "patterns": [
+      "home path",
+      "URL userinfo",
+      "private-key header",
+      "vendor token",
+      "password sentinel"
+    ],
+    "binaryScope": "native window-only screenshots show synthetic test servers; no desktop or user data captured",
+    "finalIntegration": {
+      "textFilesScanned": 73,
+      "credentialPatternHits": 0,
+      "patterns": [
+        "/\\/Users\\/apple\\//",
+        "/https?:\\/\\/[^\\s/]+:[^\\s/]+@/",
+        "/-----BEGIN .*PRIVATE KEY-----/",
+        "/sk-(?:proj-)?[A-Za-z0-9]{20,}/"
+      ]
+    }
+  },
+  "loadedAssetMatchCurrentDist": "Original MCP acceptance snapshot only; final integration build has separate build-assets.json. No claim of rerun MCP matrix against newer entry bytes.",
+  "finalIntegration": {
+    "verification": "final-integration/verification.json",
+    "workspace": "final-integration/workspace.json",
+    "groups": "delivery-groups.json",
+    "buildAssets": "final-integration/build-assets.json",
+    "docs": {
+      "label": "docs-final-integration",
+      "command": "npm run docs:check",
+      "start": "2026-11-06T13:00:11.989Z",
+      "end": "2026-11-06T13:00:12.703Z",
+      "code": 0,
+      "signal": null,
+      "log": "final-integration/docs-final-integration.log.txt"
+    },
+    "sourceSha256": "3b75532a83a6c000301eaf791dd0feeddb7102c75f211a6c6401283739461e8e",
+    "whitespace": {
+      "code": 0,
+      "scope": [
+        "crates/dgos-db/src/repositories/development_repository/tests.rs",
+        "tests/development-delivery.test.tsx",
+        "tests/development-runtime-activity.test.tsx",
+        "crates/dgos-providers/src/transport.rs",
+        "docs/02-产品与版本/当前版本/V1-实现状态.md"
+      ]
+    },
+    "services": {
+      "ownedBrowserTabs": "closed",
+      "nativeMedia": "process exited0; managed temporary test world",
+      "preservedPreview": {
+        "port": 5197,
+        "http": "reachable"
+      },
+      "otherExistingServices": "untouched"
+    },
+    "limits": [
+      "Native media 31/31 covers controlled loopback success and account lifecycle, not transcription reload/destroy cancellation or 25 MiB size boundaries.",
+      "macOS minimum version declaration is not macOS13 runtime proof.",
+      "MCP219 and Agent442/pending25 retain their own loaded-asset identities; final build is newer and is not claimed as a rerun of those matrices.",
+      "No physical keyboard/mouse, VoiceOver, native OS IME, cross-platform or release acceptance.",
+      "Retained xterm offscreen accessibility defect and historical module/PTY root-cause limits."
+    ]
+  }
+}

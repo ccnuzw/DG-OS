@@ -1,0 +1,122 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling dgos-types v0.1.0 (<repo>/crates/dgos-types)
+   Compiling dgos-db v0.1.0 (<repo>/crates/dgos-db)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 53.25s
+     Running unittests src/lib.rs (target/debug/deps/dgos_db-a5afdd828ee0a148)
+
+running 108 tests
+test appearance_tests::appearance_failed_recovery_preserves_raw_and_requires_a_new_token ... ok
+test appearance_tests::appearance_storage_failure_leaves_complete_snapshot_unchanged ... ok
+test appearance_tests::appearance_future_schema_is_never_overwritten ... ok
+test appearance_tests::appearance_concurrent_cas_only_one_commit_and_conflict_returns_winner ... ok
+test appearance_tests::appearance_valid_fields_survive_corrupt_leaves_without_rewriting_row ... ok
+test appearance_tests::appearance_session_end_and_future_row_invalidate_corruption_recovery ... ok
+test appearance_tests::appearance_new_install_and_accounts_are_independent ... ok
+test appearance_tests::appearance_coupled_background_foreground_round_trip ... ok
+test chat_tests::like_pattern_title_and_snippet_helpers_are_literal_and_char_safe ... ok
+test appearance_tests::appearance_corruption_requires_owned_one_shot_token_and_preserves_raw_until_recovery ... ok
+test appearance_tests::appearance_migration_failure_restores_database_and_files_before_forward_upgrade ... ok
+test chat_tests::first_message_sets_the_automatic_title_and_a_user_title_is_never_overwritten ... ok
+test chat_tests::a_message_cannot_belong_to_another_users_session ... ok
+test chat_tests::generation_lifecycle_replays_conflicts_and_blocks_a_second_active_generation ... ok
+test chat_tests::generation_preferences_survive_reload_but_guidance_stays_out_of_audit ... ok
+test chat_tests::generation_upgrade_retains_legacy_skill_and_safe_defaults ... ok
+test chat_tests::deleting_a_session_keeps_audit_rows_but_not_content ... ok
+test chat_tests::migration_adds_task_columns_with_defaults_and_enforces_checks ... ok
+test chat_tests::history_returns_only_completed_messages_inside_the_byte_budget ... ok
+test chat_tests::messages_page_newest_first_and_return_oldest_first ... ok
+test chat_tests::other_users_and_missing_sessions_are_indistinguishable ... ok
+test chat_tests::pinned_skill_and_no_skill_are_exclusive_and_clearing_resets_the_confirmation ... ok
+test chat_tests::regeneration_replaces_only_on_success_and_only_the_last_reply ... ok
+test chat_tests::recovery_ends_generating_messages_and_discards_regeneration_drafts ... ok
+test chat_tests::search_treats_wildcards_literally_and_stays_inside_the_user ... ok
+test chat_tests::sessions_page_by_keyset_with_stable_order_inside_one_second ... ok
+test desktop_tests::desktop_rejects_duplicate_overlimit_and_corrupt_preferences_without_default_write ... ok
+test chat_tests::terminal_state_is_written_once_and_unknown_usage_is_null ... ok
+test chat_tests::store_errors_do_not_echo_message_text ... ok
+test lan_audit_tests::a_malformed_short_id_is_not_stored ... ok
+test desktop_tests::desktop_order_survives_reopen_and_cas_cannot_overwrite_another_account ... ok
+test mcp_tests::tests::connection_events_migrate_existing_mcp_database_without_data_loss ... ok
+test mcp_tests::tests::mcp_schema_is_created_with_safe_defaults ... ok
+test chat_tests::secure_delete_leaves_no_sentinel_in_the_main_database_file ... ok
+test lan_audit_tests::listing_shows_own_and_unauthenticated_rows_newest_first_in_pages ... ok
+test module_permission_tests::audit_cursor_paging_is_stable_within_one_second ... ok
+test lan_audit_tests::the_audit_schema_has_only_the_permitted_columns ... ok
+test lan_audit_tests::identical_rejections_merge_for_sixty_seconds_then_start_a_new_row ... ok
+test module_permission_tests::audit_listing_filters_by_module ... ok
+test module_permission_tests::audit_listing_is_user_isolated_newest_first_and_hides_request_ids ... ok
+test module_permission_tests::denied_check_is_audited_and_still_trimmed_by_the_cap ... ok
+test module_permission_tests::audit_retention_trims_oldest_rows_per_user_only ... ok
+test module_permission_tests::invalid_permission_and_disabled_or_unknown_modules_are_rejected ... ok
+test module_permission_tests::grant_revoke_is_immediate_and_user_scoped ... ok
+test module_permission_tests::grants_cannot_exceed_the_published_manifest ... ok
+test module_permission_tests::migration_appends_broker_tables_without_losing_existing_rows ... ok
+test module_permission_tests::migration_creates_module_broker_tables ... ok
+test provider_scope_tests::duplicate_initial_model_ids_leave_no_partial_provider ... ok
+test provider_scope_tests::latest_started_refresh_publishes_one_coherent_snapshot ... ok
+test provider_scope_tests::manual_models_are_idempotent_and_keep_the_chosen_kind ... ok
+test provider_scope_tests::manual_models_survive_refresh_and_skip_same_id_remote_items ... ok
+test provider_scope_tests::metadata_preserves_cache_and_invalidates_refresh_while_rotation_clears_cache ... ok
+test provider_scope_tests::model_kind_roundtrip ... ok
+test provider_scope_tests::manual_models_are_scoped_to_the_owning_user ... ok
+test provider_scope_tests::manual_models_removal_touches_only_manual_rows_and_advances_the_revision ... ok
+test provider_scope_tests::model_kind_roundtrip_derives_legacy_rows_without_writing_back ... ok
+test provider_scope_tests::model_kind_roundtrip_reads_anthropic_rows_as_protocol_text_generation ... ok
+test lan_audit_tests::the_table_keeps_only_the_newest_500_rows ... ok
+test provider_scope_tests::provider_and_initial_models_commit_together ... ok
+test provider_scope_tests::scoped_provider_crud_and_transactional_order_preserve_normal_lifecycle ... ok
+test provider_scope_tests::provider_delete_after_usage_is_atomic_and_account_scoped ... ok
+test provider_scope_tests::renderer_models_recomputed ... ok
+test repositories::development_repository::capability_tests::capability_json_bounds_are_bytes_and_enforced_in_sql ... ok
+test provider_scope_tests::unsuccessful_cache_replacement_preserves_rows_and_revision ... ok
+test repositories::development_repository::capability_tests::capability_revisions_compare_swap_and_preserve_live_epoch ... ok
+test repositories::development_repository::capability_tests::capability_run_snapshots_share_native_ids_and_cascade_on_retention ... ok
+test repositories::development_repository::capability_tests::concurrent_capability_writes_have_one_cas_winner ... ok
+test repositories::development_repository::capability_tests::capability_session_chains_native_zero_and_unlink_are_scoped ... ok
+test repositories::development_repository::tests::execution_recovery_baseline_immutability_and_unlink_are_owned ... ok
+test repositories::development_repository::capability_tests::capability_upgrade_preserves_runs_and_account_purge_removes_only_owned_rows ... ok
+test repositories::development_repository::capability_tests::run_snapshot_rejects_a_native_session_from_another_project ... ok
+test repositories::development_repository::capability_tests::session_detachment_clears_capability_snapshot_without_deleting_native_history ... ok
+test repositories::development_repository::tests::historical_classification_selection_and_relocation_keep_one_owned_chain ... ok
+test repositories::maintenance_gate::tests::activity_blocks_maintenance_until_its_permit_drops ... ok
+test repositories::maintenance_gate::tests::maintenance_refuses_new_activity_until_its_lease_drops ... ok
+test repositories::maintenance_gate::tests::many_permits_are_all_counted_before_maintenance ... ok
+test repositories::development_repository::tests::account_purge_removes_development_metadata_only_for_owner ... ok
+test repositories::development_repository::tests::host_checkpoint_is_atomic_and_cannot_change_another_task_or_finished_run ... ok
+test repositories::development_repository::tests::host_file_ownership_requires_baseline_continuity_and_never_recovers_after_external_change ... ok
+test repositories::development_repository::tests::host_receipts_and_command_configuration_remain_owner_scoped_and_cascade ... ok
+test repositories::development_repository::tests::relocation_failure_rolls_back_project_and_session_paths ... ok
+test repositories::development_repository::tests::runtime_migration_preserves_existing_native_runs_and_ownership ... ok
+test repositories::development_repository::tests::terminal_execution_keeps_manual_completion_and_account_purge_removes_evidence ... ok
+test repositories::module_crash_repository::tests::crashes_are_counted_per_version_inside_a_window ... ok
+test repositories::development_repository::tests::workspace_migration_preserves_legacy_receipts_and_recovers_git_intent ... ok
+test repositories::module_storage_repository::tests::ac12_delete_is_idempotent ... ok
+test repositories::module_crash_repository::tests::a_crash_is_stored_with_its_stack_and_a_timestamp ... ok
+test startup::tests::a_file_that_cannot_be_created_fails_at_the_open_stage ... ok
+test startup::tests::a_file_that_is_not_a_database_fails_at_the_open_stage_and_is_left_alone ... ok
+test repositories::module_storage_repository::tests::ac12_key_limits_are_scalar_values_without_control_characters ... ok
+test startup::tests::the_reason_is_one_bounded_line_without_the_path ... ok
+test repositories::development_repository::tests::workspace_bindings_are_owned_and_freeze_after_baseline_or_session ... ok
+test repositories::module_storage_repository::tests::ac12_a_value_round_trips_and_a_missing_key_reads_as_none ... ok
+test repositories::module_storage_repository::tests::ac12_a_value_is_limited_to_64_kib_of_serialized_json ... ok
+test repositories::module_storage_repository::tests::ac12_storage_is_isolated_across_users_and_modules ... ok
+test repositories::module_storage_repository::tests::ac12_purge_user_removes_only_that_users_storage ... ok
+test repositories::module_storage_repository::tests::ac12_list_is_key_ascending_with_sizes_and_never_values ... ok
+test repositories::module_crash_repository::tests::history_is_bounded_per_module_and_oversized_stacks_are_cut ... ok
+test repositories::module_storage_repository::tests::ac12_the_quota_is_5_mib_per_user_and_module_and_replacement_counts_the_difference ... ok
+test workbench_tool_tests::tests::tool_reference_migration_preserves_tasks_and_rejects_duplicate_references ... ok
+test startup::tests::a_migration_failure_reports_the_migrate_stage_and_repairs_nothing ... ok
+test user_scope_tests::chat_purge_waits_for_a_running_generation ... ok
+test user_scope_tests::every_user_scoped_table_has_exactly_one_purge_entry ... ok
+test user_scope_tests::mcp_outbox_is_idempotent_and_tracks_live_references ... ok
+test user_scope_tests::marking_a_deletion_lists_every_vault_item_of_the_user_once ... ok
+test user_scope_tests::orphan_rows_are_counted_only_once_accounts_exist ... ok
+test user_scope_tests::users_are_unique_by_folded_name_and_removal_clears_only_their_pointer ... ok
+test user_scope_tests::purging_a_user_removes_only_that_users_rows_and_is_idempotent ... ok
+
+test result: ok. 108 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.81s
+

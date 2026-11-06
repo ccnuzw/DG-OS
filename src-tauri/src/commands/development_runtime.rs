@@ -25,20 +25,20 @@ pub async fn save_development_file(app: tauri::AppHandle, window: WebviewWindow,
 }
 
 #[tauri::command]
-pub async fn read_development_commands(app: tauri::AppHandle, window: WebviewWindow, project_id: String) -> Result<CommandCatalog, String> {
+pub async fn read_development_commands(app: tauri::AppHandle, window: WebviewWindow, task_id: String) -> Result<CommandCatalog, String> {
     let (owner, lease) = caller(&app, &window)?;
-    let result = app.state::<AgentManager>().read_development_commands(&owner, &project_id).await;
+    let result = app.state::<AgentManager>().read_development_commands(&owner, &task_id).await;
     if lease.is_cancelled() { return Err("session_invalid".into()); }
     result
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SaveDevelopmentCommandsInput { project_id: String, commands: Vec<CommandConfiguration> }
+pub struct SaveDevelopmentCommandsInput { task_id: String, commands: Vec<CommandConfiguration> }
 #[tauri::command]
 pub async fn save_development_commands(app: tauri::AppHandle, window: WebviewWindow, input: SaveDevelopmentCommandsInput) -> Result<CommandCatalog, String> {
     let (owner, lease) = caller(&app, &window)?;
-    let result = app.state::<AgentManager>().save_development_commands(&owner, &input.project_id, input.commands).await;
+    let result = app.state::<AgentManager>().save_development_commands(&owner, &input.task_id, input.commands).await;
     if lease.is_cancelled() { return Err("session_invalid".into()); }
     result
 }
@@ -95,25 +95,25 @@ pub async fn resize_development_terminal(app: tauri::AppHandle, window: WebviewW
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct OpenDevelopmentExternalInput { project_id: String, process_id: Option<String>, target: String, editor: Option<String> }
+pub struct OpenDevelopmentExternalInput { project_id: String, task_id: String, process_id: Option<String>, target: String, editor: Option<String> }
 #[tauri::command]
 pub async fn open_development_external(app: tauri::AppHandle, window: WebviewWindow, input: OpenDevelopmentExternalInput) -> Result<(), String> {
     let (owner, lease) = caller(&app, &window)?;
     let manager = app.state::<AgentManager>();
-    let workspace = manager.development_workspace(&owner).await?;
-    let project = workspace.projects.iter().find(|project| project.id == input.project_id && !project.archived).ok_or("project_not_found")?;
+    let task = manager.task_project(&owner, &input.task_id).await?;
+    if task.id != input.project_id { return Err("task_not_found".into()); }
+    if task.archived { return Err("project_archived".into()); }
     let target = match input.target.as_str() {
         "editor" => {
-            if manager.inspect_project(&owner, &project.id).await?.path_state != "available" { return Err("workspace_changed".into()); }
             let editor = input.editor.as_deref().filter(|value| !value.trim().is_empty() && value.len() <= 4096 && !value.contains(['\0', '\n', '\r'])).ok_or("invalid_request")?;
             if lease.is_cancelled() { return Err("session_invalid".into()); }
-            app.opener().open_path(&project.path, Some(editor)).map_err(|_| "external_open_failed")?;
+            app.opener().open_path(&task.path, Some(editor)).map_err(|_| "external_open_failed")?;
             return if lease.is_cancelled() { Err("session_invalid".into()) } else { Ok(()) };
         }
         "preview" => {
             let id = input.process_id.ok_or("process_not_found")?;
             let snapshot = manager.read_development_process(&owner, &id).await?;
-            if snapshot.project_id != project.id || snapshot.status != "ready" { return Err("service_not_ready".into()); }
+            if snapshot.task_id != input.task_id || snapshot.project_id != task.id || snapshot.status != "ready" { return Err("service_not_ready".into()); }
             snapshot.preview_url.ok_or("service_not_ready")?
         }
         _ => return Err("invalid_request".into()),

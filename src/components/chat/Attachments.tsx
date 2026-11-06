@@ -35,7 +35,7 @@ export function AssetPreview({ asset, disabled = false }: { asset: ChatAsset; di
       else setContent(new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(atob(result.base64), char => char.charCodeAt(0))));
     } catch { if (token === request.current) setError(true); }
   }
-  return <><Button size="xs" variant="ghost" disabled={disabled} onClick={() => void preview()}>{t('assets.previewLabel', { name: asset.name, kib: Math.ceil(asset.bytes_len / 1024) })}</Button>
+  return <><Button size="xs" variant="ghost" className="chat-asset-preview" disabled={disabled} onClick={() => void preview()}>{t('assets.previewLabel', { name: asset.name, kib: Math.ceil(asset.bytes_len / 1024) })}</Button>
     <Modal kind="alert" open={open} onOpenChange={value => { setOpen(value); if (!value) { request.current++; setContent(null); } }} title={asset.name}>
       {error ? <p role="alert">{t('assets.error')}</p> : content === null ? <p role="status">{t('assets.loading')}</p> : asset.mime.startsWith('image/') ? <img src={content} alt={asset.name} className="max-h-96 max-w-full object-contain" /> : <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words text-sm">{content}</pre>}
     </Modal></>;
@@ -90,10 +90,10 @@ export default function Attachments({ sessionId, disabled, onBusy }: { sessionId
     finally { if (token === version.current) updateOperation(null); }
   }
   return <section aria-label={t('assets.title')} className="grid min-w-0 gap-1">
-    <input ref={picker} type="file" multiple accept="text/*,.md,.json,.csv,.log,.yaml,.yml,image/png,image/jpeg,image/webp" className="sr-only" tabIndex={-1} onChange={event => { void add(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
+    <input ref={picker} type="file" multiple accept="text/*,.md,.json,.csv,.log,.yaml,.yml,image/png,image/jpeg,image/webp" hidden onChange={event => { void add(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
     <div className="flex flex-wrap gap-1"><Button size="xs" variant="ghost" disabled={disabled || busy || (assets?.length ?? 0) >= 4} onClick={() => picker.current?.click()}>{t('assets.add')}</Button>{operation === 'import' && <Button size="xs" variant="secondary" onClick={() => { version.current++; updateOperation(null); }}>{t('assets.cancelImport')}</Button>}</div>
-    <p className="m-0 text-xs text-muted-foreground">{t('assets.limits')}</p>
+    <details className="chat-attachment-help text-xs text-ink-secondary"><summary>{t('assets.title')}</summary><p className="m-0 mt-1">{t('assets.limits')}</p></details>
     {assets?.map(asset => <div key={asset.id} className="flex min-w-0 flex-wrap items-center gap-1"><AssetPreview asset={asset} disabled={busy} /><Button size="xs" variant="ghost" disabled={disabled || busy} aria-label={t('assets.remove', { name: asset.name })} onClick={() => void remove(asset)}>{t('common.remove')}</Button></div>)}
-    {error && <p role="alert" className="m-0 text-xs text-error-text">{error}</p>}
+    {error && <p role="alert" className="m-0 text-xs text-status-error-text">{error}</p>}
   </section>;
 }

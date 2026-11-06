@@ -31,16 +31,16 @@ export function normalizeMenu(raw: unknown): MenuItem[] {
   }
   return collect(raw);
 }
-const SURFACE='z-popover min-w-40 max-h-(--radix-dropdown-menu-content-available-height) overflow-auto rounded-md border border-solid border-border bg-popover p-1 font-sans text-sm text-popover-foreground shadow-md';
-const ITEM=cn('flex min-h-7 cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 data-[highlighted]:bg-accent data-[disabled]:pointer-events-none data-[disabled]:opacity-disabled',FOCUS_RING_INSET);
+const SURFACE='z-popover min-w-40 max-h-(--radix-dropdown-menu-content-available-height) overflow-auto rounded-md border border-solid border-border-subtle bg-surface-popover p-1 font-sans text-sm text-ink-primary shadow-md';
+const ITEM=cn('flex min-h-7 cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 data-[highlighted]:bg-surface-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-disabled',FOCUS_RING_INSET);
 function entries(items:readonly MenuItem[], context:boolean):ReactNode {
   const P=context?Context:Dropdown;
   return items.map((item,index)=>{
-    if(item.kind==='separator')return <P.Separator key={index} className="my-1 border-t border-border"/>;
-    if(item.kind==='label')return <P.Label key={index} className="px-2 py-1 text-xs text-muted-foreground">{item.text}</P.Label>;
+    if(item.kind==='separator')return <P.Separator key={index} className="my-1 border-t border-border-subtle"/>;
+    if(item.kind==='label')return <P.Label key={index} className="px-2 py-1 text-xs text-ink-secondary">{item.text}</P.Label>;
     if(item.kind==='submenu')return <P.Sub key={item.id}><P.SubTrigger className={ITEM}>{item.icon?<Icon name={item.icon}/>:null}{item.label}<span className="ml-auto"><Icon name="chevron-right"/></span></P.SubTrigger><P.Portal><P.SubContent className={SURFACE}>{entries(item.items,context)}</P.SubContent></P.Portal></P.Sub>;
     if(item.kind==='checkbox')return <P.CheckboxItem key={item.id} checked={item.checked} disabled={item.disabled} onCheckedChange={item.onCheckedChange} className={ITEM}><span className="size-4"><P.ItemIndicator><Icon name="check"/></P.ItemIndicator></span>{item.label}</P.CheckboxItem>;
-    return <P.Item key={item.id} disabled={item.disabled} onSelect={item.onSelect} className={cn(ITEM,item.danger&&'text-error-text')}>{item.icon?<Icon name={item.icon}/>:null}{item.label}{item.shortcut?<span className="ml-auto pl-4 text-xs text-muted-foreground">{item.shortcut}</span>:null}</P.Item>;
+    return <P.Item key={item.id} disabled={item.disabled} onSelect={item.onSelect} className={cn(ITEM,item.danger&&'text-status-error-text')}>{item.icon?<Icon name={item.icon}/>:null}{item.label}{item.shortcut?<span className="ml-auto pl-4 text-xs text-ink-secondary">{item.shortcut}</span>:null}</P.Item>;
   });
 }
 export interface ContextMenuProps {items:readonly MenuItem[];children:ReactNode;onOpenChange?:(open:boolean)=>void}

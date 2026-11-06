@@ -27,9 +27,9 @@
 
   body {
     display: flex;
-    background-color: var(--color-bg-primary);
-    color: var(--color-text-primary);
-    font-family: var(--font-family-base);
+    background-color: var(--surface-canvas);
+    color: var(--text-primary);
+    font-family: var(--font-family-ui);
     font-size: var(--font-size-base);
     line-height: var(--line-height-normal);
   }

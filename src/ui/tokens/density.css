@@ -1,4 +1,4 @@
-/* FR-005 §6.2.1: density is the root font size, set only by the data-density attribute (D064, D068 R1). */
+/* FR-005: data-density changes rem geometry via the root size; three-domain text sizes remain independent CSS px. */
 html {
   font-size: 14px;
 }

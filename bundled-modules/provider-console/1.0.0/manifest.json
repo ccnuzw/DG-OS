@@ -5,7 +5,7 @@
   "entry": "entry.js",
   "artifact": {
     "version": "1.0.0",
-    "sha256": "ae0042e02ee7ecab3348b4dde5a769131cdd2b113d7e68ebdfb23633199b00ea"
+    "sha256": "d508692aa1bca94857c50971439c686d0cd88783e047e9a4a588872a6c0ec464"
   },
   "permissions": [
     "providers.call"

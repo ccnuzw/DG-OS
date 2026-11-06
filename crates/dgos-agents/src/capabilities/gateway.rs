@@ -56,7 +56,7 @@ pub struct CapabilityConfirmation {
 pub(super) struct PendingConfirmation {
     pub owner: String,
     pub prompt: CapabilityConfirmation,
-    answer: oneshot::Sender<bool>,
+    pub(super) answer: oneshot::Sender<bool>,
 }
 #[derive(Clone)]
 struct Endpoint { service: ProjectCapabilities, binding: Arc<Binding>, bearer: Arc<String> }
@@ -80,14 +80,14 @@ impl ProjectCapabilities {
         let binding = self.bindings.lock().await.get(session).cloned().ok_or("session_not_found")?;
         if binding.owner != owner { return Err("session_not_found".into()); }
         binding.authorize(self).await?;
-        Ok(self.confirmations.lock().await.values().filter(|p| p.owner == owner && p.prompt.session_id == session).map(|p| p.prompt.clone()).collect())
+        Ok(self.confirmations.lock().await.values().filter(|p| p.owner == owner && p.prompt.session_id == session && !p.answer.is_closed()).map(|p| p.prompt.clone()).collect())
     }
     pub async fn respond_confirmation(&self, owner: &str, session: &str, id: &str, approved: bool) -> Result<(), String> {
         let binding = self.bindings.lock().await.get(session).cloned().ok_or("session_not_found")?;
         if binding.owner != owner { return Err("session_not_found".into()); }
         let (run, _) = binding.current_run(self).await?;
         let mut pending = self.confirmations.lock().await;
-        if !pending.get(id).is_some_and(|p| p.owner == owner && p.prompt.session_id == session && p.prompt.run_id == run) { return Err("request_expired".into()); }
+        if !pending.get(id).is_some_and(|p| p.owner == owner && p.prompt.session_id == session && p.prompt.run_id == run && !p.answer.is_closed()) { return Err("request_expired".into()); }
         pending.remove(id).ok_or("request_expired")?.answer.send(approved).map_err(|_| "request_expired".into())
     }
 }

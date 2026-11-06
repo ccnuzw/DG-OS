@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "purpose": "Stage6 final integrated local acceptance evidence; implementation status remains authoritative.",
+  "head": "d7422a51964086f084f2429d5d769468fce53f30",
+  "inspectedSourceSha256": "21fe37ae437ded17c6a07632ce3980464823a2302046a6282f011004c9779fd5",
+  "sourceSnapshot": "verification.json sourceFiles/assets",
+  "redaction": "Repository absolute path replaced with <repo>; only synthetic preview paths/text, command output and source hashes retained. Credential/URL userinfo patterns scanned with zero hits; no private account, token, model response, database, screenshot, cache or dependency archive.",
+  "archiveFiles": [
+    {
+      "file": "verification.json",
+      "sourceSha256": "c26e84cc9dfeae4d0c0f3af754044f636f9778938da213e5ee88c63dea41de05",
+      "archiveSha256": "c26e84cc9dfeae4d0c0f3af754044f636f9778938da213e5ee88c63dea41de05",
+      "bytes": 71993,
+      "redactedRepoPathOccurrences": 0,
+      "credentialPatternHits": 0
+    },
+    {
+      "file": "checks.log.txt",
+      "sourceSha256": "445b87ca67d4891d149620f0c925d7b711fc5a743e2d66985e3d2da75828959c",
+      "archiveSha256": "445b87ca67d4891d149620f0c925d7b711fc5a743e2d66985e3d2da75828959c",
+      "bytes": 29192,
+      "redactedRepoPathOccurrences": 0,
+      "credentialPatternHits": 0
+    },
+    {
+      "file": "visual-report.json",
+      "sourceSha256": "3cd74a219b8759a74f027714e671256e75f9e12ef78c4050e0703f6650479b5d",
+      "archiveSha256": "3cd74a219b8759a74f027714e671256e75f9e12ef78c4050e0703f6650479b5d",
+      "bytes": 9156,
+      "redactedRepoPathOccurrences": 0,
+      "credentialPatternHits": 0
+    },
+    {
+      "file": "native-chat-reused.log.txt",
+      "sourceSha256": "02fe71d4ed5ce9a7a63a4be3e8962546ca27a47636709fc49c86ab6c95ec8cae",
+      "archiveSha256": "02fe71d4ed5ce9a7a63a4be3e8962546ca27a47636709fc49c86ab6c95ec8cae",
+      "bytes": 2806,
+      "redactedRepoPathOccurrences": 0,
+      "credentialPatternHits": 0
+    },
+    {
+      "file": "historical-checkpoints.json",
+      "sourceSha256": "9a7a27f5b888dcd221fadc1ca019fd952c5e1ae24976fd19abbeb568111b6a4d",
+      "archiveSha256": "9a7a27f5b888dcd221fadc1ca019fd952c5e1ae24976fd19abbeb568111b6a4d",
+      "bytes": 1473,
+      "redactedRepoPathOccurrences": 0,
+      "credentialPatternHits": 0
+    }
+  ],
+  "workspace": {
+    "trackedModified": 232,
+    "untracked": 101,
+    "initialUntrackedFiles": 95,
+    "shortStatusUntrackedEntries": 77,
+    "initialShortStatusUntrackedEntries": 76,
+    "countNote": "untracked counts individual files (-uall); short status collapses untracked directories. Six new archive files account for the increase.",
+    "staged": 0,
+    "changedFromInitial": [
+      "docs/01-项目概览/工程与本地环境.md",
+      "docs/02-产品与版本/当前版本/V1-实现状态.md",
+      "docs/90-参考资料/page-sample-stage6/checks.log.txt",
+      "docs/90-参考资料/page-sample-stage6/historical-checkpoints.json",
+      "docs/90-参考资料/page-sample-stage6/native-chat-reused.log.txt",
+      "docs/90-参考资料/page-sample-stage6/manifest.json",
+      "docs/90-参考资料/page-sample-stage6/verification.json",
+      "docs/90-参考资料/page-sample-stage6/visual-report.json",
+      "tools/ui-preview/host.ts"
+    ],
+    "removedFromInitial": []
+  },
+  "services": {
+    "retainedUserPreview": {
+      "port": 5197,
+      "pid": 62661,
+      "action": "reused, not stopped/replaced"
+    },
+    "ownedProductPreview": {
+      "port": 5198,
+      "name": "Stage6ProductPreview",
+      "action": "stopped"
+    },
+    "ownedBrowserTabs": "closed"
+  },
+  "checks": {
+    "docs": "npm run docs:check: 105 documents, 15 features, 134 decisions; 0 errors/warnings/notices",
+    "whitespace": "git diff --check -- tools/ui-preview/host.ts docs/01-项目概览/工程与本地环境.md docs/02-产品与版本/当前版本/V1-实现状态.md: exit 0",
+    "finalAudit": "412 inspected source entries and accepted baselines unchanged since final checks; no initial files removed; zero owned browser tabs; 5197 remains original PID62661 and 5198 no longer listens"
+  },
+  "limits": [
+    "No commit/push/merge/publish",
+    "No new WKWebView run; source-scoped stage4 reuse only",
+    "MCP incomplete",
+    "Settings 42/42 raw success log not retained; historical delivery/status evidence only"
+  ]
+}

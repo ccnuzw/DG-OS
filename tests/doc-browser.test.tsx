@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { readdirSync, readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 const dir = new URL('../docs/90-参考资料/', import.meta.url);
 const specRoot = new URL('../docs/03-功能规格/', import.meta.url);
@@ -39,22 +39,29 @@ type Data = {
 
 let dom: JSDOM;
 let data: Data;
+const runtimeErrors: unknown[] = [];
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const content = () => dom.window.document.querySelector('#content')!;
 async function openView(view: string) {
   (dom.window.document.querySelector(`[data-view="${view}"]`) as HTMLElement).click();
   await wait(0);
+  expect(new URLSearchParams(dom.window.location.hash.slice(1)).get('view')).toBe(view);
   return content();
 }
 
 beforeAll(async () => {
   const html = readFileSync(browserUrl, 'utf8');
-  dom = new JSDOM(html, { url: browserUrl.href, runScripts: 'outside-only' });
-  // File URLs have an opaque origin, so localStorage is unavailable; the viewer only needs these methods.
-  Object.defineProperty(dom.window, 'localStorage', {
-    value: { getItem: () => null, setItem: () => {} },
-  });
+  // jsdom 30 compares file-URL path arrays by identity in History-impl.js, rejecting even hash-only
+  // pushState/replaceState. Use an HTTP origin with the real Unicode pathname; real file viewers can
+  // rewrite fragments, so changing the viewer's offline history handling would hide an emulator bug.
+  dom = new JSDOM(html, { url: `https://docs.dgos.test${browserUrl.pathname}`, runScripts: 'outside-only' });
+  dom.window.addEventListener('error', (event) => runtimeErrors.push(event.error));
+  // Scripts are evaluated manually below. Let jsdom's own lifecycle finish before registering init,
+  // then dispatch DOMContentLoaded once so viewer event handlers are not installed twice.
+  const loaded = Promise.withResolvers<void>();
+  dom.window.addEventListener('load', () => loaded.resolve(), { once: true });
+  await loaded.promise;
   dom.window.eval(readFileSync(dataUrl, 'utf8'));
   for (const match of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)) {
     if (match[1].trim()) dom.window.eval(match[1]);
@@ -64,6 +71,7 @@ beforeAll(async () => {
   data = (dom.window as unknown as { SPEC_DOCS_DATA: Data }).SPEC_DOCS_DATA;
 });
 
+afterEach(() => expect(runtimeErrors).toEqual([]));
 afterAll(() => dom?.window.close());
 
 describe('generated data', () => {
@@ -136,6 +144,9 @@ describe('viewer', () => {
     (dom.window.document.querySelector('#docList a, #docList button') as HTMLElement).click();
     await wait(0);
     expect(content().querySelector('h1, h2')).not.toBeNull();
+    const hash = new URLSearchParams(dom.window.location.hash.slice(1));
+    expect(hash.get('view')).toBe('reader');
+    expect(data.docs.some((doc) => doc.id === hash.get('doc'))).toBe(true);
   });
 });
 

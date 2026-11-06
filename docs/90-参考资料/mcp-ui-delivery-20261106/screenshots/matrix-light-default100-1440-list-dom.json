@@ -1,0 +1,85 @@
+{
+  "ok": true,
+  "value": {
+    "active": {
+      "class": "bg-surface-canvas text-ink-primary",
+      "label": null,
+      "rect": {
+        "bottom": 868,
+        "height": 868,
+        "right": 1440,
+        "width": 1440,
+        "x": 0,
+        "y": 0
+      },
+      "tag": "BODY"
+    },
+    "at": "2026-11-06T08:17:03.405Z",
+    "body": "D\nMy workspace\nOverview\nDesktop\nAI sessions\nResources\nSkills\nMCP management\nApps\nApps\nSettings\nCollapse\nMCP management\nFocus\nMCP Management\n\nOnly connect servers you trust. Local processes run with your operating-system permissions.\n\nAdd MCP server\nRefresh status\nYour servers\n3\nSearch servers\nConnection filter\nAll servers\nMCP-SLOW-SAVED-A\nstdio · Disconnected\nConnect\nEdit\nMCPLongURLABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ReadOnlyConfig\nhttp · Disconnected\nConnect\nEdit\nOfficial SDK Echo\nhttp · Connected\nDisconnect\nEdit\n\nSelect a server to view its tools and activity.",
+    "density": "100",
+    "dialogs": [],
+    "hasFocus": true,
+    "inputs": [
+      {
+        "disabled": false,
+        "label": "Search servers",
+        "rect": {
+          "bottom": 200.5,
+          "height": 28,
+          "right": 651.453125,
+          "width": 417.453125,
+          "x": 234,
+          "y": 172.5
+        },
+        "type": "text",
+        "value": ""
+      }
+    ],
+    "ok": true,
+    "rows": [
+      {
+        "pressed": "false",
+        "rect": {
+          "bottom": 342.5,
+          "height": 57.5,
+          "right": 454.1875,
+          "width": 211.1875,
+          "x": 243,
+          "y": 285
+        },
+        "text": "MCP-SLOW-SAVED-Astdio · Disconnected"
+      },
+      {
+        "pressed": "false",
+        "rect": {
+          "bottom": 508,
+          "height": 135.5,
+          "right": 454.1875,
+          "width": 211.1875,
+          "x": 243,
+          "y": 372.5
+        },
+        "text": "MCPLongURLABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ReadOnlyConfighttp · Disconnected"
+      },
+      {
+        "pressed": "false",
+        "rect": {
+          "bottom": 595.5,
+          "height": 57.5,
+          "right": 436.515625,
+          "width": 193.515625,
+          "x": 243,
+          "y": 538
+        },
+        "text": "Official SDK Echohttp · Connected"
+      }
+    ],
+    "theme": "light",
+    "url": "tauri://localhost/mcp",
+    "viewport": {
+      "height": 868,
+      "width": 1440
+    },
+    "visibility": "visible"
+  }
+}

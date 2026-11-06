@@ -74,6 +74,23 @@ pub(crate) struct CapabilityLaunch {
     pub managed: bool,
 }
 
+pub struct SessionCapabilities {
+    pub options: SessionOptions,
+    pub revision: Option<i64>,
+}
+
+pub(crate) struct CapabilityPreparation<'a> {
+    pub owner: &'a str,
+    pub session: &'a str,
+    pub task: &'a str,
+    pub project: &'a Project,
+    pub engine: Engine,
+    pub options: &'a SessionOptions,
+    pub revision: Option<i64>,
+    pub restoring: bool,
+    pub lease: CancellationToken,
+}
+
 #[derive(Clone)]
 pub struct ProjectCapabilities {
     pub(crate) repository: DevelopmentRepository,
@@ -147,7 +164,8 @@ impl ProjectCapabilities {
         self.confirmations.lock().await.retain(|_, pending| pending.prompt.project_id != project || pending.owner != owner);
         Ok(epoch)
     }
-    pub(crate) async fn prepare(&self, owner: &str, session: &str, task: &str, project: &Project, engine: Engine, options: &SessionOptions, revision: Option<i64>, restoring: bool, lease: CancellationToken) -> Result<(CapabilitySnapshot, CapabilityLaunch), String> {
+    pub(crate) async fn prepare(&self, preparation: CapabilityPreparation<'_>) -> Result<(CapabilitySnapshot, CapabilityLaunch), String> {
+        let CapabilityPreparation { owner, session, task, project, engine, options, revision, restoring, lease } = preparation;
         let saved = if restoring { self.repository.read_session_capabilities(owner, session).await? } else { None };
         if revision.is_some_and(|r| r < 0) { return Err("capability_unavailable".into()); }
         if restoring && saved.is_none() && revision.is_some_and(|r| r > 0) { return Err("capability_conflict".into()); }

@@ -1,0 +1,4 @@
+
+> dgos@0.1.0 check:ui-preview
+> tsc -p tools/ui-preview/tsconfig.json
+

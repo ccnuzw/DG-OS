@@ -1,8 +1,8 @@
 //! Real-WebView smoke for the AI workbench chat (V1-FR-006, V1-E2E-06 at fixture level).
 //!
-//! The page is the shipped `dist/` on `/workbench`; every chat command is the production handler over a
-//! temp SQLite database (`ChatManager`, `ProviderManager`, `McpManager` are the real types). The UI is
-//! driven by DOM events from the evaluated script (click, input, Radix Select via keyboard events), which
+//! The page normally resolves `/workbench` from embedded `dist/`; every chat command is the production
+//! handler over a temp SQLite database (`ChatManager`, `ProviderManager`, `McpManager` are the real
+//! types). The UI is driven by DOM events from the evaluated script (click, input, Radix Select via keyboard events), which
 //! is not the same as a user's pointer; two checks (clipboard) use real `NSEvent` key presses and read the
 //! real `NSPasteboard`. The IPC `Channel` is the real one the chat store creates; a spy installed on
 //! `transformCallback` only records what Tauri delivered.
@@ -13,6 +13,17 @@
 //!
 //! Not proven: a real vendor, VoiceOver, other platforms' WebViews, real pointer hit-testing,
 //! `WebviewWindow::close()` (the window is `destroy()`ed, which emits the same `Destroyed` event).
+//!
+//! Layout-only run (does not certify a whole-tree build): start `npm run dev -- --host 127.0.0.1`,
+//! then run `DGOS_CHAT_SMOKE_ONLY=13 DGOS_CHAT_SMOKE_URL=http://localhost:1420/workbench
+//! DGOS_CHAT_SMOKE_EXPECT_ORIGIN=http://localhost:1420 cargo test -p dgos --features webview-smoke
+//! --test webview_smoke_chat -- --nocapture`. This feature embeds dist even in debug;
+//! only check 13 accepts this explicit loopback development URL override.
+//! Preserve the `INFO chat-layout resources` JSON (resource URLs + SHA-256, inline CSS hashes),
+//! executable path and resulting checks. Response hashes use fresh same-origin fetches, so keep Vite
+//! and source stable during the run. For embedded resources, first build the current frontend
+//! successfully, rebuild this harness, omit both URL env vars, and compare logged /assets/ hashes
+//! with that dist. A pre-existing executable or dist is never evidence of a current whole-tree pass.
 
 #[path = "phase6.rs"]
 mod phase6;
@@ -343,7 +354,7 @@ const newSession = async (model) => {
   const ap = await until(() => { const b = btn('应用目标'); return b && !b.disabled && b; });
   if (!ap) throw new Error('apply button never enabled');
   ap.click();
-  if (!(await until(() => $$('[role=status]').some((s) => txt(s).includes('目标已更新'))))) throw new Error('target was not applied');
+  if (!(await until(() => !$('.chat-target') && txt($('button[aria-label="会话目标"]')).split(' · ')[0] === model))) throw new Error('target was not applied: ' + txt($('button[aria-label="会话目标"]')));
   return true;
 };
 const send = async (text) => {
@@ -1733,6 +1744,248 @@ done
     checks.check("[11] sign-out gates commands and same-owner relogin cannot revive old lease",out.success() && denied.0["ok"]==false && back.success() && old_lease.is_cancelled() && !fresh.is_cancelled() && old_agent_denied,format!("{} {} {}",out.describe(),denied.describe(),back.describe()));
 }
 
+// ---------------------------------------------------------------------------------------------
+// 13: local layout, scroll and focus in the real WebView; no replacement chat state or IPC.
+
+async fn block_layout(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
+    println!("INFO chat-layout executable {:?}", std::env::current_exe());
+    let setup = js(app, r##"
+        try {
+          if (!await until(() => $('button[aria-label="新建会话"]') || btn('新建会话'), 5000)) throw new Error('new session control missing');
+          await newSession('chat-model');
+          return {ready: !!$('textarea[aria-label="消息输入"]'), url: location.href};
+        } catch (error) { return {ready: false, error: String(error), url: location.href, body: txt(document.body).slice(0, 1600)}; }
+    "##).await;
+    checks.check("[13] production chat session prepared", setup["ready"] == true, setup.to_string());
+    if setup["ready"] != true { return; }
+    let provenance = js(app, r##"
+        const ready = !!await until(() => $('.chat-timeline') && $('.chat-composer-primary') && $('.chat-composer-body'), 5000);
+        if (!ready) return {currentLayout: false, url: location.href, origin: location.origin, body: txt(document.body).slice(0, 1600), error: 'chat layout missing after session setup'};
+        const hash = async bytes => [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(v => v.toString(16).padStart(2, '0')).join('');
+        const entries = [...$$('script[src]').map(e => e.src), ...$$('link[rel=stylesheet]').map(e => e.href)].filter(u => !u.includes('/@vite/'));
+        const observedUrls = [...new Set([
+          ...entries,
+          ...performance.getEntriesByType('resource').map(e => e.name).filter(u => /\.(?:[cm]?[jt]sx?|css)(?:[?#]|$)/.test(u)),
+        ])].filter(u => { const resource = new URL(u), page = new URL(location.href); return resource.protocol === page.protocol && resource.host === page.host; }).sort();
+        const urls = observedUrls.filter(u => entries.includes(u) || /\/(?:ChatWorkbench|MessageList|Composer)\.tsx(?:[?#]|$)|\/conversation\.css(?:[?#]|$)/.test(u)).slice(0, 8);
+        const resources = await Promise.all(urls.map(async url => {
+          const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 4000);
+          try { const response = await fetch(url, {cache: 'no-store', signal: controller.signal}); if (!response.ok) throw new Error(String(response.status)); const bytes = await response.arrayBuffer(); return {url, bytes: bytes.byteLength, sha256: await hash(bytes)}; }
+          catch (error) { return {url, error: String(error)}; }
+          finally { clearTimeout(timer); }
+        }));
+        const inlineStyles = await Promise.all($$('style').map(async e => ({id: e.getAttribute('data-vite-dev-id'), sha256: await hash(new TextEncoder().encode(e.textContent))})));
+        return {url: location.href, origin: location.origin, ua: navigator.userAgent, resources, inlineStyles,
+          observedUrls, unhashedUrls: observedUrls.filter(u => !urls.includes(u)), currentLayout: ready};
+    "##).await;
+    println!("INFO chat-layout resources {provenance}");
+    let expected_origin = std::env::var("DGOS_CHAT_SMOKE_EXPECT_ORIGIN").ok();
+    let resources_recorded = provenance["resources"].as_array().is_some_and(|resources| {
+        !resources.is_empty() && resources.iter().all(|resource| resource["sha256"].as_str().is_some_and(|hash| hash.len() == 64))
+    });
+    let current = provenance["currentLayout"] == true && resources_recorded
+        && expected_origin.as_ref().is_none_or(|origin| provenance["origin"].as_str() == Some(origin.as_str()));
+    checks.check("[13] current chat layout and resource URL/SHA-256 provenance (expected origin enforced when set)", current, provenance.to_string());
+    if !current { return; }
+
+    let resized = app.get_webview_window(MAIN).is_some_and(|window| window.set_size(tauri::LogicalSize::new(800.0, 600.0)).is_ok());
+    checks.check("[13] real native window resized to 800 × 600 logical pixels", resized, "set_size");
+    let helpers = r##"
+        const visible = el => {
+          if (!el) return false;
+          const r = el.getBoundingClientRect();
+          if (r.width <= 0 || r.height <= 0 || r.left < -1 || r.top < -1 || r.right > innerWidth + 1 || r.bottom > innerHeight + 1) return false;
+          for (let p = el.parentElement; p; p = p.parentElement) {
+            const s = getComputedStyle(p), b = p.getBoundingClientRect();
+            if (/(auto|scroll|hidden|clip)/.test(s.overflowY) && (r.top < b.top - 1 || r.bottom > b.bottom + 1)) return false;
+            if (/(auto|scroll|hidden|clip)/.test(s.overflowX) && (r.left < b.left - 1 || r.right > b.right + 1)) return false;
+          }
+          return true;
+        };
+        const scroller = () => $('.chat-message-scroll');
+        const input = () => $('textarea[aria-label="消息输入"]');
+    "##;
+    // Theme-token enlargement exercises the supported text-size variables without changing density.
+    js(app, r##"
+        window.__layoutRootStyle = document.documentElement.getAttribute('style');
+        for (const [name, size] of [['--font-size-ui', '16px'], ['--font-size-reading', '20px'], ['--font-size-code', '18px']]) document.documentElement.style.setProperty(name, size);
+        await wait(300); return true;
+    "##).await;
+    let long_text = (0..100).map(|n| format!("Layout line {n}: independently scrolling conversation content.\n\n")).collect::<String>();
+    fx.up.script(reply(&long_text));
+    let independent = js(app, &format!(r##"
+        {helpers}
+        await send('T13 independent scrolling');
+        if (!await until(() => idle() && lastDone() && txt(lastDone()).includes('Layout line 99'), 12000)) throw new Error('long reply missing');
+        const expand = btn('展开全部'); if (expand) expand.click();
+        const area = input(), list = scroller(), primary = $('.chat-composer-primary'), body = $('.chat-composer-body');
+        setVal(area, ('Long draft with independent input scrolling.\n').repeat(90)); await wait(300);
+        const pageTop = document.scrollingElement.scrollTop, footerTop = primary.getBoundingClientRect().top;
+        list.scrollTop = 0; list.dispatchEvent(new Event('scroll')); await wait(80);
+        area.scrollTop = area.scrollHeight; await wait(80);
+        const inputMovesOnly = area.scrollTop > 0 && list.scrollTop < 2;
+        const inputTop = area.scrollTop;
+        list.scrollTop = list.scrollHeight; list.dispatchEvent(new Event('scroll')); await wait(80);
+        const listTop = list.scrollTop; body.scrollTop = body.scrollHeight; await wait(80);
+        return {{width: innerWidth, height: innerHeight, readingSize: getComputedStyle(area).fontSize,
+          listScrollable: list.scrollHeight > list.clientHeight && list.clientHeight > 0,
+          inputScrollable: area.scrollHeight > area.clientHeight, inputMovesOnly,
+          listMovesOnly: list.scrollTop > 0 && Math.abs(area.scrollTop - inputTop) < 2,
+          bodyIndependent: Math.abs(list.scrollTop - listTop) < 2,
+          bodyScrollable: body.scrollHeight > body.clientHeight, bodyScrollTop: body.scrollTop,
+          footerStable: Math.abs(primary.getBoundingClientRect().top - footerTop) < 2,
+          pageStable: document.scrollingElement.scrollTop === pageTop,
+          sendVisible: visible(btn('发送', primary)), timelineWidth: $('.chat-timeline').getBoundingClientRect().width}};
+    "##)).await;
+    checks.check("[13] 800px window / supported maximum text sizes: long message and draft scroll independently; primary action stays visible", independent["width"].as_f64().is_some_and(|width| width <= 801.0)
+        && independent["listScrollable"] == true && independent["inputScrollable"] == true && independent["inputMovesOnly"] == true
+        && independent["readingSize"].as_str().is_some_and(|size| size == "20px")
+        && independent["listMovesOnly"] == true && independent["bodyIndependent"] == true
+        && independent["footerStable"] == true && independent["pageStable"] == true && independent["sendVisible"] == true, independent.to_string());
+
+    fx.up.script(Script::Sse({
+        let mut steps = vec![delta(&long_text), Step::Gate("layout-tail".into()), delta("\n\nLayout tail after scroll."), Step::Gate("layout-finish".into())];
+        steps.extend(stop_steps());
+        steps
+    }));
+    let streaming = js(app, &format!(r##"
+        {helpers}
+        await send('T13 streaming scroll');
+        if (!await until(() => $(STREAM) && txt($(STREAM)).includes('Layout line 99'), 12000)) throw new Error('stream missing');
+        const list = scroller(); list.scrollTop = 0; list.dispatchEvent(new Event('scroll')); await wait(100);
+        const other = $('.workspace-session-tabs [role="tab"][aria-selected="true"]'); if (!other) throw new Error('workspace tab focus target missing'); other.focus({{preventScroll:true}});
+        window.__layoutOther = other; window.__layoutScrollTop = list.scrollTop;
+        return {{stopVisible: visible(btn('停止生成', $('.chat-composer-primary'))), jumpVisible: visible($('.chat-jump-latest button'))}};
+    "##)).await;
+    fx.up.release("layout-tail");
+    let tail = js(app, &format!(r##"
+        {helpers}
+        const arrived = !!await until(() => $(STREAM) && txt($(STREAM)).includes('Layout tail after scroll.'));
+        return {{arrived, topRetained: Math.abs(scroller().scrollTop - window.__layoutScrollTop) < 2,
+          focusRetained: document.activeElement === window.__layoutOther}};
+    "##)).await;
+    checks.check("[13] streaming while reading history preserves scroll and outside focus; stop and back-to-bottom remain visible", streaming["stopVisible"] == true && streaming["jumpVisible"] == true
+        && tail["arrived"] == true && tail["topRetained"] == true && tail["focusRetained"] == true, format!("{streaming} {tail}"));
+    let jumped = js(app, &format!(r##"
+        {helpers}
+        const jump = $('.chat-jump-latest button'); if (!jump) return false; jump.click();
+        return !!await until(() => scroller().scrollHeight - scroller().clientHeight - scroller().scrollTop < 48);
+    "##)).await;
+    checks.check("[13] explicit back-to-bottom reaches the current stream", jumped == true, jumped.to_string());
+    // An unrelated focused control must remain focused when the stream terminates.
+    js(app, "window.__layoutOther.focus({preventScroll:true}); return true;").await;
+    fx.up.release("layout-finish");
+    let focus = js(app, "await until(() => idle(), 12000); await wait(100); return {idle: idle(), retained: document.activeElement === window.__layoutOther};").await;
+    checks.check("[13] completion does not steal focus from the workspace tab", focus["idle"] == true && focus["retained"] == true, focus.to_string());
+
+    fx.up.script(Script::Sse(vec![delta("Layout stop focus"), Step::Hold]));
+    let stopped = js(app, &format!(r##"
+        {helpers}
+        await send('T13 stop focus');
+        if (!await until(() => $(STREAM) && txt($(STREAM)).includes('Layout stop focus'), 12000)) throw new Error('stop stream missing');
+        const stop = await until(() => btn('停止生成')); if (!stop) throw new Error('stop missing');
+        const shown = visible(stop); stop.focus({{preventScroll:true}}); stop.click();
+        const restored = !!await until(() => idle() && document.activeElement === input(), 12000);
+        return {{shown, restored}};
+    "##)).await;
+    checks.check("[13] visible stop action returns focus to its own composer", stopped["shown"] == true && stopped["restored"] == true, stopped.to_string());
+
+    if let Some(note) = &fx.mcp_note {
+        checks.check("[13] approval geometry uses the connected MCP fixture", false, note.clone());
+    } else {
+        fx.up.script(proposal(&"Layout approval argument\n".repeat(100)));
+        let approval = js(app, &format!(r##"
+            {helpers}
+            const picker = btnHas('MCP 工具'); if (!picker) throw new Error('tool picker missing'); picker.click();
+            const tool = await until(() => $$('[role=checkbox]').find(e => labelOf(e).includes('fixture-server / echo')));
+            if (!tool) throw new Error('fixture tool missing'); if (tool.getAttribute('aria-checked') !== 'true') tool.click();
+            kd(tool, 'Escape'); await until(() => !$('[role=dialog]')); await wait(100);
+            await send('T13 long approval');
+            const p = await until(() => $(PROPOSAL), 12000); if (!p) throw new Error('approval missing'); await wait(100);
+            const args = $('pre', p), list = scroller(), top = list.scrollTop;
+            const approve = btn('批准本次调用', p), reject = btn('拒绝并停止', p);
+            const result = {{single: $$(PROPOSAL).length === 1, outsideTimelineScroll: !list.contains(p),
+              approvalVisible: visible(approve) && visible(reject), stopVisible: visible(btn('停止生成', $('.chat-composer-primary'))),
+              titleFocused: document.activeElement === $('#chat-proposal-heading'),
+              argsScrollable: args.scrollHeight > args.clientHeight && args.clientHeight > 0}};
+            args.scrollTop = args.scrollHeight; await wait(80);
+            result.argsIndependent = args.scrollTop > 0 && Math.abs(list.scrollTop - top) < 2;
+            const settings = $('a[aria-label="设置"]'); settings.focus(); settings.click();
+            const overlay = await until(() => $('.workspace-settings-dialog'));
+            const heading = $('#chat-proposal-heading'); heading.focus({{preventScroll:true}});
+            result.coveredCannotFocus = !!overlay && document.activeElement !== heading && !!heading.closest('[inert]');
+            const closeSettings = btn('关闭设置'); if (closeSettings) closeSettings.click();
+            result.restoredWithoutSteal = !!await until(() => !$('.workspace-settings-dialog') && document.activeElement === settings);
+            result.pendingRetained = !!$(PROPOSAL) && $$(PROPOSAL).length === 1;
+            reject.focus({{preventScroll:true}}); reject.click(); await until(() => idle(), 12000);
+            return result;
+        "##)).await;
+        checks.check("[13] approval scroll, fixed actions, settings coverage and return focus", approval["single"] == true && approval["outsideTimelineScroll"] == true
+            && approval["approvalVisible"] == true && approval["stopVisible"] == true && approval["titleFocused"] == true && approval["argsScrollable"] == true && approval["argsIndependent"] == true
+            && approval["coveredCannotFocus"] == true && approval["restoredWithoutSteal"] == true && approval["pendingRetained"] == true, approval.to_string());
+    }
+    // Stage 4: reuse the native key driver; JS only chooses a known starting control or fills fixture text.
+    use super::ui_keys::{key, prepare, Key};
+    checks.check("[13] native keyboard responder ready", prepare(app).await, "NSEvent through NSApplication");
+    js(app, "btn('重命名会话').focus(); return true;").await;
+    key(app, Key::Enter).await;
+    let editing = js(app, "return document.activeElement === $('input[aria-label=\"会话标题\"]');").await;
+    key(app, Key::Escape).await;
+    let rename_return = js(app, "return document.activeElement === btn('重命名会话');").await;
+    checks.check("[13] native Enter edits title and Escape restores rename focus", editing == true && rename_return == true, format!("editing={editing} returned={rename_return}"));
+    key(app, Key::Tab).await;
+    key(app, Key::Tab).await;
+    key(app, Key::Enter).await;
+    let modal = js(app, "return !!$('[data-modal-kind][role=dialog]') && !!document.activeElement.closest('[data-modal-kind]');").await;
+    key(app, Key::Escape).await;
+    let delete_return = js(app, "return !$('[data-modal-kind][role=dialog]') && document.activeElement === btn('删除会话');").await;
+    checks.check("[13] native Tab reaches delete Modal and Escape restores its opener", modal == true && delete_return == true, format!("modal={modal} restored={delete_return}"));
+    // The supported maximum text sizes remain active. Exercise narrow / high density geometry once.
+    if let Some(window) = app.get_webview_window(MAIN) {
+        window.set_min_size(Some(tauri::LogicalSize::new(380.0, 400.0))).ok();
+        window.set_size(tauri::LogicalSize::new(520.0, 600.0)).ok();
+    }
+    let narrow = js(app, &format!(r##"
+        {helpers}
+        document.documentElement.dataset.density = '175';
+        await wait(300);
+        const area = input(); area.focus(); await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+        const r = area.getBoundingClientRect();
+        return {{width: innerWidth, density: document.documentElement.dataset.density, inputVisible: visible(area), scrollWidth: document.documentElement.scrollWidth, inputSize: getComputedStyle(area).fontSize, inputHeight: r.height, rect:r.toJSON(), ancestors:[area.parentElement,area.closest('.chat-composer-body'),area.closest('.chat-composer'),area.closest('.chat-surface')].map(e=>({{class:e.className,rect:e.getBoundingClientRect().toJSON(),scroll:e.scrollTop,rows:getComputedStyle(e).gridTemplateRows}}))}};
+    "##)).await;
+    checks.check("[13] narrow native chat / 175% geometry and enlarged text retains reachable input without horizontal overflow", narrow["density"] == "175" && narrow["inputSize"] == "20px" && narrow["width"].as_f64().is_some_and(|v| v <= 521.0) && narrow["inputVisible"] == true && narrow["scrollWidth"].as_f64().zip(narrow["width"].as_f64()).is_some_and(|(a,b)|a <= b + 1.0), narrow.to_string());
+    js(app, "$('button[aria-label=\"会话目标\"]').focus(); return true;").await;
+    key(app, Key::Enter).await;
+    let popup = js(app, "return !!document.activeElement.closest('[role=dialog]');").await;
+    key(app, Key::Escape).await;
+    let popup_return = js(app, "return !$('[role=dialog]') && document.activeElement === $('button[aria-label=\"会话目标\"]');").await;
+    checks.check("[13] narrow native target popup opens and closes with restored focus", popup == true && popup_return == true, format!("popup={popup} returned={popup_return}"));
+    if fx.mcp_note.is_none() {
+        fx.up.script(proposal(&"Layout narrow approval argument\n".repeat(100)));
+        let approval = js(app, &format!(r##"
+            {helpers}
+            const picker = btnHas('MCP 工具'); picker.click();
+            const tool = await until(() => $$('[role=checkbox]').find(e => labelOf(e).includes('fixture-server / echo')));
+            if (!tool) throw new Error('fixture tool missing'); if (tool.getAttribute('aria-checked') !== 'true') tool.click();
+            kd(tool, 'Escape'); await until(() => !$('[role=dialog]')); await wait(100);
+            await send('T13 narrow approval');
+            const proposal = await until(() => $(PROPOSAL), 12000);
+            if (!proposal) throw new Error('narrow approval missing');
+            const body = $('.chat-approval-body', proposal), args = $('pre', proposal);
+            const approve = btn('批准本次调用', proposal), reject = btn('拒绝并停止', proposal);
+            args.focus(); await wait(80);
+            const result = {{bodyHeight: body.clientHeight, argsScrollable: args.scrollHeight > args.clientHeight,
+                decisionsVisible: visible(approve) && visible(reject), stopVisible: visible(btn('停止生成', $('.chat-composer-primary')))}};
+            args.scrollTop = args.scrollHeight; await wait(80);
+            result.parametersReachable = args.scrollTop > 0 && body.clientHeight >= 32;
+            reject.click(); await until(() => idle(), 12000);
+            return result;
+        "##)).await;
+        checks.check("[13] narrow enlarged-text approval retains scrollable parameters and visible decision/stop actions", approval["parametersReachable"] == true && approval["argsScrollable"] == true && approval["decisionsVisible"] == true && approval["stopVisible"] == true, approval.to_string());
+    }
+    js(app, "const saved = window.__layoutRootStyle; if (saved === null) document.documentElement.removeAttribute('style'); else document.documentElement.setAttribute('style', saved); return true;").await;
+}
+
 async fn scenario(app: AppHandle, root_ready: bool) {
     let mut checks = Checks::default();
     let (up, db, root, mcp_note) = {
@@ -1752,6 +2005,10 @@ async fn scenario(app: AppHandle, root_ready: bool) {
     };
     if !root_ready {
         checks.check("main window loaded /workbench", false, "page never loaded");
+        finish(checks, &root);
+    }
+    if std::env::var("DGOS_CHAT_SMOKE_ONLY").ok().as_deref() == Some("13") {
+        block_layout(&app, &mut checks, &fx).await;
         finish(checks, &root);
     }
     if std::env::var("DGOS_CHAT_SMOKE_ONLY").ok().as_deref()==Some("12") {
@@ -1988,7 +2245,25 @@ pub fn run_chat() {
         .on_window_event(module_host::handle_window_event)
         .setup(move |app| {
             let events = app.state::<LoadEvents>().0.subscribe();
-            WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("workbench".into()))
+            // The smoke feature enables custom-protocol (embedded dist), even for a debug binary.
+            // Keep the URL override confined to the explicit layout-only run and trusted dev origin.
+            let main_url = if std::env::var("DGOS_CHAT_SMOKE_ONLY").ok().as_deref() == Some("13") {
+                if let Ok(raw) = std::env::var("DGOS_CHAT_SMOKE_URL") {
+                    let url = tauri::Url::parse(&raw)?;
+                    if url.scheme() != "http" || !matches!(url.host_str(), Some("localhost" | "127.0.0.1"))
+                        || url.port() != Some(1420) || url.path() != "/workbench"
+                        || !url.username().is_empty() || url.password().is_some() || url.query().is_some() || url.fragment().is_some()
+                    {
+                        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "chat layout smoke URL must be http://localhost:1420/workbench or http://127.0.0.1:1420/workbench").into());
+                    }
+                    WebviewUrl::External(url)
+                } else {
+                    WebviewUrl::App("workbench".into())
+                }
+            } else {
+                WebviewUrl::App("workbench".into())
+            };
+            WebviewWindowBuilder::new(app, MAIN, main_url)
                 .inner_size(1000.0, 760.0)
                 .min_inner_size(800.0, 600.0)
                 .visible(true)

@@ -1,0 +1,206 @@
+   Compiling dgos-providers v0.1.0 (<repo>/crates/dgos-providers)
+   Compiling dgos-mcp v0.1.0 (<repo>/crates/dgos-mcp)
+   Compiling dgos-modules v0.1.0 (<repo>/crates/dgos-modules)
+   Compiling dgos v0.1.0 (<repo>/src-tauri)
+   Compiling dgos-workbench v0.1.0 (<repo>/crates/dgos-workbench)
+   Compiling dgos-agents v0.1.0 (<repo>/crates/dgos-agents)
+   Compiling dgos-application v0.1.0 (<repo>/crates/dgos-application)
+   Compiling dgos-lan v0.1.0 (<repo>/crates/dgos-lan)
+error[E0428]: the name `__tauri_command_name_list_mcp_servers` is defined multiple times
+  --> src-tauri/src/smoke/mcp_page.rs:80:1
+   |
+80 | #[tauri::command]
+   | ^^^^^^^^^^^^^^^^^ `__tauri_command_name_list_mcp_servers` redefined here
+   |
+  ::: src-tauri/src/commands/mcp.rs:62:1
+   |
+62 | #[tauri::command]
+   | ----------------- previous definition of the macro `__tauri_command_name_list_mcp_servers` here
+   |
+   = note: `__tauri_command_name_list_mcp_servers` must be defined only once in the macro namespace of this module
+   = note: this error originates in the attribute macro `tauri::command` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0428]: the name `__cmd__list_mcp_servers` is defined multiple times
+  --> src-tauri/src/smoke/mcp_page.rs:80:1
+   |
+80 | #[tauri::command]
+   | ^^^^^^^^^^^^^^^^^ `__cmd__list_mcp_servers` redefined here
+   |
+  ::: src-tauri/src/commands/mcp.rs:62:1
+   |
+62 | #[tauri::command]
+   | ----------------- previous definition of the macro `__cmd__list_mcp_servers` here
+   |
+   = note: `__cmd__list_mcp_servers` must be defined only once in the macro namespace of this module
+   = note: this error originates in the attribute macro `tauri::command` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0428]: the name `__tauri_command_name_get_mcp_server_config` is defined multiple times
+  --> src-tauri/src/smoke/mcp_page.rs:84:1
+   |
+84 | #[tauri::command]
+   | ^^^^^^^^^^^^^^^^^ `__tauri_command_name_get_mcp_server_config` redefined here
+   |
+  ::: src-tauri/src/commands/mcp.rs:76:1
+   |
+76 | #[tauri::command]
+   | ----------------- previous definition of the macro `__tauri_command_name_get_mcp_server_config` here
+   |
+   = note: `__tauri_command_name_get_mcp_server_config` must be defined only once in the macro namespace of this module
+   = note: this error originates in the attribute macro `tauri::command` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0428]: the name `__cmd__get_mcp_server_config` is defined multiple times
+  --> src-tauri/src/smoke/mcp_page.rs:84:1
+   |
+84 | #[tauri::command]
+   | ^^^^^^^^^^^^^^^^^ `__cmd__get_mcp_server_config` redefined here
+   |
+  ::: src-tauri/src/commands/mcp.rs:76:1
+   |
+76 | #[tauri::command]
+   | ----------------- previous definition of the macro `__cmd__get_mcp_server_config` here
+   |
+   = note: `__cmd__get_mcp_server_config` must be defined only once in the macro namespace of this module
+   = note: this error originates in the attribute macro `tauri::command` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0428]: the name `__tauri_command_name_list_mcp_tools` is defined multiple times
+   --> src-tauri/src/smoke/mcp_page.rs:88:1
+    |
+ 88 | #[tauri::command]
+    | ^^^^^^^^^^^^^^^^^ `__tauri_command_name_list_mcp_tools` redefined here
+    |
+   ::: src-tauri/src/commands/mcp.rs:183:1
+    |
+183 | #[tauri::command]
+    | ----------------- previous definition of the macro `__tauri_command_name_list_mcp_tools` here
+    |
+    = note: `__tauri_command_name_list_mcp_tools` must be defined only once in the macro namespace of this module
+    = note: this error originates in the attribute macro `tauri::command` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0428]: the name `__cmd__list_mcp_tools` is defined multiple times
+   --> src-tauri/src/smoke/mcp_page.rs:88:1
+    |
+ 88 | #[tauri::command]
+    | ^^^^^^^^^^^^^^^^^ `__cmd__list_mcp_tools` redefined here
+    |
+   ::: src-tauri/src/commands/mcp.rs:183:1
+    |
+183 | #[tauri::command]
+    | ----------------- previous definition of the macro `__cmd__list_mcp_tools` here
+    |
+    = note: `__cmd__list_mcp_tools` must be defined only once in the macro namespace of this module
+    = note: this error originates in the attribute macro `tauri::command` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0428]: the name `__tauri_command_name_list_mcp_usage_logs` is defined multiple times
+   --> src-tauri/src/smoke/mcp_page.rs:92:1
+    |
+ 92 | #[tauri::command]
+    | ^^^^^^^^^^^^^^^^^ `__tauri_command_name_list_mcp_usage_logs` redefined here
+    |
+   ::: src-tauri/src/commands/mcp.rs:245:1
+    |
+245 | #[tauri::command]
+    | ----------------- previous definition of the macro `__tauri_command_name_list_mcp_usage_logs` here
+    |
+    = note: `__tauri_command_name_list_mcp_usage_logs` must be defined only once in the macro namespace of this module
+    = note: this error originates in the attribute macro `tauri::command` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0428]: the name `__cmd__list_mcp_usage_logs` is defined multiple times
+   --> src-tauri/src/smoke/mcp_page.rs:92:1
+    |
+ 92 | #[tauri::command]
+    | ^^^^^^^^^^^^^^^^^ `__cmd__list_mcp_usage_logs` redefined here
+    |
+   ::: src-tauri/src/commands/mcp.rs:245:1
+    |
+245 | #[tauri::command]
+    | ----------------- previous definition of the macro `__cmd__list_mcp_usage_logs` here
+    |
+    = note: `__cmd__list_mcp_usage_logs` must be defined only once in the macro namespace of this module
+    = note: this error originates in the attribute macro `tauri::command` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0428]: the name `__tauri_command_name_list_mcp_connection_logs` is defined multiple times
+   --> src-tauri/src/smoke/mcp_page.rs:96:1
+    |
+ 96 | #[tauri::command]
+    | ^^^^^^^^^^^^^^^^^ `__tauri_command_name_list_mcp_connection_logs` redefined here
+    |
+   ::: src-tauri/src/commands/mcp.rs:261:1
+    |
+261 | #[tauri::command]
+    | ----------------- previous definition of the macro `__tauri_command_name_list_mcp_connection_logs` here
+    |
+    = note: `__tauri_command_name_list_mcp_connection_logs` must be defined only once in the macro namespace of this module
+    = note: this error originates in the attribute macro `tauri::command` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0428]: the name `__cmd__list_mcp_connection_logs` is defined multiple times
+   --> src-tauri/src/smoke/mcp_page.rs:96:1
+    |
+ 96 | #[tauri::command]
+    | ^^^^^^^^^^^^^^^^^ `__cmd__list_mcp_connection_logs` redefined here
+    |
+   ::: src-tauri/src/commands/mcp.rs:261:1
+    |
+261 | #[tauri::command]
+    | ----------------- previous definition of the macro `__cmd__list_mcp_connection_logs` here
+    |
+    = note: `__cmd__list_mcp_connection_logs` must be defined only once in the macro namespace of this module
+    = note: this error originates in the attribute macro `tauri::command` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0428]: the name `__tauri_command_name_update_mcp_server` is defined multiple times
+   --> src-tauri/src/smoke/mcp_page.rs:100:1
+    |
+100 | #[tauri::command]
+    | ^^^^^^^^^^^^^^^^^ `__tauri_command_name_update_mcp_server` redefined here
+    |
+   ::: src-tauri/src/commands/mcp.rs:106:1
+    |
+106 | #[tauri::command]
+    | ----------------- previous definition of the macro `__tauri_command_name_update_mcp_server` here
+    |
+    = note: `__tauri_command_name_update_mcp_server` must be defined only once in the macro namespace of this module
+    = note: this error originates in the attribute macro `tauri::command` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0428]: the name `__cmd__update_mcp_server` is defined multiple times
+   --> src-tauri/src/smoke/mcp_page.rs:100:1
+    |
+100 | #[tauri::command]
+    | ^^^^^^^^^^^^^^^^^ `__cmd__update_mcp_server` redefined here
+    |
+   ::: src-tauri/src/commands/mcp.rs:106:1
+    |
+106 | #[tauri::command]
+    | ----------------- previous definition of the macro `__cmd__update_mcp_server` here
+    |
+    = note: `__cmd__update_mcp_server` must be defined only once in the macro namespace of this module
+    = note: this error originates in the attribute macro `tauri::command` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0428]: the name `__tauri_command_name_refresh_mcp_tools` is defined multiple times
+   --> src-tauri/src/smoke/mcp_page.rs:116:1
+    |
+116 | #[tauri::command]
+    | ^^^^^^^^^^^^^^^^^ `__tauri_command_name_refresh_mcp_tools` redefined here
+    |
+   ::: src-tauri/src/commands/mcp.rs:198:1
+    |
+198 | #[tauri::command]
+    | ----------------- previous definition of the macro `__tauri_command_name_refresh_mcp_tools` here
+    |
+    = note: `__tauri_command_name_refresh_mcp_tools` must be defined only once in the macro namespace of this module
+    = note: this error originates in the attribute macro `tauri::command` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0428]: the name `__cmd__refresh_mcp_tools` is defined multiple times
+   --> src-tauri/src/smoke/mcp_page.rs:116:1
+    |
+116 | #[tauri::command]
+    | ^^^^^^^^^^^^^^^^^ `__cmd__refresh_mcp_tools` redefined here
+    |
+   ::: src-tauri/src/commands/mcp.rs:198:1
+    |
+198 | #[tauri::command]
+    | ----------------- previous definition of the macro `__cmd__refresh_mcp_tools` here
+    |
+    = note: `__cmd__refresh_mcp_tools` must be defined only once in the macro namespace of this module
+    = note: this error originates in the attribute macro `tauri::command` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+For more information about this error, try `rustc --explain E0428`.
+error: could not compile `dgos` (lib) due to 14 previous errors

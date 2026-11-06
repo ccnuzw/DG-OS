@@ -1,11 +1,17 @@
 /*
- * Entry stylesheet of the design system. No Tailwind preflight is imported: it would restyle every
- * existing page, and page migration is Phase 7. Utilities are scanned from src/ and index.html only.
+ * Entry stylesheet of the design system. No Tailwind preflight is imported: the existing base reset and
+ * component rules own element defaults. Utilities scan src/, index.html and bundled modules.
  */
 @layer theme, base, components, utilities;
 @import "tailwindcss/utilities.css" layer(utilities) source(none);
 @source "../../index.html";
 @source "../";
 @source "../../bundled-modules/";
+/* Installed provider-console@1.0.0 packages keep their original digest and these published classes (D067). */
+@source inline("text-muted-foreground text-error-text");
+/* Keep published colour entrypoints in production even after first-party callers migrate (D067). */
+@source inline("bg-background text-foreground bg-card text-card-foreground bg-popover text-popover-foreground bg-primary text-primary-foreground bg-secondary text-secondary-foreground bg-muted text-muted-foreground bg-accent text-accent-foreground bg-destructive text-destructive text-destructive-foreground border-input ring-ring outline-ring");
+/* Public size utilities still used by installed modules and caller className overrides (D067). */
+@source inline("h-7 h-9 w-7 w-9");
 @import "./tokens/index.css";
 @import "./tailwind.css";

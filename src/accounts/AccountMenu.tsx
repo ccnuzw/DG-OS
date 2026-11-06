@@ -12,8 +12,8 @@ import { useLocale } from '../i18n';
 const LINK_CLASS = ({ isActive }: { isActive: boolean }) =>
   cn(
     'rounded-md px-3 py-2 text-sm no-underline transition-colors',
-    'focus-visible:outline-2 focus-visible:outline-focus-ring',
-    isActive ? 'bg-primary text-on-primary' : 'text-foreground hover:bg-secondary',
+    'focus-visible:outline-2 focus-visible:outline-border-focus',
+    isActive ? 'bg-accent-default text-accent-on' : 'text-ink-primary hover:bg-surface-inset',
   );
 
 // Switching users re-authenticates: a wrong password leaves the current session and the rendered app untouched.
@@ -80,7 +80,7 @@ function SwitchUserDialog({
       }
     >
       {others.length === 0 ? (
-        <p className="m-0 text-sm text-muted-foreground">{t('account.switchUnavailable')}</p>
+        <p className="m-0 text-sm text-ink-secondary">{t('account.switchUnavailable')}</p>
       ) : (
         <form onSubmit={submit} noValidate>
           <Stack gap={4}>

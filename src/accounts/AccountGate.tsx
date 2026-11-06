@@ -75,7 +75,7 @@ export default function AccountGate({ children }: { children: ReactNode }) {
   if (failed) {
     return (
         <AuthShell title={t('account.readFailedTitle')}>
-          <p className="m-0 text-sm text-muted-foreground">{t('account.readFailedText')}</p>
+          <p className="m-0 text-sm text-ink-secondary">{t('account.readFailedText')}</p>
         <div>
             <Button onClick={retry}>{t('common.retry')}</Button>
         </div>
@@ -105,16 +105,16 @@ function DatabaseFailurePage({ failure }: { failure: DatabaseFailure }) {
   const { t } = useLocale();
   return (
     <AuthShell title={t('account.dbOpenFailed')}>
-      <p className="m-0 text-sm font-medium text-error-text">{t(STAGE_TEXT[failure.stage])}</p>
+      <p className="m-0 text-sm font-medium text-status-error-text">{t(STAGE_TEXT[failure.stage])}</p>
       <div>
-        <p className="m-0 text-xs text-muted-foreground">{t('account.reason')}</p>
-        <p className="m-0 text-sm text-foreground wrap-anywhere">{failure.reason}</p>
+        <p className="m-0 text-xs text-ink-secondary">{t('account.reason')}</p>
+        <p className="m-0 text-sm text-ink-primary wrap-anywhere">{failure.reason}</p>
       </div>
       <div>
-        <p className="m-0 text-xs text-muted-foreground">{t('account.dbFile')}</p>
-        <code className="block select-text text-sm text-foreground wrap-anywhere">{failure.path}</code>
+        <p className="m-0 text-xs text-ink-secondary">{t('account.dbFile')}</p>
+        <code className="block select-text text-sm text-ink-primary wrap-anywhere">{failure.path}</code>
       </div>
-      <p className="m-0 text-sm text-muted-foreground">
+      <p className="m-0 text-sm text-ink-secondary">
         {t('account.dbHelp')}
       </p>
     </AuthShell>

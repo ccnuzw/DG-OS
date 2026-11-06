@@ -1,0 +1,848 @@
+{
+  "schema": 1,
+  "slice": "agent",
+  "recordedAt": "2026-11-06T09:11:14.213Z",
+  "scope": "Historical fourteen-failure reconciliation, meaningful consumer assertions, and existing round4 evidence provenance. No feature/UI/production/store changes; no checks or external/model calls executed.",
+  "skills": [
+    "spec-docs-pro: evidence grading/status review only; shared status/docs untouched"
+  ],
+  "changedFiles": [
+    "tests/development-delivery.test.tsx",
+    "tests/development-runtime-activity.test.tsx"
+  ],
+  "checksRun": [],
+  "currentVerification": "NOT RUN; all fourteen current outcomes require parent final run. Existing 207/207 is a historical reported result and does not cover these newly restored assertions.",
+  "originalRun": {
+    "command": {
+      "label": "changed-agent-integration",
+      "command": "npx vitest run tests/development-editor.test.tsx tests/development-delivery.test.tsx tests/development-runtime-activity.test.tsx tests/development-runtime-workflows.test.tsx tests/agent-workbench.test.tsx",
+      "start": "2026-11-06T07:13:42.940Z",
+      "end": "2026-11-06T07:13:47.024Z",
+      "code": 1,
+      "signal": null,
+      "log": "<tmp>/dgos-mcp-ui-delivery-20261106-1793948903221/changed-agent-integration.log.txt"
+    },
+    "result": "5 files; 60 passed / 14 failed",
+    "log": "docs/90-参考资料/mcp-ui-delivery-20261106/changed-agent-integration.log.txt",
+    "logSha256": "3f5d7cf72f2a2d7da1300d2d488f3fb9bd862d0f5f85401dd7f215f443b8e686",
+    "sourceProvenance": {
+      "head": "d7422a51964086f084f2429d5d769468fce53f30",
+      "initialSnapshot": "<tmp>/dgos-mcp-ui-delivery-20261106-1793948903221/initial-snapshot.json",
+      "concurrentDelta": "<tmp>/dgos-mcp-ui-delivery-20261106-1793948903221/concurrent-source-delta.json",
+      "preNativeSnapshot": "<tmp>/dgos-mcp-ui-delivery-20261106-1793948903221/pre-native-source.json",
+      "archivedSnapshot": "docs/90-参考资料/mcp-ui-delivery-20261106/verification.json",
+      "boundary": "Initial snapshot + run metadata identify the pre-run source set. Consumer/store hashes remain identical through preNative/archive/current. Tests changed in concurrent delta and again afterwards. No per-file-at-import hashes/source copies are retained for the exact 07:13:42.940–07:13:47.024 run; original log stack/DOM is authoritative for exercised assertions. Do not treat later verification.json hashes as the failing test snapshot."
+    },
+    "sourceComparison": [
+      {
+        "path": "tests/development-delivery.test.tsx",
+        "initial": {
+          "path": "tests/development-delivery.test.tsx",
+          "bytes": 5537,
+          "sha256": "dc2463d709dfbb51b805e3d4965b3be3f97a3f1b616678972b06d59d43826fba"
+        },
+        "preNative": {
+          "path": "tests/development-delivery.test.tsx",
+          "bytes": 5505,
+          "sha256": "a568b0daa585c230ff50d712b6e15744f80119373c4f12cd3bf00b4b1b27c2e0"
+        },
+        "archived": {
+          "path": "tests/development-delivery.test.tsx",
+          "bytes": 5505,
+          "sha256": "a568b0daa585c230ff50d712b6e15744f80119373c4f12cd3bf00b4b1b27c2e0"
+        },
+        "current": {
+          "path": "tests/development-delivery.test.tsx",
+          "bytes": 6090,
+          "sha256": "1b40fbc6c5bcdffe4aaf663c82e2688c37d149cfb9f64715137a30f866ad6b76"
+        }
+      },
+      {
+        "path": "tests/development-runtime-activity.test.tsx",
+        "initial": {
+          "path": "tests/development-runtime-activity.test.tsx",
+          "bytes": 45032,
+          "sha256": "eb300291009bc81555b37992ac66c155d523406acde207be09f03de9493f5004"
+        },
+        "preNative": {
+          "path": "tests/development-runtime-activity.test.tsx",
+          "bytes": 44640,
+          "sha256": "025c1d619bd37125444eb6053f390564d7bd8b00cd30b7db60b264e43a794e1d"
+        },
+        "archived": {
+          "path": "tests/development-runtime-activity.test.tsx",
+          "bytes": 44640,
+          "sha256": "025c1d619bd37125444eb6053f390564d7bd8b00cd30b7db60b264e43a794e1d"
+        },
+        "current": {
+          "path": "tests/development-runtime-activity.test.tsx",
+          "bytes": 46486,
+          "sha256": "fc67ad5f60fc9641b40156639dfea15572a34e089d432ee44ed290359269d089"
+        }
+      },
+      {
+        "path": "src/components/development/DeliveryPanel.tsx",
+        "initial": {
+          "path": "src/components/development/DeliveryPanel.tsx",
+          "bytes": 24051,
+          "sha256": "6cbe8033f3619a804b6a672fb36f6a38cae4c7f0889e94ca360c4cb624900224"
+        },
+        "preNative": {
+          "path": "src/components/development/DeliveryPanel.tsx",
+          "bytes": 24051,
+          "sha256": "6cbe8033f3619a804b6a672fb36f6a38cae4c7f0889e94ca360c4cb624900224"
+        },
+        "archived": {
+          "path": "src/components/development/DeliveryPanel.tsx",
+          "bytes": 24051,
+          "sha256": "6cbe8033f3619a804b6a672fb36f6a38cae4c7f0889e94ca360c4cb624900224"
+        },
+        "current": {
+          "path": "src/components/development/DeliveryPanel.tsx",
+          "bytes": 24051,
+          "sha256": "6cbe8033f3619a804b6a672fb36f6a38cae4c7f0889e94ca360c4cb624900224"
+        }
+      },
+      {
+        "path": "src/components/development/DevelopmentRuntime.tsx",
+        "initial": {
+          "path": "src/components/development/DevelopmentRuntime.tsx",
+          "bytes": 33749,
+          "sha256": "12febfb4fec6e8fc99d4f105468f2741a710e432f2e757a0d44d4e2cfcf53b86"
+        },
+        "preNative": {
+          "path": "src/components/development/DevelopmentRuntime.tsx",
+          "bytes": 33749,
+          "sha256": "12febfb4fec6e8fc99d4f105468f2741a710e432f2e757a0d44d4e2cfcf53b86"
+        },
+        "archived": {
+          "path": "src/components/development/DevelopmentRuntime.tsx",
+          "bytes": 33749,
+          "sha256": "12febfb4fec6e8fc99d4f105468f2741a710e432f2e757a0d44d4e2cfcf53b86"
+        },
+        "current": {
+          "path": "src/components/development/DevelopmentRuntime.tsx",
+          "bytes": 33749,
+          "sha256": "12febfb4fec6e8fc99d4f105468f2741a710e432f2e757a0d44d4e2cfcf53b86"
+        }
+      },
+      {
+        "path": "src/stores/developmentRuntime.ts",
+        "initial": {
+          "path": "src/stores/developmentRuntime.ts",
+          "bytes": 19039,
+          "sha256": "19b0844a4fa388d69ae3f4032060d7131d99846676e62812177d95f057afe082"
+        },
+        "preNative": {
+          "path": "src/stores/developmentRuntime.ts",
+          "bytes": 19039,
+          "sha256": "19b0844a4fa388d69ae3f4032060d7131d99846676e62812177d95f057afe082"
+        },
+        "archived": {
+          "path": "src/stores/developmentRuntime.ts",
+          "bytes": 19039,
+          "sha256": "19b0844a4fa388d69ae3f4032060d7131d99846676e62812177d95f057afe082"
+        },
+        "current": {
+          "path": "src/stores/developmentRuntime.ts",
+          "bytes": 19039,
+          "sha256": "19b0844a4fa388d69ae3f4032060d7131d99846676e62812177d95f057afe082"
+        }
+      },
+      {
+        "path": "src/stores/developmentDelivery.ts",
+        "initial": {
+          "path": "src/stores/developmentDelivery.ts",
+          "bytes": 7306,
+          "sha256": "edbf89a934988a2f9ee918ccae9d59944146a82a7326f4e9536da40c7a3ae210"
+        },
+        "preNative": {
+          "path": "src/stores/developmentDelivery.ts",
+          "bytes": 7306,
+          "sha256": "edbf89a934988a2f9ee918ccae9d59944146a82a7326f4e9536da40c7a3ae210"
+        },
+        "archived": {
+          "path": "src/stores/developmentDelivery.ts",
+          "bytes": 7306,
+          "sha256": "edbf89a934988a2f9ee918ccae9d59944146a82a7326f4e9536da40c7a3ae210"
+        },
+        "current": {
+          "path": "src/stores/developmentDelivery.ts",
+          "bytes": 7306,
+          "sha256": "edbf89a934988a2f9ee918ccae9d59944146a82a7326f4e9536da40c7a3ae210"
+        }
+      },
+      {
+        "path": "src-tauri/src/smoke/agents_round4.rs",
+        "initial": {
+          "path": "src-tauri/src/smoke/agents_round4.rs",
+          "bytes": 32653,
+          "sha256": "26b836b498b894e64276f9766b3c7e8191cc986d6a02f0bf6db1cd4c048848f0"
+        },
+        "preNative": {
+          "path": "src-tauri/src/smoke/agents_round4.rs",
+          "bytes": 35981,
+          "sha256": "f2e72e6feffddb5ee64834051ab9ce99da6092603a567d2e5bd735b5cd55c952"
+        },
+        "archived": {
+          "path": "src-tauri/src/smoke/agents_round4.rs",
+          "bytes": 41883,
+          "sha256": "25d156e4b585e1b341d6ac63060778a1c88f2196e681baeee2abba9dc66f3a86"
+        },
+        "current": {
+          "path": "src-tauri/src/smoke/agents_round4.rs",
+          "bytes": 42300,
+          "sha256": "7314215a8e2777dbaad222a7eead61581612af7e0b04574bd12a530a5ada05dd"
+        }
+      }
+    ]
+  },
+  "groups": [
+    {
+      "id": "runtime-contextual-announcement",
+      "cases": [
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14
+      ],
+      "finding": "Every original DOM shows requested phase in a contextual status/alert. Twelve failures are exact text element mismatches, not observed missing state. Several subsequent tests removed UI coverage entirely; replacing with store-only assertions could conceal a consumer regression.",
+      "fix": "Scope rendered receipt by original target code UUID, require status/alert role appropriate to exact phase, assert semantic i18n phase key within that announcement, retain operation phase/target and all original behavioral assertions. No full wording, contextual prefix, punctuation, timeout, or error mapping is pinned/relaxed."
+    },
+    {
+      "id": "delivery-identity-layout",
+      "cases": [
+        1,
+        2
+      ],
+      "finding": "Old matcher required status + separator + UUID as one status-first text element; unchanged consumer places status separately and UUID in details / UUID-first selectable button. Original DOM truncates before receipt area, so presentation mismatch is an evidence-supported inference, not direct observed receipt DOM.",
+      "fix": "Restore visible unknown status, exact selectable receipt UUID, persistence/host original identity assertions; preserve reconcile/no-replay/task/account isolation."
+    }
+  ],
+  "cases": [
+    {
+      "number": 1,
+      "file": "tests/development-delivery.test.tsx",
+      "name": "persists identity before IPC, survives disposal and receipt loss, then keeps reconciliation on reentry",
+      "original": {
+        "outcome": "failed",
+        "error": "TestingLibraryElementError: Unable to find an element with the text: delivery.operation.unknown · 69b44cc5-3d69-41bb-83ad-3dd9c942c407. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "log": "docs/90-参考资料/mcp-ui-delivery-20261106/changed-agent-integration.log.txt",
+        "lines": [
+          62,
+          195
+        ],
+        "renderedAnnouncement": [],
+        "domTruncated": true
+      },
+      "group": "delivery-identity-layout",
+      "reason": "[INFERENCE] Current and pre-run DeliveryPanel separates status and UUID into status/details/UUID-first receipt button. Original matcher required combined status-first text. The logged DOM is cut before receipts, so the log alone cannot prove receipt visibility.",
+      "behavioralAssertionsRetained": "Identity is persisted before execute IPC; deferred IPC rejects after unmount; reconcile reaches succeeded; durable request cleared on reentry; execute IPC stays exactly once.",
+      "subsequentTestGap": "Unknown status/UUID UI assertion was deleted.",
+      "coverageRestoredInThisSlice": "Visible status carries unknown phase, exact UUID remains a selectable receipt button, host operation has unknown + original project/task.",
+      "currentSource": {
+        "line": 27,
+        "helper": null
+      },
+      "currentOutcome": "source reviewed; assertions restored; NOT RUN in this slice; parent final test run required"
+    },
+    {
+      "number": 2,
+      "file": "tests/development-delivery.test.tsx",
+      "name": "restores workspace receipts and isolates unknown identities by account and task",
+      "original": {
+        "outcome": "failed",
+        "error": "TestingLibraryElementError: Unable to find an element with the text: delivery.operation.unknown · 641ef826-f42d-4118-b26a-427ef555befe. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "log": "docs/90-参考资料/mcp-ui-delivery-20261106/changed-agent-integration.log.txt",
+        "lines": [
+          197,
+          330
+        ],
+        "renderedAnnouncement": [],
+        "domTruncated": true
+      },
+      "group": "delivery-identity-layout",
+      "reason": "[INFERENCE] Current and pre-run DeliveryPanel separates status and UUID into status/details/UUID-first receipt button. Original matcher required combined status-first text. The logged DOM is cut before receipts, so the log alone cannot prove receipt visibility.",
+      "behavioralAssertionsRetained": "Unresolved operation blocks staging only for original task/account; another task and bob remain editable.",
+      "subsequentTestGap": "Restored unknown status/UUID UI assertion was deleted.",
+      "coverageRestoredInThisSlice": "Visible unknown status and exact selectable UUID plus durable original request identity.",
+      "currentSource": {
+        "line": 51,
+        "helper": null
+      },
+      "currentOutcome": "source reviewed; assertions restored; NOT RUN in this slice; parent final test run required"
+    },
+    {
+      "number": 3,
+      "file": "tests/development-runtime-activity.test.tsx",
+      "name": "retains an owned start receipt across unmount and separates a failed history read",
+      "original": {
+        "outcome": "failed",
+        "error": "TestingLibraryElementError: Unable to find an element with the text: direct.operation.start.pending. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "log": "docs/90-参考资料/mcp-ui-delivery-20261106/changed-agent-integration.log.txt",
+        "lines": [
+          332,
+          504
+        ],
+        "renderedAnnouncement": [
+          "direct.title : direct.operation.start.pending"
+        ],
+        "domTruncated": true
+      },
+      "group": "runtime-contextual-announcement",
+      "reason": "Original DOM explicitly contains the requested phase in a contextual announcement with a command/program/title prefix; exact full-element text matcher rejects that longer text. No timeout/error-state failure is shown.",
+      "behavioralAssertionsRetained": "Duplicate start sends once; receipt survives unmount; accepted phase survives independent history failure; retry reads only and removes retry affordance.",
+      "subsequentTestGap": "Pending UI assertion was deleted and post-remount status changed to store-only phase.",
+      "coverageRestoredInThisSlice": "Original target UUID scopes pending/accepted rendered status; history error remains exactly storage_failed.",
+      "currentSource": {
+        "line": 228,
+        "helper": "expectReceipt at tests/development-runtime-activity.test.tsx:16"
+      },
+      "currentOutcome": "source reviewed; assertions restored; NOT RUN in this slice; parent final test run required"
+    },
+    {
+      "number": 4,
+      "file": "tests/development-runtime-activity.test.tsx",
+      "name": "keeps a changed command draft and selection when a hidden save completes",
+      "original": {
+        "outcome": "failed",
+        "error": "TestingLibraryElementError: Unable to find an element with the text: direct.operation.save.succeeded. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "log": "docs/90-参考资料/mcp-ui-delivery-20261106/changed-agent-integration.log.txt",
+        "lines": [
+          506,
+          677
+        ],
+        "renderedAnnouncement": [
+          "Original : direct.operation.save.succeeded"
+        ],
+        "domTruncated": true
+      },
+      "group": "runtime-contextual-announcement",
+      "reason": "Original DOM explicitly contains the requested phase in a contextual announcement with a command/program/title prefix; exact full-element text matcher rejects that longer text. No timeout/error-state failure is shown.",
+      "behavioralAssertionsRetained": "Draft edited while save in flight remains New draft after hiding, receipt settlement and reactivation.",
+      "subsequentTestGap": "Save-success UI assertion was deleted.",
+      "coverageRestoredInThisSlice": "Original submitted command UUID scopes visible save-succeeded status; save IPC count exactly one.",
+      "currentSource": {
+        "line": 256,
+        "helper": "expectReceipt at tests/development-runtime-activity.test.tsx:16"
+      },
+      "currentOutcome": "source reviewed; assertions restored; NOT RUN in this slice; parent final test run required"
+    },
+    {
+      "number": 5,
+      "file": "tests/development-runtime-activity.test.tsx",
+      "name": "keeps an unknown start blocked and reconciles only its original process ID",
+      "original": {
+        "outcome": "failed",
+        "error": "TestingLibraryElementError: Unable to find an element with the text: direct.operation.start.unknown. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "log": "docs/90-参考资料/mcp-ui-delivery-20261106/changed-agent-integration.log.txt",
+        "lines": [
+          679,
+          848
+        ],
+        "renderedAnnouncement": [
+          "direct.title : direct.operation.start.unknown"
+        ],
+        "domTruncated": true
+      },
+      "group": "runtime-contextual-announcement",
+      "reason": "Original DOM explicitly contains the requested phase in a contextual announcement with a command/program/title prefix; exact full-element text matcher rejects that longer text. No timeout/error-state failure is shown.",
+      "behavioralAssertionsRetained": "Unknown start blocks second submission; confirmation reads original generated process ID only; accepted after matching read; one start IPC.",
+      "subsequentTestGap": "Unknown UI assertion deleted; accepted assertion changed to store-only phase.",
+      "coverageRestoredInThisSlice": "Original UUID scopes unknown alert before reconciliation and accepted status afterwards.",
+      "currentSource": {
+        "line": 273,
+        "helper": "expectReceipt at tests/development-runtime-activity.test.tsx:16"
+      },
+      "currentOutcome": "source reviewed; assertions restored; NOT RUN in this slice; parent final test run required"
+    },
+    {
+      "number": 6,
+      "file": "tests/development-runtime-activity.test.tsx",
+      "name": "reports a definite rejected save and preserves the editable draft",
+      "original": {
+        "outcome": "failed",
+        "error": "TestingLibraryElementError: Unable to find an element with the text: direct.operation.save.failed. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "log": "docs/90-参考资料/mcp-ui-delivery-20261106/changed-agent-integration.log.txt",
+        "lines": [
+          850,
+          1022
+        ],
+        "renderedAnnouncement": [
+          "Keep me : direct.operation.save.failed"
+        ],
+        "domTruncated": true
+      },
+      "group": "runtime-contextual-announcement",
+      "reason": "Original DOM explicitly contains the requested phase in a contextual announcement with a command/program/title prefix; exact full-element text matcher rejects that longer text. No timeout/error-state failure is shown.",
+      "behavioralAssertionsRetained": "Invalid command is definite failure with exact invalid_command code; editable draft remains Keep me.",
+      "subsequentTestGap": "Failed UI assertion replaced by store phase/error assertion.",
+      "coverageRestoredInThisSlice": "Failed phase is also visible as alert on the same target receipt.",
+      "currentSource": {
+        "line": 293,
+        "helper": "expectReceipt at tests/development-runtime-activity.test.tsx:16"
+      },
+      "currentOutcome": "source reviewed; assertions restored; NOT RUN in this slice; parent final test run required"
+    },
+    {
+      "number": 7,
+      "file": "tests/development-runtime-activity.test.tsx",
+      "name": "does not confirm a running stop acknowledgement or repeat the stop while checking",
+      "original": {
+        "outcome": "failed",
+        "error": "TestingLibraryElementError: Unable to find an element with the text: direct.operation.stop.succeeded. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "log": "docs/90-参考资料/mcp-ui-delivery-20261106/changed-agent-integration.log.txt",
+        "lines": [
+          1024,
+          1196
+        ],
+        "renderedAnnouncement": [
+          "echo : direct.operation.stop.succeeded"
+        ],
+        "domTruncated": true
+      },
+      "group": "runtime-contextual-announcement",
+      "reason": "Original DOM explicitly contains the requested phase in a contextual announcement with a command/program/title prefix; exact full-element text matcher rejects that longer text. No timeout/error-state failure is shown.",
+      "behavioralAssertionsRetained": "running acknowledgement is accepted, not succeeded; repeated stop sends once; later exact cancelled read converges to succeeded.",
+      "subsequentTestGap": "Final success assertion changed to store phase; earlier negative succeeded text query was ineffective against prefixed text.",
+      "coverageRestoredInThisSlice": "Original run UUID scopes nonterminal accepted/unknown announcement and terminal succeeded status; exact phase asserted both before/after.",
+      "currentSource": {
+        "line": 304,
+        "helper": "expectReceipt at tests/development-runtime-activity.test.tsx:16"
+      },
+      "currentOutcome": "source reviewed; assertions restored; NOT RUN in this slice; parent final test run required"
+    },
+    {
+      "number": 8,
+      "file": "tests/development-runtime-activity.test.tsx",
+      "name": "does not confirm a cleanup_pending stop acknowledgement or repeat the stop while checking",
+      "original": {
+        "outcome": "failed",
+        "error": "TestingLibraryElementError: Unable to find an element with the text: direct.operation.stop.succeeded. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "log": "docs/90-参考资料/mcp-ui-delivery-20261106/changed-agent-integration.log.txt",
+        "lines": [
+          1198,
+          1370
+        ],
+        "renderedAnnouncement": [
+          "echo : direct.operation.stop.succeeded"
+        ],
+        "domTruncated": true
+      },
+      "group": "runtime-contextual-announcement",
+      "reason": "Original DOM explicitly contains the requested phase in a contextual announcement with a command/program/title prefix; exact full-element text matcher rejects that longer text. No timeout/error-state failure is shown.",
+      "behavioralAssertionsRetained": "cleanup_pending acknowledgement is accepted, not succeeded; repeated stop sends once; later exact cancelled read converges to succeeded.",
+      "subsequentTestGap": "Final success assertion changed to store phase; earlier negative succeeded text query was ineffective against prefixed text.",
+      "coverageRestoredInThisSlice": "Original run UUID scopes nonterminal accepted/unknown announcement and terminal succeeded status; exact phase asserted both before/after.",
+      "currentSource": {
+        "line": 304,
+        "helper": "expectReceipt at tests/development-runtime-activity.test.tsx:16"
+      },
+      "currentOutcome": "source reviewed; assertions restored; NOT RUN in this slice; parent final test run required"
+    },
+    {
+      "number": 9,
+      "file": "tests/development-runtime-activity.test.tsx",
+      "name": "does not confirm a unknown stop acknowledgement or repeat the stop while checking",
+      "original": {
+        "outcome": "failed",
+        "error": "TestingLibraryElementError: Unable to find an element with the text: direct.operation.stop.succeeded. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "log": "docs/90-参考资料/mcp-ui-delivery-20261106/changed-agent-integration.log.txt",
+        "lines": [
+          1372,
+          1544
+        ],
+        "renderedAnnouncement": [
+          "echo : direct.operation.stop.succeeded"
+        ],
+        "domTruncated": true
+      },
+      "group": "runtime-contextual-announcement",
+      "reason": "Original DOM explicitly contains the requested phase in a contextual announcement with a command/program/title prefix; exact full-element text matcher rejects that longer text. No timeout/error-state failure is shown.",
+      "behavioralAssertionsRetained": "unknown acknowledgement is unknown, not succeeded; repeated stop sends once; later exact cancelled read converges to succeeded.",
+      "subsequentTestGap": "Final success assertion changed to store phase; earlier negative succeeded text query was ineffective against prefixed text.",
+      "coverageRestoredInThisSlice": "Original run UUID scopes nonterminal accepted/unknown announcement and terminal succeeded status; exact phase asserted both before/after.",
+      "currentSource": {
+        "line": 304,
+        "helper": "expectReceipt at tests/development-runtime-activity.test.tsx:16"
+      },
+      "currentOutcome": "source reviewed; assertions restored; NOT RUN in this slice; parent final test run required"
+    },
+    {
+      "number": 10,
+      "file": "tests/development-runtime-activity.test.tsx",
+      "name": "confirms a committed save by catalog after a post-write error without resending it",
+      "original": {
+        "outcome": "failed",
+        "error": "TestingLibraryElementError: Unable to find an element with the text: direct.operation.save.succeeded. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "log": "docs/90-参考资料/mcp-ui-delivery-20261106/changed-agent-integration.log.txt",
+        "lines": [
+          1546,
+          1717
+        ],
+        "renderedAnnouncement": [
+          "Committed : direct.operation.save.succeeded"
+        ],
+        "domTruncated": true
+      },
+      "group": "runtime-contextual-announcement",
+      "reason": "Original DOM explicitly contains the requested phase in a contextual announcement with a command/program/title prefix; exact full-element text matcher rejects that longer text. No timeout/error-state failure is shown.",
+      "behavioralAssertionsRetained": "Save writes catalog then throws file_access_denied; readback confirms matching catalog without replaying save.",
+      "subsequentTestGap": "Success UI assertion replaced by store-only phase.",
+      "coverageRestoredInThisSlice": "Submitted command UUID scopes visible succeeded status; one save IPC remains.",
+      "currentSource": {
+        "line": 353,
+        "helper": "expectReceipt at tests/development-runtime-activity.test.tsx:16"
+      },
+      "currentOutcome": "source reviewed; assertions restored; NOT RUN in this slice; parent final test run required"
+    },
+    {
+      "number": 11,
+      "file": "tests/development-runtime-activity.test.tsx",
+      "name": "keeps a slow stop receipt after process selection changes without replacing the new detail",
+      "original": {
+        "outcome": "failed",
+        "error": "TestingLibraryElementError: Unable to find an element with the text: direct.operation.stop.pending. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "log": "docs/90-参考资料/mcp-ui-delivery-20261106/changed-agent-integration.log.txt",
+        "lines": [
+          1719,
+          1891
+        ],
+        "renderedAnnouncement": [
+          "direct.title : direct.operation.stop.pending"
+        ],
+        "domTruncated": true
+      },
+      "group": "runtime-contextual-announcement",
+      "reason": "Original DOM explicitly contains the requested phase in a contextual announcement with a command/program/title prefix; exact full-element text matcher rejects that longer text. No timeout/error-state failure is shown.",
+      "behavioralAssertionsRetained": "Slow stop sends once; switching to second process preserves second output/selection and never projects old stop output.",
+      "subsequentTestGap": "Pending UI assertion deleted; receipt survival had no explicit receipt assertion.",
+      "coverageRestoredInThisSlice": "Original run UUID scopes pending status before switch and succeeded status after old receipt settles.",
+      "currentSource": {
+        "line": 397,
+        "helper": "expectReceipt at tests/development-runtime-activity.test.tsx:16"
+      },
+      "currentOutcome": "source reviewed; assertions restored; NOT RUN in this slice; parent final test run required"
+    },
+    {
+      "number": 12,
+      "file": "tests/development-runtime-activity.test.tsx",
+      "name": "does not replay a retained catalog receipt over a fresh catalog after remount",
+      "original": {
+        "outcome": "failed",
+        "error": "TestingLibraryElementError: Unable to find an element with the text: direct.operation.save.succeeded. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "log": "docs/90-参考资料/mcp-ui-delivery-20261106/changed-agent-integration.log.txt",
+        "lines": [
+          1893,
+          2065
+        ],
+        "renderedAnnouncement": [
+          "Old name : direct.operation.save.succeeded"
+        ],
+        "domTruncated": true
+      },
+      "group": "runtime-contextual-announcement",
+      "reason": "Original DOM explicitly contains the requested phase in a contextual announcement with a command/program/title prefix; exact full-element text matcher rejects that longer text. No timeout/error-state failure is shown.",
+      "behavioralAssertionsRetained": "Fresh external catalog option survives remount; stale Old name option absent.",
+      "subsequentTestGap": "Retained save receipt UI assertion deleted.",
+      "coverageRestoredInThisSlice": "Original saved UUID retains succeeded status alongside fresh external catalog.",
+      "currentSource": {
+        "line": 439,
+        "helper": "expectReceipt at tests/development-runtime-activity.test.tsx:16"
+      },
+      "currentOutcome": "source reviewed; assertions restored; NOT RUN in this slice; parent final test run required"
+    },
+    {
+      "number": 13,
+      "file": "tests/development-runtime-activity.test.tsx",
+      "name": "keeps a mismatched start acknowledgement unknown without projecting its output",
+      "original": {
+        "outcome": "failed",
+        "error": "TestingLibraryElementError: Unable to find an element with the text: direct.operation.start.unknown. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "log": "docs/90-参考资料/mcp-ui-delivery-20261106/changed-agent-integration.log.txt",
+        "lines": [
+          2067,
+          2227
+        ],
+        "renderedAnnouncement": [
+          "direct.title : direct.operation.start.unknown"
+        ],
+        "domTruncated": true
+      },
+      "group": "runtime-contextual-announcement",
+      "reason": "Original DOM explicitly contains the requested phase in a contextual announcement with a command/program/title prefix; exact full-element text matcher rejects that longer text. No timeout/error-state failure is shown.",
+      "behavioralAssertionsRetained": "Wrong process/task acknowledgement stays unknown, no accepted current-task receipt, no WRONG_RECEIPT output or process inserted.",
+      "subsequentTestGap": "Unknown UI assertion changed to store-only phase.",
+      "coverageRestoredInThisSlice": "Unknown alert is scoped to original UUID, exact error target_mismatch asserted.",
+      "currentSource": {
+        "line": 450,
+        "helper": "expectReceipt at tests/development-runtime-activity.test.tsx:16"
+      },
+      "currentOutcome": "source reviewed; assertions restored; NOT RUN in this slice; parent final test run required"
+    },
+    {
+      "number": 14,
+      "file": "tests/development-runtime-activity.test.tsx",
+      "name": "retains an unmatched save as unknown and retries only the catalog read",
+      "original": {
+        "outcome": "failed",
+        "error": "TestingLibraryElementError: Unable to find an element with the text: direct.operation.save.unknown. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "log": "docs/90-参考资料/mcp-ui-delivery-20261106/changed-agent-integration.log.txt",
+        "lines": [
+          2229,
+          2389
+        ],
+        "renderedAnnouncement": [
+          "Unconfirmed : direct.operation.save.unknown"
+        ],
+        "domTruncated": true
+      },
+      "group": "runtime-contextual-announcement",
+      "reason": "Original DOM explicitly contains the requested phase in a contextual announcement with a command/program/title prefix; exact full-element text matcher rejects that longer text. No timeout/error-state failure is shown.",
+      "behavioralAssertionsRetained": "Unmatched save stays unknown, blocks resend, catalog-only confirmation eventually succeeds with one save IPC.",
+      "subsequentTestGap": "Unknown/succeeded UI assertions replaced by store-only phase; negative failed text query removed.",
+      "coverageRestoredInThisSlice": "Submitted UUID scopes unknown alert and succeeded status; exact unknown phase rules out failed.",
+      "currentSource": {
+        "line": 463,
+        "helper": "expectReceipt at tests/development-runtime-activity.test.tsx:16"
+      },
+      "currentOutcome": "source reviewed; assertions restored; NOT RUN in this slice; parent final test run required"
+    }
+  ],
+  "currentSources": [
+    {
+      "path": "tests/development-delivery.test.tsx",
+      "bytes": 6090,
+      "sha256": "1b40fbc6c5bcdffe4aaf663c82e2688c37d149cfb9f64715137a30f866ad6b76"
+    },
+    {
+      "path": "tests/development-runtime-activity.test.tsx",
+      "bytes": 46486,
+      "sha256": "fc67ad5f60fc9641b40156639dfea15572a34e089d432ee44ed290359269d089"
+    },
+    {
+      "path": "src/components/development/DeliveryPanel.tsx",
+      "bytes": 24051,
+      "sha256": "6cbe8033f3619a804b6a672fb36f6a38cae4c7f0889e94ca360c4cb624900224"
+    },
+    {
+      "path": "src/components/development/DevelopmentRuntime.tsx",
+      "bytes": 33749,
+      "sha256": "12febfb4fec6e8fc99d4f105468f2741a710e432f2e757a0d44d4e2cfcf53b86"
+    },
+    {
+      "path": "src/stores/developmentRuntime.ts",
+      "bytes": 19039,
+      "sha256": "19b0844a4fa388d69ae3f4032060d7131d99846676e62812177d95f057afe082"
+    },
+    {
+      "path": "src/stores/developmentDelivery.ts",
+      "bytes": 7306,
+      "sha256": "edbf89a934988a2f9ee918ccae9d59944146a82a7326f4e9536da40c7a3ae210"
+    },
+    {
+      "path": "src-tauri/src/smoke/agents_round4.rs",
+      "bytes": 42300,
+      "sha256": "7314215a8e2777dbaad222a7eead61581612af7e0b04574bd12a530a5ada05dd"
+    }
+  ],
+  "currentSourceCoverage": [
+    {
+      "path": "tests/development-runtime-activity.test.tsx",
+      "helperLines": [
+        16,
+        24
+      ],
+      "coverage": "expectReceipt checks exact store phase and project/task, finds original target UUID in the rendered named receipts region, scopes to its own receipt, checks live alert/status role and rendered semantic phase. Used for all twelve former runtime failures."
+    },
+    {
+      "path": "tests/development-delivery.test.tsx",
+      "coverage": "Both former delivery failures assert visible unknown status and exact selectable UUID; case1 host unknown receipt + later succeeded/no-replay; case2 durable identity + task/account lock isolation."
+    },
+    {
+      "path": "src/components/development/DevelopmentRuntime.tsx",
+      "lines": [
+        [
+          45,
+          45
+        ],
+        [
+          56,
+          57
+        ],
+        [
+          105,
+          113
+        ],
+        [
+          224,
+          229
+        ]
+      ],
+      "coverage": "Receipts are owner-filtered; fresh remount catalogs not overwritten by old terminal receipt; contextual live status/alert, exact target in disclosure, original-operation confirmation/read retry."
+    },
+    {
+      "path": "src/components/development/DeliveryPanel.tsx",
+      "lines": [
+        [
+          52,
+          73
+        ],
+        [
+          114,
+          125
+        ],
+        [
+          173,
+          174
+        ]
+      ],
+      "coverage": "Host receipts merged with unresolved durable identities filtered by owner/project/task; reconcile original operation; status separated from technical UUID."
+    },
+    {
+      "path": "src/stores/developmentRuntime.ts",
+      "lines": [
+        [
+          79,
+          118
+        ],
+        [
+          120,
+          153
+        ],
+        [
+          165,
+          181
+        ]
+      ],
+      "coverage": "Terminal statuses require explicit exited/failed/cancelled with timestamp; nonterminal stop remains accepted/unknown; exact process/project/task binding; retry is read-only; catalog equality required; definite reject list unchanged."
+    },
+    {
+      "path": "src/stores/developmentDelivery.ts",
+      "lines": [
+        [
+          54,
+          82
+        ]
+      ],
+      "coverage": "Only identity persisted, terminal host receipts remove durable identities, exact before-dispatch rejection classification unchanged."
+    }
+  ],
+  "round4": {
+    "statusDoc": {
+      "path": "docs/02-产品与版本/当前版本/V1-实现状态.md",
+      "lines": [
+        15,
+        23
+      ],
+      "reportedFrontend": "12 targeted files,207/207; raw frontend log for this count not located in inspected round4 native roots or named temp artifacts; doc is reported historical evidence, not newly observed test output.",
+      "statusGap": "Top status still says final real WKWebView/assets/PTy evidence will be centrally registered; final5 and pending-final files already exist and can be linked by parent."
+    },
+    "native": {
+      "root": "<tmp>/dgos-round4-native-20261106-final5",
+      "resultFile": "<tmp>/dgos-round4-native-20261106-final5/round4-result.json",
+      "resultSha256": "639047ab79c2e9d8eafac84eae6e0aba2532cf3b015b3739f5488ffe10822e9e",
+      "passed": 442,
+      "failed": [],
+      "modelRequests": 0,
+      "fixture": false,
+      "commands": "<tmp>/dgos-round4-native-20261106-final5/round4-commands.json",
+      "source": "real Codex/Claude handshake only; production App/WKWebView/host/disk/PID/task/session/process receipts",
+      "limits": [
+        "No physical keyboard evidence: native keys are synthesized NSEvents",
+        "IME composition guard uses DOM events; no OS IME candidate-window proof",
+        "No new engine/model semantic acceptance: engines unchanged and no real model requests",
+        "Real phase does not manufacture pending approvals; separately labeled protocol fixture supplies that UI state",
+        "Computed text/focus contrast does not claim a full VoiceOver or platform accessibility-tree audit"
+      ],
+      "evidenceFiles": [
+        "<tmp>/dgos-round4-native-20261106-final5/round4-served-assets.json",
+        "<tmp>/dgos-round4-native-20261106-final5/round4-matrix.json",
+        "<tmp>/dgos-round4-native-20261106-final5/round4-ipc-and-native-keys.json",
+        "<tmp>/dgos-round4-native-20261106-final5/round4-codex-handshake.json",
+        "<tmp>/dgos-round4-native-20261106-final5/round4-claude-handshake.json",
+        "<tmp>/dgos-round4-native-20261106-final5/round4-codex-real-host-result.json",
+        "<tmp>/dgos-round4-native-20261106-final5/round4-claude-real-host-result.json",
+        "<tmp>/dgos-round4-native-20261106-final5/round4-pty-return-0.json",
+        "<tmp>/dgos-round4-native-20261106-final5/round4-pty-return-1.json",
+        "<tmp>/dgos-round4-native-20261106-final5/round4-pty-cleanup.json"
+      ]
+    },
+    "pending": {
+      "root": "<tmp>/dgos-round4-pending-20261106-final",
+      "resultFile": "<tmp>/dgos-round4-pending-20261106-final/round4-result.json",
+      "resultSha256": "3c71c9ec5619062b0c131057821c5cc8fb6b5b70f2bbac9c3a5f086e7ae86346",
+      "passed": 25,
+      "failed": [],
+      "fixture": true,
+      "modelRequests": 0,
+      "source": "SYNTHETIC Codex protocol subprocess; production App/WKWebView/IPC, not real model/native CLI proof",
+      "warning": "Synthetic protocol pending approval is separately labeled and not real-model/native approval evidence."
+    },
+    "assetAssociation": {
+      "native": "<tmp>/dgos-round4-native-20261106-final5/round4-served-assets.json",
+      "pending": "<tmp>/dgos-round4-pending-20261106-final/round4-served-assets.json",
+      "observed": "Both final runs record identical three startup resources; each SHA-256 matches its current dist asset bytes at report creation.",
+      "resources": [
+        {
+          "bytes": 352537,
+          "sha256": "186692d9897b17f6bef6154f5a6df2b51d853d46ea56fba6fffacc9471e33bf7",
+          "url": "tauri://localhost/assets/index-UkhUL8fN.js",
+          "currentDistSha256": "186692d9897b17f6bef6154f5a6df2b51d853d46ea56fba6fffacc9471e33bf7"
+        },
+        {
+          "bytes": 998,
+          "sha256": "a2389bf71884a41e70d8fd181d866a59a8ea129de814c43a86029a5faacdc08b",
+          "url": "tauri://localhost/assets/SurfaceContext-DJgSS4fB.css",
+          "currentDistSha256": "a2389bf71884a41e70d8fd181d866a59a8ea129de814c43a86029a5faacdc08b"
+        },
+        {
+          "bytes": 67609,
+          "sha256": "e0f3d7e735eb5ed0a5c321af34c0c12a9e739b330715b6aea00641a810c22c43",
+          "url": "tauri://localhost/assets/index-CbKy_SxR.css",
+          "currentDistSha256": "e0f3d7e735eb5ed0a5c321af34c0c12a9e739b330715b6aea00641a810c22c43"
+        }
+      ],
+      "boundary": "Three startup resources are not a complete lazy-loaded module graph. No final5 per-source manifest or source hash embedded in result found. Current source cannot be declared exactly native-tested from startup asset hashes. agents_round4.rs differs from archived MCP snapshot; exact compiled driver hash unknown."
+    },
+    "activeOwnerObservation": {
+      "procTool": "No running round4-native/pending job or owner in proc://; only round4-visual-fixture service active. Registered peers are current closure workers; no separate active round4 evidence writer identified.",
+      "osSnapshot": "artifact://79; no webview_smoke_agents/cargo-test process found by text inspection; ordinary target/debug/dgos PID71979 exists with dev Vite process. No process stopped; this snapshot does not prove absence of later writers."
+    }
+  },
+  "remainingChecks": [
+    {
+      "owner": "Main",
+      "command": "npx vitest run tests/development-delivery.test.tsx tests/development-runtime-activity.test.tsx",
+      "purpose": "Run once as part of planned combined/full frontend batch after all workers finish; cover all restored assertions, do not rerun original failure just to reconfirm."
+    },
+    {
+      "owner": "Main",
+      "command": "npm run build",
+      "purpose": "Final integrated TypeScript/build checks per parent plan, only after slices land."
+    },
+    {
+      "owner": "Main",
+      "command": "npx eslint tests/development-delivery.test.tsx tests/development-runtime-activity.test.tsx",
+      "purpose": "Optional scoped lint if test files are included in repository ESLint config; consolidate with parent final lint."
+    }
+  ],
+  "recommendedCombinedScenario": {
+    "layer": "Existing mocked IPC component tests + recorded native handshake/PTy; no new real models/external calls",
+    "steps": [
+      "Start original task with deferred response; duplicate submit stays one IPC; hide/unmount then resolve accepted receipt while history read fails; reopen shows original UUID and accepted status plus independent retry-read affordance.",
+      "Change editable command draft while delayed save is hidden; matching catalog read confirms original save without replay and does not overwrite newer draft/fresh remount catalog.",
+      "Stop original process; running/cleanup_pending/unknown acknowledgements do not claim terminal success; switch to second process; read-only confirmation resolves original UUID after cancelled terminal receipt without replacing second output.",
+      "Persist delivery original UUID before IPC; reject transport after unmount; reopen unknown status and UUID, reconcile original request exactly once; alternate task/account cannot inherit its block."
+    ]
+  },
+  "handoff": "Parent owns final verification, status/archive/docs update and final source snapshot. No tests/build/lint/formatter/smoke executed by this worker; no new documentation files, commits, staging or process termination."
+}

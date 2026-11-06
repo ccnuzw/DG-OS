@@ -156,7 +156,8 @@ async fn ready_service(app: &AppHandle, ck: &mut Checks, ev: &mut Vec<Value>, ta
 }
 
 async fn preview(app: &AppHandle, ck: &mut Checks, ev: &mut Vec<Value>, project: &str, id: &str, allowed: bool) {
-    let reply=ipc(app,"main","open_development_external",json!({"input":{"project_id":project,"process_id":id,"target":"preview"}})).await;
+    let snapshot=process(app,id).await;
+    let reply=ipc(app,"main","open_development_external",json!({"input":{"project_id":project,"task_id":snapshot["task_id"],"process_id":id,"target":"preview"}})).await;
     record(ck,ev,if allowed {"ready preview opens external browser via production IPC"} else {"non-ready preview denied by production IPC"},succeeded(&reply)==allowed,reply.describe());
 }
 
@@ -339,7 +340,7 @@ async fn restart(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>)
     for row in saved["engines"].as_array().unwrap() {
         select_row(app,ck,ev,row).await;
         if let Ok(editor)=std::env::var("DGOS_ACCEPTANCE_EDITOR") {
-            let reply=ipc(app,"main","open_development_external",json!({"input":{"project_id":row["project"],"process_id":null,"target":"editor","editor":editor}})).await;
+            let reply=ipc(app,"main","open_development_external",json!({"input":{"project_id":row["project"],"task_id":row["task"],"process_id":null,"target":"editor","editor":editor}})).await;
             record(ck,ev,"validated project opens in explicit external editor",succeeded(&reply),reply.describe());
         }
         let runs=value(&ipc(app,"main","list_development_runs",json!({"taskId":row["task"]})).await);
@@ -394,6 +395,381 @@ pub(super) async fn run(app: &AppHandle, fx: &Fx, mut ck: Checks, mut ev: Vec<Va
     finish(app,fx,ck,ev,"first");
 }
 
+// Focused production-dist/WKWebView/PTY acceptance. This phase never opens an Agent
+// session, executes a Provider request, or replaces a production invoke result.
+// DGOS_PROJECT_ACCEPTANCE_PHASE=terminal-activity DGOS_PROJECT_ACCEPTANCE_ROOT=/private/tmp/<fresh>
+// cargo test -p dgos --features webview-smoke --test webview_smoke_agents -- --nocapture
+const TERMINAL_ACTIVITY_PROBE: &str = r#"
+if(window.__terminalActivity)throw Error('probe already installed');
+// Tauri's invoke property is non-writable. Observe its real fetch transport instead.
+const original=window.fetch;
+const p={events:[],marks:[],original};window.__terminalActivity=p;
+window.fetch=function(url,options,...rest){
+ const command=String(url).split('/').filter(Boolean).at(-1);
+ const watched=['start_development_process','write_development_terminal','resize_development_terminal','stop_development_process','read_development_process'].includes(command);
+ const event=watched?{command,args:JSON.parse(options?.body||'{}'),at:performance.now(),phase:p.phase||'setup'}:null;
+ if(event)p.events.push(event);
+ return original.call(this,url,options,...rest).then(response=>{if(event){event.done=performance.now();event.ok=response.headers.get('Tauri-Response')==='ok';}return response;},error=>{if(event){event.done=performance.now();event.ok=false;}throw error;});
+};
+p.mark=name=>{p.phase=name;const mark={name,index:p.events.length,at:performance.now()};p.marks.push(mark);return mark;};
+p.send=(line,focus=true)=>{
+ const textarea=document.querySelector('[data-testid="dev-terminal"] .xterm-helper-textarea');
+ if(!textarea)throw Error('real xterm textarea missing');
+ if(focus)textarea.focus();
+ for(const key of line){const code=key.charCodeAt(0);textarea.dispatchEvent(new KeyboardEvent('keydown',{key,keyCode:0,which:0,bubbles:true}));textarea.dispatchEvent(new KeyboardEvent('keypress',{key,charCode:code,keyCode:code,which:code,bubbles:true}));textarea.dispatchEvent(new KeyboardEvent('keyup',{key,keyCode:0,which:0,bubbles:true}));}
+ textarea.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
+ textarea.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
+};
+return {ok:true};
+"#;
+
+async fn activity_input(app: &AppHandle, ck: &mut Checks, ev: &mut Vec<Value>, line: &str) -> bool {
+    let reply=ui(app,json!({"line":line}),r#"const p=window.__terminalActivity;const index=p.events.length;p.send(A.line);const writes=await until(()=>{const ws=p.events.slice(index).filter(e=>e.command==='write_development_terminal');return ws.map(e=>e.args.input.data).join('')===A.line+'\r'&&ws.every(e=>e.ok)&&ws;});return {ok:!!writes};"#).await;
+    record(ck,ev,"real xterm textarea keyboard input",ui_ok(&reply),reply.to_string());
+    ui_ok(&reply)
+}
+
+async fn activity_show(app: &AppHandle, ck: &mut Checks, ev: &mut Vec<Value>, id: &str, needle: &str) -> bool {
+    let selected=tab(app,"develop").await;
+    let reply=ui(app,json!({"id":id,"needle":needle}),r#"
+const row=await need('dev-process-history-'+A.id);row.click();
+// xterm pauses offscreen rendering; its accessibility rows can still describe
+// the pre-reflow viewport. Observe the actual accessible rows after revealing it.
+const mounted=await until(()=>tid('dev-terminal'));mounted?.scrollIntoView({block:'center'});
+const ticks=rows=>rows.flatMap(row=>{const m=(row.textContent||'').match(/^TICK:(\d+)\s*$/);return m?[Number(m[1])]:[];});
+let layers=null;
+const terminal=await until(()=>{const t=tid('dev-terminal');const tree=t?.querySelector('.xterm-accessibility-tree');const text=tree?.innerText;const observed=/^TICK:\d+\s*$/.test(A.needle)?text?.split('\n').some(line=>line.trim()===A.needle.trim()):text?.includes(A.needle);const accessible=[...(tree?.children||[])];const rendered=[...(t?.querySelectorAll('.xterm-rows > div')||[])];layers={accessible:ticks(accessible),rendered:ticks(rendered)};return observed&&accessible.length&&rendered.length&&JSON.stringify(layers.accessible)===JSON.stringify(layers.rendered)&&t;});
+return {ok:!!terminal,layers,focused:document.activeElement?.className,text:terminal?.querySelector('.xterm-accessibility-tree')?.innerText.slice(-1500)};
+"#).await;
+    record(ck,ev,"same PTY history renders after activation",ui_ok(&selected)&&ui_ok(&reply),reply.to_string());
+    ui_ok(&selected)&&ui_ok(&reply)
+}
+
+async fn activity_start_ui(app: &AppHandle, ck: &mut Checks, ev: &mut Vec<Value>, task: &str) -> String {
+    let before=value(&ipc(app,"main","list_development_processes",json!({"taskId":task})).await);
+    // A DOM click works even when WKWebView rendering is suspended. Establish
+    // the visible desktop scenario before requiring its first animation frame.
+    if let Some(window)=app.get_webview_window("main") {let _=window.show();let _=window.set_focus();}
+    let reply=ui(app,json!({}),r#"
+const foreground=await until(()=>document.visibilityState==='visible'&&document.hasFocus());if(!foreground)throw Error('terminal desktop window is not foreground');
+const toggle=await need('dev-toggle-runtime');if(toggle.getAttribute('aria-expanded')!=='true')toggle.click();
+const processes=await need('dev-runtime-processes');processes.click();
+const configuration=await need('dev-runtime-configuration');if(!configuration.open)configuration.querySelector('summary').click();
+const kind=await need('dev-process-kind');kind.value='terminal';kind.dispatchEvent(new Event('change',{bubbles:true}));
+await fill('dev-process-program','/bin/sh');const trust=await need('dev-process-trust');if(!trust.checked)trust.click();
+const start=await until(()=>{const b=tid('dev-process-start');return b&&!b.disabled&&b;});if(!start)throw Error('terminal start disabled');
+const p=window.__terminalActivity;const index=p.events.length;start.click();
+const request=await until(()=>p.events.slice(index).find(e=>e.command==='start_development_process'));if(!request)throw Error('real start invocation missing');
+const chain=[];let previous='';const inspect=()=>{const t=tid('dev-terminal');const r=t?.getBoundingClientRect();const state={ack:request.ok===true,selected:tid('dev-process-history-'+request.args.input.id)?.getAttribute('aria-pressed')==='true',mounted:!!t,textarea:!!t?.querySelector('.xterm-helper-textarea'),width:t?.clientWidth,height:t?.clientHeight,top:r?.top,bottom:r?.bottom,visibility:document.visibilityState,focus:document.hasFocus(),enabled:!start.disabled,sized:p.events.slice(index).some(e=>e.command==='resize_development_terminal'&&e.args.input.id===request.args.input.id&&e.ok)};const key=JSON.stringify(state);if(key!==previous){chain.push({at:performance.now(),...state});previous=key;}return state;};
+let frameAt=null;requestAnimationFrame(()=>{frameAt=performance.now();});
+const ready=await until(()=>{const s=inspect();return s.ack&&s.enabled&&s.selected&&s.sized&&s.textarea;});
+return {ok:!!ready,chain,frameAt,at:performance.now()};
+"#).await;
+    record(ck,ev,"start real /bin/sh PTY through production UI",ui_ok(&reply),reply.to_string());
+    let after=value(&ipc(app,"main","list_development_processes",json!({"taskId":task})).await);
+    let rows:Vec<&Value>=after.as_array().into_iter().flatten().filter(|row|!before.as_array().into_iter().flatten().any(|old|old["id"]==row["id"])).collect();
+    record(ck,ev,"one UI action creates exactly one terminal receipt",rows.len()==1&&rows[0]["kind"]=="terminal"&&rows[0]["program"]=="/bin/sh",after.to_string());
+    rows.first().and_then(|row|row["id"].as_str()).unwrap_or_default().to_owned()
+}
+
+async fn activity_mark(app: &AppHandle, name: &str) {
+    ui(app,json!({"name":name}),r#"return {ok:true,mark:window.__terminalActivity.mark(A.name)};"#).await;
+}
+
+async fn activity_window(app: &AppHandle, width: f64) -> bool {
+    app.get_webview_window("main").is_some_and(|window|window.set_size(tauri::LogicalSize::new(width,1000.0)).is_ok())
+}
+
+async fn activity_interval(app: &AppHandle, ck: &mut Checks, ev: &mut Vec<Value>, name: &str, quiet: bool) {
+    let reply=ui(app,json!({"name":name,"quiet":quiet}),r#"
+const p=window.__terminalActivity;const mark=p.marks.findLast(m=>m.name===A.name);if(!mark)throw Error('interval mark missing');
+const events=p.events.slice(mark.index);const resize=events.filter(e=>e.command==='resize_development_terminal');
+const writes=events.filter(e=>e.command==='write_development_terminal');const starts=events.filter(e=>e.command==='start_development_process');
+const valid=resize.every(e=>e.args.input.rows>=1&&e.args.input.rows<=1000&&e.args.input.cols>=1&&e.args.input.cols<=1000&&e.ok===true);
+return {ok:!starts.length&&!writes.length&&valid&&(A.quiet?!resize.length:resize.length>0),from:mark.at,to:performance.now(),resize,writes:writes.length,starts:starts.length,detailReads:events.filter(e=>e.command==='read_development_process').length};
+"#).await;
+    record(ck,ev,&format!("measured {name}: {} resize, no duplicate start/input",if quiet {"zero"} else {"valid real"}),ui_ok(&reply),reply.to_string());
+}
+
+// Dependency diagnostic only; intentionally reports tree mismatches as failures.
+// DGOS_TERMINAL_ACCESSIBILITY_ONLY=1 DGOS_PROJECT_ACCEPTANCE_PHASE=terminal-activity
+// DGOS_PROJECT_ACCEPTANCE_ROOT=/private/tmp/<fresh> cargo test --offline -p dgos \
+// --features webview-smoke --test webview_smoke_agents -- --nocapture
+async fn terminal_accessibility(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>, id: &str) {
+    let first_write = ipc(app,"main","write_development_terminal",json!({"input":{"id":id,"data":"stty -echo; PS1=''; printf '\\033c'; printf '%0148d\\nMARK\\nTICK:1\\n' 0\n"}})).await;
+    record(ck,ev,"focused accessibility writes once to real PTY",succeeded(&first_write),first_write.describe());
+    let first = wait_process(app,id,|v|v["output"].as_str().is_some_and(|s|s.contains("\r\nTICK:1\r\n"))).await;
+    let second_write = ipc(app,"main","write_development_terminal",json!({"input":{"id":id,"data":"printf 'TICK:2\\n'\n"}})).await;
+    record(ck,ev,"focused accessibility appends once to same real PTY",succeeded(&second_write),second_write.describe());
+    let second = wait_process(app,id,|v|v["output"].as_str().is_some_and(|s|s.contains("\r\nTICK:2\r\n"))).await;
+    let prefix = first["output"].as_str().zip(second["output"].as_str()).is_some_and(|(a,b)|b.starts_with(a));
+    record(ck,ev,"real host snapshots retain exact output prefix",prefix,format!("first={first}; second={second}"));
+    let root=Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("repository root");
+    let source=fs::read_to_string(root.join("node_modules/@xterm/xterm/lib/xterm.js"));
+    let css=fs::read_to_string(root.join("node_modules/@xterm/xterm/css/xterm.css"));
+    let package=fs::read_to_string(root.join("node_modules/@xterm/xterm/package.json"));
+    let probe=fs::read_to_string(root.join("tests/fixtures/terminal-accessibility-probe.js"));
+    match (source,css,package,probe) {
+        (Ok(source),Ok(css),Ok(package),Ok(probe)) => {
+            let installed:Value=serde_json::from_str(&package).unwrap_or(Value::Null);
+            let body=format!(r#"
+const style=document.createElement('style');style.textContent=A.css;document.head.appendChild(style);
+const previousTerminal=globalThis.Terminal;const previousProbe=globalThis.runTerminalAccessibilityProbe;
+try {{
+{source}
+;
+{probe}
+const result=await globalThis.runTerminalAccessibilityProbe({{Terminal:globalThis.Terminal,snapshots:A.snapshots}});
+const production=tid('dev-terminal');
+return {{ok:true,result,production:{{scope:'production DOM only; public instance and actual application write chunks are unavailable',renderer:[...(production?.querySelectorAll('.xterm-rows > div')||[])].map(e=>e.textContent),tree:[...(production?.querySelectorAll('.xterm-accessibility-tree > div')||[])].map(e=>e.textContent)}}}};
+}} finally {{style.remove();if(previousProbe===undefined)delete globalThis.runTerminalAccessibilityProbe;else globalThis.runTerminalAccessibilityProbe=previousProbe;if(previousTerminal===undefined)delete globalThis.Terminal;else globalThis.Terminal=previousTerminal;}}
+"#);
+            let reply=ui(app,json!({"css":css,"snapshots":[first["output"],second["output"]]}),&body).await;
+            write_json(fx.root.join("terminal-accessibility-layers.json"),&json!({"installed_version":installed["version"],"host":{"first":first,"second":second},"probe":reply}));
+            record(ck,ev,"focused WK dependency probe completes without dropping host bytes",ui_ok(&reply)&&reply["value"]["result"]["chunksEqualLatestSnapshot"]==true,"terminal-accessibility-layers.json");
+            record(ck,ev,"offscreen accessibility tree never invents duplicate output ticks",ui_ok(&reply)&&reply["value"]["result"]["treeIntroducedDuplicateTicks"]==false,"terminal-accessibility-layers.json; fixed-interval dependency observation, not a product fix or real screen-reader observation");
+        }
+        _ => record(ck,ev,"focused accessibility dependency sources are available",false,"npm-installed xterm UMD/CSS/package and tests/fixtures/terminal-accessibility-probe.js are required"),
+    }
+    let cleanup=ui(app,json!({}),r#"const p=window.__terminalActivity;if(p)window.fetch=p.original;return {ok:true};"#).await;
+    record(ck,ev,"focused accessibility restores invoke observation",ui_ok(&cleanup),cleanup.to_string());
+    stop(app,ck,ev,id).await;
+}
+
+pub(super) async fn terminal_activity(app: &AppHandle, fx: &Fx, mut ck: Checks, mut ev: Vec<Value>) {
+    let path=fx.root.join("terminal-activity");make_repo(&path);
+    if !ui_import_project(app,&mut ck,&mut ev,"Terminal activity",&path).await || !ui_new_task(app,&mut ck,&mut ev,"Terminal activity isolated PTY").await {
+        finish(app,fx,ck,ev,"terminal-activity");return;
+    }
+    if !ui_select_task(app,&mut ck,&mut ev,"Terminal activity isolated PTY").await { finish(app,fx,ck,ev,"terminal-activity");return; }
+    let selected=value(&ipc(app,"main","read_development_workspace",json!({})).await)["selection"].clone();
+    let task=selected["task_id"].as_str().unwrap_or_default();
+    let runtime=ui(app,json!({}),r#"const toggle=await need('dev-toggle-runtime');if(toggle.getAttribute('aria-expanded')!=='true')toggle.click();const processes=await need('dev-runtime-processes');processes.click();return {ok:!!(await until(()=>tid('dev-development-runtime')))};"#).await;
+    record(&mut ck,&mut ev,"open current runtime panel through production controls",ui_ok(&runtime),runtime.to_string());
+    let probe=ui(app,json!({}),TERMINAL_ACTIVITY_PROBE).await;
+    record(&mut ck,&mut ev,"count-only invoke probe preserves all real host calls",ui_ok(&probe),probe.to_string());
+    let id=activity_start_ui(app,&mut ck,&mut ev,task).await;
+    if id.is_empty() {finish(app,fx,ck,ev,"terminal-activity");return;}
+    if std::env::var_os("DGOS_TERMINAL_ACCESSIBILITY_ONLY").is_some() {
+        terminal_accessibility(app,fx,&mut ck,&mut ev,&id).await;
+        finish(app,fx,ck,ev,"terminal-activity");return;
+    }
+    let initial_size=ui(app,json!({}),r#"const e=window.__terminalActivity.events.find(e=>e.command==='resize_development_terminal'&&e.ok);return {ok:!!e,rows:e?.args.input.rows,cols:e?.args.input.cols};"#).await;
+    activity_input(app,&mut ck,&mut ev,"stty -echo; printf 'INITIAL_SIZE:'; stty size").await;
+    let initial_view=wait_process(app,&id,|v|v["output"].as_str().is_some_and(|s|s.contains(&format!("INITIAL_SIZE:{} {}",initial_size["value"]["rows"],initial_size["value"]["cols"])))).await;
+    record(&mut ck,&mut ev,"first fit reaches actual PTY stty dimensions",ui_ok(&initial_size)&&initial_view["output"].as_str().is_some_and(|s|s.contains(&format!("INITIAL_SIZE:{} {}",initial_size["value"]["rows"],initial_size["value"]["cols"]))),initial_size.to_string());
+    let nonce=token("ACTIVITY");
+    activity_input(app,&mut ck,&mut ev,&format!("stty -echo; PS1=''; printf '%s\\n' \"$$\" > shell.pid; printf 'once\\n' >> input.marker; printf '%s%s\\n' '{}' '{}'; (i=0; while [ ! -f output.stop ]; do i=$((i+1)); printf 'TICK:%s\\n' \"$i\"; sleep 1; done) &",&nonce[..nonce.len()/2],&nonce[nonce.len()/2..])).await;
+    let baseline=wait_process(app,&id,|view|view["output"].as_str().is_some_and(|s|s.contains(&nonce)&&s.contains("TICK:2"))).await;
+    let pid=fs::read_to_string(path.join("shell.pid")).unwrap_or_default();
+    record(&mut ck,&mut ev,"xterm input executes once in live owned shell",baseline["status"]=="running"&&pid.trim().parse::<i64>().is_ok_and(alive)&&fs::read_to_string(path.join("input.marker")).unwrap_or_default()=="once\n",format!("id={id}; pid={pid}; output={}",baseline["output"]));
+    activity_show(app,&mut ck,&mut ev,&id,&nonce).await;
+    activity_mark(app,"active-resize").await;
+    record(&mut ck,&mut ev,"native active window resize",activity_window(app,1200.0).await,"1200x1000");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    activity_interval(app,&mut ck,&mut ev,"active-resize",false).await;
+    activity_mark(app,"active-idle").await;
+    tokio::time::sleep(Duration::from_millis(4600)).await;
+    activity_interval(app,&mut ck,&mut ev,"active-idle",true).await;
+    for cycle in 0..3 {
+        let away=ui(app,json!({}),r#"const a=document.querySelector('a[href="/workbench"]');if(!a)throw Error('AI navigation absent');a.click();return {ok:!!(await until(()=>document.querySelector('[data-workspace-surface="cli-agent"]')?.hidden))};"#).await;
+        record(&mut ck,&mut ev,"switch away keeps terminal surface mounted and hidden",ui_ok(&away),away.to_string());
+        // Let an already-dispatched resize settle before measuring strictly hidden work.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let interval=format!("hidden-{cycle}");activity_mark(app,&interval).await;
+        record(&mut ck,&mut ev,"native hidden window resize",activity_window(app,[1000.0,1100.0,900.0][cycle]).await,cycle);
+        tokio::time::sleep(Duration::from_millis(4600)).await;
+        activity_interval(app,&mut ck,&mut ev,&interval,true).await;
+        let hidden=process(app,&id).await;
+        record(&mut ck,&mut ev,"hidden PTY continues producing host output with same identity",hidden["id"]==baseline["id"]&&hidden["started_at"]==baseline["started_at"]&&hidden["status"]=="running"&&hidden["output"].as_str().map_or(0,str::len)>baseline["output"].as_str().map_or(0,str::len)&&fs::read_to_string(path.join("shell.pid")).unwrap_or_default()==pid,format!("id={}; bytes={}; pid={pid}",hidden["id"],hidden["output"].as_str().map_or(0,str::len)));
+        let rejected=ui(app,json!({}),r#"const p=window.__terminalActivity;const index=p.events.length;p.send('printf forbidden >> forbidden.marker',false);await new Promise(r=>setTimeout(r,100));return {ok:!p.events.slice(index).some(e=>e.command==='write_development_terminal')};"#).await;
+        record(&mut ck,&mut ev,"hidden terminal rejects adversarial textarea input",ui_ok(&rejected)&&!path.join("forbidden.marker").exists(),rejected.to_string());
+        let back=ui(app,json!({}),r#"const tab=document.querySelector('[data-workspace-tab="cli-agent"]');if(!tab)throw Error('Agent tab absent');tab.click();return {ok:!!(await until(()=>!document.querySelector('[data-workspace-surface="cli-agent"]')?.hidden))};"#).await;
+        record(&mut ck,&mut ev,"restore terminal surface through workspace tab",ui_ok(&back),back.to_string());
+        let latest=hidden["output"].as_str().unwrap_or_default().lines().rev().find(|line|line.starts_with("TICK:")).unwrap_or("TICK:").to_owned();
+        activity_show(app,&mut ck,&mut ev,&id,&latest).await;
+        let order=ui(app,json!({}),r#"const screen=tid('dev-terminal')?.querySelector('.xterm-accessibility-tree');const text=screen?.innerText||'';const ticks=[...text.matchAll(/^TICK:(\d+)\s*$/gm)].map(m=>Number(m[1]));return {ok:!!screen&&ticks.length>=2&&ticks.every((n,i)=>!i||n===ticks[i-1]+1),ticks};"#).await;
+        record(&mut ck,&mut ev,"restored xterm exposes ordered nonduplicated output ticks",ui_ok(&order),order.to_string());
+        if cycle==2 {
+            ui(app,json!({}),r#"tid('dev-terminal')?.scrollIntoView({block:'center'});return {ok:true};"#).await;
+            if let Some(window)=app.get_webview_window("main") {let _=window.set_focus();}
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let capture=Command::new("/usr/sbin/screencapture").arg("-x").arg(fx.root.join("terminal-activity-restored.png")).status();
+            record(&mut ck,&mut ev,"capture restored real WKWebView terminal",capture.is_ok_and(|s|s.success()),"terminal-activity-restored.png");
+        }
+    }
+    let dimensions=ui(app,json!({"id":id}),r#"
+const p=window.__terminalActivity;const mark=p.marks.findLast(m=>m.name==='hidden-2');
+const e=await until(()=>p.events.slice(mark.index).filter(e=>e.command==='resize_development_terminal'&&e.args.input.id===A.id&&e.ok).at(-1));
+const t=tid('dev-terminal');return {ok:!!e&&e.args.input.rows>0&&e.args.input.cols>0,request:e?.args.input,width:t?.clientWidth,height:t?.clientHeight};
+"#).await;
+    let rows=dimensions["value"]["request"]["rows"].as_u64().unwrap_or(0);let cols=dimensions["value"]["request"]["cols"].as_u64().unwrap_or(0);
+    activity_input(app,&mut ck,&mut ev,"printf 'SIZE:'; stty size").await;
+    let sized=wait_process(app,&id,|v|v["output"].as_str().is_some_and(|s|s.contains(&format!("SIZE:{rows} {cols}")))).await;
+    record(&mut ck,&mut ev,"restored fit reaches actual PTY stty dimensions",ui_ok(&dimensions)&&rows>0&&cols>0&&sized["output"].as_str().is_some_and(|s|s.contains(&format!("SIZE:{rows} {cols}"))),dimensions.to_string());
+    let covered=ui(app,json!({}),r#"document.querySelector('[data-workspace-tab="cli-agent"]').focus();window.dispatchEvent(new KeyboardEvent('keydown',{key:'k',metaKey:true,bubbles:true}));return {ok:!!(await until(()=>document.querySelector('.workspace-command')))&&!!tid('dev-terminal')&&!document.querySelector('[data-workspace-surface="cli-agent"]').hidden};"#).await;
+    record(&mut ck,&mut ev,"command overlay covers still-visible terminal",ui_ok(&covered),covered.to_string());
+    tokio::time::sleep(Duration::from_millis(250)).await;activity_mark(app,"covered").await;
+    let blocked=ui(app,json!({}),r#"window.__terminalActivity.send("printf forbidden >> forbidden.marker",false);return {ok:true};"#).await;
+    record(&mut ck,&mut ev,"covered terminal receives adversarial textarea keys",ui_ok(&blocked),blocked.to_string());
+    record(&mut ck,&mut ev,"native covered window resize",activity_window(app,1400.0).await,"1400x1000");
+    tokio::time::sleep(Duration::from_millis(3300)).await;
+    activity_interval(app,&mut ck,&mut ev,"covered",false).await;
+    record(&mut ck,&mut ev,"covered terminal rejects queued shell input",!path.join("forbidden.marker").exists(),"no forbidden.marker");
+    let uncovered=ui(app,json!({}),r#"window.dispatchEvent(new KeyboardEvent('keydown',{key:'k',metaKey:true,bubbles:true}));return {ok:!!(await until(()=>!document.querySelector('.workspace-command')))&&!document.activeElement?.classList.contains('xterm-helper-textarea')};"#).await;
+    record(&mut ck,&mut ev,"overlay restore never focuses terminal unsolicited",ui_ok(&uncovered),uncovered.to_string());
+    activity_input(app,&mut ck,&mut ev,"printf 'COVER_SIZE:'; stty size").await;
+    let cover_size=ui(app,json!({"id":id}),r#"const p=window.__terminalActivity;const m=p.marks.findLast(m=>m.name==='covered');const e=p.events.slice(m.index).filter(e=>e.command==='resize_development_terminal'&&e.args.input.id===A.id&&e.ok).at(-1);return {ok:!!e,request:e?.args.input};"#).await;
+    let cover_rows=cover_size["value"]["request"]["rows"].as_u64().unwrap_or(0);let cover_cols=cover_size["value"]["request"]["cols"].as_u64().unwrap_or(0);
+    let cover_view=wait_process(app,&id,|v|v["output"].as_str().is_some_and(|s|s.contains(&format!("COVER_SIZE:{cover_rows} {cover_cols}")))).await;
+    record(&mut ck,&mut ev,"covered visible fit reaches actual PTY dimensions",ui_ok(&cover_size)&&cover_view["output"].as_str().is_some_and(|s|s.contains(&format!("COVER_SIZE:{cover_rows} {cover_cols}"))),cover_size.to_string());
+    let zero=ui(app,json!({}),r#"const t=await need('dev-terminal');window.__terminalActivity.originalStyle=t.getAttribute('style');t.style.setProperty('height','0px','important');t.style.setProperty('min-height','0px','important');t.style.setProperty('padding','0px','important');t.style.setProperty('border','0px','important');return {ok:true};"#).await;
+    record(&mut ck,&mut ev,"collapse real terminal to zero height",ui_ok(&zero),zero.to_string());
+    tokio::time::sleep(Duration::from_millis(250)).await;activity_mark(app,"zero-height").await;
+    activity_window(app,1500.0).await;tokio::time::sleep(Duration::from_millis(1800)).await;
+    activity_interval(app,&mut ck,&mut ev,"zero-height",true).await;
+    let uncollapse=ui(app,json!({}),r#"const t=await need('dev-terminal');const s=window.__terminalActivity.originalStyle;if(s===null)t.removeAttribute('style');else t.setAttribute('style',s);return {ok:true};"#).await;
+    record(&mut ck,&mut ev,"restore terminal container geometry",ui_ok(&uncollapse),uncollapse.to_string());
+    let snapshot=ui(app,json!({}),r#"return {ok:true,events:window.__terminalActivity.events,marks:window.__terminalActivity.marks};"#).await;
+    write_json(fx.root.join("terminal-activity-ipc-before-reopen.json"),&snapshot);
+    let files=tab(app,"files").await;
+    record(&mut ck,&mut ev,"internal files tab unmounts terminal",ui_ok(&files)&&ui_ok(&ui(app,json!({}),r#"return {ok:!tid('dev-terminal')};"#).await),files.to_string());
+    activity_mark(app,"internal-files").await;tokio::time::sleep(Duration::from_millis(1800)).await;
+    activity_interval(app,&mut ck,&mut ev,"internal-files",true).await;
+    activity_show(app,&mut ck,&mut ev,&id,"TICK:").await;
+    activity_input(app,&mut ck,&mut ev,"touch output.stop; wait; printf 'NORMAL_EXIT_HISTORY\\n'; exit 7").await;
+    let exited=terminal(app,&id).await;
+    record(&mut ck,&mut ev,"normal shell exit retains actual output and exit code",exited["exit_code"]==7&&exited["output"].as_str().is_some_and(|s|s.contains("NORMAL_EXIT_HISTORY"))&&fs::read_to_string(path.join("input.marker")).unwrap_or_default()=="once\n",format!("id={id}; exit={}",exited["exit_code"]));
+    activity_show(app,&mut ck,&mut ev,&id,"NORMAL_EXIT_HISTORY").await;
+    let stopped_id=activity_start_ui(app,&mut ck,&mut ev,task).await;
+    if !stopped_id.is_empty() {
+        activity_input(app,&mut ck,&mut ev,"stty -echo; printf 'STOP_HISTORY\\n'").await;
+        wait_process(app,&stopped_id,|v|v["output"].as_str().is_some_and(|s|s.contains("STOP_HISTORY"))).await;
+        let stopped=ui(app,json!({}),r#"const b=await need('dev-process-stop');if(b.disabled)throw Error('stop disabled');b.click();return {ok:!!(await until(()=>tid('dev-process-stop')?.disabled))};"#).await;
+        let stopped_view=terminal(app,&stopped_id).await;
+        record(&mut ck,&mut ev,"explicit UI stop keeps terminal history",ui_ok(&stopped)&&stopped_view["status"]=="cancelled"&&stopped_view["output"].as_str().is_some_and(|s|s.contains("STOP_HISTORY")),stopped.to_string());
+    }
+    let capacity_id=activity_start_ui(app,&mut ck,&mut ev,task).await;
+    if !capacity_id.is_empty() {
+        activity_input(app,&mut ck,&mut ev,"stty -echo; sleep 2; printf 'CAPTURE_PREFIX\\n'; node -e 'let s=\"\";for(let i=0;i<90000;i++)s+=\"CAPACITY:\"+String(i).padStart(8,\"0\")+\"\\n\";process.stdout.write(s)'; touch capacity.done; exit 0").await;
+        let hidden_capacity=tab(app,"files").await;
+        record(&mut ck,&mut ev,"large PTY output starts after files unmounts terminal",ui_ok(&hidden_capacity)&&ui_ok(&ui(app,json!({}),r#"return {ok:!tid('dev-terminal')};"#).await),hidden_capacity.to_string());
+        let bounded=terminal(app,&capacity_id).await;
+        let bytes=bounded["output"].as_str().map_or(0,str::len);
+        record(&mut ck,&mut ev,"actual PTY output exceeds and preserves 1MiB capture prefix",bounded["exit_code"]==0&&bounded["truncated"]==true&&bytes<=1024*1024&&bytes>=1024*1024-256&&bounded["output"].as_str().is_some_and(|s|s.contains("CAPTURE_PREFIX")&&!s.contains("CAPACITY:00089999"))&&path.join("capacity.done").exists(),format!("id={capacity_id}; bytes={bytes}; truncated={}; exit={}",bounded["truncated"],bounded["exit_code"]));
+        activity_show(app,&mut ck,&mut ev,&capacity_id,"CAPACITY:").await;
+        let sequence:Vec<u64>=bounded["output"].as_str().unwrap_or_default().lines().filter_map(|line|line.strip_prefix("CAPACITY:").and_then(|n|n.trim().parse().ok())).collect();
+        record(&mut ck,&mut ev,"hidden capacity output retains original contiguous prefix order",sequence.first()==Some(&0)&&sequence.len()>1000&&sequence.windows(2).all(|pair|pair[1]==pair[0]+1),format!("lines={}; first={:?}; last={:?}",sequence.len(),sequence.first(),sequence.last()));
+    }
+    // Surface close/reopen deliberately remains a real UI action: preserve the known
+    // module-reopen timeout risk rather than route around it with a host-only assertion.
+    let reopen=ui(app,json!({}),r#"
+const t=document.querySelector('[data-workspace-tab="cli-agent"]');if(!t)throw Error('terminal workspace tab missing');t.parentElement.querySelector('.workspace-tab-close').click();
+if(!await until(()=>!document.querySelector('[data-workspace-tab="cli-agent"]')))throw Error('workspace close did not complete');
+const command=$$('.workspace-tab-actions button').find(b=>b.querySelector('svg')&&/命令|command/i.test(b.getAttribute('aria-label')||''));
+if(command)command.click();else window.dispatchEvent(new KeyboardEvent('keydown',{key:'k',metaKey:true,bubbles:true}));
+const target=await until(()=>$$('.workspace-command-results button').find(b=>/Agent|智能体/.test(txt(b))));if(!target)throw Error('reopen Agent command missing');target.click();
+return {ok:!!(await until(()=>tid('dev-project-list')))};
+"#).await;
+    record(&mut ck,&mut ev,"workspace close and explicit reopen (known timeout boundary)",ui_ok(&reopen),reopen.to_string());
+    if ui_ok(&reopen) {activity_show(app,&mut ck,&mut ev,&id,"NORMAL_EXIT_HISTORY").await;}
+    let history=value(&ipc(app,"main","list_development_processes",json!({"taskId":task})).await);
+    record(&mut ck,&mut ev,"reopen retains all receipts without restarting PTYs",history.as_array().is_some_and(|ps|ps.len()==3&&ps.iter().all(|p|p["finished_at"].is_number())&&ps.iter().any(|p|p["id"]==id)),history.to_string());
+    let counts=ui(app,json!({}),r#"const p=window.__terminalActivity;const starts=p.events.filter(e=>e.command==='start_development_process');return {ok:starts.length===3&&new Set(starts.map(e=>e.args.input.id)).size===3,starts:starts.map(e=>({id:e.args.input.id,at:e.at,ok:e.ok}))};"#).await;
+    record(&mut ck,&mut ev,"all switches and reopen create no additional starts",ui_ok(&counts),counts.to_string());
+    let trace=ui(app,json!({}),r#"const p=window.__terminalActivity;const trace={events:p.events,marks:p.marks};window.fetch=p.original;return {ok:true,trace};"#).await;
+    write_json(fx.root.join("terminal-activity-ipc.json"),&trace);
+    record(&mut ck,&mut ev,"persist real invocation timing and measurement intervals",ui_ok(&trace),"terminal-activity-ipc.json");
+    finish(app,fx,ck,ev,"terminal-activity");
+}
+
+// No model account or CLI is involved: these are production IPC invocations from WKWebView.
+pub(super) async fn worktree_runtime(app: &AppHandle, fx: &Fx, mut ck: Checks, mut ev: Vec<Value>) {
+    let source=fx.root.join("runtime-original");make_repo(&source);
+    fs::write(source.join("package.json"),r#"{"scripts":{"original-only":"node -e \"throw Error('wrong original workspace')\""}}"#).unwrap();
+    assert!(git(&source,&["add","."]));
+    assert!(git(&source,&["-c","user.name=dgos","-c","user.email=dgos@example.invalid","commit","-q","-m","original command fixture"]));
+    if !ui_import_project(app,&mut ck,&mut ev,"Runtime worktree acceptance",&source).await || !ui_new_task(app,&mut ck,&mut ev,"Run commands in isolated task worktree").await {
+        finish(app,fx,ck,ev,"worktree-runtime");return;
+    }
+    ui_select_task(app,&mut ck,&mut ev,"Run commands in isolated task worktree").await;
+    let mut selected=Value::Null;
+    for _ in 0..100 {
+        selected=value(&ipc(app,"main","read_development_workspace",json!({})).await)["selection"].clone();
+        if selected["task_id"].is_string(){break;}
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    record(&mut ck,&mut ev,"task selection committed before runtime IPC",selected["task_id"].is_string(),selected.to_string());
+    let task=selected["task_id"].as_str().unwrap_or_default();let project=selected["project_id"].as_str().unwrap_or_default();
+    let original=value(&ipc(app,"main","read_development_commands",json!({"taskId":task})).await);
+    record(&mut ck,&mut ev,"original task command catalog reads original package",original["discovered"].as_array().is_some_and(|rows|rows.iter().any(|r|r["id"]=="package:original-only")),original.to_string());
+    let head=Command::new("git").arg("-C").arg(&source).args(["rev-parse","HEAD"]).output().unwrap();
+    let head=String::from_utf8(head.stdout).unwrap();let target=fx.root.join("runtime-worktree");
+    let created=ipc(app,"main","save_development_workspaces",json!({"input":{"request_id":uuid::Uuid::new_v4().to_string(),"task_id":task,"action":"create","path":target,"branch":"task/runtime-acceptance","base_commit":head.trim()}})).await;
+    record(&mut ck,&mut ev,"production IPC creates and binds actual Git worktree",succeeded(&created)&&target.join(".git").is_file(),created.describe());
+    if !succeeded(&created) {finish(app,fx,ck,ev,"worktree-runtime");return;}
+    fs::write(target.join("package.json"),r#"{"scripts":{"worktree-only":"node -e \"require('fs').writeFileSync('npm-executed.marker',process.cwd());console.log('WORKTREE_NPM_EXECUTED')\""}}"#).unwrap();
+    fs::write(target.join("Cargo.toml"),"[package]\nname = \"dgos-runtime-worktree-fixture\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[workspace]\n").unwrap();
+    fs::create_dir(target.join("src")).unwrap();
+    fs::write(target.join("src/lib.rs"),"#[test]\nfn actual_worktree_execution() { let path = std::env::current_dir().unwrap(); assert!(path.ends_with(\"runtime-worktree\")); std::fs::write(\"cargo-executed.marker\", path.to_str().unwrap()).unwrap(); println!(\"WORKTREE_CARGO_EXECUTED\"); }\n").unwrap();
+    let catalog=value(&ipc(app,"main","read_development_commands",json!({"taskId":task})).await);
+    let discovered=catalog["discovered"].as_array();
+    record(&mut ck,&mut ev,"task discovery uses selected worktree npm and Cargo manifests",discovered.is_some_and(|rows|rows.iter().any(|r|r["id"]=="package:worktree-only")&&rows.iter().any(|r|r["id"]=="cargo:test")&&!rows.iter().any(|r|r["id"]=="package:original-only")),catalog.to_string());
+    for id in ["package:worktree-only","cargo:test"] {
+        if let Some(command)=discovered.and_then(|rows|rows.iter().find(|r|r["id"]==id)) {
+            let mut request=input(task,"command",command["program"].as_str().unwrap(),command["args"].as_array().unwrap().iter().map(|a|a.as_str().unwrap().to_owned()).collect());
+            if id=="cargo:test" {request["args"]=json!(["test","--offline","--","--nocapture"]);}
+            start(app,&mut ck,&mut ev,&request).await;
+            let result=terminal(app,request["id"].as_str().unwrap()).await;
+            let marker=if id=="cargo:test" {"cargo-executed.marker"}else{"npm-executed.marker"};
+            record(&mut ck,&mut ev,&format!("{id} executes real process in actual task worktree"),result["exit_code"]==0&&result["cwd"]==""&&fs::read_to_string(target.join(marker)).unwrap_or_default()==target.to_string_lossy()&&!source.join(marker).exists(),result.to_string());
+        } else {record(&mut ck,&mut ev,&format!("{id} available for actual execution"),false,catalog.to_string());}
+    }
+    let capture=fx.root.join("editor-opened.txt");let script=fx.root.join("CaptureEditor.applescript");let editor=fx.root.join("CaptureEditor.app");
+    fs::write(&script,format!(r#"on open openedItems
+    set destination to POSIX file "{}"
+    set stream to open for access destination with write permission
+    repeat with openedItem in openedItems
+        write ((POSIX path of openedItem) & linefeed) to stream starting at eof
+    end repeat
+    close access stream
+end open
+"#,capture.display())).unwrap();
+    let compiled=Command::new("/usr/bin/osacompile").arg("-o").arg(&editor).arg(&script).output();
+    record(&mut ck,&mut ev,"compile harmless local editor capture application",compiled.as_ref().is_ok_and(|o|o.status.success()),format!("{compiled:?}"));
+    let open_args=json!({"input":{"project_id":project,"task_id":task,"target":"editor","editor":editor}});
+    let opened=ipc(app,"main","open_development_external",open_args.clone()).await;
+    for _ in 0..100 {if fs::read_to_string(&capture).is_ok_and(|text|text.ends_with('\n')){break;}tokio::time::sleep(Duration::from_millis(100)).await;}
+    let captured=fs::read_to_string(&capture).unwrap_or_default();
+    let actual=captured.lines().next().and_then(|p|fs::canonicalize(p).ok());
+    record(&mut ck,&mut ev,"real macOS editor open event receives task worktree rather than original",succeeded(&opened)&&actual.as_ref()==Some(&target),format!("{}; captured={captured:?}",opened.describe()));
+    let mismatched=ipc(app,"main","open_development_external",json!({"input":{"project_id":"unrelated-project","task_id":task,"target":"editor","editor":editor}})).await;
+    record(&mut ck,&mut ev,"real opener IPC rejects mismatched task project",!succeeded(&mismatched)&&mismatched.describe().contains("task_not_found"),mismatched.describe());
+    // A real running process holds Alice's lease until sign-out revokes it.
+    let running=input(task,"command","/bin/sh",vec!["-c".into(),"printf 'LEASE_READY\\n'; sleep 120".into()]);
+    start(app,&mut ck,&mut ev,&running).await;
+    let running_id=running["id"].as_str().unwrap();
+    let ready=wait_process(app,running_id,|v|v["output"].as_str().is_some_and(|s|s.contains("LEASE_READY"))).await;
+    record(&mut ck,&mut ev,"actual process is running before lease revocation",ready["status"]=="running",ready.to_string());
+    ui_sign_out(app,&mut ck,&mut ev,ALICE.0).await;
+    for (command,args) in [("open_development_external",open_args.clone()),("read_development_commands",json!({"taskId":task})),("start_development_process",json!({"input":input(task,"command","/bin/sh",vec!["-c".into(),"touch forbidden.marker".into()])}))] {
+        let denied=ipc(app,"main",command,args).await;
+        record(&mut ck,&mut ev,&format!("signed-out real IPC rejects {command}"),!succeeded(&denied),denied.describe());
+    }
+    ui_sign_in(app,&mut ck,&mut ev,BOB).await;goto(app,"main","/tasks/agent").await;
+    for (command,args) in [("open_development_external",open_args.clone()),("read_development_commands",json!({"taskId":task})),("save_development_commands",json!({"input":{"task_id":task,"commands":[]}})),("read_development_process",json!({"id":running_id}))] {
+        let denied=ipc(app,"main",command,args).await;
+        record(&mut ck,&mut ev,&format!("other owner real IPC rejects {command}"),!succeeded(&denied),denied.describe());
+    }
+    record(&mut ck,&mut ev,"denied IPC creates no editor events or command markers",fs::read_to_string(&capture).unwrap_or_default()==captured&&!target.join("forbidden.marker").exists()&&!source.join("forbidden.marker").exists(),"capture unchanged; forbidden.marker absent");
+    ui_sign_out(app,&mut ck,&mut ev,BOB.0).await;ui_sign_in(app,&mut ck,&mut ev,ALICE).await;
+    let revoked=process(app,running_id).await;
+    record(&mut ck,&mut ev,"revoked account lease terminates actual running command",revoked["status"]=="cancelled"&&revoked["finished_at"].is_number(),revoked.to_string());
+    // LaunchServices has finished the open event; remove only the temporary capture app/source.
+    if editor.exists(){fs::remove_dir_all(&editor).unwrap();}fs::remove_file(&script).unwrap();
+    finish(app,fx,ck,ev,"worktree-runtime");
+}
+
 fn finish(app: &AppHandle, fx: &Fx, ck: Checks, ev: Vec<Value>, phase: &str) {
     write_json(fx.root.join(format!("stage3-result-{phase}.json")),&json!({"passed":ck.passed,"failed":ck.failed,"checks":ev}));
     println!("STAGE3 {phase}: {} passed, {} failed; {}",ck.passed,ck.failed.len(),fx.root.display());
@@ -404,7 +780,7 @@ fn finish(app: &AppHandle, fx: &Fx, ck: Checks, ev: Vec<Value>, phase: &str) {
 /// Evidence is persisted before the app event loop returns, independently of restart.
 pub(super) fn exit_evidence(fx: &Fx, clean: bool) -> bool {
     let phase=std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").unwrap_or_default();
-    let suffix=if phase=="stage3-first" {"first"} else if phase=="stage3-restart" {"restart"} else {return clean;};
+    let suffix=if phase=="stage3-first" {"first"} else if phase=="stage3-restart" {"restart"} else if phase=="terminal-activity" {"terminal-activity"} else if phase=="worktree-runtime" {"worktree-runtime"} else {return clean;};
     let result_path=fx.root.join(format!("stage3-result-{suffix}.json"));
     let Ok(bytes)=fs::read(&result_path) else {return false;};
     let mut result:Value=serde_json::from_slice(&bytes).unwrap();

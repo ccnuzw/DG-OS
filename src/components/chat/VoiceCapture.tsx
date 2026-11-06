@@ -108,7 +108,7 @@ export default function VoiceCapture({ sessionId, disabled, onBusy }: { sessionI
   const locked = phase !== 'idle';
   return <section aria-label={t('voice.title')} className="grid min-w-0 gap-2">
     <Button size="xs" variant="ghost" disabled={disabled || locked} aria-expanded={expanded} onClick={() => { if (expanded) setExpanded(false); else void load(); }}>{t('voice.title')}</Button>
-    {expanded && <><p className="m-0 text-xs text-muted-foreground">{t('voice.help')}</p>
+    {expanded && <><p className="m-0 text-xs text-ink-secondary">{t('voice.help')}</p>
       <Select label={t('voice.provider')} placeholder={t('voice.chooseProvider')} value={providerId} onChange={id => void selectProvider(id)} disabled={disabled || locked} options={providers.map(provider => ({ value: provider.id, label: `${provider.name} · ${new URL(provider.base_url).host}` }))} />
       <Select label={t('voice.model')} placeholder={t('voice.chooseModel')} value={modelId} onChange={setModelId} disabled={disabled || locked} options={models.map(model => ({ value: model.model_id, label: model.model_name }))} />
       <div className="flex flex-wrap gap-2">{phase === 'idle' && <Button size="sm" disabled={disabled || !providerId || !modelId} onClick={() => void record()}>{t('voice.record')}</Button>}
@@ -118,6 +118,6 @@ export default function VoiceCapture({ sessionId, disabled, onBusy }: { sessionI
       {phase === 'permission' || phase === 'recording' || phase === 'transcribing' ? <p role="status" className="m-0 text-xs">{t(`voice.${phase}`)}</p> : null}
       {url && <audio controls src={url} className="max-w-full" />}
     </>}
-    {error && <p role="alert" className="m-0 text-xs text-error-text">{error}</p>}
+    {error && <p role="alert" className="m-0 text-xs text-status-error-text">{error}</p>}
   </section>;
 }

@@ -70,6 +70,7 @@ pub struct OwnedSessionView {
 struct Active {
     backend: Backend,
     lease: CancellationToken,
+    generation: Uuid,
 }
 #[derive(Clone)]
 pub struct AgentManager {
@@ -88,6 +89,8 @@ pub(crate) struct Inner {
     retained: Mutex<Vec<ActivityPermit>>,
     pub(crate) watchers: Mutex<Vec<tokio::task::JoinHandle<bool>>>,
     pub(crate) host: Mutex<HashMap<String, Arc<crate::runtime::HostProcess>>>,
+    #[cfg(test)]
+    pub(crate) fail_takeover_close: std::sync::atomic::AtomicBool,
     pub(crate) capabilities: std::sync::RwLock<Option<crate::capabilities::ProjectCapabilities>>,
 }
 impl AgentManager {
@@ -109,6 +112,8 @@ impl AgentManager {
                 retained: Mutex::new(Vec::new()),
                 watchers: Mutex::new(Vec::new()),
                 host: Mutex::new(HashMap::new()),
+                #[cfg(test)]
+                fail_takeover_close: std::sync::atomic::AtomicBool::new(false),
                 capabilities: std::sync::RwLock::new(None),
             }),
         }
@@ -167,15 +172,17 @@ impl AgentManager {
         task_id: Option<String>,
         lease: CancellationToken,
     ) -> Result<OwnedSessionView, String> {
-        self.open_with_capabilities(owner, engine, id, options, task_id, lease, None).await
+        self.open_with_capabilities(owner, engine, id, crate::capabilities::SessionCapabilities { options, revision: None }, task_id, lease).await
     }
     pub async fn open_with_capabilities(
-        &self, owner: &str, engine: Engine, id: String, mut options: SessionOptions,
-        task_id: Option<String>, lease: CancellationToken, capability_revision: Option<i64>,
+        &self, owner: &str, engine: Engine, id: String, capabilities: crate::capabilities::SessionCapabilities,
+        task_id: Option<String>, lease: CancellationToken,
     ) -> Result<OwnedSessionView, String> {
+        let crate::capabilities::SessionCapabilities { mut options, revision: capability_revision } = capabilities;
         Uuid::parse_str(&id).map_err(|_| "invalid_request_id")?;
         self.ready().await?;
         let _admission = self.inner.admission.lock().await;
+        self.validate_handoff_target(owner, &id).await?;
         if self.inner.stop.is_cancelled() || lease.is_cancelled() {
             return Err("cancelled".into());
         }
@@ -196,8 +203,7 @@ impl AgentManager {
         }
         let task_id = match &existing { Some(r) => r.task_id.clone(), None => task_id };
         let project = if let Some(task_id) = &task_id {
-            let task = self.inner.repository.task(owner, task_id).await?;
-            let project = self.inner.repository.project(owner, &task.project_id).await?;
+            let project = self.ensure_task_workspace(owner, task_id).await?;
             if project.archived { return Err("project_archived".into()); }
             crate::projects::validate_directory(&project).await?;
             Some(project)
@@ -263,7 +269,7 @@ impl AgentManager {
         let service = self.capabilities();
         let (capability_snapshot, launch) = match (&service, &project, &task_id) {
             (Some(service), Some(project), Some(task)) => {
-                let prepared = service.prepare(owner, &id, task, project, engine, &options, capability_revision, existing.is_some(), lease.clone()).await?;
+                let prepared = service.prepare(crate::capabilities::CapabilityPreparation { owner, session: &id, task, project, engine, options: &options, revision: capability_revision, restoring: existing.is_some(), lease: lease.clone() }).await?;
                 (Some(prepared.0), prepared.1)
             }
             _ if capability_revision.is_some_and(|r| r > 0) => return Err("capability_unavailable".into()),
@@ -334,7 +340,7 @@ impl AgentManager {
             .active
             .lock()
             .await
-            .insert(id.clone(), Active { backend, lease });
+            .insert(id.clone(), Active { backend, lease, generation: Uuid::new_v4() });
         Ok(OwnedSessionView { id, engine, view, capabilities: capability_snapshot })
     }
     pub(crate) async fn workspace_available(&self, workspace: &str, except: Option<&str>) -> Result<(), String> {
@@ -342,6 +348,20 @@ impl AgentManager {
         let backends: Vec<_> = self.inner.active.lock().await.iter().filter(|(id, _)| Some(id.as_str()) != except).filter_map(|(id, a)| records.iter().find(|r| &r.id == id && r.workspace == workspace).map(|_| a.backend.clone())).collect();
         for backend in backends { if backend.snapshot().await.status != "closed" { return Err("workspace_busy".into()); } }
         Ok(())
+    }
+    /// Exact actual directory, including foreign occupancy; callers must redact ownership.
+    pub(crate) async fn native_workspace_entries(&self, workspace: &str) -> Vec<(SessionRecord, Backend, Uuid)> {
+        let records = self.inner.records.lock().await.clone();
+        let entries: Vec<_> = self.inner.active.lock().await.iter().filter_map(|(id, active)| {
+            records.iter().find(|record| record.id == *id && record.workspace == workspace)
+                .map(|record| (record.clone(), active.backend.clone(), active.generation))
+        }).collect();
+        let mut live = Vec::new();
+        for entry in entries {
+            if entry.1.snapshot().await.status != "closed" { live.push(entry); }
+        }
+        live.sort_by(|left, right| left.0.id.cmp(&right.0.id));
+        live
     }
     pub(crate) async fn project_available(&self, project_id: &str) -> Result<(), String> {
         if self.inner.host.lock().await.values().any(|p| p.project_id == project_id) { return Err("project_busy".into()); }
@@ -402,6 +422,16 @@ impl AgentManager {
     pub async fn close_session(&self, owner: &str, id: &str) -> Result<bool, String> {
         let (_, backend) = self.owned(owner, id).await?;
         if let Some(service) = self.capabilities() { service.close_session(id).await; }
+        Ok(backend.close().await)
+    }
+    /// Same close lifecycle, with authority rechecked after capability cleanup and just
+    /// before touching the native process. Caller holds manager admission.
+    pub(crate) async fn close_takeover_session(&self, owner: &str, id: &str, project_id: &str, epoch: i64, lease: &CancellationToken) -> Result<bool, String> {
+        let (_, backend) = self.owned(owner, id).await?;
+        if let Some(service) = self.capabilities() { service.close_session(id).await; }
+        if self.inner.repository.capability_epoch(owner, project_id).await? != epoch { return Err("capability_revoked".into()); }
+        self.ready().await?;
+        if lease.is_cancelled() { return Err("session_invalid".into()); }
         Ok(backend.close().await)
     }
     /// Closes a backend that never entered `active`, then hands its permit to a watcher.
@@ -473,5 +503,37 @@ impl AgentManager {
             ok &= matches!(tokio::time::timeout(std::time::Duration::from_secs(15), watcher).await, Ok(Ok(true)));
         }
         ok
+    }
+}
+
+impl AgentManager {
+    /// Caller holds admission. External Git/editors remain outside this host lock.
+    pub(crate) async fn repository_git_available(&self, path: &str, common_dir: &str) -> Result<(), String> {
+        self.workspace_available(path, None).await?;
+        self.host_workspace_available(path).await?;
+        let records = self.inner.records.lock().await.clone();
+        let active: Vec<_> = self.inner.active.lock().await.iter().filter_map(|(id, active)| {
+            records.iter().find(|r| r.id == *id).map(|r| (r.workspace.clone(), active.backend.clone()))
+        }).collect();
+        let mut candidates = Vec::new();
+        for (workspace, backend) in active {
+            if matches!(backend.snapshot().await.status.as_str(), "running" | "waiting" | "starting" | "unknown") {
+                candidates.push(workspace);
+            }
+        }
+        candidates.extend(self.inner.host.lock().await.values().map(|p| p.workspace.clone()));
+        candidates.sort(); candidates.dedup();
+        for workspace in candidates {
+            let mut command = crate::projects::git_command(std::path::Path::new(&workspace));
+            command.args(["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+            let lease = CancellationToken::new();
+            // Failure cannot establish that a live writer belongs to another repository.
+            let (bytes, truncated) = crate::projects::git_output(command, std::time::Duration::from_secs(10), &lease, &self.inner.stop).await.map_err(|_| "repository_busy")?;
+            if truncated { return Err("repository_busy".into()); }
+            let common = std::str::from_utf8(&bytes).map_err(|_| "repository_busy")?.trim();
+            let common = tokio::fs::canonicalize(common).await.map_err(|_| "repository_busy")?;
+            if common == std::path::Path::new(common_dir) { return Err("repository_busy".into()); }
+        }
+        Ok(())
     }
 }

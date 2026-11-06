@@ -1,0 +1,94 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling dgos-types v0.1.0 (<repo>/crates/dgos-types)
+   Compiling dgos-db v0.1.0 (<repo>/crates/dgos-db)
+   Compiling dgos-mcp v0.1.0 (<repo>/crates/dgos-mcp)
+   Compiling dgos-skills v0.1.0 (<repo>/crates/dgos-skills)
+   Compiling dgos-providers v0.1.0 (<repo>/crates/dgos-providers)
+   Compiling dgos-workbench v0.1.0 (<repo>/crates/dgos-workbench)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 10s
+     Running unittests src/lib.rs (target/debug/deps/dgos_workbench-57e53f2f1f985dbb)
+
+running 18 tests
+test chat::tests::assemble_skips_questions_without_a_completed_reply_and_replies_without_a_question ... ok
+test chat::tests::assemble_drops_whole_oldest_turns_and_reports_how_many ... ok
+test chat::tests::outcomes_follow_the_d074_table ... ok
+test chat::tests::assemble_refuses_instead_of_truncating ... ok
+test chat::tests::assemble_orders_system_history_current_and_never_takes_roles_from_input ... ok
+test chat::tests::assemble_with_the_whole_history_dropped_still_succeeds_when_the_current_message_fits ... ok
+test chat::tests::only_destination_changed_carries_detail ... ok
+test chat::tests::split_at_boundary_keeps_characters_whole ... ok
+test chat::tests::inputs_reject_identity_and_unknown_fields ... ok
+test tools::tests::approval_contract_accepts_only_proposal_identity_not_replacement_arguments ... ok
+test chat::tests::fingerprint_ignores_path_and_credentials_but_not_host_port_scheme_or_type ... ok
+test tools::tests::every_model_round_counts_tool_results_and_descriptor_bytes ... ok
+test tests::a_duplicate_task_id_keeps_the_original_cancellation_token ... ok
+test chat::tests::the_registry_never_overwrites_an_existing_cancellation_token ... ok
+test chat::tests::the_first_stop_reason_wins_and_windows_only_cancel_their_own ... ok
+test chat::tests::one_active_generation_per_user_and_cancel_is_owner_only_and_repeatable ... ok
+test tests::terminal_audit_cannot_be_rewritten_or_finished_by_another_user ... ok
+test tools::tests::abandoned_task_expires_and_releases_memory_without_replay ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/chat_generation.rs (target/debug/deps/chat_generation-2ff553fc4a826ef0)
+
+running 19 tests
+test a_closed_sink_stops_the_generation_and_keeps_what_arrived ... ok
+test chat_generations_stay_out_of_the_single_task_history ... ok
+test a_reply_over_the_size_limit_stops_with_generation_limit ... ok
+test another_user_cannot_touch_a_session_and_gets_the_missing_answer ... ok
+test destroying_the_window_cancels_only_its_generation ... ok
+test an_abandoned_job_frees_the_user_and_its_orphan_is_closed_without_resending ... ok
+test a_cut_connection_is_interrupted_with_content_and_failed_without ... ok
+test controlled_attachments_survive_send_replay_history_and_regeneration ... ok
+test a_streamed_reply_is_saved_with_the_snapshot_and_feeds_the_next_turn ... ok
+test history_over_budget_drops_whole_oldest_turns_and_reports_them ... ok
+test ending_a_users_session_cancels_and_waits_for_only_their_generation ... ok
+test graceful_shutdown_ends_the_generation_as_process_interrupted ... ok
+test stopping_keeps_the_received_part_and_closes_the_upstream_stream ... ok
+test repeats_and_concurrent_sends_never_reach_the_upstream_twice ... ok
+test restart_recovery_finalizes_unfinished_generations_without_resending ... ok
+test regeneration_replaces_the_reply_only_when_the_new_one_succeeds ... ok
+test each_send_rereads_the_provider_and_blocks_a_changed_destination ... ok
+test unusable_targets_are_refused_without_choosing_another_provider ... ok
+test content_stays_in_chat_tables_and_survives_neither_deletion_nor_audit ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.88s
+
+     Running tests/chat_redaction.rs (target/debug/deps/chat_redaction-6660caaa4d7929e0)
+
+running 2 tests
+test the_log_capture_sees_events_from_every_kind_of_caller ... ok
+test chat_content_and_upstream_error_text_never_reach_the_log ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.21s
+
+     Running tests/chat_skill.rs (target/debug/deps/chat_skill-92b3468b84e69fe2)
+
+running 6 tests
+test a_skill_the_user_has_not_added_cannot_be_pinned ... ok
+test unsupported_budget_and_output_limit_refuse_before_session_commit_or_dispatch ... ok
+test a_session_must_choose_a_skill_or_no_skill_before_the_first_send ... ok
+test ordered_pins_and_controls_survive_session_read_and_reach_stream_request ... ok
+test the_pinned_version_is_sent_as_its_own_user_message_and_recorded_with_its_hash ... ok
+test a_disabled_tampered_or_changed_skill_blocks_the_send_until_the_user_chooses_again ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.84s
+
+     Running tests/chat_tools.rs (target/debug/deps/chat_tools-d64738b488eea041)
+
+running 8 tests
+test selections_are_checked_on_every_send_before_anything_is_written ... ok
+test stopping_a_parked_turn_finishes_it_once_and_revokes_the_proposal ... ok
+test a_final_answer_over_the_reply_limit_is_cut_like_a_stream ... ok
+test a_plain_send_after_a_tool_turn_needs_no_reselection_and_carries_no_authorization ... ok
+test denial_ends_the_turn_without_calling_the_model_again ... ok
+test pending_tool_approval_blocks_maintenance_until_terminal ... ok
+test an_approved_tool_turn_saves_only_the_final_answer_and_never_enters_later_context ... ok
+test destroying_the_window_or_shutting_down_ends_a_parked_turn ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.84s
+

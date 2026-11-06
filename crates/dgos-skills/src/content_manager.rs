@@ -264,7 +264,7 @@ impl SkillsManager {
         };
 
         let (files, compatible_apps, required_tools) = if row.is_bundled {
-            let (meta, files, _) =
+            let crate::content_package::ValidatedContentPackage { metadata: meta, files, .. } =
                 crate::content_package::validate_package_files(&path, expected_hash)?;
             if meta.id != id || meta.version != version {
                 return Err(SkillError::InvalidManifest("snapshot identity mismatch".into()));

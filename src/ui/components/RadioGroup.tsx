@@ -31,7 +31,7 @@ export function RadioGroup(props: RadioGroupProps) {
   return (
     <div className="flex flex-col gap-2">
       {labelId ? (
-        <span id={labelId} className="text-sm font-medium text-foreground">
+        <span id={labelId} className="text-sm font-medium text-ink-primary">
           {label}
         </span>
       ) : null}
@@ -54,17 +54,17 @@ export function RadioGroup(props: RadioGroupProps) {
                 value={option.value}
                 disabled={option.disabled}
                 className={cn(
-                  'flex size-4 shrink-0 appearance-none items-center justify-center rounded-full border border-solid border-input bg-background p-0',
-                  'data-[state=checked]:border-primary',
+                  'flex size-4 shrink-0 appearance-none items-center justify-center rounded-full border border-solid border-edge-control bg-surface-field p-0',
+                  'data-[state=checked]:border-accent-default',
                   'disabled:cursor-not-allowed disabled:opacity-disabled',
                   FOCUS_RING,
                 )}
               >
-                <RadioGroupPrimitive.Indicator className="size-2 rounded-full bg-primary" />
+                <RadioGroupPrimitive.Indicator className="size-2 rounded-full bg-accent-default" />
               </RadioGroupPrimitive.Item>
               <label
                 htmlFor={itemId}
-                className={cn('text-sm text-foreground', itemDisabled ? 'cursor-not-allowed opacity-disabled' : 'cursor-pointer')}
+                className={cn('text-sm text-ink-primary', itemDisabled ? 'cursor-not-allowed opacity-disabled' : 'cursor-pointer')}
               >
                 {option.label}
               </label>

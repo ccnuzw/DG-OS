@@ -4,8 +4,8 @@
  * Geometry not represented by the spacing scale: workspace/session tabs and navigation width.
  *
  * N is the design-baseline pixel value: `calc(Nrem / 14)` is N px at 100% density and scales with the
- * five density steps (D064). The `max()` guards keep the smallest chrome usable at 75%, where geometry
- * shrinks by 25% but text stops at the 11px floor.
+ * five density steps (D064). The `max()` guards preserve chrome at 75%; the independent UI font can
+ * make flex rows grow further. These are layout roles, not font sizes or responsive breakpoints.
  */
 :root {
   /* Workspace/session tabs: 33px / 38px at 100%, preserving text at high density. */
@@ -19,6 +19,7 @@
   /* Settings and readable work areas follow FR-009's final rendered measurements. */
   --settings-nav-width: calc(150rem / 14);
   --launcher-width: calc(760rem / 14);
+  /* Equal today, independently controlled: conversation reading/composer vs module document host. */
   --conversation-width: calc(720rem / 14);
   --document-width: calc(720rem / 14);
 

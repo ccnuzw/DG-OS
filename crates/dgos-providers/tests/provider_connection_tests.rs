@@ -350,3 +350,19 @@ async fn anthropic_official_profile_authenticates_with_bearer_only() {
     assert!(!headers.iter().any(|line| line.starts_with("x-api-key")));
     assert!(headers.contains(&"anthropic-version: 2026-10-21".to_string()));
 }
+
+#[tokio::test]
+async fn loopback_diagnostics_never_send_credentials_to_an_environment_proxy() {
+    let mut proxy = mockito::Server::new_async().await;
+    let intercepted = proxy.mock("GET", mockito::Matcher::Any).with_status(502).expect(0).create_async().await;
+    for name in ["connection_diagnostics_report_a_refused_connection_as_a_network_error", "anthropic_a_refused_connection_is_a_network_error_not_ok_false"] {
+        // Environment belongs to a child process, never the concurrent test runner.
+        let mut child = tokio::process::Command::new(std::env::current_exe().unwrap());
+        child.args(["--exact", name, "--nocapture"]);
+        for key in ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"] { child.env(key, proxy.url()); }
+        child.env("NO_PROXY", "").env("no_proxy", "").kill_on_drop(true);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), child.output()).await.unwrap().unwrap();
+        assert!(result.status.success(), "{name}: {}", String::from_utf8_lossy(&result.stdout));
+    }
+    intercepted.assert_async().await;
+}

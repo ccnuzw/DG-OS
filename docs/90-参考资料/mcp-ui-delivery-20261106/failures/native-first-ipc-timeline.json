@@ -1,0 +1,70 @@
+[
+  {
+    "at_ms": 1793951465678,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793951465785,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793951466243,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "production shell loads English from isolated host"
+  },
+  {
+    "at_ms": 1793951466555,
+    "command": "list_mcp_servers",
+    "detail": {},
+    "phase": "received"
+  },
+  {
+    "at_ms": 1793951466555,
+    "command": "list_mcp_servers",
+    "detail": {
+      "production_handler_called": false
+    },
+    "phase": "smoke_pre_dispatch_rejection"
+  },
+  {
+    "at_ms": 1793951466569,
+    "command": "page_step",
+    "detail": {
+      "passed": true,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": true
+        }
+      }
+    },
+    "phase": "navigate /mcp"
+  },
+  {
+    "at_ms": 1793951466571,
+    "command": "page_step",
+    "detail": {
+      "passed": false,
+      "result": {
+        "ok": true,
+        "value": {
+          "ok": false
+        }
+      }
+    },
+    "phase": "initial server read failure is visible without empty success"
+  }
+]

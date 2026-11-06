@@ -234,6 +234,34 @@ fn run_status(params: &Value) -> &'static str {
     }
 }
 
+fn bridge_path() -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os("DGOS_CLAUDE_BRIDGE") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+    let executable = std::env::current_exe().map_err(|_| "bridge_unavailable")?;
+    if let Some(parent) = executable.parent() {
+        for path in [
+            parent.join("../Resources/agent-bridge/dgos-claude-bridge"),
+            parent.join("agent-bridge/dgos-claude-bridge"),
+        ] {
+            if path.is_file() {
+                return Ok(path);
+            }
+        }
+    }
+    #[cfg(debug_assertions)]
+    {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tools/agent-bridge/bin/dgos-claude-bridge");
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+    Err("bridge_unavailable".into())
+}
 #[cfg(test)]
 mod tests {
     use super::{result_failed, result_text, terminal_data};
@@ -262,32 +290,4 @@ mod tests {
         assert_eq!(data["terminal_reason"], native["terminal_reason"]);
         assert_eq!(data["errors"], native["errors"]);
     }
-}
-fn bridge_path() -> Result<PathBuf, String> {
-    if let Some(path) = std::env::var_os("DGOS_CLAUDE_BRIDGE") {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Ok(path);
-        }
-    }
-    let executable = std::env::current_exe().map_err(|_| "bridge_unavailable")?;
-    if let Some(parent) = executable.parent() {
-        for path in [
-            parent.join("../Resources/agent-bridge/dgos-claude-bridge"),
-            parent.join("agent-bridge/dgos-claude-bridge"),
-        ] {
-            if path.is_file() {
-                return Ok(path);
-            }
-        }
-    }
-    #[cfg(debug_assertions)]
-    {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tools/agent-bridge/bin/dgos-claude-bridge");
-        if path.is_file() {
-            return Ok(path);
-        }
-    }
-    Err("bridge_unavailable".into())
 }

@@ -5,15 +5,17 @@ use crate::{
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::{HashMap, HashSet}, sync::Arc, time::Duration};
 use tokio::{process::Command, sync::Mutex};
 use tokio_util::sync::CancellationToken;
+
+type SendReceipt = ([u8; 32], Option<Result<(), String>>);
 
 #[derive(Clone)]
 pub struct CodexSession {
     wire: Transport,
     view: Arc<Mutex<SessionView>>,
-    receipts: Arc<Mutex<HashMap<String, ([u8; 32], Option<Result<(), String>>)>>>,
+    receipts: Arc<Mutex<HashMap<String, SendReceipt>>>,
     turn: Arc<Mutex<Option<String>>>,
     user_echo_pending: Arc<Mutex<bool>>,
 }
@@ -102,7 +104,8 @@ impl CodexSession {
             "turn/plan/updated" => view.push(method, None, json!({"plan":params.get("plan"),"explanation":params.get("explanation"),"turnId":params.get("turnId")})),
             "serverRequest/resolved" => {
                 if let Some(id) = params.get("requestId") {
-                    view.pending.retain(|p| p.id != id.to_string());
+                    let request_id = id.to_string();
+                    view.pending.retain(|p| p.id != request_id);
                 }
                 if view.pending.is_empty() && view.status == "waiting" {
                     view.status = "running".into();
@@ -281,7 +284,7 @@ impl CodexSession {
         for override_value in &launch.codex_overrides {
             command.arg("-c").arg(override_value);
         }
-        let (wire, mut events) = Transport::spawn(command, lease, diagnostic)?;
+        let (wire, mut events) = Transport::spawn(command, lease.clone(), diagnostic)?;
         let session = Self {
             wire,
             view: Arc::new(Mutex::new(SessionView::new(options.workspace.clone()))),
@@ -304,14 +307,11 @@ impl CodexSession {
             let mut thread_config = None;
             if launch.managed {
                 let read = session.wire.startup_request("handshake_config_read", "config/read", json!({"includeLayers":false,"cwd":options.workspace})).await.map_err(|_| "mcp_unavailable")?;
-                let servers = read.pointer("/config/mcp_servers").and_then(Value::as_object).ok_or("mcp_unavailable")?;
-                let mut config = serde_json::Map::with_capacity(servers.len());
-                for (name, server) in servers {
-                    if name.is_empty() || !name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-') || !server.is_object() { return Err("mcp_unavailable".into()); }
-                    config.insert(format!("mcp_servers.{name}.enabled"), json!(name == "dgos_project"));
-                }
-                if !servers.contains_key("dgos_project") { return Err("mcp_unavailable".into()); }
-                thread_config = Some(Value::Object(config));
+                // Plugin MCP servers are absent from config/read's mcp_servers table.
+                // Discover their names before starting a thread, without disabling the
+                // plugins themselves (which also supply native Skills and hooks).
+                let inventory = session.wire.startup_request("handshake_mcp_inventory", "mcpServerStatus/list", json!({"detail":"toolsAndAuthOnly","limit":1000})).await.map_err(|_| "mcp_unavailable")?;
+                thread_config = Some(managed_mcp_config(&read, &inventory)?);
             }
             let method = if options.resume_id.is_some() { "thread/resume" } else { "thread/start" };
             let mut params = json!({"cwd":options.workspace,"approvalPolicy":"on-request","sandbox":"workspace-write"});
@@ -325,14 +325,7 @@ impl CodexSession {
             let result = session.wire.startup_request(stage, method, params).await?;
             if launch.managed {
                 let thread_id = result.pointer("/thread/id").and_then(Value::as_str).ok_or("mcp_unavailable")?;
-                let status = session.wire.startup_request("handshake_mcp_status", "mcpServerStatus/list", json!({"threadId":thread_id,"detail":"toolsAndAuthOnly","limit":1000})).await.map_err(|_| "mcp_unavailable")?;
-                let servers = status.get("data").and_then(Value::as_array).ok_or("mcp_unavailable")?;
-                session.view.lock().await.push("mcp/isolated", None, json!({"servers":servers.iter().filter_map(|server| Some(json!({"name":server.get("name")?.as_str()? ,"status":server.get("runtimeStatus").cloned().unwrap_or(Value::Null)}))).collect::<Vec<_>>()}));
-                let gateway_connected = servers.iter().any(|server| server.get("name").and_then(Value::as_str) == Some("dgos_project") && server.get("runtimeStatus").and_then(Value::as_str) == Some("connected"));
-                let others_disabled = servers.iter().filter(|server| server.get("name").and_then(Value::as_str) != Some("dgos_project")).all(|server| server.get("runtimeStatus").and_then(Value::as_str) == Some("disabled"));
-                if status.get("nextCursor").is_some_and(|cursor| !cursor.is_null()) || !gateway_connected || !others_disabled {
-                    return Err("mcp_unavailable".into());
-                }
+                session.wait_managed_mcp(thread_id, &lease).await?;
             }
             let id = result.pointer("/thread/id").and_then(Value::as_str).ok_or("invalid_output")?;
             let mut view = session.view.lock().await;
@@ -350,6 +343,24 @@ impl CodexSession {
             return Err(error);
         }
         Ok(session)
+    }
+    async fn wait_managed_mcp(&self, thread_id: &str, lease: &CancellationToken) -> Result<(), String> {
+        let ready = async {
+            loop {
+                let status = self.wire.startup_request("handshake_mcp_status", "mcpServerStatus/list", json!({"threadId":thread_id,"detail":"toolsAndAuthOnly","limit":1000})).await.map_err(|_| "mcp_unavailable")?;
+                if managed_mcp_ready(&status)? {
+                    let servers = status["data"].as_array().ok_or("mcp_unavailable")?;
+                    self.view.lock().await.push("mcp/isolated", None, json!({"servers":servers.iter().map(|server| json!({"name":server["name"],"status":server["runtimeStatus"]})).collect::<Vec<_>>()}));
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        };
+        tokio::select! {
+            biased;
+            _ = lease.cancelled() => Err("closed".into()),
+            result = tokio::time::timeout(Duration::from_secs(20), ready) => result.unwrap_or_else(|_| Err("mcp_unavailable".into())),
+        }
     }
     async fn register_skills(&self, root: &str, workspace: &str) -> Result<(), String> {
         let registered = async {
@@ -394,6 +405,59 @@ impl CodexSession {
     }
 }
 
+// Thread config keys are protocol dotted paths, not TOML expressions: quoting a
+// segment creates a different literal server name. Reject ambiguous segments.
+fn mcp_name(name: &str) -> bool {
+    !name.is_empty() && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
+fn managed_mcp_config(read: &Value, inventory: &Value) -> Result<Value, String> {
+    let servers = read.pointer("/config/mcp_servers").and_then(Value::as_object).ok_or("mcp_unavailable")?;
+    let gateway_url = servers.get("dgos_project").and_then(|server| server.get("url")).and_then(Value::as_str).filter(|url| !url.is_empty()).ok_or("mcp_unavailable")?;
+    let mut config = serde_json::Map::with_capacity(servers.len());
+    for (name, server) in servers {
+        if !mcp_name(name) || !server.is_object() { return Err("mcp_unavailable".into()); }
+        config.insert(format!("mcp_servers.{name}.enabled"), json!(name == "dgos_project"));
+    }
+    if inventory.get("nextCursor").is_some_and(|cursor| !cursor.is_null()) { return Err("mcp_unavailable".into()); }
+    let entries = inventory.get("data").and_then(Value::as_array).ok_or("mcp_unavailable")?;
+    let mut names = HashSet::with_capacity(entries.len());
+    for entry in entries {
+        let name = entry.get("name").and_then(Value::as_str).filter(|name| mcp_name(name)).ok_or("mcp_unavailable")?;
+        if !names.insert(name) { return Err("mcp_unavailable".into()); }
+        if !servers.contains_key(name) {
+            if entry.get("pluginId").and_then(Value::as_str).filter(|id| !id.is_empty()).is_none() { return Err("mcp_unavailable".into()); }
+            // An enabled=false entry still needs a valid transport in Codex.
+            // A disabled host URL shadows only this plugin's MCP server; no
+            // native plugin, Skill, hook, or global configuration is changed.
+            config.insert(format!("mcp_servers.{name}"), json!({"url":gateway_url,"enabled":false}));
+        }
+    }
+    Ok(Value::Object(config))
+}
+
+fn managed_mcp_ready(status: &Value) -> Result<bool, String> {
+    if status.get("nextCursor").is_some_and(|cursor| !cursor.is_null()) { return Err("mcp_unavailable".into()); }
+    let servers = status.get("data").and_then(Value::as_array).ok_or("mcp_unavailable")?;
+    let mut names = HashSet::with_capacity(servers.len());
+    let mut gateway = None;
+    for server in servers {
+        let name = server.get("name").and_then(Value::as_str).filter(|name| mcp_name(name)).ok_or("mcp_unavailable")?;
+        if !names.insert(name) { return Err("mcp_unavailable".into()); }
+        let state = server.get("runtimeStatus").and_then(Value::as_str).ok_or("mcp_unavailable")?;
+        if name == "dgos_project" {
+            gateway = Some(match state {
+                "connected" => true,
+                "starting" => false,
+                _ => return Err("mcp_unavailable".into()),
+            });
+        } else if state != "disabled" {
+            return Err("mcp_unavailable".into());
+        }
+    }
+    gateway.ok_or_else(|| "mcp_unavailable".into())
+}
+
 fn native_error(params: &Value) -> String {
     params.pointer("/turn/error/message")
         .or_else(|| params.pointer("/error/message"))
@@ -430,5 +494,98 @@ mod tests {
         CodexSession::item(&mut view, &item);
         assert_eq!(view.events[0].data, item);
         assert_eq!(native_error(&json!({"turn":{"error":{"message":"native failure"}}})), "native failure");
+    }
+
+    #[test]
+    fn managed_mcp_rejects_unknown_terminal_and_unselected_states() {
+        for state in ["notStarted", "failed", "cancelled", "disabled", "authenticationRequired", "unknown"] {
+            assert_eq!(managed_mcp_ready(&json!({"data":[{"name":"dgos_project","runtimeStatus":state}]})), Err("mcp_unavailable".into()));
+        }
+        for state in ["connected", "starting", "failed", "unknown"] {
+            assert_eq!(managed_mcp_ready(&json!({"data":[{"name":"dgos_project","runtimeStatus":"starting"},{"name":"native","runtimeStatus":state}]})), Err("mcp_unavailable".into()));
+        }
+        for invalid in [
+            json!({"data":[]}),
+            json!({"data":[{"name":"dgos_project","runtimeStatus":null}]}),
+            json!({"data":[{"name":"dgos_project","runtimeStatus":"connected"}],"nextCursor":"more"}),
+            json!({"data":[{"name":"dgos_project","runtimeStatus":"connected"},{"name":"dgos_project","runtimeStatus":"starting"}]}),
+        ] {
+            assert_eq!(managed_mcp_ready(&invalid), Err("mcp_unavailable".into()));
+        }
+    }
+
+    #[cfg(unix)]
+    async fn managed_fixture(root: &std::path::Path, state: &str) -> SessionOptions {
+        std::fs::create_dir_all(root).unwrap();
+        let executable = root.join("codex");
+        let script = r##"count=0
+state=STATE
+while IFS= read -r line; do
+case "$line" in
+*'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}';;
+*'"method":"config/read"'*) printf '%s\n' '{"id":2,"result":{"config":{"mcp_servers":{"dgos_project":{"url":"http://127.0.0.1:1/mcp"},"node_repl":{"command":"native"}},"plugins":{"native@bundled":{"enabled":true}},"skills":{"native":true},"hooks":{"native":true}}}}';;
+*'"method":"mcpServerStatus/list"'*)
+case "$line" in
+*'"threadId"'*)
+count=$((count + 1))
+if [ "$count" -eq 1 ]; then
+    printf '%s\n' '{"id":5,"result":{"data":[{"name":"dgos_project","runtimeStatus":"starting"},{"name":"cua_repl","runtimeStatus":"disabled"},{"name":"node_repl","runtimeStatus":"disabled"}],"nextCursor":null}}'
+    printf '%s' starting > "starting"
+elif [ "$state" = connected ]; then
+    printf '%s\n' '{"id":6,"result":{"data":[{"name":"dgos_project","runtimeStatus":"connected"},{"name":"cua_repl","runtimeStatus":"disabled"},{"name":"node_repl","runtimeStatus":"disabled"}],"nextCursor":null}}'
+else
+    : # Leave the next readiness request pending to exercise lease cancellation.
+fi;;
+*) printf '%s\n' '{"id":3,"result":{"data":[{"name":"dgos_project","pluginId":null},{"name":"node_repl","pluginId":null},{"name":"cua_repl","pluginId":"native@bundled"}],"nextCursor":null}}';;
+esac;;
+*'"method":"thread/start"'*)
+case "$line" in
+*'"mcp_servers.cua_repl":{"enabled":false,"url":"http://127.0.0.1:1/mcp"}'*'"mcp_servers.dgos_project.enabled":true'*'"mcp_servers.node_repl.enabled":false'*)
+    case "$line" in
+    *'"plugins.'*|*'"skills.'*|*'"hooks.'*) exit 1;;
+    esac
+    printf '%s\n' '{"id":4,"result":{"thread":{"id":"isolated","turns":[]}}}';;
+*) printf '%s\n' '{"id":4,"error":{"code":-32600,"message":"native MCP remained enabled"}}';;
+esac;;
+esac
+done
+"##.replace("state=STATE", &format!("state={state}"));
+        crate::test_support::prepare_shell_fixture(&executable, &script).await;
+        SessionOptions {
+            workspace: root.to_string_lossy().into_owned(), resume_id: None,
+            executable: Some(executable.to_string_lossy().into_owned()), model: None, trust_workspace: true,
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn managed_plugin_mcp_is_disabled_before_gateway_becomes_ready() {
+        let root = std::env::temp_dir().join(format!("dgos-codex-isolation-{}", uuid::Uuid::new_v4()));
+        let options = managed_fixture(&root, "connected").await;
+        let session = tokio::time::timeout(Duration::from_secs(3), CodexSession::open_with_capabilities(options, CancellationToken::new(), crate::capabilities::CapabilityLaunch { managed: true, ..Default::default() })).await.unwrap().unwrap();
+        let view = session.snapshot().await;
+        assert_eq!(view.status, "idle");
+        assert_eq!(view.native_id.as_deref(), Some("isolated"));
+        let isolated = view.events.iter().find(|event| event.kind == "mcp/isolated").unwrap();
+        assert!(isolated.data["servers"].as_array().unwrap().iter().any(|server| server["name"] == "dgos_project" && server["status"] == "connected"));
+        assert!(session.close().await);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn managed_gateway_readiness_wait_is_cancelled_without_a_reply() {
+        let root = std::env::temp_dir().join(format!("dgos-codex-cancel-{}", uuid::Uuid::new_v4()));
+        let lease = CancellationToken::new();
+        let options = managed_fixture(&root, "pending").await;
+        let task_lease = lease.clone();
+        let opening = tokio::spawn(async move { CodexSession::open_with_capabilities(options, task_lease, crate::capabilities::CapabilityLaunch { managed: true, ..Default::default() }).await });
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !root.join("starting").exists() { tokio::time::sleep(Duration::from_millis(10)).await; }
+        }).await.unwrap();
+        lease.cancel();
+        let result = tokio::time::timeout(Duration::from_secs(3), opening).await.unwrap().unwrap();
+        assert!(matches!(result, Err(reason) if reason == "closed"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

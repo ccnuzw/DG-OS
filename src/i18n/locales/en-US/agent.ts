@@ -1,4 +1,10 @@
 export default {
+  'agent.sendShortcut': '⌘ / Ctrl + Enter to send', 'agent.sendEmpty': 'Write a message to send.', 'agent.sendBusy': 'Wait for the current operation to finish.',
+  'agent.sendWaiting': 'Respond to the pending request to continue.', 'agent.sendRunning': 'The agent is working. Interrupt it before sending another message.', 'agent.sendUnavailable': 'This runtime is not ready. Resume or select a ready session to send.',
+  'agent.latest': 'Jump to latest', 'agent.rawEvents': 'Inspect native events ({count})', 'agent.allowSession': 'Allow for this session',
+  'agent.references': 'Tool output references', 'agent.openFile': 'Open file', 'agent.openDiff': 'Open diff', 'agent.openRun': 'Open associated run',
+  'agent.referenceUnresolved': 'This tool location could not be resolved safely. Inspect the native event for details.', 'agent.referenceUnavailable': 'This reference is unavailable in the current task. Check its path, line and access restrictions.',
+  'agent.referenceRunUnavailable': 'The associated run is unavailable in this task. Inspect the original event for details.',
   'agent.engine.codex': 'Codex', 'agent.engine.claude': 'Claude',
   'agent.you': 'You', 'agent.assistant': 'Agent', 'agent.finished': 'Turn result', 'agent.activity': 'Tools and progress',
   'agent.truncated': 'Only recent conversation content is shown. The local agent retains the full history.',

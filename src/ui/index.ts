@@ -84,6 +84,8 @@ export type {
   StatusBadgeProps,
   StatusBadgeStatus,
 } from './components/PagePatterns';
+export { resourceView } from '../resourceState';
+export type { ResourceReadState, ResourceRefresh, ResourceViewState } from '../resourceState';
 export { Icon } from './components/Icon';
 export type { IconProps } from './components/Icon';
 export { Popover } from './components/Popover';

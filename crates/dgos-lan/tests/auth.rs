@@ -639,6 +639,40 @@ async fn peer_host_and_origin_are_checked_before_anything_else() {
 }
 
 #[tokio::test]
+async fn host_admission_reaches_loopback_with_an_environment_proxy() {
+    let proxy = Upstream::start().await;
+    let mut child = tokio::process::Command::new(std::env::current_exe().unwrap());
+    child.args([
+        "--exact",
+        "peer_host_and_origin_are_checked_before_anything_else",
+        "--nocapture",
+    ]);
+    for key in [
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ] {
+        child.env(key, format!("http://{}", proxy.addr));
+    }
+    // Only the child gets proxy settings; parallel tests keep their own environment.
+    child.env("NO_PROXY", "").env("no_proxy", "").kill_on_drop(true);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(60), child.output())
+        .await
+        .expect("host admission child timed out")
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(proxy.hits(), 0, "host admission requests escaped loopback");
+}
+
+#[tokio::test]
 async fn only_whitelisted_routes_exist_and_errors_have_no_cors() {
     let env = env().await;
     let cookie = env.paired(PEER).await;

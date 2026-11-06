@@ -1,0 +1,99 @@
+{
+  "ok": true,
+  "value": {
+    "active": {
+      "class": "bg-surface-canvas text-ink-primary",
+      "label": null,
+      "rect": {
+        "bottom": 868,
+        "height": 868,
+        "right": 1440,
+        "width": 1440,
+        "x": 0,
+        "y": 0
+      },
+      "tag": "BODY"
+    },
+    "at": "2026-11-06T08:16:48.426Z",
+    "body": "D\nMy workspace\nOverview\nDesktop\nAI sessions\nResources\nSkills\nMCP management\nApps\nApps\nSettings\nCollapse\nMCP management\nFocus\nMCP Management\n\nOnly connect servers you trust. Local processes run with your operating-system permissions.\n\nAdd MCP server\nRefresh status\nYour servers\n3\nSearch servers\nConnection filter\nAll servers\nMCPFilesystemABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789LongNameWrapCheck\nstdio · Connected\nDisconnect\nEdit\nMCPLongURLABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ReadOnlyConfig\nhttp · Disconnected\nConnect\nEdit\nOfficial SDK Echo\nhttp · Connected\nDisconnect\nOfficial SDK Echo\n\nhttp · Connected\n\nEdit\nDelete\nHTTP authentication\nToken configured\n\nOnly an opaque reference is stored in DGOS. Tokens are never returned to this page. Rotation or removal disconnects the server.\n\nBearer token\nStore token\nRemove token\nOfficial SDK Echo tools\nDescriptions do not grant permissions\nRefresh tools\n\nUnable to refresh this resource.\n\nMCP page smoke controlled read failure: list_mcp_tools\n\nShowing the previous result.\n\nRetry\necho\nEcho synthetic compatibility data\necho\nInspect / call\nRecent use\nRefresh usage\n\nParameters and output are never stored. Pending, interrupted, cancelled or timeout can mean the external result is unknown. Check it before retrying; no automatic replay occurs.\n\nUnable to refresh this resource.\n\nMCP page smoke controlled read failure: list_mcp_usage_logs\n\nShowing the previous result.\n\nRetry\nSUCCESS\necho\n5 ms\nNov 6, 2026 at 4:16 PM\nConnection history\nConnection events\nRefresh connections\n\nStatus changes and retry counts only. No command arguments, URLs, headers or tokens are recorded.\n\nUnable to refresh this resource.\n\nMCP page smoke controlled read failure: list_mcp_connection_logs\n\nShowing the previous result.\n\nRetry\nREADY\nconnected\n29 ms\nNov 6, 2026 at 4:16 PM\nCONFIGURED\ndisconnected\n- ms\nNov 6, 2026 at 4:16 PM\nCONFIGURED\nSYNTHETIC_LAYOUT_ONLY_LongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogTokenLongLogToken\nSYNTHETIC_LAYOUT_ONLY_LongErrorClassLongErrorClassLongErrorClassLongErrorClassLongErrorClassLongErrorClassLongErrorClassLongErrorClassLongErrorClassLongErrorClassLongErrorClassLongErrorClassLongErrorClassLongErrorClassLongErrorClassLongErrorClass\n- ms\nNov 6, 2026 at 3:08 PM",
+    "density": "100",
+    "dialogs": [],
+    "hasFocus": true,
+    "inputs": [
+      {
+        "disabled": false,
+        "label": "Search servers",
+        "rect": {
+          "bottom": 200.5,
+          "height": 28,
+          "right": 642.953125,
+          "width": 417.453125,
+          "x": 225.5,
+          "y": 172.5
+        },
+        "type": "text",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "label": "Bearer token",
+        "rect": {
+          "bottom": 349.5,
+          "height": 28,
+          "right": 1122.875,
+          "width": 437.921875,
+          "x": 684.953125,
+          "y": 321.5
+        },
+        "type": "password",
+        "value": "[redacted]"
+      }
+    ],
+    "ok": true,
+    "rows": [
+      {
+        "pressed": "false",
+        "rect": {
+          "bottom": 420.5,
+          "height": 135.5,
+          "right": 428.015625,
+          "width": 193.515625,
+          "x": 234.5,
+          "y": 285
+        },
+        "text": "MCPFilesystemABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789LongNameWrapCheckstdio · Connected"
+      },
+      {
+        "pressed": "false",
+        "rect": {
+          "bottom": 586,
+          "height": 135.5,
+          "right": 445.6875,
+          "width": 211.1875,
+          "x": 234.5,
+          "y": 450.5
+        },
+        "text": "MCPLongURLABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ReadOnlyConfighttp · Disconnected"
+      },
+      {
+        "pressed": "true",
+        "rect": {
+          "bottom": 673.5,
+          "height": 57.5,
+          "right": 486.046875,
+          "width": 251.546875,
+          "x": 234.5,
+          "y": 616
+        },
+        "text": "Official SDK Echohttp · Connected"
+      }
+    ],
+    "theme": "light",
+    "url": "tauri://localhost/mcp",
+    "viewport": {
+      "height": 868,
+      "width": 1440
+    },
+    "visibility": "visible"
+  }
+}

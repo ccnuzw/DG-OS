@@ -22,6 +22,9 @@ export const TOKEN_GLOBS = ['src/ui/tokens/**'];
  */
 export const DEFINITION_GLOBS = ['src/ui/tokens/**/*.css', 'src/ui/tailwind.css'];
 
+/** Computed palette reads are confined to these existing definition/output entrypoints. */
+export const COLOR_DEFINITION_GLOBS = [...TOKEN_GLOBS, 'src/ui/tailwind.css', 'src/ui/theme/kernel.ts', 'src/ui/theme/apply.ts'];
+
 /** Runtime variables owned by a third-party package; CSS may read them but cannot define them. */
 export const RUNTIME_VARIABLE_PREFIXES = ['--radix-'];
 

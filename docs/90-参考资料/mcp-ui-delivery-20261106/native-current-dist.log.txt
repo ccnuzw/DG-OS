@@ -1,0 +1,224 @@
+   Compiling dgos v0.1.0 (<repo>/src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 26.26s
+     Running tests/webview_smoke_mcp.rs (target/debug/deps/webview_smoke_mcp-56399f9a4388c644)
+INFO MCP page retained evidence <local-evidence>/native-current-dist
+PASS production shell loads English from isolated host
+PASS navigate /mcp
+PASS initial server read failure is visible without empty success
+PASS explicit retry recovers real server catalog
+PASS failed refresh retains old server rows and announces stale content
+PASS server refresh failure recovers explicitly
+PASS initial selected detail reads fail visibly
+PASS detail retry restores genuine tools logs and connections
+PASS usage refresh reads real confirmed echo audit
+PASS navigate /
+PASS navigate /mcp
+PASS failed detail refresh keeps old tools usage and connection content
+PASS detail refresh read failures recover
+PASS edit configuration first read failure freezes blank fields
+PASS configuration retry restores real HTTP config
+PASS close unchanged config
+PASS real discovery publication with lost receipt stays unconfirmed
+PASS read saved tools does not certify discovery success
+PASS edit saved config does not certify discovery success
+PASS navigate /
+PASS navigate /mcp
+PASS inactive return and read refresh do not replay discovery
+PASS establish known row focus for native list selection
+PASS native Enter selects actual MCP server row
+PASS establish real tool opener focus
+PASS native Enter opens production tool Modal with focus inside
+PASS native Tab keeps focus trapped in tool Modal
+PASS native Tab keeps focus trapped in tool Modal
+PASS native Tab keeps focus trapped in tool Modal
+PASS native Tab keeps focus trapped in tool Modal
+PASS native Tab keeps focus trapped in tool Modal
+PASS native Tab keeps focus trapped in tool Modal
+PASS native Tab keeps focus trapped in tool Modal
+PASS native Tab keeps focus trapped in tool Modal
+PASS native Tab keeps focus trapped in tool Modal
+PASS native Tab keeps focus trapped in tool Modal
+PASS native Tab keeps focus trapped in tool Modal
+PASS native Tab keeps focus trapped in tool Modal
+PASS native Tab keeps focus trapped in tool Modal
+PASS native Tab keeps focus trapped in tool Modal
+PASS native Tab keeps focus trapped in tool Modal
+PASS native Tab keeps focus trapped in tool Modal
+PASS native Escape closes tool Modal and returns exact opener focus
+PASS establish editor opener focus
+PASS native Enter opens real editor and selects transport starting focus
+PASS native Space opens editor Select
+PASS native End Enter changes transport to HTTP
+PASS focus cancel before native dirty-form Modal
+PASS native editor cancel opens discard Modal
+PASS native Escape preserves editor draft and returns cancel focus
+PASS focus explicit discard choice
+PASS native explicit discard closes editor
+PASS create server form draft through actual input handler
+PASS navigate /
+PASS navigate /mcp
+PASS MCP configuration draft survives inactive work surface
+PASS navigate /settings/appearance
+PASS close settings overlay with actual control
+PASS navigate /mcp
+PASS MCP configuration draft survives inactive work surface
+PASS surface close requests unsaved confirmation
+PASS surface close cancellation retains same configuration draft
+PASS surface explicit discard removes only target MCP surface
+PASS navigate /mcp
+PASS discarded surface reopens without old draft
+PASS begin gated real save for server A
+PASS select B during pending A save without replacing the saving editor
+PASS late A save receipt never steals B selection
+PASS new B draft created only after A receipt remains intact
+PASS navigate /
+PASS navigate /mcp
+PASS B draft survives subsequent asynchronous presentation reads
+PASS discard B draft explicitly
+PASS seed unsaved Bearer sentinel
+PASS navigate /
+PASS navigate /mcp
+PASS inactive work surface clears unsaved Bearer
+PASS seed Bearer before settings overlay
+PASS navigate /settings/appearance
+PASS close settings after Bearer deactivation
+PASS navigate /mcp
+PASS settings overlay inactivity clears unsaved Bearer
+PASS production appearance bootstrap applies saved host snapshot
+PASS navigate /mcp
+PASS MCP hydrates after production reload
+PASS wide or compact server list wraps long names
+PASS actual long URL config is editable without page overflow
+PASS close unchanged long URL form
+PASS detail shows long diagnostic log without page overflow
+PASS long JSON tool Modal fits native viewport
+PASS long JSON Modal closes without dispatch
+PASS production appearance bootstrap applies saved host snapshot
+PASS navigate /mcp
+PASS MCP hydrates after production reload
+PASS wide or compact server list wraps long names
+PASS actual long URL config is editable without page overflow
+PASS close unchanged long URL form
+PASS detail shows long diagnostic log without page overflow
+PASS long JSON tool Modal fits native viewport
+PASS long JSON Modal closes without dispatch
+PASS production appearance bootstrap applies saved host snapshot
+PASS navigate /mcp
+PASS MCP hydrates after production reload
+PASS wide or compact server list wraps long names
+PASS actual long URL config is editable without page overflow
+PASS close unchanged long URL form
+PASS detail shows long diagnostic log without page overflow
+PASS long JSON tool Modal fits native viewport
+PASS long JSON Modal closes without dispatch
+PASS production appearance bootstrap applies saved host snapshot
+PASS navigate /mcp
+PASS MCP hydrates after production reload
+PASS wide or compact server list wraps long names
+PASS actual long URL config is editable without page overflow
+PASS close unchanged long URL form
+PASS detail shows long diagnostic log without page overflow
+PASS long JSON tool Modal fits native viewport
+PASS long JSON Modal closes without dispatch
+PASS production appearance bootstrap applies saved host snapshot
+PASS navigate /mcp
+PASS MCP hydrates after production reload
+PASS wide or compact server list wraps long names
+PASS actual long URL config is editable without page overflow
+PASS close unchanged long URL form
+PASS detail shows long diagnostic log without page overflow
+PASS long JSON tool Modal fits native viewport
+PASS long JSON Modal closes without dispatch
+PASS production appearance bootstrap applies saved host snapshot
+PASS navigate /mcp
+PASS MCP hydrates after production reload
+PASS wide or compact server list wraps long names
+PASS actual long URL config is editable without page overflow
+PASS close unchanged long URL form
+PASS detail shows long diagnostic log without page overflow
+PASS long JSON tool Modal fits native viewport
+PASS long JSON Modal closes without dispatch
+PASS production appearance bootstrap applies saved host snapshot
+PASS navigate /mcp
+PASS MCP hydrates after production reload
+PASS wide or compact server list wraps long names
+PASS actual long URL config is editable without page overflow
+PASS close unchanged long URL form
+PASS detail shows long diagnostic log without page overflow
+PASS long JSON tool Modal fits native viewport
+PASS long JSON Modal closes without dispatch
+PASS production appearance bootstrap applies saved host snapshot
+PASS navigate /mcp
+PASS MCP hydrates after production reload
+PASS wide or compact server list wraps long names
+PASS actual long URL config is editable without page overflow
+PASS close unchanged long URL form
+PASS detail shows long diagnostic log without page overflow
+PASS long JSON tool Modal fits native viewport
+PASS long JSON Modal closes without dispatch
+PASS production appearance bootstrap applies saved host snapshot
+PASS navigate /mcp
+PASS MCP hydrates after production reload
+PASS wide or compact server list wraps long names
+PASS actual long URL config is editable without page overflow
+PASS close unchanged long URL form
+PASS detail shows long diagnostic log without page overflow
+PASS long JSON tool Modal fits native viewport
+PASS long JSON Modal closes without dispatch
+PASS production appearance bootstrap applies saved host snapshot
+PASS navigate /mcp
+PASS MCP hydrates after production reload
+PASS wide or compact server list wraps long names
+PASS actual long URL config is editable without page overflow
+PASS close unchanged long URL form
+PASS detail shows long diagnostic log without page overflow
+PASS long JSON tool Modal fits native viewport
+PASS long JSON Modal closes without dispatch
+PASS production appearance bootstrap applies saved host snapshot
+PASS navigate /mcp
+PASS MCP hydrates after production reload
+PASS wide or compact server list wraps long names
+PASS actual long URL config is editable without page overflow
+PASS close unchanged long URL form
+PASS detail shows long diagnostic log without page overflow
+PASS long JSON tool Modal fits native viewport
+PASS long JSON Modal closes without dispatch
+PASS production appearance bootstrap applies saved host snapshot
+PASS navigate /mcp
+PASS MCP hydrates after production reload
+PASS wide or compact server list wraps long names
+PASS actual long URL config is editable without page overflow
+PASS close unchanged long URL form
+PASS detail shows long diagnostic log without page overflow
+PASS long JSON tool Modal fits native viewport
+PASS long JSON Modal closes without dispatch
+PASS production appearance bootstrap applies saved host snapshot
+PASS navigate /mcp
+PASS MCP hydrates after production reload
+PASS focus server editor before native resize
+PASS native shrink retains visible editor and valid focus
+PASS compact back returns focus to server search
+PASS compact resume restores editor detail focus
+PASS native grow restores both columns with original editor
+PASS close resize editor
+PASS focus existing work-surface menu opener
+PASS native Enter opens surface menu at current MCP entry
+PASS native Home navigates surface menu
+PASS native Escape returns surface menu focus to opener
+PASS production appearance bootstrap applies saved host snapshot
+PASS navigate /mcp
+PASS MCP hydrates after production reload
+PASS prepare long modal for independent scroll and focus checks
+PASS modal and JSON scroll independently while footer stays reachable
+PASS native modal focus has visible ring and unclipped control
+PASS native modal focus has visible ring and unclipped control
+PASS native modal focus has visible ring and unclipped control
+PASS native modal focus has visible ring and unclipped control
+PASS native modal focus has visible ring and unclipped control
+PASS native modal focus has visible ring and unclipped control
+PASS native modal focus has visible ring and unclipped control
+PASS native modal focus has visible ring and unclipped control
+PASS supplemental modal closes without dispatch
+PASS shipped dist asset identity recorded
+PASS owned MCP sessions shut down
+SMOKE RESULT: 219 passed, 0 failed; retained MCP page evidence <local-evidence>/native-current-dist

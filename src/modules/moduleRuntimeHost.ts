@@ -430,7 +430,9 @@ export class ModuleRuntimeHost {
   async prepareViewClose(runtimeId: string, viewId: string): Promise<{ dirty: boolean; canSave?: boolean; blocked?: boolean }> {
     const instance = this.instances.get(runtimeId);
     const view = instance?.views.get(viewId);
-    return await view?.descriptor.beforeClose?.() ?? { dirty: false };
+    const status = await view?.descriptor.beforeClose?.() ?? { dirty: false };
+    if (instance && view && (instance.disposed || instance.crashed || instance.views.get(viewId) !== view)) return { dirty: false, blocked: true };
+    return status;
   }
   async saveView(runtimeId: string, viewId: string): Promise<boolean> {
     const instance = this.instances.get(runtimeId);

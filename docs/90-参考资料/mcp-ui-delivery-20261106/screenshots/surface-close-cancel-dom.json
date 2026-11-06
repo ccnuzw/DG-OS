@@ -1,0 +1,179 @@
+{
+  "ok": true,
+  "value": {
+    "active": {
+      "class": "control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-solid font-sans font-medium transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-disabled aria-busy:cursor-progress focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover h-(--control-height-compact) px-3 text-sm",
+      "label": null,
+      "rect": {
+        "bottom": 484.2160949707031,
+        "height": 27.1700439453125,
+        "right": 751.9157104492188,
+        "width": 66.4696044921875,
+        "x": 685.4461059570312,
+        "y": 457.0460510253906
+      },
+      "tag": "BUTTON"
+    },
+    "at": "2026-11-06T08:16:59.264Z",
+    "body": "D\nMy workspace\nOverview\nDesktop\nAI sessions\nResources\nSkills\nMCP management\nApps\nApps\nSettings\nCollapse\nMCP management\nFocus\nMCP Management\n\nOnly connect servers you trust. Local processes run with your operating-system permissions.\n\nAdd MCP server\nRefresh status\nYour servers\n3\nSearch servers\nConnection filter\nAll servers\nMCPFilesystemABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789LongNameWrapCheck\nstdio · Connected\nDisconnect\nMCPLongURLABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ReadOnlyConfig\nhttp · Disconnected\nConnect\nEdit\nOfficial SDK Echo\nhttp · Connected\nDisconnect\nEdit\nAdd MCP server\nNo secrets in server configs\nName\nTransport\nstdio process\nExecutable\nArguments\n\nJSON array; paths with spaces remain one argument. Shell syntax is not evaluated.\n\nWorking directory\nEnable server\nConnect automatically on app startup\n\nSaving never launches a process or connects immediately. Auto-connect is off by default.\n\nSave server\nCancel\nMCPFilesystemABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789LongNameWrapCheck\n\nstdio · Connected\n\nEdit\nDelete\nMCPFilesystemABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789LongNameWrapCheck tools\nDescriptions do not grant permissions\nRefresh tools\nCreate Directory\nCreate a new directory or ensure a directory exists. Can create multiple nested directories in one operation. If the directory already exists, this operation will succeed silently. Perfect for setting up directory structures for projects or ensuring required paths exist. Only works within allowed directories.\ncreate_directory\nInspect / call\nDirectory Tree\nGet a recursive tree view of files and directories as a JSON structure. Each entry includes 'name', 'type' (file/directory), and 'children' for directories. Files have no children array, while directories always have a children array (which may be empty). The output is formatted with 2-space indentation for readability. Only works within allowed directories.\ndirectory_tree\nInspect / call\nEdit File\nMake line-based edits to a text file. Each edit replaces exact line sequences with new content. Returns a git-style diff showing the changes made. Only works within allowed directories.\nedit_file\nInspect / call\nGet File Info\nRetrieve detailed metadata about a file or directory. Returns comprehensive information including size, creation time, last modified time, permissions, and type. This tool is perfect for understanding file characteristics without reading the actual content. Only works within allowed directories.\nget_file_info\nInspect / call\nList Allowed Directories\nReturns the list of directories that this server is allowed to access. Subdirectories within these allowed directories are also accessible. Use this to understand which directories and their nested paths are available before trying to access files.\nlist_allowed_directories\nInspect / call\nList Directory\nGet a detailed listing of all files and directories in a specified path. Results clearly distinguish between files and directories with [FILE] and [DIR] prefixes. This tool is essential for understanding directory structure and finding specific files within a directory. Only works within allowed directories.\nlist_directory\nInspect / call\nList Directory with Sizes\nGet a detailed listing of all files and directories in a specified path, including sizes. Results clearly distinguish between files and directories with [FILE] and [DIR] prefixes. This tool is useful for understanding directory structure and finding specific files within a directory. Only works within allowed directories.\nlist_directory_with_sizes\nInspect / call\nMove File\nMove or rename files and directories. Can move files between directories and rename them in a single operation. If the destination exists, the operation will fail. Works across different directories and can be used for simple renaming within the same directory. Both source and destination must be within allowed directories.\nmove_file\nInspect / call\nRead File (Deprecated)\nRead the complete contents of a file as text. DEPRECATED: Use read_text_file instead.\nread_file\nInspect / call\nRead Media File\nRead a file and return it as a base64-encoded content block with its MIME type. Image and audio files are returned as image/audio content; any other file type is returned as an embedded resource. Only works within allowed directories.\nread_media_file\nInspect / call\nRead Multiple Files\nRead the contents of multiple files simultaneously. This is more efficient than reading files one by one when you need to analyze or compare multiple files. Each file's content is returned with its path as a reference. Failed reads for individual files won't stop the entire operation. Only works within allowed directories.\nread_multiple_files\nInspect / call\nRead Text File\nRead the complete contents of a file from the file system as text. Handles various text encodings and provides detailed error messages if the file cannot be read. Use this tool when you need to examine the contents of a single file. Use the 'head' parameter to read only the first N lines of a file, or the 'tail' parameter to read only the last N lines of a file. Operates on the file as text regardless of extension. Only works within allowed directories.\nread_text_file\nInspect / call\nSearch Files\nRecursively search for files and directories matching a pattern. The patterns should be glob-style patterns that match paths relative to the working directory. Use pattern like '*.ext' to match files in current directory, and '**/*.ext' to match files in all subdirectories. Returns full paths to all matching items. Great for finding files when you don't know their exact location. Only searches within allowed directories.\nsearch_files\nInspect / call\nWrite File\nCreate a new file or completely overwrite an existing file with new content. Use with caution as it will overwrite existing files without warning. Handles text content with proper encoding. Only works within allowed directories.\nwrite_file\nInspect / call\nRecent use\nRefresh usage\n\nParameters and output are never stored. Pending, interrupted, cancelled or timeout can mean the external result is unknown. Check it before retrying; no automatic replay occurs.\n\nNo calls recorded for this server.\n\nConnection history\nUnsaved changes\nDiscard unsaved changes and close?\nCancel\nDiscard and close",
+    "density": "100",
+    "dialogs": [
+      {
+        "rect": {
+          "bottom": 508.4964294433594,
+          "height": 148.99285888671875,
+          "right": 914.1123657226562,
+          "width": 388.2398681640625,
+          "x": 525.8724975585938,
+          "y": 359.5035705566406
+        },
+        "text": "Unsaved changesDiscard unsaved changes and close?CancelDiscard and close"
+      }
+    ],
+    "hasFocus": true,
+    "inputs": [
+      {
+        "disabled": false,
+        "label": "Search servers",
+        "rect": {
+          "bottom": 200.5,
+          "height": 28,
+          "right": 642.953125,
+          "width": 417.453125,
+          "x": 225.5,
+          "y": 172.5
+        },
+        "type": "text",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "label": "Name",
+        "rect": {
+          "bottom": 254.5,
+          "height": 28,
+          "right": 1344.484375,
+          "width": 648.53125,
+          "x": 695.953125,
+          "y": 226.5
+        },
+        "type": "text",
+        "value": "MCP-DRAFT-RETAINED"
+      },
+      {
+        "disabled": false,
+        "label": "Executable",
+        "rect": {
+          "bottom": 389.5,
+          "height": 28,
+          "right": 1344.484375,
+          "width": 648.53125,
+          "x": 695.953125,
+          "y": 361.5
+        },
+        "type": "text",
+        "value": "/usr/bin/true"
+      },
+      {
+        "disabled": false,
+        "label": "Arguments",
+        "rect": {
+          "bottom": 457,
+          "height": 28,
+          "right": 1344.484375,
+          "width": 648.53125,
+          "x": 695.953125,
+          "y": 429
+        },
+        "type": "text",
+        "value": "[]"
+      },
+      {
+        "disabled": false,
+        "label": "Working directory",
+        "rect": {
+          "bottom": 546.5,
+          "height": 28,
+          "right": 1344.484375,
+          "width": 648.53125,
+          "x": 695.953125,
+          "y": 518.5
+        },
+        "type": "text",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "rect": {
+          "bottom": 580.25,
+          "height": 16,
+          "right": 695.953125,
+          "width": 16,
+          "x": 679.953125,
+          "y": 564.25
+        },
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "disabled": false,
+        "rect": {
+          "bottom": 615.75,
+          "height": 16,
+          "right": 695.953125,
+          "width": 16,
+          "x": 679.953125,
+          "y": 599.75
+        },
+        "type": "checkbox",
+        "value": "on"
+      }
+    ],
+    "ok": true,
+    "rows": [
+      {
+        "pressed": "true",
+        "rect": {
+          "bottom": 401,
+          "height": 116,
+          "right": 486.046875,
+          "width": 251.546875,
+          "x": 234.5,
+          "y": 285
+        },
+        "text": "MCPFilesystemABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789LongNameWrapCheckstdio · Connected"
+      },
+      {
+        "pressed": "false",
+        "rect": {
+          "bottom": 566.5,
+          "height": 135.5,
+          "right": 445.6875,
+          "width": 211.1875,
+          "x": 234.5,
+          "y": 431
+        },
+        "text": "MCPLongURLABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ReadOnlyConfighttp · Disconnected"
+      },
+      {
+        "pressed": "false",
+        "rect": {
+          "bottom": 654,
+          "height": 57.5,
+          "right": 428.015625,
+          "width": 193.515625,
+          "x": 234.5,
+          "y": 596.5
+        },
+        "text": "Official SDK Echohttp · Connected"
+      }
+    ],
+    "theme": "light",
+    "url": "tauri://localhost/mcp",
+    "viewport": {
+      "height": 868,
+      "width": 1440
+    },
+    "visibility": "visible"
+  }
+}

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
-import type { ReactNode } from 'react';
+import type { FocusEvent, ReactNode } from 'react';
 import { Dialog } from 'radix-ui';
 import {
   closeModal,
@@ -12,6 +12,7 @@ import {
 import { Button, type ButtonVariant } from './Button';
 import { StatusIcon } from './StatusIcon';
 import { t, useLocale } from '../../i18n';
+import './patterns.css';
 
 // Modal on the Radix Dialog primitive (D066). What the primitive provides and this file relies on (verified in
 // jsdom by tests/ui-overlays.test.tsx): `role="dialog"` named by the title, siblings hidden from assistive
@@ -21,13 +22,13 @@ import { t, useLocale } from '../../i18n';
 //  - B05-32 a confirm callback runs once however fast the button is clicked, and the dialog cannot be dismissed
 //    while it runs;
 //  - a click on the scrim never dismisses (a stray click must not cancel a delete or lose a form).
-// Real focus movement, scrim opacity and the 400-600px width are not measurable in jsdom (verified in Phase 8).
+// Real focus movement, scrim opacity and viewport-constrained geometry are measured by the WKWebView smoke.
 
 const ICON_COLOR: Record<ModalIcon, string> = {
-  success: 'text-success-text',
-  error: 'text-error-text',
-  warning: 'text-warning-text',
-  info: 'text-info-text',
+  success: 'text-status-success-text',
+  error: 'text-status-error-text',
+  warning: 'text-status-warning-text',
+  info: 'text-status-info-text',
 };
 
 /** Shown when the confirm callback rejects. Fixed text: a rejection's own message is never rendered. */
@@ -53,6 +54,23 @@ export interface ModalProps {
   onCancel?: () => void;
   /** Replaces the default buttons. */
   footer?: ReactNode;
+}
+
+// WebKit can scroll only the text caret into view on Tab, leaving the input border and ring clipped.
+// Correct the nearest modal scrollport after native focus scrolling, without moving the panel or page.
+function revealFocusedControl(event: FocusEvent<HTMLDivElement>) {
+  const region = event.currentTarget;
+  const target = event.target;
+  requestAnimationFrame(() => {
+    if (!region.isConnected || document.activeElement !== target || !region.contains(target)) return;
+    const bounds = region.getBoundingClientRect();
+    const field = target.getBoundingClientRect();
+    const padding = parseFloat(getComputedStyle(region).scrollPaddingTop) || 4;
+    const top = bounds.top + region.clientTop + padding;
+    const bottom = bounds.top + region.clientTop + region.clientHeight - padding;
+    if (field.top < top || field.height > bottom - top) region.scrollTop += field.top - top;
+    else if (field.bottom > bottom) region.scrollTop += field.bottom - bottom;
+  });
 }
 
 function ModalView(props: ModalProps) {
@@ -135,7 +153,9 @@ function ModalView(props: ModalProps) {
   return (
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-modal bg-overlay opacity-overlay animate-overlay-in motion-reduce:animate-none" />
+        {/* The inset box owns the viewport bounds, including at enlarged density; no intrinsic minimum can exceed it. */}
+        <div className="pointer-events-none fixed inset-4 z-modal flex items-center justify-center">
+        <Dialog.Overlay className="pointer-events-auto fixed inset-0 z-modal bg-overlay-scrim opacity-overlay animate-overlay-in motion-reduce:animate-none" />
         <Dialog.Content
           data-modal-kind={kind}
           {...(description ? {} : { 'aria-describedby': undefined })}
@@ -149,24 +169,26 @@ function ModalView(props: ModalProps) {
             const target = returnFocusTo.current;
             if (target && target !== document.body && target.isConnected) target.focus();
           }}
-          className="fixed inset-4 z-modal m-auto flex h-fit max-h-9/10 w-fit min-w-100 max-w-150 flex-col gap-4 overflow-y-auto rounded-lg border border-input bg-popover p-6 text-popover-foreground shadow-xl wrap-anywhere animate-modal-in motion-reduce:animate-none"
+          className="ui-modal-panel pointer-events-auto relative z-modal flex max-h-full flex-col gap-4 rounded-lg border border-edge-control bg-surface-popover p-6 text-ink-primary shadow-xl wrap-anywhere animate-modal-in motion-reduce:animate-none"
         >
-          <div className="flex items-start gap-3 pr-8">
+          <div className="ui-modal-heading flex shrink-0 items-start gap-3 pr-8">
             {icon ? <StatusIcon name={icon} className={ICON_COLOR[icon]} /> : null}
-            <Dialog.Title className="text-lg font-semibold">{title}</Dialog.Title>
+            <Dialog.Title className="min-w-0 text-lg font-semibold">{title}</Dialog.Title>
           </div>
-          {description ? (
-            <Dialog.Description asChild>
-              <div className="text-sm text-muted-foreground">{description}</div>
-            </Dialog.Description>
-          ) : null}
-          {children}
-          {failed ? (
-            <p role="alert" className="text-sm text-error-text">
-              {CONFIRM_FAILED_TEXT}
-            </p>
-          ) : null}
-          <div className="flex justify-end gap-2">{footer ?? defaultFooter}</div>
+          <div className="ui-modal-body flex min-h-0 min-w-0 flex-col gap-4 overflow-y-auto" onFocusCapture={revealFocusedControl}>
+            {description ? (
+              <Dialog.Description asChild>
+                <div className="text-sm text-ink-secondary">{description}</div>
+              </Dialog.Description>
+            ) : null}
+            {children}
+            {failed ? (
+              <p role="alert" className="text-sm text-status-error-text">
+                {CONFIRM_FAILED_TEXT}
+              </p>
+            ) : null}
+          </div>
+          <div className="ui-modal-footer flex min-w-0 shrink-0 flex-wrap justify-end gap-2" onFocusCapture={revealFocusedControl}>{footer ?? defaultFooter}</div>
           {/* Last in DOM order so the first Tab stop is an action, not the ×, while it stays top-right. */}
           <Dialog.Close asChild>
             <Button
@@ -181,6 +203,7 @@ function ModalView(props: ModalProps) {
             </Button>
           </Dialog.Close>
         </Dialog.Content>
+        </div>
       </Dialog.Portal>
     </Dialog.Root>
   );

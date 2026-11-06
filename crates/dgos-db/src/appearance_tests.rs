@@ -15,7 +15,7 @@ async fn appearance_new_install_and_accounts_are_independent(){
 #[tokio::test]
 async fn appearance_concurrent_cas_only_one_commit_and_conflict_returns_winner(){
  let repo=AppearanceRepository::new(memory().await);repo.get("default-user").await.unwrap();
- let mut a=AppearanceValues::default();a.mode="dark".into();let mut b=a.clone();b.density=175;
+ let a=AppearanceValues{mode:"dark".into(),..Default::default()};let mut b=a.clone();b.density=175;
  let (a,b)=tokio::join!(repo.apply("default-user",&a,0),repo.apply("default-user",&b,0));
  let results=[a.unwrap(),b.unwrap()];assert_eq!(results.iter().filter(|r|matches!(r,AppearanceSave::Saved{..})).count(),1);
  let winner=snapshot(repo.get("default-user").await.unwrap());assert_eq!(winner.revision,1);
@@ -72,7 +72,7 @@ async fn appearance_migration_failure_restores_database_and_files_before_forward
  let repo=AppearanceRepository::new(db.clone());
  // D126 deliberately does not migrate the retired two-key preference.
  assert_eq!(snapshot(repo.get("default-user").await.unwrap()).values,AppearanceValues::default());
- let mut values=AppearanceValues::default();values.mode="dark".into();values.density=150;
+ let values=AppearanceValues{mode:"dark".into(),density:150,..Default::default()};
  repo.apply("default-user",&values,0).await.unwrap();
  let expected=snapshot(repo.get("default-user").await.unwrap());
  db.execute_unprepared("INSERT INTO chat_sessions(id,user_id,title,skill_id,skill_version_id,skill_content_hash,created_at,updated_at) VALUES ('legacy','default-user','kept','skill','v1','hash',0,0)").await.unwrap();

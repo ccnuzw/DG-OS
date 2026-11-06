@@ -5,6 +5,7 @@ export default {
   "chat.argsHelp": ". Review the exact arguments below. Tools may change data or send it externally.",
   "chat.assistant": "Assistant",
   "chat.awaitingTool": "Waiting for your tool approval…",
+  "chat.backToBottom": "Back to bottom",
   "chat.byteUnit": "UTF-8 bytes",
   "chat.cancel": "Cancel",
   "chat.chat": "Chat",

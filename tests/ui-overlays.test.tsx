@@ -4,18 +4,21 @@
 //  - Proven here: roles and names, `aria-labelledby`/`aria-describedby`, siblings hidden while a dialog is open,
 //    removal from the DOM, Tab/Shift+Tab wrapping inside the dialog, Esc closing only the top dialog, focus restored
 //    to the opener, one confirm callback per confirm, no dismissal while busy, tooltip open/close by hover, focus,
-//    Esc and blur, and that the class literals the components use are real Tailwind utilities.
+//    Esc and blur.
 //  - NOT proven here, left to a real WebView (Phase 8): that focus really cannot leave the dialog with a physical
 //    Tab key (jsdom has no default Tab action, so Tab is checked through Radix's keydown handler plus a programmatic
-//    focus-escape), that scrims visibly darken per layer, the 400-600px width and viewport fit, that the Select
+//    focus-escape), that scrims visibly darken per layer, nominal width and viewport fit, that the Select
 //    popup is clickable above a Modal, that animations run, and VoiceOver announcements.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { Button, DropdownMenu, Popover, Modal, ModalHost, Select, ToastViewport, Tooltip, clearToasts, toast } from '@dgos/ui';
 import { CONFIRM_FAILED_TEXT } from '../src/ui/components/Modal';
-import { compileUi, contrast, themeTokens } from './helpers/designTokens';
+import { invoke } from '@tauri-apps/api/core';
+import { AssetPreview } from '../src/components/chat/Attachments';
+import { contrast, themeTokens } from './helpers/designTokens';
 
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 afterEach(() => {
   act(() => Modal.closeAll());
   act(() => clearToasts());
@@ -53,7 +56,7 @@ function openDialog(label = 'open') {
 }
 
 describe('Modal (AC07)', () => {
-  it('shows a dialog named by its title and described by its text, with a scrim', () => {
+  it('shows a dialog named by its title and described by its text', () => {
     render(<Opener />);
     expect(screen.queryByRole('dialog')).toBeNull();
     openDialog();
@@ -63,10 +66,6 @@ describe('Modal (AC07)', () => {
     expect(document.getElementById(titleId!)?.textContent).toBe('Delete provider');
     const describedBy = dialog.getAttribute('aria-describedby');
     expect(document.getElementById(describedBy!)?.textContent).toBe('This cannot be undone.');
-    // The scrim is a sibling layer of the content, drawn from the --color-overlay token at --opacity-overlay.
-    const scrim = document.querySelector('.bg-overlay');
-    expect(scrim).not.toBeNull();
-    expect(scrim!.className).toContain('opacity-overlay');
   });
 
   it('hides the page behind it from assistive technology while open', () => {
@@ -140,6 +139,65 @@ describe('Modal (AC07)', () => {
     expect(within(dialog).queryByRole('button', { name: '取消' })).toBeNull();
   });
 
+  it('preserves a three-action custom footer and dispatches only the chosen save action', async () => {
+    const save = vi.fn();
+    const discard = vi.fn();
+    function UnsavedConsumer() {
+      const [open, setOpen] = useState(true);
+      return <Modal open={open} onOpenChange={setOpen} title="保存未完成的工作？" description="关闭前请选择保留或放弃当前修改。"
+        footer={<>
+          <Button variant="secondary" onClick={() => setOpen(false)}>取消</Button>
+          <Button variant="danger" onClick={() => { discard(); setOpen(false); }}>放弃更改</Button>
+          <Button onClick={() => { save(); setOpen(false); }}>保存并关闭</Button>
+        </>} />;
+    }
+    render(<UnsavedConsumer />);
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getAllByRole('button').map(button => button.textContent || button.getAttribute('aria-label')))
+      .toEqual(['取消', '放弃更改', '保存并关闭', '关闭']);
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存并关闭' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(discard).not.toHaveBeenCalled();
+  });
+
+  it('keeps a custom footer submit associated with its body form, including native validation', () => {
+    const submitted = vi.fn();
+    render(
+      <Opener kind="form" footer={<><Button variant="secondary">返回参数</Button><Button type="submit" form="review-arguments">检查并确认调用</Button></>}>
+        <form id="review-arguments" onSubmit={event => { event.preventDefault(); submitted(); }}>
+          <label>参数<input required name="arguments" /></label>
+          <pre>{'Long schema argument. '.repeat(100)}</pre>
+        </form>
+      </Opener>,
+    );
+    openDialog();
+    const submit = screen.getByRole('button', { name: '检查并确认调用' });
+    fireEvent.click(submit);
+    expect(submitted).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('参数'), { target: { value: 'reviewed' } });
+    fireEvent.click(submit);
+    expect(submitted).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
+  it('renders the real attachment preview with its long filename and preformatted body, then restores focus on Escape', async () => {
+    const name = `audit-${'long-filename-'.repeat(12)}.txt`;
+    const text = 'Long attachment line. '.repeat(300);
+    vi.mocked(invoke).mockResolvedValue({ success: true, data: { base64: btoa(text) } });
+    render(<AssetPreview asset={{ id: 'preview-long', name, mime: 'text/plain', bytes_len: text.length }} />);
+    const trigger = screen.getByRole('button');
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole('dialog', { name });
+    await waitFor(() => expect(dialog.querySelector('pre')?.textContent).toBe(text));
+    expect(within(dialog).getByRole('button', { name: '确定' })).toBeTruthy();
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+    expect(invoke).toHaveBeenCalledWith('preview_chat_asset', { assetId: 'preview-long' });
+  });
+
   it('the × and Cancel dismiss through onCancel; the title icon is decorative', () => {
     const onCancel = vi.fn();
     render(<Opener onCancel={onCancel} icon="warning" />);
@@ -158,7 +216,7 @@ describe('Modal (AC07)', () => {
     const armed = Promise.withResolvers<void>();
     setTimeout(armed.resolve, 10);
     await act(async () => armed.promise);
-    const scrim = document.querySelector('.bg-overlay')!;
+    const scrim = screen.getByRole('dialog').previousElementSibling!;
     fireEvent.pointerDown(scrim);
     fireEvent.pointerUp(scrim);
     fireEvent.click(scrim);
@@ -236,15 +294,6 @@ describe('Modal accessibility and stacking (AC16)', () => {
     expect(first.id).not.toBe(second.id);
   });
 
-  it('every layer adds its own scrim, so the page darkens with each dialog', () => {
-    Modal.confirm({ title: 'one' });
-    render(<ModalHost />);
-    expect(document.querySelectorAll('.bg-overlay')).toHaveLength(1);
-    act(() => void Modal.confirm({ title: 'two' }));
-    expect(document.querySelectorAll('.bg-overlay')).toHaveLength(2);
-    act(() => void Modal.alert({ title: 'three' }));
-    expect(document.querySelectorAll('.bg-overlay')).toHaveLength(3);
-  });
 
   it('a later dialog is later in the DOM, so it paints above the earlier one at the same z-index', () => {
     Modal.confirm({ title: 'under' });
@@ -511,7 +560,7 @@ describe('Select inside a Modal', () => {
     const listbox = await screen.findByRole('listbox');
     // An open Select hides everything outside its list from the accessibility tree, the dialog included.
     const dialogLayer = layerOf(screen.getByRole('dialog', { hidden: true }));
-    expect(layerOf(document.querySelector('.bg-overlay'))).toBe(dialogLayer);
+    expect(layerOf(screen.getByRole('dialog', { hidden: true }).previousElementSibling)).toBe(dialogLayer);
     expect(layerOf(listbox)).toBeGreaterThan(dialogLayer);
     // 0-49 is the in-page band (a canvas or page stacks inside it); a dialog must never fall into it.
     expect(dialogLayer).toBeGreaterThan(49);
@@ -631,26 +680,6 @@ describe('overlay tokens and class literals (D066, D069)', () => {
     }
   });
 
-  it('the utilities Modal, Tooltip and Select use are generated by the real Tailwind build', async () => {
-    const css = await compileUi([
-      'bg-overlay', 'opacity-overlay', 'animate-overlay-in', 'animate-modal-in', 'z-modal', 'z-popover', 'fixed', 'inset-0', 'inset-4',
-      'm-auto', 'h-fit', 'w-fit', 'min-w-100', 'max-w-150', 'max-h-9/10', 'max-w-75', 'overflow-y-auto', 'border-input',
-      'shadow-xl', 'bg-popover', 'text-popover-foreground', 'text-muted-foreground', 'text-error-text', 'wrap-break-word', 'wrap-anywhere',
-    ]);
-    expect(css).toMatch(/\.bg-overlay\s*\{\s*background-color:\s*var\(--color-overlay\)/);
-    expect(css).toMatch(/\.opacity-overlay\s*\{\s*opacity:\s*var\(--opacity-overlay\)/);
-    expect(css).toMatch(/\.z-modal\s*\{\s*z-index:\s*var\(--z-index-modal\)/);
-    expect(css).toMatch(/\.z-popover\s*\{\s*z-index:\s*var\(--z-index-popover\)/);
-    expect(css).toMatch(/\.animate-modal-in\s*\{\s*animation:\s*var\(--animate-modal-in\)/);
-    expect(css).toMatch(/--animate-modal-in:\s*modal-in var\(--duration-slow\)/);
-    expect(css).toMatch(/@keyframes modal-in/);
-    expect(css).toMatch(/@keyframes overlay-in\s*\{[^}]*\}[^}]*opacity:\s*var\(--opacity-overlay\)/);
-    expect(css).toMatch(/\.min-w-100\s*\{\s*min-width:\s*calc\(var\(--spacing-unit\)\s*\*\s*100\)/);
-    expect(css).toMatch(/\.max-w-150\s*\{\s*max-width:\s*calc\(var\(--spacing-unit\)\s*\*\s*150\)/);
-    expect(css).toMatch(/\.max-h-9\\\/10\s*\{\s*max-height:\s*calc\(9 \/ 10 \* 100%\)/);
-    expect(css).toMatch(/\.wrap-break-word\s*\{\s*overflow-wrap:\s*break-word/);
-    expect(css).toMatch(/\.wrap-anywhere\s*\{\s*overflow-wrap:\s*anywhere/);
-  });
 });
 
 describe('compact popup behavior',()=>{

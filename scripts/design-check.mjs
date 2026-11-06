@@ -22,6 +22,7 @@ const STYLE_TAGS = {
   'color-no-hex': 'R2',
   'color-named': 'R2',
   'function-disallowed-list': 'R2',
+  'dgos/semantic-colors': 'R2',
   'dgos/defined-custom-properties': 'R3',
   'at-rule-no-unknown': 'R3',
   'declaration-property-unit-disallowed-list': 'R4',

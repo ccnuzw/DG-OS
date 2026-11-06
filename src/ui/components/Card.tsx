@@ -6,12 +6,12 @@ import { omitStyle, type DomProps } from '../lib/props';
 
 function CardRoot(props: DomProps<'div'>) {
   const { className, ...rest } = omitStyle(props);
-  return <div {...rest} className={cn('rounded-lg border border-border bg-card text-card-foreground shadow-sm', className)} />;
+  return <div {...rest} className={cn('rounded-lg border border-border-subtle bg-surface-card text-ink-primary shadow-sm', className)} />;
 }
 
 function CardHeader(props: DomProps<'div'>) {
   const { className, ...rest } = omitStyle(props);
-  return <div {...rest} className={cn('border-b border-border px-4 py-3 text-base font-semibold', className)} />;
+  return <div {...rest} className={cn('border-b border-border-subtle px-4 py-3 text-base font-semibold', className)} />;
 }
 
 function CardBody(props: DomProps<'div'>) {
@@ -21,7 +21,7 @@ function CardBody(props: DomProps<'div'>) {
 
 function CardFooter(props: DomProps<'div'>) {
   const { className, ...rest } = omitStyle(props);
-  return <div {...rest} className={cn('flex items-center justify-end gap-2 border-t border-border px-4 py-3', className)} />;
+  return <div {...rest} className={cn('flex items-center justify-end gap-2 border-t border-border-subtle px-4 py-3', className)} />;
 }
 
 export const Card = Object.assign(CardRoot, { Header: CardHeader, Body: CardBody, Footer: CardFooter });

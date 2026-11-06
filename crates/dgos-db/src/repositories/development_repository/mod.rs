@@ -7,6 +7,10 @@ mod executions;
 mod sessions;
 mod runtime;
 mod capabilities;
+mod workspaces;
+pub use workspaces::{GitOperationIntent, StoredWorkspace};
+mod handoffs;
+pub use handoffs::StoredHandoff;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

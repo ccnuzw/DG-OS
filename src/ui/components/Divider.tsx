@@ -19,7 +19,7 @@ export function Divider(props: DividerProps) {
       {...rest}
       role="separator"
       aria-orientation={vertical ? 'vertical' : undefined}
-      className={cn('shrink-0 bg-divider', vertical ? 'h-full w-px self-stretch' : 'h-px w-full', className)}
+      className={cn('shrink-0 bg-border-divider', vertical ? 'h-full w-px self-stretch' : 'h-px w-full', className)}
     />
   );
 }

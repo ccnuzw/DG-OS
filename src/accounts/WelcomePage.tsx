@@ -10,7 +10,7 @@ export function WelcomePage({ onSkip }: { onSkip: () => void }) {
   const { t } = useLocale();
   return (
     <AuthShell title={t('auth.welcome')}>
-      <p className="m-0 text-sm text-muted-foreground">
+      <p className="m-0 text-sm text-ink-secondary">
         {t('auth.welcomeText')}
       </p>
       <CreateAccountForm submitLabel={t('auth.create')} onCreated={reloadApp} />

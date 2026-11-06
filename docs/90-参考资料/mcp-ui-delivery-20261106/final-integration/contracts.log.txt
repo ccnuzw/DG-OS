@@ -1,0 +1,5 @@
+
+> dgos@0.1.0 contracts:check
+> node scripts/check-host-contracts.mjs
+
+Checked 182 host IPC contracts (static only); react and react-dom match package-lock.json.

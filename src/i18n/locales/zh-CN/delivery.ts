@@ -1,0 +1,16 @@
+export default {
+  'delivery.title': '工作区与 Git 交付', 'delivery.workspaces': '任务工作区', 'delivery.unknown': '状态不可用', 'delivery.directory': '目录', 'delivery.branch': '新分支', 'delivery.baseCommit': '基准提交哈希', 'delivery.create': '创建 worktree', 'delivery.import': '导入已有 worktree', 'delivery.select': '使用工作区', 'delivery.remove': '移除工作区', 'delivery.retainBranch': '移除 worktree 时保留成果的分支', 'delivery.cleanCopyWarning': '新 worktree 从提交开始，不包含原目录的未提交修改。',
+  'delivery.git': 'Git 审查', 'delivery.existingStaged': '任务开始前已暂存', 'delivery.includeExisting': '在本次提交中包含这些原有暂存路径', 'delivery.files': '变更文件', 'delivery.conflicts': '未合并冲突', 'delivery.stagedDiff': '完整索引差异', 'delivery.worktreeDiff': '工作区差异', 'delivery.emptyDiff': '没有文本差异。', 'delivery.stage': '暂存所选文件', 'delivery.unstage': '取消暂存所选文件', 'delivery.discard': '安全恢复所选文件', 'delivery.discardWarning': '仅将这些明确路径恢复到任务基线。宿主拒绝原有、外部或归属不明的修改，并校验当前文件哈希。保留索引。', 'delivery.discardSelected': '恢复所选文件', 'delivery.commitMessage': '提交信息', 'delivery.confirmAllIndex': '我已审查完整索引并确认本次提交的确切内容', 'delivery.commit': '提交已审查索引', 'delivery.remote': '已配置的远端名', 'delivery.push': '推送当前分支', 'delivery.switch': '切换分支', 'delivery.merge': '合并分支',
+  'delivery.operation.pending': '处理中', 'delivery.operation.succeeded': '已完成', 'delivery.operation.failed': '失败', 'delivery.operation.unknown': '结果未知', 'delivery.handoffs': '跨引擎继续开发', 'delivery.prepareHandoff': '生成交接摘要', 'delivery.useDraft': '审查此摘要', 'delivery.sourceSession': '来源会话', 'delivery.chooseSource': '选择来源会话', 'delivery.remaining': '剩余问题与续作要求', 'delivery.summary': '可编辑交接摘要', 'delivery.capabilityRevision': '目标新会话能力配置', 'delivery.trustWorkspace': '我信任新会话的目标目录', 'delivery.acceptTrust': '创建带此草稿的新会话',
+  'delivery.removeWarning': '仅在任务已完成或取消后移除此受管 worktree。目录必须干净且无活动执行，所有成果须由指定分支保留。此处不能移除原目录或导入目录。',
+  'delivery.kind.original': '原始目录', 'delivery.kind.imported': '导入目录', 'delivery.kind.managed': '受管 worktree',
+  'delivery.plainDirectory': '此任务使用普通目录，无法进行 Git 交付。', 'delivery.detached': '分离 HEAD',
+  'delivery.indexStatus': '索引', 'delivery.worktreeStatus': '工作区', 'delivery.conflictStage': '阶段 {stage}',
+  'delivery.editConflict': '审查上面的各项冲突，在“文件”中打开并编辑后，刷新并明确暂存已解决的文件。',
+  'delivery.reconcile': '核实操作结果', 'delivery.unknownOperation': '操作结果未知。请检查并核实此操作；不会自动重放。',
+  'delivery.pushTrust': '我信任此目录并授权网络访问，将当前本地分支非强制推送到已配置的远端。',
+  'delivery.handoffHint': '先关闭来源运行，审查编辑生成的摘要，再为另一引擎选择新能力和目录信任。新会话只获得待明确发送的草稿。',
+  'delivery.targetEngine': '目标引擎', 'delivery.closeSource': '准备交接前请关闭来源运行。', 'delivery.closeSourceAction': '关闭来源会话',
+  'delivery.chooseCapability': '选择原生配置或兼容的项目修订', 'delivery.accepted': '已创建会话', 'delivery.awaitingReview': '待审查',
+  'delivery.operationId': '操作 ID', 'delivery.inspectOperation': '审查操作',
+} as const;

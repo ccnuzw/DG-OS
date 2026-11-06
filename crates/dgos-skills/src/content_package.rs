@@ -118,10 +118,16 @@ pub(crate) fn read_package_files(path: &Path) -> Result<BTreeMap<String, Vec<u8>
     Ok(files)
 }
 
+pub(crate) struct ValidatedContentPackage {
+    pub metadata: ContentSkillMetadata,
+    pub files: BTreeMap<String, Vec<u8>>,
+    pub file_manifest: BTreeMap<String, String>,
+}
+
 pub(crate) fn validate_package_files(
     path: &Path,
     expected_hash: &str,
-) -> Result<(ContentSkillMetadata, BTreeMap<String, Vec<u8>>, BTreeMap<String, String>)> {
+) -> Result<ValidatedContentPackage> {
     let files = read_package_files(path)?;
     for required in ["skill.json", "SKILL.md", "LICENSE"] {
         if files.get(required).is_none_or(|bytes| bytes.is_empty()) {
@@ -164,11 +170,12 @@ pub(crate) fn validate_package_files(
     if actual != expected_hash {
         return Err(invalid("package hash mismatch"));
     }
-    Ok((meta, files, manifest))
+    Ok(ValidatedContentPackage { metadata: meta, files, file_manifest: manifest })
 }
 
 pub fn validate_package(path: &Path, expected_hash: &str) -> Result<BundledSkill> {
-    let (metadata, mut bytes, files) = validate_package_files(path, expected_hash)?;
+    let ValidatedContentPackage { metadata, files: mut bytes, file_manifest: files } =
+        validate_package_files(path, expected_hash)?;
     let content_hash = expected_hash.to_owned();
     let body = String::from_utf8(bytes.remove("SKILL.md").unwrap())
         .map_err(|_| invalid("non UTF-8 body"))?;

@@ -4,39 +4,41 @@ import { Button, DropdownMenu, Icon, Popover, type MenuItem } from '@dgos/ui';
 import { useLocale } from '../i18n';
 import type { WorkspaceSurface } from './model';
 import type { WorkspaceAppEntry } from '../modules/moduleApi';
+import { appUsable } from './useAppCatalog';
 
 export type NavigationAction = { id: string; label: string; group: 'workspace' | 'apps' | 'settings'; icon: ReactNode; run: () => void; disabled?: boolean };
-export const appUsable = (entry: WorkspaceAppEntry) => entry.enabled && entry.permissionState === 'granted' && entry.runtimeState === 'ready' && !entry.crashed;
 
 export function WorkspaceTools({ actions, open, onClose }: { actions: NavigationAction[]; open: boolean; onClose: () => void }) {
   const { t } = useLocale();
   const [query, setQuery] = useState('');
-  const [selected, setSelected] = useState(0);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const origin = useRef<HTMLElement | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const id = useId();
   const filtered = actions.filter(action => `${action.label} ${action.id}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
-  const current = filtered[selected];
-  useEffect(() => { list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' }); }, [selected]);
+  const selected = filtered.findIndex(action => action.id === selectedId);
+  const current = filtered[selected] ?? filtered.find(action => !action.disabled);
+  const currentIndex = current ? filtered.indexOf(current) : -1;
+  useEffect(() => { list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' }); }, [current?.id]);
   const execute = (action: NavigationAction) => { if (!action.disabled) { onClose(); action.run(); } };
   const move = (direction: number) => {
     for (let count = 1; count <= filtered.length; count++) {
-      const next = (selected + direction * count + filtered.length) % filtered.length;
-      if (!filtered[next].disabled) { setSelected(next); break; }
+      const next = (currentIndex + direction * count + filtered.length) % filtered.length;
+      if (!filtered[next].disabled) { setSelectedId(filtered[next].id); break; }
     }
   };
   return <Dialog.Root open={open} onOpenChange={value => { if (!value) onClose(); }}>
     <Dialog.Portal>
-      <Dialog.Overlay className="fixed inset-0 z-modal bg-overlay opacity-overlay" />
-      <Dialog.Content aria-describedby={undefined} onOpenAutoFocus={() => { origin.current = document.activeElement as HTMLElement; setQuery(''); setSelected(0); }} onCloseAutoFocus={event => { event.preventDefault(); requestAnimationFrame(() => { const target = origin.current; if (target?.isConnected && !target.closest('[hidden], [inert]') && !document.querySelector('.workspace-settings-dialog, .workspace-launcher-panel')) target.focus(); }); }} className="workspace-command">
+      <Dialog.Overlay className="fixed inset-0 z-modal bg-overlay-scrim opacity-overlay" />
+      <Dialog.Content aria-describedby={undefined} onOpenAutoFocus={() => { origin.current = document.activeElement as HTMLElement; setQuery(''); setSelectedId(null); }} onCloseAutoFocus={event => { event.preventDefault(); requestAnimationFrame(() => { const target = origin.current; if (target?.isConnected && !target.closest('[hidden], [inert]') && !document.querySelector('.workspace-settings-dialog, .workspace-launcher-panel')) target.focus(); }); }} className="workspace-command">
         <Dialog.Title className="sr-only">{t('shell.commandTitle')}</Dialog.Title>
-        <div className="workspace-command-search"><Icon name="search" /><input role="combobox" aria-expanded aria-controls={`${id}-list`} aria-activedescendant={current ? `${id}-${selected}` : undefined} aria-label={t('shell.commandSearch')} value={query} onChange={event => { setQuery(event.target.value); setSelected(0); }} onKeyDown={event => {
+        <div className="workspace-command-search"><Icon name="search" /><input role="combobox" aria-expanded aria-controls={`${id}-list`} aria-activedescendant={current ? `${id}-${currentIndex}` : undefined} aria-label={t('shell.commandSearch')} value={query} onChange={event => { setQuery(event.target.value); setSelectedId(null); }} onKeyDown={event => {
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); move(event.key === 'ArrowDown' ? 1 : -1); }
-          if (event.key === 'Home' || event.key === 'End') { event.preventDefault(); setSelected(event.key === 'Home' ? 0 : filtered.length - 1); }
+          if (event.key === 'Home' || event.key === 'End') { event.preventDefault(); const enabled = filtered.filter(action => !action.disabled); setSelectedId((event.key === 'Home' ? enabled[0] : enabled[enabled.length - 1])?.id ?? null); }
           if (event.key === 'Enter' && current) { event.preventDefault(); execute(current); }
         }} placeholder={t('shell.commandSearch')} /><kbd>{t('shell.escapeKey')}</kbd></div>
         <div ref={list} id={`${id}-list`} role="listbox" aria-label={t('shell.commands')} className="workspace-command-results">
-          {filtered.map((action, index) => <div key={action.id}><div className="workspace-command-group">{index === 0 || filtered[index - 1].group !== action.group ? t(action.group === 'apps' ? 'nav.modules' : action.group === 'settings' ? 'nav.settings' : 'shell.workspace') : null}</div><button id={`${id}-${index}`} type="button" role="option" tabIndex={-1} aria-selected={selected === index} aria-disabled={action.disabled} onMouseEnter={() => setSelected(index)} onClick={() => execute(action)} className="workspace-command-option">{action.icon}<span>{action.label}</span>{action.disabled ? <Icon name="stop" size="sm" /> : null}</button></div>)}
+          {filtered.map((action, index) => <div key={action.id}><div className="workspace-command-group">{index === 0 || filtered[index - 1].group !== action.group ? t(action.group === 'apps' ? 'nav.modules' : action.group === 'settings' ? 'nav.settings' : 'shell.workspace') : null}</div><button id={`${id}-${index}`} type="button" role="option" tabIndex={-1} aria-selected={current?.id === action.id} aria-disabled={action.disabled} onMouseEnter={() => setSelectedId(action.id)} onClick={() => execute(action)} className="workspace-command-option">{action.icon}<span>{action.label}</span>{action.disabled ? <Icon name="stop" size="sm" /> : null}</button></div>)}
           {!filtered.length ? <p className="workspace-overlay-empty">{t('shell.noCommands')}</p> : null}
         </div>
       </Dialog.Content>
@@ -86,7 +88,7 @@ export function Launcher({ open, query, catalog, loading, error, onRetry, onMana
           const index = pinnedIds.indexOf(entry.moduleId);
           const items: MenuItem[] = [{ kind: 'item', id: 'pin', label: t(pinned ? 'shell.unpinApp' : 'shell.pin'), disabled: !usable && !pinned, onSelect: () => toggle(entry), shortcut: 'P' }];
           if (pinned) items.push({ kind: 'item', id: 'up', label: t('shell.moveEarlier'), disabled: index === 0, onSelect: () => onMove(entry.moduleId, -1) }, { kind: 'item', id: 'down', label: t('shell.moveLater'), disabled: index === pinnedIds.length - 1, onSelect: () => onMove(entry.moduleId, 1) });
-          return <div key={entry.moduleId} className="workspace-launcher-cell"><button type="button" draggable={usable} aria-disabled={!usable} title={`${entry.displayName}${usable ? '' : ` — ${t('shell.appUnavailable')}`}`} onClick={() => { if (held.current) { held.current = false; return; } onOpen(entry); }} onDragStart={event => { clearHold(); event.dataTransfer.setData('application/x-dgos-module', entry.moduleId); event.dataTransfer.effectAllowed = 'copy'; onDragStart(entry.moduleId); }} onDragEnd={onDragEnd} onPointerDown={event => { held.current = false; if (event.pointerType === 'touch' && usable) hold.current = setTimeout(() => { held.current = true; toggle(entry); }, 550); }} onPointerUp={clearHold} onPointerCancel={clearHold} onPointerMove={clearHold} onKeyDown={event => { if (event.key.toLowerCase() === 'p' && usable) { event.preventDefault(); toggle(entry); } }} className="workspace-launcher-item" data-blocked={!usable}>
+          return <div key={entry.moduleId} className="workspace-launcher-cell"><button type="button" draggable={usable} aria-disabled={!usable} title={`${entry.displayName}${usable ? '' : ` — ${t('shell.appUnavailable')}`}`} onClick={() => { if (held.current) { held.current = false; return; } onOpen(entry); }} onDragStart={event => { clearHold(); event.dataTransfer.setData('application/x-dgos-module', entry.moduleId); event.dataTransfer.effectAllowed = 'copy'; onDragStart(entry.moduleId); }} onDragEnd={onDragEnd} onPointerDown={event => { held.current = false; if (event.pointerType === 'touch' && usable) hold.current = setTimeout(() => { held.current = true; toggle(entry); }, 550); }} onPointerUp={clearHold} onPointerCancel={clearHold} onPointerMove={clearHold} onKeyDown={event => { if (event.key.toLowerCase() === 'p' && (usable || pinned)) { event.preventDefault(); toggle(entry); } }} className="workspace-launcher-item" data-blocked={!usable}>
             <span className="workspace-launcher-icon"><Icon name={entry.layout === 'full-bleed' ? 'palette' : 'code'} size="lg" />{usable ? <i aria-hidden="true" /> : null}</span><span className="workspace-launcher-name">{entry.displayName}</span>{pinned ? <span className="sr-only">{t('shell.pinned')}</span> : null}
           </button><DropdownMenu label={entry.displayName} items={items} trigger={<Button size="xxs" variant="ghost" iconOnly aria-label={t('shell.appActions', { title: entry.displayName })}><Icon name="more" size="sm" /></Button>} /></div>;
         })}{!loading && !visible.length ? <p className="workspace-overlay-empty">{t(catalog.length ? 'shell.noApps' : 'shell.catalogEmpty')}</p> : null}</div>}
