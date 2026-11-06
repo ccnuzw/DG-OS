@@ -45,12 +45,12 @@ async function read<T>(command: string, args: { [key: string]: unknown }): Promi
   }
 }
 
-export interface FileListInput { project_id: string; path: string; query: string; include_ignored: boolean }
+export interface FileListInput { project_id: string; task_id?: string | null; path: string; query: string; include_ignored: boolean }
 export function listDevelopmentFiles(input: FileListInput): Promise<Outcome<DevFileList>> {
   return read<DevFileList>('list_development_files', { input });
 }
 
-export function readDevelopmentFile(input: { project_id: string; path: string }): Promise<Outcome<DevFileView>> {
+export function readDevelopmentFile(input: { project_id: string; task_id?: string | null; path: string }): Promise<Outcome<DevFileView>> {
   return read<DevFileView>('read_development_file', { input });
 }
 

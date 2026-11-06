@@ -5,6 +5,7 @@ import { useDevelopment } from '../src/stores/developmentStore';
 import { useDevelopmentEditor } from '../src/stores/developmentEditor';
 import { chooseContext } from '../src/stores/developmentSelection';
 import { useDevelopmentRuntime } from '../src/stores/developmentRuntime';
+import { FileEditor } from '../src/components/development/FileEditor';
 const { invoke, confirmDiscard } = vi.hoisted(() => ({ invoke: vi.fn(), confirmDiscard: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('../src/workspace/closeCoordinator', () => ({ confirmDiscard }));
@@ -17,7 +18,7 @@ function installFiles() {
     return Promise.resolve(null);
   });
 }
-it('cancelling file, search, tab and context changes keeps the edited draft and context', async () => {
+it('cancelling file, search and context changes keeps the draft while code views coexist', async () => {
   installFiles(); confirmDiscard.mockResolvedValue(false);
   render(<ProjectReview projectId="p" taskId="t" />);
   fireEvent.click(await screen.findByTestId('dev-file-item-a.ts'));
@@ -27,37 +28,30 @@ it('cancelling file, search, tab and context changes keeps the edited draft and 
   fireEvent.change(screen.getByTestId('dev-file-search'), { target: { value: 'b' } });
   await waitFor(() => expect(confirmDiscard).toHaveBeenCalledTimes(2));
   fireEvent.keyDown(screen.getByTestId('dev-review-tab-changes'), { key: 'Enter' });
-  await waitFor(() => expect(confirmDiscard).toHaveBeenCalledTimes(3));
+  expect(confirmDiscard).toHaveBeenCalledTimes(2);
+  fireEvent.keyDown(screen.getByTestId('dev-review-tab-files'), { key: 'Enter' });
   await act(async () => { expect((await chooseContext({ project_id: 'other', task_id: null, session_id: null })).ok).toBe(false); });
   expect((screen.getByTestId('dev-file-editor') as HTMLTextAreaElement).value).toBe('unsaved draft');
   expect((screen.getByTestId('dev-file-search') as HTMLInputElement).value).toBe('');
   expect(invoke.mock.calls.some(([command]) => command === 'select_development_context')).toBe(false);
 });
-it('requires tab activation and keeps one discard decision in flight across repeated input', async () => {
+it('keeps the same file editor and draft mounted while reviewing changes', async () => {
   installFiles();
-  const pending = Promise.withResolvers<boolean>();
-  confirmDiscard.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(true);
   render(<ProjectReview projectId="p" taskId="t" />);
   fireEvent.click(await screen.findByTestId('dev-file-item-a.ts'));
-  fireEvent.change(await screen.findByTestId('dev-file-editor'), { target: { value: 'unsaved draft' } });
+  const editor = await screen.findByTestId('dev-file-editor') as HTMLTextAreaElement;
+  fireEvent.change(editor, { target: { value: 'unsaved draft' } });
   const changes = screen.getByTestId('dev-review-tab-changes');
-  const runs = screen.getByTestId('dev-review-tab-runs');
   act(() => { changes.focus(); });
-  expect(confirmDiscard).not.toHaveBeenCalled();
-  fireEvent.keyDown(changes, { key: 'Enter' });
-  fireEvent.keyDown(changes, { key: 'Enter', repeat: true });
-  fireEvent.mouseDown(runs, { button: 0, ctrlKey: false });
-  expect(confirmDiscard).toHaveBeenCalledTimes(1);
-  await act(async () => { pending.resolve(false); });
-  // A closed modal restores focus to its trigger, which must not request another discard.
-  act(() => { changes.blur(); changes.focus(); });
-  expect(confirmDiscard).toHaveBeenCalledTimes(1);
   expect(screen.getByTestId('dev-review-tab-files').getAttribute('aria-selected')).toBe('true');
-  expect((screen.getByTestId('dev-file-editor') as HTMLTextAreaElement).value).toBe('unsaved draft');
   fireEvent.keyDown(changes, { key: 'Enter' });
   await waitFor(() => expect(changes.getAttribute('aria-selected')).toBe('true'));
-  expect(confirmDiscard).toHaveBeenCalledTimes(2);
-  expect(screen.queryByTestId('dev-file-editor')).toBeNull();
+  expect(editor.closest('[role="tabpanel"]')?.hasAttribute('hidden')).toBe(true);
+  expect(confirmDiscard).not.toHaveBeenCalled();
+  fireEvent.keyDown(screen.getByTestId('dev-review-tab-files'), { key: 'Enter' });
+  expect(screen.getByTestId('dev-file-editor')).toBe(editor);
+  expect(editor.value).toBe('unsaved draft');
+  expect(invoke.mock.calls.filter(([command]) => command === 'read_development_file')).toHaveLength(1);
 });
 it('retains a conflict draft, compares reread disk and requires explicit discard to reload', async () => {
   installFiles();
@@ -97,4 +91,31 @@ it('does not apply old task process history after another task or account takes 
   const accountRead = useDevelopmentRuntime.getState().refresh('new'); useDevelopment.getState().reset();
   account.resolve([{ id: 'private-process' }]); await accountRead;
   expect(useDevelopmentRuntime.getState().processes).toEqual([]); expect(useDevelopmentRuntime.getState().taskId).toBeNull();
+});
+
+it('positions a validated diagnostic line once without resetting later edits', async () => {
+  invoke.mockResolvedValue({ path: 'a.ts', text: 'first\nsecond\nthird', hash: 'hash', size: 18, reason: null });
+  render(<FileEditor projectId="p" taskId="t" path="a.ts" line={2} />);
+  const editor = await screen.findByTestId('dev-file-editor') as HTMLTextAreaElement;
+  await waitFor(() => expect(editor.selectionStart).toBe(6));
+  expect(editor.selectionEnd).toBe(12);
+  editor.setSelectionRange(0, 0);
+  fireEvent.change(editor, { target: { value: 'changed\nsecond\nthird' } });
+  expect(editor.selectionStart).not.toBe(8);
+  expect(invoke.mock.calls.some(([command]) => command === 'save_development_file')).toBe(false);
+});
+
+it('saves the current draft once after composition ends and ignores repeating save keys', async () => {
+  installFiles();
+  render(<FileEditor projectId="p" taskId="t" path="a.ts" />);
+  const editor = await screen.findByTestId('dev-file-editor');
+  fireEvent.change(editor, { target: { value: '中文 draft' } });
+  fireEvent.keyDown(editor, { key: 's', ctrlKey: true, isComposing: true });
+  fireEvent.keyDown(editor, { key: 's', metaKey: true, keyCode: 229 });
+  fireEvent.keyDown(editor, { key: 's', ctrlKey: true, repeat: true });
+  expect(invoke.mock.calls.filter(([command]) => command === 'save_development_file')).toHaveLength(0);
+  invoke.mockImplementation((command: string) => command === 'save_development_file' ? Promise.resolve({ path: 'a.ts', text: '中文 draft', hash: 'saved', size: 12, reason: null }) : Promise.resolve(null));
+  fireEvent.keyDown(editor, { key: 'S', ctrlKey: true });
+  await waitFor(() => expect(useDevelopmentEditor.getState().saving).toBe(false));
+  expect(invoke.mock.calls.filter(([command]) => command === 'save_development_file')).toEqual([['save_development_file', { input: { project_id: 'p', task_id: 't', path: 'a.ts', expected_hash: 'initial-hash', text: '中文 draft' } }]]);
 });

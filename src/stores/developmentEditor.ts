@@ -4,6 +4,7 @@ import { useDevelopment } from './developmentStore';
 import { readDevelopmentFile, type DevFileView } from './developmentReview';
 import { hostCode } from './hostError';
 import { confirmDiscard } from '../workspace/closeCoordinator';
+import { t } from '../i18n';
 
 interface EditorState {
   projectId: string | null; taskId: string | null; path: string | null;
@@ -19,7 +20,7 @@ export const useDevelopmentEditor = create<EditorState>((set, get) => ({
     const ticket = ++revision;
     const epoch = useDevelopment.getState().epoch;
     set({ projectId, taskId, path, file: null, draft: '', disk: null, busy: true, saving: false, error: null });
-    const result = await readDevelopmentFile({ project_id: projectId, path });
+    const result = await readDevelopmentFile({ project_id: projectId, task_id: taskId, path });
     if (ticket !== revision || epoch !== useDevelopment.getState().epoch) return;
     set(result.ok ? { file: result.value, draft: result.value.text ?? '', busy: false } : { error: result.code, busy: false });
   },
@@ -40,7 +41,7 @@ export const useDevelopmentEditor = create<EditorState>((set, get) => ({
       const code = hostCode(error);
       set({ error: code, saving: false });
       if (code === 'file_changed') {
-        const disk = await readDevelopmentFile({ project_id: projectId, path });
+        const disk = await readDevelopmentFile({ project_id: projectId, task_id: taskId, path });
         if (ticket !== revision || epoch !== useDevelopment.getState().epoch) return;
         if (disk.ok) set({ disk: disk.value });
       }
@@ -60,7 +61,7 @@ export function hasDevelopmentDraft(): boolean {
 export async function guardDevelopmentDraft(): Promise<boolean> {
   if (!hasDevelopmentDraft()) return true;
   const { draft, file } = useDevelopmentEditor.getState();
-  return await confirmDiscard() && useDevelopmentEditor.getState().draft === draft && useDevelopmentEditor.getState().file === file;
+  return await confirmDiscard({ title: t('dev.discardDraft'), content: t('dev.discardDraft.file', { path: file?.path ?? '' }), confirmText: t('dev.discardDraft') }) && useDevelopmentEditor.getState().draft === draft && useDevelopmentEditor.getState().file === file;
 }
 export async function discardDevelopmentDraft(): Promise<boolean> {
   const epoch = useDevelopment.getState().epoch;
