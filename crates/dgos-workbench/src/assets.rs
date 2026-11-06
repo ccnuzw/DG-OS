@@ -127,7 +127,7 @@ fn validate(mime: &str, data: &[u8]) -> Result<&'static str, ChatError> {
 /// Keeps the last path component only. A name with control characters or no text is refused.
 fn sanitize_name(raw: &str) -> Result<String, ChatError> {
     let base = raw
-        .rsplit(|c| c == '/' || c == '\\')
+        .rsplit(['/', '\\'])
         .next()
         .unwrap_or("")
         .trim();
@@ -139,7 +139,7 @@ fn sanitize_name(raw: &str) -> Result<String, ChatError> {
 
 /// Largest base64 text that can decode to `MAX_IMAGE_BYTES`, the largest accepted file.
 fn encoded_limit() -> usize {
-    (MAX_IMAGE_BYTES + 2) / 3 * 4
+    MAX_IMAGE_BYTES.div_ceil(3) * 4
 }
 
 /// Message text with the text attachments appended in order, as the model receives it.

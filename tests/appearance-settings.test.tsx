@@ -20,7 +20,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: async (command:string,args?:{sn
 }}));
 beforeEach(()=>{host.stored={...structuredClone(DEFAULTS),revision:4};host.sets=[];host.fail=false;host.gate=null;setLocaleForTesting('zh-CN');});
 afterEach(()=>{cleanup();disposeAppearance();resetLocaleForTesting();});
-async function open(){await initAppearance();render(<MemoryRouter><AppearanceSettings/></MemoryRouter>);}
+async function open(){await initAppearance();render(<MemoryRouter  future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><AppearanceSettings/></MemoryRouter>);}
 function dark(){return within(screen.getByRole('radiogroup',{name:'主题'})).getByRole('radio',{name:'暗色'});}
 describe('appearance draft transaction',()=>{
   it('previews without writing and cancel restores confirmed appearance',async()=>{
@@ -48,13 +48,13 @@ describe('appearance draft transaction',()=>{
     await waitFor(()=>expect(host.stored?.mode).toBe('dark'));
   });
   it('restores confirmed appearance when the editor unmounts',async()=>{
-    await initAppearance();const view=render(<MemoryRouter><AppearanceSettings/></MemoryRouter>);
+    await initAppearance();const view=render(<MemoryRouter  future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><AppearanceSettings/></MemoryRouter>);
     fireEvent.click(dark());view.unmount();
     expect(document.documentElement.dataset.theme).toBe('light');expect(host.sets).toEqual([]);
   });
   it('defers a navigation click until the save has settled',async()=>{
     await initAppearance();let release!:()=>void;host.gate=new Promise(resolve=>{release=resolve;});
-    render(<MemoryRouter><AppearanceSettings/><Link to="/elsewhere">Leave</Link></MemoryRouter>);
+    render(<MemoryRouter  future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><AppearanceSettings/><Link to="/elsewhere">Leave</Link></MemoryRouter>);
     const navigate=vi.fn();screen.getByRole('link',{name:'Leave'}).addEventListener('click',navigate);
     fireEvent.click(dark());fireEvent.click(screen.getByRole('button',{name:'应用外观'}));
     fireEvent.click(screen.getByRole('link',{name:'Leave'}));expect(navigate).not.toHaveBeenCalled();

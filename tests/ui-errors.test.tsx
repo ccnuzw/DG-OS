@@ -429,9 +429,7 @@ describe('ErrorPage (AC19)', () => {
   describe('route table', () => {
     it('an unknown path in the real App shows ErrorPage, not a blank content area', async () => {
       render(
-        <MemoryRouter initialEntries={['/definitely/not/a/page']}>
-          <App />
-        </MemoryRouter>,
+        <MemoryRouter initialEntries={['/definitely/not/a/page']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><App /></MemoryRouter>,
       );
       expect(await screen.findByRole('heading', { level: 1, name: '404 页面不存在' })).toBeTruthy();
       expect(document.querySelector('.app-content')?.textContent).toContain('返回首页');
@@ -439,9 +437,7 @@ describe('ErrorPage (AC19)', () => {
 
     it('returns from a missing route to the desktop', async () => {
       render(
-        <MemoryRouter initialEntries={['/nope']}>
-          <App />
-        </MemoryRouter>,
+        <MemoryRouter initialEntries={['/nope']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><App /></MemoryRouter>,
       );
       fireEvent.click(await screen.findByRole('button', { name: '返回首页' }));
       await waitFor(() => expect(document.querySelector('a[href="/"][aria-current="page"]')).not.toBeNull());
@@ -451,9 +447,7 @@ describe('ErrorPage (AC19)', () => {
 
     it('an unknown path under /settings keeps the existing Settings behaviour (not the 404 page)', async () => {
       render(
-        <MemoryRouter initialEntries={['/settings/whatever']}>
-          <App />
-        </MemoryRouter>,
+        <MemoryRouter initialEntries={['/settings/whatever']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><App /></MemoryRouter>,
       );
       expect(await screen.findByRole('heading', { name: '系统设置' })).toBeTruthy();
       expect(screen.queryByText('404 页面不存在')).toBeNull();

@@ -880,17 +880,17 @@ impl ChatManager {
         let assets = crate::assets::ChatAssets::new(self.db.clone());
         let current_assets = assets.for_send(user, &input.asset_ids).await?;
         let history_assets = assets.for_messages(user, &history.rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>()).await?;
-        let (messages, dropped) = assemble_assets(
+        let (messages, dropped) = assemble_assets(ContextAssembly {
             policy,
             reserve,
-            &prepared.skills.iter().map(|s| &s.content).collect::<Vec<_>>(),
-            &history,
-            content,
-            prepared.model.context_window,
-            &prepared.generation,
-            &current_assets,
-            &history_assets,
-        )?;
+            skills: &prepared.skills.iter().map(|s| &s.content).collect::<Vec<_>>(),
+            history: &history,
+            current: content,
+            context_window: prepared.model.context_window,
+            generation: &prepared.generation,
+            current_assets: &current_assets,
+            history_assets: &history_assets,
+        })?;
         validate_image_support(&messages, &prepared.model)?;
         let plan = (!selected.is_empty()).then(|| ToolPlan {
             messages: messages.clone(),
@@ -1048,17 +1048,17 @@ impl ChatManager {
         ids.push(question.id.clone());
         let mut history_assets = assets.for_messages(user, &ids).await?;
         let current_assets = history_assets.remove(&question.id).unwrap_or_default();
-        let (messages, dropped) = assemble_assets(
-            HOST_POLICY,
-            0,
-            &prepared.skills.iter().map(|s| &s.content).collect::<Vec<_>>(),
-            &history,
-            &question.content,
-            prepared.model.context_window,
-            &prepared.generation,
-            &current_assets,
-            &history_assets,
-        )?;
+        let (messages, dropped) = assemble_assets(ContextAssembly {
+            policy: HOST_POLICY,
+            reserve: 0,
+            skills: &prepared.skills.iter().map(|s| &s.content).collect::<Vec<_>>(),
+            history: &history,
+            current: &question.content,
+            context_window: prepared.model.context_window,
+            generation: &prepared.generation,
+            current_assets: &current_assets,
+            history_assets: &history_assets,
+        })?;
         validate_image_support(&messages, &prepared.model)?;
         // Same admission as send: maintenance refuses new generations at once instead of waiting.
         let permit = self.gate.admit().map_err(|_| ChatError::GenerationInProgress)?;
@@ -1554,7 +1554,17 @@ fn assemble(
     context_window: Option<i32>,
     generation: &dgos_types::GenerationParameters,
 ) -> Result<(Vec<WireMessage>, u32)> {
-    assemble_assets(HOST_POLICY, 0, skills, history, current, context_window, generation, &[], &HashMap::new())
+    assemble_assets(ContextAssembly {
+        policy: HOST_POLICY,
+        reserve: 0,
+        skills,
+        history,
+        current,
+        context_window,
+        generation,
+        current_assets: &[],
+        history_assets: &HashMap::new(),
+    })
 }
 
 /// Serialized size of the selected tool definitions plus a margin for the request's JSON
@@ -1575,17 +1585,23 @@ fn validate_image_support(messages: &[WireMessage], model: &Model) -> Result<()>
     Ok(())
 }
 
-fn assemble_assets(
-    policy: &str,
+struct ContextAssembly<'a> {
+    policy: &'a str,
     reserve: usize,
-    skills: &[&dgos_skills::PreparedContent],
-    history: &History,
-    current: &str,
+    skills: &'a [&'a dgos_skills::PreparedContent],
+    history: &'a History,
+    current: &'a str,
     context_window: Option<i32>,
-    generation: &dgos_types::GenerationParameters,
-    current_assets: &[crate::assets::Attachment],
-    history_assets: &HashMap<String, Vec<crate::assets::Attachment>>,
-) -> Result<(Vec<WireMessage>, u32)> {
+    generation: &'a dgos_types::GenerationParameters,
+    current_assets: &'a [crate::assets::Attachment],
+    history_assets: &'a HashMap<String, Vec<crate::assets::Attachment>>,
+}
+
+fn assemble_assets(input: ContextAssembly<'_>) -> Result<(Vec<WireMessage>, u32)> {
+    let ContextAssembly {
+        policy, reserve, skills, history, current, context_window, generation,
+        current_assets, history_assets,
+    } = input;
     if skills.iter().any(|skill| skill.body.len() > MAX_MESSAGE_BYTES)
         || current.len() > MAX_MESSAGE_BYTES
     {

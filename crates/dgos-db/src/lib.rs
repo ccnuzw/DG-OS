@@ -26,10 +26,10 @@ mod workbench_tool_tests;
 
 /// Log targets that must never emit below `warn`. sea-orm records every executed statement, bound
 /// values included, in `trace`-level spans, so `RUST_LOG=trace` would write chat text, titles and
-/// search queries to the log (D072, AC24). Subscribers apply this as a separate `Targets` filter
-/// AND-ed with the user's filter, not as extra `RUST_LOG` directives: `EnvFilter` lets a more
-/// specific target (`sea_orm::driver=trace`) win over `sea_orm=warn`, so a directive cap can be
-/// lifted by a debugging session.
+/// search queries to the log (D072, AC24). Subscribers enforce this independently of user
+/// directives and check it before applying verbosity. The host requests dynamic callsite
+/// interests so another subscriber cannot cache an unconditional enable for its privacy filter.
+/// Disabling SQLx statement logging alone would leave sea-orm's statement spans enabled.
 pub const QUIET_LOG_TARGETS: [&str; 2] = ["sea_orm", "sqlx"];
 
 use sea_orm::{ConnectOptions, Database, DatabaseConnection, DbErr};
