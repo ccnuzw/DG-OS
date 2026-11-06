@@ -5,7 +5,7 @@ import { FOCUS_RING } from '../lib/focus';
 import { omitStyle, type DomProps } from '../lib/props';
 import { Spinner } from './Spinner';
 
-// Heights are the spec's 32/36/40px at 100% density: h-8/h-9/h-10 are 8/9/10 x 4rem/14 (FR-005 §7.1.1).
+// Density scales geometry; control-text-fit separately preserves the current text line and border allowance.
 const buttonVariants = cva(
   [
     'control-text-fit inline-flex shrink-0 appearance-none items-center justify-center gap-2 whitespace-nowrap rounded-md border-0 border-solid font-sans font-medium',
@@ -15,18 +15,18 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        primary: 'bg-primary text-primary-foreground enabled:hover:bg-primary-hover enabled:active:bg-primary-active',
-        secondary: 'border border-input bg-secondary text-secondary-foreground enabled:hover:bg-border',
-        danger: 'bg-destructive text-destructive-foreground enabled:hover:bg-error-text',
-        ghost: 'bg-transparent text-foreground enabled:hover:bg-accent',
-        link: 'bg-transparent text-primary underline-offset-4 enabled:hover:underline',
+        primary: 'bg-accent-default text-accent-on enabled:hover:bg-accent-hover enabled:active:bg-accent-active',
+        secondary: 'border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover',
+        danger: 'bg-status-error text-status-error-on enabled:hover:bg-status-error-text',
+        ghost: 'bg-transparent text-ink-primary enabled:hover:bg-surface-hover',
+        link: 'bg-transparent text-accent-default underline-offset-4 enabled:hover:underline',
       },
-      // h-6/h-7 are 24/28px at a 14px root (4rem/14 * N): the compact sizes the workspace chrome uses.
+      // xs is the shared 28px compact control; md retains the published 36px default-height role.
       size: {
         xxs: 'h-6 px-2 text-xs',
-        xs: 'h-7 px-3 text-sm',
+        xs: 'h-(--control-height-compact) px-3 text-sm',
         sm: 'h-8 px-3 text-sm',
-        md: 'h-9 px-4 text-sm',
+        md: 'h-(--control-height-default) px-4 text-sm',
         lg: 'h-10 px-5 text-base',
       },
       iconOnly: {
@@ -36,9 +36,9 @@ const buttonVariants = cva(
     },
     compoundVariants: [
       { iconOnly: true, size: 'xxs', className: 'w-6' },
-      { iconOnly: true, size: 'xs', className: 'w-7' },
+      { iconOnly: true, size: 'xs', className: 'w-(--control-height-compact)' },
       { iconOnly: true, size: 'sm', className: 'w-8' },
-      { iconOnly: true, size: 'md', className: 'w-9' },
+      { iconOnly: true, size: 'md', className: 'w-(--control-height-default)' },
       { iconOnly: true, size: 'lg', className: 'w-10' },
       // A link reads as text: no fixed height, no padding. Compound classes come last, so they beat the size's.
       { variant: 'link', className: 'h-auto px-0' },

@@ -177,9 +177,9 @@ export default function StorageSettings() {
   return (
     <div className="settings-content settings-sections storage-settings">
       <h1 className="m-0 text-lg font-semibold">{t('storage.title')}</h1>
-      <p className="text-sm text-muted-foreground">{t('storage.help')}</p>
-      {busy && <p className="text-sm text-muted-foreground">{t('storage.loading')}</p>}
-      {error && <p role="alert" className="text-sm text-error-text">{error}</p>}
+      <p className="text-sm text-ink-secondary">{t('storage.help')}</p>
+      {busy && <p className="text-sm text-ink-secondary">{t('storage.loading')}</p>}
+      {error && <p role="alert" className="text-sm text-status-error-text">{error}</p>}
       <Button type="button" onClick={() => void load()} disabled={busy}>{t('storage.refresh')}</Button>
       <ul className="m-0 flex list-none flex-col gap-3 p-0">
         {categories.map(category => {
@@ -187,7 +187,7 @@ export default function StorageSettings() {
           return (
             <li key={category} className="storage-cleanup-row">
               <strong className="text-sm">{t(`storage.category.${category}`)}</strong>
-              <span className="text-xs text-muted-foreground">{t(`storage.help.${category}`)}</span>
+              <span className="text-xs text-ink-secondary">{t(`storage.help.${category}`)}</span>
               <span className="text-sm">
                 {t('storage.count')}: {formatCount(category)} · {t('storage.bytes')}: {formatBytes(category)} · {statusText(category)}
               </span>
@@ -224,7 +224,7 @@ export default function StorageSettings() {
       {result && <p role="status" className="text-sm">{resultText(result)}</p>}
       <section className="flex flex-col gap-2">
         <strong className="text-sm">{t('storage.vacuum.title')}</strong>
-        <span className="text-xs text-muted-foreground">{t('storage.vacuum.help')}</span>
+        <span className="text-xs text-ink-secondary">{t('storage.vacuum.help')}</span>
         <Button type="button" onClick={() => void requestVacuum()} disabled={busy}>{t('storage.vacuum.preview')}</Button>
         {vacuumPreview && (
           <div className="flex flex-col gap-2">

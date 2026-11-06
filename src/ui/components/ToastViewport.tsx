@@ -25,10 +25,10 @@ const toastVariants = cva(
   {
     variants: {
       type: {
-        success: 'border-success bg-success-bg text-success-text',
-        error: 'border-error bg-error-bg text-error-text',
-        warning: 'border-warning bg-warning-bg text-warning-text',
-        info: 'border-info bg-info-bg text-info-text',
+        success: 'border-status-success bg-status-success-surface text-status-success-text',
+        error: 'border-status-error bg-status-error-surface text-status-error-text',
+        warning: 'border-status-warning bg-status-warning-surface text-status-warning-text',
+        info: 'border-status-info bg-status-info-surface text-status-info-text',
       },
       closing: {
         true: 'animate-toast-out',

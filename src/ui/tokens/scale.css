@@ -1,14 +1,14 @@
 /*
- * FR-005 §4.2-§4.6 non-colour tokens. Sizes are rem on a 14px root (D064): `calc(Nrem / 14)` is N px at
- * 100%. Names that Tailwind also uses (radius, shadow, easing, font weight, opacity) go in `@theme static`
- * so one name carries one value; names Tailwind spells differently stay plain and are mapped in
- * ../tailwind.css. Nothing here is a breakpoint: V1 has none (D064).
+ * FR-005 non-colour tokens. Geometry uses rem on a 14px root: `calc(Nrem / 14)` is N px at 100% density.
+ * Typography uses independent UI/reading/code preferences in CSS px, with an 11px floor; browser zoom
+ * still scales the rendered page. Same-name Tailwind keys live in `@theme static`; other keys are mapped
+ * in ../tailwind.css. Responsive conditions belong to their layouts, never to persisted density.
  */
 :root {
   --font-family-base: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-family-mono: "SF Mono", Monaco, "Cascadia Code", monospace;
 
-  /* Smallest effective text size. 75% density makes the root 10.5px, so every size token is floored (D064). */
+  /* Text floor is independent of density; do not replace it with a rem geometry value. */
   --font-size-min: 11px;
   --font-size-xs: max(var(--font-size-ui), var(--font-size-min));
   --font-size-sm: max(calc(var(--font-size-ui) + 1px), var(--font-size-min));
@@ -79,7 +79,7 @@
   --opacity-hover: 0.8;
   --opacity-overlay: 0.6;
 
-  /* Role mapping for the prototype's UI, reading and code domains. These are not density values. */
+  /* Runtime defaults for independent UI, reading and code preferences (D126), not density values. */
   --font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-family-reading: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-family-code: "SF Mono", Monaco, "Cascadia Code", monospace;
@@ -89,8 +89,11 @@
   --line-height-ui: var(--line-height-normal);
   --line-height-reading: var(--line-height-relaxed);
   --line-height-code: var(--line-height-normal);
+  /* Nominal control geometry, not a text-fit limit. "default" is the published 36px role, not Button's default. */
   --control-height-compact: calc(28rem / 14);
   --control-height-default: calc(36rem / 14);
+  /* Published but unused by first-party layouts; retain inherited module exports (D067). Use geometry
+     tabbar roles and the spacing scale directly in new code rather than adding aliases to these aliases. */
   --tab-height-workspace: var(--tabbar-height);
   --tab-height-session: var(--session-tabbar-height);
   --page-gap: var(--spacing-6);

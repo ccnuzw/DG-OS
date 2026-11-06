@@ -65,7 +65,7 @@ function ChangePasswordCard() {
       <Card.Body>
         <form onSubmit={submit} noValidate>
           <Stack gap={4}>
-            <p className="m-0 text-muted-foreground">{t('account.changePasswordHelp')}</p>
+            <p className="m-0 text-ink-secondary">{t('account.changePasswordHelp')}</p>
             <Input
               label={t('account.currentPassword')}
               type="password"
@@ -181,8 +181,8 @@ export default function AccountSettings() {
   if (!account) {
     return (
       <div className="settings-content settings-sections">
-        <h1 className="m-0 text-lg font-semibold text-foreground">{t('account.title')}</h1>
-        <p className="m-0 text-sm text-muted-foreground">{t('account.unavailable')}</p>
+        <h1 className="m-0 text-lg font-semibold text-ink-primary">{t('account.title')}</h1>
+        <p className="m-0 text-sm text-ink-secondary">{t('account.unavailable')}</p>
       </div>
     );
   }
@@ -192,14 +192,14 @@ export default function AccountSettings() {
     return (
       <div className="h-full overflow-y-auto">
         <div className="settings-content settings-sections">
-          <h1 className="m-0 text-lg font-semibold text-foreground">{t('account.title')}</h1>
+          <h1 className="m-0 text-lg font-semibold text-ink-primary">{t('account.title')}</h1>
           <Card>
             <Card.Header>
               <h2 className="m-0 text-base font-semibold">{t('account.first')}</h2>
             </Card.Header>
             <Card.Body>
               <Stack gap={4}>
-                <p className="m-0 text-muted-foreground">
+                <p className="m-0 text-ink-secondary">
                   {t('account.firstHelp')}
                 </p>
                 <CreateAccountForm submitLabel={t('account.create')} onCreated={reloadApp} />
@@ -215,7 +215,7 @@ export default function AccountSettings() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="settings-content settings-sections">
-        <h1 className="m-0 text-lg font-semibold text-foreground">{t('account.title')}</h1>
+        <h1 className="m-0 text-lg font-semibold text-ink-primary">{t('account.title')}</h1>
         <Card>
           <Card.Header>
             <h2 className="m-0 text-base font-semibold">{t('account.current')}</h2>
@@ -243,11 +243,11 @@ export default function AccountSettings() {
         <ChangePasswordCard />
         <Card>
           <Card.Header>
-            <h2 className="m-0 text-base font-semibold text-error-text">{t('account.deleteAccount')}</h2>
+            <h2 className="m-0 text-base font-semibold text-status-error-text">{t('account.deleteAccount')}</h2>
           </Card.Header>
           <Card.Body>
             <Stack gap={4}>
-              <p className="m-0 text-muted-foreground">{t('account.deleteHelp')}</p>
+              <p className="m-0 text-ink-secondary">{t('account.deleteHelp')}</p>
               <div>
                 <Button variant="danger" onClick={() => setDeleting(true)}>
                   {t('account.deleteAccount')}

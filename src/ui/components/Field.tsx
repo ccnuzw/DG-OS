@@ -28,13 +28,13 @@ export function Field({
   return (
     <div className="flex w-full flex-col gap-1">
       {hasVisibleLabel(label) ? (
-        <label htmlFor={id} className="text-sm font-medium text-foreground">
+        <label htmlFor={id} className="text-sm font-medium text-ink-primary">
           {label}
         </label>
       ) : null}
       {children}
       {error ? (
-        <p id={errorId} className="text-sm text-error-text">
+        <p id={errorId} className="text-sm text-status-error-text">
           {error}
         </p>
       ) : null}
@@ -44,15 +44,18 @@ export function Field({
 
 /** Border colour by state: error wins over success. All three pair with the page background at >= 3:1 (AC20). */
 export function controlBorder(error: string | undefined, success: boolean): string {
-  if (error) return 'border-error';
-  if (success) return 'border-success';
-  return 'border-input';
+  if (error) return 'border-status-error';
+  if (success) return 'border-status-success';
+  return 'border-edge-control';
 }
 
-/** Surface shared by Input, textarea and the Select trigger. */
-export const CONTROL_SURFACE = [
-  'control-text-fit w-full appearance-none rounded-md border border-solid bg-background px-3 font-sans text-sm text-foreground',
-  'placeholder:text-muted-foreground',
+/** Control geometry and states, without a default typography role. */
+export const CONTROL_SURFACE_BASE = [
+  'control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary',
+  'placeholder:text-ink-secondary',
   'disabled:cursor-not-allowed disabled:opacity-disabled',
   FOCUS_RING,
 ].join(' ');
+
+/** Default UI typography shared by Input and the Select trigger. */
+export const CONTROL_SURFACE = `${CONTROL_SURFACE_BASE} font-sans text-sm`;

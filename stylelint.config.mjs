@@ -1,6 +1,7 @@
 // Style-compliance rules R2 (colours), R3 (defined variables) and R4 (px report) for CSS, D068.
 // Paths are relative to the scanned root (the runner passes it as `configBasedir`).
 import definedCustomProperties from './scripts/design-check/stylelint-plugin.mjs';
+import semanticColors from './scripts/design-check/stylelint-semantic-colors.mjs';
 import { DEFINITION_GLOBS, RUNTIME_VARIABLE_PREFIXES, TOKEN_GLOBS } from './scripts/design-check/scope.mjs';
 
 /** Tailwind 4 directives that appear in this repo's stylesheets or that components may use. */
@@ -17,11 +18,12 @@ const COLOR_RULES = {
 const PX_REPORT = [{ '/^(font-size|padding|margin|gap|row-gap|column-gap)(-.+)?$/': ['px'] }, { severity: 'warning' }];
 
 export default {
-  plugins: [definedCustomProperties],
+  plugins: [definedCustomProperties, semanticColors],
   referenceFiles: DEFINITION_GLOBS,
   rules: {
     ...COLOR_RULES,
     'dgos/defined-custom-properties': [true, { runtimePrefixes: RUNTIME_VARIABLE_PREFIXES }],
+    'dgos/semantic-colors': true,
     'at-rule-no-unknown': [true, { ignoreAtRules: TAILWIND_AT_RULES }],
     'declaration-property-unit-disallowed-list': PX_REPORT,
   },
@@ -35,6 +37,11 @@ export default {
         'function-disallowed-list': null,
         'declaration-property-unit-disallowed-list': null,
       },
+    },
+    {
+      // These files own both the published variables and the one-way consumer aliases.
+      files: DEFINITION_GLOBS,
+      rules: { 'dgos/semantic-colors': [true, { allowComputed: true, allowDefinitions: true }] },
     },
   ],
 };

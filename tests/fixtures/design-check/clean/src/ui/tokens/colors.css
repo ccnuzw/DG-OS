@@ -5,6 +5,8 @@
   --color-border: white;
   --font-size-base: 14px;
   --spacing-2: 0.5rem;
+  --accent-default: var(--color-primary);
+  --surface-canvas: var(--color-primary);
 }
 :root[data-theme="dark"] {
   --color-primary: #60a5fa;

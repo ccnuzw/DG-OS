@@ -461,12 +461,12 @@ export default function ProviderForm({
   return (
     <div className="provider-form">
       {/* 标题 */}
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
-        <h2 className="m-0 min-w-0 wrap-anywhere text-lg font-semibold text-foreground">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle pb-3">
+        <h2 className="m-0 min-w-0 wrap-anywhere text-lg font-semibold text-ink-primary">
           {isNewMode ? t('providerForm.new') : provider.name}
         </h2>
         {isEditMode && (
-          <span className="font-mono text-xs text-muted-foreground">{t('detail.id')}{provider.id.slice(0, 8)}...</span>
+          <span className="font-mono text-xs text-ink-secondary">{t('detail.id')}{provider.id.slice(0, 8)}...</span>
         )}
       </header>
 
@@ -477,7 +477,7 @@ export default function ProviderForm({
             <Stack gap={1}>
               <Input
                 id="name"
-                label={<>{t('detail.name')}{' '}<span className="text-error-text">*</span></>}
+                label={<>{t('detail.name')}{' '}<span className="text-status-error-text">*</span></>}
                 value={formData.name}
                 onChange={(e) => handleChange('name', e.target.value)}
                 placeholder={t('detail.myProvider')}
@@ -496,7 +496,7 @@ export default function ProviderForm({
                 disabled={loading || saving}
               />
               {vendorsStatus === 'error' && vendors.length === 0 && (
-                <p className="m-0 text-xs text-warning-text">{t('providerForm.vendorUnavailable')}</p>
+                <p className="m-0 text-xs text-status-warning-text">{t('providerForm.vendorUnavailable')}</p>
               )}
             </Stack>
 
@@ -510,23 +510,23 @@ export default function ProviderForm({
                   options={endpoints.map((row) => ({ value: row.provider_type, label: row.display_name }))}
                   disabled={loading || saving}
                 />
-                <p className="m-0 text-xs text-muted-foreground">{t('providerForm.protocol')}</p>
+                <p className="m-0 text-xs text-ink-secondary">{t('providerForm.protocol')}</p>
               </Stack>
             )}
 
             <Stack gap={1}>
               <Input
                 id="base_url"
-                label={<>{t('providerForm.baseUrl')}{' '}<span className="text-error-text">*</span></>}
+                label={<>{t('providerForm.baseUrl')}{' '}<span className="text-status-error-text">*</span></>}
                 inputMode="url"
                 value={formData.base_url}
                 onChange={(e) => handleChange('base_url', e.target.value)}
                 placeholder={t('providerForm.baseUrlExample')}
                 disabled={loading || saving}
               />
-              <p className="m-0 text-xs text-muted-foreground">{t('providerForm.baseUrlHelp')}</p>
+              <p className="m-0 text-xs text-ink-secondary">{t('providerForm.baseUrlHelp')}</p>
               {isLocalCleartext(formData.base_url) && (
-                <p role="note" className="m-0 text-xs text-muted-foreground">
+                <p role="note" className="m-0 text-xs text-ink-secondary">
                   {t('providerForm.localHttp')}</p>
               )}
             </Stack>
@@ -535,19 +535,19 @@ export default function ProviderForm({
               <Input
                 id="api_key"
                 type="password"
-                label={<>{t('providerForm.apiKey')}{' '}<span className="text-error-text">*</span></>}
+                label={<>{t('providerForm.apiKey')}{' '}<span className="text-status-error-text">*</span></>}
                 value={formData.api_key}
                 onChange={(e) => handleChange('api_key', e.target.value)}
                 placeholder={isEditMode ? t('providerForm.keepKey') : 'sk-...'}
                 disabled={loading || saving}
               />
               {isEditMode ? (
-                <p className="m-0 text-xs text-muted-foreground">{t('providerForm.editKeyHelp')}</p>
+                <p className="m-0 text-xs text-ink-secondary">{t('providerForm.editKeyHelp')}</p>
               ) : (
-                <p className="m-0 text-xs text-muted-foreground">{t('providerForm.keyStorage')}</p>
+                <p className="m-0 text-xs text-ink-secondary">{t('providerForm.keyStorage')}</p>
               )}
               {needsNewKey && (
-                <p role="status" className="m-0 text-sm text-warning-text">
+                <p role="status" className="m-0 text-sm text-status-warning-text">
                   {t('providerForm.newKeyRequired')}</p>
               )}
             </Stack>
@@ -560,7 +560,7 @@ export default function ProviderForm({
                 onChange={(checked) => handleChange('enabled', checked)}
                 disabled={loading || saving}
               />
-              <p className="m-0 text-xs text-muted-foreground">{t('providerForm.disabledCalls')}</p>
+              <p className="m-0 text-xs text-ink-secondary">{t('providerForm.disabledCalls')}</p>
             </Stack>
 
             <Stack gap={3}>
@@ -576,7 +576,7 @@ export default function ProviderForm({
                   {t('providerForm.advanced')}</Button>
               </div>
               {advancedOpen && (
-                <div id="provider-advanced-options" className="flex flex-col gap-4 rounded-md border border-border p-3">
+                <div id="provider-advanced-options" className="flex flex-col gap-4 rounded-md border border-border-subtle p-3">
                   <Stack gap={1}>
                     <Select
                       id="auth_style"
@@ -586,7 +586,7 @@ export default function ProviderForm({
                       options={AUTH_STYLE_OPTIONS.map(option => ({ ...option, label: option.label.startsWith('provider.') ? t(option.label) : option.value === 'bearer' ? t('providerForm.authBearer') : t('providerForm.authApiKey') }))}
                       disabled={loading || saving}
                     />
-                    <p className="m-0 text-xs text-muted-foreground">{t('providerForm.authStyleHelp')}</p>
+                    <p className="m-0 text-xs text-ink-secondary">{t('providerForm.authStyleHelp')}</p>
                   </Stack>
                   <Stack gap={1}>
                     <Checkbox
@@ -597,7 +597,7 @@ export default function ProviderForm({
                       disabled={loading || saving}
                     />
                     {allowInsecureHttp && (
-                      <p role="note" className="m-0 rounded-md bg-warning-bg p-2 text-sm text-warning-text">
+                      <p role="note" className="m-0 rounded-md bg-status-warning-surface p-2 text-sm text-status-warning-text">
                         {t('providerForm.httpWarning')}</p>
                     )}
                   </Stack>
@@ -621,7 +621,7 @@ export default function ProviderForm({
                   placeholder={t('providerForm.probePlaceholder')}
                   disabled={saving}
                 />
-                <p className="m-0 text-xs text-muted-foreground">
+                <p className="m-0 text-xs text-ink-secondary">
                   {t('providerForm.testOneSmallRequest')}</p>
               </Stack>
             )}
@@ -651,7 +651,7 @@ export default function ProviderForm({
               <div
                 className={cn(
                   'wrap-anywhere rounded-md p-3 text-sm',
-                  testResult === 'success' ? 'bg-success-bg text-success-text' : 'bg-error-bg text-error-text',
+                  testResult === 'success' ? 'bg-status-success-surface text-status-success-text' : 'bg-status-error-surface text-status-error-text',
                 )}
               >
                 <span aria-hidden="true">{testResult === 'success' ? '✓' : '✗'}</span> <span>{testMessage}</span>
@@ -661,7 +661,7 @@ export default function ProviderForm({
 
             {/* 模型错误 */}
             {modelsError && (
-              <div className="wrap-anywhere rounded-md bg-error-bg p-3 text-sm text-error-text">✗ {modelsError}</div>
+              <div className="wrap-anywhere rounded-md bg-status-error-surface p-3 text-sm text-status-error-text">✗ {modelsError}</div>
             )}
           </Stack>
       </section>
@@ -677,24 +677,24 @@ export default function ProviderForm({
                     key={model.id}
                     className="provider-model-row"
                   >
-                    <h4 className="m-0 wrap-anywhere text-sm font-semibold text-foreground">{model.model_name}</h4>
-                    <div className="wrap-anywhere font-mono text-xs text-muted-foreground">{model.model_id}</div>
+                    <h4 className="m-0 wrap-anywhere text-sm font-semibold text-ink-primary">{model.model_name}</h4>
+                    <div className="wrap-anywhere font-mono text-xs text-ink-secondary">{model.model_id}</div>
                     <div className="flex flex-wrap gap-1">
-                      <span className="rounded-sm bg-secondary px-2 py-1 text-xs text-secondary-foreground">
+                      <span className="rounded-sm bg-surface-inset px-2 py-1 text-xs text-ink-primary">
                         {model.model_type === 'chat' ? 'text-generation' : model.model_type}
                       </span>
                       {model.source === 'manual' && (
-                        <span className="rounded-sm bg-warning-bg px-2 py-1 text-xs text-warning-text">{t('detail.manual')}</span>
+                        <span className="rounded-sm bg-status-warning-surface px-2 py-1 text-xs text-status-warning-text">{t('detail.manual')}</span>
                       )}
                       {model.supports_streaming && (
-                        <span className="rounded-sm bg-info-bg px-2 py-1 text-xs text-info-text">{t('providerForm.streaming')}</span>
+                        <span className="rounded-sm bg-status-info-surface px-2 py-1 text-xs text-status-info-text">{t('providerForm.streaming')}</span>
                       )}
                       {model.supports_vision && (
-                        <span className="rounded-sm bg-info-bg px-2 py-1 text-xs text-info-text">{t('providerForm.vision')}</span>
+                        <span className="rounded-sm bg-status-info-surface px-2 py-1 text-xs text-status-info-text">{t('providerForm.vision')}</span>
                       )}
                     </div>
                     {model.context_window && (
-                      <div className="text-xs text-muted-foreground">
+                      <div className="text-xs text-ink-secondary">
                         {t('provider.context', { count: formatNumber(model.context_window, locale) })}
                       </div>
                     )}
@@ -746,11 +746,11 @@ export default function ProviderForm({
                 </div>
               )}
               {isNewMode && (
-                <p className="m-0 text-xs text-muted-foreground">
+                <p className="m-0 text-xs text-ink-secondary">
                   {t('providerForm.modelsSavedOnCreate')}</p>
               )}
               {isEditMode && (
-                <p className="m-0 text-xs text-muted-foreground">
+                <p className="m-0 text-xs text-ink-secondary">
                   {t('providerForm.modelsUpdated')}</p>
               )}
             </Stack>

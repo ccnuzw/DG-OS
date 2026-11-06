@@ -72,8 +72,8 @@ async function copyText(text: string): Promise<void> {
   }
 }
 
-const cell = 'border-b border-input px-3 py-2 text-left align-top wrap-anywhere';
-const head = `${cell} font-semibold text-muted-foreground`;
+const cell = 'border-b border-edge-control px-3 py-2 text-left align-top wrap-anywhere';
+const head = `${cell} font-semibold text-ink-secondary`;
 
 function AuditLog({ reportError }: { reportError: (error: unknown) => void }) {
   usePageLocale();
@@ -122,7 +122,7 @@ function AuditLog({ reportError }: { reportError: (error: unknown) => void }) {
       <Card.Body>
         <Stack gap={3}>
           {loaded && items.length === 0 ? (
-            <p className="m-0 text-sm text-muted-foreground">{t('lan.noAudit')}</p>
+            <p className="m-0 text-sm text-ink-secondary">{t('lan.noAudit')}</p>
           ) : null}
           {items.length > 0 ? (
             <div className="overflow-x-auto">
@@ -395,9 +395,9 @@ export default function LanSettings() {
   const actualPort = currentPort;
 
   return (
-    <div className="settings-content settings-sections text-foreground">
-      <h1 className="m-0 text-lg font-semibold text-foreground">{t('lan.title')}</h1>
-        <div role="note" className="rounded-lg border border-warning bg-warning-bg p-3 text-sm text-warning-text wrap-anywhere">
+    <div className="settings-content settings-sections text-ink-primary">
+      <h1 className="m-0 text-lg font-semibold text-ink-primary">{t('lan.title')}</h1>
+        <div role="note" className="rounded-lg border border-status-warning bg-status-warning-surface p-3 text-sm text-status-warning-text wrap-anywhere">
          {t('lan.trustedNetwork')}
       </div>
 
@@ -406,13 +406,13 @@ export default function LanSettings() {
           <Card.Body>
             {loadFailed ? (
               <Stack gap={3}>
-                <p role="alert" className="m-0 text-sm text-error-text">{t('lan.readFailed')}</p>
+                <p role="alert" className="m-0 text-sm text-status-error-text">{t('lan.readFailed')}</p>
                 <div>
                   <Button variant="secondary" onClick={() => void refresh()}>{t('system.retry')}</Button>
                 </div>
               </Stack>
             ) : (
-              <p role="status" className="m-0 text-sm text-muted-foreground">{t('lan.reading')}</p>
+              <p role="status" className="m-0 text-sm text-ink-secondary">{t('lan.reading')}</p>
             )}
           </Card.Body>
         </Card>
@@ -427,38 +427,38 @@ export default function LanSettings() {
                 <Switch label={t('lan.enabled')} checked={status.enabled} disabled={switching} onChange={toggle} />
                 <dl className="m-0 flex flex-col gap-2 text-sm">
                   <div className="flex gap-4">
-                    <dt className="w-28 shrink-0 text-muted-foreground">{t('lan.serviceStatus')}</dt>
+                    <dt className="w-28 shrink-0 text-ink-secondary">{t('lan.serviceStatus')}</dt>
                     <dd className="m-0">{t(STATE_KEYS[status.state])}</dd>
                   </div>
                   {status.failure_code !== null ? (
                     <div className="flex gap-4">
-                      <dt className="w-28 shrink-0 text-muted-foreground">{t('lan.failureReason')}</dt>
-                 <dd className="m-0 text-error-text">{LAN_FAILURE_TEXT[status.failure_code] ?? t('lan.failureReason')}</dd>
+                      <dt className="w-28 shrink-0 text-ink-secondary">{t('lan.failureReason')}</dt>
+                 <dd className="m-0 text-status-error-text">{LAN_FAILURE_TEXT[status.failure_code] ?? t('lan.failureReason')}</dd>
                     </div>
                   ) : null}
                   {running && status.address ? (
                     <>
                       <div className="flex gap-4">
-                        <dt className="w-28 shrink-0 text-muted-foreground">{t('lan.address')}</dt>
+                        <dt className="w-28 shrink-0 text-ink-secondary">{t('lan.address')}</dt>
                         <dd className="m-0 select-all break-all">{`http://${status.address}`}</dd>
                       </div>
                       <div className="flex gap-4">
-                        <dt className="w-28 shrink-0 text-muted-foreground">{t('lan.currentPort')}</dt>
+                        <dt className="w-28 shrink-0 text-ink-secondary">{t('lan.currentPort')}</dt>
                         <dd className="m-0">{actualPort ?? '—'}</dd>
                       </div>
                     </>
                   ) : null}
                   <div className="flex gap-4">
-                    <dt className="w-28 shrink-0 text-muted-foreground">{t('lan.preferredPort')}</dt>
+                    <dt className="w-28 shrink-0 text-ink-secondary">{t('lan.preferredPort')}</dt>
                     <dd className="m-0">{status.preferred_port}</dd>
                   </div>
                   <div className="flex gap-4">
-                    <dt className="w-28 shrink-0 text-muted-foreground">{t('lan.devices')}</dt>
+                    <dt className="w-28 shrink-0 text-ink-secondary">{t('lan.devices')}</dt>
                     <dd className="m-0">{status.session_count}</dd>
                   </div>
                 </dl>
                 {running && status.port_fallback && actualPort !== null ? (
-                  <p role="status" className="m-0 text-sm text-warning-text">
+                  <p role="status" className="m-0 text-sm text-status-warning-text">
                     {t('lan.fallback', { preferred: status.preferred_port, actual: actualPort })}
                   </p>
                 ) : null}
@@ -487,7 +487,7 @@ export default function LanSettings() {
                       setPortError(undefined);
                     }}
                   />
-                  <p className="m-0 text-xs text-muted-foreground">
+                  <p className="m-0 text-xs text-ink-secondary">
                     {t('lan.portHelp', { min: LAN_PORT_MIN, max: LAN_PORT_MAX })}
                   </p>
                   <div>
@@ -510,26 +510,26 @@ export default function LanSettings() {
             <Card.Body>
               <Stack gap={3}>
                 {!running ? (
-                  <p className="m-0 text-sm text-muted-foreground">{t('lan.noCode')}</p>
+                  <p className="m-0 text-sm text-ink-secondary">{t('lan.noCode')}</p>
                 ) : codeUnavailable ? (
-                  <p role="status" className="m-0 text-sm text-muted-foreground">{t('lan.noCode')}</p>
+                  <p role="status" className="m-0 text-sm text-ink-secondary">{t('lan.noCode')}</p>
                 ) : code === null ? (
-                  <p role="status" className="m-0 text-sm text-muted-foreground">
+                  <p role="status" className="m-0 text-sm text-ink-secondary">
                     {issuing ? t('lan.generatingCode') : t('lan.noCodeYet')}
                   </p>
                 ) : expired ? (
-                  <p role="status" className="m-0 text-sm text-warning-text">{t('lan.codeExpired')}</p>
+                  <p role="status" className="m-0 text-sm text-status-warning-text">{t('lan.codeExpired')}</p>
                 ) : (
                   <>
                     <div className="flex flex-wrap items-center gap-3">
-                      <code data-testid="lan-code" className="select-all rounded-md bg-secondary px-3 py-2 font-mono text-lg tracking-wider">
+                      <code data-testid="lan-code" className="select-all rounded-md bg-surface-inset px-3 py-2 font-mono text-lg tracking-wider">
                         {groupCode(code.code)}
                       </code>
                       <Button variant="secondary" size="sm" onClick={() => void copyText(groupCode(code.code))}>{t('lan.copyCode')}</Button>
                     </div>
-                    <p className="m-0 text-sm text-muted-foreground">{t('lan.validUntil', { time: formatTime(code.expires_at) })}</p>
+                    <p className="m-0 text-sm text-ink-secondary">{t('lan.validUntil', { time: formatTime(code.expires_at) })}</p>
                     <div className="flex flex-wrap items-center gap-3">
-                      <code data-testid="lan-pair-url" className="select-all break-all rounded-md bg-secondary px-3 py-2 font-mono text-sm">
+                      <code data-testid="lan-pair-url" className="select-all break-all rounded-md bg-surface-inset px-3 py-2 font-mono text-sm">
                         {code.pair_url}
                       </code>
                       <Button variant="secondary" size="sm" onClick={() => void copyText(code.pair_url)}>{t('lan.copyLink')}</Button>
@@ -551,7 +551,7 @@ export default function LanSettings() {
             </Card.Header>
             <Card.Body>
               {devices.length === 0 ? (
-                <p className="m-0 text-sm text-muted-foreground">{t('lan.noDevices')}</p>
+                <p className="m-0 text-sm text-ink-secondary">{t('lan.noDevices')}</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse text-sm" aria-label={t('lan.devices')}>

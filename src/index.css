@@ -11,7 +11,7 @@
 
 :root {
   font-family: var(--font-family-ui);
-  line-height: var(--line-height-normal);
+  line-height: var(--line-height-ui);
   font-weight: var(--font-weight-normal);
 
   font-synthesis: none;
@@ -20,11 +20,11 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Background and colour come from the body utilities in index.html (bg-background text-foreground).
+/* Background and colour come from the body utilities in index.html (bg-surface-canvas text-ink-primary).
    font-size stays off :root: the root size is the density (tokens/density.css). */
 body {
   margin: 0;
-  font-size: max(11px, var(--font-size-ui));
+  font-size: max(var(--font-size-min), var(--font-size-ui));
   display: flex;
   min-width: 320px;
   min-height: 100vh;

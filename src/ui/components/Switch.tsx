@@ -28,23 +28,23 @@ export function Switch(props: SwitchProps) {
         onCheckedChange={onChange}
         {...accessibleName(props)}
         className={cn(
-          'inline-flex h-5 w-9 shrink-0 appearance-none items-center rounded-full border border-solid border-input bg-secondary p-0 transition-colors motion-reduce:transition-none',
-          'data-[state=checked]:border-primary data-[state=checked]:bg-primary',
+          'inline-flex h-5 w-9 shrink-0 appearance-none items-center rounded-full border border-solid border-edge-control bg-surface-inset p-0 transition-colors motion-reduce:transition-none',
+          'data-[state=checked]:border-accent-default data-[state=checked]:bg-accent-default',
           'disabled:cursor-not-allowed disabled:opacity-disabled',
           FOCUS_RING,
         )}
       >
         <SwitchPrimitive.Thumb
           className={cn(
-            'block size-3.5 translate-x-0.5 rounded-full bg-foreground transition-transform motion-reduce:transition-none',
-            'data-[state=checked]:translate-x-4 data-[state=checked]:bg-primary-foreground',
+            'block size-3.5 translate-x-0.5 rounded-full bg-ink-primary transition-transform motion-reduce:transition-none',
+            'data-[state=checked]:translate-x-4 data-[state=checked]:bg-accent-on',
           )}
         />
       </SwitchPrimitive.Root>
       {hasVisibleLabel(label) ? (
         <label
           htmlFor={fieldId}
-          className={cn('text-sm text-foreground', disabled ? 'cursor-not-allowed opacity-disabled' : 'cursor-pointer')}
+          className={cn('text-sm text-ink-primary', disabled ? 'cursor-not-allowed opacity-disabled' : 'cursor-pointer')}
         >
           {label}
         </label>

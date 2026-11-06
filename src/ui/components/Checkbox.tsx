@@ -30,9 +30,9 @@ export function Checkbox(props: CheckboxProps) {
         onCheckedChange={(next) => onChange(next === true)}
         {...accessibleName(props)}
         className={cn(
-          'flex size-4 shrink-0 appearance-none items-center justify-center rounded-sm border border-solid border-input bg-background p-0 text-primary-foreground',
-          'data-[state=checked]:border-primary data-[state=checked]:bg-primary',
-          'data-[state=indeterminate]:border-primary data-[state=indeterminate]:bg-primary',
+          'flex size-4 shrink-0 appearance-none items-center justify-center rounded-sm border border-solid border-edge-control bg-surface-field p-0 text-accent-on',
+          'data-[state=checked]:border-accent-default data-[state=checked]:bg-accent-default',
+          'data-[state=indeterminate]:border-accent-default data-[state=indeterminate]:bg-accent-default',
           'disabled:cursor-not-allowed disabled:opacity-disabled',
           FOCUS_RING,
         )}
@@ -44,7 +44,7 @@ export function Checkbox(props: CheckboxProps) {
       {hasVisibleLabel(label) ? (
         <label
           htmlFor={fieldId}
-          className={cn('text-sm text-foreground', disabled ? 'cursor-not-allowed opacity-disabled' : 'cursor-pointer')}
+          className={cn('text-sm text-ink-primary', disabled ? 'cursor-not-allowed opacity-disabled' : 'cursor-pointer')}
         >
           {label}
         </label>

@@ -261,7 +261,7 @@ export default function ProviderManagement() {
 
       {error && (
         <div
-          className="mx-6 mt-4 flex items-start justify-between gap-3 rounded-lg border border-error bg-error-bg p-3 text-error-text"
+          className="mx-6 mt-4 flex items-start justify-between gap-3 rounded-lg border border-status-error bg-status-error-surface p-3 text-status-error-text"
           role="alert"
         >
           <span className="min-w-0 wrap-anywhere">{error}</span>
@@ -274,7 +274,7 @@ export default function ProviderManagement() {
       <div className="mx-6 mt-4 flex shrink-0 flex-col gap-3 empty:hidden">
         {providers.filter(provider => provider.credential_status === 'migration_required').map(provider => (
           <section
-            className="flex flex-wrap items-center gap-3 rounded-lg border border-warning bg-warning-bg p-3 text-warning-text"
+            className="flex flex-wrap items-center gap-3 rounded-lg border border-status-warning bg-status-warning-surface p-3 text-status-warning-text"
             key={provider.id}
             aria-label={t('provider.migrationAria', { name: provider.name })}
           >
@@ -292,7 +292,7 @@ export default function ProviderManagement() {
         ))}
         {providers.filter(provider => provider.credential_status === 'missing').map(provider => (
           <section
-            className="flex flex-wrap items-center gap-3 rounded-lg border border-warning bg-warning-bg p-3 text-warning-text"
+            className="flex flex-wrap items-center gap-3 rounded-lg border border-status-warning bg-status-warning-surface p-3 text-status-warning-text"
             key={provider.id}
             aria-label={t('provider.missingAria', { name: provider.name })}
           >
@@ -304,7 +304,7 @@ export default function ProviderManagement() {
           </section>
         ))}
       </div>
-      {migratingProviderId && <p role="status" className="mx-6 mt-4 mb-0 text-sm text-muted-foreground">{t('detail.waitingVault')}</p>}
+      {migratingProviderId && <p role="status" className="mx-6 mt-4 mb-0 text-sm text-ink-secondary">{t('detail.waitingVault')}</p>}
 
       <div className="provider-columns">
         <ProviderList
@@ -324,18 +324,18 @@ export default function ProviderManagement() {
         <div className="provider-detail">
           <Button variant="ghost" size="sm" className="provider-back" onClick={() => discardThen(() => { setSelectedProvider(null); setIsCreatingProvider(false); })}>{t('provider.selectTitle')}</Button>
           <Stack gap={4}>
-             {modelsLoading && <p role="status" className="m-0 text-sm text-muted-foreground">{t('provider.loadingModels')}</p>}
+             {modelsLoading && <p role="status" className="m-0 text-sm text-ink-secondary">{t('provider.loadingModels')}</p>}
             {providers.length === 0 && !isCreatingProvider ? (
               <div className="flex max-w-150 flex-col items-center gap-3 px-6 py-12 text-center">
-                <h2 className="m-0 text-xl font-semibold text-foreground">{t('provider.emptyTitle')}</h2>
-                <p className="m-0 text-sm text-muted-foreground">{t('provider.emptyText')}</p>
+                <h2 className="m-0 text-xl font-semibold text-ink-primary">{t('provider.emptyTitle')}</h2>
+                <p className="m-0 text-sm text-ink-secondary">{t('provider.emptyText')}</p>
                 <Button onClick={handleNewProvider}>+ {t('provider.create')}</Button>
               </div>
             ) : selectedProvider === null && !isCreatingProvider ? (
               <div className="flex max-w-150 flex-col items-center gap-3 px-6 py-12 text-center">
-                <span aria-hidden="true" className="text-3xl text-muted-foreground">←</span>
-                <h2 className="m-0 text-xl font-semibold text-foreground">{t('provider.selectTitle')}</h2>
-                <p className="m-0 text-sm text-muted-foreground">{t('provider.selectText')}</p>
+                <span aria-hidden="true" className="text-3xl text-ink-secondary">←</span>
+                <h2 className="m-0 text-xl font-semibold text-ink-primary">{t('provider.selectTitle')}</h2>
+                <p className="m-0 text-sm text-ink-secondary">{t('provider.selectText')}</p>
                 <Button onClick={handleNewProvider}>+ {t('provider.new')}</Button>
               </div>
             ) : (

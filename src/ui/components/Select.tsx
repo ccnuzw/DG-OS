@@ -34,7 +34,9 @@ export function Select(props: SelectProps) {
   const ids = useFieldIds(id, error, undefined);
   // Radix keeps showing nothing for a value without an item. '' is the only value it renders as the placeholder,
   // so a value that is not (or is no longer) in `options` is shown as empty; no other option is selected for it.
-  const shown = options.some((option) => option.value === value) ? value : '';
+  const selected = options.find((option) => option.value === value);
+  const shown = selected ? value : '';
+  const valueId = `${ids.fieldId}-value`;
   const listId = useId();
   return (
     <Field id={ids.fieldId} label={label} error={error} errorId={ids.errorId}>
@@ -43,17 +45,20 @@ export function Select(props: SelectProps) {
           id={ids.fieldId}
           {...accessibleName(props)}
           aria-invalid={error ? true : undefined}
-          aria-describedby={ids.describedBy}
+          aria-describedby={[selected ? valueId : undefined, ids.describedBy].filter(Boolean).join(' ') || undefined}
+          title={selected?.label}
           className={cn(
             CONTROL_SURFACE,
-            'flex h-7 items-center justify-between gap-2 text-left',
-            'data-[placeholder]:text-muted-foreground',
+            'flex h-(--control-height-compact) min-w-0 items-center justify-between gap-2 text-left',
+            'data-[placeholder]:text-ink-secondary',
             controlBorder(error, success),
             className,
           )}
         >
-          <SelectPrimitive.Value placeholder={placeholder} />
-          <SelectPrimitive.Icon>
+          <span className="min-w-0 flex-1 truncate">
+            <SelectPrimitive.Value id={valueId} placeholder={placeholder} />
+          </span>
+          <SelectPrimitive.Icon className="shrink-0">
             <ChevronGlyph />
           </SelectPrimitive.Icon>
         </SelectPrimitive.Trigger>
@@ -62,7 +67,7 @@ export function Select(props: SelectProps) {
             id={listId}
             position="popper"
             sideOffset={4}
-            className="z-popover w-(--radix-select-trigger-width) max-h-(--radix-select-content-available-height) overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md"
+            className="z-popover w-(--radix-select-trigger-width) max-h-(--radix-select-content-available-height) overflow-hidden rounded-md border border-border-subtle bg-surface-popover text-ink-primary shadow-md"
           >
             <SelectPrimitive.Viewport className="p-1">
               {options.map((option) => (
@@ -71,14 +76,14 @@ export function Select(props: SelectProps) {
                   value={option.value}
                   className={cn(
                     'relative flex cursor-pointer select-none items-center rounded-sm py-1.5 pl-8 pr-3 text-sm',
-                    'data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground',
+                    'data-[highlighted]:bg-surface-hover data-[highlighted]:text-ink-primary',
                     FOCUS_RING_INSET,
                   )}
                 >
                   <SelectPrimitive.ItemIndicator className="absolute left-2 inline-flex items-center">
                     <CheckGlyph />
                   </SelectPrimitive.ItemIndicator>
-                  <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
+                  <SelectPrimitive.ItemText><span className="wrap-anywhere">{option.label}</span></SelectPrimitive.ItemText>
                 </SelectPrimitive.Item>
               ))}
             </SelectPrimitive.Viewport>

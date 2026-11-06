@@ -29,14 +29,14 @@ export function toApiError(error: unknown): ModuleApiError {
 
 /** Text link used by both module pages. */
 export const MODULE_LINK_CLASS =
-  'text-primary underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring';
+  'text-accent-default underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus';
 
 type NoticeTone = 'error' | 'warning' | 'success';
 
 const NOTICE_TONE: Record<NoticeTone, { box: string; icon: 'error' | 'warning' | 'success' }> = {
-  error: { box: 'border-error bg-error-bg text-error-text', icon: 'error' },
-  warning: { box: 'border-warning bg-warning-bg text-warning-text', icon: 'warning' },
-  success: { box: 'border-success bg-success-bg text-success-text', icon: 'success' },
+  error: { box: 'border-status-error bg-status-error-surface text-status-error-text', icon: 'error' },
+  warning: { box: 'border-status-warning bg-status-warning-surface text-status-warning-text', icon: 'warning' },
+  success: { box: 'border-status-success bg-status-success-surface text-status-success-text', icon: 'success' },
 };
 
 /** Tinted message box: a status icon plus content that wraps instead of overflowing a narrow window. */
@@ -74,18 +74,18 @@ export function ErrorNotice({ error }: { error: ModuleApiError }) {
 
 export function CrashLogList({ crashes }: { crashes: ModuleCrashRecord[] }) {
   usePageLocale();
-  if (crashes.length === 0) return <p className="my-2 text-sm text-muted-foreground">{t('module.noCrashes')}</p>;
+  if (crashes.length === 0) return <p className="my-2 text-sm text-ink-secondary">{t('module.noCrashes')}</p>;
   return (
     <ul className="m-0 list-none p-0">
       {crashes.map((crash) => {
         const at = new Date(crash.created_at * 1000);
         return (
-          <li key={crash.crash_id} className="border-t border-border py-2 text-sm first:border-t-0">
+          <li key={crash.crash_id} className="border-t border-border-subtle py-2 text-sm first:border-t-0">
             <div className="wrap-anywhere">
               <time dateTime={at.toISOString()}>{formatDateTime(at)}</time> · {crash.source} · <strong>{crash.error_name}</strong>{' '}
               {t('detail.versionParen')}{crash.module_version})
             </div>
-            <pre className="m-0 mt-2 overflow-x-auto rounded-md bg-secondary p-2 font-mono text-xs text-secondary-foreground">
+            <pre className="m-0 mt-2 overflow-x-auto rounded-md bg-surface-inset p-2 font-mono text-xs text-ink-primary">
               {crash.stack}
             </pre>
           </li>
@@ -98,7 +98,7 @@ export function CrashLogList({ crashes }: { crashes: ModuleCrashRecord[] }) {
 function ConfirmPanel({ label, children }: { label: string; children: ReactNode }) {
   usePageLocale();
   return (
-    <section role="dialog" aria-label={label} className="my-3 rounded-lg border border-border bg-muted p-4 text-sm text-foreground">
+    <section role="dialog" aria-label={label} className="my-3 rounded-lg border border-border-subtle bg-surface-panel p-4 text-sm text-ink-primary">
       <Stack gap={3}>{children}</Stack>
     </section>
   );
@@ -231,13 +231,13 @@ function PermissionAuditList({ log, busy, onLoadOlder }: {
   return (
     <div aria-label={t('module.permissionLogButton')} role="region">
       {log.entries.length === 0 ? (
-        <p className="my-2 text-sm text-muted-foreground">{t('module.noPermissionActivity')}</p>
+        <p className="my-2 text-sm text-ink-secondary">{t('module.noPermissionActivity')}</p>
       ) : (
         <ul className="m-0 list-none p-0">
           {log.entries.map((entry, index) => {
             const at = new Date(entry.created_at * 1000);
             return (
-              <li key={index} className="border-t border-border py-2 text-sm first:border-t-0 wrap-anywhere">
+              <li key={index} className="border-t border-border-subtle py-2 text-sm first:border-t-0 wrap-anywhere">
                 <code className="font-mono">{entry.permission}</code> · <strong>{entry.action}</strong> ·{' '}
                 <time dateTime={at.toISOString()}>{formatDateTime(at)}</time>
               </li>
@@ -254,7 +254,7 @@ function PermissionAuditList({ log, busy, onLoadOlder }: {
 
 type Pending = { kind: 'enable' | 'uninstall'; moduleId: string } | null;
 
-const BADGE_CLASS = 'rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground';
+const BADGE_CLASS = 'rounded-full bg-surface-inset px-2 py-0.5 text-xs text-ink-primary';
 
 export default function ModuleManagement() {
   usePageLocale();
@@ -424,18 +424,18 @@ export default function ModuleManagement() {
   const visibleModules = modules?.filter(module => filter === 'all' || (filter === 'enabled' ? module.enabled : module.runtime.state === 'failed' || module.permissions.some(permission => !permission.granted)));
 
   return (
-    <div className="settings-content settings-sections text-foreground">
+    <div className="settings-content settings-sections text-ink-primary">
       <header className="mb-4">
-        <h1 className="m-0 mb-2 text-lg font-semibold text-foreground">{t('module.title')}</h1>
-        <p className="m-0 mb-2 text-sm text-muted-foreground">
+        <h1 className="m-0 mb-2 text-lg font-semibold text-ink-primary">{t('module.title')}</h1>
+        <p className="m-0 mb-2 text-sm text-ink-secondary">
           {t('module.subtitle')}</p>
       </header>
 
       <div role="group" aria-label={t('module.filters')} className="flex flex-wrap gap-2">{['all', 'enabled', 'pending'].map(value => <Button key={value} variant={filter === value ? 'primary' : 'secondary'} aria-pressed={filter === value} onClick={() => setFilter(value)}>{t(`module.filter.${value}`)}</Button>)}</div>
       {loadError !== null && <ErrorNotice error={loadError} />}
       {modules === null && loadError === null && <Loading label={t('module.loading')} />}
-      {modules?.length === 0 && <p className="text-sm text-muted-foreground">{t('module.none')}</p>}
-      {Boolean(modules?.length) && visibleModules?.length === 0 && <p role="status" className="text-sm text-muted-foreground">{t('module.noMatches')}</p>}
+      {modules?.length === 0 && <p className="text-sm text-ink-secondary">{t('module.none')}</p>}
+      {Boolean(modules?.length) && visibleModules?.length === 0 && <p role="status" className="text-sm text-ink-secondary">{t('module.noMatches')}</p>}
 
       <Stack gap={4}>
         {visibleModules?.map((module) => {
@@ -448,13 +448,13 @@ export default function ModuleManagement() {
                   <Stack direction="horizontal" gap={2} className="flex-wrap items-center">
                     <h2 className="m-0 mr-2 min-w-0 text-sm font-semibold wrap-anywhere">{module.name}</h2>
                     <span className={BADGE_CLASS}>{t('module.version')} {module.version}</span>
-                    {module.official && <span className="rounded-full bg-info-bg px-2 py-0.5 text-xs text-info-text">{t('module.official')}</span>}
+                    {module.official && <span className="rounded-full bg-status-info-surface px-2 py-0.5 text-xs text-status-info-text">{t('module.official')}</span>}
                     <span className={BADGE_CLASS}>{module.enabled ? t('providerForm.enabled') : t('module.disabled')}</span>
                     <span className={BADGE_CLASS}>{t('detail.runtime')}{module.runtime.state}</span>
                   </Stack>
                 </Card.Header>
                 <Card.Body>
-                  <p className="m-0 mb-2 text-muted-foreground wrap-anywhere">
+                  <p className="m-0 mb-2 text-ink-secondary wrap-anywhere">
                      {module.module_id} {t('detail.recentCrashes')} {module.recent_crashes}
                   </p>
                   {module.runtime.state === 'failed' && module.recent_crashes > 0 && <NoticeBox tone="error" role="alert">{t('module.moduleCrashed', { id: module.module_id })}</NoticeBox>}

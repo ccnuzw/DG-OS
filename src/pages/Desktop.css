@@ -9,7 +9,7 @@
 .desktop-shortcut { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: var(--spacing-2); padding: var(--spacing-3); border: 0; border-radius: var(--radius-lg); background: transparent; color: inherit; font: inherit; cursor: pointer; overflow-wrap: anywhere; }
 .desktop-shortcut:hover { background: var(--surface-hover); }
 .desktop-shortcut:disabled { opacity: .5; cursor: not-allowed; }
-.desktop-icon { display: flex; justify-content: center; align-items: center; width: 3rem; height: 3rem; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-panel); color: var(--color-primary); }
+.desktop-icon { display: flex; justify-content: center; align-items: center; width: 3rem; height: 3rem; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-panel); color: var(--accent-default); }
 .desktop-recent { width: 60%; box-sizing: border-box; padding: var(--spacing-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-panel); }
 .desktop-page h2 { margin: 0 0 var(--spacing-3); font-size: var(--font-size-sm); font-weight: 600; }
 .desktop-recent-list { display: flex; flex-direction: column; gap: var(--spacing-1); }

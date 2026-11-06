@@ -28,6 +28,7 @@ const EXPECTED = [
   // hard-coded-colors.ts: hex, hex in a declaration, rgba(), hsl(), keyword in a declaration, var() fallback,
   // `color: 'red'` and `backgroundColor: 'Navy'` (line 7 has two); lines 8 and 9 are the allowed forms
   ...[1, 2, 3, 4, 5, 6, 7, 7].map((line) => `src/hard-coded-colors.ts:${line} R2 ${ESLINT}`),
+  ...[8, 8].map((line) => `src/hard-coded-colors.ts:${line} R2 dgos/semantic-colors`),
   // tailwind-arbitrary.tsx: line 4 is a hex AND an arbitrary value, line 11 is fill="red" and stroke="Blue"
   ...[4, 4, 5, 6, 7, 8, 9, 10, 11, 11].map((line) => `src/tailwind-arbitrary.tsx:${line} R2 ${ESLINT}`),
   // eslint-disable comments do not hide the colour
@@ -45,11 +46,14 @@ const EXPECTED = [
   ...[2, 2].map((line) => `src/legacy.css:${line} R2 function-disallowed-list`),
   ...[7, 7, 8].map((line) => `src/legacy.css:${line} R3 dgos/defined-custom-properties`),
   'src/legacy.css:15 R3 at-rule-no-unknown',
+  // Published computed values remain definitions, but are forbidden at consumer sites.
+  ...[5, 5, 6, 6, 8, 16].map((line) => `src/legacy.css:${line} R2 dgos/semantic-colors`),
   // index.html
   'index.html:4 R1 html/inline-style',
   'index.html:7 R1 html/inline-style',
   'index.html:6 R2 html/hard-coded-color',
   'index.html:6 R2 html/tailwind-arbitrary-value',
+  'index.html:6 R2 html/semantic-colors',
 ].sort();
 
 describe('violating fixtures are reported (AC11, AC12)', () => {
@@ -124,6 +128,27 @@ it('restricts style access to the exact theme writer operation',async()=>{
     writeFileSync(path,'export function apply(root){root.style.cssText="display:none";}\n');
     expect((await runDesignCheck(dir)).violations.some((finding:Finding)=>finding.rule==='dgos/theme-writer')).toBe(true);
   } finally {rmSync(dir,{recursive:true,force:true});}
+});
+
+it('enforces semantic consumer colors across script, CSS and HTML without renaming program states', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dgos-semantic-'));
+  try {
+    cpSync(cleanRoot, dir, { recursive: true });
+    writeFileSync(join(dir, 'src', 'semantic.tsx'), [
+      'export const bad = `hover:bg-secondary/50 data-[state=open]:!text-muted-foreground text-text-secondary-role`;',
+      'export const computed = "var(--color-primary)";',
+      'export const dynamic = `--color-${name}`;',
+      'export const good = "primary error active bg-surface-field text-ink-primary border-edge-control text-accent-on bg-primary-extra";',
+    ].join('\n'));
+    writeFileSync(join(dir, 'src', 'semantic.css'), '.page { --surface-canvas: var(--surface-panel); color: var(--color-primary); }\n@apply hover:bg-secondary;');
+    writeFileSync(join(dir, 'index.html'), '<body class="dark:bg-card/80 text-ink-primary"></body>');
+    const result = await runDesignCheck(dir);
+    expect(result.toolErrors).toEqual([]);
+    const hits = result.violations.filter((v: Finding) => v.rule.endsWith('/semantic-colors'));
+    expect(hits.filter((v: Finding) => v.file === 'src/semantic.tsx').map((v: Finding) => v.line)).toEqual([1, 1, 1, 2, 3]);
+    expect(hits.filter((v: Finding) => v.file === 'src/semantic.css')).toHaveLength(3);
+    expect(hits.filter((v: Finding) => v.file === 'index.html')).toHaveLength(1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 describe('npm run design:check exit code and output (AC11, AC12)', () => {

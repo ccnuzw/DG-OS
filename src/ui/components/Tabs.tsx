@@ -22,7 +22,7 @@ function TabsRoot(props: TabsProps) {
 
 function TabsList(props: StyleFree<ComponentProps<typeof TabsPrimitive.List>>) {
   const { className, ...rest } = omitStyle(props);
-  return <TabsPrimitive.List {...rest} className={cn('inline-flex items-center gap-1 border-b border-border', className)} />;
+  return <TabsPrimitive.List {...rest} className={cn('inline-flex items-center gap-1 border-b border-border-subtle', className)} />;
 }
 
 function TabsTrigger(props: StyleFree<ComponentProps<typeof TabsPrimitive.Trigger>>) {
@@ -31,9 +31,9 @@ function TabsTrigger(props: StyleFree<ComponentProps<typeof TabsPrimitive.Trigge
     <TabsPrimitive.Trigger
       {...rest}
       className={cn(
-        '-mb-px inline-flex h-7 appearance-none items-center border-0 border-b-2 border-solid border-transparent bg-transparent px-3 font-sans text-sm font-medium text-muted-foreground transition-colors motion-reduce:transition-none',
-        'enabled:hover:text-foreground',
-        'data-[state=active]:border-primary data-[state=active]:text-foreground',
+        '-mb-px inline-flex h-7 appearance-none items-center border-0 border-b-2 border-solid border-transparent bg-transparent px-3 font-sans text-sm font-medium text-ink-secondary transition-colors motion-reduce:transition-none',
+        'enabled:hover:text-ink-primary',
+        'data-[state=active]:border-accent-default data-[state=active]:text-ink-primary',
         'disabled:cursor-not-allowed disabled:opacity-disabled',
         FOCUS_RING,
         className,

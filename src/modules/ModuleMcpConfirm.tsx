@@ -54,7 +54,7 @@ export default function ModuleMcpConfirm({ host = moduleRuntimeHost }: { host?: 
     >
       <pre
         aria-label={t('module.mcpArgs')}
-        className="max-h-60 overflow-auto whitespace-pre-wrap rounded-md border border-input bg-muted p-3 text-xs"
+        className="max-h-60 overflow-auto whitespace-pre-wrap rounded-md border border-edge-control bg-surface-panel p-3 text-xs"
       >
         {formatArguments(current.arguments)}
       </pre>

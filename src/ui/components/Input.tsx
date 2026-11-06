@@ -1,6 +1,6 @@
 import { cn } from '../lib/cn';
 import { accessibleName, omitStyle, type DomProps, type Named } from '../lib/props';
-import { CONTROL_SURFACE, Field, controlBorder, useFieldIds } from './Field';
+import { CONTROL_SURFACE, CONTROL_SURFACE_BASE, Field, controlBorder, useFieldIds } from './Field';
 
 interface FieldExtras {
   /** Error text shown under the control. Sets `aria-invalid` and is linked through `aria-describedby`. */
@@ -16,10 +16,17 @@ export type SingleLineInputProps = Omit<DomProps<'input'>, 'type'> &
   FieldExtras &
   Named & { multiline?: false; type?: InputType };
 
-/** AC27: `multiline` renders a `<textarea>` with the same label, error and disabled behaviour. */
+/** AC27: a textarea with the same label/error behaviour. Uses UI typography unless className selects type-reading/type-code. */
 export type MultilineInputProps = DomProps<'textarea'> & FieldExtras & Named & { multiline: true; rows?: number };
 
 export type InputProps = SingleLineInputProps | MultilineInputProps;
+
+// Keep UI defaults out of explicit content roles: Tailwind utility order otherwise overrides their size/leading.
+function inputSurface(className: string | undefined): string {
+  return /(?:^|\s)(?:type-reading|type-code|font-mono)(?=\s|$)/.test(className ?? '')
+    ? CONTROL_SURFACE_BASE
+    : CONTROL_SURFACE;
+}
 
 export function Input(props: InputProps) {
   return props.multiline ? <TextareaField {...props} /> : <InputField {...props} />;
@@ -48,7 +55,7 @@ function InputField(props: SingleLineInputProps) {
         type={type}
         aria-invalid={error ? true : undefined}
         aria-describedby={ids.describedBy}
-        className={cn(CONTROL_SURFACE, 'h-7', controlBorder(error, success), className)}
+        className={cn(inputSurface(className), 'h-(--control-height-compact)', controlBorder(error, success), className)}
       />
     </Field>
   );
@@ -77,7 +84,7 @@ function TextareaField(props: MultilineInputProps) {
         rows={rows}
         aria-invalid={error ? true : undefined}
         aria-describedby={ids.describedBy}
-        className={cn(CONTROL_SURFACE, 'type-reading min-h-16 py-2', controlBorder(error, success), className)}
+        className={cn(inputSurface(className), 'min-h-16 py-2', controlBorder(error, success), className)}
       />
     </Field>
   );

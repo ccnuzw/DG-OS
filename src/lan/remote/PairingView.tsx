@@ -56,10 +56,10 @@ export function PairingView({ api, initialCode = '', autoSubmit = false, notice,
     <main className="mx-auto flex w-full max-w-112 flex-1 flex-col justify-center gap-6 p-6">
       <header className="flex flex-col gap-2">
         <h1 className="text-2xl font-semibold">{t('remote.connectTitle')}</h1>
-        <p className="text-muted-foreground">{t('remote.connectHelp')}</p>
+        <p className="text-ink-secondary">{t('remote.connectHelp')}</p>
       </header>
       {notice ? (
-        <p role="status" className="rounded-md bg-warning-bg px-3 py-2 text-warning-text">
+        <p role="status" className="rounded-md bg-status-warning-surface px-3 py-2 text-status-warning-text">
           {notice}
         </p>
       ) : null}
@@ -84,7 +84,7 @@ export function PairingView({ api, initialCode = '', autoSubmit = false, notice,
             aria-describedby={error ? 'lan-access-code-error' : undefined}
           />
           {error ? (
-            <p id="lan-access-code-error" role="alert" className="text-sm text-error-text">
+            <p id="lan-access-code-error" role="alert" className="text-sm text-status-error-text">
               {error}
             </p>
           ) : null}
