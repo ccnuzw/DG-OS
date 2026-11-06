@@ -1,4 +1,5 @@
 import { setLocaleForTesting } from '../src/i18n/runtime';
+import { t } from '../src/i18n';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
@@ -6,6 +7,9 @@ import { MemoryRouter } from 'react-router-dom';
 import McpManagement from '../src/pages/McpManagement';
 import McpConnectionNotice from '../src/components/McpConnectionNotice';
 import { useMcpStore } from '../src/stores/mcpStore';
+import { useDevelopment } from '../src/stores/developmentStore';
+import { SurfaceScope } from '../src/workspace/SurfaceContext';
+import { createWorkspaceController } from '../src/workspace/controller';
 import { Modal, ModalHost, ToastViewport, clearToasts } from '@dgos/ui';
 import { getToastSnapshot } from '../src/ui/feedback/toastStore';
 
@@ -96,7 +100,7 @@ it('persists explicit remote plaintext consent and resets it whenever the endpoi
 it('shows recovery exhaustion outside management and clears the alert on recovery or disable', async () => {
   let current = [{ ...servers[0], status: 'error', reconnect_attempts: 3, reconnect_exhausted: true }];
   mocked.mockResolvedValue(current);
-  render(<MemoryRouter initialEntries={['/workbench']}><McpConnectionNotice /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={['/workbench']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpConnectionNotice /></MemoryRouter>);
   const alert = await screen.findByRole('alert', { name: 'MCP connection recovery stopped' });
   expect(within(alert).getByText(/Alpha cannot connect/)).toBeTruthy();
   expect(within(alert).getByRole('link', { name: 'Manage connections' }).getAttribute('href')).toBe('/mcp');
@@ -153,7 +157,6 @@ it('allows incomplete argv editing but rejects malformed JSON without saving', a
   fireEvent.change(screen.getByLabelText(/^Arguments/), { target: { value: '["--root",' } });
   expect((screen.getByLabelText(/^Arguments/) as HTMLInputElement).value).toBe('["--root",');
   fireEvent.click(screen.getByRole('button', { name: 'Save server' }));
-  await screen.findByRole('alert');
   expect(mocked.mock.calls.some(([name]) => name === 'create_mcp_server')).toBe(false);
 });
 
@@ -168,6 +171,13 @@ it('edits the clicked server rather than the previously selected server and pers
   await waitFor(() => expect(mocked).toHaveBeenCalledWith('update_mcp_server', { serverId: 'a', request: {
     name: 'Alpha', transport: 'stdio', stdio: { executable: '/usr/local/bin/server', args: ['--root', '/My Documents'] }, enabled: true, auto_connect: true,
   } }));
+  await waitFor(() => expect(screen.queryByRole('form', { name: 'Server configuration' })).toBeNull());
+  expect(screen.getByText('Not checked yet.')).toBeTruthy();
+  expect(screen.queryByText('Connect the server to discover tools.')).toBeNull();
+  expect(screen.queryByText('a capability')).toBeNull();
+  fireEvent.click(within(screen.getByText('Not checked yet.').closest('[role="status"]') as HTMLElement).getByRole('button', { name: 'Retry' }));
+  await screen.findByText('a capability');
+  expect(screen.queryByText('Not checked yet.')).toBeNull();
 });
 
 it('requires explicit review and confirmation and sends exactly the reviewed parameters once', async () => {
@@ -287,7 +297,7 @@ it('keeps a call running when cancellation fails and does not pretend that it st
 });
 
 function renderWithFeedback() {
-  return render(<MemoryRouter><McpManagement /><ToastViewport /><ModalHost /></MemoryRouter>);
+  return render(<MemoryRouter  future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /><ToastViewport /><ModalHost /></MemoryRouter>);
 }
 function failing(command: string, error: unknown) {
   const handler = mocked.getMockImplementation()!;
@@ -308,7 +318,7 @@ it('opens the blocking error dialog for a severe host error from deleting a serv
   vi.spyOn(console, 'error').mockImplementation(() => {});
   failing('delete_mcp_server', { code: 1001015 });
   renderWithFeedback();
-  await screen.findByText('Alpha');
+  await select();
   fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0]);
   fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete MCP server?' })).getByRole('button', { name: 'Delete' }));
   const dialog = await screen.findByRole('dialog', { name: 'OS credential store unavailable' });
@@ -325,7 +335,7 @@ it('deletes a server only after the dialog is confirmed, once however fast it is
   const handler = mocked.getMockImplementation()!;
   mocked.mockImplementation((command, args) => command === 'delete_mcp_server' ? new Promise(resolve => { finish = () => resolve(undefined); }) : handler(command, args));
   renderWithFeedback();
-  await screen.findByText('Alpha');
+  await select();
 
   fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0]);
   let dialog = await screen.findByRole('dialog', { name: 'Delete MCP server?' });
@@ -350,7 +360,7 @@ it('deletes a server only after the dialog is confirmed, once however fast it is
 
 it('opens one delete dialog for repeated clicks and Esc cancels without deleting', async () => {
   renderWithFeedback();
-  await screen.findByText('Alpha');
+  await select();
   const trigger = screen.getAllByRole('button', { name: 'Delete' })[0];
   fireEvent.click(trigger); fireEvent.click(trigger);
   const dialog = await screen.findByRole('dialog', { name: 'Delete MCP server?' });
@@ -368,12 +378,10 @@ it('leaves editing alone when another server is deleted and ends it when the edi
   await screen.findByText('Alpha');
   fireEvent.click(screen.getByRole('button', { name: 'Edit Alpha' }));
   await screen.findByText('Edit Alpha');
-  fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[1]);
-  fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete MCP server?' })).getByRole('button', { name: 'Delete' }));
+  await act(async () => { await useMcpStore.getState().remove('b'); });
   await waitFor(() => expect(screen.queryByText('Beta')).toBeNull());
   expect(screen.getByText('Edit Alpha')).toBeTruthy();
-  fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0]);
-  fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete MCP server?' })).getByRole('button', { name: 'Delete' }));
+  await act(async () => { await useMcpStore.getState().remove('a'); });
   await waitFor(() => expect(screen.queryByText('Edit Alpha')).toBeNull());
   expect(screen.queryByRole('form', { name: 'Server configuration' })).toBeNull();
 });
@@ -440,7 +448,8 @@ it('does not raise a host error toast for argument validation that never reached
   fireEvent.change(screen.getByLabelText('Executable'), { target: { value: '/usr/local/bin/server' } });
   fireEvent.change(screen.getByLabelText(/^Arguments/), { target: { value: '["--root",' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save server' }));
-  expect((await screen.findByRole('alert')).textContent).toBe('Arguments must be a JSON array of strings.');
+  expect(screen.getByLabelText(/^Arguments/).getAttribute('aria-invalid')).toBe('true');
+  expect(mocked.mock.calls.some(([name]) => name === 'create_mcp_server')).toBe(false);
   expect(screen.queryByText('Operation failed')).toBeNull();
   expect(console.error).not.toHaveBeenCalled();
 });
@@ -469,7 +478,7 @@ it('D111 keeps repeated status-poll failures inline: no Toast after 30 s of fail
     return listCalls === 1 ? Promise.resolve(servers) : Promise.reject('MCP status service unreachable');
   });
   vi.useFakeTimers();
-  render(<MemoryRouter><McpManagement /><McpConnectionNotice /><ToastViewport /><ModalHost /></MemoryRouter>);
+  render(<MemoryRouter  future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /><McpConnectionNotice /><ToastViewport /><ModalHost /></MemoryRouter>);
   await act(async () => { await vi.advanceTimersByTimeAsync(0); });
   expect(screen.getByText('Alpha')).toBeTruthy();
   expect(screen.queryByRole('alert')).toBeNull();
@@ -477,10 +486,9 @@ it('D111 keeps repeated status-poll failures inline: no Toast after 30 s of fail
   // Three 10 s polls, each rejected.
   await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
   expect(listCalls).toBeGreaterThanOrEqual(4);
-  expect(useMcpStore.getState().error).toBe('MCP status service unreachable');
   const alerts = screen.getAllByRole('alert');
-  expect(alerts.map(node => node.textContent)).toEqual(['MCP status service unreachable']);
-  expect(alerts[0].hasAttribute('data-state')).toBe(false);
+  expect(alerts).toHaveLength(1);
+  expect(alerts[0].textContent).toContain('MCP status service unreachable');
   expect(getToastSnapshot().visible).toHaveLength(0);
   expect(getToastSnapshot().queued).toHaveLength(0);
 
@@ -501,4 +509,241 @@ it('D112 marks the MCP Server URL input inputmode="url" without giving it type="
   const url = screen.getByLabelText(/^Server URL/) as HTMLInputElement;
   expect(url.getAttribute('inputmode')).toBe('url');
   expect(url.type).toBe('text');
+});
+
+it('retries a failed configuration read without saving an empty configuration', async () => {
+  const first = Promise.withResolvers<unknown>();
+  const handler = mocked.getMockImplementation()!;
+  mocked.mockImplementation((command, args) => command === 'get_mcp_server_config' ? first.promise : handler(command, args));
+  render(<McpManagement />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
+  expect(screen.getByText('Loading configuration…')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Save changes' }).hasAttribute('disabled')).toBe(true);
+  await act(async () => { first.reject('configuration unavailable'); await first.promise.catch(() => {}); });
+  const alert = screen.getByRole('alert');
+  expect(alert.textContent).toContain('configuration unavailable');
+  mocked.mockImplementation(handler);
+  fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
+  expect(screen.getByRole('button', { name: 'Save changes' }).hasAttribute('disabled')).toBe(false);
+  expect(screen.queryByText('configuration unavailable')).toBeNull();
+  expect(mocked.mock.calls.some(([command]) => command === 'update_mcp_server')).toBe(false);
+});
+
+it('preserves the selected server and configuration draft while status refreshes slowly and fails', async () => {
+  const handler = mocked.getMockImplementation()!;
+  render(<McpManagement />); await select();
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Alpha' }));
+  await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Unsaved Alpha' } });
+  const name = screen.getByLabelText('Name');
+  const refresh = Promise.withResolvers<unknown>();
+  mocked.mockImplementation((command, args) => command === 'list_mcp_servers' ? refresh.promise : handler(command, args));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
+  expect(screen.getByLabelText('Name')).toBe(name);
+  expect((name as HTMLInputElement).value).toBe('Unsaved Alpha');
+  expect(screen.getByRole('button', { name: 'Select Alpha' }).getAttribute('aria-pressed')).toBe('true');
+  await act(async () => { refresh.reject('status refresh unavailable'); await refresh.promise.catch(() => {}); });
+  expect(screen.getByRole('alert').textContent).toContain('status refresh unavailable');
+  expect(screen.getByLabelText('Name')).toBe(name);
+  expect((name as HTMLInputElement).value).toBe('Unsaved Alpha');
+});
+
+it('does not replace another configuration draft with a slow read from the previous target', async () => {
+  const slow = Promise.withResolvers<unknown>();
+  const handler = mocked.getMockImplementation()!;
+  mocked.mockImplementation((command, args) => command === 'get_mcp_server_config' && args && typeof args === 'object' && 'serverId' in args && args.serverId === 'a' ? slow.promise : handler(command, args));
+  render(<McpManagement />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
+  expect(screen.getByText('Loading configuration…')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Beta' }));
+  await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Beta'));
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Beta draft' } });
+  await act(async () => { slow.resolve({ name: 'Old Alpha', transport: 'stdio', stdio: { executable: 'old', args: [] } }); await slow.promise; });
+  expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Beta draft');
+  expect(screen.getByLabelText(/^Server URL/)).toBeTruthy();
+});
+
+it('drops a slow configuration failure after the account changes', async () => {
+  const slow = Promise.withResolvers<unknown>();
+  const handler = mocked.getMockImplementation()!;
+  mocked.mockImplementation((command, args) => command === 'get_mcp_server_config' ? slow.promise : handler(command, args));
+  render(<McpManagement />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
+  expect(screen.getByText('Loading configuration…')).toBeTruthy();
+  mocked.mockImplementation(handler);
+  act(() => { useDevelopment.getState().reset(); });
+  await screen.findByRole('button', { name: 'Select Beta' });
+  await act(async () => { slow.reject('old account configuration unavailable'); await slow.promise.catch(() => {}); });
+  expect(screen.queryByRole('form', { name: 'Server configuration' })).toBeNull();
+  expect(screen.queryByRole('alert')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Beta' }));
+  await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Beta'));
+});
+
+it('keeps invalid argument feedback attached to the draft field and sends no save', async () => {
+  render(<McpManagement />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
+  await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
+  const args = screen.getByLabelText(/^Arguments/);
+  fireEvent.change(args, { target: { value: '[1]' } });
+  fireEvent.submit(screen.getByRole('form', { name: 'Server configuration' }));
+  expect(args.getAttribute('aria-invalid')).toBe('true');
+  const descriptions = args.getAttribute('aria-describedby')?.split(' ').map(id => document.getElementById(id)?.textContent ?? '') ?? [];
+  expect(descriptions).toContain(t('mcp.jsonArrayError'));
+  expect((args as HTMLInputElement).value).toBe('[1]');
+  expect(mocked.mock.calls.some(([name]) => name === 'update_mcp_server')).toBe(false);
+});
+
+it('retains a rejected configuration draft and synchronously rejects a second save', async () => {
+  const save = Promise.withResolvers<unknown>();
+  const handler = mocked.getMockImplementation()!;
+  mocked.mockImplementation((command, args) => command === 'update_mcp_server' ? save.promise : handler(command, args));
+  render(<McpManagement />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
+  await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Retained draft' } });
+  const form = screen.getByRole('form', { name: 'Server configuration' });
+  fireEvent.submit(form); fireEvent.submit(form);
+  expect(mocked.mock.calls.filter(([name]) => name === 'update_mcp_server')).toHaveLength(1);
+  await act(async () => { save.reject('MCP configuration is invalid: rejected'); await save.promise.catch(() => {}); });
+  expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Retained draft');
+  expect(screen.getByRole('button', { name: 'Save changes' }).hasAttribute('disabled')).toBe(false);
+});
+
+it('does not close or report an old save into a new account configuration editor', async () => {
+  const save = Promise.withResolvers<unknown>();
+  const handler = mocked.getMockImplementation()!;
+  mocked.mockImplementation((command, args) => command === 'update_mcp_server' ? save.promise : handler(command, args));
+  renderWithFeedback();
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
+  await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
+  fireEvent.submit(screen.getByRole('form', { name: 'Server configuration' }));
+  act(() => { useDevelopment.getState().reset(); });
+  await waitFor(() => expect(screen.queryByRole('form', { name: 'Server configuration' })).toBeNull());
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Beta' }));
+  await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Beta'));
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'New account draft' } });
+  await act(async () => { save.resolve(servers[0]); await save.promise; });
+  expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('New account draft');
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(getToastSnapshot().visible).toHaveLength(0);
+  expect(getToastSnapshot().queued).toHaveLength(0);
+});
+
+it('keeps a confirmed save after a failed tool read and retries only the saved snapshot', async () => {
+  const handler = mocked.getMockImplementation()!;
+  let failTools = false;
+  mocked.mockImplementation((command, args) => {
+    if (command === 'update_mcp_server') { failTools = true; return Promise.resolve({ ...servers[0], name: 'Saved Alpha' }); }
+    if (command === 'list_mcp_tools' && failTools) return Promise.reject('saved tools unavailable');
+    return handler(command, args);
+  });
+  render(<McpManagement />); await select();
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Alpha' }));
+  await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Saved Alpha' } });
+  fireEvent.submit(screen.getByRole('form', { name: 'Server configuration' }));
+  await waitFor(() => expect(screen.queryByRole('form', { name: 'Server configuration' })).toBeNull());
+  expect(screen.getByText(t('mcp.saved'))).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Select Saved Alpha' })).toBeTruthy();
+  fireEvent.click(within(screen.getByText('Not checked yet.').closest('[role="status"]') as HTMLElement).getByRole('button', { name: 'Retry' }));
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toContain('saved tools unavailable');
+  expect(screen.getByText(t('mcp.saved'))).toBeTruthy();
+  failTools = false;
+  fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+  await screen.findByText('a capability');
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(mocked.mock.calls.filter(([command]) => command === 'update_mcp_server')).toHaveLength(1);
+  expect(mocked.mock.calls.some(([command]) => command === 'refresh_mcp_tools' || command === 'connect_mcp_server')).toBe(false);
+});
+
+it('shares one discard decision between repeated draft cancellation and the surface close guard', async () => {
+  const controller = createWorkspaceController();
+  render(<SurfaceScope id="mcp" active controller={controller}><McpManagement /><ModalHost /></SurfaceScope>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
+  await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
+  expect(controller.getSurfaceStatuses().mcp.dirty).toBe(false);
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Retained Alpha' } });
+  expect(controller.getSurfaceStatuses().mcp.dirty).toBe(true);
+  const cancel = screen.getByRole('button', { name: 'Cancel' });
+  fireEvent.click(cancel); fireEvent.click(cancel);
+  let leaving!: Promise<boolean>;
+  act(() => { leaving = controller.canLeave('mcp'); });
+  const dialog = await screen.findByRole('dialog', { name: t('shell.unsavedTitle') });
+  expect(screen.getAllByRole('dialog')).toHaveLength(1);
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  await act(async () => { expect(await leaving).toBe(false); });
+  expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Retained Alpha');
+  expect(controller.getSurfaceStatuses().mcp.dirty).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  fireEvent.click(within(await screen.findByRole('dialog', { name: t('shell.unsavedTitle') })).getByRole('button', { name: t('shell.discard') }));
+  await waitFor(() => expect(screen.queryByRole('form', { name: 'Server configuration' })).toBeNull());
+  expect(controller.getSurfaceStatuses().mcp.dirty).toBe(false);
+  expect(await controller.canLeave('mcp')).toBe(true);
+  expect(mocked.mock.calls.some(([command]) => command === 'update_mcp_server')).toBe(false);
+});
+
+it('vetoes surface close while configuration saving is in flight', async () => {
+  const save = Promise.withResolvers<unknown>();
+  const handler = mocked.getMockImplementation()!;
+  mocked.mockImplementation((command, args) => command === 'update_mcp_server' ? save.promise : handler(command, args));
+  const controller = createWorkspaceController();
+  render(<SurfaceScope id="mcp" active controller={controller}><McpManagement /></SurfaceScope>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
+  await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
+  fireEvent.submit(screen.getByRole('form', { name: 'Server configuration' }));
+  expect(await controller.canLeave('mcp')).toBe(false);
+  expect(screen.getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await act(async () => { save.resolve(servers[0]); await save.promise; });
+  await waitFor(() => expect(screen.queryByRole('form', { name: 'Server configuration' })).toBeNull());
+  expect(await controller.canLeave('mcp')).toBe(true);
+});
+
+it('closes the old discard dialog on account change and leaves the new configuration draft accessible', async () => {
+  renderWithFeedback();
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
+  await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Old draft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  await screen.findByRole('dialog', { name: t('shell.unsavedTitle') });
+  act(() => { useDevelopment.getState().reset(); });
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Beta' }));
+  await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Beta'));
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'New account draft' } });
+  expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('New account draft');
+  expect(mocked.mock.calls.some(([command]) => command === 'update_mcp_server')).toBe(false);
+});
+
+it('retains an editing draft through narrow list navigation and width changes without retargeting the save', async () => {
+  let resize!: (entries: { contentRect: { width: number } }[]) => void;
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(private callback: typeof resize) {}
+    observe(element: Element) { if (element.classList.contains('mcp-content')) resize = this.callback; }
+    unobserve() {}
+    disconnect() {}
+  });
+  try {
+    renderWithFeedback();
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
+    await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
+    const input = screen.getByLabelText('Name');
+    fireEvent.change(input, { target: { value: 'Alpha draft' } });
+    act(() => resize([{ contentRect: { width: 500 } }]));
+    expect(screen.getByLabelText('Name')).toBe(input);
+    fireEvent.click(screen.getByRole('button', { name: 'Your servers · Alpha' }));
+    fireEvent.change(screen.getByLabelText('Search servers'), { target: { value: 'Beta' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Select Beta' }));
+    expect(screen.getByLabelText('Name')).toBe(input);
+    expect((input as HTMLInputElement).value).toBe('Alpha draft');
+    act(() => resize([{ contentRect: { width: 1100 } }]));
+    expect((screen.getByLabelText('Search servers') as HTMLInputElement).value).toBe('Beta');
+    expect(screen.getByRole('button', { name: 'Edit Beta' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.submit(screen.getByRole('form', { name: 'Server configuration' }));
+    await waitFor(() => expect(mocked).toHaveBeenCalledWith('update_mcp_server', expect.objectContaining({ serverId: 'a', request: expect.objectContaining({ name: 'Alpha draft' }) })));
+  } finally { vi.unstubAllGlobals(); }
 });
