@@ -1,0 +1,4 @@
+# Reviewed baselines are versioned. Candidates/results are local review artifacts.
+candidate/
+results/
+.accept-*/
