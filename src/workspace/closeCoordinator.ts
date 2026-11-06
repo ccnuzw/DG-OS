@@ -4,9 +4,9 @@ import { useChatStore } from '../stores/chatStore';
 import { useTaskRunner } from '../stores/taskRunnerStore';
 import { useAgentRunner } from '../stores/agentRunnerStore';
 
-export function confirmDiscard(): Promise<boolean> {
+export function confirmDiscard(options?: { title: string; content: string; confirmText: string }): Promise<boolean> {
   return new Promise(resolve => {
-    Modal.confirm({ title: t('shell.unsavedTitle'), content: t('shell.unsavedConfirm'), confirmText: t('shell.discard'), cancelText: t('common.cancel'), confirmVariant: 'danger', onConfirm: () => { resolve(true); }, onCancel: () => { resolve(false); } });
+    Modal.confirm({ title: options?.title ?? t('shell.unsavedTitle'), content: options?.content ?? t('shell.unsavedConfirm'), confirmText: options?.confirmText ?? t('shell.discard'), cancelText: t('common.cancel'), confirmVariant: 'danger', onConfirm: () => { resolve(true); }, onCancel: () => { resolve(false); } });
   });
 }
 export function waitForChatTerminal(sessionIds: readonly string[], timeoutMs = 10_000): Promise<boolean> {

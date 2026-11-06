@@ -30,7 +30,6 @@
   .workspace-nav-item[data-tone='app'] .workspace-nav-icon { background: var(--surface-selected); color: var(--accent-default); }
   .workspace-rail.is-collapsed .workspace-brand, .workspace-nav-item.is-collapsed { justify-content: center; padding-inline: 0; }
   .workspace-rail-footer { display: flex; flex: none; flex-direction: column; gap: var(--spacing-1); padding-top: var(--spacing-2); margin-top: var(--spacing-3); border-top: 1px solid var(--border-subtle); }
-  .workspace-account-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-xs); }
   .workspace-collapse { align-self: flex-end; background: linear-gradient(120deg, var(--accent-default), var(--status-info)); color: var(--accent-on); border: 0; }
   .workspace-collapse:hover:not(:disabled) { background: var(--accent-hover); color: var(--accent-on); }
   .workspace-rail.is-collapsed .workspace-collapse { align-self: center; }

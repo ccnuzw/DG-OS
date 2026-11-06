@@ -1,12 +1,13 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import App from '../src/App';
 import { isHostSettingsPath } from '../src/modules/hostRoutes';
 import { moduleRuntimeHost } from '../src/modules/moduleRuntimeHost';
 import type * as ModuleRuntimeHostModule from '../src/modules/moduleRuntimeHost';
-import { readFixture } from './helpers/moduleFixtures';
+import { hooksControl, readFixture } from './helpers/moduleFixtures';
 import { resetLocaleForTesting, setLocaleForTesting } from '../src/i18n/runtime';
+import { Modal, ModalHost } from '@dgos/ui';
 
 const bridge = vi.hoisted(() => ({
   attachCalls: 0,
@@ -111,6 +112,7 @@ afterEach(async () => {
   cleanup();
   vi.restoreAllMocks();
   // The host singleton outlives each test: unload whatever a test left loaded.
+  Modal.closeAll();
   const channel = bridge.channels[0];
   for (const view of moduleRuntimeHost.getSnapshot()) {
     channel.onmessage({ kind: 'unload', ticket: `cleanup-${view.runtimeId}`, runtimeId: view.runtimeId, hookTimeoutMs: 100 });
@@ -192,6 +194,18 @@ describe('SPA navigation', () => {
     expect(returned.textContent).toBe('count:1');
     expect(screen.getByTestId('module-slot').contains(view.container)).toBe(true);
 
+    fireEvent.click(navLink('/settings'));
+    await screen.findByRole('tablist', { name: '系统设置' });
+    expect(button.isConnected).toBe(true);
+    expect(button.closest('[hidden]')).toBeNull();
+    expect(button.closest('[inert]')).not.toBeNull();
+    expect(moduleRuntimeHost.getSnapshot()[0].container).toBe(view.container);
+    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }));
+    await waitFor(() => expect(window.location.pathname).toBe('/apps/dgos.route'));
+    expect(await screen.findByTestId('fixture-counter')).toBe(button);
+    expect(button.closest('[inert]')).toBeNull();
+    expect(button.textContent).toBe('count:1');
+
     channel.onmessage({ kind: 'unload', ticket: 'route-unload', runtimeId: 'rt-route-1', hookTimeoutMs: 500 });
     await waitFor(() => expect(moduleRuntimeHost.getSnapshot()).toHaveLength(0));
     expect(screen.queryByTestId('fixture-counter')).toBeNull();
@@ -199,6 +213,129 @@ describe('SPA navigation', () => {
     expect(screen.getByRole('tab', { name: /Route app/ })).toBeTruthy();
     expect(screen.getByText('应用当前不可用，请在应用管理中检查启用、授权和运行状态。')).toBeTruthy();
   });
+
+  it('updates a hidden module dirty marker and checks the document again when closing', async () => {
+    const control = { dirty: false, checks: 0, disposed: 0 };
+    hooksControl().seenReact = control;
+    renderApp();
+    render(<ModalHost />);
+    await waitFor(() => expect(bridge.channels).toHaveLength(1));
+    bridge.channels[0].onmessage({
+      kind: 'load', ticket: 'hidden-dirty', runtimeId: 'rt-hidden', moduleId: 'dgos.route',
+      version: '1.0.0', hookTimeoutMs: 500, views: { layout: 'document', capability: 'multiple' },
+      source: `export default function createModule(host) {
+        const state = globalThis.__dgosHooks.seenReact;
+        return { Component: () => null, openView: () => ({
+          Component: () => host.React.createElement('div', null, 'Hidden document'),
+          beforeClose: () => { state.checks++; return { dirty: state.dirty, canSave: false }; },
+          dispose: () => { state.disposed++; }
+        }) };
+      }`,
+    });
+    fireEvent.click(screen.getByRole('button', { name: '应用', exact: true }));
+    fireEvent.click(await within(screen.getByRole('dialog', { name: '应用' })).findByRole('button', { name: 'Route app', exact: true }));
+    const document = await screen.findByText('Hidden document');
+    fireEvent.click(navLink('/workbench'));
+    expect(document.closest('[hidden]')).not.toBeNull();
+    control.dirty = true;
+    const tab = screen.getByRole('tab', { name: /Route app/ });
+    await waitFor(() => expect(tab.querySelector('.workspace-dirty-dot')).not.toBeNull());
+    const checks = control.checks;
+    fireEvent.click(screen.getByRole('button', { name: '关闭 Route app' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(control.checks).toBeGreaterThan(checks);
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消', exact: true }));
+    expect(document.isConnected).toBe(true);
+    expect(control.disposed).toBe(0);
+    delete hooksControl().seenReact;
+  });
+
+  it('keeps a dirty document on cancel or failed save, and closes only after successful save', async () => {
+    const control = { saved: false, attempts: 0, disposed: 0 };
+    hooksControl().seenReact = control;
+    renderApp();
+    await waitFor(() => expect(bridge.channels).toHaveLength(1));
+    bridge.channels[0].onmessage({
+      kind: 'load', ticket: 'save-load', runtimeId: 'rt-save', moduleId: 'dgos.route',
+      version: '1.0.0', hookTimeoutMs: 500,
+      views: { layout: 'document', capability: 'multiple' },
+      source: `export default function createModule(host) {
+        const control = globalThis.__dgosHooks.seenReact;
+        return { Component: () => null, openView: () => ({
+          Component: () => host.React.createElement('div', null, 'Document draft'),
+          beforeClose: () => ({ dirty: true, canSave: true }),
+          save: () => { control.attempts++; return control.saved; },
+          dispose: () => { control.disposed++; }
+        }) };
+      }`,
+    });
+    fireEvent.click(screen.getByRole('button', { name: '应用', exact: true }));
+    fireEvent.click(await within(screen.getByRole('dialog', { name: '应用' })).findByRole('button', { name: 'Route app', exact: true }));
+    const draft = await screen.findByText('Document draft');
+    fireEvent.click(screen.getByRole('button', { name: '关闭 Route app' }));
+    let dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消', exact: true }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(draft.isConnected).toBe(true);
+    expect(control.disposed).toBe(0);
+    fireEvent.click(screen.getByRole('button', { name: '关闭 Route app' }));
+    dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存并关闭' }));
+    await waitFor(() => expect(control.attempts).toBe(1));
+    expect(draft.isConnected).toBe(true);
+    expect(screen.getByRole('dialog')).toBe(dialog);
+    control.saved = true;
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存并关闭' }));
+    await waitFor(() => expect(screen.queryByRole('tab', { name: /Route app/ })).toBeNull());
+    expect(draft.isConnected).toBe(false);
+    expect(control.disposed).toBe(1);
+    expect(moduleRuntimeHost.getSnapshot()[0].runtimeId).toBe('rt-save');
+    delete hooksControl().seenReact;
+  });
+  it('keeps a newer confirmation after a cancelled save and releases it when the runtime unloads', async () => {
+    const pending = Promise.withResolvers<boolean>();
+    const control = { save: pending.promise, attempts: 0, disposed: 0 };
+    hooksControl().seenReact = control;
+    renderApp();
+    await waitFor(() => expect(bridge.channels).toHaveLength(1));
+    bridge.channels[0].onmessage({
+      kind: 'load', ticket: 'cancelled-save', runtimeId: 'rt-cancelled-save', moduleId: 'dgos.route',
+      version: '1.0.0', hookTimeoutMs: 500, views: { layout: 'document', capability: 'multiple' },
+      source: `export default function createModule(host) {
+        const control = globalThis.__dgosHooks.seenReact;
+        return { Component: () => null, openView: () => ({
+          Component: () => host.React.createElement('div', null, 'Pending save draft'),
+          beforeClose: () => ({ dirty: true, canSave: true }),
+          save: () => { control.attempts++; return control.save; },
+          dispose: () => { control.disposed++; }
+        }) };
+      }`,
+    });
+    fireEvent.click(screen.getByRole('button', { name: '应用', exact: true }));
+    fireEvent.click(await within(screen.getByRole('dialog', { name: '应用' })).findByRole('button', { name: 'Route app', exact: true }));
+    const draft = await screen.findByText('Pending save draft');
+    fireEvent.click(screen.getByRole('button', { name: '关闭 Route app' }));
+    let dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存并关闭' }));
+    await waitFor(() => expect(control.attempts).toBe(1));
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消', exact: true }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: '关闭 Route app' }));
+    dialog = await screen.findByRole('dialog');
+    await act(async () => { pending.resolve(true); });
+    expect(screen.getByRole('dialog')).toBe(dialog);
+    expect(draft.isConnected).toBe(true);
+    expect(control.disposed).toBe(0);
+    bridge.channels[0].onmessage({ kind: 'unload', ticket: 'unload-during-consent', runtimeId: 'rt-cancelled-save', hookTimeoutMs: 500 });
+    await waitFor(() => expect(moduleRuntimeHost.getSnapshot()).toHaveLength(0));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByRole('tab', { name: /Route app/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '关闭 Route app' }));
+    await waitFor(() => expect(screen.queryByRole('tab', { name: /Route app/ })).toBeNull());
+    expect(control.disposed).toBe(1);
+    delete hooksControl().seenReact;
+  });
+
 });
 
 describe('Settings route parity with the Rust gate (D037)', () => {

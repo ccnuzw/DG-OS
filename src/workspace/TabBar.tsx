@@ -34,6 +34,7 @@ export function TabBar({ surfaces, activeSurfaceId, focusedSurfaceId = null, run
         const selected = surface.id === activeSurfaceId;
         const running = surfaceStatuses[surface.id]?.running || (surface.kind === 'app' && runningModuleIds.includes(surface.moduleId));
         const dirty = surfaceStatuses[surface.id]?.dirty;
+        const runningLabel = surfaceStatuses[surface.id]?.runningLabel ?? t('shell.running');
         const title = surface.kind === 'ai' ? t('nav.workbench') : surface.title;
         return <div key={surface.id} className={cn('workspace-tab', selected && 'is-active')}>
           <button type="button" role="tab" data-workspace-tab={surface.id} aria-selected={selected} tabIndex={(roving ?? activeSurfaceId ?? surfaces[0]?.id) === surface.id ? 0 : -1} title={title} onFocus={() => setRoving(surface.id)} onClick={() => onActivate(surface.id)} onKeyDown={event => {
@@ -43,7 +44,7 @@ export function TabBar({ surfaces, activeSurfaceId, focusedSurfaceId = null, run
             const index = buttons.indexOf(event.currentTarget);
             const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
             buttons[next]?.focus(); buttons[next]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-          }} className="workspace-tab-main"><Icon name={surface.kind === 'ai' ? 'file' : surface.kind === 'task' ? 'code' : surface.kind === 'resource' ? 'folder' : 'menu'} size="sm" /><span>{title}</span>{running ? <i className="workspace-running-dot" role="img" aria-label={t('shell.running')} /> : null}{dirty ? <i className="workspace-dirty-dot" role="img" aria-label={t('shell.unsavedTitle')} /> : null}</button>
+          }} className="workspace-tab-main"><Icon name={surface.kind === 'ai' ? 'file' : surface.kind === 'task' ? 'code' : surface.kind === 'resource' ? 'folder' : 'menu'} size="sm" /><span>{title}</span>{running ? <i className="workspace-running-dot" role="img" aria-label={runningLabel} title={runningLabel} /> : null}{dirty ? <i className="workspace-dirty-dot" role="img" aria-label={t('shell.unsavedTitle')} /> : null}</button>
           <button type="button" aria-label={t('shell.closeTab', { title })} onClick={() => onClose(surface.id)} className="workspace-tab-close"><Icon name="close" size="sm" /></button>
         </div>;
       })}
