@@ -3,15 +3,22 @@ import { useLocale } from '../../i18n';
 import type { Skill } from '../../stores/skillsStore';
 import type { Model } from '../../stores/providerStore';
 export interface GenerationParameters { temperature?: number | null; reasoning?: { effort?: string; budget_tokens?: number } | null; max_tokens?: number | null; instruction?: string }
+export function ReasoningControls({ value, onChange, disabled }: { value: GenerationParameters; onChange: (value: GenerationParameters) => void; disabled?: boolean }) {
+  const { t } = useLocale();
+  const patch = (next: Partial<GenerationParameters>) => onChange({ ...value, ...next });
+  return <Stack gap={3}>
+    <Select label={t('generation.reasoning')} value={value.reasoning?.effort ?? '__default__'} disabled={disabled} options={['__default__','low','medium','high'].map(v => ({ value: v, label: t(`generation.${v === '__default__' ? 'default' : v === 'medium' ? 'effortMedium' : v}`) }))} onChange={v => patch({ reasoning: v === '__default__' ? null : { effort: v, ...(value.reasoning?.budget_tokens !== undefined ? { budget_tokens: value.reasoning.budget_tokens } : {}) } })} />
+    <Input label={t('generation.reasoningBudget')} type="number" min={1} step={1} value={value.reasoning?.budget_tokens ?? ''} disabled={disabled} onChange={e => patch({ reasoning: e.target.value === '' ? (value.reasoning?.effort ? { effort: value.reasoning.effort } : null) : { ...value.reasoning, budget_tokens: Number(e.target.value) } })} />
+  </Stack>;
+}
 export function GenerationControls({ value, onChange, disabled, model }: { value: GenerationParameters; onChange: (value: GenerationParameters) => void; disabled?: boolean; model?: Model }) {
   const { t } = useLocale();
   const patch = (next: Partial<GenerationParameters>) => onChange({ ...value, ...next });
   return <Stack gap={3}>
     <Select label={t('generation.length')} value={String(value.max_tokens ?? 1024)} disabled={disabled} options={[1024,4096,8192].map((tokens, index) => ({ value: String(tokens), label: t(['generation.short','generation.medium','generation.long'][index]) }))} onChange={v => patch({ max_tokens: Number(v) })} />
     <Input label={t('generation.temperature')} type="number" min={0} max={2} step={0.1} value={value.temperature ?? ''} disabled={disabled} onChange={e => patch({ temperature: e.target.value === '' ? null : Number(e.target.value) })} />
-    <Select label={t('generation.reasoning')} value={value.reasoning?.effort ?? '__default__'} disabled={disabled} options={['__default__','low','medium','high'].map(v => ({ value: v, label: t(`generation.${v === '__default__' ? 'default' : v === 'medium' ? 'effortMedium' : v}`) }))} onChange={v => patch({ reasoning: v === '__default__' ? null : { effort: v, ...(value.reasoning?.budget_tokens !== undefined ? { budget_tokens: value.reasoning.budget_tokens } : {}) } })} />
-    <Input label={t('generation.reasoningBudget')} type="number" min={1} step={1} value={value.reasoning?.budget_tokens ?? ''} disabled={disabled} onChange={e => patch({ reasoning: e.target.value === '' ? (value.reasoning?.effort ? { effort: value.reasoning.effort } : null) : { ...value.reasoning, budget_tokens: Number(e.target.value) } })} />
-    <Input label={t('generation.instruction')} multiline rows={3} value={value.instruction ?? ''} disabled={disabled} onChange={e => patch({ instruction: e.target.value })} />
+    <ReasoningControls value={value} onChange={onChange} disabled={disabled} />
+    <Input label={t('generation.instruction')} multiline rows={3} className="type-reading" value={value.instruction ?? ''} disabled={disabled} onChange={e => patch({ instruction: e.target.value })} />
     <p className="m-0 text-xs text-ink-secondary">{t('generation.capabilityNotice')} {model?.max_output_tokens ? t('generation.outputLimit', { count: model.max_output_tokens }) : t('generation.unknownLimit')}</p>
     <p className="m-0 text-xs text-ink-secondary">{t('generation.reasoningCapability', { state: t(`generation.${model?.capabilities?.reasoning ?? 'unknown'}`) })}</p>
   </Stack>;

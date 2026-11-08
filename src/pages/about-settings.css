@@ -1,0 +1,16 @@
+.about-settings { display: grid; gap: var(--spacing-5); min-width: 0; color: var(--text-primary); container: about-settings / inline-size; }
+.about-title { margin: 0; font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); }
+.about-information { display: grid; gap: var(--spacing-6); min-width: 0; padding-block: var(--spacing-5); }
+.about-identity { display: flex; align-items: center; gap: var(--spacing-4); min-width: 0; }
+.about-mark { display: grid; place-items: center; flex: none; width: var(--spacing-12); height: var(--spacing-12); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-selected); color: var(--accent-default); font-size: var(--font-size-2xl); font-weight: var(--font-weight-semibold); }
+.about-name { display: grid; gap: var(--spacing-1); min-width: 0; }
+.about-name > span, .about-versions dt { color: var(--text-secondary); font-size: var(--font-size-sm); }
+.about-name h2 { margin: 0; font-size: var(--font-size-2xl); font-weight: var(--font-weight-semibold); overflow-wrap: anywhere; }
+.about-versions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; border-block: 1px solid var(--border-subtle); }
+.about-versions > div { display: grid; align-content: start; gap: var(--spacing-2); min-width: 0; padding-block: var(--spacing-4); }
+.about-versions > div + div { padding-inline-start: var(--spacing-5); border-inline-start: 1px solid var(--border-subtle); }
+.about-versions dd { margin: 0; font-size: var(--font-size-lg); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; user-select: text; }
+.about-availability { max-width: 65ch; margin: 0; font-size: var(--font-size-sm); line-height: 1.6; color: var(--text-secondary); overflow-wrap: anywhere; }
+.about-error { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-3); color: var(--status-error-text); }
+.about-error p { margin: 0; }
+@container about-settings (max-width: 360px) { .about-versions { grid-template-columns: minmax(0, 1fr); } .about-versions > div + div { padding-inline-start: 0; border-inline-start: 0; border-top: 1px solid var(--border-subtle); } }

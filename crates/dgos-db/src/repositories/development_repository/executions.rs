@@ -1,4 +1,6 @@
+
 use super::*;
+use super::capabilities::head;
 use sea_orm::TransactionTrait;
 
 // File text is bounded to 8MiB by the review layer; JSON metadata/escaping has headroom.
@@ -29,6 +31,45 @@ pub struct StoredRun {
 }
 
 impl DevelopmentRepository {
+    /// Atomically stores a Provider-bound native run and its immutable binding snapshot.
+    pub async fn begin_cli_run(&self, run: &StoredRun, snapshot: &super::CliProviderSnapshot) -> Result<(), String> {
+        if run.source != "native_agent" || run.status != "running" || run.id.is_empty() || run.owner.is_empty() || run.session_id.is_none() || run.events.len()>MAX_EVENTS || run.summary.len()>16384 {
+            return Err("invalid_cli_binding".into());
+        }
+        let encoded = serde_json::to_string(snapshot).map_err(|_| "invalid_capabilities")?;
+        if encoded.len() > 1_048_576 { return Err("invalid_capabilities".into()); }
+        let tx = self.db.begin().await.map_err(db)?;
+        let result = async {
+            execute(&tx, "UPDATE development_capability_heads SET permission_epoch=permission_epoch WHERE owner=? AND project_id=?", vec![v(run.owner.clone()),v(run.project_id.clone())]).await?;
+            super::capabilities::active_project(&tx,&run.owner,&run.project_id).await?;
+            let session_id = run.session_id.as_deref().ok_or("invalid_cli_binding")?;
+            let binding = fetch_one(&tx, "SELECT b.binding_id,b.project_id,b.task_id,b.revision,b.permission_epoch,b.state,b.execution_policy,s.engine,b.provider_id,b.model_id,b.provider_revision FROM development_cli_session_bindings b JOIN development_agent_sessions s ON s.owner=b.owner AND s.id=b.session_id WHERE b.owner=? AND b.session_id=?", vec![v(run.owner.clone()),v(session_id)]).await?.ok_or("legacy_session_read_only")?;
+            let binding_id: String = binding.try_get("", "binding_id").map_err(db)?;
+            let project: Option<String> = binding.try_get("", "project_id").map_err(db)?;
+            let task: Option<String> = binding.try_get("", "task_id").map_err(db)?;
+            let revision: Option<i64> = binding.try_get("", "revision").map_err(db)?;
+            let epoch: i64 = binding.try_get("", "permission_epoch").map_err(db)?;
+            let state: String = binding.try_get("", "state").map_err(db)?;
+            let policy: String = binding.try_get("", "execution_policy").map_err(db)?;
+            let engine: Option<String> = binding.try_get("", "engine").map_err(db)?;
+            let provider: Option<String> = binding.try_get("", "provider_id").map_err(db)?;
+            let model: Option<String> = binding.try_get("", "model_id").map_err(db)?;
+            let provider_revision: Option<i64> = binding.try_get("", "provider_revision").map_err(db)?;
+            if binding_id != snapshot.binding_id || policy != "provider_bound" || state != "active" || project.as_deref()!=Some(&run.project_id) || task.as_deref()!=Some(&run.task_id) || revision!=Some(snapshot.revision) || epoch!=snapshot.permission_epoch || engine.as_deref()!=Some(snapshot.engine.as_str()) || provider.as_deref()!=Some(snapshot.provider_id.as_str()) || model.as_deref()!=Some(snapshot.model_id.as_str()) || provider_revision!=Some(snapshot.provider_revision) || run.engine!=snapshot.engine { return Err("capability_revoked".into()); }
+            let head_now = head(&tx,&run.owner,&run.project_id).await?.ok_or("capability_revoked")?;
+            if head_now.0 != snapshot.revision || head_now.1 != snapshot.permission_epoch { return Err("capability_revoked".into()); }
+            let session=session_row(&tx,&run.owner,session_id).await?;
+            if session.engine!=run.engine { return Err("invalid_cli_binding".into()); }
+            let task_row = task_row(&tx,&run.owner,&run.task_id).await?;
+            if task_row.project_id!=run.project_id { return Err("task_not_found".into()); }
+            if fetch_one(&tx,"SELECT 1 AS busy FROM development_runs WHERE owner=? AND session_id=? AND status IN ('running','waiting')",vec![v(run.owner.clone()),v(session_id)]).await?.is_some(){return Err("busy".into());}
+            execute(&tx, "INSERT INTO development_runs(id,owner,session_id,task_id,project_id,engine,status,started_at,finished_at,summary,reason,events,fingerprint,start_fingerprint,truncated,request_fingerprint,source,runtime) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vec![v(run.id.clone()),v(run.owner.clone()),v(run.session_id.clone()),v(run.task_id.clone()),v(run.project_id.clone()),v(run.engine.clone()),v(run.status.clone()),v(run.started_at),v(run.finished_at),v(run.summary.clone()),v(run.reason.clone()),v(run.events.clone()),v(run.fingerprint.clone()),v(run.start_fingerprint.clone()),v(run.truncated as i64),v(run.request_fingerprint.clone()),v("native_agent"),v(run.runtime.clone())]).await?;
+            execute(&tx,"INSERT INTO development_run_capabilities(owner,run_id,snapshot,format) VALUES(?,?,?,'cli_provider_v1')",vec![v(run.owner.clone()),v(run.id.clone()),v(encoded)]).await?;
+            execute(&tx,"UPDATE development_tasks SET status='in_progress' WHERE owner=? AND id=? AND status NOT IN ('completed','cancelled')",vec![v(run.owner.clone()),v(run.task_id.clone())]).await?;
+            Ok::<(),String>(())
+        }.await;
+        match result { Ok(())=>{tx.commit().await.map_err(db)},Err(error)=>{let _=tx.rollback().await;Err(error)} }
+    }
     pub async fn review_baseline(&self, owner: &str, task_id: &str) -> Result<Option<serde_json::Value>, String> {
         let row = fetch_one(&self.db, "SELECT b.baseline FROM development_review_baselines b JOIN development_tasks t ON t.id=b.task_id AND t.owner=b.owner WHERE b.owner=? AND b.task_id=?", vec![v(owner), v(task_id)]).await?;
         row.map(|r| r.try_get::<String>("", "baseline").map_err(db).and_then(|s| serde_json::from_str(&s).map_err(|_| "storage_failed".into()))).transpose()
@@ -57,6 +98,12 @@ impl DevelopmentRepository {
         if run.owner.is_empty() || run.status != "running" || run.id.is_empty() || run.events.len() > MAX_EVENTS { return Err("storage_failed".into()); }
         let tx = self.db.begin().await.map_err(db)?;
         let result = async {
+            if run.session_id.is_some() && fetch_one(&tx,"SELECT 1 AS complete FROM development_migrations WHERE key=?",vec![v(super::cutover::CUTOVER_KEY)]).await?.is_some() {
+                return Err("legacy_session_read_only".into());
+            }
+            if let Some(session_id)=&run.session_id {
+                if fetch_one(&tx,"SELECT 1 AS bound FROM development_cli_session_bindings WHERE owner=? AND session_id=?",vec![v(run.owner.clone()),v(session_id.clone())]).await?.is_some() { return Err("legacy_session_read_only".into()); }
+            }
             let task=task_row(&tx,&run.owner,&run.task_id).await?;
             if task.project_id!=run.project_id { return Err("task_not_found".into()); }
             if let Some(session_id)=&run.session_id {

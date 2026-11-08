@@ -3,7 +3,7 @@ import { Button, Input, Select } from '@dgos/ui';
 import { useLocale } from '../../i18n';
 import type { Engine, LiveSessions } from '../../stores/agentRunnerStore';
 import type { DevelopmentSession, DevelopmentTask, Project } from '../../stores/developmentStore';
-import type { CapabilityRevision } from '../../stores/developmentCapabilities';
+import type { CliProviderRevision } from '../../stores/developmentCapabilities';
 
 interface Props {
   project: Project;
@@ -19,11 +19,11 @@ interface Props {
   model: string;
   onModel(value: string): void;
   busy: boolean;
-  projectCapabilities: CapabilityRevision | null;
-  selectedCapabilities: CapabilityRevision | null;
+  projectCapabilities: CliProviderRevision | null;
+  selectedCapabilities: CliProviderRevision | null;
   capabilitiesLoading: boolean;
   capabilitiesError: string | null;
-  onCapabilities(value: CapabilityRevision | null): void;
+  onCapabilities(value: CliProviderRevision | null): void;
   onStart(): void;
   onResume(session: DevelopmentSession): void;
 }
@@ -71,17 +71,14 @@ export function SessionPanel(props: Props) {
         <p className="m-0 break-all text-xs" data-testid="dev-session-cwd">{t('review.cwd')}: {props.workspacePath ?? t('delivery.unknown')}</p>
         <label className="dev-session-trust flex items-start gap-2 text-xs"><input type="checkbox" data-testid="dev-trust" checked={trusted} onChange={event => props.onTrusted(event.target.checked)} /><span>{t('dev.trustProject')}</span></label>
         <p className="m-0 text-xs text-ink-secondary">{t('dev.trustHint')} {t('dev.resumeNotStarted')}</p>
-        <Select label={t('capabilities.newSessionSource')} value={props.selectedCapabilities ? String(props.selectedCapabilities.revision) : 'native'} disabled={busy} onChange={value => props.onCapabilities(value === 'native' ? null : props.projectCapabilities?.revision === Number(value) ? props.projectCapabilities : props.selectedCapabilities)} options={[{ value: 'native', label: t('capabilities.native') }, ...(props.selectedCapabilities ? [{ value: String(props.selectedCapabilities.revision), label: t('capabilities.projectRevision', { revision: props.selectedCapabilities.revision }) }] : []), ...(props.projectCapabilities && props.projectCapabilities.revision !== props.selectedCapabilities?.revision ? [{ value: String(props.projectCapabilities.revision), label: t('capabilities.projectRevision', { revision: props.projectCapabilities.revision }) }] : [])]} />
+        <Select label={t('capabilities.newSessionSource')} value={props.selectedCapabilities ? String(props.selectedCapabilities.revision) : ''} placeholder={t('capabilities.chooseProvider')} disabled={busy || props.capabilitiesLoading} onChange={value => props.onCapabilities(props.projectCapabilities?.revision === Number(value) ? props.projectCapabilities : props.selectedCapabilities)} options={props.projectCapabilities ? [{ value: String(props.projectCapabilities.revision), label: t('capabilities.projectRevision', { revision: props.projectCapabilities.revision }) }] : []} />
         {props.capabilitiesLoading ? <p role="status" className="text-xs text-ink-secondary">{t('capabilities.loading')}</p> : null}
         {props.capabilitiesError ? <p role="alert" className="text-xs text-status-error">{props.capabilitiesError}</p> : null}
-        {props.selectedCapabilities ? <p className="m-0 break-all text-xs">{t('capabilities.fixedModel', { engine: props.selectedCapabilities.configuration.engine === 'codex' ? 'Codex' : 'Claude', model: props.selectedCapabilities.configuration.provider.source === 'dgos' ? props.selectedCapabilities.configuration.provider.model_id : t('capabilities.native') })}</p> : <>
-          <Select label={t('agent.engine')} value={props.engine} onChange={value => props.onEngine(value === 'claude' ? 'claude' : 'codex')} options={[{ value: 'codex', label: t('agent.engine.codex') }, { value: 'claude', label: t('agent.engine.claude') }]} />
-          <Input label={t('agent.model')} value={props.model} onChange={event => props.onModel(event.target.value)} />
-        </>}
+        {props.selectedCapabilities ? <p className="m-0 break-all text-xs">{t('capabilities.fixedModel', { engine: props.selectedCapabilities.configuration.engine === 'codex' ? 'Codex' : 'Claude', model: props.selectedCapabilities.configuration.provider.model_id })}</p> : <p role="alert" className="text-xs text-status-error">{t('capabilities.providerRequired')}</p>}
         <p className="m-0 text-xs text-ink-secondary">{t('capabilities.restorePinned')}</p>
         {task && !props.workspacePath ? <p role="alert" className="m-0 text-xs text-status-error">{t('dev.error.invalid_workspace')}</p> : null}
         {task && !trusted ? <p className="m-0 text-xs text-ink-secondary">{t('dev.error.workspace_untrusted')}</p> : null}
-        {task ? <Button size="xs" data-testid={`dev-session-new-${props.selectedCapabilities?.configuration.engine ?? props.engine}`} disabled={!canStart} onClick={props.onStart}>{t('dev.newSession')}</Button> : null}
+        {task ? <Button size="xs" data-testid={`dev-session-new-${props.selectedCapabilities?.configuration.engine ?? 'codex'}`} disabled={!canStart || !props.selectedCapabilities || props.capabilitiesLoading} onClick={props.onStart}>{t('dev.newSession')}</Button> : null}
       </div>
     </details>
   </section>;

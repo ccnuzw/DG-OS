@@ -1,7 +1,9 @@
+pub mod ai_run_repository;
+pub use ai_run_repository::{AiRunRepository, NewAiRun};
 pub mod maintenance_gate;
 pub use maintenance_gate::{ActivityPermit, MaintenanceBusy, MaintenanceGate, MaintenanceLease};
 pub mod cli_repository;
-pub use cli_repository::{CliRepository, CliPaths, CliSave, CliSnapshot};
+pub use cli_repository::{CliDetection, CliUpdateMetadata, CliRepository, CliPaths, CliSave, CliSnapshot};
 pub mod appearance_repository;
 pub mod chat_repository;
 pub mod asset_repository;

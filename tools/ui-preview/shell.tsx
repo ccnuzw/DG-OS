@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { applyTheme } from '../../src/ui/theme/apply';
-import { DEFAULTS } from '../../src/ui/appearance/model';
+import { DEFAULTS, DENSITIES } from '../../src/ui/appearance/model';
 import './preview.css';
 applyTheme(document.documentElement, DEFAULTS, 'light');
 const scenes = ['controls','modal','patterns-ready','patterns-initial-error','patterns-refresh-error','patterns-empty','patterns-unconfirmed','settings','chat','chat-streaming','chat-approval','chat-error'];
 const names = ['基础控件','长表单弹窗','列表与详情','首次失败','刷新失败保留旧数据','空列表','未确认结果','设置外壳与CLI','聊天长正文与代码','聊天运行中快照','聊天长参数审批','聊天错误与未知结果'];
 const fields = [
   ['scenario','场景',scenes], ['locale','语言',['zh-CN','en-US']], ['theme','主题',['light','dark']],
-  ['density','密度',['75','100','125','150','175']], ['uiSize','UI字号',['12','13','14','16']],
+  ['density','布局缩放',DENSITIES.map(String)], ['uiSize','UI字号',['12','13','14','16','20']],
   ['readingSize','阅读字号',['13','14','16','18','20']], ['codeSize','代码字号',['12','13','14','16','18']],
   ['width','容器宽度',['380','520','800','1280']], ['fault','设置故障',['none','initial-error','probe-error','unknown','conflict']],
 ] as const;

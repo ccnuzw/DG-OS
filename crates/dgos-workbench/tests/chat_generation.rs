@@ -1664,3 +1664,37 @@ async fn controlled_attachments_survive_send_replay_history_and_regeneration() {
     fx.chat.run_generation(&fx.providers, sent.job.unwrap(), &Collect::default()).await;
     assert_eq!(fx.up.body(3)["messages"].as_array().unwrap().last().unwrap()["content"][1]["image_url"]["url"], "data:image/png;base64,iVBORw0KGgo=");
 }
+
+struct CoreAdmission;
+#[async_trait::async_trait]
+impl dgos_workbench::ExecutionGuard for CoreAdmission {
+    async fn before_model(&self) -> Result<(), String> { Ok(()) }
+    async fn before_tool(&self) -> Result<(), String> { panic!("text does not use tools") }
+    async fn approve(&self, _: &dgos_workbench::ToolProposal) -> Result<bool, String> { panic!("text does not request approval") }
+}
+
+#[tokio::test]
+async fn public_executor_streams_real_deltas_and_aborts_on_closed_sink() {
+    let f = fx().await;
+    f.up.script(vec![reasoning("private-thought"), delta("visible-piece"), Step::Hold]);
+    let received = Mutex::new(Vec::new());
+    let sink = |event| match event {
+        dgos_workbench::CoreEvent::Delta(text) => { received.lock().unwrap().push(text); false },
+        _ => true,
+    };
+    let request = dgos_workbench::ExecutionRequest {
+        user: ALICE.into(), provider_id: f.provider_id.clone(), model_id: "chat-model".into(), revision: None,
+        messages: vec![dgos_types::ChatMessage { role: "user".into(), content: "stream now".into(), images: vec![] }],
+        tools: vec![], generation: Default::default(), context_window: None,
+        provenance: dgos_types::ExecutionProvenance { caller: dgos_types::BuiltinCaller::Workbench, request_id: uuid::Uuid::new_v4().to_string() },
+        cancellation: tokio_util::sync::CancellationToken::new(), deadline: tokio::time::Instant::now() + Duration::from_secs(5),
+    };
+    let mcp = dgos_mcp::McpManager::new(f.db.clone());
+    let result = dgos_workbench::AiExecutor::run(&f.providers, &mcp, request, &CoreAdmission, &sink).await;
+    assert_eq!(result.error.as_deref(), Some("task_cancelled"));
+    assert_eq!(result.content.as_deref(), Some("visible-piece"));
+    assert!(result.result_unknown);
+    assert_eq!(*received.lock().unwrap(), vec!["visible-piece"]);
+    until(|| f.up.open() == 0).await;
+    assert_eq!(f.up.hits(), 1);
+}

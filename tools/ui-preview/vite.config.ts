@@ -10,6 +10,7 @@ const evidence: Record<string, string> = {
   '/evidence/xterm-source': `${repo}tests/fixtures/terminal-accessibility.html`,
 };
 export default defineConfig({
+  publicDir: `${repo}public`,
   root, plugins: [react(), tailwindcss(), {
     name: 'preview-host-boundary',
     configureServer(server) {

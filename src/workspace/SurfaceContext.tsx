@@ -14,6 +14,8 @@ export function SurfaceScope({ id, active, visible = active, controller, childre
 export function useSurfaceActive(): boolean { return useContext(SurfaceContext)?.active ?? true; }
 /** Layout visibility is independent of interaction eligibility under an overlay. */
 export function useSurfaceVisible(): boolean { return useContext(SurfaceContext)?.visible ?? true; }
+/** Stable identity for state owned by one mounted workspace surface. */
+export function useSurfaceId(): string | null { return useContext(SurfaceContext)?.id ?? null; }
 export function useSurfaceCloseGuard(guard: () => Promise<boolean>): void {
   const surface = useContext(SurfaceContext);
   const latest = useRef(guard);

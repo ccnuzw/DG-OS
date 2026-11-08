@@ -38,6 +38,21 @@ pub async fn recover_appearance_preferences(app: tauri::AppHandle, window: Webvi
     CommandResponse::from(repository.recover(context.user_id(),&recovery_token).await.map_err(storage_error))
 }
 
+#[tauri::command]
+pub async fn list_local_fonts(window: WebviewWindow) -> CommandResponse<&'static [crate::local_fonts::LocalFont]> {
+    let _context = match host::context(&window, BuiltinCaller::Settings, Capability::Appearance) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    // Native font discovery and cache initialization must not block the async event loop.
+    let result = tokio::task::spawn_blocking(crate::local_fonts::catalogue).await;
+    CommandResponse::from(match result {
+        Ok(Ok(fonts)) => Ok(fonts),
+        Ok(Err(error)) => Err(DgosError::InternalError(error.to_string())),
+        Err(_) => Err(DgosError::InternalError("local font catalogue unavailable".into())),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

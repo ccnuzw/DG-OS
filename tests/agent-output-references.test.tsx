@@ -50,7 +50,7 @@ it('requires explicit clicks and navigates to the actual failed run', () => {
 it('denies callbacks after the selected session is replaced', () => {
   invoke.mockImplementation(async (command: string) => command === 'list_development_capability_confirmations' ? [] : null);
   const native = event({ type: 'fileChange', changes: [{ path: 'a.ts' }] });
-  const session: AgentSession = { id: 'one', engine: 'codex', native_id: null, workspace: '/task', status: 'idle', pending: [], events: [native], error: null };
+  const session: AgentSession = { id: 'one', generation: 'generation-one', engine: 'codex', native_id: null, workspace: '/task', status: 'idle', pending: [], events: [native], error: null };
   useAgentRunner.setState({ session, selected: 'one' });
   const onOpenReference = vi.fn();
   render(<AgentConversation session={session} drafts={{}} setDraft={vi.fn()} busy={false} error={false} onOpenReference={onOpenReference} />);
@@ -61,7 +61,7 @@ it('denies callbacks after the selected session is replaced', () => {
 
 it('blocks old owner callbacks immediately when the account resets', () => {
   invoke.mockImplementation(async (command: string) => command === 'list_development_capability_confirmations' ? [] : null);
-  const session: AgentSession = { id: 'one', engine: 'codex', native_id: null, workspace: '/task', status: 'idle', pending: [], events: [event({ type: 'fileChange', changes: [{ path: 'a.ts' }] })], error: null };
+  const session: AgentSession = { id: 'one', generation: 'generation-one', engine: 'codex', native_id: null, workspace: '/task', status: 'idle', pending: [], events: [event({ type: 'fileChange', changes: [{ path: 'a.ts' }] })], error: null };
   useAgentRunner.setState({ session, selected: 'one' });
   const onOpenReference = vi.fn();
   render(<AgentConversation session={session} drafts={{}} setDraft={vi.fn()} busy={false} error={false} onOpenReference={onOpenReference} />);

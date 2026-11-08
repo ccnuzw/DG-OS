@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '@dgos/ui';
 import { Dialog } from 'radix-ui';
 import { useLocale } from '../../i18n';
@@ -17,21 +17,19 @@ import { AgentConversation } from './AgentConversation';
 import { useDevelopmentEditor, hasDevelopmentDraft, guardDevelopmentDraft, discardDevelopmentDraft } from '../../stores/developmentEditor';
 import { useDevelopmentRuntime, processActive } from '../../stores/developmentRuntime';
 import '../../components/development/development.css';
-import { useProjectCapabilities, type CapabilityRevision } from '../../stores/developmentCapabilities';
+import { useProjectCapabilities, type CliProviderRevision } from '../../stores/developmentCapabilities';
 import { hostCode } from '../../stores/hostError';
 import { SessionCapabilitySnapshot } from '../../components/development/CapabilitySnapshotView';
 import './workbench.css';
 import { readDevelopmentWorkspaces, readDevelopmentGit } from '../../stores/developmentDelivery';
 import { useDevelopmentDrafts, guardWorkbenchDrafts } from '../../stores/developmentDrafts';
-import { useHostCapabilityConfirmations } from '../../components/development/HostCapabilityConfirmations';
-import { invoke } from '@tauri-apps/api/core';
-import type { AgentSession } from '../../stores/agentRunnerStore';
-import { listCapabilityConfirmations } from '../../stores/developmentCapabilities';
 import { PanelResizer, useWorkbenchLayout } from '../../components/development/WorkbenchLayout';
 import { DevelopmentRuntime } from '../../components/development/DevelopmentRuntime';
 import '../../components/development/workbench-layout.css';
 import { TaskLaunch } from '../../components/development/TaskLaunch';
+import { CliCleanupRecheck } from '../../components/development/CliCleanupRecheck';
 import { resolveDevelopmentFileReference, type AgentOutputReference } from '../../components/development/eventOutputReferences';
+import { RuntimeNavigation } from '../../components/chat/RuntimeNavigation';
 
 const RESTING = ['idle', 'closed', 'error'];
 
@@ -44,8 +42,6 @@ export default function AgentWorkbench() {
   const fileEditor = useDevelopmentEditor();
   const hostRuntime = useDevelopmentRuntime();
   const editorDrafts = useDevelopmentDrafts(state => state.entries);
-  const confirmations = useHostCapabilityConfirmations(context.pending ? null : runner.session?.status === 'closed' ? null : runner.session?.id ?? null);
-  const [otherApprovals, setOtherApprovals] = useState<{ sessionId: string; count: number }[]>([]);
   const [engine, setEngine] = useState<Engine>('codex');
   const [model, setModel] = useState('');
   const [trusted, setTrusted] = useState(false);
@@ -55,6 +51,7 @@ export default function AgentWorkbench() {
   const [workspaceRefresh, setWorkspaceRefresh] = useState(0);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const connection = useRef<{ epoch: number; generation: number } | null>(null);
   const { root, layout, setLayout, compact } = useWorkbenchLayout();
   const [launch, setLaunch] = useState<{ taskId: string | null; revision: number | null; nonce: number } | null>(null);
   const [fileTarget, setFileTarget] = useState<FileTarget | null>(null);
@@ -63,12 +60,20 @@ export default function AgentWorkbench() {
   const launchTrigger = useRef<HTMLButtonElement>(null);
   const navigationTrigger = useRef<HTMLButtonElement>(null);
   const agentTrigger = useRef<HTMLButtonElement>(null);
+  const codeTrigger = useRef<HTMLButtonElement>(null);
   const runtimeTrigger = useRef<HTMLButtonElement>(null);
   const navigation = useRef<HTMLElement>(null);
   const agentPanel = useRef<HTMLDivElement>(null);
   const navigationOpen = compact ? drawerOpen : layout.navigation;
-  const agentVisible = compact ? layout.compactView === 'agent' : layout.agent;
-  const codeVisible = !compact || layout.compactView === 'code';
+  const agentVisible = compact ? layout.compactView === 'agent' : layout.agent || !layout.tools;
+  const codeVisible = compact ? layout.compactView === 'code' : layout.tools;
+  useLayoutEffect(() => {
+    const focused = document.activeElement;
+    if (!surfaceActive || !root.current || root.current.closest('[hidden], [inert]')) return;
+    if (!navigationOpen && navigation.current?.contains(focused)) navigationTrigger.current?.focus();
+    else if (!agentVisible && agentPanel.current?.contains(focused)) agentTrigger.current?.focus();
+    else if (!codeVisible && root.current.querySelector('#dev-panel-code')?.contains(focused)) codeTrigger.current?.focus();
+  }, [navigationOpen, agentVisible, codeVisible, surfaceActive, root]);
   function revealAgent(approval = false) {
     setLayout(value => ({ ...value, agent: true, compactView: 'agent' }));
     window.requestAnimationFrame(() => {
@@ -90,12 +95,12 @@ export default function AgentWorkbench() {
   const selectedSaved = development.sessions.find(item => item.id === development.selection.session_id) ?? null;
   const projectPath = project?.path ?? null;
   const projectCapabilities = useProjectCapabilities(project?.id ?? null);
-  const [capabilityChoice, setCapabilityChoice] = useState<{ projectId: string; epoch: number; revision: CapabilityRevision } | null>(null);
-  const selectedCapabilities = capabilityChoice && capabilityChoice.projectId === project?.id && capabilityChoice.epoch === development.epoch ? capabilityChoice.revision : null;
-  function showCode(view: 'files' | 'changes' | 'review' | 'capabilities' | 'delivery') { setLayout(value => ({ ...value, compactView: 'code', codeView: view })); }
+  const [capabilityChoice, setCapabilityChoice] = useState<{ projectId: string; epoch: number; revision: CliProviderRevision } | null>(null);
+  const selectedCapabilities = capabilityChoice && capabilityChoice.projectId === project?.id && capabilityChoice.epoch === development.epoch ? capabilityChoice.revision : projectCapabilities.value;
+  function showCode(view: 'files' | 'changes' | 'review' | 'capabilities' | 'delivery') { setLayout(value => ({ ...value, tools: true, compactView: 'code', codeView: view })); }
   function showRuntime() { setLayout(value => ({ ...value, runtime: true, runtimeView: 'processes' })); }
   function manageProjects() { setLaunch(null); setDrawerOpen(true); setLayout(value => ({ ...value, navigation: true })); window.requestAnimationFrame(() => navigation.current?.querySelector<HTMLElement>('[data-testid="dev-project-create-open"]')?.focus()); }
-  function useConfiguration(revision: CapabilityRevision) { setLaunch({ taskId: task?.id ?? null, revision: revision.revision, nonce: Date.now() }); }
+  function useConfiguration(revision: CliProviderRevision) { setCapabilityChoice(project ? { projectId: project.id, epoch: development.epoch, revision } : null); setLaunch({ taskId: task?.id ?? null, revision: revision.revision, nonce: Date.now() }); }
   async function openReference(reference: AgentOutputReference, mode: 'file' | 'diff') {
     if (!project || !task || !runner.session || context.pending) throw Error('invalid_selection');
     const epoch = development.epoch, generation = contextGeneration(), sessionId = runner.session.id;
@@ -138,7 +143,7 @@ export default function AgentWorkbench() {
   }, [hostActive, hostRuntime.taskId, development.epoch, context.generation, context.pending]);
   const dirty = Object.values(drafts).some(value => value.trim()) || Object.keys(editorDrafts).length > 0 || Object.values(hostRuntime.drafts).some(draft => draft.dirty) || (fileEditor.file !== null && hasDevelopmentDraft());
   const hostMarker = hostRuntime.read.status !== 'ready' || hostRuntime.read.refresh.status !== 'current' ? 'direct.marker.lastKnown' : hostRuntime.processes.some(process => process.status === 'unknown') ? 'direct.status.unknown' : hostRuntime.processes.some(process => process.status === 'cleanup_pending') ? 'direct.status.cleanup_pending' : hostRuntime.processes.some(process => process.status === 'starting') ? 'direct.status.starting' : 'shell.running';
-  useSurfaceStatus({ dirty, running: liveActive || runner.busy || hostActive, runningLabel: hostActive && !liveActive && !runner.busy ? t(hostMarker) : undefined });
+  useSurfaceStatus({ dirty, running: liveActive || runner.busy || runner.acting || hostActive, runningLabel: hostActive && !liveActive && !runner.busy && !runner.acting ? t(hostMarker) : undefined });
   useEffect(() => { void useDevelopment.getState().load(); }, []);
   useEffect(() => {
     if (!runner.session || context.pending) return;
@@ -148,7 +153,7 @@ export default function AgentWorkbench() {
   useSurfaceCloseGuard(async () => {
     if (!await guardDevelopmentDraft()) return false;
     if (!await guardWorkbenchDrafts()) return false;
-    if (liveActive || runner.busy) {
+    if (liveActive || runner.busy || runner.acting) {
       const accepted = await confirmAction(t('agent.title'), t('shell.closeRunningConfirm'), t('shell.stopAndClose'));
       if (!accepted || !await prepareAgentClose()) return false;
     } else if (Object.values(drafts).some(value => value.trim()) && !await confirmDiscard()) return false;
@@ -158,10 +163,25 @@ export default function AgentWorkbench() {
     return true;
   });
 
+  async function connect<T>(operation: () => Promise<T>, cancelled: T): Promise<T> {
+    const epoch = useDevelopment.getState().epoch, generation = contextGeneration();
+    if (development.epoch !== epoch || context.generation !== generation || context.pending || useAgentRunner.getState().busy || connection.current?.epoch === epoch && connection.current.generation === generation) return cancelled;
+    const intent = { epoch, generation };
+    connection.current = intent; setBusy(true); setFailure(null);
+    try {
+      if (!await discardDevelopmentDraft() || epoch !== useDevelopment.getState().epoch || generation !== contextGeneration()) return cancelled;
+      return await operation();
+    } finally {
+      if (connection.current === intent) connection.current = null;
+      if (epoch === useDevelopment.getState().epoch && generation === contextGeneration()) setBusy(false);
+    }
+  }
+  function start(input: AgentOpenInput, projectId: string, taskId: string, sessionId: string | null): Promise<Outcome<null>> {
+    return connect<Outcome<null>>(() => startConnection(input, projectId, taskId, sessionId), { ok: false, code: 'cancelled' });
+  }
   // Starts a new runtime or resumes a saved one. Each call is one explicit user action and never retries. Both the
   // development and runtime account epochs are captured first; a response that crosses an account change is dropped.
-  async function start(input: AgentOpenInput, projectId: string, taskId: string, sessionId: string | null): Promise<Outcome<null>> {
-    if (!await discardDevelopmentDraft()) return { ok: false, code: 'cancelled' };
+  async function startConnection(input: AgentOpenInput, projectId: string, taskId: string, sessionId: string | null): Promise<Outcome<null>> {
     const devEpoch = useDevelopment.getState().epoch;
     const runEpoch = useAgentRunner.getState().epoch;
     const generation = contextGeneration();
@@ -169,7 +189,7 @@ export default function AgentWorkbench() {
     await runner.open(input);
     if (useDevelopment.getState().epoch !== devEpoch || useAgentRunner.getState().epoch !== runEpoch || contextGeneration() !== generation) return { ok: false, code: 'cancelled' };
     const opened = useAgentRunner.getState();
-    if (opened.error || opened.session?.id !== input.id) { const code = opened.error ?? 'unknown'; setFailure(code); setBusy(false); return { ok: false, code }; }
+    if (opened.error || opened.session?.id !== ('id' in input ? input.id : input.session_id)) { const code = opened.error ?? 'unknown'; setFailure(code); setBusy(false); return { ok: false, code }; }
     await useDevelopment.getState().load();
     if (useDevelopment.getState().epoch !== devEpoch || useAgentRunner.getState().epoch !== runEpoch || contextGeneration() !== generation) return { ok: false, code: 'cancelled' };
     const selecting = chooseContext({ project_id: projectId, task_id: taskId, session_id: sessionId ?? opened.session.id });
@@ -182,7 +202,8 @@ export default function AgentWorkbench() {
     if (selected.ok) revealAgent();
     return selected;
   }
-  async function inspectSession(sessionId: string) {
+  function inspectSession(sessionId: string) {
+    return connect(async () => {
     const epoch = development.epoch, generation = contextGeneration();
     setBusy(true);
     await runner.attach(sessionId);
@@ -197,14 +218,14 @@ export default function AgentWorkbench() {
       if (selected.ok && epoch === useDevelopment.getState().epoch && useDevelopment.getState().selection.session_id === sessionId) { setLaunch(null); revealAgent(); }
     }
     setBusy(false);
+    }, undefined);
   }
   function startNew() {
-    if (!project || !task || taskWorkspace?.taskId !== task.id || workspaceError) return;
-    const selectedEngine = selectedCapabilities?.configuration.engine ?? engine;
-    void start({ id: crypto.randomUUID(), engine: selectedEngine, task_id: task.id, capability_revision: selectedCapabilities?.revision ?? 0, options: { workspace: taskWorkspace.path, resume_id: null, executable: null, model: selectedCapabilities ? null : model || null, trust_workspace: trusted } }, project.id, task.id, null);
+    if (!project || !task || taskWorkspace?.taskId !== task.id || workspaceError || !selectedCapabilities || !trusted) return;
+    void start({ intent: 'create', id: crypto.randomUUID(), engine: selectedCapabilities.configuration.engine, task_id: task.id, project_revision: selectedCapabilities.revision, provider: selectedCapabilities.configuration.provider, options: { workspace: taskWorkspace.path, resume_id: null, executable: null, model: null, trust_workspace: true } }, project.id, task.id, null);
   }
-  async function resume(session: DevelopmentSession, trust = trusted) {
-    if (!await discardDevelopmentDraft()) return;
+  function resume(session: DevelopmentSession, trust = trusted) {
+    return connect(async () => {
     if (!project || !session.task_id) return;
     if (runner.live[session.id] && runner.live[session.id] !== 'closed') {
       const devEpoch = useDevelopment.getState().epoch;
@@ -223,8 +244,9 @@ export default function AgentWorkbench() {
       if (selected.ok) { setLaunch(null); revealAgent(); }
       return;
     }
-    const result = await start({ id: session.id, engine: session.engine, task_id: session.task_id, options: { workspace: session.workspace, resume_id: null, executable: null, model: session.model, trust_workspace: trust } }, project.id, session.task_id, session.id);
+    const result = await startConnection({ intent: 'resume', session_id: session.id, trust_workspace: trust }, project.id, session.task_id, session.id);
     if (result.ok) setLaunch(null);
+    }, undefined);
   }
   async function classify(session: DevelopmentSession) {
     if (!task) return;
@@ -233,10 +255,11 @@ export default function AgentWorkbench() {
     const result = await development.classify(session.id, task.id);
     if (epoch === useDevelopment.getState().epoch && generation === contextGeneration()) setFailure(result.ok ? null : result.code);
   }
-  async function acceptHandoff(sessionId: string, summary: string) {
+  function acceptHandoff(sessionId: string) {
+    return connect(async () => {
     if (!project || !task) return;
-    const epoch = useDevelopment.getState().epoch, generation = contextGeneration();
-    setDrafts(state => ({ ...state, [sessionId]: summary }));
+    const epoch = useDevelopment.getState().epoch;
+    const generation = contextGeneration();
     setBusy(true);
     await useDevelopment.getState().load();
     if (epoch !== useDevelopment.getState().epoch || generation !== contextGeneration()) return;
@@ -246,36 +269,10 @@ export default function AgentWorkbench() {
     if (attached.error || attached.session?.id !== sessionId) { setFailure(attached.error ?? 'unknown'); setBusy(false); return; }
     const result = await chooseContext({ project_id: project.id, task_id: task.id, session_id: sessionId });
     if (epoch === useDevelopment.getState().epoch) { if (!result.ok) setFailure(result.code); setBusy(false); }
+    }, undefined);
   }
   const current = context.pending ? null : runner.session;
-  const pendingCount = current && current.status !== 'closed' ? current.pending.length + confirmations.pending.length : 0;
-  const otherWaiting = Object.entries(runner.live).filter(([id, status]) => !context.pending && id !== current?.id && status !== 'closed' && development.sessions.some(session => session.id === id && session.project_id && session.task_id)).map(([id]) => id).sort().join('\n');
-  useEffect(() => {
-    let disposed = false; let timer: number | undefined;
-    const epoch = development.epoch, runEpoch = runner.epoch;
-    const generation = context.generation;
-    setOtherApprovals([]);
-    async function poll() {
-      const rows = await Promise.all(otherWaiting ? otherWaiting.split('\n').map(async sessionId => {
-        try {
-          const [snapshot, host] = await Promise.all([invoke<AgentSession>('get_agent_session', { sessionId }), listCapabilityConfirmations(sessionId)]);
-          return { sessionId, count: snapshot.status === 'closed' ? 0 : snapshot.pending.length + host.filter(item => item.session_id === sessionId).length };
-        } catch { return { sessionId, count: 0 }; }
-      }) : []);
-      if (disposed || epoch !== useDevelopment.getState().epoch || runEpoch !== useAgentRunner.getState().epoch || generation !== contextGeneration()) return;
-      setOtherApprovals(rows.filter(row => row.count > 0));
-      if (otherWaiting) timer = window.setTimeout(() => void poll(), 700);
-    }
-    void poll(); return () => { disposed = true; window.clearTimeout(timer); };
-  }, [otherWaiting, development.epoch, runner.epoch, context.generation]);
-  async function navigateApproval(sessionId: string) {
-    const saved = development.sessions.find(item => item.id === sessionId);
-    if (!saved?.project_id || !saved.task_id) return;
-    const epoch = development.epoch;
-    const result = await chooseContext({ project_id: saved.project_id, task_id: saved.task_id, session_id: saved.id });
-    if (!result.ok || epoch !== useDevelopment.getState().epoch || useDevelopment.getState().selection.session_id !== saved.id) return;
-    revealAgent(true); await useAgentRunner.getState().attach(saved.id);
-  }
+  const pendingCount = current && current.status !== 'closed' ? current.pending.length : 0;
   const failureCode = failure ?? development.error ?? runner.error;
   const processes = hostRuntime.taskId === task?.id ? hostRuntime.processes : [];
   const activeProcesses = processes.filter(processActive).length;
@@ -283,8 +280,9 @@ export default function AgentWorkbench() {
   const unknownProcesses = processes.filter(item => ['unknown', 'cleanup_pending'].includes(item.status)).length;
   const unresolvedOperations = hostRuntime.operations.filter(item => item.taskId === task?.id && ['unknown', 'pending', 'confirming'].includes(item.phase)).length;
   return <section ref={root} className={`agent-workbench dev-workspace dev-layout-agent-${layout.agentWidth} dev-layout-runtime-${layout.runtimeHeight}`} data-compact={compact}>
-    <span className="sr-only" role="status" data-testid="agent-session-announcement">{surfaceActive && current ? `${t(`agent.engine.${current.engine}`)}: ${t(`agent.state.${current.status}`)}. ${t('layout.approvalCounts', { native: current.pending.length, host: confirmations.pending.length })}` : ''}</span>
+    <span className="sr-only" role="status" data-testid="agent-session-announcement">{surfaceActive && current ? `${t(`agent.engine.${current.engine}`)}: ${t(`agent.state.${current.status}`)}. ${t('dev.pendingApprovals', { count: current.pending.length })}` : ''}</span>
     <header className="dev-workspace-header" inert={compact && drawerOpen}>
+      <RuntimeNavigation runtime="native" />
       <Button ref={navigationTrigger} size="sm" variant="ghost" data-testid="dev-toggle-navigation" aria-expanded={navigationOpen} aria-controls="dev-navigation" onClick={() => compact ? setDrawerOpen(value => !value) : setLayout(value => ({ ...value, navigation: !value.navigation }))}>{t('dev.projects')}</Button>
       <div className="dev-workspace-context"><h1>{project?.name ?? t('dev.title')}</h1><p title={task?.goal}>{task?.goal ?? t('dev.noTaskSelected')}</p>
         <div className="dev-context-status" data-testid="dev-context-status"><span>{taskWorkspace?.taskId === task?.id && taskWorkspace ? `${taskWorkspace.branch ?? t('dev.kindLabel.directory')} / ${taskWorkspace.kind === 'original' ? t('layout.original') : 'worktree'}` : t('layout.directoryUnresolved')}</span><span>{current ? `${t(`agent.engine.${current.engine}`)}: ${t(`agent.state.${current.status}`)}` : t('layout.noRuntime')}</span>{workspaceError ? <span className="text-status-error-text">{t('layout.contextFailed')}: {errorText(workspaceError)}</span> : null}</div>
@@ -292,11 +290,12 @@ export default function AgentWorkbench() {
       <details className="dev-context-details" data-testid="dev-context-details"><summary>{t('layout.contextDetails')}</summary><div className="dev-detail"><p>{t('review.cwd')}: {taskWorkspace?.path ?? t('layout.directoryUnresolved')}</p><p>{t('dev.selected')}: {project?.id ?? '—'}</p><p>{t('dev.tasks')}: {task?.id ?? '—'}</p><p>{t('dev.sessions')}: {current?.id ?? selectedSaved?.id ?? '—'}</p><p>{t('layout.head')}: {taskWorkspace?.head ?? '—'}</p><Button size="xs" variant="secondary" onClick={() => setWorkspaceRefresh(value => value + 1)}>{t('dev.inspect')}</Button></div></details>
       <Button ref={launchTrigger} size="sm" variant="secondary" data-testid="dev-start-task" aria-expanded={Boolean(launch)} aria-controls="dev-task-launch-panel" onClick={() => setLaunch(value => value ? null : { taskId: task?.id ?? null, revision: null, nonce: Date.now() })}>{t(task ? 'workflow.continueTask' : 'workflow.startTask')}</Button>
       <div className="dev-view-switch" role="group" aria-label={t('dev.workspaceView')}>
-        <Button size="sm" variant={codeVisible ? 'secondary' : 'ghost'} aria-pressed={codeVisible} onClick={() => setLayout(value => ({ ...value, compactView: 'code' }))}>{t('dev.projectTools')}</Button>
-        <Button ref={agentTrigger} size="sm" variant={agentVisible ? 'secondary' : 'ghost'} data-testid="dev-toggle-agent" aria-expanded={agentVisible} aria-controls="dev-panel-agent" onClick={() => agentVisible && !compact ? (setLayout(value => ({ ...value, agent: false })), agentTrigger.current?.focus()) : revealAgent()}>{t('dev.conversation')}{pendingCount ? ` (${pendingCount})` : ''}</Button>
+        <Button ref={codeTrigger} size="sm" variant={codeVisible ? 'secondary' : 'ghost'} aria-expanded={codeVisible} aria-controls="dev-panel-code" onClick={() => setLayout(value => ({ ...value, tools: compact ? true : !value.tools, compactView: 'code' }))}>{t('dev.projectTools')}</Button>
+        <Button ref={agentTrigger} size="sm" variant={agentVisible ? 'secondary' : 'ghost'} data-testid="dev-toggle-agent" aria-expanded={agentVisible} aria-controls="dev-panel-agent" onClick={() => agentVisible && codeVisible && !compact ? (setLayout(value => ({ ...value, agent: false })), agentTrigger.current?.focus()) : revealAgent()}>{t('dev.conversation')}{pendingCount ? ` (${pendingCount})` : ''}</Button>
       </div>
     </header>
     {failureCode ? <p role="alert" className="dev-workspace-error text-sm text-status-error">{errorText(failureCode)}</p> : null}
+    {failureCode === 'cleanup_pending' && !launch ? <CliCleanupRecheck /> : null}
     <Dialog.Root open={Boolean(launch)} onOpenChange={open => { if (!open) setLaunch(null); }}>
       <Dialog.Portal>
         <Dialog.Overlay className="dev-launch-overlay" />
@@ -332,21 +331,18 @@ export default function AgentWorkbench() {
       </aside>
       <div className="dev-workspace-main" inert={compact && drawerOpen}>
         {task ? <details className="dev-task-brief" data-testid="dev-task-summary"><summary>{t('dev.taskFor', { goal: task.goal })}<span>{t(`dev.taskStatus.${task.status}`)}</span></summary><p className="m-0 whitespace-pre-wrap text-sm">{task.requirements}</p></details> : null}
-        {pendingCount || otherApprovals.length ? <div className="dev-approval-navigation">
-          {pendingCount ? <Button size="xs" variant="secondary" onClick={() => revealAgent(true)}>{t('dev.pendingApprovals', { count: pendingCount })} · {t('layout.approvalCounts', { native: current?.pending.length ?? 0, host: confirmations.pending.length })}</Button> : null}
-          {otherApprovals.map(item => <Button key={item.sessionId} size="xs" variant="ghost" onClick={() => void navigateApproval(item.sessionId)}>{t('dev.otherApprovals', { count: item.count, task: development.tasks.find(task => task.id === development.sessions.find(session => session.id === item.sessionId)?.task_id)?.goal ?? item.sessionId })}</Button>)}
-        </div> : null}
-        <div className={`dev-collaboration${agentVisible && !compact ? ' dev-agent-open' : ''}`}>
+        {pendingCount ? <div className="dev-approval-navigation"><Button size="xs" variant="secondary" onClick={() => revealAgent(true)}>{t('dev.pendingApprovals', { count: pendingCount })}</Button></div> : null}
+        <div className={`dev-collaboration${agentVisible && codeVisible && !compact ? ' dev-agent-open' : ''}`}>
         <div id="dev-panel-code" data-testid="dev-panel-code" className="dev-tools-pane" hidden={!codeVisible}>
-          {project && !context.pending ? <ProjectReview key={`${development.epoch}:${context.generation}:${project.id}:${task?.id ?? ''}`} projectId={project.id} taskId={task?.id ?? null} sessions={sessions} live={runner.live} capabilityRevision={selectedCapabilities?.revision ?? 0} view={layout.codeView} onViewChange={codeView => setLayout(value => ({ ...value, codeView }))} fileTarget={fileTarget} snapshot={current?.capabilities} onUseConfiguration={useConfiguration} onOpenRuntime={showRuntime} workspacePath={taskWorkspace?.taskId === task?.id ? taskWorkspace?.path : ''} onWorkspaceChange={()=>{setWorkspaceRefresh(value => value + 1);setTrusted(false);}} onHandoff={(sessionId,summary)=>{revealAgent();void acceptHandoff(sessionId,summary);}} /> : <div className="dev-workspace-empty"><h2>{t('dev.welcome')}</h2><p>{t('dev.none')}</p></div>}
+          {project && !context.pending ? <ProjectReview key={`${development.epoch}:${context.generation}:${project.id}:${task?.id ?? ''}`} projectId={project.id} taskId={task?.id ?? null} sessions={sessions} live={runner.live} capabilityRevision={selectedCapabilities?.revision ?? 0} view={layout.codeView} onViewChange={codeView => setLayout(value => ({ ...value, codeView }))} fileTarget={fileTarget} snapshot={current?.configuration?.format === 'provider_bound' ? current.configuration.snapshot : null} onUseConfiguration={useConfiguration} onOpenRuntime={showRuntime} workspacePath={taskWorkspace?.taskId === task?.id ? taskWorkspace?.path : ''} onWorkspaceChange={()=>{setWorkspaceRefresh(value => value + 1);setTrusted(false);}} onHandoff={sessionId=>{revealAgent();void acceptHandoff(sessionId);}} /> : <div className="dev-workspace-empty"><h2>{t('dev.welcome')}</h2><p>{t('dev.none')}</p></div>}
         </div>
-        {agentVisible && !compact ? <PanelResizer axis="agent" value={layout.agentWidth} onChange={agentWidth => setLayout(value => ({ ...value, agentWidth }))} label={t('layout.resizeAgent')} testId="dev-agent-resizer" controls="dev-panel-agent" /> : null}
+        {agentVisible && codeVisible && !compact ? <PanelResizer axis="agent" value={layout.agentWidth} onChange={agentWidth => setLayout(value => ({ ...value, agentWidth }))} label={t('layout.resizeAgent')} testId="dev-agent-resizer" controls="dev-panel-agent" /> : null}
         <div ref={agentPanel} id="dev-panel-agent" data-testid="dev-panel-agent" className="dev-conversation-pane" hidden={!agentVisible}>
-          {current ? <AgentConversation key={`${development.epoch}:${current.id}`} session={current} confirmations={confirmations} drafts={drafts} setDraft={(id, value) => { if (useDevelopment.getState().epoch === development.epoch) setDrafts(state => ({ ...state, [id]: value })); }} busy={busy || runner.busy} error={Boolean(runner.error)} onOpenReference={openReference} onSelectRun={runId => { setRunTarget(runId); setLayout(value => ({ ...value, runtime: true, runtimeView: 'runs' })); }} />
+          {current ? <AgentConversation key={`${development.epoch}:${current.id}:${current.generation}`} session={current} drafts={drafts} setDraft={(id, value) => { if (useDevelopment.getState().epoch === development.epoch) setDrafts(state => ({ ...state, [id]: value })); }} busy={busy || runner.busy} error={Boolean(runner.error)} onOpenReference={openReference} onSelectRun={runId => { setRunTarget(runId); setLayout(value => ({ ...value, runtime: true, runtimeView: 'runs' })); }} />
             : !context.pending && selectedSaved && selectedSaved.task_id ? <div className="dev-workspace-empty" data-testid="dev-resume-entry"><h2>{t('dev.resume')}</h2><p>{t('dev.resumeNotStarted')}</p>
               <details><summary>{t('capabilities.actual')}</summary><SessionCapabilitySnapshot key={selectedSaved.id} sessionId={selectedSaved.id} snapshot={undefined} /></details>
               <label className="dev-checkbox"><input type="checkbox" checked={trusted} onChange={event => setTrusted(event.target.checked)} />{t('dev.trustProject')}</label>
-              <Button size="sm" variant="secondary" disabled={busy || !trusted} onClick={() => resume(selectedSaved)}>{t('dev.trustResume')}</Button></div>
+              <Button size="sm" variant="secondary" disabled={busy || runner.busy || !trusted} onClick={() => resume(selectedSaved)}>{t('dev.trustResume')}</Button></div>
             : <div className="dev-workspace-empty"><h2>{t(project ? task ? 'dev.startConversation' : 'dev.newTask' : 'dev.welcome')}</h2><p>{t(project ? task ? 'dev.startConversationHint' : 'dev.noTasks' : 'dev.none')}</p>{project && task ? <p className="text-xs text-ink-secondary">{t('dev.sessionSetupHint')}</p> : null}</div>}
         </div>
         </div>

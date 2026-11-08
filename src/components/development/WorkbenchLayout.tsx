@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
+import { useLayoutBudget } from '../../ui/layout/useLayoutBudget';
+import { workbenchMinimumWidth } from '../../ui/layout/layoutBudgets';
 
 export type CodeView = 'files' | 'changes' | 'capabilities' | 'delivery' | 'review';
-interface Layout { navigation: boolean; agent: boolean; runtime: boolean; agentWidth: number; runtimeHeight: number; codeView: CodeView; compactView: 'code' | 'agent'; runtimeView: 'processes' | 'runs' }
+interface Layout { navigation: boolean; agent: boolean; tools: boolean; runtime: boolean; agentWidth: number; runtimeHeight: number; codeView: CodeView; compactView: 'code' | 'agent'; runtimeView: 'processes' | 'runs' }
 const KEY = 'dgos.development.layout.v2';
-const defaults: Layout = { navigation: true, agent: true, runtime: false, agentWidth: 38, runtimeHeight: 40, codeView: 'files', compactView: 'code', runtimeView: 'processes' };
+const defaults: Layout = { navigation: true, agent: true, tools: false, runtime: false, agentWidth: 38, runtimeHeight: 40, codeView: 'files', compactView: 'agent', runtimeView: 'processes' };
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 function restore(): Layout {
   try {
@@ -12,11 +14,12 @@ function restore(): Layout {
     return {
       navigation: typeof value.navigation === 'boolean' ? value.navigation : defaults.navigation,
       agent: typeof value.agent === 'boolean' ? value.agent : defaults.agent,
+      tools: typeof value.tools === 'boolean' ? value.tools : defaults.tools,
       runtime: typeof value.runtime === 'boolean' ? value.runtime : defaults.runtime,
       agentWidth: Number.isFinite(value.agentWidth) ? clamp(Math.round(value.agentWidth), 26, 55) : defaults.agentWidth,
       runtimeHeight: Number.isFinite(value.runtimeHeight) ? clamp(Math.round(value.runtimeHeight), 22, 65) : defaults.runtimeHeight,
       codeView: ['files', 'changes', 'capabilities', 'delivery', 'review'].includes(value.codeView) ? value.codeView : defaults.codeView,
-      compactView: value.compactView === 'agent' ? 'agent' : 'code',
+      compactView: value.compactView === 'code' ? 'code' : 'agent',
       runtimeView: value.runtimeView === 'runs' ? 'runs' : 'processes',
     };
   } catch { return defaults; }
@@ -24,20 +27,10 @@ function restore(): Layout {
 // Presentation preferences only. No object IDs, inputs, permissions or execution state enter storage.
 export function useWorkbenchLayout() {
   const [layout, setLayout] = useState(restore);
-  const root = useRef<HTMLElement>(null);
-  const [compact, setCompact] = useState(false);
+  const { root, narrow: compact } = useLayoutBudget<HTMLElement>(workbenchMinimumWidth);
   useEffect(() => {
     try { localStorage.setItem(KEY, JSON.stringify(layout)); } catch { /* In-memory layout remains usable. */ }
   }, [layout]);
-  useEffect(() => {
-    const element = root.current;
-    if (!element) return;
-    const measure = () => { if (element.clientWidth > 0) setCompact(element.clientWidth < 1000); };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
   return { root, layout, setLayout, compact };
 }
 

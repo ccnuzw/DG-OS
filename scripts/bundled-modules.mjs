@@ -1,7 +1,7 @@
 // Recomputes the v2 integrity (D057) of every module under bundled-modules/ with the same algorithm as
 // the host's `digest::read_package` (crates/dgos-modules/src/digest.rs), and keeps three things in
-// agreement: the package manifest's artifact.sha256 (the v2 hex, a build consistency value only), and
-// the BUILTIN_PINS list in admission.rs (D047, D052). Pins are `v2:` + 64 lowercase hex digits.
+// agreement: each manifest artifact.sha256, current executable BUILTIN_PINS and
+// non-executable RETAINED_PINS. Retained artifacts are verified but never installed or run.
 //
 //   node scripts/bundled-modules.mjs          check only; exit 1 on any disagreement
 //   node scripts/bundled-modules.mjs --write  rewrite manifests and the pin list
@@ -20,6 +20,8 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../bundled-modules/', import.meta.url));
 const admissionPath = fileURLToPath(new URL('../crates/dgos-modules/src/admission.rs', import.meta.url));
 const write = process.argv.includes('--write');
+// Retiring code requires an explicit release decision; never infer it from directory order.
+const retainedReleases = new Set(['provider-console@1.0.0']);
 
 const u64 = (n) => {
   const buffer = Buffer.alloc(8);
@@ -122,22 +124,31 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     }
   }
 
-  const block = pins.length
-    ? `pub(crate) const BUILTIN_PINS: &[(&str, &str, &str)] = &[\n${pins
-        .map(([id, version, digest]) => `    (\n        "${id}",\n        "${version}",\n        "${digest}",\n    ),`)
-        .join('\n')}\n];`
-    : 'pub(crate) const BUILTIN_PINS: &[(&str, &str, &str)] = &[];';
   const source = readFileSync(admissionPath, 'utf8');
-  const pattern = /pub\(crate\) const BUILTIN_PINS: &\[\(&str, &str, &str\)\] = &\[[\s\S]*?\];/;
-  if (!pattern.test(source)) throw new Error('BUILTIN_PINS not found in admission.rs');
-  // rustfmt reflows the block, so compare the parsed triples rather than the text.
-  const parse = (value) => [...value.matchAll(/"([^"]*)",\s*"([^"]*)",\s*"((?:v2:)?[0-9a-f]*)"/g)].map((m) => m.slice(1).join('@'));
-  const current = parse(source.match(pattern)[0]).sort().join('\n');
-  const wanted = pins.map((pin) => pin.join('@')).sort().join('\n');
-  if (current !== wanted) {
-    if (write) writeFileSync(admissionPath, source.replace(pattern, block));
-    else problems.push('admission.rs: BUILTIN_PINS differs from the recomputed bundle (run with --write, then cargo fmt)');
+  const groups = [
+    ['BUILTIN_PINS', pins.filter(([id, version]) => !retainedReleases.has(`${id}@${version}`))],
+    ['RETAINED_PINS', pins.filter(([id, version]) => retainedReleases.has(`${id}@${version}`))],
+  ];
+  for (const release of retainedReleases) {
+    if (!pins.some(([id, version]) => `${id}@${version}` === release)) problems.push(`retained package missing: ${release}`);
   }
+  const currentIds = groups[0][1].map(([id]) => id.toLowerCase());
+  if (new Set(currentIds).size !== currentIds.length) problems.push('each module must have exactly one current release; explicitly retire the previous release');
+  let updated = source;
+  for (const [name, entries] of groups) {
+    const block = `pub(crate) const ${name}: &[(&str, &str, &str)] = &[${entries.length ? '\n' + entries.map(([id, version, digest]) => `    (\n        "${id}",\n        "${version}",\n        "${digest}",\n    ),`).join('\n') + '\n' : ''}];`;
+    const pattern = new RegExp(`pub\\(crate\\) const ${name}: &\\[\\(&str, &str, &str\\)\\] = &\\[[\\s\\S]*?\\];`);
+    if (!pattern.test(source)) throw new Error(`${name} not found in admission.rs`);
+    // rustfmt may reflow a block; compare triples rather than formatting.
+    const parse = value => [...value.matchAll(/"([^"]*)",\s*"([^"]*)",\s*"((?:v2:)?[0-9a-f]*)"/g)].map(match => match.slice(1).join('@'));
+    const current = parse(source.match(pattern)[0]).sort().join('\n');
+    const wanted = entries.map(pin => pin.join('@')).sort().join('\n');
+    if (current !== wanted) {
+      if (write) updated = updated.replace(pattern, block);
+      else problems.push(`admission.rs: ${name} differs from the recomputed bundle (run with --write, then cargo fmt)`);
+    }
+  }
+  if (write && updated !== source && !problems.length) writeFileSync(admissionPath, updated);
 
   if (problems.length) {
     console.error(problems.join('\n'));

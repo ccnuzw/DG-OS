@@ -211,6 +211,7 @@ pub struct BoundModuleCall {
     generation: u64,
     control: CallControl,
     registration: Option<Registration>,
+    settlement: Option<bool>,
 }
 
 impl BoundModuleCall {
@@ -242,13 +243,19 @@ impl BoundModuleCall {
         self.control.clone()
     }
 
+    /// Freeze cancellation before terminal persistence without releasing the
+    /// runtime's in-flight request. Later cancel attempts return false.
+    pub fn seal_settlement(&mut self) -> bool {
+        *self.settlement.get_or_insert_with(|| self.control.claim_settlement())
+    }
+
     /// Settle with `outcome`, unless a cancel was accepted first. Returns
     /// `true` when the call settled as given. On `false` the call settled as
     /// cancelled (`Interrupted` if the effect had started) and the caller
     /// must answer `1004028`, discarding whatever it computed.
     pub fn finish(mut self, outcome: ModuleRequestOutcome) -> bool {
         self.registration = None;
-        let honoured = self.control.claim_settlement();
+        let honoured = self.seal_settlement();
         let outcome = if honoured {
             outcome
         } else {
@@ -416,6 +423,7 @@ impl ModuleCallRouter {
             generation,
             control,
             registration,
+            settlement: None,
         })
     }
 
@@ -1004,6 +1012,28 @@ mod tests {
                 + stats.denied
                 + stats.interrupted
                 + stats.cancelled
+    }
+
+    #[tokio::test]
+    async fn sealing_terminal_keeps_runtime_in_flight_and_orders_cancel() {
+        let f = fixture();
+        let attachment = f.loader.attach("main").attachment_id;
+        let runtime = f.runtime("mod-a");
+        f.load(&runtime).await;
+        let route = f.router.issue(&runtime).unwrap();
+        let mut committed = f.router.admit_once(route.as_str(), &attachment, "committed").unwrap();
+        assert!(committed.seal_settlement());
+        assert!(committed.seal_settlement());
+        assert_eq!(runtime.request_stats().in_flight, 1);
+        assert_eq!(f.router.cancel(route.as_str(), &attachment, "committed"), Ok(false));
+        assert!(committed.finish(ModuleRequestOutcome::Succeeded));
+        let mut cancelled = f.router.admit_once(route.as_str(), &attachment, "cancelled").unwrap();
+        assert_eq!(f.router.cancel(route.as_str(), &attachment, "cancelled"), Ok(true));
+        assert!(!cancelled.seal_settlement());
+        assert!(!cancelled.finish(ModuleRequestOutcome::Succeeded));
+        let stats = runtime.request_stats();
+        assert_eq!((stats.succeeded, stats.cancelled, stats.in_flight), (1, 1, 0));
+        assert!(invariant_holds(stats));
     }
 
     #[tokio::test]

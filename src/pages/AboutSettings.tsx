@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
-import { Button, Card, Loading } from '@dgos/ui';
+import { Button, Loading } from '@dgos/ui';
 import { usePageError } from '../pageError';
 import { t, useLocale as usePageLocale } from '../i18n';
+import './about-settings.css';
 
 // V1-FR-007 §2.3 item 7 (D085). Only information the app already has: the name and version from the bundle
 // configuration and the Tauri runtime version, read through Tauri's built-in `app` commands (granted by
@@ -46,35 +47,30 @@ export default function AboutSettings() {
   }, [read]);
 
   return (
-    <div className="settings-content settings-sections text-ink-primary">
-      <h1 className="m-0 text-lg font-semibold text-ink-primary">{t('about.title')}</h1>
-      <Card>
-        <Card.Header>
-          <h2 className="m-0 text-base font-semibold">{t('about.version')}</h2>
-        </Card.Header>
-        <Card.Body>
-          {load.state === 'loading' && <Loading label={t('about.loading')} />}
-          {load.state === 'failed' && (
-            <div role="alert" className="flex flex-wrap items-center justify-between gap-3 text-status-error-text">
-              <p className="m-0">{t('about.readFailed')}</p>
-              <Button variant="secondary" onClick={() => void read()}>{t('system.retry')}</Button>
-            </div>
-          )}
-          {load.state === 'ready' && (
-            <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-2">
-              <dt className="text-ink-secondary">{t('about.app')}</dt>
-              <dd className="m-0 wrap-anywhere">{load.info.name}</dd>
-              <dt className="text-ink-secondary">{t('about.version')}</dt>
-              <dd className="m-0 wrap-anywhere">{load.info.version}</dd>
-              <dt className="text-ink-secondary">{t('about.runtime')}</dt>
-              <dd className="m-0 wrap-anywhere">{load.info.tauriVersion}</dd>
+    <div className="settings-content about-settings">
+      <h1 className="about-title">{t('about.title')}</h1>
+      <section className="about-information" aria-label={t('about.app')}>
+        {load.state === 'loading' && <Loading label={t('about.loading')} />}
+        {load.state === 'failed' && (
+          <div role="alert" className="about-error">
+            <p>{t('about.readFailed')}</p>
+            <Button variant="secondary" onClick={() => void read()}>{t('system.retry')}</Button>
+          </div>
+        )}
+        {load.state === 'ready' && (
+          <>
+            <header className="about-identity">
+              <span className="about-mark" aria-hidden="true">{Array.from(load.info.name)[0]?.toLocaleUpperCase()}</span>
+              <div className="about-name"><span>{t('about.app')}</span><h2>{load.info.name}</h2></div>
+            </header>
+            <dl className="about-versions">
+              <div><dt>{t('about.version')}</dt><dd>{load.info.version}</dd></div>
+              <div><dt>{t('about.runtime')}</dt><dd>{load.info.tauriVersion}</dd></div>
             </dl>
-          )}
-        </Card.Body>
-      </Card>
-      <p className="m-0 text-sm text-ink-secondary">
-         {t('about.unavailable')}
-      </p>
+          </>
+        )}
+      </section>
+      <p className="about-availability">{t('about.unavailable')}</p>
     </div>
   );
 }

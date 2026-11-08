@@ -2,9 +2,8 @@
 //
 // What this file can and cannot prove (jsdom, no layout, no CSS variable resolution):
 //  - Proven here: roles, accessible names, label/aria wiring, controlled values, disabled/loading behaviour,
-//    Tabs/Radio arrow keys, the Stack gap class table, `style` being dropped, and that every interactive
-//    component carries a focus-visible utility.
-//  - NOT proven here, left to a real WebView (Phase 8): that the focus ring is actually visible and not clipped,
+//    Tabs/Radio arrow keys, the Stack gap class table and `style` being dropped.
+//  - NOT proven here, left to a rendered browser/WebView: visible, unclipped focus feedback,
 //    real focus movement after Tab/arrow keys in WKWebView, Select popper placement and the trigger-width
 //    variable, spinner animation, and Space activating a native button. jsdom does not turn a `keydown` Space
 //    into a click, so Space is tested by the click that a browser dispatches for it (marked below), not by key
@@ -731,56 +730,6 @@ describe('no component takes an inline style (FR-005 §7.2.1)', () => {
 });
 
 describe('focus ring (AC24)', () => {
-  const FOCUS = /(^|\s)focus-visible:outline-2(\s|$)/;
-
-  /** One of everything interactive, in a state where all of it is in the DOM. */
-  function Everything() {
-    return (
-      <>
-        <Button>b</Button>
-        <Input label="i" />
-        <Input multiline label="m" />
-        <Select label="s" options={[{ value: 'x', label: 'X' }]} value="" onChange={() => {}} />
-        <Checkbox label="c" checked={false} onChange={() => {}} />
-        <RadioGroup label="r" options={[{ value: 'x', label: 'X' }]} value="x" onChange={() => {}} />
-        <Switch label="w" checked={false} onChange={() => {}} />
-        <Tabs value="a" onValueChange={() => {}}>
-          <Tabs.List aria-label="t"><Tabs.Trigger value="a">A</Tabs.Trigger></Tabs.List>
-          <Tabs.Content value="a">panel</Tabs.Content>
-        </Tabs>
-      </>
-    );
-  }
-
-  it('every interactive element carries a focus-visible outline', () => {
-    render(<Everything />);
-    const interactive = [
-      ...screen.getAllByRole('button'),
-      ...screen.getAllByRole('textbox'),
-      ...screen.getAllByRole('combobox'),
-      ...screen.getAllByRole('checkbox'),
-      ...screen.getAllByRole('radio'),
-      ...screen.getAllByRole('switch'),
-      ...screen.getAllByRole('tab'),
-      screen.getByRole('tabpanel'),
-    ];
-    // button, 2 text fields, combobox, checkbox, radio, switch, tab + panel
-    expect(new Set(interactive).size).toBeGreaterThanOrEqual(9);
-    for (const element of new Set(interactive)) {
-      const label = `${element.tagName} role=${element.getAttribute('role') ?? '-'}`;
-      expect(element.className, label).toMatch(FOCUS);
-    }
-  });
-
-  it('no rendered element removes the outline', () => {
-    const { container } = render(<Everything />);
-    for (const element of container.querySelectorAll('*')) {
-      const className = element.getAttribute('class') ?? '';
-      expect(className, element.tagName).not.toMatch(/(^|[\s:])outline-none(\s|$)/);
-    }
-  });
-
-
   it('the ring colour meets 3:1 on the surfaces components sit on, in both themes (WCAG 1.4.11)', () => {
     const { light, dark } = themeTokens();
     for (const [name, tokens] of [['light', light], ['dark', dark]] as const) {

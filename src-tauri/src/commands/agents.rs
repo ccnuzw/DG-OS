@@ -8,14 +8,17 @@ use dgos_agents::projects::{CreateProjectInput, UpdateProjectInput, SaveTaskInpu
 use dgos_db::development_repository::{DevelopmentWorkspace, DevelopmentTask, Project, Selection};
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OpenAgentSessionInput { id: String, engine: Engine, options: SessionOptions, task_id: Option<String>, capability_revision: Option<i64> }
+#[serde(tag = "intent", rename_all = "snake_case", deny_unknown_fields)]
+pub enum OpenAgentSessionInput {
+    Create { id: String, engine: Engine, options: SessionOptions, task_id: String, project_revision: i64, provider: dgos_agents::capabilities::CliProviderRef },
+    Resume { session_id: String, trust_workspace: bool },
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SendAgentMessageInput { session_id: String, request_id: String, text: String }
+pub struct SendAgentMessageInput { session_id: String, generation: String, request_id: String, text: String }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RespondAgentRequestInput { session_id: String, request_id: String, response: Value }
+pub struct RespondAgentRequestInput { session_id: String, generation: String, request_id: String, response: Value }
 
 #[tauri::command]
 pub async fn list_agent_sessions(app: tauri::AppHandle, window: WebviewWindow) -> Result<Vec<SessionRecord>, String> {
@@ -28,10 +31,15 @@ pub async fn open_agent_session(app: tauri::AppHandle, window: WebviewWindow, in
     let resolver = app.state::<std::sync::Arc<crate::session::SessionResolver>>();
     let (session, lease) = resolver.agent_session().map_err(|e| e.to_string())?;
     if session.user_id() != context.user_id() || lease.is_cancelled() { return Err("session_invalid".into()); }
-    let mut options = input.options;
-    let preferences = app.state::<dgos_db::CliRepository>().get(context.user_id()).await?;
-    options.executable = match input.engine { Engine::Codex => preferences.paths.codex, Engine::Claude => preferences.paths.claude };
-    app.state::<AgentManager>().open_with_capabilities(context.user_id(), input.engine, input.id, dgos_agents::capabilities::SessionCapabilities { options, revision: input.capability_revision }, input.task_id, lease).await
+    let manager = app.state::<AgentManager>();
+    match input {
+        OpenAgentSessionInput::Create { id, engine, mut options, task_id, project_revision, provider } => {
+            let preferences = app.state::<dgos_db::CliRepository>().get(context.user_id()).await?;
+            options.executable = match engine { Engine::Codex => preferences.paths.codex, Engine::Claude => preferences.paths.claude };
+            manager.open_session(context.user_id(), engine, id, dgos_agents::capabilities::SessionCreate { options, project_revision, provider }, Some(task_id), lease).await
+        }
+        OpenAgentSessionInput::Resume { session_id, trust_workspace } => manager.resume_session(context.user_id(), &session_id, trust_workspace, lease).await,
+    }
 }
 #[tauri::command]
 pub async fn get_agent_session(app: tauri::AppHandle, window: WebviewWindow, session_id: String) -> Result<OwnedSessionView, String> {
@@ -41,12 +49,12 @@ pub async fn get_agent_session(app: tauri::AppHandle, window: WebviewWindow, ses
 #[tauri::command]
 pub async fn send_agent_message(app: tauri::AppHandle, window: WebviewWindow, input: SendAgentMessageInput) -> Result<(), String> {
     let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
-    app.state::<AgentManager>().send(context.user_id(), &input.session_id, input.request_id, input.text).await
+    app.state::<AgentManager>().send(context.user_id(), &input.session_id, &input.generation, input.request_id, input.text).await
 }
 #[tauri::command]
 pub async fn respond_agent_request(app: tauri::AppHandle, window: WebviewWindow, input: RespondAgentRequestInput) -> Result<(), String> {
     let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
-    app.state::<AgentManager>().respond(context.user_id(), &input.session_id, input.request_id, input.response).await
+    app.state::<AgentManager>().respond(context.user_id(), &input.session_id, &input.generation, input.request_id, input.response).await
 }
 #[tauri::command]
 pub async fn interrupt_agent_session(app: tauri::AppHandle, window: WebviewWindow, session_id: String) -> Result<(), String> {

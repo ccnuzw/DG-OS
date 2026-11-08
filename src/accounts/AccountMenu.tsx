@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { Button, DropdownMenu, Icon, Input, Modal, RadioGroup, Stack, cn } from '@dgos/ui';
+import { FOCUS_RING } from '@dgos/ui/lib/focus';
 import { ROUTES } from '../appRoutes';
 import { usePageError } from '../pageError';
 import { useAccount } from './AccountContext';
@@ -12,7 +13,7 @@ import { useLocale } from '../i18n';
 const LINK_CLASS = ({ isActive }: { isActive: boolean }) =>
   cn(
     'rounded-md px-3 py-2 text-sm no-underline transition-colors',
-    'focus-visible:outline-2 focus-visible:outline-border-focus',
+    FOCUS_RING,
     isActive ? 'bg-accent-default text-accent-on' : 'text-ink-primary hover:bg-surface-inset',
   );
 
@@ -139,7 +140,7 @@ export default function AccountMenu({ collapsed = false }: { collapsed?: boolean
 
   return (
     <div className="workspace-account-widget">
-      <DropdownMenu label={state.current.username} trigger={<Button variant="ghost" size="sm" disabled={busy} title={state.current.username} aria-label={state.current.username}><span className="workspace-account-avatar">{state.current.username.slice(0, 1)}</span>{collapsed ? null : <span className="workspace-account-name">{state.current.username}</span>}</Button>} items={[
+      <DropdownMenu label={state.current.username} trigger={<Button variant="ghost" size="sm" className={collapsed ? 'justify-center' : 'justify-start'} disabled={busy} title={state.current.username} aria-label={state.current.username}><span className="workspace-account-avatar">{state.current.username.slice(0, 1)}</span>{collapsed ? null : <span className="workspace-account-name">{state.current.username}</span>}</Button>} items={[
         { kind: 'label', text: state.current.username },
         { kind: 'item', id: 'account', label: t('account.title'), icon: 'home', onSelect: () => navigate(ROUTES.account) },
         { kind: 'item', id: 'switch', label: t('account.switch'), onSelect: () => setSwitching(true) },

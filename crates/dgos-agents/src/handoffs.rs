@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 pub struct PrepareHandoffInput { pub task_id:String,pub source_session_id:String,pub target_engine:Engine,pub remaining:String }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AcceptHandoffInput { pub handoff_id:String,pub summary:String,pub confirmed:bool,pub capability_revision:i64,pub options:SessionOptions }
+pub struct AcceptHandoffInput { pub handoff_id:String,pub summary:String,pub confirmed:bool,pub project_revision:i64,pub provider:crate::capabilities::CliProviderRef,pub options:SessionOptions }
 #[derive(Serialize)]
 pub struct AcceptedHandoff {pub handoff:StoredHandoff,pub session:OwnedSessionView}
 fn engine_name(engine:Engine)->&'static str {match engine {Engine::Codex=>"codex",Engine::Claude=>"claude"}}
@@ -31,11 +31,9 @@ impl AgentManager {
         let project=self.task_project(owner,&task.id).await?;
         if project.archived {return Err("project_archived".into());}
         let source=self.list(owner).await.into_iter().find(|s|s.id==input.source_session_id && s.task_id.as_deref()==Some(task.id.as_str())).ok_or("session_not_found")?;
-        if source.engine==input.target_engine {return Err("invalid_handoff".into());}
         self.workspace_available(&project.path,None).await?;
         self.host_workspace_available(&project.path).await?;
         let epoch=self.inner.repository.capability_epoch(owner,&project.id).await?;
-        if self.inner.repository.read_session_capabilities(owner,&source.id).await?.is_some_and(|c|c.permission_epoch!=epoch){return Err("capability_revoked".into());}
         let review=self.read_development_review(owner,&task.id).await?;
         let runs=self.list_development_runs(owner,&task.id).await?;
         let source_run=runs.iter().find(|r|r.session_id.as_deref()==Some(source.id.as_str()));
@@ -65,7 +63,7 @@ impl AgentManager {
     }
     pub async fn accept_development_handoff(&self,owner:&str,input:AcceptHandoffInput,lease:CancellationToken)->Result<AcceptedHandoff,String> {
         if !input.confirmed || !input.options.trust_workspace {return Err("workspace_untrusted".into());}
-        if input.options.resume_id.is_some() || input.capability_revision<0 || input.summary.trim().is_empty() || input.summary.len()>65536 {return Err("invalid_handoff".into());}
+        if input.options.resume_id.is_some() || input.project_revision<=0 || input.summary.trim().is_empty() || input.summary.len()>65536 {return Err("invalid_handoff".into());}
         // Reject secret-bearing edits instead of silently transferring unreviewed text.
         if crate::executions::sanitize_text(&input.summary)!=input.summary{return Err("secret_argument_denied".into());}
         let (handoff,engine,id)={
@@ -78,18 +76,16 @@ impl AgentManager {
             self.workspace_available(&project.path,None).await?;self.host_workspace_available(&project.path).await?;
             if self.task_fingerprint(owner,&handoff.task_id).await?!=handoff.fingerprint{return Err("handoff_stale".into());}
             let engine=match handoff.target_engine.as_str(){"codex"=>Engine::Codex,"claude"=>Engine::Claude,_=>return Err("invalid_handoff".into())};
-            if input.capability_revision>0 {
-                let revision=self.inner.repository.capability_revision(owner,&handoff.project_id,Some(input.capability_revision)).await?.ok_or("capability_unavailable")?;
-                let config:crate::capabilities::CapabilityConfiguration=serde_json::from_str(&revision.configuration).map_err(|_|"storage_failed")?;
-                if config.engine!=engine{return Err("provider_incompatible".into());}
-            }
+            let revision=self.inner.repository.cli_provider_revision(owner,&handoff.project_id,Some(input.project_revision)).await?.ok_or("provider_required")?;
+            let config:dgos_db::development_repository::CliProviderConfiguration=serde_json::from_str(&revision.configuration).map_err(|_|"storage_failed")?;
+            if config.engine!=engine_name(engine) || config.provider_id!=input.provider.provider_id || config.model_id!=input.provider.model_id || config.provider_revision!=input.provider.provider_revision {return Err("provider_revision_changed".into());}
             let id=uuid::Uuid::new_v4().to_string();
             let row=self.inner.repository.reserve_handoff(owner,&handoff.id,&input.summary,&id).await?;
             (row,engine,id)
         };
         // Durable reservation means failure/unknown is inspectable and never blindly retried.
         // The reviewed summary remains a draft; a separate explicit send creates a normal run.
-        let session=self.open_with_capabilities(owner,engine,id,crate::capabilities::SessionCapabilities { options: input.options, revision: Some(input.capability_revision) },Some(handoff.task_id.clone()),lease).await?;
+        let session=self.open_session(owner,engine,id,crate::capabilities::SessionCreate { options: input.options, project_revision: input.project_revision, provider: input.provider },Some(handoff.task_id.clone()),lease).await?;
         Ok(AcceptedHandoff{handoff,session})
     }
 }

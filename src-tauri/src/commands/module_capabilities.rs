@@ -319,20 +319,21 @@ pub async fn module_call_mcp_tool(
         Ok(call) => call,
         Err(error) => return CommandResponse::from(Err(error)),
     };
-    let admitted_at = std::time::Instant::now();
-    let dispatch = app.state::<ModuleCapabilityDispatchService>();
-    let mcp = app.state::<dgos_application::ModuleMcpService>();
-    let result = match dispatch
-        .authorize_bound(call, ModulePermission::McpCall)
-        .await
-    {
-        Ok((call, grant)) => {
-            mcp.call_tool(call, grant, admitted_at, server_id, tool_name, arguments)
-                .await
-        }
-        Err(error) => Err(error),
+    let (_, account_lease, attachment_lease) = match host::module_call_leases(&window, &call) {
+        Ok(leases) => leases,
+        Err(error) => { call.finish(dgos_modules::ModuleRequestOutcome::Denied); return CommandResponse::from(Err(error)); }
     };
-    CommandResponse::from(result)
+    let admitted_at = std::time::Instant::now();
+    let dispatch = app.state::<ModuleCapabilityDispatchService>().inner().clone();
+    let mcp = app.state::<dgos_application::ModuleMcpService>().inner().clone();
+    let driver = tauri::async_runtime::spawn(async move {
+        let _permit = _permit;
+        match dispatch.authorize_bound(call, ModulePermission::McpCall).await {
+            Ok((call, grant)) => mcp.call_tool(call, grant, admitted_at, server_id, tool_name, arguments, account_lease, attachment_lease).await,
+            Err(error) => Err(error),
+        }
+    });
+    CommandResponse::from(driver.await.unwrap_or(Err(DgosError::StreamInterrupted)))
 }
 
 /// The user's answer to a module's MCP confirmation (D093). Main-window and

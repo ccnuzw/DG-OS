@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { Button, Input, Stack } from '@dgos/ui';
 import { usePageError } from '../pageError';
 import {
@@ -11,6 +11,7 @@ import {
 } from './accountApi';
 import { InlineError } from './AuthShell';
 import { t, useLocale } from '../i18n';
+import { PasswordField } from './PasswordField';
 
 interface FieldErrors {
   username?: string;
@@ -23,9 +24,13 @@ interface FieldErrors {
 export function CreateAccountForm({
   submitLabel,
   onCreated,
+  onBusyChange,
+  onCancel,
 }: {
   submitLabel: string;
   onCreated: (state: AccountState) => void;
+  onBusyChange?: (busy: boolean) => void;
+  onCancel?: () => void;
 }) {
   useLocale();
   const reportError = usePageError('CreateAccountForm');
@@ -35,10 +40,17 @@ export function CreateAccountForm({
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const pending = useRef(false);
+
+  const setPending = (next: boolean) => {
+    pending.current = next;
+    setBusy(next);
+    onBusyChange?.(next);
+  };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (busy) return;
+    if (pending.current) return;
     const next: FieldErrors = {
       username: usernameProblem(username),
       password: passwordProblem(password),
@@ -48,12 +60,12 @@ export function CreateAccountForm({
     setFormError(undefined);
     if (next.username || next.password || next.confirm) return;
 
-    setBusy(true);
+    setPending(true);
     let state: AccountState;
     try {
       state = await createAccount(username, password);
     } catch (error) {
-      setBusy(false);
+      setPending(false);
       const text = accountErrorText(error);
       if (text) setFormError(text);
       else reportError(error);
@@ -62,7 +74,7 @@ export function CreateAccountForm({
     setUsername('');
     setPassword('');
     setConfirm('');
-    setBusy(false);
+    setPending(false);
     onCreated(state);
   };
 
@@ -76,24 +88,23 @@ export function CreateAccountForm({
           error={errors.username}
           onChange={(event) => setUsername(event.target.value)}
         />
-        <Input
+        <PasswordField
           label={t('account.passwordLabel')}
-          type="password"
           autoComplete="new-password"
           value={password}
           error={errors.password}
           onChange={(event) => setPassword(event.target.value)}
         />
-        <Input
+        <PasswordField
           label={t('account.confirmPassword')}
-          type="password"
           autoComplete="new-password"
           value={confirm}
           error={errors.confirm}
           onChange={(event) => setConfirm(event.target.value)}
         />
         {formError ? <InlineError>{formError}</InlineError> : null}
-        <div>
+        <div className="flex flex-wrap gap-2">
+          {onCancel ? <Button variant="secondary" disabled={busy} onClick={onCancel}>{t('account.cancel')}</Button> : null}
           <Button type="submit" loading={busy}>
             {submitLabel}
           </Button>

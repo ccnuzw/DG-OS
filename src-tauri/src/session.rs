@@ -18,7 +18,10 @@ use tokio_util::sync::CancellationToken;
 
 struct ResolvedState {
     account: SessionState,
+    stopping: bool,
     agent_lease: CancellationToken,
+    native_generation: uuid::Uuid,
+    native_contexts: Vec<(uuid::Uuid, dgos_agents::native_extensions::HostContext)>,
 }
 
 pub struct SessionResolver {
@@ -29,7 +32,7 @@ impl SessionResolver {
     /// Production start: closed until account recovery settles the state.
     pub fn starting() -> Arc<Self> {
         Arc::new(Self {
-            state: RwLock::new(ResolvedState { account: SessionState::Switching, agent_lease: CancellationToken::new() }),
+            state: RwLock::new(ResolvedState { account: SessionState::Switching, stopping: false, agent_lease: CancellationToken::new(), native_generation: uuid::Uuid::new_v4(), native_contexts: Vec::new() }),
         })
     }
 
@@ -38,7 +41,7 @@ impl SessionResolver {
     #[cfg(any(test, feature = "webview-smoke"))]
     pub fn no_accounts() -> Arc<Self> {
         Arc::new(Self {
-            state: RwLock::new(ResolvedState { account: SessionState::NoAccounts, agent_lease: CancellationToken::new() }),
+            state: RwLock::new(ResolvedState { account: SessionState::NoAccounts, stopping: false, agent_lease: CancellationToken::new(), native_generation: uuid::Uuid::new_v4(), native_contexts: Vec::new() }),
         })
     }
 
@@ -51,8 +54,11 @@ impl SessionResolver {
 
     fn set(&self, state: SessionState) {
         let mut current = self.state.write().unwrap_or_else(|p| p.into_inner());
+        if current.stopping { return; }
         current.agent_lease.cancel();
-        *current = ResolvedState { account: state, agent_lease: CancellationToken::new() };
+        let mut revoked = true;
+        for (_, context) in &current.native_contexts { revoked &= context.revoke().is_ok(); }
+        *current = ResolvedState { account: if revoked { state } else { SessionState::Switching }, stopping: false, agent_lease: CancellationToken::new(), native_generation: uuid::Uuid::new_v4(), native_contexts: Vec::new() };
     }
 
     /// The current session; `1008007` while signed out, switching or
@@ -73,9 +79,34 @@ impl SessionResolver {
 
 
 
+    /// Snapshot only; registration below checks the same generation under the write lock.
+    pub(crate) fn native_session(&self) -> Result<(String, uuid::Uuid, CancellationToken), String> {
+        let current = self.state.read().map_err(|_| "session_invalid")?;
+        if current.agent_lease.is_cancelled() { return Err("session_invalid".into()); }
+        Ok((current.account.user_id().ok_or("session_invalid")?.to_owned(), current.native_generation, current.agent_lease.clone()))
+    }
+
+    pub(crate) fn register_native(&self, owner: &str, generation: uuid::Uuid, roots: dgos_agents::native_extensions::TrustedRoots, access: dgos_agents::native_extensions::Access) -> Result<(dgos_agents::native_extensions::NativeExtensions, dgos_agents::native_extensions::HostContext), String> {
+        let context = dgos_agents::native_extensions::HostContext::from_host(owner.to_owned(), generation.to_string(), roots, access).map_err(|e| e.to_string())?;
+        let api = dgos_agents::native_extensions::NativeExtensions::new(context.clone()).map_err(|e| e.to_string())?;
+        let mut current = self.state.write().map_err(|_| "session_invalid")?;
+        if current.account.user_id() != Some(owner) || current.native_generation != generation || current.agent_lease.is_cancelled() { return Err("session_invalid".into()); }
+        current.native_contexts.retain(|(registered_generation, context)| {
+            if *registered_generation == generation { true } else { let _ = context.revoke(); false }
+        });
+        if current.native_contexts.len() >= 4096 { return Err("native_extension_Limit".into()); }
+        current.native_contexts.push((generation, context.clone()));
+        Ok((api, context))
+    }
+
     pub fn close_agents(&self) {
-        let current = self.state.write().unwrap_or_else(|p| p.into_inner());
+        let mut current = self.state.write().unwrap_or_else(|p| p.into_inner());
+        current.account = SessionState::Switching;
+        current.stopping = true;
         current.agent_lease.cancel();
+        for (_, context) in &current.native_contexts { let _ = context.revoke(); }
+        current.native_contexts.clear();
+        current.native_generation = uuid::Uuid::new_v4();
     }
 }
 
@@ -114,8 +145,8 @@ impl SessionPort for HostSessionPort {
     }
 
     fn set_state(&self, state: SessionState) {
-        self.mcp.set_connection_scope(connection_scope(&state));
         self.resolver.set(state);
+        self.mcp.set_connection_scope(connection_scope(&self.resolver.state()));
     }
 
     async fn release(&self, user_id: &str) {
@@ -134,6 +165,11 @@ impl SessionPort for HostSessionPort {
         if let Some(confirmations) = self.app.try_state::<Arc<ModuleMcpConfirmations>>() {
             confirmations.cancel_user(user_id);
         }
+        let ai = async {
+            if let Some(ai) = self.app.try_state::<dgos_application::AiService>() {
+                if !ai.cancel_user(user_id).await { tracing::warn!("AI runs still settling at session end"); }
+            }
+        };
         let agents = async {
             if let Some(agents) = self.app.try_state::<dgos_agents::AgentManager>() {
                 if !agents.cancel_user(user_id).await { tracing::warn!("Agent processes still settling at session end"); }
@@ -158,7 +194,7 @@ impl SessionPort for HostSessionPort {
         let mcp = async {
             if self.mcp.disconnect_user(user_id).await.is_err() { tracing::warn!("MCP connections could not all be closed at session end"); }
         };
-        tokio::join!(agents, modules, chat, workbench, mcp);
+        tokio::join!(agents, modules, chat, workbench, mcp, ai);
     }
 }
 
@@ -254,5 +290,44 @@ mod tests {
         assert!(!fresh.is_cancelled());
         resolver.close_agents();
         assert!(fresh.is_cancelled());
+        assert_eq!(resolver.current().unwrap_err().error_code(), 1008007);
+        assert!(resolver.agent_session().is_err());
+        assert!(resolver.native_session().is_err());
+        resolver.set(SessionState::SignedIn("late-sign-in".into()));
+        assert_eq!(resolver.state(), SessionState::Switching);
+        assert!(resolver.current().is_err());
+    }
+
+    #[test]
+    fn native_contexts_are_revoked_and_cleared_on_account_generation_change() {
+        use dgos_agents::native_extensions::{Access, TrustedRoots};
+        let temp = tempfile::tempdir().unwrap();
+        let resolver = SessionResolver::no_accounts();
+        let (owner, generation, _) = resolver.native_session().unwrap();
+        let roots_dir = temp.path().canonicalize().unwrap();
+        for name in ["home", "codex", "claude", "journal"] { std::fs::create_dir(roots_dir.join(name)).unwrap(); }
+        let roots = TrustedRoots {
+            os_home: roots_dir.join("home"),
+            codex_home: roots_dir.join("codex"),
+            claude_home: roots_dir.join("claude"),
+            claude_user_file: roots_dir.join("claude-user.json"),
+            project: None,
+            journal: roots_dir.join("journal"),
+        };
+        let mut missing_roots = roots.clone();
+        missing_roots.os_home = roots_dir.join("missing-home");
+        for _ in 0..4096 {
+            assert!(resolver.register_native(&owner, generation, missing_roots.clone(), Access::Read).is_err());
+        }
+        assert!(resolver.state.read().unwrap().native_contexts.is_empty());
+        let (_, first) = resolver.register_native(&owner, generation, roots.clone(), Access::Read).unwrap();
+        let (_, second) = resolver.register_native(&owner, generation, roots, Access::Manage).unwrap();
+        assert_eq!(resolver.state.read().unwrap().native_contexts.len(), 2);
+        resolver.set(SessionState::SignedIn("next-user".into()));
+        assert!(dgos_agents::native_extensions::NativeExtensions::new(first).is_err());
+        assert!(dgos_agents::native_extensions::NativeExtensions::new(second).is_err());
+        assert!(resolver.state.read().unwrap().native_contexts.is_empty());
+        let (_, next_generation, _) = resolver.native_session().unwrap();
+        assert_ne!(generation, next_generation);
     }
 }

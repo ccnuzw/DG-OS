@@ -11,4 +11,12 @@ export default {
   'workbenchNavigation.running': '{count} 个执行中',
   'workbenchNavigation.liveCli': '{count} 个 CLI 已打开',
   'workbenchNavigation.activeProcesses': '{count} 个宿主进程活动中',
+  'workbenchNavigation.runtime': '对话运行时',
+  'workbenchNavigation.dgos': 'DG-OS AI',
+  'workbenchNavigation.native': '原生 CLI · Codex / Claude',
+  'workbenchNavigation.capabilities': '管理会话能力',
+  'workbenchNavigation.permissions': '权限',
+  'workbenchNavigation.hostPermissions': 'DG-OS 只在你逐次批准确切调用后执行所选 MCP 工具。连接与凭据在 MCP 管理中维护；此处不授予全局权限。',
+  'workbenchNavigation.dgosSource': 'DG-OS AI：共享 Provider、固定版本内容 Skill 与 DG-OS MCP。目标变更需明确应用；前往管理页不会发送消息。',
+  'workbenchNavigation.nativeSource': '原生 CLI：Provider 来自 DG-OS；Skills、MCP、指令、Hooks 与审批由当前 CLI 管理。保存配置不代表当前会话已加载；请在管理页明确观测会话，并使用受支持的刷新操作。'
 } as const;

@@ -1,14 +1,23 @@
+/* Focus follows the role: existing field border, contained action line, or current-item background. */
+.ui-focus:focus-visible { outline: 1px solid var(--border-focus); outline-offset: -1px; }
+.ui-focus-accent:focus-visible, .ui-focus[role='checkbox'][data-state='checked']:focus-visible, .ui-focus[role='checkbox'][data-state='indeterminate']:focus-visible, .ui-focus[role='switch'][data-state='checked']:focus-visible { outline-color: var(--accent-on); outline-offset: -2px; }
+.ui-focus-danger:focus-visible { outline-color: var(--status-error-on); outline-offset: -2px; }
+.ui-focus:focus:not(:focus-visible) { outline: none; }
+.ui-focus-field:focus { outline: none; border-color: var(--border-focus); }
+.ui-focus-item:focus { outline: none; background-color: var(--surface-hover); }
+@media (forced-colors: active) {
+  .ui-focus:focus-visible, .ui-focus-item:focus-visible { outline: 1px solid Highlight; outline-offset: -1px; }
+  .ui-focus-field:focus { border-color: Highlight; }
+}
+
 /* Page-pattern layout only; this is a local responsive rule, not a persisted density or breakpoint contract. */
 .resource-layout-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
 }
+.resource-layout-grid[data-narrow='true'] { grid-template-columns: minmax(0, 1fr); }
+.resource-layout-grid[data-narrow='false'] { grid-template-columns: minmax(14rem, .85fr) minmax(0, 1.15fr); }
 
-@media (min-width: 64rem) {
-  .resource-layout-grid {
-    grid-template-columns: minmax(14rem, 0.85fr) minmax(0, 1.15fr);
-  }
-}
 
 @media (prefers-reduced-motion: reduce) {
   .resource-layout-grid * {
@@ -27,7 +36,7 @@
 }
 
 /* Body children retain their intrinsic height; only the body scrollport shrinks. */
-/* A full 2px outline plus 2px offset must fit inside each clipped scrollport. */
+/* Retain breathing room for focused controls when WebKit scrolls only their text caret into view. */
 .ui-modal-body, .ui-modal-footer { padding: 4px; margin: -4px; }
 .ui-modal-body { scroll-padding-block: 4px; }
 .ui-modal-body :focus-visible, .ui-modal-footer :focus-visible { scroll-margin-block: 4px; }

@@ -56,7 +56,7 @@ export interface ModalProps {
   footer?: ReactNode;
 }
 
-// WebKit can scroll only the text caret into view on Tab, leaving the input border and ring clipped.
+// WebKit can scroll only the text caret into view on Tab, leaving the input boundary clipped.
 // Correct the nearest modal scrollport after native focus scrolling, without moving the panel or page.
 function revealFocusedControl(event: FocusEvent<HTMLDivElement>) {
   const region = event.currentTarget;

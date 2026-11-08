@@ -248,6 +248,8 @@ pub struct ChatChunk {
     /// Displayable reasoning text increment; never mixed into `delta`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_delta: Option<String>,
+    /// True when persisting this stream's provider usage audit failed.
+    pub audit_warning: bool,
 }
 
 /// What `call_provider_stream` pushes to the caller's Channel (FR-001 §6.3). Exactly one `Done`
@@ -312,6 +314,7 @@ mod stream_event_tests {
                 completion_tokens: 2,
                 total_tokens: 5,
             }),
+            audit_warning: false,
         });
         assert_eq!(events.len(), 3);
         assert_eq!(

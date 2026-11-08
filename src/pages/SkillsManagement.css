@@ -7,8 +7,13 @@
 .skills-facts { grid-template-columns: minmax(5rem, auto) minmax(0, 1fr); }
 .skills-facts dt { color: var(--text-secondary); }
 .skills-facts dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
-@container (max-width: 760px) {
-  .skills-resource-layout { grid-template-columns: minmax(0, 1fr); }
-  .skills-resource-list, .skills-resource-detail { max-height: none; }
-  .skills-resource-detail { position: static; }
+.skills-page summary:focus-visible, .skills-package-upload:has(input:focus-visible) { outline: 1px solid var(--border-focus); outline-offset: -1px; }
+@media (hover: hover) and (pointer: fine) {
+  .skills-card-actions { opacity: 0; pointer-events: none; }
+  .skills-browse-card:hover .skills-card-actions,
+  .skills-browse-card:focus-within .skills-card-actions,
+  .skills-card-actions:has([aria-busy="true"]) { opacity: 1; pointer-events: auto; }
 }
+.skills-resource-layout[data-narrow='true'] { grid-template-columns: minmax(0, 1fr); }
+.skills-resource-layout[data-narrow='true'] .skills-resource-list, .skills-resource-layout[data-narrow='true'] .skills-resource-detail { max-height: none; }
+.skills-resource-layout[data-narrow='true'] .skills-resource-detail { position: static; }

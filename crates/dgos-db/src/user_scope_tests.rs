@@ -55,10 +55,14 @@ fn seed(user: &str, n: u32) -> String {
           VALUES ('{user}', 'srv-{n}', 'connected', 'ready', 1);
         INSERT INTO workbench_tasks (id, user_id, app_id, provider_id, model_id, status, created_at)
           VALUES ('task-{n}', '{user}', 'a', 'prov-{n}', 'm', 'succeeded', 1);
+        INSERT INTO workbench_tasks (id,user_id,app_id,provider_id,model_id,status,created_at)
+          VALUES ('ai-task-{n}','{user}','mod-1','prov-{n}','m','running',1);
         INSERT INTO workbench_task_skills (task_id, version_id, skill_id, content_hash)
           VALUES ('task-{n}', 'ver-1', 'skill-1', 'h');
         INSERT INTO workbench_task_tools (task_id, server_id, tool_name, schema_hash)
           VALUES ('task-{n}', 'srv-{n}', 't', 'h');
+        INSERT INTO ai_run_bindings (task_id,user_id,module_id,module_version,module_integrity,runtime_id,request_id,authorization_epoch,skill_refs,tool_refs)
+          VALUES ('ai-task-{n}','{user}','mod-1','1.0.0','aaaa','rt','ai-request-{n}',0,'[]','[]');
         INSERT INTO chat_sessions (id, user_id, title, created_at, updated_at)
           VALUES ('chat-{n}', '{user}', 't', 1, 1);
         INSERT INTO chat_messages (id, session_id, user_id, seq, role, status, task_id, created_at, updated_at)

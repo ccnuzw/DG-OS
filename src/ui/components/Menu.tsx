@@ -1,7 +1,7 @@
 import { ContextMenu as Context, DropdownMenu as Dropdown } from 'radix-ui';
 import { type ReactElement, type ReactNode } from 'react';
 import { Icon } from './Icon';
-import { FOCUS_RING_INSET } from '../lib/focus';
+import { FOCUS_ITEM } from '../lib/focus';
 import { cn } from '../lib/cn';
 export type MenuItem =
   | { kind:'item'; id:string; label:string; icon?:string; shortcut?:string; disabled?:boolean; danger?:boolean; onSelect?:()=>void }
@@ -32,7 +32,7 @@ export function normalizeMenu(raw: unknown): MenuItem[] {
   return collect(raw);
 }
 const SURFACE='z-popover min-w-40 max-h-(--radix-dropdown-menu-content-available-height) overflow-auto rounded-md border border-solid border-border-subtle bg-surface-popover p-1 font-sans text-sm text-ink-primary shadow-md';
-const ITEM=cn('flex min-h-7 cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 data-[highlighted]:bg-surface-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-disabled',FOCUS_RING_INSET);
+const ITEM=cn('flex min-h-7 cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 data-[highlighted]:bg-surface-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-disabled',FOCUS_ITEM);
 function entries(items:readonly MenuItem[], context:boolean):ReactNode {
   const P=context?Context:Dropdown;
   return items.map((item,index)=>{

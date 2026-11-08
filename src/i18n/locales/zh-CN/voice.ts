@@ -8,6 +8,7 @@ export default {
   "voice.record": "开始录音",
   "voice.stop": "结束录音",
   "voice.transcribe": "转写到草稿",
+  "voice.playback": "录音回放",
   "voice.permission": "等待麦克风授权…",
   "voice.recording": "正在录音 · 最长60秒",
   "voice.transcribing": "正在转写…",

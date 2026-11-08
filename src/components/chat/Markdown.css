@@ -53,3 +53,30 @@
 .chat-code .hljs-strong {
   font-weight: var(--font-weight-bold);
 }
+
+/* Prose scales from the reading role; only the code-block toolbar uses UI type. */
+.type-reading .chat-markdown-link { font-family: inherit; font-size: inherit; line-height: inherit; }
+.chat-markdown-heading-large { font-size: 1.3em; }
+.chat-markdown-heading-medium { font-size: 1.15em; }
+.chat-markdown-heading-small { font-size: 1.05em; }
+
+/* Keep model prose readable without turning every response block into a card. */
+.chat-markdown { min-width: 0; overflow-wrap: anywhere; }
+.chat-markdown > :first-child { margin-top: 0; }
+.chat-markdown > :last-child { margin-bottom: 0; }
+.chat-markdown [role='heading'] { color: var(--text-reading); line-height: 1.35; }
+.chat-markdown ul, .chat-markdown ol { padding-inline-start: calc(24rem / 14); }
+.chat-markdown li + li { margin-top: var(--spacing-1); }
+.chat-markdown li > p { margin-block: var(--spacing-1); }
+.chat-markdown blockquote { border-color: var(--accent-default); }
+.chat-markdown :not(pre) > code { border: 1px solid var(--border-subtle); background: var(--surface-inset); }
+.chat-markdown table { min-width: min(100%, calc(320rem / 14)); width: max-content; max-width: 100%; }
+.chat-markdown th { color: var(--text-reading); text-align: left; }
+.chat-markdown td, .chat-markdown th { overflow-wrap: anywhere; }
+.chat-markdown hr { border-color: var(--border-subtle); }
+.chat-markdown-link { color: var(--accent-active); }
+
+@container (max-width: 600px) {
+  .chat-markdown ul, .chat-markdown ol { padding-inline-start: calc(20rem / 14); }
+  .chat-markdown table { min-width: 0; }
+}

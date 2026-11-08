@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Button, Modal } from '@dgos/ui';
+import { Button, Icon, Modal, Popover } from '@dgos/ui';
+import { Paperclip } from 'lucide-react';
 import { useLocale } from '../../i18n';
 import { useChatStore, type ChatAsset } from '../../stores/chatStore';
 
@@ -41,18 +42,24 @@ export function AssetPreview({ asset, disabled = false }: { asset: ChatAsset; di
     </Modal></>;
 }
 
-export default function Attachments({ sessionId, disabled, onBusy }: { sessionId: string; disabled: boolean; onBusy: (busy: boolean) => void }) {
+export default function Attachments({ sessionId, disabled, onBusy, children }: {
+  sessionId: string;
+  disabled: boolean;
+  onBusy: (busy: boolean) => void;
+  children: (slots: { contextTrigger: ReactNode; attachmentTrigger: ReactNode; attachments: ReactNode }) => ReactNode;
+}) {
   const { t } = useLocale();
   const assets = useChatStore(state => state.sessionAssets[sessionId]);
   const [operation, setOperation] = useState<'import' | 'remove' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
   const version = useRef(0);
   const activeOperation = useRef<'import' | 'remove' | null>(null);
   useEffect(() => {
     const unsubscribe = useChatStore.subscribe(state => {
       if (state.activeSessionId === sessionId && state.sessions.some(session => session.id === sessionId)) return;
-      version.current++; updateOperation(null);
+      version.current++; updateOperation(null); setOpen(false);
     });
     return () => { unsubscribe(); version.current++; activeOperation.current = null; onBusy(false); };
   }, [sessionId]);
@@ -89,11 +96,26 @@ export default function Attachments({ sessionId, disabled, onBusy }: { sessionId
     } catch { if (token === version.current) setError(t('assets.error')); }
     finally { if (token === version.current) updateOperation(null); }
   }
-  return <section aria-label={t('assets.title')} className="grid min-w-0 gap-1">
+  const cannotAdd = disabled || busy || (assets?.length ?? 0) >= 4;
+  const cancelImport = () => { version.current++; updateOperation(null); };
+  const attachmentTrigger = <Button size="sm" variant="ghost" iconOnly className="chat-composer-icon" disabled={cannotAdd} aria-label={t('assets.add')} title={t('assets.add')} onClick={() => picker.current?.click()}><Paperclip size={16} aria-hidden="true" /></Button>;
+  const contextTrigger = <Popover label={t('assets.context')} side="top" align="start" open={open} onOpenChange={setOpen} trigger={
+    <Button size="sm" variant="ghost" iconOnly className="chat-composer-icon" disabled={disabled} aria-label={t('assets.context')} title={t('assets.context')}><Icon name="plus" /></Button>
+  } content={
+    <section className="chat-context-menu">
+      <header className="chat-picker-header"><strong>{t('assets.context')}</strong><Button size="xxs" variant="ghost" iconOnly aria-label={t('common.close')} title={t('common.close')} onClick={() => setOpen(false)}><Icon name="close" size="sm" /></Button></header>
+      <Button size="sm" variant="ghost" className="chat-context-add" disabled={cannotAdd} onClick={() => { setOpen(false); picker.current?.click(); }}><Paperclip size={16} aria-hidden="true" />{t('assets.add')}</Button>
+      <p className="chat-picker-help">{t('assets.limits')}</p>
+      {operation === 'import' && <Button size="xs" variant="secondary" onClick={cancelImport}>{t('assets.cancelImport')}</Button>}
+    </section>
+  } />;
+  const attachments = assets?.length || operation === 'import' || error ? <section aria-label={t('assets.title')} className="chat-attachment-context" aria-busy={busy}>
+    {assets?.map(asset => <div key={asset.id} className="chat-context-chip"><Icon name="file" size="sm" /><AssetPreview asset={asset} disabled={busy} /><Button size="xxs" variant="ghost" iconOnly className="chat-context-remove" disabled={disabled || busy} aria-label={t('assets.remove', { name: asset.name })} title={t('assets.remove', { name: asset.name })} onClick={() => void remove(asset)}><Icon name="close" size="sm" /></Button></div>)}
+    {operation === 'import' && <Button size="xs" variant="secondary" onClick={cancelImport}>{t('assets.cancelImport')}</Button>}
+    {error && <p role="alert" className="chat-media-error">{error}</p>}
+  </section> : null;
+  return <>
     <input ref={picker} type="file" multiple accept="text/*,.md,.json,.csv,.log,.yaml,.yml,image/png,image/jpeg,image/webp" hidden onChange={event => { void add(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
-    <div className="flex flex-wrap gap-1"><Button size="xs" variant="ghost" disabled={disabled || busy || (assets?.length ?? 0) >= 4} onClick={() => picker.current?.click()}>{t('assets.add')}</Button>{operation === 'import' && <Button size="xs" variant="secondary" onClick={() => { version.current++; updateOperation(null); }}>{t('assets.cancelImport')}</Button>}</div>
-    <details className="chat-attachment-help text-xs text-ink-secondary"><summary>{t('assets.title')}</summary><p className="m-0 mt-1">{t('assets.limits')}</p></details>
-    {assets?.map(asset => <div key={asset.id} className="flex min-w-0 flex-wrap items-center gap-1"><AssetPreview asset={asset} disabled={busy} /><Button size="xs" variant="ghost" disabled={disabled || busy} aria-label={t('assets.remove', { name: asset.name })} onClick={() => void remove(asset)}>{t('common.remove')}</Button></div>)}
-    {error && <p role="alert" className="m-0 text-xs text-status-error-text">{error}</p>}
-  </section>;
+    {children({ contextTrigger, attachmentTrigger, attachments })}
+  </>;
 }

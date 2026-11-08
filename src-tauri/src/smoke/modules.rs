@@ -25,7 +25,7 @@ use dgos_application::{
 use dgos_db::sea_orm_migration::MigratorTrait;
 use dgos_db::{ModuleCrashRepository, ModulePermissionRepository};
 use dgos_modules::{
-    LoaderTimeouts, LocalModuleSources, ModuleAdmission, ModuleCallRouter, ModulePublisher,
+    BuiltinModuleSources, LoaderTimeouts, LocalModuleSources, ModuleAdmission, ModuleCallRouter, ModulePublisher,
     ModuleRuntimeSupervisor, PageLoaderConfig, PageModuleLoader, PinnedModuleAdmission,
 };
 use serde_json::{json, Value};
@@ -50,6 +50,9 @@ const CRASH_ID: &str = "mx-crash";
 const REACT_ID: &str = "mr-react";
 const BARE_ID: &str = "mr-bare";
 const CONSOLE: &str = "provider-console";
+
+#[path = "modules_page.rs"]
+mod page;
 
 // Fixture locale only; lifecycle commands below use production host authorization.
 #[tauri::command]
@@ -112,11 +115,15 @@ impl ModuleAdmission for GrowingAdmission {
 }
 
 pub(super) async fn build_world() -> (ModWorld, ModuleHostBridge) {
-    build_world_with(&[]).await
+    build_world_with_retired(&[], true).await
 }
 
 /// `extra` are additional one-file fixture modules (id, source) published and pinned like the others.
 pub(super) async fn build_world_with(extra: &[(&str, &str)]) -> (ModWorld, ModuleHostBridge) {
+    build_world_with_retired(extra, false).await
+}
+
+async fn build_world_with_retired(extra: &[(&str, &str)], retired_console: bool) -> (ModWorld, ModuleHostBridge) {
     let root =
         std::env::temp_dir().join(format!("dgos-webview-smoke-modules-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
@@ -154,11 +161,13 @@ pub(super) async fn build_world_with(extra: &[(&str, &str)]) -> (ModWorld, Modul
             .unwrap()
             .push((id.clone(), "1.0.0".into(), digest));
     }
-    // The shipped first-party module is provisioned as the host does at startup.
-    publisher
-        .provision_builtin(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../bundled-modules"))
-        .await
-        .unwrap();
+    let bundle = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../bundled-modules");
+    if retired_console {
+        publisher.commit(publisher.stage(&bundle.join("provider-console/1.0.0")).unwrap()).await.unwrap();
+        use dgos_db::sea_orm::ConnectionTrait;
+        db.execute_unprepared("UPDATE modules SET is_official=1,is_enabled=0 WHERE id='provider-console'").await.unwrap();
+    }
+    publisher.provision_builtin(&bundle).await.unwrap();
 
     let transport = Arc::new(ChannelTransport::default());
     let (loader, lost) = PageModuleLoader::new(
@@ -186,7 +195,8 @@ pub(super) async fn build_world_with(extra: &[(&str, &str)]) -> (ModWorld, Modul
         supervisor,
         LocalModuleSources::new(sources.clone()),
     )
-    .with_maintenance(maintenance.clone());
+    .with_maintenance(maintenance.clone())
+    .with_builtin_sources(BuiltinModuleSources::new(&bundle).unwrap()).unwrap();
     manager.spawn_lost_runtime_reporter(lost).unwrap();
     manager.recover().await.unwrap();
     let crashes = ModuleCrashService::new(ModuleCrashRepository::new(db.clone()), manager.clone());
@@ -407,6 +417,8 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
         }),
         format!("{console:?}"),
     );
+    checks.check("the retained bundled release remains installed without executing old code",
+        console.is_some_and(|m| m["version"] == "1.0.0"), format!("{console:?}"));
     let p = probe(&app).await;
     let events = probe_events(&p);
     checks.check(
@@ -429,6 +441,13 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
             && react["hooks"] == "function",
         react.to_string(),
     );
+    let upgraded = run_op(&app, "update_module", CONSOLE).await;
+    let after_upgrade = list(&app).await;
+    checks.check("explicit update migrates the disabled retained release to the current bundle without granting new permissions",
+        upgraded["outcome"] == "updated" && module(&after_upgrade, CONSOLE).is_some_and(|m|
+            m["version"] == "1.1.0" && m["official"] == true && m["enabled"] == false
+            && m["permissions"].as_array().is_some_and(|permissions| permissions.iter().all(|permission| permission["granted"] == false))),
+        format!("{upgraded} {:?}", module(&after_upgrade, CONSOLE)));
 
     // -- Navigation entries and the module panel ---------------------------------
     let catalog = ipc(&app, MAIN, "read_workspace_app_catalog", json!({})).await;
@@ -820,7 +839,7 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
     js(&app, "[...document.querySelectorAll('button[aria-label=\"Close Provider Console\"]')].at(-1)?.click(); return true;").await;
     let prompted = until_js(&app, "return !!document.querySelector('[role=dialog]');", 5).await;
     js(&app, "const d=[...document.querySelectorAll('[role=dialog]')].at(-1); [...d.querySelectorAll('button')].find(b=>b.textContent.trim()==='Discard and close')?.click(); return true;").await;
-    let discarded = until_js(&app, "return !window.__dirtyView.isConnected && window.__firstView.isConnected && document.querySelectorAll('[data-module-view]').length === 1;", 5).await;
+    let discarded = until_js(&app, "return !window.__dirtyView.isConnected && window.__firstView.isConnected && document.querySelectorAll('[data-module-view]').length === 1 && location.pathname === '/apps/provider-console/documents/one';", 5).await;
     let _ = click_link(&app, "/apps/provider-console/documents/two").await;
     let fresh = until_js(&app, "const v=[...document.querySelectorAll('[data-module-view]')].find(v=>v!==window.__firstView); return !!v && v!==window.__dirtyView && v.querySelector('textarea').value==='';", 5).await;
     checks.check("discard releases only its module document and reopening starts clean", prompted && discarded && fresh && bridge.loader().tracked_instances()==tracked, format!("discarded={discarded} fresh={fresh}"));
@@ -930,6 +949,10 @@ fn chrono_now() -> i64 {
 }
 
 pub fn run_modules() {
+    if std::env::var("DGOS_MODULE_SMOKE_MODE").is_ok_and(|mode| mode == "page") {
+        page::run();
+        return;
+    }
     std::thread::spawn(|| {
         std::thread::sleep(WATCHDOG);
         println!("SMOKE RESULT: watchdog expired");

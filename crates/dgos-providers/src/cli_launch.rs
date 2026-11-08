@@ -40,7 +40,7 @@ pub struct CliProviderLaunchMetadata {
     pub model: Model,
     pub base_url: String,
     pub protocol_candidate: CliProviderProtocol,
-    /// Always false here: a host must perform its separate engine-specific compatibility probe.
+    /// False means no engine-specific real-service proof, not an admission failure.
     pub protocol_verified: bool,
     pub auth_style: AuthStyle,
     pub allow_insecure_http: bool,
@@ -58,10 +58,11 @@ pub struct CliProviderLaunchMetadata {
 /// the host is responsible for any copies it makes and for the child process environment.
 ///
 /// Resolution checks ownership, enabled state, model availability and the exact revision while
-/// holding the manager's credential pointer lock. A returned snapshot is not a revocable lease:
-/// the host must recheck the bound revision immediately before launch and cancel a running child
-/// on revocation under its execution policy. Native CLI mode does not need this API or a secret.
-/// A protocol candidate still requires the host's engine-specific probe; no proxy is provided.
+/// holding the manager's credential pointer lock. This snapshot alone is not a process lease.
+/// A managed CLI host must register_cli_opening, resolve_cli_provider_for_lease, and use
+/// with_cli_spawn for its final synchronous spawn boundary, retaining the lease until exit.
+/// A protocol candidate is not compatibility evidence; the host must support the adapter and
+/// confirm the effective route. No per-account paid compatibility probe is required.
 ///
 /// ```compile_fail
 /// fn cannot_serialize(launch: &dgos_providers::CliProviderLaunch) {
@@ -88,6 +89,18 @@ impl CliProviderLaunch {
     pub fn credential(&self) -> &SecretValue {
         &self.credential
     }
+}
+
+/// Compare only settings consumed by the native launch adapter. Retry policy and
+/// unrelated metadata do not change a running process's route or authorization.
+pub(super) fn execution_settings_changed(before: &dgos_types::Provider, after: &dgos_types::ProviderConfig) -> bool {
+    let Ok(before) = validate_provider_config(&before.provider_type, &before.base_url, before.config.as_ref()) else { return true; };
+    let Ok(after) = validate_provider_config(&after.provider_type, &after.base_url, after.config.as_ref()) else { return true; };
+    before.provider_type != after.provider_type || before.base_url != after.base_url
+        || before.auth_override.unwrap_or(before.profile.auth) != after.auth_override.unwrap_or(after.profile.auth)
+        || before.allow_insecure_http != after.allow_insecure_http
+        || before.profile.version_header != after.profile.version_header
+        || before.workspace_id.as_ref().filter(|_| before.profile.official) != after.workspace_id.as_ref().filter(|_| after.profile.official)
 }
 
 impl ProviderManager {

@@ -6,6 +6,7 @@ import AccountGate from "./accounts/AccountGate";
 import "./index.css";
 import { ErrorBoundary, ModalHost, ToastViewport, initAppearance } from "@dgos/ui";
 import { initLocale } from "./i18n";
+import { LayoutScaleFeedback } from './ui/appearance/LayoutScaleFeedback';
 
 // Sets data-theme/data-density and lifts the first-frame gate; never rejects (D065, FR-005 B05-25).
 void (async () => {
@@ -22,6 +23,7 @@ void (async () => {
           </AccountGate>
         </BrowserRouter>
         <ToastViewport />
+        <LayoutScaleFeedback />
         <ModalHost />
       </ErrorBoundary>
     </React.StrictMode>,

@@ -1,0 +1,33 @@
+.module-management { display: grid; gap: var(--spacing-4); min-width: 0; color: var(--text-primary); container: module-management / inline-size; }
+.module-page-heading { display: grid; gap: var(--spacing-2); }
+.module-page-heading h1 { margin: 0; font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); }
+.module-page-heading p { margin: 0; max-width: 70ch; color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.6; overflow-wrap: anywhere; }
+.module-filters { display: flex; flex-wrap: wrap; gap: var(--spacing-1); width: fit-content; max-width: 100%; padding: var(--spacing-1); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-inset); }
+.module-filters button[aria-pressed='true'] { background: var(--surface-panel); color: var(--accent-default); box-shadow: var(--shadow-sm); }
+.module-list { display: grid; gap: var(--spacing-5); min-width: 0; }
+.module-card { display: grid; gap: var(--spacing-3); min-width: 0; padding: var(--spacing-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-panel); }
+.module-card-heading { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-3); min-width: 0; }
+.module-mark { display: grid; place-items: center; flex: none; width: var(--spacing-10); height: var(--spacing-10); border-radius: var(--radius-md); color: var(--accent-default); background: var(--surface-selected); }
+.module-identity { display: grid; flex: 1 1 12em; gap: var(--spacing-1); min-width: 0; }
+.module-name-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-2); min-width: 0; }
+.module-name-row h2 { margin: 0; font-size: var(--font-size-ui); font-weight: var(--font-weight-semibold); overflow-wrap: anywhere; }
+.module-official { padding: 0 var(--spacing-2); border-radius: var(--radius-sm); background: var(--status-info-surface); color: var(--status-info-text); font-size: var(--font-size-xs); }
+.module-id { font-size: var(--font-size-xs); color: var(--text-secondary); overflow-wrap: anywhere; user-select: text; }
+.module-version { color: var(--text-secondary); font-size: var(--font-size-sm); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.module-status-row { display: flex; flex-wrap: wrap; gap: var(--spacing-2) var(--spacing-4); align-items: center; color: var(--text-secondary); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
+.module-state { display: inline-flex; align-items: center; gap: var(--spacing-1); }
+.module-state i { width: var(--spacing-1); height: var(--spacing-1); border-radius: 50%; background: currentColor; flex: none; }
+.module-state.is-enabled, .module-runtime.is-ready { color: var(--status-success-text); }
+.module-runtime.is-failed, .module-crash-count { color: var(--status-error-text); }
+.module-primary-actions, .module-log-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-2); }
+.module-permissions { min-width: 0; padding-block: var(--spacing-3); border-block: 1px solid var(--border-subtle); }
+.module-permissions h3 { display: flex; gap: var(--spacing-2); margin: 0 0 var(--spacing-2); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
+.module-permissions h3 span { color: var(--text-secondary); font-weight: var(--font-weight-normal); }
+.module-permission-list { display: grid; gap: var(--spacing-2); list-style: none; padding: 0; margin: 0; }
+.module-permission-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--spacing-2) var(--spacing-3); align-items: center; min-width: 0; font-size: var(--font-size-sm); }
+.module-permission-row code { min-width: 0; font-family: var(--font-family-code); font-size: var(--font-size-code); overflow-wrap: anywhere; }
+.module-permission-granted { color: var(--text-secondary); }
+.module-permission-pending { color: var(--status-warning-text); }
+.module-management button { max-width: 100%; height: auto; min-height: var(--control-height-compact); white-space: normal; overflow-wrap: anywhere; }
+.module-log-actions { gap: var(--spacing-1); }
+@container module-management (max-width: 400px) { .module-card { padding: var(--spacing-3); } .module-permission-row { grid-template-columns: minmax(0, 1fr) auto; } .module-permission-row code { grid-column: 1 / -1; } }

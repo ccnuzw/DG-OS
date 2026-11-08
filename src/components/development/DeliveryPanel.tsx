@@ -9,11 +9,12 @@ import { readDevelopmentWorkspaces, saveDevelopmentWorkspace, readDevelopmentGit
 import { deliveryRequests, dispatchDeliveryRequest, forgetDeliveryRequests } from '../../stores/developmentDelivery';
 import { confirmAction, errorText } from './shared';
 import { developmentDraftKey, useDevelopmentDrafts, useScopedDevelopmentDraft } from '../../stores/developmentDrafts';
+import { GitHistoryPull } from './GitHistoryPull';
 
 interface Props {
   projectId: string; taskId: string; sessions: { id: string; engine: 'codex' | 'claude' }[];
   live: Record<string, string>; capabilityRevision: number; workspacePath: string;
-  onHandoff?: (sessionId: string, summary: string, revision: number) => void;
+  onHandoff?: (sessionId: string) => void;
   onWorkspaceChange?: (path: string) => void;
 }
 export function DeliveryPanel(props: Props) {
@@ -44,7 +45,6 @@ function ScopedDeliveryPanel({ projectId, taskId, sessions, live, onHandoff, onW
   const summaryDraft = useScopedDevelopmentDraft('handoff', [projectId, taskId, handoffId ?? ''], handoff?.summary ?? '');
   const summary = summaryDraft.value;
   const [targetRevision, setTargetRevision] = useState<string>(''); const [trustedTarget, setTrustedTarget] = useState(false);
-  const [nativeModel, setNativeModel] = useState('');
   const mounted = useRef(true); const ticket = useRef(0);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; ++ticket.current; }; }, []);
   useEffect(() => { setTrustedTarget(false); }, [workspaces?.selected_workspace_id]);
@@ -131,16 +131,17 @@ function ScopedDeliveryPanel({ projectId, taskId, sessions, live, onHandoff, onW
     setBusy(false);
   }
   async function accept() {
-    if (!handoff || !selected || !trustedTarget || targetRevision === '') return;
+    const provider = capabilities.value;
+    if (!handoff || !selected || !provider || provider.configuration.engine !== target || !trustedTarget || targetRevision !== String(provider.revision)) return;
     const valid = guard(); setBusy(true); setError(null);
-    const result = await acceptDevelopmentHandoff({ handoff_id: handoff.id, summary, confirmed: true, capability_revision: Number(targetRevision), options: { workspace: selected.path, resume_id: null, executable: null, model: targetRevision === '0' ? nativeModel || null : null, trust_workspace: true } });
+    const result = await acceptDevelopmentHandoff({ handoff_id: handoff.id, summary, confirmed: true, project_revision: provider.revision, provider: provider.configuration.provider, options: { workspace: selected.path, resume_id: null, executable: null, model: null, trust_workspace: true } });
     if (!valid()) return;
     if (!result.ok) { setError(result.code); setBusy(false); await useDevelopment.getState().load(); return; }
     summaryDraft.clear(summary);
     deliveryDraft.clear();
     setHistory(rows => rows.map(item => item.id === result.value.handoff.id ? result.value.handoff : item));
     // The host has already opened the fresh runtime. The parent attaches/selects it and preserves the reviewed draft.
-    onHandoff?.(result.value.session.id, result.value.handoff.summary, Number(targetRevision));
+    onHandoff?.(result.value.session.id);
     setBusy(false);
   }
   return <div className="dev-review-stack" data-testid="dev-delivery">
@@ -167,6 +168,7 @@ function ScopedDeliveryPanel({ projectId, taskId, sessions, live, onHandoff, onW
         <div className="dev-danger-actions"><Button size="xs" variant="danger" disabled={busy || unresolved || !selectedPaths.length || !git.baseline_version} onClick={async () => { const valid = guard(); if (await confirmAction(t('delivery.discard'), t('delivery.discardWarning') + '\n' + selectedPaths.join('\n'), t('delivery.discardSelected')) && valid()) void act({ kind: 'discard', baseline_version: git.baseline_version, files: selectedPaths.map(p => ({ path: p, expected_hash: git.file_versions[p]?.split(':', 1)[0] ?? '' })), confirmed: true }); }}>{t('delivery.discard')}</Button></div>
         <Input label={t('delivery.commitMessage')} value={message} onChange={e => commitDraft.setValue(e.target.value)} /><label className="dev-checkbox"><input type="checkbox" checked={fullIndex} onChange={e => setFullIndex(e.target.checked)} />{t('delivery.confirmAllIndex')}</label><Button size="xs" disabled={busy || unresolved || !message.trim() || !fullIndex || (!git.staged_diff && !git.merge_heads.length) || (git.initial_staged_paths.length > 0 && !includeExisting)} onClick={() => void act({ kind: 'commit', message, confirm_full_index: fullIndex, confirm_preexisting_staged: includeExisting })}>{t('delivery.commit')}</Button>
         {commitDraft.dirty ? <Button size="xs" variant="secondary" disabled={busy} onClick={() => void commitDraft.discard()}>{t('dev.discardDraft')}</Button> : null}
+        <GitHistoryPull key={`${taskId}:${git.path}`} review={git} busy={busy} blocked={unresolved} act={act} />
         <Input label={t('delivery.remote')} value={remote} onChange={e => setRemote(e.target.value)} /><Button size="xs" disabled={busy || unresolved || !remote} onClick={async () => { const valid = guard(); if (await confirmAction(t('delivery.push'), t('delivery.pushTrust') + '\n' + git.path + '\n' + remote + ' / ' + git.branch, t('delivery.push')) && valid()) void act({ kind: 'push', remote, trust_directory: true, trust_network: true }); }}>{t('delivery.push')}</Button>
         <Input label={t('delivery.branch')} value={branchTarget} onChange={e => setBranchTarget(e.target.value)} /><div className="flex gap-2"><Button size="xs" variant="secondary" disabled={busy || unresolved || !branchTarget} onClick={() => void act({ kind: 'switch', branch: branchTarget })}>{t('delivery.switch')}</Button><Button size="xs" variant="secondary" disabled={busy || unresolved || !branchTarget} onClick={() => void act({ kind: 'merge', branch: branchTarget })}>{t('delivery.merge')}</Button></div>
       </>}
@@ -178,9 +180,9 @@ function ScopedDeliveryPanel({ projectId, taskId, sessions, live, onHandoff, onW
       {source ? <p className="text-xs">{t('delivery.targetEngine')}: {target}</p> : null}
       {sourceId && live[sourceId] ? <><p role="status" className="dev-evidence-warning">{t('delivery.closeSource')}</p><Button size="xs" disabled={busy} onClick={async () => { const valid = guard(); setBusy(true); const ok = await useAgentRunner.getState().action('close_agent_session', { sessionId: sourceId }); if (valid()) { if (!ok) setError(useAgentRunner.getState().error ?? 'unknown'); setBusy(false); } }}>{t('delivery.closeSourceAction')}</Button></> : null}
       <Input label={t('delivery.remaining')} value={remaining} onChange={e => deliveryDraft.setValue({ ...deliveryDraft.value, remaining: e.target.value })} /><Button size="xs" disabled={busy || !sourceId || Boolean(live[sourceId])} onClick={() => void prepare()}>{t('delivery.prepareHandoff')}</Button>
-      {handoff ? <><label className="dev-field">{t('delivery.summary')}<textarea className="dev-editor" value={summary} onChange={e => summaryDraft.setValue(e.target.value)} /></label><label className="dev-field">{t('delivery.capabilityRevision')}<select value={targetRevision} onChange={e=>setTargetRevision(e.target.value)}><option value="">{t('delivery.chooseCapability')}</option><option value="0">{t('capabilities.native')}</option>{compatible ? <option value={compatible.revision}>{t('capabilities.projectRevision', { revision: compatible.revision })}</option> : null}</select></label>{targetRevision === '0' ? <Input label={t('agent.model')} value={nativeModel} onChange={e => setNativeModel(e.target.value)} /> : null}<p className="m-0 break-all text-xs">{selected?.path ?? t('delivery.unknown')}</p><label className="dev-checkbox"><input type="checkbox" checked={trustedTarget} onChange={e => setTrustedTarget(e.target.checked)} />{t('delivery.trustWorkspace')}</label><Button size="xs" disabled={busy || !summary.trim() || !selected || !trustedTarget || targetRevision === '' || Boolean(handoff.target_session_id)} onClick={() => void accept()}>{t('delivery.acceptTrust')}</Button></> : null}
+      {handoff ? <><label className="dev-field">{t('delivery.summary')}<textarea className="dev-editor type-reading" value={summary} onChange={e => summaryDraft.setValue(e.target.value)} /></label><label className="dev-field">{t('delivery.capabilityRevision')}<select value={targetRevision} onChange={e => setTargetRevision(e.target.value)}><option value="">{t('delivery.chooseCapability')}</option>{compatible ? <option value={compatible.revision}>{t('capabilities.projectRevision', { revision: compatible.revision })}</option> : null}</select></label><p className="m-0 break-all text-xs">{selected?.path ?? t('delivery.unknown')}</p><label className="dev-checkbox"><input type="checkbox" checked={trustedTarget} onChange={e => setTrustedTarget(e.target.checked)} />{t('delivery.trustWorkspace')}</label><Button size="xs" disabled={busy || !selected || !trustedTarget || !compatible || targetRevision !== String(compatible.revision) || Boolean(handoff.target_session_id)} onClick={() => void accept()}>{t('delivery.acceptTrust')}</Button><Button size="xs" variant="secondary" disabled={busy || !summary.trim() || !useAgentRunner.getState().selected} onClick={() => { const runner = useAgentRunner.getState(); if (runner.session && runner.session.id === runner.selected) void runner.action('send_agent_message', { input: { session_id: runner.session.id, generation: runner.session.generation, request_id: crypto.randomUUID(), text: summary } }); }}>{t('delivery.sendSummary')}</Button></> : null}
       {summaryDraft.dirty ? <Button size="xs" variant="secondary" disabled={busy} onClick={() => void summaryDraft.discard()}>{t('dev.discardDraft')}</Button> : null}
-      {history.map(item => <details key={item.id} className="dev-run"><summary className="text-xs">{item.target_engine} · {item.id.slice(0, 8)} · {item.target_session_id ? t('delivery.accepted') : t('delivery.awaitingReview')}</summary><pre className="dev-diff" tabIndex={0}>{item.summary}</pre><p className="break-all text-xs">{item.fingerprint}</p>{!item.target_session_id ? <Button size="xs" variant="secondary" onClick={() => { setHandoff(item); setTargetRevision(''); setTrustedTarget(false); }}>{t('delivery.useDraft')}</Button> : null}</details>)}
+      {history.map(item => <details key={item.id} className="dev-run"><summary className="text-xs">{item.target_engine} · {item.id.slice(0, 8)} · {item.target_session_id ? t('delivery.accepted') : t('delivery.awaitingReview')}</summary><pre className="dev-diff type-reading" tabIndex={0}>{item.summary}</pre><p className="break-all text-xs">{item.fingerprint}</p>{!item.target_session_id ? <Button size="xs" variant="secondary" onClick={() => { setHandoff(item); setTargetRevision(''); setTrustedTarget(false); }}>{t('delivery.useDraft')}</Button> : null}</details>)}
     </section>
   </div>;
 }

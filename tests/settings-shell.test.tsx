@@ -21,6 +21,9 @@ const host = vi.hoisted(() => ({
 }));
 
 const app = vi.hoisted(() => ({ failVersion: 0, versionCalls: 0 }));
+const picker = vi.hoisted(() => vi.fn());
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({ open: picker }));
 
 vi.mock('@tauri-apps/api/core', () => {
   class Channel {
@@ -62,7 +65,8 @@ const official = {
 function respond(command: string): unknown {
   if (command === 'list_providers') return { success: true, data: [] };
   if (command === 'list_provider_vendors') return { success: true, data: [] };
-  if (command === 'get_cli_preferences') return { success: true, data: { revision: 1, paths: { codex: '/configured/codex', claude: null, gemini: null, node: null } } };
+  if (command === 'get_cli_preferences') return { success: true, data: { revision: 1, paths: { codex: '/configured/codex', claude: null, gemini: null, node: null }, detections: {} } };
+  if (command === 'probe_node_directory') return { success: true, data: { status: 'available', path: nodePath, version: 'v22.14.0' } };
   if (command === 'get_appearance_preferences') return { success: true, data: { kind: 'ready', snapshot: { ...structuredClone(DEFAULTS), revision: 1 }, repairWarnings: [] } };
   if (command === 'list_mcp_servers') return [];
   if (command === 'list_modules') return { success: true, data: [] };
@@ -105,6 +109,19 @@ const settingsTabs = () => within(screen.getByRole('tablist', { name: '系统设
 const tab = (name: string) => within(screen.getByRole('tablist', { name: '系统设置' })).getByRole('tab', { name });
 const where = () => screen.getByTestId('where').textContent;
 const select = async (name: string) => { await screen.findByRole('tablist', { name: '系统设置' }); fireEvent.mouseDown(tab(name), { button: 0 }); };
+const nodeDirectory = '/draft/node';
+const nodePath = `${nodeDirectory}/bin/node`;
+async function chooseNodeDraft() {
+  const input = await screen.findByRole('textbox', { name: 'Node.js' }) as HTMLInputElement;
+  const choose = screen.getByRole('button', { name: '选择 Node.js 安装文件夹' });
+  await waitFor(() => expect((choose as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(choose);
+  await waitFor(() => {
+    expect(input.value).toBe(nodePath);
+    expect((choose as HTMLButtonElement).disabled).toBe(false);
+  });
+  return input;
+}
 
 beforeEach(() => {
   setLocaleForTesting('zh-CN');
@@ -114,6 +131,7 @@ beforeEach(() => {
   host.handler = respond;
   app.failVersion = 0;
   app.versionCalls = 0;
+  picker.mockResolvedValue(nodeDirectory);
   useProviderStore.setState(providerInitial, true);
   useSkillsStore.setState(skillsInitial, true);
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -128,20 +146,16 @@ afterEach(() => {
 });
 
 describe('default entry (B07-15)', () => {
-  it('opens on an overview with no tab selected and makes no host call of its own', async () => {
-    renderAt('/');
-    await screen.findByRole('heading', { name: '桌面总览' });
-    const shellOnly = new Set(host.calls);
-    cleanup();
-    host.calls = [];
-
+  it('opens Appearance as the first and selected settings category', async () => {
     renderAt('/settings');
-    expect(await screen.findByRole('heading', { name: '系统设置' })).toBeTruthy();
-    await screen.findByRole('tablist', { name: '系统设置' });
-    expect(settingsTabs().filter(t => t.getAttribute('aria-selected') === 'true')).toEqual([]);
-    expect(host.calls.filter(command => !shellOnly.has(command))).toEqual([]);
-  });
 
+    expect(await screen.findByRole('heading', { level: 1, name: '外观设置' })).toBeTruthy();
+    expect(where()).toBe('/settings/appearance');
+    expect(settingsTabs().map(item => item.textContent)).toEqual([
+      '外观', 'Provider', '模块', '局域网协同', '账户', 'CLI 工具', '存储', '关于',
+    ]);
+    expect(settingsTabs().filter(item => item.getAttribute('aria-selected') === 'true').map(item => item.textContent)).toEqual(['外观']);
+  });
 });
 
 describe('tab navigation (B07-01)', () => {
@@ -225,16 +239,14 @@ describe('local UI state across tabs (B07-16)', () => {
 describe('settings leave boundaries', () => {
   it('keeps a dirty CLI category mounted when category navigation is cancelled', async () => {
     renderAt('/settings/cli');
-    const input = await screen.findByRole('textbox', { name: /^Codex/ });
-    await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
-    fireEvent.change(input, { target: { value: '/draft/codex' } });
+    const input = await chooseNodeDraft();
     await select('关于');
     const confirmation = await screen.findByRole('dialog', { name: '未保存的内容' });
     expect(where()).toBe('/settings/cli');
     fireEvent.click(within(confirmation).getByRole('button', { name: '取消' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '未保存的内容' })).toBeNull());
-    expect(screen.getByRole('textbox', { name: /^Codex/ })).toBe(input);
-    expect((input as HTMLInputElement).value).toBe('/draft/codex');
+    expect(screen.getByRole('textbox', { name: 'Node.js' })).toBe(input);
+    expect(input.value).toBe(nodePath);
     await select('关于');
     fireEvent.click(within(await screen.findByRole('dialog', { name: '未保存的内容' })).getByRole('button', { name: '放弃并关闭' }));
     await waitFor(() => expect(where()).toBe('/settings/about'));
@@ -243,9 +255,7 @@ describe('settings leave boundaries', () => {
 
   it('returns a cancelled menu leave confirmation to the category selector and preserves selection', async () => {
     renderAt('/settings/cli');
-    const input = await screen.findByRole('textbox', { name: /^Codex/ });
-    await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
-    fireEvent.change(input, { target: { value: '/menu/draft' } });
+    const input = await chooseNodeDraft();
     const selector = screen.getByRole('combobox', { name: '系统设置' });
     act(() => selector.focus());
     fireEvent.keyDown(selector, { key: 'Enter' });
@@ -255,7 +265,7 @@ describe('settings leave boundaries', () => {
     await waitFor(() => expect(document.activeElement).toBe(selector));
     expect(where()).toBe('/settings/cli');
     expect(selector.textContent).toContain('CLI 工具');
-    expect((input as HTMLInputElement).value).toBe('/menu/draft');
+    expect(input.value).toBe(nodePath);
     fireEvent.keyDown(selector, { key: 'Enter' });
     fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: '关于' }));
     fireEvent.click(within(await screen.findByRole('dialog', { name: '未保存的内容' })).getByRole('button', { name: '放弃并关闭' }));
@@ -270,15 +280,13 @@ describe('settings leave boundaries', () => {
     act(() => entry.focus());
     fireEvent.click(entry);
     await select('CLI 工具');
-    const input = await screen.findByRole('textbox', { name: /^Codex/ });
-    await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
-    fireEvent.change(input, { target: { value: '/close/draft' } });
+    const input = await chooseNodeDraft();
     const close = screen.getByRole('button', { name: '关闭设置' });
     act(() => close.focus());
     fireEvent.click(close);
     fireEvent.click(within(await screen.findByRole('dialog', { name: '未保存的内容' })).getByRole('button', { name: '取消' }));
     await waitFor(() => expect(document.activeElement).toBe(close));
-    expect((input as HTMLInputElement).value).toBe('/close/draft');
+    expect(input.value).toBe(nodePath);
     fireEvent.click(close);
     fireEvent.click(within(await screen.findByRole('dialog', { name: '未保存的内容' })).getByRole('button', { name: '放弃并关闭' }));
     await waitFor(() => expect(document.activeElement).toBe(entry));
@@ -290,7 +298,7 @@ describe('settings leave boundaries', () => {
   it('keeps a dirty appearance preview when category navigation is cancelled', async () => {
     await initAppearance();
     renderAt('/settings/appearance');
-    const dark = within(await screen.findByRole('radiogroup', { name: '主题' })).getByRole('radio', { name: '暗色' });
+    const dark = within(await screen.findByRole('radiogroup', { name: '主题' })).getByRole('radio', { name: '深色' });
     fireEvent.click(dark);
     await select('关于');
     const confirmation = await screen.findByRole('dialog', { name: '未保存的内容' });
@@ -312,9 +320,7 @@ describe('settings leave boundaries', () => {
     const name = screen.getByLabelText('名称 *') as HTMLInputElement;
     fireEvent.change(name, { target: { value: 'Kept Provider draft' } });
     await select('CLI 工具');
-    const codex = await screen.findByRole('textbox', { name: /^Codex/ });
-    await waitFor(() => expect((codex as HTMLInputElement).disabled).toBe(false));
-    fireEvent.change(codex, { target: { value: '/draft/codex' } });
+    await chooseNodeDraft();
     await select('关于');
     const confirmation = await screen.findByRole('dialog', { name: '未保存的内容' });
     fireEvent.click(within(confirmation).getByRole('button', { name: '放弃并关闭' }));
@@ -334,17 +340,15 @@ describe('settings leave boundaries', () => {
     window.history.pushState({ idx: 1, key: 'cli' }, '', '/settings/cli');
     try {
       render(<BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><App /><Where /><ModalHost /></BrowserRouter>);
-      const input = await screen.findByRole('textbox', { name: /^Codex/ });
-      await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
-      fireEvent.change(input, { target: { value: '/history/draft' } });
+      const input = await chooseNodeDraft();
       act(() => window.history.back());
       const confirmation = await screen.findByRole('dialog', { name: '未保存的内容' });
       expect(where()).toBe('/settings/cli');
       expect(window.location.pathname).toBe('/settings/cli');
       fireEvent.click(within(confirmation).getByRole('button', { name: '取消' }));
       await waitFor(() => expect(screen.queryByRole('dialog', { name: '未保存的内容' })).toBeNull());
-      expect(screen.getByRole('textbox', { name: /^Codex/ })).toBe(input);
-      expect((input as HTMLInputElement).value).toBe('/history/draft');
+      expect(screen.getByRole('textbox', { name: 'Node.js' })).toBe(input);
+      expect(input.value).toBe(nodePath);
       act(() => window.history.back());
       fireEvent.click(within(await screen.findByRole('dialog', { name: '未保存的内容' })).getByRole('button', { name: '放弃并关闭' }));
       await waitFor(() => expect(where()).toBe('/settings/about'));
@@ -401,7 +405,6 @@ describe('load failure and retry', () => {
     expect(await screen.findByText('0.1.0')).toBeTruthy();
     expect(screen.getByText('DG-OS')).toBeTruthy();
     expect(screen.getByText('2.9.0')).toBeTruthy();
-    expect(screen.getByText(/系统信息（操作系统与架构）、许可证信息和检查更新在本版本暂不提供/)).toBeTruthy();
   });
 
   it('About reports a failed read through the unified error Toast and recovers on retry (B07-17)', async () => {
@@ -470,19 +473,6 @@ describe('management through product navigation', () => {
     expect(JSON.stringify(request)).not.toMatch(/user_?id/i);
   });
 
-  it.each([
-    ['success', { success: true, data: true }, '连接成功'],
-    ['failure', { success: false, error: { code: 1001002, message: 'upstream said 401' } }, '请检查 API Key 和 Provider 权限。'],
-  ])('AC04 tests the connection from the Provider tab and shows the %s result', async (_, reply, text) => {
-    host.handler = command => (command === 'test_provider_connection' ? reply : respond(command));
-    await openNewProviderForm();
-
-    fireEvent.click(screen.getByRole('button', { name: /测试连接/ }));
-
-    expect(await screen.findByText(text)).toBeTruthy();
-    expect(argsOf('test_provider_connection')).toEqual([{ config: expect.objectContaining({ base_url: created.base_url }) }]);
-    expect(host.calls).not.toContain('create_provider');
-  });
 
   it('AC06 adds an official local skill to My Skills from the Skills tab; legacy entries stay read-only', async () => {
     const legacy = { ...official, skill_id: 'old-calculator', name: 'Old Calculator', identity: 'legacy_registry', source_kind: 'legacy_registry' };

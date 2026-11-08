@@ -3,9 +3,9 @@
  *
  * Geometry not represented by the spacing scale: workspace/session tabs and navigation width.
  *
- * N is the design-baseline pixel value: `calc(Nrem / 14)` is N px at 100% density and scales with the
- * five density steps (D064). The `max()` guards preserve chrome at 75%; the independent UI font can
- * make flex rows grow further. These are layout roles, not font sizes or responsive breakpoints.
+ * N is the standard design pixel value: `calc(Nrem / 14)` is N px at density100.
+ * Layout scale covers 60–150%. Auxiliary widths are bounded; readable content
+ * is constrained by line length rather than multiplying its maximum with layout geometry.
  */
 :root {
   /* Workspace/session tabs: 33px / 38px at 100%, preserving text at high density. */
@@ -13,14 +13,14 @@
   --session-tabbar-height: max(30px, calc(38rem / 14));
 
   /* Navigation rail follows FR-009 final-render baseline. */
-  --sidebar-width: calc(188rem / 14);
-  --sidebar-width-collapsed: calc(54rem / 14);
+  --sidebar-width: clamp(176px, calc(188rem / 14), 216px);
+  --sidebar-width-collapsed: clamp(48px, calc(54rem / 14), 64px);
 
-  /* Settings and readable work areas follow FR-009's final rendered measurements. */
-  --settings-nav-width: calc(150rem / 14);
-  --launcher-width: calc(760rem / 14);
-  /* Equal today, independently controlled: conversation reading/composer vs module document host. */
-  --conversation-width: calc(720rem / 14);
-  --document-width: calc(720rem / 14);
+  --settings-nav-width: clamp(148px, calc(168rem / 14), 184px);
+  --provider-list-width: clamp(200px, calc(220rem / 14), 260px);
+  --launcher-width: clamp(700px, calc(760rem / 14), 820px);
+  /* Standard 12px text retains a 720px measure; larger inherited text gains bounded room. */
+  --conversation-width: clamp(720px, 52ch, 880px);
+  --document-width: 880px;
 
 }

@@ -1,4 +1,5 @@
 import { Dialog } from 'radix-ui';
+import { PanelsTopLeft } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Button, DropdownMenu, Icon, Popover, type MenuItem } from '@dgos/ui';
 import { useLocale } from '../i18n';
@@ -33,6 +34,7 @@ export function WorkspaceTools({ actions, open, onClose }: { actions: Navigation
       <Dialog.Content aria-describedby={undefined} onOpenAutoFocus={() => { origin.current = document.activeElement as HTMLElement; setQuery(''); setSelectedId(null); }} onCloseAutoFocus={event => { event.preventDefault(); requestAnimationFrame(() => { const target = origin.current; if (target?.isConnected && !target.closest('[hidden], [inert]') && !document.querySelector('.workspace-settings-dialog, .workspace-launcher-panel')) target.focus(); }); }} className="workspace-command">
         <Dialog.Title className="sr-only">{t('shell.commandTitle')}</Dialog.Title>
         <div className="workspace-command-search"><Icon name="search" /><input role="combobox" aria-expanded aria-controls={`${id}-list`} aria-activedescendant={current ? `${id}-${currentIndex}` : undefined} aria-label={t('shell.commandSearch')} value={query} onChange={event => { setQuery(event.target.value); setSelectedId(null); }} onKeyDown={event => {
+          if (event.nativeEvent.isComposing) return;
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); move(event.key === 'ArrowDown' ? 1 : -1); }
           if (event.key === 'Home' || event.key === 'End') { event.preventDefault(); const enabled = filtered.filter(action => !action.disabled); setSelectedId((event.key === 'Home' ? enabled[0] : enabled[enabled.length - 1])?.id ?? null); }
           if (event.key === 'Enter' && current) { event.preventDefault(); execute(current); }
@@ -53,7 +55,7 @@ export function TabListPopover({ surfaces, activeId, onActivate, onClose, label 
   const [open, setOpen] = useState(false);
   const content = useRef<HTMLDivElement>(null);
   useEffect(() => { if (open) requestAnimationFrame(() => { const current = content.current?.querySelector<HTMLButtonElement>('[aria-current="true"]'); current?.focus(); current?.scrollIntoView({ block: 'nearest' }); }); }, [open]);
-  return <Popover open={open} onOpenChange={setOpen} align="end" label={label} trigger={<Button size="xxs" variant="ghost" iconOnly aria-label={label} title={label}><Icon name="menu" size="sm" /></Button>} content={<div ref={content} className="workspace-tab-list" onKeyDown={event => {
+  return <Popover open={open} onOpenChange={setOpen} align="end" label={label} trigger={<Button size="xxs" variant="ghost" iconOnly className="text-status-info-text enabled:hover:bg-status-info-surface data-[state=open]:bg-status-info-surface" aria-label={label} title={label}><PanelsTopLeft className="size-3.5" aria-hidden="true" /></Button>} content={<div ref={content} className="workspace-tab-list" onKeyDown={event => {
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
     const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[data-tab-choice]'));
     const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
@@ -80,19 +82,34 @@ export function Launcher({ open, query, catalog, loading, error, onRetry, onMana
   const toggle = (entry: WorkspaceAppEntry) => pinnedIds.includes(entry.moduleId) ? onUnpin(entry.moduleId) : onPin(entry);
   return <Dialog.Root modal={false} open={open} onOpenChange={value => { if (!value && !activeDrag) onClose(); }}>
     {open ? <div className="workspace-launcher-layer" onPointerDown={event => { if (event.target === event.currentTarget && !activeDrag) onClose(); }}>
-      <Dialog.Content aria-describedby="launcher-help" onOpenAutoFocus={() => { origin.current = document.activeElement as HTMLElement; }} onCloseAutoFocus={event => { event.preventDefault(); requestAnimationFrame(() => { if (origin.current?.isConnected && !origin.current.closest('[hidden], [inert]') && !document.querySelector('.workspace-settings-dialog, .workspace-command')) origin.current.focus(); }); }} onInteractOutside={event => { if (activeDrag) event.preventDefault(); }} onEscapeKeyDown={event => { if (event.defaultPrevented) return; event.stopPropagation(); }} className="workspace-launcher-panel">
-        <header className="workspace-launcher-head"><div><Dialog.Title>{t('nav.modules')}</Dialog.Title><p>{t('shell.workspace')}</p></div><div className="workspace-launcher-search"><Icon name="search" size="sm" /><input aria-label={t('shell.launcherSearch')} value={query} onChange={event => onQuery(event.target.value)} placeholder={t('shell.launcherSearch')} /></div></header>
-        {error ? <div role="alert" className="workspace-overlay-empty">{t('shell.catalogError')} <Button variant="secondary" onClick={onRetry}>{t('common.retry')}</Button></div> : <div className="workspace-launcher-grid" aria-busy={loading}>{loading ? <p role="status">{t('common.loading')}</p> : visible.map(entry => {
+      <Dialog.Content aria-describedby={undefined} onOpenAutoFocus={() => { origin.current = document.activeElement as HTMLElement; }} onCloseAutoFocus={event => { event.preventDefault(); requestAnimationFrame(() => { if (origin.current?.isConnected && !origin.current.closest('[hidden], [inert]') && !document.querySelector('.workspace-settings-dialog, .workspace-command')) origin.current.focus(); }); }} onInteractOutside={event => { if (activeDrag) event.preventDefault(); }} onEscapeKeyDown={event => { if (event.defaultPrevented) return; event.stopPropagation(); }} className="workspace-launcher-panel">
+        <header className="workspace-launcher-head"><div><Dialog.Title>{t('nav.modules')}</Dialog.Title><p>{t('shell.workspace')}</p></div><div className="workspace-launcher-search"><Icon name="search" size="sm" /><input aria-label={t('shell.launcherSearch')} value={query} onChange={event => onQuery(event.target.value)} onKeyDown={event => {
+          if (event.nativeEvent.isComposing) return;
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            const choices = event.currentTarget.closest('.workspace-launcher-panel')?.querySelectorAll<HTMLButtonElement>('.workspace-launcher-item');
+            const target = event.key === 'ArrowDown' ? choices?.[0] : choices?.[choices.length - 1];
+            if (target) { event.preventDefault(); target.focus(); target.scrollIntoView({ block: 'nearest' }); }
+          } else if (event.key === 'Enter' && visible.length) { event.preventDefault(); onOpen(visible[0]); }
+        }} placeholder={t('shell.launcherSearch')} /></div></header>
+        {error ? <div role="alert" className="workspace-overlay-empty">{t('shell.catalogError')} <Button variant="secondary" onClick={onRetry}>{t('common.retry')}</Button></div> : <div className="workspace-launcher-grid" aria-busy={loading} onKeyDown={event => {
+          if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key) || !(event.target instanceof HTMLElement) || !event.target.matches('.workspace-launcher-item')) return;
+          const choices = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('.workspace-launcher-item'));
+          const columns = getComputedStyle(event.currentTarget).gridTemplateColumns.split(' ').length;
+          const offset = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : event.key === 'ArrowUp' ? -columns : columns;
+          const index = choices.indexOf(event.target as HTMLButtonElement);
+          const target = choices[(index + offset + choices.length) % choices.length];
+          if (target) { event.preventDefault(); target.focus(); target.scrollIntoView({ block: 'nearest' }); }
+        }}>{loading ? <p role="status">{t('common.loading')}</p> : visible.map(entry => {
           const usable = appUsable(entry);
           const pinned = pinnedIds.includes(entry.moduleId);
           const index = pinnedIds.indexOf(entry.moduleId);
-          const items: MenuItem[] = [{ kind: 'item', id: 'pin', label: t(pinned ? 'shell.unpinApp' : 'shell.pin'), disabled: !usable && !pinned, onSelect: () => toggle(entry), shortcut: 'P' }];
+          const items: MenuItem[] = [{ kind: 'item', id: 'pin', label: t(pinned ? 'shell.unpinApp' : 'shell.pin'), disabled: !usable && !pinned, onSelect: () => toggle(entry) }];
           if (pinned) items.push({ kind: 'item', id: 'up', label: t('shell.moveEarlier'), disabled: index === 0, onSelect: () => onMove(entry.moduleId, -1) }, { kind: 'item', id: 'down', label: t('shell.moveLater'), disabled: index === pinnedIds.length - 1, onSelect: () => onMove(entry.moduleId, 1) });
-          return <div key={entry.moduleId} className="workspace-launcher-cell"><button type="button" draggable={usable} aria-disabled={!usable} title={`${entry.displayName}${usable ? '' : ` — ${t('shell.appUnavailable')}`}`} onClick={() => { if (held.current) { held.current = false; return; } onOpen(entry); }} onDragStart={event => { clearHold(); event.dataTransfer.setData('application/x-dgos-module', entry.moduleId); event.dataTransfer.effectAllowed = 'copy'; onDragStart(entry.moduleId); }} onDragEnd={onDragEnd} onPointerDown={event => { held.current = false; if (event.pointerType === 'touch' && usable) hold.current = setTimeout(() => { held.current = true; toggle(entry); }, 550); }} onPointerUp={clearHold} onPointerCancel={clearHold} onPointerMove={clearHold} onKeyDown={event => { if (event.key.toLowerCase() === 'p' && (usable || pinned)) { event.preventDefault(); toggle(entry); } }} className="workspace-launcher-item" data-blocked={!usable}>
+          return <div key={entry.moduleId} className="workspace-launcher-cell"><button type="button" draggable={usable} aria-disabled={!usable} title={`${entry.displayName}${usable ? '' : ` — ${t('shell.appUnavailable')}`}`} onClick={() => { if (held.current) { held.current = false; return; } onOpen(entry); }} onDragStart={event => { clearHold(); event.dataTransfer.setData('application/x-dgos-module', entry.moduleId); event.dataTransfer.effectAllowed = 'copy'; onDragStart(entry.moduleId); }} onDragEnd={onDragEnd} onPointerDown={event => { held.current = false; if (event.pointerType === 'touch' && usable) hold.current = setTimeout(() => { held.current = true; toggle(entry); }, 550); }} onPointerUp={clearHold} onPointerCancel={clearHold} onPointerMove={clearHold} className="workspace-launcher-item" data-blocked={!usable}>
             <span className="workspace-launcher-icon"><Icon name={entry.layout === 'full-bleed' ? 'palette' : 'code'} size="lg" />{usable ? <i aria-hidden="true" /> : null}</span><span className="workspace-launcher-name">{entry.displayName}</span>{pinned ? <span className="sr-only">{t('shell.pinned')}</span> : null}
           </button><DropdownMenu label={entry.displayName} items={items} trigger={<Button size="xxs" variant="ghost" iconOnly aria-label={t('shell.appActions', { title: entry.displayName })}><Icon name="more" size="sm" /></Button>} /></div>;
         })}{!loading && !visible.length ? <p className="workspace-overlay-empty">{t(catalog.length ? 'shell.noApps' : 'shell.catalogEmpty')}</p> : null}</div>}
-        <footer><p id="launcher-help">{t('shell.launcherHint')} · {t('shell.pinShortcut')}</p><p role="status" aria-live="polite">{notice}</p><Button variant="ghost" onClick={() => { onClose(); onManage(); }}>{t('shell.openManagement')}</Button></footer>
+        <footer><p role="status" aria-live="polite">{notice}</p><Button variant="ghost" onClick={() => { onClose(); onManage(); }}>{t('shell.openManagement')}</Button></footer>
       </Dialog.Content>
     </div> : null}
   </Dialog.Root>;

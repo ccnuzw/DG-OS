@@ -16,7 +16,7 @@
 //! example).
 
 use crate::{
-    admission::BUILTIN_PINS, digest, valid_module_id, valid_version_path, ModulePackageError,
+    admission::{BUILTIN_PINS, RETAINED_PINS}, digest, valid_module_id, valid_version_path, ModulePackageError,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -135,10 +135,13 @@ pub fn verify_release_bundle(pins: &[ReleasePin<'_>], root: &Path) -> Vec<Releas
     violations.into_iter().collect()
 }
 
-/// The gate for the list compiled into this build. This is what a release
-/// pipeline runs against the unpacked artifact.
+/// Verify both current executable packages and retained recovery artifacts.
 pub fn verify_builtin_release_bundle(root: &Path) -> Vec<ReleaseViolation> {
-    verify_release_bundle(BUILTIN_PINS, root)
+    verify_release_bundle(&builtin_bundle_pins(), root)
+}
+
+pub(crate) fn builtin_bundle_pins() -> Vec<ReleasePin<'static>> {
+    BUILTIN_PINS.iter().chain(RETAINED_PINS).copied().collect()
 }
 
 /// Shape check shared with the compiled-in list: a pin must be a complete,
@@ -629,9 +632,7 @@ mod tests {
         assert!(first.windows(2).all(|pair| pair[0] <= pair[1]));
     }
 
-    /// The executable release gate for the real list. While `BUILTIN_PINS`
-    /// is empty it requires the shipped directory to hold no package; the
-    /// first real pin turns it into the artifact comparison (D047, D049).
+    /// Check all shipped bytes, including the non-executable recovery package.
     #[test]
     fn the_shipped_bundle_equals_the_builtin_pins() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bundled-modules");
@@ -675,7 +676,7 @@ mod tests {
         copy
     }
 
-    const CONSOLE_DIR: &str = "provider-console/1.0.0";
+    const CONSOLE_DIR: &str = "provider-console/1.1.0";
 
     #[test]
     fn an_untouched_copy_of_the_shipped_bundle_passes() {
@@ -735,14 +736,26 @@ mod tests {
             .join(CONSOLE_DIR);
         let real = digest::package_integrity(&shipped).unwrap();
         let admission = PinnedModuleAdmission::builtin();
-        assert!(admission.admits("provider-console", "1.0.0", &real));
+        assert!(admission.admits("provider-console", "1.1.0", &real));
 
         let copy = copy_of_shipped_bundle();
         let dir = copy.path().join(CONSOLE_DIR);
         fs::write(dir.join("entry.js"), "export default function () {}").unwrap();
         let tampered = digest::package_integrity(&dir).unwrap();
         assert_ne!(real, tampered);
-        assert!(!admission.admits("provider-console", "1.0.0", &tampered));
+        assert!(!admission.admits("provider-console", "1.1.0", &tampered));
         assert!(!admission.admits("unpinned-module", "1.0.0", &real));
+    }
+
+    #[test]
+    fn retained_package_is_verified_but_never_admitted() {
+        use crate::{ModuleAdmission, PinnedModuleAdmission};
+        let admission = PinnedModuleAdmission::builtin();
+        for &(id, version, integrity) in RETAINED_PINS {
+            assert!(!admission.admits(id, version, integrity));
+        }
+        let copy = copy_of_shipped_bundle();
+        fs::write(copy.path().join("provider-console/1.0.0/entry.js"), "changed").unwrap();
+        assert_eq!(kinds(&verify_builtin_release_bundle(copy.path())), ["digest_mismatch"]);
     }
 }

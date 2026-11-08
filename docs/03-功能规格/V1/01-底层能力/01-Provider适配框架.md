@@ -63,7 +63,7 @@ Provider 适配框架是 DGOS 的底层核心能力，负责屏蔽各个 AI 模�
 - ✅ 同步调用接口
 - ✅ 流式调用接口（SSE）：`call_provider_stream`、`cancel_provider_stream` 是宿主 API，没有独立页面；AC06 由 FR-006 的流式聊天与 `webview_smoke_provider_stream` 满足（D098）
 - ✅ 使用记录保存
-- ✅ 多 Provider 排序机制（用户通过 Provider 列表的上移/下移按钮调整，调用 `update_provider_order`；拖拽交互按 D098 第 5 项留给 D097 的改版）
+- ✅ 多 Provider 排序机制（用户通过当前 Provider 详情操作菜单的上移/下移项调整，调用 `update_provider_order`；拖拽交互按 D098 第 5 项留给 D097 的改版）
 - ✅ Provider 启用/禁用开关
 - ✅ 并发调用支持（不排队）
 - ✅ 可配置重试策略（应用层配置）

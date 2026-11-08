@@ -43,6 +43,20 @@ impl AgentManager {
                 evidence["remote_ref"] = json!(reference);
                 evidence["remote_matches"] = json!(proven);
             },
+            GitAction::Pull { .. } => {
+                let target = details["target_oid"].as_str();
+                let owned = details["owned_ref_oid"].as_str();
+                let fetched = matches!(details["phase"].as_str(), Some("ff_started" | "completed"));
+                let reference = format!("refs/dgos-pull/{}", request.id);
+                let local = optional_ref(Path::new(&project.path), &["rev-parse", "--verify", &reference], &lease, &self.inner.stop).await?;
+                let expected_head = if details["result"] == "already_up_to_date" { before.head.as_deref() } else { target };
+                if fetched && target.is_some_and(valid_oid) && owned.is_some_and(valid_oid) && local.as_deref() == owned && after.branch == before.branch && after.head.as_deref() == expected_head && after.files.is_empty() && after.conflicts.is_empty() && after.merge_heads.is_empty() {
+                    let tree = head_tree(Path::new(&project.path), after.head.as_deref().ok_or("invalid_git_operation")?, &lease, &self.inner.stop).await?;
+                    proven = sorted(after.index.clone()) == sorted(tree);
+                }
+                evidence["phase"] = details["phase"].clone();
+                evidence["target_oid"] = json!(target);
+            },
             GitAction::Switch { branch } => {
                 proven = after.branch.as_deref() == Some(branch.as_str()) && after.head.as_deref() == details["target_oid"].as_str() && after.files.is_empty() && after.merge_heads.is_empty() && after.conflicts.is_empty();
             },
@@ -83,6 +97,9 @@ impl AgentManager {
         details["reconciliation"] = evidence;
         details["after"] = json!(after);
         self.inner.repository.finish_git_operation(owner, &input.id, if proven { "succeeded" } else { "unknown" }, &details).await?;
+        if proven && matches!(request.action, GitAction::Pull { .. }) {
+            operations::cleanup_pull_ref(Path::new(&project.path), &request.id, &details, &self.inner.stop).await;
+        }
         self.inner.repository.git_operation(owner, &input.id).await?.ok_or_else(|| "storage_failed".into())
     }
 }

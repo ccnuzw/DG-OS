@@ -10,7 +10,7 @@
 //! a [`Sent`]; the caller then awaits [`ChatManager::run_generation`], which streams to the sink
 //! and ends in exactly one terminal transaction.
 
-use crate::tools::{ToolProposal, ToolSelection};
+use crate::tools::ToolProposal;
 use crate::{skill_guidance, HOST_POLICY, OUTPUT_TOKENS};
 use dgos_db::{
     sea_orm::DatabaseConnection, BeginGeneration, ChatMessage, ChatRepository, ChatSession,
@@ -24,7 +24,6 @@ use dgos_types::{
     BuiltinCaller, ChatMessage as WireMessage, ChatRequest, DgosError, ExecutionProvenance, Model,
     Provider,
 };
-use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -269,7 +268,7 @@ pub struct SendChatInput {
     /// One to eight MCP tools chosen for this send only (D022/D075). Non-empty makes the turn a
     /// non-streaming tool turn; nothing is remembered for the next send.
     #[serde(default)]
-    pub tools: Vec<ToolSelection>,
+    pub tools: Vec<dgos_types::AiToolSelection>,
     /// Controlled asset ids attached to this message (V2 D133 §2). Validated against the account's
     /// stored assets and linked in the same transaction as the message.
     #[serde(default)]
@@ -1218,79 +1217,26 @@ impl ChatManager {
             caller: BuiltinCaller::Workbench,
             request_id: task_id.clone(),
         };
-        let deadline = tokio::time::sleep(MAX_DURATION);
-        tokio::pin!(deadline);
-        let mut buffer = String::new();
-        let end = 'drain: {
-            let opened = tokio::select! {
-                biased;
-                _ = active.token.cancelled() => break 'drain End::Stopped(active.reason()),
-                _ = &mut deadline => break 'drain End::Stopped("generation_limit"),
-                opened = providers.stream_provider_bound_cancellable_with_provenance(
-                    &provider_id, &model_id, request, &user, revision, Some(&provenance),
-                    active.token.clone(),
-                ) => opened,
+        let forward = |event| {
+            let sent = match event {
+                crate::execution::CoreEvent::Delta(text) => sink.send(ChatEvent::Delta { assistant_message_id: assistant_message_id.clone(), text }),
+                crate::execution::CoreEvent::ReasoningDelta(text) => sink.send(ChatEvent::ReasoningDelta { assistant_message_id: assistant_message_id.clone(), text }),
+                crate::execution::CoreEvent::Phase(_) => true,
             };
-            let mut stream = match opened {
-                Ok(stream) => stream,
-                Err(error) => break 'drain End::Failed(error.error_code()),
-            };
-            loop {
-                let item = tokio::select! {
-                    biased;
-                    _ = active.token.cancelled() => break 'drain End::Stopped(active.reason()),
-                    _ = &mut deadline => break 'drain End::Stopped("generation_limit"),
-                    item = stream.next() => item,
-                };
-                match item {
-                    None => break 'drain End::Failed(DgosError::StreamInterrupted.error_code()),
-                    Some(Err(error)) => {
-                        break 'drain if active.token.is_cancelled() {
-                            End::Stopped(active.reason())
-                        } else {
-                            End::Failed(error.error_code())
-                        };
-                    }
-                    Some(Ok(chunk)) => {
-                        if let Some(text) = chunk.reasoning_delta.filter(|t| !t.is_empty()) {
-                            if !sink.send(ChatEvent::ReasoningDelta {
-                                assistant_message_id: assistant_message_id.clone(),
-                                text,
-                            }) {
-                                active.stop("task_cancelled");
-                            }
-                        }
-                        if !chunk.delta.is_empty() {
-                            let room = MAX_REPLY_BYTES - buffer.len();
-                            let (piece, over) = split_at_boundary(&chunk.delta, room);
-                            buffer.push_str(piece);
-                            if !piece.is_empty()
-                                && !sink.send(ChatEvent::Delta {
-                                    assistant_message_id: assistant_message_id.clone(),
-                                    text: piece.to_owned(),
-                                })
-                            {
-                                active.stop("task_cancelled");
-                            }
-                            if over {
-                                break 'drain End::Stopped("generation_limit");
-                            }
-                        }
-                        if let Some(finish_reason) = chunk.finish_reason {
-                            break 'drain End::Completed {
-                                finish_reason,
-                                tokens: chunk
-                                    .usage
-                                    .map(|usage| i64::from(usage.total_tokens))
-                                    .filter(|tokens| *tokens > 0),
-                            };
-                        }
-                    }
-                }
-            }
+            if !sent { active.stop("task_cancelled"); }
+            sent
         };
-        self.finish(&user, &task_id, &assistant_message_id, buffer, end, sink)
-            .await;
+        let binding = crate::execution::StepBinding { user: &user, provider_id: &provider_id, model_id: &model_id, revision,
+            provenance: &provenance, cancellation: &active.token, deadline: tokio::time::Instant::now() + MAX_DURATION,
+            guard: &crate::execution::LegacyGuard, sink: &forward };
+        let drained = crate::execution::drain_stream(providers, &binding, request).await;
+        let end = match drained.end {
+            crate::execution::StreamEnd::Completed { finish_reason, tokens } => End::Completed { finish_reason, tokens },
+            crate::execution::StreamEnd::Stopped("task_cancelled") => End::Stopped(active.reason()),
+            crate::execution::StreamEnd::Stopped(reason) => End::Stopped(reason),
+            crate::execution::StreamEnd::Failed(code) => End::Failed(code),
+        };
+        self.finish(&user, &task_id, &assistant_message_id, drained.content, end, sink).await;
     }
 
     async fn finish(
@@ -1756,15 +1702,7 @@ async fn resolve_model(
 }
 
 pub(super) fn validate_generation_profile(provider: &Provider, generation: &dgos_types::GenerationParameters) -> Result<()> {
-    let vendor_id = provider.config.as_ref().and_then(|v| v.get("vendor_id")).and_then(Value::as_str).unwrap_or_else(|| dgos_providers::vendor::infer_vendor(&provider.provider_type, &provider.base_url));
-    let profile = dgos_providers::vendor::resolve_profile(vendor_id, &provider.provider_type, &provider.base_url)?;
-    profile.check_sampling(generation.temperature, generation.reasoning.as_ref())?;
-    if let Some(reasoning) = &generation.reasoning {
-        let mapped = profile.reasoning_params(reasoning)?;
-        if reasoning.budget_tokens.is_some() && !matches!(mapped, dgos_providers::vendor::ReasoningParams::AnthropicBudget { .. }) { return Err(DgosError::RequestNotSupported.into()); }
-        if matches!(mapped, dgos_providers::vendor::ReasoningParams::AnthropicBudget { budget } if budget >= generation.output_tokens()) { return Err(DgosError::RequestNotSupported.into()); }
-    }
-    Ok(())
+    crate::execution::validate_generation(provider, generation).map_err(Into::into)
 }
 
 async fn resolve_skills(

@@ -4,6 +4,7 @@ import { Lexer, type Token, type Tokens } from 'marked';
 import { common, createLowlight } from 'lowlight';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { Button, Modal, cn } from '@dgos/ui';
+import { FOCUS_RING } from '@dgos/ui/lib/focus';
 import { COPY_TEXT, useCopyFeedback } from './clipboard';
 import './Markdown.css';
 
@@ -17,7 +18,6 @@ import './Markdown.css';
 // marked's `Token` union has an open `Generic` member, so switching on `type` does not narrow it. The lexer guarantees
 // the shape that belongs to each `type`, which is why each case below names its token with a cast.
 
-const FOCUS = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus';
 const MAX_HIGHLIGHT_CHARS = 20000;
 const lowlight = createLowlight(common);
 
@@ -48,7 +48,7 @@ function LinkButton({ url, children }: { url: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button variant="link" className={cn('inline h-auto whitespace-normal text-left underline wrap-anywhere', FOCUS)} onClick={() => setOpen(true)}>
+      <Button variant="link" className={cn('chat-markdown-link inline h-auto whitespace-normal text-left underline wrap-anywhere', FOCUS_RING)} onClick={() => setOpen(true)}>
         {children}
       </Button>
       <Modal
@@ -103,14 +103,14 @@ function CodeBlock({ lang, text }: { lang?: string; text: string }) {
   const highlighted = useMemo(() => highlight(label, text), [label, text]);
   return (
     <div className="my-2 overflow-hidden rounded-md border border-border-subtle bg-surface-inset">
-      <div className="flex items-center justify-between gap-2 border-b border-border-subtle px-3 py-1 text-xs text-ink-secondary">
+      <div className="flex items-center justify-between gap-2 border-b border-border-subtle px-3 py-1 font-sans text-xs text-ink-secondary">
         <span className="min-w-0 wrap-anywhere">{label || t('chat.code')}</span>
         <span className="flex items-center gap-2">
           <span role="status" className={cn('text-xs', state === 'failed' ? 'text-status-error-text' : 'text-status-success-text')}>{COPY_TEXT[state]}</span>
           <Button size="sm" variant="ghost" onClick={() => copy(text)}>{t('chat.copyCode')}</Button>
         </span>
       </div>
-      <pre tabIndex={0} aria-label={label ? t('chat.codeLabel', { language: label }) : t('chat.code')} className={cn('chat-code type-code m-0 overflow-x-auto p-3', FOCUS)}>
+      <pre tabIndex={0} aria-label={label ? t('chat.codeLabel', { language: label }) : t('chat.code')} className={cn('chat-code type-code m-0 overflow-x-auto p-3', FOCUS_RING)}>
         <code>{highlighted ?? text}</code>
       </pre>
     </div>
@@ -118,7 +118,7 @@ function CodeBlock({ lang, text }: { lang?: string; text: string }) {
 }
 
 const HEADING_CLASS: Readonly<Record<number, string>> = {
-  1: 'text-lg', 2: 'text-base', 3: 'text-base', 4: 'text-sm', 5: 'text-sm', 6: 'text-sm',
+  1: 'chat-markdown-heading-large', 2: 'chat-markdown-heading-medium', 3: 'chat-markdown-heading-medium', 4: 'chat-markdown-heading-small', 5: 'chat-markdown-heading-small', 6: 'chat-markdown-heading-small',
 };
 const ALIGN_CLASS: Readonly<Record<string, string>> = { left: 'text-left', center: 'text-center', right: 'text-right' };
 
@@ -221,7 +221,7 @@ function renderBlocks(tokens: readonly Token[]): ReactNode[] {
         };
         return (
           <div key={index} className="my-2 overflow-x-auto">
-            <table className="border-collapse text-sm">
+            <table className="border-collapse">
               <thead><tr>{table.header.map((c, i) => cell(c, i, true))}</tr></thead>
               <tbody>{table.rows.map((row, r) => <tr key={r}>{row.map((c, i) => cell(c, i, false))}</tr>)}</tbody>
             </table>
@@ -247,7 +247,7 @@ function PlainText({ source }: { source: string }) {
 function MarkdownBody({ source }: { source: string }) {
   usePageLocale();
   const tokens = useMemo(() => Lexer.lex(source), [source]);
-  return <div className="type-reading">{renderBlocks(tokens)}</div>;
+  return <div className="type-reading chat-markdown">{renderBlocks(tokens)}</div>;
 }
 
 interface BoundaryProps { source: string; children: ReactNode }

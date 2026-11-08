@@ -1,11 +1,10 @@
-// AC24: every interactive component uses the semantic --border-focus role (FR-005 §4.7).
-// The outline is never removed, so there is no `outline-none` to pair (design:check R5).
-// The class names are complete literals so Tailwind's scanner emits them.
+import '../components/patterns.css';
 
-/** Ring drawn outside the control. */
-export const FOCUS_RING =
-  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus';
+/** Quiet keyboard position for actions; drawn inside the control so scrollports cannot clip it. */
+export const FOCUS_RING = 'ui-focus';
 
-/** Ring drawn inside the box, for items that sit flush in a list (Select options). */
-export const FOCUS_RING_INSET =
-  'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-border-focus';
+/** Text fields strengthen their existing border for pointer and keyboard focus. */
+export const FOCUS_FIELD = 'ui-focus-field';
+
+/** Menu and Select options express the current keyboard item through their background. */
+export const FOCUS_ITEM = 'ui-focus-item';

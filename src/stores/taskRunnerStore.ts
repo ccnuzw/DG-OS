@@ -41,7 +41,7 @@ export const useTaskRunner = create<TaskRunnerState>((set, get) => {
     if (terminal) terminalSeen = true;
     set({ outcome, toolTask: 'phase' in outcome ? outcome as ToolTaskUpdate : null, taskId: terminal ? null : outcome.record.task.id,
       running: terminal ? false : get().running, resultUnknown: false,
-      error: outcome.record.task.status !== 'running' && outcome.record.task.status !== 'succeeded' ? `${t('workbench.taskFailedPrefix', { status: outcome.record.task.status, code: outcome.record.task.error_code || 'unknown_error' })} ${t(outcome.record.task.error_code === 'mcp_unknown_result' ? 'workbench.toolUnknownResult' : outcome.record.task.error_code === 'mcp_audit_warning' ? 'workbench.toolAuditIncomplete' : 'workbench.noSkillRetry')} ${t('workbench.externalCancellationWarning')}` : null });
+      error: outcome.record.task.status !== 'running' && outcome.record.task.status !== 'succeeded' ? `${t('workbench.taskFailedPrefix', { status: outcome.record.task.status, code: outcome.record.task.error_code || 'unknown_error' })} ${t(['mcp_1003005', 'mcp_1003006', 'mcp_1003016'].includes(outcome.record.task.error_code ?? '') ? 'workbench.toolUnknownResult' : outcome.record.task.error_code === 'mcp_audit_warning' ? 'workbench.toolAuditIncomplete' : 'workbench.noSkillRetry')} ${t('workbench.externalCancellationWarning')}` : null });
   };
   return {
     epoch: 0, taskId: null, kind: null, running: false, cancelPending: false, resultUnknown: false, error: null, outcome: null, toolTask: null,

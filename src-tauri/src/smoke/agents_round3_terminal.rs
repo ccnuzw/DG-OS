@@ -7,6 +7,9 @@ use super::*;
 
 type Journey<T> = Result<T, String>;
 
+#[path = "agents_pty_live.rs"]
+mod live;
+
 fn save(fx: &Fx, name: &str, data: &Value) {
     fs::write(fx.root.join(format!("terminal-round3-{name}.json")), serde_json::to_vec_pretty(data).expect("terminal JSON")).expect("terminal evidence");
 }
@@ -198,6 +201,7 @@ const p=window.__round3Terminal;const starts=p.events.filter(e=>e.command==='sta
 }
 
 pub(super) async fn run(app: &AppHandle, fx: &Fx, mut ck: Checks, mut ev: Vec<Value>) {
+    if std::env::var_os("DGOS_PTY_LIVE_ACCEPTANCE").is_some() { live::run(app,fx,ck,ev).await;return; }
     let old=Path::new("/private/tmp/dgos-layout-round2-20261106-delivery/layout-round2-failure-dom.json");
     if let Ok(bytes)=fs::read(old) { if let Ok(value)=serde_json::from_slice::<Value>(&bytes) { save(fx,"round2-failure-before-fix",&value); } }
     if let Err(error)=journey(app,fx,&mut ck,&mut ev).await { record(&mut ck,&mut ev,"terminal recovery journey completes",false,error); snapshot(app,fx,"failure").await; }

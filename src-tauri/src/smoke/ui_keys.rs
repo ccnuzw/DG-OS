@@ -33,12 +33,16 @@ pub(super) enum Key {
     Down,
     Home,
     End,
+    CommandMinus,
+    CommandEqual,
+    CommandPlus,
 }
 
 impl Key {
     /// (macOS virtual key code, characters, modifier flags)
     fn spec(self) -> (u16, &'static str, usize) {
         const SHIFT: usize = 1 << 17;
+        const COMMAND: usize = 1 << 20;
         const NUMPAD: usize = 1 << 21;
         const FN: usize = 1 << 23;
         match self {
@@ -53,12 +57,15 @@ impl Key {
             Key::Up => (126, "\u{f700}", FN | NUMPAD),
             Key::Home => (115, "\u{f729}", FN),
             Key::End => (119, "\u{f72b}", FN),
+            Key::CommandMinus => (27, "-", COMMAND),
+            Key::CommandEqual => (24, "=", COMMAND),
+            Key::CommandPlus => (24, "+", COMMAND | SHIFT),
         }
     }
 }
 
 #[cfg(target_os = "macos")]
-fn post(app: &AppHandle, key: Key, down: bool) -> bool {
+fn post_with_repeat(app: &AppHandle, key: Key, down: bool, repeat: bool) -> bool {
     use objc2::encode::{Encode, Encoding};
     use objc2::runtime::{AnyObject, Bool};
     use objc2::{class, msg_send};
@@ -85,6 +92,8 @@ fn post(app: &AppHandle, key: Key, down: bool) -> bool {
             let chars = CString::new(chars).expect("no NUL in key characters");
             let text: *mut AnyObject =
                 msg_send![class!(NSString), stringWithUTF8String: chars.as_ptr()];
+            let unmodified = CString::new(if key == Key::CommandPlus { "=" } else { chars.to_str().unwrap() }).unwrap();
+            let ignoring: *mut AnyObject = msg_send![class!(NSString), stringWithUTF8String: unmodified.as_ptr()];
             let info: *mut AnyObject = msg_send![class!(NSProcessInfo), processInfo];
             let timestamp: f64 = msg_send![info, systemUptime];
             let number: isize = msg_send![win, windowNumber];
@@ -98,8 +107,8 @@ fn post(app: &AppHandle, key: Key, down: bool) -> bool {
                 windowNumber: number,
                 context: std::ptr::null_mut::<AnyObject>(),
                 characters: text,
-                charactersIgnoringModifiers: text,
-                isARepeat: Bool::NO,
+                charactersIgnoringModifiers: ignoring,
+                isARepeat: Bool::new(repeat),
                 keyCode: code
             ];
             // Route through NSApplication so currentEvent and WebKit's keyboard-input modality agree.
@@ -110,8 +119,12 @@ fn post(app: &AppHandle, key: Key, down: bool) -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn post(_: &AppHandle, _: Key, _: bool) -> bool {
+fn post_with_repeat(_: &AppHandle, _: Key, _: bool, _: bool) -> bool {
     false
+}
+
+fn post(app: &AppHandle, key: Key, down: bool) -> bool {
+    post_with_repeat(app, key, down, false)
 }
 
 /// Activate the application and make the window key (the app may be launched in the background).
@@ -215,6 +228,15 @@ pub(super) async fn key(app: &AppHandle, key: Key) {
     sleep(Duration::from_millis(220)).await;
 }
 
+/// A held-key repeat uses NSEvent's repeat flag; DOM event construction cannot exercise this path.
+pub(super) async fn repeat_key(app: &AppHandle, key: Key) {
+    activate(app);
+    post_with_repeat(app, key, true, true);
+    sleep(Duration::from_millis(20)).await;
+    post(app, key, false);
+    sleep(Duration::from_millis(220)).await;
+}
+
 const PRE: &str = r#"
 const root = document.documentElement;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -230,16 +252,20 @@ const tabbables = () => [...document.querySelectorAll('a[href],button,input,sele
 const focusInfo = () => {
   const el = document.activeElement;
   if (!el || el === document.body) return { body: true, hasFocus: document.hasFocus() };
-  const cs = getComputedStyle(el); const ring = tokenColor('--color-focus-ring'); const oc = parse(cs.outlineColor); const bg = bgOf(el);
+  const cs = getComputedStyle(el); const bg = bgOf(el);
+  const outlined = cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0;
+  const bordered = ['input', 'textarea', 'select'].includes(el.tagName.toLowerCase()) || el.getAttribute('role') === 'combobox';
+  const ink = parse(outlined ? cs.outlineColor : bordered ? cs.borderTopColor : '');
+  const visible = outlined || bordered && cs.borderTopStyle !== 'none' && parseFloat(cs.borderTopWidth) > 0;
   return { body: false, hasFocus: document.hasFocus(), tag: el.tagName.toLowerCase(), role: el.getAttribute('role'), label: lbl(el), id: el.id,
-    index: tabbables().indexOf(el), fv: el.matches(':focus-visible'), outlineW: parseFloat(cs.outlineWidth), outlineStyle: cs.outlineStyle,
-    outlineIsToken: !!oc && oc.c.join() === ring.join(), contrast: oc ? Math.round(ratio(oc.c, parseFloat(cs.outlineOffset) >= 0 ? bgOf(el.parentElement || el) : bg) * 100) / 100 : null, ownContrast: oc ? Math.round(ratio(oc.c, bg) * 100) / 100 : null, offset: cs.outlineOffset };
+    index: tabbables().indexOf(el), fv: el.matches(':focus-visible'), indicatorVisible: visible,
+    contrast: ink ? Math.round(ratio(ink.c, outlined && parseFloat(cs.outlineOffset) >= 0 ? bgOf(el.parentElement || el) : bg) * 100) / 100 : null };
 };
 const geo = (el) => { const r = el.getBoundingClientRect(); return { l: Math.round(r.left), t: Math.round(r.top), r: Math.round(r.right), b: Math.round(r.bottom), w: Math.round(r.width), h: Math.round(r.height), vw: root.clientWidth, vh: innerHeight, inside: r.left >= -0.5 && r.top >= -0.5 && r.right <= root.clientWidth + 0.5 && r.bottom <= innerHeight + 0.5 }; };
 const zOf = (el) => { let z = 0; for (let n = el; n && n !== document.documentElement; n = n.parentElement) { const v = parseInt(css(n, 'zIndex'), 10); if (!Number.isNaN(v)) z = Math.max(z, v); } return z; };
 // The focused element's ring box (border box grown by outline width + offset) against the padding box of every
 // ancestor that clips (any overflow other than visible). Returns the clipping ancestors and by how much they cut.
-const ringCuts = () => { const el = document.activeElement; const cs = getComputedStyle(el); const g = parseFloat(cs.outlineWidth) + parseFloat(cs.outlineOffset); const r = el.getBoundingClientRect(); const ring = { l: r.left - g, t: r.top - g, r: r.right + g, b: r.bottom + g }; const cuts = []; for (let n = el.parentElement; n; n = n.parentElement) { const s = getComputedStyle(n); if (s.overflowX === 'visible' && s.overflowY === 'visible') continue; const b = n.getBoundingClientRect(); const over = { l: b.left + parseFloat(s.borderLeftWidth) - ring.l, t: b.top + parseFloat(s.borderTopWidth) - ring.t, r: ring.r - (b.right - parseFloat(s.borderRightWidth)), b: ring.b - (b.bottom - parseFloat(s.borderBottomWidth)) }; const bad = Object.fromEntries(Object.entries(over).filter(([, v]) => v > 0.5).map(([k, v]) => [k, Math.round(v * 10) / 10])); if (Object.keys(bad).length) cuts.push({ cls: String(n.className).slice(0, 48), ...bad }); } return cuts; };
+const ringCuts = () => { const el = document.activeElement; const cs = getComputedStyle(el); const g = cs.outlineStyle === 'none' ? 0 : Math.max(0, parseFloat(cs.outlineWidth) + parseFloat(cs.outlineOffset)); const r = el.getBoundingClientRect(); const ring = { l: r.left - g, t: r.top - g, r: r.right + g, b: r.bottom + g }; const cuts = []; for (let n = el.parentElement; n; n = n.parentElement) { const s = getComputedStyle(n); if (s.overflowX === 'visible' && s.overflowY === 'visible') continue; const b = n.getBoundingClientRect(); const over = { l: b.left + parseFloat(s.borderLeftWidth) - ring.l, t: b.top + parseFloat(s.borderTopWidth) - ring.t, r: ring.r - (b.right - parseFloat(s.borderRightWidth)), b: ring.b - (b.bottom - parseFloat(s.borderBottomWidth)) }; const bad = Object.fromEntries(Object.entries(over).filter(([, v]) => v > 0.5).map(([k, v]) => [k, Math.round(v * 10) / 10])); if (Object.keys(bad).length) cuts.push({ cls: String(n.className).slice(0, 48), ...bad }); } return cuts; };
 "#;
 
 async fn js(app: &AppHandle, body: &str) -> Value {
@@ -286,9 +312,7 @@ fn ring_problem(info: &Value) -> Option<String> {
         return Some("focus is on <body>".into());
     }
     let ok = info["fv"] == true
-        && info["outlineStyle"] != "none"
-        && info["outlineW"].as_f64().unwrap_or(0.0) >= 2.0
-        && info["outlineIsToken"] == true
+        && info["indicatorVisible"] == true
         && info["contrast"].as_f64().unwrap_or(0.0) >= 3.0;
     if ok {
         None
@@ -329,7 +353,7 @@ async fn home(app: &AppHandle, checks: &mut Checks) {
         format!("{order:?}"),
     );
     checks.check(
-        "Home: each focused control has a visible :focus-visible ring (>=2px, --color-focus-ring, >=3:1 on its background)",
+        "Home: each keyboard-focused control has a visible contrasting position indicator",
         bad.is_empty(),
         bad.join(" | "),
     );
@@ -785,7 +809,7 @@ pub(super) async fn modal_viewports(app: &AppHandle, checks: &mut Checks) {
         let read = super::ipc(app, MAIN, "get_appearance_preferences", json!({})).await;
         let mut snapshot = read.data()["snapshot"].clone();
         let revision = snapshot.as_object_mut().and_then(|v| v.remove("revision"));
-        snapshot["density"] = json!(75);
+        snapshot["density"] = json!(90);
         snapshot["typography"]["uiSize"] = json!(ui);
         snapshot["typography"]["readingSize"] = json!(reading);
         snapshot["typography"]["codeSize"] = json!(code);
@@ -806,10 +830,10 @@ pub(super) async fn modal_viewports(app: &AppHandle, checks: &mut Checks) {
             key(app, Key::Enter).await;
         }
         let geometry = js(app, "const e=document.getElementById('g-long-select'),v=e.firstElementChild,full=document.getElementById(e.getAttribute('aria-describedby')); return {g:geo(e), h:e.clientHeight, valueH:v.getBoundingClientRect().height, overflow:e.scrollWidth>e.clientWidth+1, full:full?.textContent, title:e.title, ellipsis:css(v,'textOverflow'), white:css(v,'whiteSpace'), focus:document.activeElement===e};").await;
-        checks.check(&format!("Select long {value} @75% UI16: native selection, single line and full accessible value"), geometry["g"]["inside"] == true && geometry["overflow"] == false && geometry["ellipsis"] == "ellipsis" && geometry["white"] == "nowrap" && geometry["full"] == geometry["title"] && geometry["full"].as_str().unwrap_or("").starts_with(if value == "zh" { "中文" } else { "LongEnglish" }) && geometry["valueH"].as_f64().unwrap_or(999.0) <= geometry["h"].as_f64().unwrap_or(0.0)+1.0 && geometry["focus"] == true, geometry.to_string());
+        checks.check(&format!("Select long {value} @90% UI16: native selection, single line and full accessible value"), geometry["g"]["inside"] == true && geometry["overflow"] == false && geometry["ellipsis"] == "ellipsis" && geometry["white"] == "nowrap" && geometry["full"] == geometry["title"] && geometry["full"].as_str().unwrap_or("").starts_with(if value == "zh" { "中文" } else { "LongEnglish" }) && geometry["valueH"].as_f64().unwrap_or(999.0) <= geometry["h"].as_f64().unwrap_or(0.0)+1.0 && geometry["focus"] == true, geometry.to_string());
     }
     window.set_theme(Some(tauri::Theme::Light)).ok();
-    for (width, density) in [(520u32, 175u32), (800, 100), (800, 175)] {
+    for (width, density) in [(520u32, 150u32), (800, 100), (800, 150)] {
         let tag = format!("Modal {width}x600 @{density}%");
         let resized = window.set_size(tauri::LogicalSize::new(width as f64, 600.0)).is_ok();
         let saved = set_appearance(app, "light", density).await;
@@ -1112,7 +1136,7 @@ pub(super) async fn run(app: &AppHandle, checks: &mut Checks) {
             "g-open never appeared",
         );
     }
-    for density in [75, 150, 175] {
+    for density in [60, 70, 80, 90, 100, 110, 120, 130, 140, 150] {
         density_geometry(app, checks, density).await;
     }
     gallery_themes(app, checks).await;
@@ -1273,7 +1297,7 @@ async fn ring_walk(app: &AppHandle, checks: &mut Checks, tag: &str) {
 /// FR-007: the vertical category list uses manual activation. Native Home/Down must visit all eight
 /// categories without navigating; every focused tab retains an unclipped ring at each density.
 async fn settings_tab_rings(app: &AppHandle, checks: &mut Checks) {
-    for density in [75, 100, 175] {
+    for density in [60, 70, 80, 90, 100, 110, 120, 130, 140, 150] {
         let tag = format!("Settings tabs @{density}%");
         set_appearance(app, "light", density).await;
         if !ready(app, "/settings/about").await {
@@ -1345,10 +1369,8 @@ async fn settings_tab_rings(app: &AppHandle, checks: &mut Checks) {
     set_appearance(app, "light", 100).await;
 }
 
-/// Tab to the control `pred` describes (within `max` presses), then require what `settings_tab_rings` requires of a
-/// tab: the computed style of `ring_problem` (`:focus-visible`, solid, >= 2px, outline colour equal to the computed
-/// `--color-focus-ring`, >= 3:1) and no ancestor with `overflow` other than `visible` cutting the ring box (border box
-/// grown by outline width + offset). Returns the problem, or `None` when the ring is whole.
+/// Tab to a control and require a visible contrasting keyboard position plus an unclipped boundary.
+/// Fields may use their existing border; actions may use a contained outline.
 async fn ring_target(app: &AppHandle, name: &str, pred: &str, max: usize) -> Option<String> {
     if !tab_until(app, pred, max, false).await {
         return Some(format!("{name}: not reached by Tab"));
@@ -1376,7 +1398,7 @@ async fn focus_ring_targets(app: &AppHandle, checks: &mut Checks) {
     let checkbox = "document.activeElement.getAttribute('role') === 'checkbox' && document.activeElement.getAttribute('aria-checked') === 'true'";
     let trigger = "document.activeElement.id === 'g-toast-long'";
     let close = "document.activeElement.getAttribute('aria-label') === '关闭' && !!document.activeElement.closest('[data-toast-type=\"error\"]')";
-    for (theme, density) in [("light", 100u32), ("light", 175), ("dark", 100)] {
+    for (theme, density) in [("light", 100u32), ("light", 150), ("dark", 100)] {
         let tag = format!("Focus ring targets {theme}/{density}%");
         set_appearance(app, theme, density).await;
         if !open_gallery(app).await {
@@ -1703,7 +1725,7 @@ async fn settings_narrow_menu(app: &AppHandle, checks: &mut Checks) {
     if !menu { return; }
     key(app, Key::Enter).await;
     key(app, Key::Home).await;
-    for _ in 0..6 { key(app, Key::Down).await; }
+    for _ in 0..5 { key(app, Key::Down).await; }
     key(app, Key::Enter).await;
     let selected = js(app, r#"
 const input=await until(() => location.pathname==='/settings/cli' && document.querySelector('.cli-tool-row input:not([disabled])'));
@@ -1713,30 +1735,34 @@ return {loaded:!!input,focus:document.activeElement===menu,value:menu.textConten
     checks.check("settings narrow menu: native selection opens CLI and returns to selector",
         selected["loaded"] == true && selected["focus"] == true && selected["value"].as_str().unwrap_or("").contains("CLI"), selected.to_string());
     if selected["loaded"] != true { return; }
-    let drafted = js(app, r#"
-const input=document.querySelector('.cli-tool-row input');
-window.__settingsKeyboardDraft=input;
-Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'/tmp/dgos-keyboard-unsaved');
-input.dispatchEvent(new Event('input',{bubbles:true}));
-return !!(await until(() => [...document.querySelectorAll('.cli-settings-actions button')].some(e=>e.textContent.trim()==='保存' && !e.disabled)));
-"#).await == true;
     key(app, Key::Enter).await;
     key(app, Key::Home).await;
-    for _ in 0..3 { key(app, Key::Down).await; }
     key(app, Key::Enter).await;
-    let prompt = truthy(app, "document.querySelector('[data-modal-kind=confirm]') && location.pathname==='/settings/cli'").await;
+    let drafted = js(app, r#"
+const light=await until(() => location.pathname==='/settings/appearance' && [...document.querySelectorAll('.appearance-top [role=radio]')].find(e=>lbl(e)==='亮色' && e.getAttribute('aria-checked')==='true' && !e.disabled));
+if (!light) return false;
+const dark=[...document.querySelectorAll('.appearance-top [role=radio]')].find(e=>lbl(e)==='暗色');
+dark?.click();
+const dirty=!!(await until(() => root.dataset.theme==='dark' && dark?.getAttribute('aria-checked')==='true' && [...document.querySelectorAll('.appearance-footer button')].some(e=>e.textContent.trim()==='应用外观' && !e.disabled)));
+const menu=document.querySelector('.workspace-settings-select [role=combobox]');
+menu?.focus();
+return dirty && document.activeElement===menu;
+"#).await == true;
+    key(app, Key::Enter).await;
+    key(app, Key::End).await;
+    key(app, Key::Enter).await;
+    let prompt = truthy(app, "document.querySelector('[data-modal-kind=confirm]') && location.pathname==='/settings/appearance'").await;
     key(app, Key::Escape).await;
     let cancelled = js(app, r#"
 await until(() => !document.querySelector('[data-modal-kind=confirm]'));
 const menu=document.querySelector('.workspace-settings-select [role=combobox]');
-return {draft:window.__settingsKeyboardDraft?.isConnected && window.__settingsKeyboardDraft.value==='/tmp/dgos-keyboard-unsaved',path:location.pathname,focus:document.activeElement===menu,value:menu.textContent};
+return {draft:root.dataset.theme==='dark' && [...document.querySelectorAll('.appearance-top [role=radio]')].some(e=>lbl(e)==='暗色' && e.getAttribute('aria-checked')==='true') && [...document.querySelectorAll('.appearance-footer button')].some(e=>e.textContent.trim()==='应用外观' && !e.disabled),path:location.pathname,focus:document.activeElement===menu,value:menu.textContent};
 "#).await;
-    checks.check("settings narrow menu: native Escape cancels leave and restores category focus",
-        drafted && prompt && cancelled["draft"] == true && cancelled["path"] == "/settings/cli"
-            && cancelled["focus"] == true && cancelled["value"].as_str().unwrap_or("").contains("CLI"), cancelled.to_string());
+    checks.check("settings narrow menu: native Escape keeps Appearance draft and restores category focus",
+        drafted && prompt && cancelled["draft"] == true && cancelled["path"] == "/settings/appearance"
+            && cancelled["focus"] == true && cancelled["value"].as_str().unwrap_or("").contains("外观"), cancelled.to_string());
     key(app, Key::Enter).await;
-    key(app, Key::Home).await;
-    for _ in 0..3 { key(app, Key::Down).await; }
+    key(app, Key::End).await;
     key(app, Key::Enter).await;
     let discard = tab_to_dialog_button(app, "放弃并关闭").await;
     key(app, Key::Enter).await;
@@ -1788,38 +1814,40 @@ return {open:!!dialog,background:window.__shellModule?.isConnected,width:dialog?
     key(&app, Key::Escape).await;
     let returned = js(&app, "await until(() => !document.querySelector('.workspace-settings-dialog')); return {same:document.querySelector('#g-open') === window.__shellModule,focus:document.activeElement?.getAttribute('href'),path:location.pathname};").await;
     checks.check("shell settings Escape returns same module", returned["same"] == true && returned["path"] == "/apps/p8-gallery", returned.to_string());
+    let baseline = set_appearance(&app, "light", 100).await;
     let guarded = js(&app, r#"
 const clickText = (selector, text) => [...document.querySelectorAll(selector)].find(e => e.textContent.trim() === text)?.click();
 document.querySelector('a[href="/settings"]').click();
 await until(() => document.querySelector('.workspace-settings-categories'));
-const cli = [...document.querySelectorAll('.workspace-settings-category')].find(e => e.textContent.trim() === 'CLI 工具');
-cli?.dispatchEvent(new MouseEvent('mousedown', {bubbles:true,button:0}));
-const input = await until(() => [...document.querySelectorAll('.cli-tool-row input')].find(e => !e.disabled));
-if (!input) return {error:'CLI did not load'};
-const original = input.value;
-Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '/tmp/dgos-ui-stage3-unsaved');
-input.dispatchEvent(new Event('input', {bubbles:true}));
-await until(() => [...document.querySelectorAll('.settings-actions button')].some(e => !e.disabled && e.textContent.trim() === '保存'));
+const appearance = document.querySelector('.workspace-settings-category[data-settings-category="appearance"]');
+appearance?.dispatchEvent(new MouseEvent('mousedown', {bubbles:true,button:0}));
+const light = await until(() => location.pathname === '/settings/appearance' && [...document.querySelectorAll('.appearance-top [role=radio]')].find(e => lbl(e) === '亮色' && e.getAttribute('aria-checked') === 'true' && !e.disabled));
+if (!light) return {error:'Appearance did not load the light baseline'};
+const dark = [...document.querySelectorAll('.appearance-top [role=radio]')].find(e => lbl(e) === '暗色');
+dark?.click();
+const dirty = () => root.dataset.theme === 'dark' && dark?.isConnected && dark.getAttribute('aria-checked') === 'true' && [...document.querySelectorAll('.appearance-footer button')].some(e => !e.disabled && e.textContent.trim() === '应用外观');
+const drafted = !!(await until(dirty));
+if (!drafted) return {error:'Appearance preview did not become dirty'};
 const about = [...document.querySelectorAll('.workspace-settings-category')].find(e => e.textContent.trim() === '关于');
 about?.dispatchEvent(new MouseEvent('mousedown', {bubbles:true,button:0}));
 const prompt = await until(() => document.querySelector('[data-modal-kind="confirm"]'));
 if (!prompt) return {error:'category guard absent',path:location.pathname};
 clickText('[data-modal-kind="confirm"] button', '取消');
 await until(() => !document.querySelector('[data-modal-kind="confirm"]'));
-const kept = location.pathname === '/settings/cli' && input.value === '/tmp/dgos-ui-stage3-unsaved';
+const kept = location.pathname === '/settings/appearance' && dirty();
 clickText('.workspace-settings-header button', '关闭设置');
 await until(() => document.querySelector('[data-modal-kind="confirm"]'));
 clickText('[data-modal-kind="confirm"] button', '取消');
 await until(() => !document.querySelector('[data-modal-kind="confirm"]'));
-const cancelled = location.pathname === '/settings/cli' && input.isConnected;
+const cancelled = location.pathname === '/settings/appearance' && dirty();
 clickText('.workspace-settings-header button', '关闭设置');
 await until(() => document.querySelector('[data-modal-kind="confirm"]'));
 clickText('[data-modal-kind="confirm"] button', '放弃并关闭');
 const returned = !!(await until(() => !document.querySelector('.workspace-settings-dialog') && location.pathname === '/apps/p8-gallery'));
-return {kept,cancelled,returned,same:document.querySelector('#g-open') === window.__shellModule,original};
+return {drafted,kept,cancelled,returned,same:document.querySelector('#g-open') === window.__shellModule};
 "#).await;
-    checks.check("shell category leave cancels without losing CLI draft", guarded["kept"] == true, guarded.to_string());
-    checks.check("shell settings close cancels then returns after a single discard", guarded["cancelled"] == true && guarded["returned"] == true && guarded["same"] == true, guarded.to_string());
+    checks.check("shell category leave cancels without losing Appearance draft", baseline && guarded["drafted"] == true && guarded["kept"] == true, guarded.to_string());
+    checks.check("shell settings close keeps Appearance draft on cancel then returns after a single discard", guarded["cancelled"] == true && guarded["returned"] == true && guarded["same"] == true, guarded.to_string());
     let command = js(&app, "const trigger=document.querySelector('.workspace-tab-actions button[title*=Ctrl]'); trigger.focus(); trigger.click(); return !!(await until(() => document.querySelector('.workspace-command input') === document.activeElement));").await;
     checks.check("shell command autofocus", command == true, command.to_string());
     key(&app, Key::Escape).await;
@@ -1831,7 +1859,7 @@ return {kept,cancelled,returned,same:document.querySelector('#g-open') === windo
     checks.check("shell closes workspace and returns home", closed == true, closed.to_string());
     settings_tab_rings(&app, checks).await;
     // Exercise the production scroll owner and native traversal in wide and narrow windows.
-    for (width, density) in [(800u32, 75u32), (800, 175), (520, 75), (520, 175)] {
+    for (width, density) in [(800u32, 60u32), (800, 150), (520, 60), (520, 150)] {
         let resized = app.get_webview_window(MAIN).is_some_and(|window| {
             window.set_min_size(Some(tauri::LogicalSize::new(520.0, 600.0))).is_ok()
                 && window.set_size(tauri::LogicalSize::new(width as f64, 600.0)).is_ok()

@@ -1,5 +1,7 @@
 #[path = "cli_launch_tests.rs"]
 mod cli_launch_tests;
+#[path = "cli_binding_tests.rs"]
+mod cli_binding_tests;
 
 use crate::{test_support::MemoryCredentialVault, ProviderManager};
 use dgos_db::{
@@ -346,6 +348,24 @@ async fn normal_model_refresh_advances_snapshot_and_bound_call_uses_saved_revisi
     assert_eq!(warning.content, "Completed with audit warning");
     assert!(warning.audit_warning);
     warning_call.assert_async().await;
+    let stream_warning_call = server.mock("POST", "/chat/completions")
+        .match_header("authorization", "Bearer synthetic-revision")
+        .with_status(200)
+        .with_header("content-type", "text/event-stream")
+        .with_body(concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"kept\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        ))
+        .expect(1).create_async().await;
+    let mut stream = manager.stream_provider_bound(&provider.id, "fixture-chat", dgos_types::ChatRequest {
+        messages: vec![dgos_types::ChatMessage { role: "user".into(), content: "stream audit".into(), images: Vec::new() }],
+        max_tokens: Some(32), stream: Some(true), ..Default::default()
+    }, "local", Some(snapshot.config_revision)).await.unwrap();
+    let chunks = stream.collect::<Vec<_>>().await;
+    assert_eq!(chunks.iter().filter_map(|chunk| chunk.as_ref().ok()).map(|chunk| chunk.delta.as_str()).collect::<Vec<_>>().join(""), "kept");
+    assert!(chunks.iter().filter_map(|chunk| chunk.as_ref().ok()).any(|chunk| chunk.audit_warning));
+    stream_warning_call.assert_async().await;
 }
 
 #[tokio::test]
@@ -2934,4 +2954,76 @@ async fn model_cache_is_cleared_only_by_credential_rotation_or_endpoint_change()
         "adapter change keeps no rows"
     );
     assert_eq!(vault.entry_count().await, 1);
+}
+#[tokio::test]
+async fn cancellable_calls_stop_while_credentials_are_locked_without_dispatch() {
+    let (_dir, url, db) = database().await;
+    let vault = Arc::new(MemoryCredentialVault::default());
+    let mut server = mockito::Server::new_async().await;
+    let provider = crate::test_support::seed_provider(db, &vault, config(&server.url(), "synthetic-lock"), "local").await.unwrap();
+    let manager = ProviderManager::with_vault(&url, vault).await.unwrap();
+    let upstream = server.mock("POST", "/chat/completions").expect(0).create_async().await;
+    for use_deadline in [false, true] {
+        let lock = manager.hold_credentials_lock_for_test().await;
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let dispatch = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(30);
+        let call = manager.call_provider_bound_cancellable_with_provenance(&provider.id, "fixture-chat", dgos_types::ChatRequest {
+            messages: vec![dgos_types::ChatMessage { role: "user".into(), content: "must not escape".into(), images: vec![] }],
+            stream: Some(false), ..Default::default()
+        }, "local", Some(provider.config_revision), None, cancellation.clone(), deadline, dispatch.clone());
+        tokio::pin!(call);
+        if use_deadline {
+            assert!(matches!(call.await, Err(dgos_types::DgosError::Timeout)));
+        } else {
+            tokio::select! {
+                result = &mut call => panic!("call unexpectedly completed while credentials were locked: {result:?}"),
+                _ = tokio::time::sleep(std::time::Duration::from_millis(5)) => cancellation.cancel(),
+            }
+            assert!(matches!(call.await, Err(dgos_types::DgosError::StreamInterrupted)));
+        }
+        assert!(!dispatch.load(std::sync::atomic::Ordering::Acquire));
+        drop(lock);
+    }
+    upstream.assert_async().await;
+}
+#[tokio::test]
+async fn cancelled_dispatched_call_records_usage_as_unknown() {
+    let (_dir, url, db) = database().await;
+    let vault = Arc::new(MemoryCredentialVault::default());
+    let mut server = mockito::Server::new_async().await;
+    let provider = crate::test_support::seed_provider(db, &vault, config(&server.url(), "synthetic-cancel"), "local").await.unwrap();
+    let manager = ProviderManager::with_vault(&url, vault).await.unwrap();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let started_tx = std::sync::Mutex::new(Some(started_tx));
+    let call = server.mock("POST", "/chat/completions")
+        .with_chunked_body(move |writer| {
+            if let Some(started_tx) = started_tx.lock().unwrap().take() { let _ = started_tx.send(()); }
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            std::io::Write::write_all(writer, br#"{"choices":[{"message":{"content":"late"}}]}"#)
+        }).expect(1).create_async().await;
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let dispatched = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let future = manager.call_provider_bound_cancellable_with_provenance(&provider.id, "fixture-chat", dgos_types::ChatRequest {
+        messages: vec![dgos_types::ChatMessage { role: "user".into(), content: "may be billed".into(), images: vec![] }],
+        stream: Some(false), ..Default::default()
+    }, "local", Some(provider.config_revision), None, cancellation.clone(), tokio::time::Instant::now() + std::time::Duration::from_secs(5), dispatched.clone());
+    tokio::pin!(future);
+    tokio::select! {
+        result = &mut future => panic!("call completed before the upstream observed it: {result:?}"),
+        _ = started_rx => {},
+    }
+    assert!(dispatched.load(std::sync::atomic::Ordering::Acquire));
+    cancellation.cancel();
+    assert!(matches!(future.await, Err(dgos_types::DgosError::StreamInterrupted)));
+    let usage = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let rows = manager.list_usage_logs("local", None).await.unwrap();
+            if !rows.is_empty() { break rows; }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.unwrap();
+    assert_eq!(usage.len(), 1);
+    assert_eq!((usage[0].request_tokens, usage[0].response_tokens, usage[0].success, usage[0].usage_reported), (0, 0, false, Some(false)));
+    call.assert_async().await;
 }

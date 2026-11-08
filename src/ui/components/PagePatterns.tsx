@@ -1,3 +1,4 @@
+import { useLayoutBudget } from '../layout/useLayoutBudget';
 import type { FormEventHandler, KeyboardEvent, ReactNode } from 'react';
 import { useLocale } from '../../i18n';
 import type { ResourceViewState } from '../../resourceState';
@@ -187,8 +188,13 @@ export interface ResourceLayoutProps {
 }
 
 export function ResourceLayout({ list, detail, listLabel, detailLabel, className }: ResourceLayoutProps) {
+  const { root, narrow } = useLayoutBudget<HTMLDivElement>(element => {
+    const rootRem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    const textSize = parseFloat(getComputedStyle(element).fontSize) || rootRem;
+    return Math.max(rootRem * 64, textSize * 64);
+  });
   return (
-    <div className={cn('resource-layout-grid min-w-0 max-w-full gap-4 overflow-hidden', className)}>
+    <div ref={root} data-narrow={narrow} className={cn('resource-layout-grid min-w-0 max-w-full gap-4 overflow-hidden', className)}>
       <section aria-label={listLabel} className="min-w-0 overflow-hidden">{list}</section>
       {detail ? <section aria-label={detailLabel} className="min-w-0 overflow-hidden">{detail}</section> : null}
     </div>
@@ -285,7 +291,7 @@ export function ResourceCard({ children, title, description, status, actions, on
       data-read-only={readOnly || undefined}
       onClick={interactive ? onSelect : undefined}
       onKeyDown={handleKeyDown}
-      className={cn('min-w-0 overflow-hidden', interactive && 'cursor-pointer transition-colors hover:border-accent-default focus-visible:border-accent-default focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus', disabled && 'opacity-disabled', className)}
+      className={cn('min-w-0 overflow-hidden', interactive && 'ui-focus-field cursor-pointer transition-colors hover:border-accent-default focus-visible:border-border-focus', disabled && 'opacity-disabled', className)}
     >
       {title || status || actions ? (
         <Card.Header className="resource-card-header grid min-w-0 items-start gap-2 border-0 px-3 py-2">

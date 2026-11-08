@@ -34,11 +34,11 @@ pub(super) const MAIN: &str = "main";
 /// A second connection to the smoke database, for fault injection and read-back (never the host's own handle).
 pub(super) struct UiProbe(pub(super) DatabaseConnection);
 
-/// Matrix runs ~120 page loads; the shared 240 s watchdog is too short for it.
-const UI_WATCHDOG: Duration = Duration::from_secs(1500);
+/// The full theme x ten-scale route matrix needs a longer watchdog than focused smoke scenarios.
+const UI_WATCHDOG: Duration = Duration::from_secs(3600);
 
 const THEMES: [&str; 3] = ["light", "dark", "auto"];
-const DENSITIES: [u32; 5] = [75, 100, 125, 150, 175];
+const DENSITIES: [u32; 10] = [60, 70, 80, 90, 100, 110, 120, 130, 140, 150];
 const ROUTES: [&str; 14] = [
     "/",
     "/providers",

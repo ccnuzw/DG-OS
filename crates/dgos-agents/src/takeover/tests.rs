@@ -2,7 +2,7 @@
 use super::*;
 use crate::{Engine, SessionOptions, files::SaveFileInput, projects::{CreateProjectInput, SaveTaskInput}};
 use dgos_db::development_repository::StoredWorkspace;
-use std::{os::unix::fs::PermissionsExt, path::{Path, PathBuf}};
+use std::path::{Path, PathBuf};
 
 fn git(path: &Path, args: &[&str]) {
     let output = std::process::Command::new("git").current_dir(path).args(args).output().unwrap();
@@ -14,15 +14,15 @@ impl Fixture {
         let root = std::env::temp_dir().join(format!("dgos-takeover-{}", uuid::Uuid::new_v4()));
         for name in ["original", "worktree", "other"] { std::fs::create_dir_all(root.join(name)).unwrap(); }
         let root = root.canonicalize().unwrap();
-        std::fs::write(root.join("codex"), r##"#!/bin/sh
+        crate::test_support::codex_fixture(&root.join("codex"), &r##"
 while IFS= read -r line; do
 case "$line" in
+CONFIG_REPLY
 *'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}';;
-*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '%s\n' '{"id":2,"result":{"thread":{"id":"fixture-thread","turns":[]}}}';;
+*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":3,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"fixture-thread","turns":[]}}}\n' "$PWD";;
 esac
 done
-"##).unwrap();
-        std::fs::set_permissions(root.join("codex"), std::fs::Permissions::from_mode(0o700)).unwrap();
+"##.replace("CONFIG_REPLY", crate::test_support::CODEX_CONFIG_REPLY)).await;
         let manager = crate::test_support::manager(&root).await;
         Self { root, manager }
     }
@@ -32,7 +32,9 @@ done
         ReadTakeoverInput { project_id: project.id, task_id: task.id }
     }
     async fn open(&self, owner: &str, scope: &ReadTakeoverInput, id: &str) {
-        self.manager.open(owner, Engine::Codex, id.into(), SessionOptions { workspace: self.root.to_string_lossy().into(), resume_id: None, executable: Some(self.root.join("codex").to_string_lossy().into()), model: None, trust_workspace: true }, Some(scope.task_id.clone()), CancellationToken::new()).await.unwrap();
+        let options = SessionOptions { workspace: self.root.to_string_lossy().into(), resume_id: None, executable: Some(self.root.join("codex").to_string_lossy().into()), model: None, trust_workspace: true };
+        let create = crate::test_support::create(&self.manager, owner, &scope.task_id, options).await;
+        self.manager.open_session(owner, Engine::Codex, id.into(), create, Some(scope.task_id.clone()), CancellationToken::new()).await.unwrap();
     }
     async fn view(&self, owner: &str, scope: &ReadTakeoverInput) -> TakeoverView {
         self.manager.read_development_takeover(owner, scope.clone(), CancellationToken::new()).await.unwrap()
@@ -98,10 +100,11 @@ async fn revoked_epoch_reopened_generation_and_replaced_directory_reject_old_con
     let f = Fixture::new().await; let scope = f.task("alice", "original").await;
     let id = uuid::Uuid::new_v4().to_string(); f.open("alice", &scope, &id).await;
     let view = f.view("alice", &scope).await;
-    f.manager.inner.repository.revoke_project_capabilities("alice", &scope.project_id).await.unwrap();
+    f.manager.inner.providers.revoke("alice", &scope.project_id).await.unwrap();
     assert_eq!(f.close("alice", &scope, view.token).await.unwrap_err(), "takeover_stale");
     let view = f.view("alice", &scope).await;
     assert!(f.manager.close_session("alice", &id).await.unwrap());
+    let id = uuid::Uuid::new_v4().to_string();
     f.open("alice", &scope, &id).await;
     assert_eq!(f.close("alice", &scope, view.token).await.unwrap_err(), "takeover_stale");
     let view = f.view("alice", &scope).await;

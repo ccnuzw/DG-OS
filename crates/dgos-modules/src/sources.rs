@@ -1,11 +1,9 @@
 //! Controlled local module sources (D034).
 //!
-//! A lifecycle operation never receives a path or URL from the renderer. The
-//! only update source is a directory named exactly like the module id inside
-//! a host-owned root; the id must pass the publisher's id check, the entry
-//! must be a real directory (not a symlink) and must still resolve inside the
-//! root. The publisher then re-validates manifest, entry, symlinks and digest
-//! when the package is staged.
+//! Lifecycle commands receive only a module id. Non-official sources resolve
+//! inside a host-owned local root; official sources require the entire shipped
+//! bundle to match compiled pins. Staging rechecks copied identity and digest,
+//! so neither renderer paths nor local replacements authorize official code.
 
 use crate::valid_module_id;
 use std::{
@@ -13,6 +11,54 @@ use std::{
     path::{Path, PathBuf},
 };
 use thiserror::Error;
+
+/// Host-only bundled update source. Production pins cannot be supplied by a renderer.
+#[derive(Clone, Debug)]
+pub struct BuiltinModuleSources {
+    root: PathBuf,
+    pins: Vec<(String, String, String)>,
+    bundle_pins: Vec<(String, String, String)>,
+}
+
+impl BuiltinModuleSources {
+    /// Assemble from the host's shipped resource directory, never renderer input.
+    /// Validation failure must leave official updates unavailable; no local fallback.
+    pub fn new(root: impl Into<PathBuf>) -> Result<Self, ModuleSourceError> {
+        Self::verified(root.into(), crate::admission::BUILTIN_PINS, &crate::release_gate::builtin_bundle_pins())
+    }
+
+    pub fn is_builtin(module_id: &str) -> bool {
+        crate::admission::BUILTIN_PINS.iter().any(|(id,_,_)|*id==module_id)
+    }
+
+    fn verified(root: PathBuf, pins: &[crate::ReleasePin<'_>], bundle_pins: &[crate::ReleasePin<'_>]) -> Result<Self, ModuleSourceError> {
+        let mut ids = std::collections::HashSet::new();
+        if pins.iter().any(|(id, _, _)| !ids.insert(id.to_ascii_lowercase())) { return Err(ModuleSourceError::Rejected); }
+        if !crate::verify_release_bundle(bundle_pins, &root).is_empty() { return Err(ModuleSourceError::Rejected); }
+        let owned = |pins: &[crate::ReleasePin<'_>]| pins.iter().map(|(id, version, digest)| (id.to_string(), version.to_string(), digest.to_string())).collect();
+        Ok(Self { root, pins: owned(pins), bundle_pins: owned(bundle_pins) })
+    }
+
+    pub fn contains(&self, module_id: &str) -> bool {
+        self.pins.iter().any(|(id,_,_)|id==module_id)
+    }
+
+    pub(crate) fn resolve(&self, module_id: &str) -> Result<(PathBuf, &str, &str), ModuleSourceError> {
+        if !valid_module_id(module_id) { return Err(ModuleSourceError::InvalidModuleId); }
+        let pins: Vec<_> = self.bundle_pins.iter().map(|(id,version,digest)|(id.as_str(),version.as_str(),digest.as_str())).collect();
+        // Recheck the complete bundle for each explicit update, not only at startup.
+        if !crate::verify_release_bundle(&pins,&self.root).is_empty() { return Err(ModuleSourceError::Rejected); }
+        let mut matches=self.pins.iter().filter(|(id,_,_)|id==module_id);
+        let (_,version,digest)=matches.next().ok_or(ModuleSourceError::NotFound)?;
+        if matches.next().is_some() { return Err(ModuleSourceError::Rejected); }
+        Ok((self.root.join(module_id).join(version),version,digest))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(root: PathBuf, pins: &[crate::ReleasePin<'_>]) -> Result<Self, ModuleSourceError> {
+        Self::verified(root, pins, pins)
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum ModuleSourceError {

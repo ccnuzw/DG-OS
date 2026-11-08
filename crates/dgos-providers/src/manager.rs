@@ -1,3 +1,11 @@
+#[path = "mutations.rs"]
+mod mutations;
+#[path = "cli_bindings.rs"]
+mod cli_bindings;
+pub use cli_bindings::{
+    CliProviderBinding, CliProviderBindingGate, CliProviderChange, CliProviderChangeKind,
+    CliProviderChangeSink, CliProviderLease,
+};
 #[path = "cli_launch.rs"]
 mod cli_launch;
 pub use cli_launch::{CliProviderLaunch, CliProviderLaunchMetadata, CliProviderProtocol};
@@ -13,6 +21,7 @@ use dgos_types::{
 };
 use futures::StreamExt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -31,6 +40,9 @@ use dgos_db::repositories::provider_repository::CredentialCleanup;
 
 /// Provider manager - main entry point for provider operations
 /// Clones share the database pool, vault, HTTP client, credential pointer lock and maintenance gate.
+#[cfg(test)]
+pub struct ProviderCredentialLockFixture(tokio::sync::OwnedMutexGuard<()>);
+
 pub struct ProviderManager {
     // Retained so cloned repositories use the same database connection pool.
     db: DatabaseConnection,
@@ -41,6 +53,9 @@ pub struct ProviderManager {
     // Serialize credential pointer changes and their outbox cleanup. Network
     // calls release this lock after obtaining their immutable adapter snapshot.
     credentials_lock: Arc<Mutex<()>>,
+    // Process leases and mutation commits share credentials_lock as their final spawn gate.
+    cli_bindings: Arc<CliProviderBindingGate>,
+    mutations: Arc<mutations::ProviderMutations>,
     /// Built once and cloned into every adapter (clones share one connection pool). Building a
     /// client per call stalled for about 3 s on macOS, outside every timeout and while
     /// `credentials_lock` was held. Built with the default connect timeout, which is the only
@@ -62,6 +77,8 @@ impl Clone for ProviderManager {
             usage_log_repo: UsageLogRepository::new(self.db.clone()),
             vault: self.vault.clone(),
             credentials_lock: self.credentials_lock.clone(),
+            cli_bindings: self.cli_bindings.clone(),
+            mutations: self.mutations.clone(),
             http: self.http.clone(),
             direct_http: self.direct_http.clone(),
             gate: self.gate.clone(),
@@ -94,10 +111,17 @@ impl ProviderManager {
             usage_log_repo,
             vault,
             credentials_lock: Arc::new(Mutex::new(())),
+            cli_bindings: Arc::new(CliProviderBindingGate::default()),
+            mutations: Arc::new(mutations::ProviderMutations::default()),
             http: crate::transport::http_client(AdapterOptions::default().connect_timeout),
             direct_http: crate::transport::direct_http_client(AdapterOptions::default().connect_timeout),
             gate: MaintenanceGate::new(),
         })
+    }
+
+    #[cfg(test)]
+    pub async fn hold_credentials_lock_for_test(&self) -> ProviderCredentialLockFixture {
+        ProviderCredentialLockFixture(self.credentials_lock.clone().lock_owned().await)
     }
 
     /// Production wiring passes the process-wide gate that VACUUM uses. Without it, the manager owns a private gate.
@@ -167,7 +191,15 @@ impl ProviderManager {
 
     /// Adds a `source = manual` model. Idempotent per `(provider, model_id)`; `kind` defaults to
     /// the classification rules and is accepted only in its canonical spelling.
-    pub async fn add_manual_model(
+    pub async fn add_manual_model(&self, provider_id: &str, user_id: &str, model_id: &str,
+        kind: Option<&str>) -> DgosResult<Model> {
+        let (provider_id, user_id, model_id, kind) = (provider_id.to_owned(), user_id.to_owned(), model_id.to_owned(), kind.map(str::to_owned));
+        self.own_mutation(move |manager| async move {
+            manager.add_manual_model_owned(&provider_id, &user_id, &model_id, kind.as_deref()).await
+        }).await
+    }
+
+    async fn add_manual_model_owned(
         &self,
         provider_id: &str,
         user_id: &str,
@@ -182,6 +214,7 @@ impl ProviderManager {
             Some(kind) => Some(ModelKind::parse(kind).ok_or(DgosError::RequestNotSupported)?),
             None => None,
         };
+        let guard = self.credentials_lock.lock().await;
         let provider = self.owned_provider(provider_id, user_id).await?;
         let model = build_model(
             &provider.provider_type,
@@ -190,21 +223,34 @@ impl ProviderManager {
             ModelSource::Manual,
             kind,
         );
-        self.provider_repo
-            .add_manual_model(provider_id, user_id, model)
-            .await
+        let result = self.provider_repo.add_manual_model(provider_id, user_id, model).await;
+        let delivery = self.cli_mutation_outcome(&provider, &result, CliProviderChangeKind::MetadataChanged).await;
+        drop(guard);
+        if let Some(delivery) = delivery { delivery.deliver(); }
+        result
     }
 
     /// Removes a `source = manual` model; a missing or remote one is a successful no-op.
-    pub async fn remove_manual_model(
+    pub async fn remove_manual_model(&self, provider_id: &str, user_id: &str, model_id: &str) -> DgosResult<()> {
+        let (provider_id, user_id, model_id) = (provider_id.to_owned(), user_id.to_owned(), model_id.to_owned());
+        self.own_mutation(move |manager| async move {
+            manager.remove_manual_model_owned(&provider_id, &user_id, &model_id).await
+        }).await
+    }
+
+    async fn remove_manual_model_owned(
         &self,
         provider_id: &str,
         user_id: &str,
         model_id: &str,
     ) -> DgosResult<()> {
-        self.provider_repo
-            .remove_manual_model(provider_id, user_id, model_id.trim())
-            .await
+        let guard = self.credentials_lock.lock().await;
+        let provider = self.owned_provider(provider_id, user_id).await?;
+        let result = self.provider_repo.remove_manual_model(provider_id, user_id, model_id.trim()).await;
+        let delivery = self.cli_model_mutation_outcome(&provider, &result).await;
+        drop(guard);
+        if let Some(delivery) = delivery { delivery.deliver(); }
+        result
     }
 
     /// Get a provider by ID
@@ -218,14 +264,21 @@ impl ProviderManager {
     }
 
     /// Update a provider
-    pub async fn update_provider(
+    pub async fn update_provider(&self, id: &str, config: ProviderConfig, user_id: &str) -> DgosResult<Provider> {
+        let (id, user_id) = (id.to_owned(), user_id.to_owned());
+        self.own_mutation(move |manager| async move {
+            manager.update_provider_owned(&id, config, &user_id).await
+        }).await
+    }
+
+    async fn update_provider_owned(
         &self,
         id: &str,
         config: ProviderConfig,
         user_id: &str,
     ) -> DgosResult<Provider> {
         info!("Updating provider: {}", id);
-        let _guard = self.credentials_lock.lock().await;
+        let guard = self.credentials_lock.lock().await;
         let current = self.owned_provider(id, user_id).await?;
         let mut config = config;
         prepare_config(&mut config)?;
@@ -234,38 +287,56 @@ impl ProviderManager {
         if config.base_url == current.base_url.trim_end_matches('/') {
             config.base_url = current.base_url.clone();
         }
-        if config.api_key.is_empty() {
-            if config.base_url != current.base_url || config.provider_type != current.provider_type
-            {
+        let kind = if !config.api_key.is_empty() || cli_launch::execution_settings_changed(&current, &config)
+            || (current.enabled && !config.enabled)
+        { CliProviderChangeKind::ExecutionInvalidated } else { CliProviderChangeKind::MetadataChanged };
+        let result = if config.api_key.is_empty() {
+            if config.base_url != current.base_url || config.provider_type != current.provider_type {
                 return Err(DgosError::CredentialRequired);
             }
-            let result = self.provider_repo.update(id, config, user_id).await;
-            self.cleanup_unlocked().await;
-            return result;
-        }
-        let scope = scope_for(user_id, id, &config.base_url, new_credential_ref());
-        self.store_verified(&scope, std::mem::take(&mut config.api_key))
-            .await?;
-        let result = self
-            .provider_repo
-            .update_with_credential_ref(id, config, user_id, Some(scope.credential_ref))
-            .await;
-        self.cleanup_unlocked().await;
+            self.provider_repo.update(id, config, user_id).await
+        } else {
+            let scope = scope_for(user_id, id, &config.base_url, new_credential_ref());
+            self.store_verified(&scope, std::mem::take(&mut config.api_key)).await?;
+            self.provider_repo.update_with_credential_ref(id, config, user_id, Some(scope.credential_ref)).await
+        };
+        let delivery = self.cli_mutation_outcome(&current, &result, kind).await;
+        drop(guard);
+        if let Some(delivery) = delivery { delivery.deliver(); }
+        let _ = self.drain_credential_cleanup().await;
         result
     }
 
     /// Delete a provider
     pub async fn delete_provider(&self, id: &str, user_id: &str) -> DgosResult<()> {
+        let (id, user_id) = (id.to_owned(), user_id.to_owned());
+        self.own_mutation(move |manager| async move {
+            manager.delete_provider_owned(&id, &user_id).await
+        }).await
+    }
+
+    async fn delete_provider_owned(&self, id: &str, user_id: &str) -> DgosResult<()> {
         info!("Deleting provider: {}", id);
 
-        let _guard = self.credentials_lock.lock().await;
-        self.provider_repo.delete(id, user_id).await?;
-        self.cleanup_unlocked().await;
-        Ok(())
+        let guard = self.credentials_lock.lock().await;
+        let current = self.owned_provider(id, user_id).await?;
+        let result = self.provider_repo.delete(id, user_id).await;
+        let delivery = self.cli_mutation_outcome(&current, &result, CliProviderChangeKind::ExecutionInvalidated).await;
+        drop(guard);
+        if let Some(delivery) = delivery { delivery.deliver(); }
+        let _ = self.drain_credential_cleanup().await;
+        result
     }
 
     /// Update provider sort order
-    pub async fn update_provider_order(
+    pub async fn update_provider_order(&self, provider_ids: Vec<String>, user_id: &str) -> DgosResult<()> {
+        let user_id = user_id.to_owned();
+        self.own_mutation(move |manager| async move {
+            manager.update_provider_order_owned(provider_ids, &user_id).await
+        }).await
+    }
+
+    async fn update_provider_order_owned(
         &self,
         provider_ids: Vec<String>,
         user_id: &str,
@@ -274,16 +345,27 @@ impl ProviderManager {
     }
 
     /// Toggle provider enabled status
-    pub async fn toggle_provider(
+    pub async fn toggle_provider(&self, id: &str, enabled: bool, user_id: &str) -> DgosResult<Provider> {
+        let (id, user_id) = (id.to_owned(), user_id.to_owned());
+        self.own_mutation(move |manager| async move {
+            manager.toggle_provider_owned(&id, enabled, &user_id).await
+        }).await
+    }
+
+    async fn toggle_provider_owned(
         &self,
         id: &str,
         enabled: bool,
         user_id: &str,
     ) -> DgosResult<Provider> {
-        let _guard = self.credentials_lock.lock().await;
-        self.provider_repo
-            .toggle_enabled(id, enabled, user_id)
-            .await
+        let guard = self.credentials_lock.lock().await;
+        let current = self.owned_provider(id, user_id).await?;
+        let result = self.provider_repo.toggle_enabled(id, enabled, user_id).await;
+        let kind = if enabled { CliProviderChangeKind::MetadataChanged } else { CliProviderChangeKind::ExecutionInvalidated };
+        let delivery = self.cli_mutation_outcome(&current, &result, kind).await;
+        drop(guard);
+        if let Some(delivery) = delivery { delivery.deliver(); }
+        result
     }
 
     /// Test provider connection. `probe_model` is used only when the service has no model list
@@ -315,6 +397,13 @@ impl ProviderManager {
 
     /// Refresh models from provider API
     pub async fn refresh_models(&self, provider_id: &str, user_id: &str) -> DgosResult<Vec<Model>> {
+        let (provider_id, user_id) = (provider_id.to_owned(), user_id.to_owned());
+        self.own_mutation(move |manager| async move {
+            manager.refresh_models_owned(&provider_id, &user_id).await
+        }).await
+    }
+
+    async fn refresh_models_owned(&self, provider_id: &str, user_id: &str) -> DgosResult<Vec<Model>> {
         info!("Refreshing models for provider: {}", provider_id);
         let (ticket, adapter) = {
             let _guard = self.credentials_lock.lock().await;
@@ -326,9 +415,12 @@ impl ProviderManager {
             (ticket, adapter)
         };
         let models = adapter.list_models().await?;
-        self.provider_repo
-            .publish_model_refresh(&ticket, models)
-            .await
+        let guard = self.credentials_lock.lock().await;
+        let result = self.provider_repo.publish_model_refresh(&ticket, models).await;
+        let delivery = self.cli_model_mutation_outcome(&ticket.provider, &result).await;
+        drop(guard);
+        if let Some(delivery) = delivery { delivery.deliver(); }
+        result
     }
 
     /// Call a provider (synchronous)
@@ -459,6 +551,57 @@ impl ProviderManager {
         result.map_err(|(error, _)| error)
     }
 
+    /// Cancellation-aware model call. The dispatch flag changes only after credential
+    /// resolution and immediately before entering the adapter; cancellation after that
+    /// boundary records usage as unknown if the adapter future is dropped.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn call_provider_bound_cancellable_with_provenance(
+        &self, provider_id: &str, model_id: &str, mut request: ChatRequest, user_id: &str,
+        expected_revision: Option<i64>, provenance: Option<&ExecutionProvenance>,
+        cancellation: CancellationToken, deadline: tokio::time::Instant, dispatched: Arc<AtomicBool>,
+    ) -> DgosResult<ChatResponse> {
+        let started = Instant::now();
+        let _permit = self.gate.admit().map_err(|_| DgosError::ProviderRequestRejected)?;
+        let prepare = async {
+            let provider = self.provider_repo.get(provider_id, user_id).await?
+                .ok_or_else(|| DgosError::ProviderNotFound(provider_id.to_owned()))?;
+            if !provider.enabled { return Err(DgosError::ProviderUnavailable("Provider is disabled".into())); }
+            let adapter = self.adapter_for_saved(&provider, true, expected_revision).await?;
+            self.fill_max_tokens(adapter.as_ref(), provider_id, model_id, &mut request).await;
+            Ok::<_, DgosError>(adapter)
+        };
+        let adapter = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err(DgosError::StreamInterrupted),
+            _ = tokio::time::sleep_until(deadline) => return Err(DgosError::Timeout),
+            result = prepare => result?,
+        };
+        if cancellation.is_cancelled() { return Err(DgosError::StreamInterrupted); }
+        if tokio::time::Instant::now() >= deadline { return Err(DgosError::Timeout); }
+        dispatched.store(true, Ordering::Release);
+        let mut audit = UnknownCallAudit::new(&self.db, provider_id, model_id, user_id, provenance, started);
+        let response = tokio::select! {
+            biased;
+            response = adapter.call_with_usage(model_id, request) => response.map_err(|failure| (failure.error, failure.usage)),
+            _ = cancellation.cancelled() => return Err(DgosError::StreamInterrupted),
+            _ = tokio::time::sleep_until(deadline) => return Err(DgosError::Timeout),
+        };
+        let elapsed = started.elapsed().as_millis() as u32;
+        let mut response = response;
+        let (prompt, completion, success, error_code) = match &response {
+            Ok(response) => (response.usage.prompt_tokens, response.usage.completion_tokens, true, None),
+            Err((error, usage)) => { let (p, c) = usage.as_ref().map_or((0, 0), |u| (u.prompt_tokens, u.completion_tokens)); (p, c, false, Some(error.error_code().to_string())) }
+        };
+        let write = self.usage_log_repo.create_with_provenance(provider_id, model_id, user_id, prompt, completion,
+            prompt > 0 || completion > 0, elapsed, success, error_code, provenance).await;
+        audit.complete();
+        if let Err(error) = write {
+            warn!(provider_id, model_id, error = %error, "Provider usage audit write failed");
+            if let Ok(response) = &mut response { response.audit_warning = true; }
+        }
+        response.map_err(|(error, _)| error)
+    }
+
     /// Structured tool proposals are data; this method never executes a tool.
     pub async fn call_provider_tools(
         &self,
@@ -541,6 +684,50 @@ impl ProviderManager {
             if let Ok(response) = &mut result {
                 response.audit_warning = true;
             }
+        }
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn call_provider_tools_bound_cancellable_with_provenance(
+        &self, provider_id: &str, model_id: &str, request: ToolChatRequest, user_id: &str,
+        expected_revision: Option<i64>, provenance: Option<&ExecutionProvenance>, cancellation: CancellationToken,
+        deadline: tokio::time::Instant, dispatched: Arc<AtomicBool>,
+    ) -> DgosResult<ToolChatResponse> {
+        let started = Instant::now();
+        let _permit = self.gate.admit().map_err(|_| DgosError::ProviderRequestRejected)?;
+        let prepare = async {
+            let provider = self.provider_repo.get(provider_id, user_id).await?
+                .filter(|p| p.enabled && p.user_id == user_id)
+                .ok_or_else(|| DgosError::ProviderUnavailable("Provider unavailable for this user".into()))?;
+            self.adapter_for_saved(&provider, true, expected_revision).await
+        };
+        let adapter = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err(DgosError::StreamInterrupted),
+            _ = tokio::time::sleep_until(deadline) => return Err(DgosError::Timeout),
+            result = prepare => result?,
+        };
+        if cancellation.is_cancelled() { return Err(DgosError::StreamInterrupted); }
+        if tokio::time::Instant::now() >= deadline { return Err(DgosError::Timeout); }
+        dispatched.store(true, Ordering::Release);
+        let mut audit = UnknownCallAudit::new(&self.db, provider_id, model_id, user_id, provenance, started);
+        let mut result = tokio::select! {
+            biased;
+            result = adapter.call_tools(model_id, request) => result,
+            _ = cancellation.cancelled() => return Err(DgosError::StreamInterrupted),
+            _ = tokio::time::sleep_until(deadline) => return Err(DgosError::Timeout),
+        };
+        let (input, output, error) = match &result {
+            Ok(response) => (response.usage.prompt_tokens, response.usage.completion_tokens, None),
+            Err(error) => (0, 0, Some(error.error_code().to_string())),
+        };
+        let write = self.usage_log_repo.create_with_provenance(provider_id, model_id, user_id, input, output, input > 0 || output > 0,
+            started.elapsed().as_millis() as u32, result.is_ok(), error, provenance).await;
+        audit.complete();
+        if let Err(error) = write {
+            warn!(provider_id, model_id, error = %error, "Provider tools response audit write failed");
+            if let Ok(response) = &mut result { response.audit_warning = true; }
         }
         result
     }
@@ -688,6 +875,48 @@ impl ProviderManager {
             .await?;
         let stream = cancellable_stream(stream, cancellation);
         Ok(Box::pin(stream))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn stream_provider_bound_cancellable_controlled_with_provenance(
+        &self, provider_id: &str, model_id: &str, mut request: ChatRequest, user_id: &str,
+        expected_revision: Option<i64>, provenance: Option<&ExecutionProvenance>, cancellation: CancellationToken,
+        deadline: tokio::time::Instant, dispatched: Arc<AtomicBool>,
+    ) -> DgosResult<crate::traits::BoxStream<crate::ChatChunk>> {
+        let permit = self.gate.admit().map_err(|_| DgosError::ProviderRequestRejected)?;
+        let prepare = async {
+            let provider = self.provider_repo.get(provider_id, user_id).await?
+                .ok_or_else(|| DgosError::ProviderNotFound(provider_id.to_owned()))?;
+            if !provider.enabled { return Err(DgosError::ProviderUnavailable("Provider is disabled".into())); }
+            let adapter = self.adapter_for_saved(&provider, true, expected_revision).await?;
+            self.fill_max_tokens(adapter.as_ref(), provider_id, model_id, &mut request).await;
+            Ok::<_, DgosError>(adapter)
+        };
+        let adapter = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err(DgosError::StreamInterrupted),
+            _ = tokio::time::sleep_until(deadline) => return Err(DgosError::Timeout),
+            result = prepare => result?,
+        };
+        if cancellation.is_cancelled() { return Err(DgosError::StreamInterrupted); }
+        if tokio::time::Instant::now() >= deadline { return Err(DgosError::Timeout); }
+        let started = Instant::now();
+        dispatched.store(true, Ordering::Release);
+        let mut audit = StreamAudit { db: self.db.clone(), provider_id: provider_id.into(), model_id: model_id.into(), user_id: user_id.into(),
+            provenance: provenance.cloned(), started, finished: false, permit: Some(permit) };
+        let opened = tokio::select! {
+            biased;
+            stream = adapter.stream(model_id, request) => stream,
+            _ = cancellation.cancelled() => return Err(DgosError::StreamInterrupted),
+            _ = tokio::time::sleep_until(deadline) => return Err(DgosError::Timeout),
+        };
+        match opened {
+            Ok(stream) => Ok(Box::pin(cancellable_stream(audited_stream(stream, audit), cancellation))),
+            Err(error) => {
+                audit.finish(StreamOutcome::Failed(error.error_code())).await;
+                Err(error)
+            }
+        }
     }
 
     /// List usage logs
@@ -849,12 +1078,19 @@ impl ProviderManager {
 
     /// Only explicit migration uses the legacy value as a credential; normal
     /// consumption authenticates from the vault. Failure leaves the row intact.
-    pub async fn migrate_provider_credential(
+    pub async fn migrate_provider_credential(&self, id: &str, user_id: &str) -> DgosResult<Provider> {
+        let (id, user_id) = (id.to_owned(), user_id.to_owned());
+        self.own_mutation(move |manager| async move {
+            manager.migrate_provider_credential_owned(&id, &user_id).await
+        }).await
+    }
+
+    async fn migrate_provider_credential_owned(
         &self,
         id: &str,
         user_id: &str,
     ) -> DgosResult<Provider> {
-        let _guard = self.credentials_lock.lock().await;
+        let guard = self.credentials_lock.lock().await;
         let provider = self.owned_provider(id, user_id).await?;
         if provider.credential_ref.is_some() {
             return Ok(provider);
@@ -870,7 +1106,10 @@ impl ProviderManager {
             .provider_repo
             .commit_credential_migration(&provider, &scope.credential_ref)
             .await;
-        self.cleanup_unlocked().await;
+        let delivery = self.cli_mutation_outcome(&provider, &result, CliProviderChangeKind::ExecutionInvalidated).await;
+        drop(guard);
+        if let Some(delivery) = delivery { delivery.deliver(); }
+        let _ = self.drain_credential_cleanup().await;
         result
     }
 
@@ -1014,6 +1253,37 @@ fn prepare_config(config: &mut ProviderConfig) -> DgosResult<()> {
     config.base_url = normalized.base_url;
     Ok(())
 }
+struct UnknownCallAudit {
+    db: DatabaseConnection,
+    provider_id: String,
+    model_id: String,
+    user_id: String,
+    provenance: Option<ExecutionProvenance>,
+    started: Instant,
+    complete: bool,
+}
+
+impl UnknownCallAudit {
+    fn new(db: &DatabaseConnection, provider_id: &str, model_id: &str, user_id: &str, provenance: Option<&ExecutionProvenance>, started: Instant) -> Self {
+        Self { db: db.clone(), provider_id: provider_id.into(), model_id: model_id.into(), user_id: user_id.into(), provenance: provenance.cloned(), started, complete: false }
+    }
+    fn complete(&mut self) { self.complete = true; }
+}
+
+impl Drop for UnknownCallAudit {
+    fn drop(&mut self) {
+        if self.complete { return; }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else { warn!("Provider call dropped outside a runtime; unknown usage audit skipped"); return; };
+        let (db, provider_id, model_id, user_id, provenance, started) = (self.db.clone(), self.provider_id.clone(), self.model_id.clone(), self.user_id.clone(), self.provenance.clone(), self.started);
+        runtime.spawn(async move {
+            if let Err(error) = UsageLogRepository::new(db).create_with_provenance(&provider_id, &model_id, &user_id, 0, 0, false,
+                started.elapsed().as_millis() as u32, false, Some(DgosError::StreamInterrupted.error_code().to_string()), provenance.as_ref()).await {
+                warn!(provider_id, model_id, error = %error, "Unknown provider usage audit write failed");
+            }
+        });
+    }
+}
+
 
 enum StreamOutcome {
     /// `usage` is `None` when the upstream ended the stream without reporting usage.
@@ -1031,7 +1301,7 @@ async fn write_stream_log(
     provenance: Option<&ExecutionProvenance>,
     started: Instant,
     outcome: StreamOutcome,
-) {
+ ) -> bool {
     // A stream that fails or is cancelled never has usage (D081): the upstream may already
     // have produced and billed output, so the zeros are recorded as unknown, not as free.
     let (prompt, completion, reported, error_code) = match outcome {
@@ -1041,22 +1311,18 @@ async fn write_stream_log(
         StreamOutcome::Done { usage: None } => (0, 0, false, None),
         StreamOutcome::Failed(code) => (0, 0, false, Some(code.to_string())),
     };
-    if let Err(error) = UsageLogRepository::new(db.clone())
+    match UsageLogRepository::new(db.clone())
         .create_with_provenance(
-            provider_id,
-            model_id,
-            user_id,
-            prompt,
-            completion,
-            reported,
-            started.elapsed().as_millis() as u32,
-            error_code.is_none(),
-            error_code,
-            provenance,
+            provider_id, model_id, user_id, prompt, completion, reported,
+            started.elapsed().as_millis() as u32, error_code.is_none(), error_code, provenance,
         )
         .await
     {
-        warn!(provider_id, model_id, error = %error, "Stream usage audit write failed");
+        Ok(_) => true,
+        Err(error) => {
+            warn!(provider_id, model_id, error = %error, "Stream usage audit write failed");
+            false
+        }
     }
 }
 
@@ -1075,20 +1341,9 @@ struct StreamAudit {
 }
 
 impl StreamAudit {
-    async fn finish(&mut self, outcome: StreamOutcome) {
-        if std::mem::replace(&mut self.finished, true) {
-            return;
-        }
-        write_stream_log(
-            &self.db,
-            &self.provider_id,
-            &self.model_id,
-            &self.user_id,
-            self.provenance.as_ref(),
-            self.started,
-            outcome,
-        )
-        .await;
+    async fn finish(&mut self, outcome: StreamOutcome) -> bool {
+        if std::mem::replace(&mut self.finished, true) { return true; }
+        write_stream_log(&self.db, &self.provider_id, &self.model_id, &self.user_id, self.provenance.as_ref(), self.started, outcome).await
     }
 }
 
@@ -1134,14 +1389,10 @@ fn audited_stream(
         (stream, audit),
         |(mut stream, mut audit)| async move {
             match stream.next().await {
-                Some(Ok(chunk)) => {
-                    // Only the terminal chunk carries a finish reason.
+                Some(Ok(mut chunk)) => {
                     if chunk.finish_reason.is_some() {
-                        let usage = chunk
-                            .usage
-                            .as_ref()
-                            .map(|usage| (usage.prompt_tokens, usage.completion_tokens));
-                        audit.finish(StreamOutcome::Done { usage }).await;
+                        let usage = chunk.usage.as_ref().map(|usage| (usage.prompt_tokens, usage.completion_tokens));
+                        chunk.audit_warning = !audit.finish(StreamOutcome::Done { usage }).await;
                     }
                     Some((Ok(chunk), (stream, audit)))
                 }

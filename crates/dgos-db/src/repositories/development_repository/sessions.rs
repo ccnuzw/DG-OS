@@ -61,10 +61,10 @@ impl DevelopmentRepository {
         if session.project_id.is_some() != session.task_id.is_some() { return Err("invalid_selection".into()); }
         let changed = execute(
             &self.db,
-            "INSERT INTO development_agent_sessions(id,owner,engine,native_id,workspace,executable,model,project_id,task_id) VALUES(?,?,?,?,?,?,?,?,?) \
-             ON CONFLICT(id) DO UPDATE SET native_id=excluded.native_id,workspace=excluded.workspace,executable=excluded.executable,\
-             model=excluded.model,project_id=excluded.project_id,task_id=excluded.task_id \
-             WHERE development_agent_sessions.owner=excluded.owner AND development_agent_sessions.engine=excluded.engine \
+            "INSERT INTO development_agent_sessions(id,owner,engine,native_id,workspace,executable,model,project_id,task_id) VALUES(?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET native_id=excluded.native_id,workspace=excluded.workspace,executable=excluded.executable,
+             model=excluded.model,project_id=excluded.project_id,task_id=excluded.task_id
+             WHERE development_agent_sessions.owner=excluded.owner AND development_agent_sessions.engine=excluded.engine
              AND development_agent_sessions.project_id IS excluded.project_id AND development_agent_sessions.task_id IS excluded.task_id",
             session_values(session),
         ).await?;

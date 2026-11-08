@@ -179,6 +179,7 @@
   font-family: var(--font-family-code);
   font-size: max(var(--font-size-min), var(--font-size-code));
   line-height: var(--line-height-code);
+  font-variant-ligatures: none;
   color: var(--text-code);
   background-color: var(--surface-code);
 }
@@ -200,9 +201,22 @@ html[data-sidebar-treatment="soft"] .bg-surface-rail {
     font-family: var(--font-family-code);
     font-size: max(var(--font-size-min), var(--font-size-code));
     line-height: var(--line-height-code);
+    font-variant-ligatures: none;
   }
-  /* Nominal geometry may shrink with density; one current text line plus two border pixels must fit. */
+  /* Geometry follows layout scale; text controls retain a usable target and one independent text line. */
   .control-text-fit {
-    min-height: calc(1lh + 2px);
+    min-height: max(24px, calc(1lh + 2px));
+    min-width: 24px;
+  }
+  /* Preserve nominal icon geometry while keeping small boolean controls and slider thumbs clickable. */
+  .control-hit-target { position: relative; }
+  .control-hit-target::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 24px);
+    height: max(100%, 24px);
+    transform: translate(-50%, -50%);
   }
 }

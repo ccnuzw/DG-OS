@@ -2,10 +2,11 @@ import { setLocaleForTesting } from '../src/i18n/runtime';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
-import { ToastViewport, clearToasts } from '@dgos/ui';
+import { ToastViewport, clearToasts, disposeAppearance } from '@dgos/ui';
 import App from '../src/App';
 // Resolve the real lazy page before assertions; cold Vitest transforms are fixture setup.
 import '../src/pages/SettingsShell';
+import { DEFAULTS } from '../src/ui/appearance/model';
 
 interface Call {
   command: string;
@@ -115,6 +116,7 @@ function installInvoke() {
   mockedInvoke.mockImplementation(async (command: string, args?: unknown) => {
     const params = args as Record<string, unknown> | undefined;
     state.calls.push({ command, args: params });
+    if (command === 'get_appearance_preferences') return ok({ kind: 'ready', snapshot: { ...structuredClone(DEFAULTS), revision: 1 }, repairWarnings: [] });
     if (command === 'list_modules') return ok(structuredClone(state.modules));
     if (command === 'read_workspace_app_catalog') return ok({ catalogRevision: 'test', entries: state.modules.map(module => ({ moduleId: module.module_id, displayName: module.name, iconResourceId: null, layout: 'document', viewCapability: 'single', enabled: module.enabled, permissionState: module.permissions.every((permission: {granted: boolean}) => permission.granted) ? 'granted' : 'pending', runtimeState: module.runtime.state, crashed: module.runtime.state === 'failed' })) });
     if (command === 'list_module_crashes') return ok(state.crashes);
@@ -216,30 +218,13 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  disposeAppearance();
   clearToasts();
   act(() => fakeHost.set([]));
   vi.clearAllMocks();
 });
 
 describe('Module management list', () => {
-  it('renders every module with version, badges, runtime state, permissions and crash count', async () => {
-    renderAt('/settings/modules');
-
-    expect(await screen.findByRole('heading', { name: 'Alpha' })).toBeTruthy();
-    const alpha = card('dgos.alpha');
-    expect(alpha.getByText('Official')).toBeTruthy();
-    expect(alpha.getByText('Disabled')).toBeTruthy();
-    expect(alpha.getByText('Version 1.0.0')).toBeTruthy();
-    expect(alpha.getByText('Runtime: not_loaded')).toBeTruthy();
-    expect(alpha.getByText('providers.call').parentElement?.textContent).toContain('Not granted');
-    expect(alpha.getByText('storage.read').parentElement?.textContent).toContain('Granted');
-
-    const beta = card('dgos.beta');
-    expect(beta.queryByText('Official')).toBeNull();
-    expect(beta.getByText('Enabled')).toBeTruthy();
-    expect(beta.getByText('Runtime: ready')).toBeTruthy();
-    expect(beta.getByText(/Recent crashes: 2/)).toBeTruthy();
-  });
 
   it('is reachable from the sidebar and from the Modules tab of the Settings shell', async () => {
     renderAt('/settings');

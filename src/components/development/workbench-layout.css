@@ -1,34 +1,34 @@
-/* Discrete percentage sizes keep user geometry in classes; no runtime theme/style writer. */
-.dev-layout-agent-26 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 74fr) .5rem minmax(18rem, 26fr); }
-.dev-layout-agent-27 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 73fr) .5rem minmax(18rem, 27fr); }
-.dev-layout-agent-28 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 72fr) .5rem minmax(18rem, 28fr); }
-.dev-layout-agent-29 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 71fr) .5rem minmax(18rem, 29fr); }
-.dev-layout-agent-30 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 70fr) .5rem minmax(18rem, 30fr); }
-.dev-layout-agent-31 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 69fr) .5rem minmax(18rem, 31fr); }
-.dev-layout-agent-32 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 68fr) .5rem minmax(18rem, 32fr); }
-.dev-layout-agent-33 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 67fr) .5rem minmax(18rem, 33fr); }
-.dev-layout-agent-34 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 66fr) .5rem minmax(18rem, 34fr); }
-.dev-layout-agent-35 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 65fr) .5rem minmax(18rem, 35fr); }
-.dev-layout-agent-36 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 64fr) .5rem minmax(18rem, 36fr); }
-.dev-layout-agent-37 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 63fr) .5rem minmax(18rem, 37fr); }
-.dev-layout-agent-38 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 62fr) .5rem minmax(18rem, 38fr); }
-.dev-layout-agent-39 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 61fr) .5rem minmax(18rem, 39fr); }
-.dev-layout-agent-40 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 60fr) .5rem minmax(18rem, 40fr); }
-.dev-layout-agent-41 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 59fr) .5rem minmax(18rem, 41fr); }
-.dev-layout-agent-42 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 58fr) .5rem minmax(18rem, 42fr); }
-.dev-layout-agent-43 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 57fr) .5rem minmax(18rem, 43fr); }
-.dev-layout-agent-44 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 56fr) .5rem minmax(18rem, 44fr); }
-.dev-layout-agent-45 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 55fr) .5rem minmax(18rem, 45fr); }
-.dev-layout-agent-46 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 54fr) .5rem minmax(18rem, 46fr); }
-.dev-layout-agent-47 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 53fr) .5rem minmax(18rem, 47fr); }
-.dev-layout-agent-48 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 52fr) .5rem minmax(18rem, 48fr); }
-.dev-layout-agent-49 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 51fr) .5rem minmax(18rem, 49fr); }
-.dev-layout-agent-50 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 50fr) .5rem minmax(18rem, 50fr); }
-.dev-layout-agent-51 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 49fr) .5rem minmax(18rem, 51fr); }
-.dev-layout-agent-52 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 48fr) .5rem minmax(18rem, 52fr); }
-.dev-layout-agent-53 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 47fr) .5rem minmax(18rem, 53fr); }
-.dev-layout-agent-54 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 46fr) .5rem minmax(18rem, 54fr); }
-.dev-layout-agent-55 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(0, 45fr) .5rem minmax(18rem, 55fr); }
+/* Saved percentages are preferences; minimum text and geometry tracks may constrain the rendered split. */
+.dev-layout-agent-26 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 74fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 26fr); }
+.dev-layout-agent-27 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 73fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 27fr); }
+.dev-layout-agent-28 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 72fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 28fr); }
+.dev-layout-agent-29 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 71fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 29fr); }
+.dev-layout-agent-30 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 70fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 30fr); }
+.dev-layout-agent-31 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 69fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 31fr); }
+.dev-layout-agent-32 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 68fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 32fr); }
+.dev-layout-agent-33 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 67fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 33fr); }
+.dev-layout-agent-34 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 66fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 34fr); }
+.dev-layout-agent-35 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 65fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 35fr); }
+.dev-layout-agent-36 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 64fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 36fr); }
+.dev-layout-agent-37 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 63fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 37fr); }
+.dev-layout-agent-38 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 62fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 38fr); }
+.dev-layout-agent-39 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 61fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 39fr); }
+.dev-layout-agent-40 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 60fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 40fr); }
+.dev-layout-agent-41 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 59fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 41fr); }
+.dev-layout-agent-42 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 58fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 42fr); }
+.dev-layout-agent-43 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 57fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 43fr); }
+.dev-layout-agent-44 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 56fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 44fr); }
+.dev-layout-agent-45 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 55fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 45fr); }
+.dev-layout-agent-46 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 54fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 46fr); }
+.dev-layout-agent-47 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 53fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 47fr); }
+.dev-layout-agent-48 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 52fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 48fr); }
+.dev-layout-agent-49 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 51fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 49fr); }
+.dev-layout-agent-50 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 50fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 50fr); }
+.dev-layout-agent-51 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 49fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 51fr); }
+.dev-layout-agent-52 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 48fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 52fr); }
+.dev-layout-agent-53 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 47fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 53fr); }
+.dev-layout-agent-54 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 46fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 54fr); }
+.dev-layout-agent-55 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 45fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 55fr); }
 .dev-layout-runtime-22 .dev-bottom-runtime { flex-basis: 22%; }
 .dev-layout-runtime-23 .dev-bottom-runtime { flex-basis: 23%; }
 .dev-layout-runtime-24 .dev-bottom-runtime { flex-basis: 24%; }
@@ -73,8 +73,8 @@
 .dev-layout-runtime-63 .dev-bottom-runtime { flex-basis: 63%; }
 .dev-layout-runtime-64 .dev-bottom-runtime { flex-basis: 64%; }
 .dev-layout-runtime-65 .dev-bottom-runtime { flex-basis: 65%; }
-.dev-workspace-body { position: relative; grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr); }
-.dev-workspace-header { gap: var(--spacing-2); padding: var(--spacing-2) var(--spacing-3); }
+.dev-workspace-body { position: relative; grid-template-columns: max(16rem, calc(16 * var(--font-size-ui))) minmax(0, 1fr); }
+.dev-workspace-header { flex-wrap: wrap; gap: var(--spacing-2); padding: var(--spacing-2) var(--spacing-3); }
 .dev-context-status { display: flex; flex-wrap: wrap; gap: var(--spacing-1) var(--spacing-3); color: var(--text-secondary); font-size: var(--font-size-xs); }
 .dev-context-status > span { overflow-wrap: anywhere; }
 .dev-context-details { position: relative; flex-shrink: 0; font-size: var(--font-size-xs); }
@@ -88,10 +88,11 @@
 .dev-task-launch-panel > button { align-self: end; }
 .dev-task-launch-panel .dev-editor { min-height: 8rem; }
 .dev-collaboration { display: grid; flex: 1; min-height: 0; min-width: 0; grid-template-columns: minmax(0, 1fr); }
-.dev-tools-pane { min-height: 0; overflow: hidden; padding: var(--spacing-2) var(--spacing-3); }
-.dev-tools-pane .dev-file-layout { grid-template-columns: minmax(7rem, .3fr) minmax(0, 1fr); }
+.dev-tools-pane { min-height: 0; overflow: hidden; padding: var(--spacing-2) var(--spacing-3); container-type: inline-size; }
+@container (min-width: 601px) { .dev-tools-pane .dev-file-layout { grid-template-columns: minmax(7rem, .3fr) minmax(0, 1fr); } }
+@container (max-width: 600px) { .dev-tools-pane .dev-file-layout { grid-template-columns: minmax(0, 1fr); } }
 .dev-runtime-configuration > summary { cursor: pointer; font-size: var(--font-size-xs); padding: var(--spacing-2); }
-.dev-runtime-configuration > summary:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
+.dev-runtime-configuration > summary:focus-visible { outline: 1px solid var(--border-focus); outline-offset: -1px; }
 .dev-runtime-configuration > div { padding-block: var(--spacing-2); }
 .dev-tools-pane .dev-review > div { gap: var(--spacing-2); }
 .dev-tools-pane > .dev-review, .dev-tools-pane > .dev-review > div { display: flex; flex: 1; flex-direction: column; height: 100%; min-height: 0; }
@@ -101,7 +102,7 @@
 .dev-conversation-pane { border-inline-start: 1px solid var(--border-subtle); container-type: inline-size; }
 .dev-panel-resizer { flex-shrink: 0; background: var(--surface-inset); touch-action: none; }
 .dev-panel-resizer:hover { background: var(--accent-default); }
-.dev-panel-resizer:focus-visible, .dev-context-details summary:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
+.dev-panel-resizer:focus-visible, .dev-context-details summary:focus-visible { outline: 1px solid var(--border-focus); outline-offset: -1px; }
 .dev-panel-resizer-agent { cursor: col-resize; }
 .dev-panel-resizer-runtime { height: .5rem; cursor: row-resize; }
 .dev-runtime-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-2); flex-shrink: 0; border-top: 1px solid var(--border-subtle); background: var(--surface-panel); padding: var(--spacing-1) var(--spacing-2); }

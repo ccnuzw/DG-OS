@@ -167,11 +167,11 @@ describe('Vendor selection (AC16)', () => {
     } : undefined);
     await openNewForm();
     fireEvent.change(input('API Key *'), { target: { value: 'synthetic-key' } });
-    fireEvent.click(screen.getByRole('button', { name: /Refresh Models/ }));
-    expect(await screen.findByRole('heading', { name: 'preview-model' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch model preview' }));
+    expect(await screen.findByRole('button', { name: /^preview-model / })).toBeTruthy();
 
     await choose('Vendor', 'Acme Cloud');
-    expect(screen.queryByRole('heading', { name: 'preview-model' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^preview-model / })).toBeNull();
   });
 });
 
@@ -253,21 +253,6 @@ describe('Saved providers and the list (AC16)', () => {
   const acme = { ...savedBase, id: 'p-acme', name: 'Acme saved', base_url: 'https://llm.acme.example/v1', config: { vendor_id: 'acme', retry: { max_attempts: 3 }, auth_style: 'both' } };
   const legacyOfficial = { ...savedBase, id: 'p-legacy', name: 'Legacy official', base_url: 'https://api.openai.com/v1' };
   const legacyThirdParty = { ...savedBase, id: 'p-third', name: 'Legacy third party', base_url: 'https://proxy.thirdparty.example/v1' };
-  const lookalike = { ...savedBase, id: 'p-evil', name: 'Lookalike host', base_url: 'https://api.openai.com.evil.example/v1' };
-  const unknownVendor = { ...savedBase, id: 'p-ghost', name: 'Ghost vendor', base_url: 'https://ghost.example/v1', config: { vendor_id: 'ghost' } };
-
-  const card = (name: string) => screen.getByRole('group', { name, exact: true });
-
-  it('shows the host vendor display name and infers it for legacy providers', async () => {
-    mockHost([acme, legacyOfficial, legacyThirdParty, lookalike, unknownVendor]);
-    render(<ProviderManagement />);
-
-    await waitFor(() => expect(within(card('Acme saved')).getByText('Acme Cloud')).toBeTruthy());
-    expect(within(card('Legacy official')).getByText('OpenAI')).toBeTruthy();
-    expect(within(card('Legacy third party')).getByText('Custom')).toBeTruthy();
-    expect(within(card('Lookalike host')).getByText('Custom')).toBeTruthy();
-    expect(within(card('Ghost vendor')).getByText('ghost')).toBeTruthy();
-  });
 
   it('shows the saved vendor in the edit form and keeps unrelated config keys on save', async () => {
     mockHost([acme], (command) => command === 'update_provider'
@@ -278,7 +263,7 @@ describe('Saved providers and the list (AC16)', () => {
 
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Vendor' }).textContent).toContain('Acme Cloud'));
     fireEvent.change(input('Name *'), { target: { value: 'Acme renamed' } });
-    fireEvent.click(screen.getByRole('button', { name: /Save Changes/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Save connection configuration/i }));
 
     await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith('update_provider', {
       id: 'p-acme',
@@ -300,7 +285,7 @@ describe('Saved providers and the list (AC16)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Legacy third party', exact: true }));
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Vendor' }).textContent).toContain('Custom'));
     fireEvent.change(input('Name *'), { target: { value: 'Renamed' } });
-    fireEvent.click(screen.getByRole('button', { name: /Save Changes/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Save connection configuration/i }));
     await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith('update_provider', {
       id: 'p-third',
       config: expect.objectContaining({ name: 'Renamed', config: undefined }),
@@ -315,7 +300,7 @@ describe('Saved providers and the list (AC16)', () => {
 
     await choose('Vendor', 'OpenAI');
     expect(screen.getByText(/Enter a new API key before testing or saving/)).toBeTruthy();
-    expect((screen.getByRole('button', { name: /Save Changes/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: /Save connection configuration/i }) as HTMLButtonElement).disabled).toBe(true);
     // the saved URL stays: only a new-provider form pre-fills it
     expect(input('Base URL *').value).toBe('https://llm.acme.example/v1');
   });

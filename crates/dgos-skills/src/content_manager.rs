@@ -439,6 +439,31 @@ impl SkillsManager {
         }
         Ok(pins)
     }
+    /// D136: read-only catalogue for the existing content execution profile. No usage audit,
+    /// script execution or implicit dependency installation occurs during discovery.
+    pub async fn ai_content_catalog(&self, user: &str) -> Result<Vec<dgos_types::AiSkillEntry>> {
+        let mut entries = Vec::new();
+        for skill in self.content_repo.user_skills(user).await? {
+            if !skill.enabled { continue; }
+            if let Ok(content) = self.prepare_content_skill_inner(&skill.skill_id, user).await {
+                entries.push(dgos_types::AiSkillEntry {
+                    name: skill.name,
+                    skill: dgos_types::AiSkillRef { skill_id: content.skill_id, version: content.version, content_hash: content.content_hash },
+                });
+            }
+        }
+        Ok(entries)
+    }
+
+    /// Revalidate the original selection; an update never silently replaces a run's content.
+    pub async fn validate_ai_pin(&self, user: &str, pin: &dgos_types::AiSkillRef) -> Result<()> {
+        let content = self.prepare_content_skill_inner(&pin.skill_id, user).await?;
+        if content.version != pin.version || content.content_hash != pin.content_hash {
+            return Err(SkillError::DependencyNotSatisfied("selected skill changed".into()));
+        }
+        Ok(())
+    }
+
     async fn prepare_content_skill_inner(
         &self,
         id: &str,

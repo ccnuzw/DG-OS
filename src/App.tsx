@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Routes, Route, useLocation, useNavigate } from "react-router-dom";
 import McpConnectionNotice from "./components/McpConnectionNotice";
 import ModuleHostBootstrap from "./modules/ModuleHostBootstrap";
@@ -23,6 +23,8 @@ import './workspace/workspace.css';
 import Desktop from './pages/Desktop';
 import './modules/provider-console.css';
 import { useDesktopPreferences } from './workspace/desktopPreferences';
+import { useLayoutBudget } from './ui/layout/useLayoutBudget';
+import { shellMinimumWidth } from './ui/layout/layoutBudgets';
 const SkillsManagement = lazy(() => import("./pages/SkillsManagement"));
 const Workbench = lazy(() => import("./components/chat/ChatWorkbench"));
 const SingleTask = lazy(() => import('./pages/workbench/SingleTaskWorkbench'));
@@ -62,7 +64,7 @@ function App() {
   useEffect(() => { void useDesktopPreferences.getState().load(); }, []);
   useEffect(() => { if (desktop.loaded) controller.dispatch({ type: 'preferences/hydrate', pinnedModuleIds: desktop.values.pinnedModuleIds }); }, [desktop.loaded, desktop.values.pinnedModuleIds, controller]);
   const savePins = () => useDesktopPreferences.getState().patch({ pinnedModuleIds: controller.getSnapshot().pinnedModuleIds });
-  const [narrow, setNarrow] = useState(() => window.matchMedia?.('(max-width: 1119px)').matches ?? false);
+  const { root: shellRoot, narrow } = useLayoutBudget<HTMLDivElement>(shellMinimumWidth);
   const [toolsOpen, setToolsOpen] = useState(false);
   const intent = intentForPath(location.pathname);
   const entries = catalog?.entries ?? [];
@@ -71,20 +73,18 @@ function App() {
     if (!state.focusedSurfaceId) controller.setLayout({ ...controller.getLayout(), sidebar: !userCollapsed });
     controller.toggleFocus(id);
   };
-  useEffect(() => {
-    const media = window.matchMedia?.('(max-width: 1119px)');
-    const update = () => setNarrow(media?.matches ?? false);
-    media?.addEventListener('change', update);
-    return () => media?.removeEventListener('change', update);
-  }, []);
   useEffect(() => controller.registerGuard('ai', prepareChatClose), [controller]);
+  const openedRoute = useRef<string | null>(null);
   useEffect(() => {
     const old = /^\/settings\/modules\/([^/]+)$/.exec(location.pathname);
     if (old) { try { navigate(appPath(decodeURIComponent(old[1])), { replace: true }); } catch { navigate(ROUTES.modules, { replace: true }); } return; }
     if (intent?.kind !== 'module' || !catalog) return;
     const entry = catalog.entries.find(value => value.moduleId === intent.moduleId);
-    if (entry) controller.dispatch({ type: 'app/open', moduleId: entry.moduleId, documentId: entry.viewCapability === 'single' ? null : intent.documentId, title: entry.displayName, usable: entry.enabled && entry.permissionState === 'granted', runtimeReady: entry.runtimeState === 'ready' && !entry.crashed });
-  }, [location.pathname, catalog, navigate, controller]);
+    const routeKey = JSON.stringify([location.key, location.pathname]);
+    if (!entry || openedRoute.current === routeKey) return;
+    const outcome = controller.dispatch({ type: 'app/open', moduleId: entry.moduleId, documentId: entry.viewCapability === 'single' ? null : intent.documentId, title: entry.displayName, usable: entry.enabled && entry.permissionState === 'granted', runtimeReady: entry.runtimeState === 'ready' && !entry.crashed });
+    if (outcome.result === 'created' || outcome.result === 'focused') openedRoute.current = routeKey;
+  }, [location.key, location.pathname, catalog, navigate, controller]);
   useEffect(() => {
     if (!catalog || !desktop.loaded) return;
     for (const moduleId of controller.getSnapshot().pinnedModuleIds) {
@@ -111,7 +111,7 @@ function App() {
   const shown = state.surfaces.find(surface => surface.id === shownId);
   const fullBleed = shown?.kind === 'app' && entries.find(entry => entry.moduleId === shown.moduleId)?.layout === 'full-bleed';
   const focused = state.focusedSurfaceId !== null && state.focusedSurfaceId === shownId;
-  return <div className="flex h-screen w-full flex-col">
+  return <div ref={shellRoot} className="flex h-screen w-full min-w-0 flex-col">
     <ModuleHostBootstrap />
     <AppShell navEntries={builtin.primary} navGroups={builtin.groups} pinnedEntries={apps.pinnedEntries}
       collapsed={userCollapsed || narrow} autoCollapsed={narrow} onToggleCollapsed={() => desktop.patch({ sidebarCollapsed: !userCollapsed })}

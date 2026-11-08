@@ -7,8 +7,11 @@ mod commands;
 mod host;
 mod instance_lock;
 mod lan;
+mod lifecycle;
+mod local_fonts;
 mod logging;
 mod module_host;
+mod native_extensions;
 mod os_credentials;
 mod provider_credentials;
 mod provider_streams;
@@ -31,6 +34,7 @@ pub fn run() {
 
     module_host::install(tauri::Builder::default())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Initialize database connection
             let app_handle = app.handle().clone();
@@ -94,6 +98,7 @@ pub fn run() {
                 };
 
                 let maintenance = dgos_db::MaintenanceGate::new();
+                app_handle.manage(commands::CliUpdateTickets::default());
                 let manager = ProviderManager::with_vault(
                     &database_url,
                     Arc::new(provider_credentials::OsProviderCredentialVault),
@@ -128,6 +133,13 @@ pub fn run() {
                 // until account recovery below settles it.
                 let resolver = session::SessionResolver::starting();
                 app_handle.manage(resolver.clone());
+                match native_extensions::NativeHost::from_environment(
+                    resolver.clone(),
+                    app_dir.join("native-extensions"),
+                ) {
+                    Ok(native) => { app_handle.manage(native); }
+                    Err(_) => tracing::error!("Native extension management unavailable"),
+                }
                 let mcp_manager = Arc::new(McpManager::with_policy_and_vault(
                     db.clone(),
                     Arc::new(commands::DesktopMcpPolicy(resolver.clone())),
@@ -233,6 +245,14 @@ pub fn run() {
                     module_supervisor,
                     dgos_modules::LocalModuleSources::new(module_sources_dir),
                 ).with_maintenance(maintenance.clone());
+                let module_operations = match dgos_modules::BuiltinModuleSources::new(&bundled_modules_dir) {
+                    Ok(sources) => module_operations.with_builtin_sources(sources)
+                        .expect("Failed to configure bundled module updates before recovery"),
+                    Err(_) => {
+                        tracing::error!("Bundled module updates unavailable: bundle verification failed");
+                        module_operations
+                    }
+                };
                 module_operations
                     .spawn_lost_runtime_reporter(module_lost)
                     .expect("Failed to start the module runtime loss reporter");
@@ -287,6 +307,13 @@ pub fn run() {
                     dgos_db::ModuleStorageRepository::new(db.clone()),
                 ));
                 app_handle.manage(module_mcp_confirmations.clone());
+                let ai = dgos_application::AiService::new(
+                    host_capabilities.clone(), dgos_db::AiRunRepository::new(db.clone()),
+                    Arc::new(manager.clone()), skills_state.manager.clone(), mcp_state.manager.clone(),
+                    module_mcp_confirmations.clone(), maintenance.clone(),
+                );
+                ai.recover_interrupted().await.expect("Failed to recover module AI audit");
+                app_handle.manage(ai);
                 app_handle.manage(dgos_application::ModuleMcpService::new(
                     module_mcp_confirmations,
                     mcp_state.manager.clone(),
@@ -299,8 +326,8 @@ pub fn run() {
                 app_handle.manage(module_publisher);
                 app_handle.manage(module_host_bridge);
 
-                let project_capabilities = dgos_agents::capabilities::ProjectCapabilities::new(dgos_db::DevelopmentRepository::new(db.clone()), manager.clone(), skills_state.manager.clone(), mcp_state.manager.clone(), app_dir.join("project-capabilities"));
-                app_handle.manage(project_capabilities.clone());
+                let cli_providers = dgos_agents::capabilities::CliProviders::new(dgos_db::DevelopmentRepository::new(db.clone()), manager.clone()).expect("Failed to initialize CLI Provider lifecycle");
+                app_handle.manage(cli_providers.clone());
                 // Store managers in app state
                 app_handle.manage(manager);
                 app_handle.manage(skills_state);
@@ -320,8 +347,7 @@ pub fn run() {
                 let mcp_for_accounts = mcp_state.manager.clone();
                 app_handle.manage(mcp_state);
                 app_handle.manage(workbench);
-                let agents = dgos_agents::AgentManager::with_maintenance(app_dir.join("agent-sessions.json"), dgos_db::DevelopmentRepository::new(db.clone()), maintenance.clone());
-                agents.install_capabilities(project_capabilities);
+                let agents = dgos_agents::AgentManager::with_maintenance(app_dir.join("agent-sessions.json"), dgos_db::DevelopmentRepository::new(db.clone()), maintenance.clone(), cli_providers);
                 if agents.load().await.is_err() { tracing::error!("Agent session index unavailable; Agent admission remains closed"); }
                 app_handle.manage(agents);
                 app_handle.manage(chat);
@@ -405,6 +431,19 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::discover_native_skills,
+            commands::get_native_skill,
+            commands::preview_native_skill,
+            commands::preview_native_skill_visibility,
+            commands::discover_native_mcp,
+            commands::preview_native_mcp,
+            commands::commit_native_operation,
+            commands::cancel_native_operation,
+            commands::inspect_native_operation,
+            commands::list_native_sessions,
+            commands::observe_native_session,
+            commands::native_session_action,
+            commands::inspect_native_session_request,
             commands::import_chat_asset,
             commands::preview_chat_asset,
             commands::remove_chat_asset,
@@ -413,6 +452,9 @@ pub fn run() {
             commands::get_cli_preferences,
             commands::set_cli_preferences,
             commands::probe_cli,
+            commands::probe_node_directory,
+            commands::check_cli_update,
+            commands::update_cli,
             commands::get_storage_overview,
             commands::preview_storage_cleanup,
             commands::execute_storage_cleanup,
@@ -506,16 +548,17 @@ pub fn run() {
             commands::resize_development_terminal,
             commands::open_development_external,
             commands::list_development_runs,
-            commands::read_development_capabilities,
-            commands::save_development_capabilities,
-            commands::revoke_development_capabilities,
-            commands::read_development_capability_catalog,
-            commands::get_development_session_capabilities,
-            commands::list_development_capability_confirmations,
-            commands::respond_development_capability_confirmation,
+            commands::read_development_cli_provider,
+            commands::save_development_cli_provider,
+            commands::revoke_development_cli_provider,
+            commands::recheck_development_cli_cleanup,
+            commands::read_development_cli_provider_catalog,
+            commands::get_development_session_configuration,
             commands::read_development_workspaces,
             commands::save_development_workspaces,
             commands::read_development_git,
+            commands::read_development_git_history,
+            commands::preview_development_git_pull,
             commands::execute_development_git,
             commands::reconcile_development_git,
             commands::prepare_development_handoff,
@@ -554,6 +597,7 @@ pub fn run() {
              commands::get_appearance_preferences,
              commands::set_appearance_preferences,
              commands::recover_appearance_preferences,
+             commands::list_local_fonts,
              commands::get_desktop_preferences,
              commands::set_desktop_preferences,
              // Host language preference (D118): available before account sign-in
@@ -571,6 +615,13 @@ pub fn run() {
             commands::module_storage_delete,
             commands::module_storage_list,
             commands::module_call_mcp_tool,
+            commands::module_run_ai,
+            commands::module_list_ai_providers,
+            commands::module_list_ai_skills,
+            commands::module_list_ai_tools,
+            commands::module_list_ai_runs,
+            commands::module_get_ai_run,
+            commands::module_cancel_ai_run,
             commands::resolve_module_mcp_confirmation,
             // Module management (D055)
             commands::enable_module,
@@ -605,46 +656,7 @@ pub fn run() {
             // macOS menu Quit can deliver Exit without ExitRequested.
             if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) && !shutdown_started {
                 shutdown_started = true;
-                if let Some(resolver) = app.try_state::<Arc<session::SessionResolver>>() {
-                    resolver.close_agents();
-                }
-                let agents = app.try_state::<dgos_agents::AgentManager>().map(|m| m.inner().clone());
-                if let Some(agents) = &agents { agents.close(); }
-                // Agent cleanup is independent of unrelated managers being present.
-                let agent_cleanup = async move {
-                    match agents { Some(agents) => agents.shutdown().await, None => true }
-                };
-                // Absent when startup stopped at a database failure: nothing to shut down.
-                let (Some(mcp), Some(workbench), Some(chat), Some(lan)) = (
-                    app.try_state::<commands::McpState>(),
-                    app.try_state::<dgos_workbench::WorkbenchManager>(),
-                    app.try_state::<dgos_workbench::ChatManager>(),
-                    app.try_state::<Arc<dgos_lan::LanService>>(),
-                ) else {
-                    if !tauri::async_runtime::block_on(agent_cleanup) {
-                        tracing::warn!("Agent shutdown incomplete");
-                    }
-                    return;
-                };
-                let mcp = mcp.manager.clone();
-                let workbench = workbench.inner().clone();
-                let chat = chat.inner().clone();
-                let lan = lan.inner().clone();
-                let result = tauri::async_runtime::block_on(async move {
-                    // Owned process cleanup must finish even if unrelated managers
-                    // exceed their shutdown deadline.
-                    let other_cleanup = async {
-                        tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                            lan.shutdown().await;
-                            tokio::join!(workbench.shutdown(), mcp.shutdown(), chat.shutdown())
-                        }).await
-                    };
-                    tokio::join!(other_cleanup, agent_cleanup)
-                });
-                match result {
-                    (Ok((Ok(()), Ok(()), true)), true) => {}
-                    _ => tracing::warn!("Desktop shutdown incomplete; startup recovery will finalize interrupted audits"),
-                }
+                tauri::async_runtime::block_on(lifecycle::shutdown(app));
             }
         });
 }

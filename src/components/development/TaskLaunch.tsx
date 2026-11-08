@@ -5,9 +5,11 @@ import { useDevelopment, type DevelopmentSession, type Outcome, type TaskStatus 
 import { useAgentRunner, type AgentOpenInput, type Engine } from '../../stores/agentRunnerStore';
 import { readDevelopmentWorkspaces } from '../../stores/developmentDelivery';
 import { developmentDraftKey, useDevelopmentDrafts, useScopedDevelopmentDraft } from '../../stores/developmentDrafts';
-import { readCapabilities, useProjectCapabilities } from '../../stores/developmentCapabilities';
+import { readCliProviderRevision, useProjectCapabilities } from '../../stores/developmentCapabilities';
 import { chooseContext, contextGeneration, useContextSelection } from '../../stores/developmentSelection';
 import { errorText } from './shared';
+import { CliCleanupRecheck } from './CliCleanupRecheck';
+import { hostCode } from '../../stores/hostError';
 
 interface LaunchDraft {
   goal: string; requirements: string; status: TaskStatus;
@@ -53,8 +55,6 @@ export function TaskLaunch({ initialTaskId, requestedRevision = null, onStart, o
   const activeTask = selectedTask ?? projectTasks.find(task => task.id === value.taskId) ?? null;
   const savedCapabilities = useProjectCapabilities(project?.id ?? null);
   const [revision, setRevision] = useState<number | null>(requestedRevision ?? value.revision ?? null);
-  const [engine, setEngine] = useState<Engine>(value.engine ?? 'codex');
-  const [model, setModel] = useState(value.model ?? '');
   const [directory, setDirectory] = useState<ResolvedDirectory | null>(null);
   const [trustKey, setTrustKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -98,9 +98,9 @@ export function TaskLaunch({ initialTaskId, requestedRevision = null, onStart, o
     let sessionId = value.sessionId;
     let openDispatched = false;
     try {
-      const capabilities = await readCapabilities(project.id);
+      const capabilities = await readCliProviderRevision(project.id);
       if (!current()) return;
-      if ((capabilities?.revision ?? null) !== (savedCapabilities.value?.revision ?? null) || (capabilities?.permission_epoch ?? null) !== (savedCapabilities.value?.permission_epoch ?? null) || revision !== null && revision !== capabilities?.revision) { setError('capability_conflict'); return; }
+      if (!capabilities || (capabilities.revision !== savedCapabilities.value?.revision || capabilities.permission_epoch !== savedCapabilities.value?.permission_epoch) || revision !== capabilities.revision) { setError('capability_conflict'); return; }
       if (!taskId) {
         if (value.taskCreateAttempted || !value.goal.trim()) return;
         const before = projectTasks.map(task => task.id);
@@ -121,7 +121,7 @@ export function TaskLaunch({ initialTaskId, requestedRevision = null, onStart, o
       sessionId ??= crypto.randomUUID();
       updateDraft({ taskId, sessionId, sessionOpenAttempted: true, sessionOpenUnknown: true });
       openDispatched = true;
-      const opened = await onStart({ id: sessionId, engine: revision === null ? engine : capabilities!.configuration.engine, task_id: taskId, capability_revision: revision ?? 0, options: { workspace: workspace.path, resume_id: null, executable: null, model: revision === null ? model || null : null, trust_workspace: true } }, project.id, taskId);
+      const opened = await onStart({ intent: 'create', id: sessionId, engine: capabilities.configuration.engine, task_id: taskId, project_revision: capabilities.revision, provider: capabilities.configuration.provider, options: { workspace: workspace.path, resume_id: null, executable: null, model: null, trust_workspace: true } }, project.id, taskId);
       if (epoch !== useDevelopment.getState().epoch) return;
       if (opened.ok) {
         completed.current = true;
@@ -140,12 +140,13 @@ export function TaskLaunch({ initialTaskId, requestedRevision = null, onStart, o
           return { entries };
         });
       } else {
-        updateDraft({ taskId, sessionId, sessionOpened: false, sessionOpenUnknown: opened.code === 'unknown' });
+        updateDraft({ taskId, sessionId, sessionOpened: false, sessionOpenUnknown: ['unknown', 'cleanup_pending', 'session_exists'].includes(opened.code) });
         if (current()) setError(opened.code);
       }
-    } catch {
-      if (epoch === useDevelopment.getState().epoch && openDispatched) updateDraft({ taskId, sessionId, sessionOpenUnknown: true });
-      if (current()) setError('unknown');
+    } catch (failure) {
+      const code = hostCode(failure);
+      if (epoch === useDevelopment.getState().epoch && openDispatched) updateDraft({ taskId, sessionId, sessionOpenUnknown: ['unknown', 'cleanup_pending', 'session_exists'].includes(code) });
+      if (current()) setError(code);
     } finally { operation.current = false; if (mounted.current) setBusy(false); }
   }
   async function continueSession(session: DevelopmentSession) {
@@ -164,14 +165,15 @@ export function TaskLaunch({ initialTaskId, requestedRevision = null, onStart, o
       {project ? <>
         <p data-testid="task-launch-directory" className="m-0 break-all text-xs">{currentDirectory?.path ?? t('capabilities.loading')}</p>
         <Select id="task-launch-task" label={t('dev.tasks')} value={selectedTask?.id ?? 'new'} disabled={busy} options={[{ value: 'new', label: t('taskLaunch.newTask') }, ...projectTasks.map(task => ({ value: task.id, label: task.goal }))]} onChange={id => { setChosenTask(id === 'new' ? null : id); setTrustKey(null); }} />
-        {!activeTask ? <><Input id="task-launch-goal" data-testid="task-launch-goal" label={t('dev.goal')} value={value.goal} disabled={busy || value.taskCreateUnknown} onChange={event => updateDraft({ goal: event.target.value })} /><label className="dev-field">{t('dev.requirements')}<textarea id="task-launch-requirements" data-testid="task-launch-requirements" className="dev-editor" value={value.requirements} disabled={busy || value.taskCreateUnknown} onChange={event => updateDraft({ requirements: event.target.value })} /></label></> : <><p className="text-sm">{activeTask.goal}</p><p className="whitespace-pre-wrap text-xs">{activeTask.requirements}</p></>}
+        {!activeTask ? <><Input id="task-launch-goal" data-testid="task-launch-goal" className="type-reading" label={t('dev.goal')} value={value.goal} disabled={busy || value.taskCreateUnknown} onChange={event => updateDraft({ goal: event.target.value })} /><label className="dev-field">{t('dev.requirements')}<textarea id="task-launch-requirements" data-testid="task-launch-requirements" className="dev-editor type-reading" value={value.requirements} disabled={busy || value.taskCreateUnknown} onChange={event => updateDraft({ requirements: event.target.value })} /></label></> : <><p className="type-reading">{activeTask.goal}</p><p className="type-reading whitespace-pre-wrap">{activeTask.requirements}</p></>}
         {value.taskCreateUnknown ? <><p role="alert">{t('taskLaunch.taskOutcomeUnknown')}</p><Button size="xs" disabled={busy} onClick={() => void reconcileTask()}>{t('taskLaunch.recheckTasks')}</Button>{candidates.map(task => <Button key={task.id} size="xs" onClick={() => { updateDraft({ taskId: task.id, taskCreateUnknown: false }); }}>{task.goal} · {task.id}</Button>)}</> : null}
         <Checkbox id="task-launch-trust" label={t('dev.trustProject')} checked={trusted} disabled={busy || !currentDirectory} onChange={checked => setTrustKey(checked ? directoryKey : null)} />
         <p className="m-0 text-xs text-ink-secondary">{t('dev.trustHint')}</p>
-        <Select id="task-launch-capabilities" label={t('capabilities.newSessionSource')} value={revision === null ? 'native' : String(revision)} disabled={busy || savedCapabilities.loading} options={[{ value: 'native', label: t('capabilities.native') }, ...(savedCapabilities.value ? [{ value: String(savedCapabilities.value.revision), label: t('capabilities.projectRevision', { revision: savedCapabilities.value.revision }) }] : [])]} onChange={choice => { const next = choice === 'native' ? null : Number(choice); setRevision(next); updateDraft({ revision: next }); }} />
-        {revision === null ? <><Select id="task-launch-engine" label={t('agent.engine')} value={engine} disabled={busy} options={[{ value: 'codex', label: t('agent.engine.codex') }, { value: 'claude', label: t('agent.engine.claude') }]} onChange={choice => { const next = choice === 'claude' ? 'claude' : 'codex'; setEngine(next); updateDraft({ engine: next }); }} /><Input label={t('agent.model')} value={model} disabled={busy} onChange={event => { setModel(event.target.value); updateDraft({ model: event.target.value }); }} /></> : <p className="text-xs">{t('capabilities.projectRevision', { revision })}</p>}
+        <Select id="task-launch-capabilities" label={t('capabilities.newSessionSource')} value={revision === null ? '' : String(revision)} placeholder={t('capabilities.chooseProvider')} disabled={busy || savedCapabilities.loading} options={savedCapabilities.value ? [{ value: String(savedCapabilities.value.revision), label: t('capabilities.projectRevision', { revision: savedCapabilities.value.revision }) }] : []} onChange={choice => { const next = Number(choice); setRevision(next); updateDraft({ revision: next }); }} />
+        {revision === null ? <p role="alert" className="text-xs text-status-error">{t('capabilities.providerRequired')}</p> : <p className="text-xs">{t('capabilities.projectRevision', { revision })}</p>}
         {error || savedCapabilities.error ? <p role="alert" className="text-xs text-status-error">{errorText(error ?? 'unknown')}</p> : null}
-        <Button size="xs" data-testid="task-launch-start" disabled={busy || completed.current || pending || !trusted || project.archived || !activeTask && !value.goal.trim() || value.taskCreateUnknown || value.sessionOpenUnknown || value.sessionOpened || savedCapabilities.loading || Boolean(savedCapabilities.error)} onClick={() => void start()}>{t('taskLaunch.start')}</Button>
+        {error === 'cleanup_pending' ? <CliCleanupRecheck /> : null}
+        <Button size="xs" data-testid="task-launch-start" disabled={busy || completed.current || pending || !trusted || !revision || project.archived || !activeTask && !value.goal.trim() || value.taskCreateUnknown || value.sessionOpenUnknown || value.sessionOpened || savedCapabilities.loading || Boolean(savedCapabilities.error) || savedCapabilities.value?.revision !== revision} onClick={() => void start()}>{t('taskLaunch.start')}</Button>
         {(value.sessionOpenUnknown || value.sessionOpened) && value.sessionId ? <Button size="xs" disabled={busy || !onInspectSession} onClick={() => { if (onInspectSession && value.sessionId) void onInspectSession(value.sessionId); }}>{t('taskLaunch.inspectSession')} · {value.sessionId}</Button> : null}
         {taskSessions.map(session => <Button key={session.id} size="xs" variant="secondary" data-testid={`task-launch-continue-${session.id}`} disabled={busy || ['unknown', 'error'].includes(live[session.id]) || !isLive(live[session.id]) && (!trusted || session.workspace !== currentDirectory?.path || !session.native_id)} onClick={() => void continueSession(session)}>{t(isLive(live[session.id]) ? 'taskLaunch.connectLive' : 'taskLaunch.continueSaved')} · {session.engine} · {session.id.slice(0, 8)} · {session.workspace}</Button>)}
       </> : null}

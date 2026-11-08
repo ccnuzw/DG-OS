@@ -1,0 +1,34 @@
+.lan-settings { display: flex; flex-direction: column; gap: var(--spacing-4); min-width: 0; container-type: inline-size; }
+.lan-section { display: grid; gap: var(--spacing-4); min-width: 0; padding: var(--spacing-5); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-panel); }
+.lan-heading, .lan-service-controls, .lan-device-identity, .lan-record-context { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-3); min-width: 0; }
+.lan-heading { justify-content: space-between; }
+.lan-heading h2 { margin: 0; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.lan-settings button { height: auto; min-height: var(--control-height-compact); white-space: normal; overflow-wrap: anywhere; }
+.lan-muted, .lan-warning, .lan-error { margin: 0; font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.lan-muted { color: var(--text-secondary); }
+.lan-warning { color: var(--status-warning-text); }
+.lan-error { color: var(--status-error-text); }
+.lan-service-state { display: inline-flex; align-items: center; gap: var(--spacing-2); font-size: var(--font-size-sm); color: var(--text-secondary); }
+.lan-service-state > span { width: var(--spacing-2); height: var(--spacing-2); border-radius: 50%; background: currentColor; flex: none; }
+.lan-service-state.is-running { color: var(--status-success-text); }
+.lan-service-state.is-starting { color: var(--status-warning-text); }
+.lan-service-state.is-failed { color: var(--status-error-text); }
+.lan-address { margin: 0; display: flex; flex-wrap: wrap; gap: var(--spacing-2) var(--spacing-4); font-size: var(--font-size-sm); }
+.lan-address dt { color: var(--text-secondary); }
+.lan-address dd { margin: 0; overflow-wrap: anywhere; user-select: all; }
+.lan-port-form { display: grid; gap: var(--spacing-2); }
+.lan-port-controls { display: flex; flex-wrap: wrap; align-items: end; gap: var(--spacing-3); }
+.lan-port-controls > div { width: min(100%, 16em); min-width: 0; }
+.lan-copy-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-3); min-width: 0; }
+.lan-copy-row code { flex: 1 1 16em; min-width: 0; padding: var(--spacing-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-inset); user-select: all; overflow-wrap: anywhere; font-family: var(--font-family-code); font-size: var(--font-size-code); }
+.lan-copy-row button { flex: none; max-width: 100%; }
+.lan-count { color: var(--text-secondary); font-weight: var(--font-weight-normal); margin-inline-start: var(--spacing-2); }
+.lan-list { list-style: none; padding: 0; margin: 0; min-width: 0; }
+.lan-device, .lan-record { display: grid; gap: var(--spacing-3); min-width: 0; padding-block: var(--spacing-3); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.lan-device + .lan-device, .lan-record + .lan-record { border-top: 1px solid var(--border-subtle); }
+.lan-metadata { display: flex; flex-wrap: wrap; gap: var(--spacing-2) var(--spacing-5); margin: 0; color: var(--text-secondary); font-size: var(--font-size-xs); }
+.lan-metadata > div { display: flex; flex-wrap: wrap; gap: var(--spacing-2); }
+.lan-metadata dd { margin: 0; overflow-wrap: anywhere; }
+.lan-record-details summary { width: fit-content; cursor: pointer; color: var(--text-secondary); padding-block: var(--spacing-1); }
+.lan-record-details[open] .lan-metadata { margin-top: var(--spacing-2); }
+@container (max-width: 500px) { .lan-section { padding: var(--spacing-3); } .lan-service-controls { width: 100%; justify-content: space-between; } .lan-copy-row code { flex-basis: 100%; } }

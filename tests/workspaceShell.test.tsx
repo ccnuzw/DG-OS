@@ -50,12 +50,33 @@ describe('live command and launcher inputs', () => {
     expect(run).toHaveBeenLastCalledWith('last');
   });
 
-  it('lets a pinned app be unpinned by keyboard after permission is revoked', () => {
+  it('lets a pinned unavailable app be unpinned from its actions menu', async () => {
     const entry: WorkspaceAppEntry = { moduleId: 'revoked', displayName: 'Revoked app', iconResourceId: null, layout: 'document', viewCapability: 'single', enabled: true, permissionState: 'denied', runtimeState: 'ready', crashed: false };
     const onUnpin = vi.fn();
     render(<Launcher open query="" catalog={[entry]} loading={false} error={false} pinnedIds={[entry.moduleId]} activeDrag={null} notice="" onRetry={() => {}} onManage={() => {}} onQuery={() => {}} onClose={() => {}} onOpen={() => {}} onPin={() => {}} onUnpin={onUnpin} onMove={() => {}} onDragStart={() => {}} onDragEnd={() => {}} />);
-    fireEvent.keyDown(screen.getAllByRole('button', { name: /^Revoked app/ }).find(button => button.getAttribute('aria-disabled') === 'true')!, { key: 'p' });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Revoked app 的操作' }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole('menuitem', { name: '取消固定' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '向前移动' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('menuitem', { name: '向后移动' }).getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(screen.getByRole('menuitem', { name: '取消固定' }));
     expect(onUnpin).toHaveBeenCalledWith('revoked');
+  });
+
+  it('moves from launcher search to apps without the removed pin binding', () => {
+    const entry: WorkspaceAppEntry = { moduleId: 'ready', displayName: 'Ready app', iconResourceId: null, layout: 'document', viewCapability: 'single', enabled: true, permissionState: 'granted', runtimeState: 'ready', crashed: false };
+    const onPin = vi.fn();
+    const onOpen = vi.fn();
+    render(<Launcher open query="" catalog={[entry]} loading={false} error={false} pinnedIds={[]} activeDrag={null} notice="" onRetry={() => {}} onManage={() => {}} onQuery={() => {}} onClose={() => {}} onOpen={onOpen} onPin={onPin} onUnpin={() => {}} onMove={() => {}} onDragStart={() => {}} onDragEnd={() => {}} />);
+    const search = screen.getByRole('textbox', { name: '搜索应用' });
+    const app = screen.getByRole('button', { name: 'Ready app' });
+    fireEvent.keyDown(search, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(app);
+    fireEvent.keyDown(app, { key: 'p' });
+    expect(onPin).not.toHaveBeenCalled();
+    fireEvent.keyDown(search, { key: 'Enter', isComposing: true });
+    expect(onOpen).not.toHaveBeenCalled();
+    fireEvent.keyDown(search, { key: 'Enter' });
+    expect(onOpen).toHaveBeenCalledWith(entry);
   });
 });
 
@@ -119,7 +140,7 @@ describe('TabBar (AC15)', () => {
         onToggleFocus={onToggleFocus}
       />,
     );
-    expect(screen.getByRole('button', { name: /专注/ }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { pressed: true })).toBeTruthy();
   });
 
   it('offers no focus control when nothing is open', () => {

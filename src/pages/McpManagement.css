@@ -1,5 +1,5 @@
 .mcp-page { height: 100%; min-width: 0; overflow: auto; background: var(--surface-canvas); color: var(--text-primary); }
-.mcp-content { display: flex; flex-direction: column; gap: var(--spacing-3); max-width: calc(1200rem / 14); min-width: 0; margin-inline: auto; padding: var(--spacing-4) var(--spacing-5); }
+.mcp-content { display: flex; flex-direction: column; gap: var(--spacing-3); max-width: calc(1200rem / 14); min-width: 0; margin-inline: auto; padding: var(--spacing-4) var(--spacing-5); container-type: inline-size; }
 .mcp-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: var(--spacing-3); padding-bottom: var(--spacing-3); border-bottom: 1px solid var(--border-subtle); }
 .mcp-header-actions, .mcp-detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-2); }
 .mcp-columns { display: grid; grid-template-columns: minmax(16rem, .8fr) minmax(0, 1.4fr); gap: var(--spacing-3); align-items: start; min-width: 0; }
@@ -31,8 +31,8 @@
 .mcp-back-list { max-width: 100%; height: auto; white-space: normal; overflow-wrap: anywhere; text-align: start; }
 .mcp-server-detail:has(form) { border-color: var(--border-focus); }
 .mcp-server-detail form { scroll-margin-block: var(--spacing-3); }
-.mcp-log-list:focus-visible, .mcp-server-detail:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
-@media (max-width: 40rem) {
+.mcp-log-list:focus-visible, .mcp-server-detail:focus-visible { outline: 1px solid var(--border-focus); outline-offset: -1px; }
+@container (max-width: 40rem) {
   .mcp-content { padding-inline: var(--spacing-3); }
   .mcp-header { align-items: stretch; }
   .mcp-header-actions { width: 100%; }

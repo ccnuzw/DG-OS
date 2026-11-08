@@ -1,4 +1,8 @@
 export default {
+  'capabilities.chooseProvider': '选择服务商配置',
+  'capabilities.providerRequired': '请选择已保存的服务商配置后再启动。',
+  'capabilities.legacyReadOnly': '旧会话历史（只读）',
+  'capabilities.legacyCannotResume': '此会话仅供查看历史；继续开发需要使用服务商配置创建新会话。',
   'capabilities.title': '项目能力',
   'capabilities.editHint': '选择引擎并固定项目能力。保存会创建供新会话选择的修订；已有会话保留实际配置。',
   'capabilities.unverified': '未验证组合：保存或准备配置不代表当前 CLI 与服务商组合已经通过运行验证。',

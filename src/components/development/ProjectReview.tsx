@@ -11,10 +11,10 @@ import type { CodeView } from './WorkbenchLayout';
 import { discardDevelopmentDraft } from '../../stores/developmentEditor';
 import { FileEditor } from './FileEditor';
 import { ProjectCapabilities } from './ProjectCapabilities';
-import { CapabilitySnapshotView } from './CapabilitySnapshotView';
+import { SessionConfigurationViewDisplay } from './CapabilitySnapshotView';
 import { DeliveryPanel } from './DeliveryPanel';
 import { TaskReview } from './TaskReview';
-import type { CapabilityRevision, CapabilitySnapshot } from '../../stores/developmentCapabilities';
+import type { CliProviderRevision, CliProviderSnapshot } from '../../stores/developmentCapabilities';
 
 export interface FileTarget { path: string; line?: number; mode: 'file' | 'diff'; nonce: number }
 
@@ -53,7 +53,7 @@ export function SourceLines({ text, label }: { text: string; label: string }) {
   return <div className="dev-source" tabIndex={0} role="region" aria-label={label}><ol>{text.split('\n').map((line, index) => <li key={index}><code>{line || ' '}</code></li>)}</ol></div>;
 }
 
-export function ProjectReview({ projectId, taskId, sessions = [], live = {}, capabilityRevision = 0, workspacePath = '', onHandoff, onWorkspaceChange, view, onViewChange, fileTarget, snapshot, onUseConfiguration, onOpenRuntime }: { projectId: string; taskId: string | null; sessions?: {id:string;engine:'codex'|'claude'}[]; live?: Record<string,string>; capabilityRevision?: number; workspacePath?: string; onHandoff?: (sessionId:string,summary:string,revision:number)=>void; onWorkspaceChange?: (path:string)=>void; view?: CodeView; onViewChange?: (view: CodeView)=>void; fileTarget?: FileTarget | null; snapshot?: CapabilitySnapshot | null; onUseConfiguration?: (revision: CapabilityRevision)=>void; onOpenRuntime?: ()=>void }) {
+export function ProjectReview({ projectId, taskId, sessions = [], live = {}, capabilityRevision = 0, workspacePath = '', onHandoff, onWorkspaceChange, view, onViewChange, fileTarget, snapshot, onUseConfiguration, onOpenRuntime }: { projectId: string; taskId: string | null; sessions?: {id:string;engine:'codex'|'claude'}[]; live?: Record<string,string>; capabilityRevision?: number; workspacePath?: string; onHandoff?: (sessionId:string)=>void; onWorkspaceChange?: (path:string)=>void; view?: CodeView; onViewChange?: (view: CodeView)=>void; fileTarget?: FileTarget | null; snapshot?: CliProviderSnapshot | null; onUseConfiguration?: (revision: CliProviderRevision)=>void; onOpenRuntime?: ()=>void }) {
   const { t } = useLocale();
   const [localTab, setTab] = useState<CodeView>('files');
   const tab = view ?? localTab;
@@ -157,7 +157,7 @@ function Run({ run, stale }: { run: DevRun; stale: boolean }) {
     {run.reason ? <p role="status" className="m-0 whitespace-pre-wrap text-xs text-status-error">{run.reason}</p> : null}
     {stale ? <p className="dev-evidence-warning">{t('review.runStale')}</p> : null}
     {run.truncated ? <p className="dev-evidence-warning">{t('review.runTruncated')}</p> : null}
-    <CapabilitySnapshotView snapshot={run.capabilities} />
+    <SessionConfigurationViewDisplay value={run.configuration ?? null} />
     <details><summary className="text-xs">{t('review.events', { count: run.events.length })}</summary><div className="dev-review-stack">
       {run.events.map(event => {
         const raw = event.data && typeof event.data === 'object' && !Array.isArray(event.data) ? event.data : {};

@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import App from '../../src/App';
 import { AccountContext } from '../../src/accounts/AccountContext';
 import { ErrorBoundary, ModalHost, ToastViewport, initAppearance } from '../../src/ui';
+import { LayoutScaleFeedback } from '../../src/ui/appearance/LayoutScaleFeedback';
 import { setLocaleForTesting } from '../../src/i18n';
 import { useChatStore } from '../../src/stores/chatStore';
 import ComponentScenes from './ComponentScenes';
@@ -22,9 +23,9 @@ if (scenario === 'chat-error') {
 }
 if (scenario === 'chat-approval' || scenario === 'chat-streaming') await useChatStore.getState().send(locale === 'en-US' ? 'Run the isolated preview stream.' : '运行隔离预览消息。');
 const appScene = scenario.startsWith('settings') || scenario.startsWith('chat');
-createRoot(document.getElementById('root')!).render(<ErrorBoundary><MemoryRouter initialEntries={[scenario.startsWith('settings') ? '/settings/cli' : '/workbench']} future={{v7_startTransition:true,v7_relativeSplatPath:true}}><AccountContext.Provider value={{ state: { mode: 'signed_in', current: { username: 'preview-only', last_sign_in_at: null }, accounts: [{ username: 'preview-only', last_sign_in_at: null }], preselected: null }, refresh: async () => {} }}>{appScene ? <App/> : <main className="preview-components"><ComponentScenes scenario={scenario} locale={locale}/></main>}</AccountContext.Provider><ModalHost/><ToastViewport/></MemoryRouter></ErrorBoundary>);
+createRoot(document.getElementById('root')!).render(<ErrorBoundary><MemoryRouter initialEntries={[scenario === 'settings-appearance' ? '/settings/appearance' : scenario.startsWith('settings') ? '/settings/cli' : '/workbench']} future={{v7_startTransition:true,v7_relativeSplatPath:true}}><AccountContext.Provider value={{ state: { mode: 'signed_in', current: { username: 'preview-only', last_sign_in_at: null }, accounts: [{ username: 'preview-only', last_sign_in_at: null }], preselected: null }, refresh: async () => {} }}>{appScene ? <App/> : <main className="preview-components"><ComponentScenes scenario={scenario} locale={locale}/></main>}</AccountContext.Provider><ModalHost/><ToastViewport/><LayoutScaleFeedback/></MemoryRouter></ErrorBoundary>);
 const mounted = () => {
-  const selector = scenario.startsWith('settings') ? '.cli-settings input:not(:disabled)' : scenario.startsWith('chat') ? '.chat-composer textarea' : '[data-preview-controls], [data-preview-patterns]';
+  const selector = scenario === 'settings-appearance' ? '.appearance-editor input:not(:disabled)' : scenario.startsWith('settings') ? '.cli-settings input:not(:disabled)' : scenario.startsWith('chat') ? '.chat-composer textarea' : '[data-preview-controls], [data-preview-patterns]';
   if (document.querySelector(selector) || (scenario.startsWith('settings') && document.querySelector('.cli-feedback-error'))) { diagnostics.ready = true; return; }
   requestAnimationFrame(mounted);
 };

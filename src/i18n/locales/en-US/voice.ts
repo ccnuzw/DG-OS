@@ -8,6 +8,7 @@ export default {
   "voice.record": "Record audio",
   "voice.stop": "Finish recording",
   "voice.transcribe": "Transcribe to draft",
+  "voice.playback": "Recorded audio playback",
   "voice.permission": "Waiting for microphone permission…",
   "voice.recording": "Recording · maximum 60 seconds",
   "voice.transcribing": "Transcribing…",

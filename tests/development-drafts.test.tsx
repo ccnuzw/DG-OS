@@ -40,25 +40,28 @@ it('retains blank and edited task fields through task/project selection and same
  expect((screen.getByTestId('dev-task-goal') as HTMLTextAreaElement).value).toBe('Reloaded');
 });
 
-it('retains capability edits across reload, tab unmount, project/task changes and clears them on account reset', async () => {
- invoke.mockImplementation(async command => command === 'read_development_capability_catalog' ? { providers: [], skills: [{ id: 'skill', name: 'Skill', version: '1', hash: 'h', enabled: true }], mcp: [] } : null);
+it('retains Provider binding drafts across reload, unmount and project changes, then clears them on account reset', async () => {
+ invoke.mockImplementation(async (command, args) => command === 'read_development_cli_provider_catalog'
+  ? { project_id: args.projectId, engine: args.engine, providers: [{ id: 'provider', name: 'Provider', enabled: true, config_revision: 2, models: [{ id: 'model', name: 'Model', model_type: 'chat' }] }] }
+  : null);
+ const source = () => screen.getByRole('combobox', { name: 'capabilities.source' }) as HTMLSelectElement;
  let view = render(<MemoryRouter><ProjectCapabilities projectId="p" /></MemoryRouter>);
- fireEvent.click(await screen.findByRole('checkbox', { name: /Skill/ }));
+ fireEvent.change(await screen.findByRole('combobox', { name: 'capabilities.source' }), { target: { value: 'provider' } });
  fireEvent.click(screen.getByRole('button', { name: 'capabilities.reload' }));
- await waitFor(() => expect((screen.getByRole('checkbox', { name: /Skill/ }) as HTMLInputElement).checked).toBe(true));
+ await waitFor(() => expect(source().value).toBe('provider'));
  view.unmount();
  await act(async () => { await chooseContext({ project_id: 'p', task_id: 'other', session_id: null }); });
  view = render(<MemoryRouter><ProjectCapabilities projectId="p2" /></MemoryRouter>);
- expect((await screen.findByRole('checkbox', { name: /Skill/ }) as HTMLInputElement).checked).toBe(false);
+ expect((await screen.findByRole('combobox', { name: 'capabilities.source' }) as HTMLSelectElement).value).toBe('');
  view.rerender(<MemoryRouter><ProjectCapabilities projectId="p" /></MemoryRouter>);
- await waitFor(() => expect((screen.getByRole('checkbox', { name: /Skill/ }) as HTMLInputElement).checked).toBe(true));
- const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(options => { options.onCancel?.(); return { id: 'confirm', close: () => {} }; });
+ await waitFor(() => expect(source().value).toBe('provider'));
+ vi.spyOn(Modal, 'confirm').mockImplementation(options => { options.onCancel?.(); return { id: 'confirm', close: () => {} }; });
  fireEvent.click(screen.getByRole('button', { name: 'capabilities.revoke' }));
  await act(async () => {});
- expect(confirm.mock.calls[0][0].content).toBe('dev.discardDraft.capabilities');
- expect(invoke.mock.calls.some(([command]) => command === 'revoke_development_capabilities')).toBe(false);
+ expect(source().value).toBe('provider');
+ expect(invoke.mock.calls.some(([command]) => command === 'revoke_development_cli_provider')).toBe(false);
  await act(async () => { useDevelopment.getState().reset(); });
- expect((await screen.findByRole('checkbox', { name: /Skill/ }) as HTMLInputElement).checked).toBe(false);
+ await waitFor(() => expect(source().value).toBe(''));
  expect(useDevelopmentDrafts.getState().entries).toEqual({});
 });
 

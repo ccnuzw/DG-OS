@@ -27,11 +27,35 @@ pub(crate) struct Transport {
     diagnostic: ProcessDiagnostic,
     pid: Option<u32>,
 }
+pub(crate) struct StartupError {
+    pub error: String,
+    pub child: Option<Transport>,
+}
+impl From<String> for StartupError {
+    fn from(error: String) -> Self { Self { error, child: None } }
+}
+impl From<&str> for StartupError {
+    fn from(error: &str) -> Self { error.to_owned().into() }
+}
+impl Transport {
+    /// Native observations must stop being current as soon as IO ends, before reaping.
+    pub(crate) fn native_available(&self) -> bool {
+        !self.stop.is_cancelled() && !self.finished.is_cancelled() && !self.input.is_closed()
+    }
+    pub(crate) fn stopped(&self) -> bool {
+        self.finished.is_cancelled() && self.reaped.load(Ordering::Acquire)
+    }
+    pub(crate) async fn startup_failure(&self, error: String) -> StartupError {
+        self.close().await;
+        StartupError { error, child: Some(self.clone()) }
+    }
+}
 impl Transport {
     pub fn spawn(
         mut command: Command,
         lease: CancellationToken,
         diagnostic: ProcessDiagnostic,
+        provider_lease: Arc<dgos_providers::CliProviderLease>,
     ) -> Result<(Self, mpsc::Receiver<Value>), String> {
         command
             .stdin(std::process::Stdio::piped())
@@ -50,8 +74,8 @@ impl Transport {
         diagnostic.record("spawned", pid, "completed", "none");
         #[cfg(unix)]
         let group = child.id().map(|pid| pid as i32);
-        let mut stdin = child.stdin.take().ok_or("spawn_failed")?;
-        let stdout = child.stdout.take().ok_or("spawn_failed")?;
+        let mut stdin = child.stdin.take().expect("piped child stdin");
+        let stdout = child.stdout.take().expect("piped child stdout");
         let (input, mut writes) = mpsc::channel::<Value>(64);
         let (events, received) = mpsc::channel(128);
         let pending: Arc<Mutex<HashMap<u64, Reply>>> = Arc::default();
@@ -69,6 +93,7 @@ impl Transport {
             pid,
         };
         tokio::spawn(async move {
+            let _provider_lease = provider_lease;
             let io = async {
                 let reader = async {
                     let mut reader = BufReader::new(stdout);
@@ -124,6 +149,7 @@ impl Transport {
                 _ = stop.cancelled() => diagnostic.record("transport", pid, "cancelled", "cancelled"),
                 _ = io => diagnostic.record("transport", pid, "failed", "connection_lost"),
             }
+            writes.close();
             let cleanup = diagnostic.phase("cleanup", pid);
             // The CLI and its ordinary tool descendants share this dedicated process group.
             #[cfg(unix)]
@@ -149,6 +175,12 @@ impl Transport {
                     tokio::time::timeout(Duration::from_secs(2), child.wait()).await,
                     Ok(Ok(_))
                 );
+            }
+            while !reaped {
+                diagnostic.record("exit_wait", pid, "pending", "cleanup_pending");
+                // Never release the actual child or authorization on an uncertain wait.
+                reaped = child.wait().await.is_ok();
+                if !reaped { tokio::time::sleep(Duration::from_millis(100)).await; }
             }
             exit.finish((!reaped).then_some("cleanup_pending"));
             cleanup.finish((!reaped).then_some("cleanup_pending"));

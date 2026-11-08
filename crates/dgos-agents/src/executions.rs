@@ -26,11 +26,11 @@ pub struct RunRecord {
     pub fingerprint: String,
     pub start_fingerprint: String,
     pub truncated: bool,
-    pub capabilities: Option<crate::capabilities::CapabilitySnapshot>,
+    pub configuration: Option<crate::capabilities::SessionConfigurationView>,
 }
 impl RunRecord {
     fn from_stored(r: StoredRun) -> Result<Self, String> {
-        Ok(Self { id:r.id,session_id:r.session_id,task_id:r.task_id,engine:r.engine,source:r.source,status:r.status,started_at:r.started_at,finished_at:r.finished_at,summary:r.summary,reason:r.reason,events:serde_json::from_str(&r.events).map_err(|_| "storage_failed")?,fingerprint:r.fingerprint,start_fingerprint:r.start_fingerprint,truncated:r.truncated,capabilities:None })
+        Ok(Self { id:r.id,session_id:r.session_id,task_id:r.task_id,engine:r.engine,source:r.source,status:r.status,started_at:r.started_at,finished_at:r.finished_at,summary:r.summary,reason:r.reason,events:serde_json::from_str(&r.events).map_err(|_| "storage_failed")?,fingerprint:r.fingerprint,start_fingerprint:r.start_fingerprint,truncated:r.truncated,configuration:None })
     }
 }
 
@@ -42,13 +42,18 @@ impl AgentManager {
         for stored in self.inner.repository.runs(owner, task_id).await? {
             let snapshot = self.inner.repository.run_capabilities(owner, &stored.id).await?;
             let mut record = RunRecord::from_stored(stored)?;
-            record.capabilities = snapshot.map(|s| serde_json::from_str(&s).map_err(|_| "storage_failed")).transpose()?;
+            record.configuration = snapshot.map(|raw| {
+                let value: Value = serde_json::from_str(&raw).map_err(|_| "storage_failed")?;
+                if value.get("binding_id").is_some() {
+                    Ok(crate::capabilities::SessionConfigurationView::ProviderBound { snapshot: serde_json::from_value(value).map_err(|_| "storage_failed")?, read_only: true })
+                } else { Ok::<_,String>(crate::capabilities::SessionConfigurationView::LegacyHistory { history: Some(value), read_only: true }) }
+            }).transpose()?;
             records.push(record);
         }
         Ok(records)
     }
 
-    pub async fn send(&self, owner: &str, id: &str, request_id: String, text: String) -> Result<(), String> {
+    pub async fn send(&self, owner: &str, id: &str, generation: &str, request_id: String, text: String) -> Result<(), String> {
         uuid::Uuid::parse_str(&request_id).map_err(|_| "invalid_request_id")?;
         if text.trim().is_empty() || text.len()>65536 { return Err("invalid_prompt".into()); }
         let request_fingerprint=format!("{:x}",Sha256::digest(text.as_bytes()));
@@ -66,20 +71,19 @@ impl AgentManager {
         if project.archived { return Err("project_archived".into()); }
         crate::projects::validate_directory(&project).await?;
         let (_,backend)=self.owned(owner,id).await?;
+        self.require_generation(id, generation).await?;
+        let control = self.session_control(id).await?;
+        let _control = control.try_lock().map_err(|_| "session_busy")?;
+        self.native_result_known(id).await?;
         self.validate_handoff_target(owner,id).await?;
         if backend.snapshot().await.status!="idle" { return Err("busy".into()); }
         self.capture_task_baseline(owner,&task_id).await?;
         // Baseline is immutable; the start marker must describe this send, not the first round.
         let fingerprint=self.task_fingerprint(owner,&task_id).await?;
         let run=StoredRun { id:request_id.clone(),owner:owner.into(),session_id:Some(id.into()),task_id,project_id,engine:match record.engine { Engine::Codex=>"codex",Engine::Claude=>"claude" }.into(),source:"native_agent".into(),runtime:None,status:"running".into(),started_at:now(),finished_at:None,summary:String::new(),reason:None,events:"[]".into(),fingerprint:fingerprint.clone(),start_fingerprint:fingerprint,truncated:false,request_fingerprint };
-        self.inner.repository.start_run(&run).await?;
-        if let Some(service) = self.capabilities() {
-            if let Err(error) = service.begin_run(owner, id, &request_id).await {
-                let mut failed = run.clone(); failed.status = "failed".into(); failed.reason = Some(error.clone()); failed.finished_at = Some(now());
-                self.inner.repository.finish_run(owner, &failed, Some("blocked")).await?;
-                return Err(error);
-            }
-        }
+        let configuration = self.inner.providers.read_session(owner, id).await?;
+        let crate::capabilities::SessionConfigurationView::ProviderBound { snapshot, .. } = configuration else { return Err("legacy_session_read_only".into()); };
+        self.inner.repository.begin_cli_run(&run, &snapshot).await?;
         let (result_tx,result_rx)=tokio::sync::oneshot::channel();
         let manager=self.clone();
         let watched=backend.clone();
@@ -147,7 +151,6 @@ async fn watch(manager: AgentManager, backend: Backend, mut run: StoredRun, mut 
             } else if manager.inner.stop.is_cancelled() { terminal=Some("unknown".into());run.reason=Some("shutdown".into()); }
         }
         if let Some(status)=terminal {
-            if let Some(service) = manager.capabilities() { if let Some(session) = &run.session_id { service.end_run(session).await; } }
             run.status=status;
             run.finished_at=Some(now());
             run.fingerprint=match manager.task_fingerprint(&run.owner,&run.task_id).await { Ok(value)=>value,Err(_)=>{run.truncated=true;String::new()} };

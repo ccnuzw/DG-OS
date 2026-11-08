@@ -14,8 +14,8 @@ use dgos_providers::{
     ProviderManager,
 };
 use dgos_skills::SkillsManager;
-use dgos_types::ProviderConfig;
-use dgos_workbench::{TaskInput, ToolAction, ToolSelection, ToolTaskInput, WorkbenchManager};
+use dgos_types::{AiToolSelection, ProviderConfig};
+use dgos_workbench::{TaskInput, ToolAction, ToolTaskInput, WorkbenchManager};
 use std::sync::Arc;
 
 struct Allow;
@@ -129,7 +129,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         model_id,
         prompt: "Use the selected echo tool exactly once with {\"text\":\"DGOS-REAL-PROVIDER-MCP-20261028\"}. After the tool result, reply with a short confirmation. Do not answer before calling the tool.".into(), skill_ids: vec![], generation: Default::default(), allow_without_skill: true,
         client_task_id: None, },
-        tools: vec![ToolSelection {
+        tools: vec![AiToolSelection {
             server_id: tool.server_id.clone(),
             tool_name: tool.tool_name.clone(),
             schema_hash: tool.schema_hash.clone(),

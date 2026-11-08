@@ -320,18 +320,119 @@ describe('signed in: nav menu', () => {
 });
 
 describe('signed in: account page', () => {
-  it('creates another account without reloading and re-reads the state', async () => {
+  it('creates another account in a dialog without switching the current account and re-reads the state', async () => {
     renderApp('/account');
     expect(await screen.findByRole('heading', { name: '账户' })).toBeTruthy();
+    expect(screen.queryByLabelText('用户名')).toBeNull();
+    useChatStore.getState().setDraft('running-session', 'keep current draft');
+    press('新建账户');
+    const dialog = await screen.findByRole('dialog', { name: '新建账户' });
     reply('create_account', ok({ ...signedIn, accounts: [alice, bob, { username: 'carol', last_sign_in_at: null }] }));
-    typeInto('用户名', 'carol');
-    typeInto('密码', 'password1');
-    typeInto('确认密码', 'password1');
-    press('创建账户');
+    typeInto('用户名', 'carol', dialog);
+    typeInto('密码', 'password1', dialog);
+    typeInto('确认密码', 'password1', dialog);
+    press('创建账户', dialog);
     expect(await screen.findByText('账户已创建')).toBeTruthy();
     expect(reloadApp).not.toHaveBeenCalled();
     expect(callsOf('create_account')).toEqual([['create_account', { input: { username: 'carol', password: 'password1' } }]]);
     await waitFor(() => expect(callsOf('get_account_state')).toHaveLength(2));
+    expect(screen.queryByRole('dialog', { name: '新建账户' })).toBeNull();
+    expect(callsOf('sign_in')).toHaveLength(0);
+    expect(callsOf('sign_out')).toHaveLength(0);
+    expect(useChatStore.getState().sessionDrafts['running-session']).toBe('keep current draft');
+    const currentAccount = screen.getByRole('region', { name: '当前账户' });
+    expect(within(currentAccount).getByText('alice')).toBeTruthy();
+  });
+
+  it('cancels account creation, returns focus and keeps failed input available to correct', async () => {
+    renderApp('/account');
+    await screen.findByRole('heading', { name: '账户' });
+    const trigger = screen.getByRole('button', { name: '新建账户' });
+    trigger.focus();
+    fireEvent.click(trigger);
+    let dialog = await screen.findByRole('dialog', { name: '新建账户' });
+    typeInto('用户名', 'discarded', dialog);
+    press('取消', dialog);
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '新建账户' })).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+    expect(callsOf('create_account')).toHaveLength(0);
+
+    fireEvent.click(trigger);
+    dialog = await screen.findByRole('dialog', { name: '新建账户' });
+    expect(within(dialog).getByLabelText('用户名')).toHaveProperty('value', '');
+    reply('create_account', fail(1008001));
+    typeInto('用户名', 'alice', dialog);
+    typeInto('密码', 'password1', dialog);
+    typeInto('确认密码', 'password1', dialog);
+    press('创建账户', dialog);
+    expect(await within(dialog).findByText('用户名已存在')).toBeTruthy();
+    expect(within(dialog).getByLabelText('用户名')).toHaveProperty('value', 'alice');
+    expect(within(dialog).getByLabelText('密码')).toHaveProperty('value', 'password1');
+    expect(reloadApp).not.toHaveBeenCalled();
+    expect(callsOf('get_account_state')).toHaveLength(1);
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '新建账户' })).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('keeps the creation dialog open during the host request, then allows cancellation after failure', async () => {
+    const { promise, resolve: finish } = Promise.withResolvers<unknown>();
+    reply('create_account', promise);
+    renderApp('/account');
+    await screen.findByRole('heading', { name: '账户' });
+    press('新建账户');
+    const dialog = await screen.findByRole('dialog', { name: '新建账户' });
+    typeInto('用户名', 'carol', dialog);
+    typeInto('密码', 'password1', dialog);
+    typeInto('确认密码', 'password1', dialog);
+    press('创建账户', dialog);
+    expect(within(dialog).getByRole('button', { name: '取消' })).toHaveProperty('disabled', true);
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    press('关闭', dialog);
+    press('创建账户', dialog);
+    expect(screen.getByRole('dialog', { name: '新建账户' })).toBe(dialog);
+    expect(callsOf('create_account')).toHaveLength(1);
+    await act(async () => finish(fail(1008001)));
+    expect(await within(dialog).findByText('用户名已存在')).toBeTruthy();
+    press('取消', dialog);
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '新建账户' })).toBeNull());
+    expect(reloadApp).not.toHaveBeenCalled();
+  });
+
+  it('shows and hides account passwords independently without submitting or changing their values', async () => {
+    renderApp('/account');
+    await screen.findByRole('heading', { name: '账户' });
+    const toggle = (label: string, scope: HTMLElement = document.body) => {
+      const input = within(scope).getByLabelText(label);
+      expect(fireEvent.paste(input, { clipboardData: { getData: () => 'paste-ready-password' } })).toBe(true);
+      typeInto(label, 'paste-ready-password', scope);
+      expect(input).toHaveProperty('type', 'password');
+      press(`显示${label}`, scope);
+      expect(input).toHaveProperty('type', 'text');
+      expect(within(scope).getByRole('button', { name: `隐藏${label}` }).getAttribute('aria-pressed')).toBe('true');
+      expect(input).toHaveProperty('value', 'paste-ready-password');
+      press(`隐藏${label}`, scope);
+      expect(input).toHaveProperty('type', 'password');
+      expect(input).toHaveProperty('value', 'paste-ready-password');
+    };
+    toggle('当前密码');
+    toggle('新密码');
+    toggle('确认新密码');
+    expect(screen.getByLabelText('当前密码').getAttribute('autocomplete')).toBe('current-password');
+    expect(screen.getByLabelText('新密码').getAttribute('autocomplete')).toBe('new-password');
+    press('新建账户');
+    let dialog = await screen.findByRole('dialog', { name: '新建账户' });
+    toggle('密码', dialog);
+    expect(within(dialog).getByLabelText('确认密码')).toHaveProperty('type', 'password');
+    toggle('确认密码', dialog);
+    press('取消', dialog);
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '新建账户' })).toBeNull());
+    press('删除账户');
+    dialog = await screen.findByRole('dialog', { name: '删除账户？' });
+    toggle('当前密码', dialog);
+    expect(callsOf('create_account')).toHaveLength(0);
+    expect(callsOf('change_password')).toHaveLength(0);
+    expect(callsOf('delete_account')).toHaveLength(0);
   });
 
   it('changes the password and reloads; a wrong current password keeps the page', async () => {
@@ -361,7 +462,7 @@ describe('signed in: account page', () => {
     await screen.findByRole('heading', { name: '账户' });
     press('删除账户');
     const dialog = await screen.findByRole('dialog', { name: '删除账户？' });
-    expect(within(dialog).getByText(/永久删除/)).toBeTruthy();
+    expect(within(dialog).getByText(/账户“alice”的全部数据将被永久删除/)).toBeTruthy();
 
     press('确认删除', dialog);
     expect(await within(dialog).findByText('请输入密码以确认删除')).toBeTruthy();

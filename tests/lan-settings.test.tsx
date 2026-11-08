@@ -173,15 +173,13 @@ afterEach(() => {
 });
 
 describe('status', () => {
-  it('shows the state, the address, the actual and preferred port, and the unencrypted-network notice', async () => {
+  it('shows the running address and allows editing the preferred port', async () => {
     host.status = running({ session_count: 2 });
     await openPage();
 
     expect(screen.getByText('仅在可信网络中使用：局域网连接未加密')).toBeTruthy();
     expect(screen.getByText('运行中')).toBeTruthy();
     expect(screen.getByText('http://192.168.1.5:8635')).toBeTruthy();
-    expect(screen.getByText('当前端口').nextElementSibling?.textContent).toBe('8635');
-    expect(screen.getAllByText('首选端口')[0].nextElementSibling?.textContent).toBe('8635');
     expect(screen.getByRole('switch', { name: '启用局域网协同' }).getAttribute('aria-checked')).toBe('true');
     expect(screen.queryByText(/被其他程序占用/)).toBeNull();
     expect(count('get_lan_status')).toBeGreaterThanOrEqual(1);
@@ -194,7 +192,6 @@ describe('status', () => {
 
     expect(screen.getByText('首选端口 8635 被其他程序占用，当前使用 8637')).toBeTruthy();
     expect(screen.getByText('http://192.168.1.5:8637')).toBeTruthy();
-    expect(screen.getByText('当前端口').nextElementSibling?.textContent).toBe('8637');
   });
 
   it.each([
@@ -310,11 +307,11 @@ describe('preferred port', () => {
     expect(portInput().value).toBe('8635');
 
     fireEvent.change(portInput(), { target: { value: '9000' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存端口' }));
 
     await waitFor(() => expect(lastArgs('set_lan_port')).toEqual({ port: 9000 }));
     expect(screen.queryByRole('dialog')).toBeNull();
-    await waitFor(() => expect(screen.getAllByText('首选端口')[0].nextElementSibling?.textContent).toBe('9000'));
+    await waitFor(() => expect(portInput().value).toBe('9000'));
     expect(count('issue_lan_access_code')).toBe(0);
   });
 
@@ -323,7 +320,7 @@ describe('preferred port', () => {
     await openPage();
 
     fireEvent.change(portInput(), { target: { value } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存端口' }));
 
     expect(await screen.findByText('端口须为 1024～65535 的整数')).toBeTruthy();
     expect(count('set_lan_port')).toBe(0);
@@ -335,7 +332,7 @@ describe('preferred port', () => {
     await openPage();
 
     fireEvent.change(portInput(), { target: { value: '6000' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存端口' }));
 
     expect(await screen.findByText('端口不可用：须为 1024～65535，且不是浏览器禁止的端口')).toBeTruthy();
     expect(lastArgs('set_lan_port')).toEqual({ port: 6000 });
@@ -346,7 +343,7 @@ describe('preferred port', () => {
     await screen.findByTestId('lan-code');
 
     fireEvent.change(portInput(), { target: { value: '9000' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存端口' }));
     const confirmDialog = await dialog();
     expect(within(confirmDialog).getByText(/会断开全部设备/)).toBeTruthy();
     expect(count('set_lan_port')).toBe(0);
@@ -363,7 +360,7 @@ describe('preferred port', () => {
     expect((await screen.findByTestId('lan-code')).textContent).toBe('AAAA-BBBB-CCCC');
 
     fireEvent.change(portInput(), { target: { value: '9000' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存端口' }));
     fireEvent.click(within(await dialog()).getByRole('button', { name: '修改并断开' }));
 
     await waitFor(() => expect(lastArgs('set_lan_port')).toEqual({ port: 9000 }));
@@ -378,7 +375,7 @@ describe('preferred port', () => {
     await screen.findByTestId('lan-code');
 
     fireEvent.change(portInput(), { target: { value: '8637' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存端口' }));
 
     await waitFor(() => expect(lastArgs('set_lan_port')).toEqual({ port: 8637 }));
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -400,7 +397,6 @@ describe('switch', () => {
     await waitFor(() => expect(lastArgs('set_lan_enabled')).toEqual({ enabled: false }));
     await waitFor(() => expect(screen.getByText('已停止')).toBeTruthy());
     expect(screen.queryByTestId('lan-code')).toBeNull();
-    expect(screen.getByText('当前没有已连接的设备')).toBeTruthy();
   });
 
   it('leaves the service running when the confirmation is cancelled', async () => {
@@ -428,21 +424,11 @@ describe('switch', () => {
 });
 
 describe('devices', () => {
-  it('lists label, IP, short id and times', async () => {
-    host.devices = [device(1), device(2)];
-    await openPage();
-
-    const table = await screen.findByRole('table', { name: '已连接设备' });
-    const rows = within(table).getAllByRole('row');
-    expect(rows).toHaveLength(3);
-    const first = within(rows[1]).getAllByRole('cell').map((c) => c.textContent);
-    expect(first.slice(0, 3)).toEqual(['iPhone 1', '192.168.1.11', 'sid1']);
-  });
 
   it('disconnects one device after a confirmation and refreshes the list', async () => {
     host.devices = [device(1), device(2)];
     await openPage();
-    await screen.findByRole('table', { name: '已连接设备' });
+    await screen.findByRole('list', { name: '已连接设备' });
 
     fireEvent.click(screen.getByRole('button', { name: '断开 iPhone 1' }));
     const confirmDialog = await dialog();
@@ -458,7 +444,7 @@ describe('devices', () => {
   it('does not disconnect when the confirmation is cancelled', async () => {
     host.devices = [device(1)];
     await openPage();
-    await screen.findByRole('table', { name: '已连接设备' });
+    await screen.findByRole('list', { name: '已连接设备' });
 
     fireEvent.click(screen.getByRole('button', { name: '断开 iPhone 1' }));
     fireEvent.click(within(await dialog()).getByRole('button', { name: '取消' }));
@@ -471,7 +457,7 @@ describe('devices', () => {
   it('disconnects all devices after a confirmation', async () => {
     host.devices = [device(1), device(2)];
     await openPage();
-    await screen.findByRole('table', { name: '已连接设备' });
+    await screen.findByRole('list', { name: '已连接设备' });
 
     fireEvent.click(screen.getByRole('button', { name: '断开全部' }));
     const confirmDialog = await dialog();
@@ -492,18 +478,15 @@ describe('audit records', () => {
     ];
     await openPage();
 
-    const table = await screen.findByRole('table', { name: '审计记录' });
-    expect(within(table).getAllByRole('row')).toHaveLength(3);
-    expect(within(table).getByText('配对被拒绝')).toBeTruthy();
-    expect(within(table).getByText('访问凭据无效或已使用')).toBeTruthy();
-    expect(within(table).getByText('会话被撤销')).toBeTruthy();
-    expect(within(table).getByText('主机断开该设备')).toBeTruthy();
-    expect(within(table).getByText('sid1')).toBeTruthy();
-    expect(within(table).getByText('3')).toBeTruthy();
+    const records = await screen.findByRole('list', { name: '连接与安全记录' });
+    expect(within(records).getByText('访问凭据无效或已使用')).toBeTruthy();
+    expect(within(records).getByText('主机断开该设备')).toBeTruthy();
+    fireEvent.click(within(records).getAllByText('详情')[0]);
+    expect(within(records).getByText('1010004')).toBeTruthy();
     expect(host.auditCursors).toEqual([undefined]);
 
     fireEvent.click(screen.getByRole('button', { name: '加载更多' }));
-    await waitFor(() => expect(within(screen.getByRole('table', { name: '审计记录' })).getAllByRole('row')).toHaveLength(4));
+    await screen.findByText('配对成功');
     expect(host.auditCursors).toEqual([undefined, 'c1']);
     expect(screen.getByText('配对成功')).toBeTruthy();
     expect(screen.queryByRole('button', { name: '加载更多' })).toBeNull();
@@ -525,7 +508,7 @@ describe('secrets and polling', () => {
     fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
     await waitFor(() => expect(count('issue_lan_access_code')).toBe(2));
     fireEvent.change(portInput(), { target: { value: '9000' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存端口' }));
     fireEvent.click(within(await dialog()).getByRole('button', { name: '修改并断开' }));
     await waitFor(() => expect(count('set_lan_port')).toBe(1));
     await waitFor(() => expect(count('issue_lan_access_code')).toBe(3));
@@ -583,8 +566,8 @@ describe('secrets and polling', () => {
 it('shows English confirmation copy and preserves device identity in interpolation',async()=>{
   setLocaleForTesting('en-US');host.devices=[device(1)];
   render(<MemoryRouter  future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><LanSettings/><ModalHost/></MemoryRouter>);
-  const table=await screen.findByRole('table',{name:'Connected devices'});
-  fireEvent.click(await within(table).findByRole('button',{name:'Disconnect iPhone 1'}));
+  const list=await screen.findByRole('list',{name:'Connected devices'});
+  fireEvent.click(await within(list).findByRole('button',{name:'Disconnect iPhone 1'}));
   const prompt=await screen.findByRole('dialog',{name:'Disconnect device?'});
   expect(prompt.textContent).toContain('iPhone 1');expect(prompt.textContent).toContain('192.168.1.11');
   fireEvent.click(within(prompt).getByRole('button',{name:'Cancel'}));

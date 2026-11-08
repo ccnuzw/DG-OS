@@ -203,7 +203,7 @@ it('MCP unknown external result is explicit and never presented as success', asy
   const handler = mocked.getMockImplementation()!;
   mocked.mockImplementation((command, args) => command === 'advance_workbench_tool_task'
     && (args?.action as { type: string }).type === 'approve'
-    ? Promise.resolve({ record: { ...toolRecord, task: { ...toolRecord.task, status: 'failed', error_code: 'mcp_unknown_result' } }, phase: 'finished' })
+    ? Promise.resolve({ record: { ...toolRecord, task: { ...toolRecord.task, status: 'failed', error_code: 'mcp_1003005' } }, phase: 'finished' })
     : handler(command, args));
   fireEvent.click(screen.getByRole('button', { name: 'Approve this call once' }));
   await screen.findByRole('alert');

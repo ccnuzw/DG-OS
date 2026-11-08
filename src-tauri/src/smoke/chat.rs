@@ -298,7 +298,7 @@ const until = async (fn, ms = 8000) => { const t = Date.now(); while (Date.now()
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const txt = (el) => ((el && el.textContent) || '').trim();
-const btn = (t, root = document) => $$('button', root).find((b) => txt(b) === t);
+const btn = (t, root = document) => $$('button', root).find((b) => (b.getAttribute('aria-label') || txt(b)) === t);
 const btnHas = (t, root = document) => $$('button', root).find((b) => txt(b).includes(t));
 const kd = (el, key) => { el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })); };
 const setVal = (el, v) => { const p = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(p, 'value').set.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); };
@@ -345,16 +345,23 @@ const newSession = async (model) => {
   const ready = await until(() => $$('[aria-label="AI 会话标签"] [role=tab]').length > before && $('button[aria-label="会话目标"]'));
   if (!ready) throw new Error('new session did not appear');
   $('button[aria-label="会话目标"]').click();
-  await until(() => combo('Provider'));
-  await choose('Provider', 'Smoke Loopback');
-  await choose('模型', model);
+  const provider = await until(() => $$('.chat-provider-option').find(x => x.getAttribute('aria-label') === 'Smoke Loopback'));
+  if (!provider) throw new Error('provider missing');
+  provider.click();
+  const modelOption = await until(() => $$('.chat-model-option').find(x => x.getAttribute('aria-label') === model));
+  if (!modelOption) throw new Error('model missing: ' + model);
+  modelOption.click();
+  kd($('[role=dialog]'), 'Escape');
+  const skills = btn('选择 Skills');
+  if (!skills) throw new Error('Skills picker missing');
+  skills.click();
   const noSkill = await until(() => [...document.querySelectorAll('[role="checkbox"]')].find(el => document.querySelector(`label[for="${el.id}"]`)?.textContent?.includes('明确不使用技能')));
   if (!noSkill) throw new Error('no-skill checkbox missing');
   if (noSkill.getAttribute('aria-checked') !== 'true') noSkill.click();
   const ap = await until(() => { const b = btn('应用目标'); return b && !b.disabled && b; });
   if (!ap) throw new Error('apply button never enabled');
   ap.click();
-  if (!(await until(() => !$('.chat-target') && txt($('button[aria-label="会话目标"]')).split(' · ')[0] === model))) throw new Error('target was not applied: ' + txt($('button[aria-label="会话目标"]')));
+  if (!(await until(() => !$('.chat-target-popover') && txt($('.chat-model-button-label')).includes(model)))) throw new Error('target was not applied: ' + txt($('button[aria-label="会话目标"]')));
   return true;
 };
 const send = async (text) => {
@@ -1338,8 +1345,9 @@ async fn block_lists(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
     .await;
     let deleted = js(
         app,
-        "const del = btn('删除会话'); if (!del) throw new Error('no delete button'); del.click(); \
-         const dialog = await until(() => $('[role=dialog]')); const confirm = dialog && btn('删除', dialog); if (!confirm) throw new Error('no confirm'); confirm.click(); \
+        "const tab = $('.workspace-session-tabs [role=tab][aria-selected=true]'); tab.dispatchEvent(new MouseEvent('contextmenu', {bubbles:true,clientX:100,clientY:100})); \
+         const del = await until(() => $$('[role=menuitem]').find(e => txt(e)==='删除会话')); if (!del) throw new Error('no delete menu item'); del.click(); \
+         const dialog = await until(() => $('[data-modal-kind][role=dialog]')); const confirm = dialog && btn('删除会话', dialog); if (!confirm) throw new Error('no confirm'); confirm.click(); \
          const ok = await until(() => !$$('section[aria-label=\"会话列表\"] li').some((li) => txt(li).includes('T8 regen base')) && txt(document.body).includes('开始一次对话'), 8000); \
          return { ok: !!ok };",
     )
@@ -1645,9 +1653,12 @@ async fn block_account_workspace(app: &AppHandle, checks: &mut Checks, fx: &Fixt
     let accounts = dgos_application::AccountService::new(fx.db.clone(), ports);
     accounts.recover().await.unwrap();
     app.manage(accounts);
-    let agent_manager = dgos_agents::AgentManager::with_maintenance(fx.root.join("agents.json"), dgos_db::DevelopmentRepository::new(fx.db.clone()), app.state::<dgos_db::MaintenanceGate>().inner().clone());
+    let repository = dgos_db::DevelopmentRepository::new(fx.db.clone());
+    let cli_providers = dgos_agents::capabilities::CliProviders::new(repository.clone(), app.state::<ProviderManager>().inner().clone()).unwrap();
+    let agent_manager = dgos_agents::AgentManager::with_maintenance(fx.root.join("agents.json"), repository, app.state::<dgos_db::MaintenanceGate>().inner().clone(), cli_providers.clone());
     agent_manager.load().await.unwrap();
     app.manage(agent_manager);
+    app.manage(cli_providers);
     let alice = ipc(app, MAIN, "create_account", json!({"input":{"username":"alice","password":"alice-password"}})).await;
     let bob = ipc(app, MAIN, "create_account", json!({"input":{"username":"bob","password":"bob-password"}})).await;
     checks.check("[11] two real accounts created", alice.success() && bob.success(), format!("{} {}", alice.describe(), bob.describe()));
@@ -1680,15 +1691,16 @@ async fn block_account_workspace(app: &AppHandle, checks: &mut Checks, fx: &Fixt
         use std::os::unix::fs::PermissionsExt;
         let executable=fx.root.join("codex-account-fixture");
         std::fs::write(&executable,r##"#!/bin/sh
-if [ "$1" = "--version" ]; then printf '%s\n' 'codex-cli 0.0.0'; exit 0; fi
+if [ "$1" = "--version" ]; then printf '%s\n' 'codex-cli 0.167.0'; exit 0; fi
 while IFS= read -r line; do
 case "$line" in
 *'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}';;
-*'"method":"thread/start"'*) printf '%s\n' '{"id":2,"result":{"thread":{"id":"account-thread","turns":[]}}}';;
-*'"method":"turn/start"'*) printf '%s\n' '{"id":3,"result":{"turn":{"id":"account-turn"}}}' '{"method":"turn/started","params":{"turn":{"id":"account-turn"}}}' '{"id":"account-approval","method":"item/commandExecution/requestApproval","params":{"command":"echo allowed","availableDecisions":["accept","decline"]}}';;
+*'"method":"config/read"'*) printf '%s\n' '{"id":2,"result":{"config":{"model_provider":"dgos_project","model_providers":{"dgos_project":{"base_url":"FIXTURE_BASE_URL","wire_api":"responses","env_key":"DGOS_PROVIDER_KEY","requires_openai_auth":false}}}}}';;
+*'"method":"thread/start"'*) printf '{"id":3,"result":{"cwd":"%s","model":"chat-model","modelProvider":"dgos_project","thread":{"id":"account-thread","turns":[]}}}\n' "$PWD";;
+*'"method":"turn/start"'*) printf '%s\n' '{"id":4,"result":{"turn":{"id":"account-turn"}}}' '{"method":"turn/started","params":{"threadId":"account-thread","turn":{"id":"account-turn"}}}' '{"id":"account-approval","method":"item/commandExecution/requestApproval","params":{"threadId":"account-thread","turnId":"account-turn","itemId":"account-item","command":"echo allowed","availableDecisions":["accept","decline"]}}';;
 esac
 done
-"##).unwrap();
+"##.replace("FIXTURE_BASE_URL", &app.state::<ProviderManager>().list_providers(LOCAL_USER).await.unwrap()[0].base_url)).unwrap();
         std::fs::set_permissions(&executable,std::fs::Permissions::from_mode(0o700)).unwrap();
         let id=uuid::Uuid::new_v4().to_string();
         let probe = ipc(app, MAIN, "probe_cli", json!({"tool":"codex","path":executable})).await;
@@ -1697,12 +1709,43 @@ done
         let saved = ipc(app, MAIN, "set_cli_preferences", json!({"paths":paths,"expectedRevision":current.data()["revision"]})).await;
         let readback = ipc(app, MAIN, "get_cli_preferences", json!({})).await;
         let stale = ipc(app, MAIN, "set_cli_preferences", json!({"paths":paths,"expectedRevision":current.data()["revision"]})).await;
-        checks.check("[11] CLI version, account CAS save and readback use production IPC",probe.success() && probe.data()["status"]=="available" && probe.data()["version"]=="codex-cli 0.0.0" && probe.data()["managed"]==false && saved.data()["saved"]==true && readback.data()["paths"]["codex"]==json!(executable) && stale.data()["saved"]==false,format!("{} {} {} {}",probe.describe(),saved.describe(),readback.describe(),stale.describe()));
+        checks.check("[11] CLI version, account CAS save and readback use production IPC",probe.success() && probe.data()["status"]=="available" && probe.data()["version"]=="codex-cli 0.167.0" && probe.data()["managed"]==false && saved.data()["saved"]==true && readback.data()["paths"]["codex"]==json!(executable) && stale.data()["saved"]==false,format!("{} {} {} {}",probe.describe(),saved.describe(),readback.describe(),stale.describe()));
+        // The cached badge must survive renderer lifecycles even when its executable
+        // is no longer runnable; entering settings must not run a fresh probe.
+        std::fs::set_permissions(&executable,std::fs::Permissions::from_mode(0o600)).unwrap();
+        let cached = js(app, r#"
+          const states=[];
+          for(let visit=0;visit<2;visit++){
+            $$('a').find(a=>a.getAttribute('href')==='/settings').click();
+            const tab=await until(()=>$$('[role=tab]').find(e=>txt(e)==='CLI 工具')); kd(tab,'Enter');
+            const version=await until(()=>$('.cli-tool-codex .cli-tool-version'));
+            const input=$('.cli-tool-codex input');
+            states.push({version:txt(version),path:input?.value,readOnly:input?.readOnly});
+            btn('关闭设置').click(); await until(()=>!$('[data-settings-shell]'));
+          }
+          return states;
+        "#).await;
+        let unchanged = ipc(app, MAIN, "get_cli_preferences", json!({})).await;
+        std::fs::set_permissions(&executable,std::fs::Permissions::from_mode(0o700)).unwrap();
+        checks.check("[11] persisted CLI badge reopens with read-only path and no re-probe", cached.as_array().is_some_and(|states| states.len()==2 && states.iter().all(|state| state["version"]=="codex-cli 0.167.0" && state["path"]==json!(executable) && state["readOnly"]==true)) && unchanged.data()["revision"]==readback.data()["revision"] && unchanged.data()["detections"]["codex"]["version"]=="codex-cli 0.167.0", format!("states={cached} {}",unchanged.describe()));
+        let node_root=fx.root.join("selected-node");
+        std::fs::create_dir_all(node_root.join("bin")).unwrap();
+        let node_executable=node_root.join("bin/node");
+        std::fs::write(&node_executable,"#!/bin/sh\n[ \"$1\" = --version ] || exit 2\nprintf 'v22.33.44\\n'\n").unwrap();
+        std::fs::set_permissions(&node_executable,std::fs::Permissions::from_mode(0o700)).unwrap();
+        let selected_node=ipc(app, MAIN, "probe_node_directory", json!({"directory":node_root})).await;
+        let mut selected_paths=unchanged.data()["paths"].clone(); selected_paths["node"]=json!(node_executable);
+        let node_saved=ipc(app, MAIN, "set_cli_preferences", json!({"paths":selected_paths,"expectedRevision":unchanged.data()["revision"]})).await;
+        let node_readback=ipc(app, MAIN, "get_cli_preferences", json!({})).await;
+        checks.check("[11] selected Node path and verified version persist together through IPC", selected_node.data()["status"]=="available" && node_saved.data()["saved"]==true && node_readback.data()["paths"]["node"]==json!(node_executable) && node_readback.data()["detections"]["node"]["version"]=="v22.33.44" && node_readback.data()["detections"]["codex"]["version"]=="codex-cli 0.167.0", format!("{} {} {}",selected_node.describe(),node_saved.describe(),node_readback.describe()));
         let manager = app.state::<dgos_agents::AgentManager>();
         let project = manager.create_project(LOCAL_USER, dgos_agents::projects::CreateProjectInput { kind: "import".into(), name: "Account boundary".into(), path: fx.root.to_string_lossy().into_owned(), source: None }, tokio_util::sync::CancellationToken::new()).await.unwrap();
-        let development_task = manager.save_development_task(LOCAL_USER, dgos_agents::projects::SaveTaskInput { id: None, project_id: project.id, goal: "Account boundary".into(), requirements: "Reject old account operations".into(), status: "todo".into() }, tokio_util::sync::CancellationToken::new()).await.unwrap();
-        let opened=ipc(app,MAIN,"open_agent_session",json!({"input":{"id":id,"engine":"codex","task_id":development_task.id,"options":{"workspace":fx.root,"resume_id":null,"model":null,"trust_workspace":true}}})).await;
-        let sent=ipc(app,MAIN,"send_agent_message",json!({"input":{"session_id":id,"request_id":uuid::Uuid::new_v4(),"text":"hold for account change"}})).await;
+        let development_task = manager.save_development_task(LOCAL_USER, dgos_agents::projects::SaveTaskInput { id: None, project_id: project.id.clone(), goal: "Account boundary".into(), requirements: "Reject old account operations".into(), status: "todo".into() }, tokio_util::sync::CancellationToken::new()).await.unwrap();
+        let selected = app.state::<ProviderManager>().list_providers(LOCAL_USER).await.unwrap().remove(0);
+        let provider = dgos_agents::capabilities::CliProviderRef { provider_id: selected.id, model_id: "chat-model".into(), provider_revision: selected.config_revision };
+        let head = app.state::<dgos_agents::capabilities::CliProviders>().save(LOCAL_USER, dgos_agents::capabilities::SaveCliProviderInput { project_id: project.id, expected_revision: 0, configuration: dgos_agents::capabilities::CliProviderConfiguration { engine: dgos_agents::Engine::Codex, provider: provider.clone() } }).await.unwrap();
+        let opened=ipc(app,MAIN,"open_agent_session",json!({"input":{"intent":"create","id":id,"engine":"codex","task_id":development_task.id,"project_revision":head.revision,"provider":provider,"options":{"workspace":fx.root,"resume_id":null,"model":null,"trust_workspace":true}}})).await;
+        let sent=ipc(app,MAIN,"send_agent_message",json!({"input":{"session_id":id,"generation":opened.data()["generation"],"request_id":uuid::Uuid::new_v4(),"text":"hold for account change"}})).await;
         checks.check("[11] production Agent process starts",opened.0["ok"]==true && sent.0["ok"]==true,format!("{} {}",opened.describe(),sent.describe()));
         id
     };
@@ -1927,19 +1970,20 @@ async fn block_layout(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
     // Stage 4: reuse the native key driver; JS only chooses a known starting control or fills fixture text.
     use super::ui_keys::{key, prepare, Key};
     checks.check("[13] native keyboard responder ready", prepare(app).await, "NSEvent through NSApplication");
-    js(app, "btn('重命名会话').focus(); return true;").await;
+    js(app, "const tab = $('.workspace-session-tabs [role=tab][aria-selected=true]'); tab.focus(); tab.dispatchEvent(new MouseEvent('contextmenu', {bubbles:true,clientX:100,clientY:100})); await until(() => $('[role=menu]')); return true;").await;
+    key(app, Key::Down).await;
     key(app, Key::Enter).await;
     let editing = js(app, "return document.activeElement === $('input[aria-label=\"会话标题\"]');").await;
     key(app, Key::Escape).await;
-    let rename_return = js(app, "return document.activeElement === btn('重命名会话');").await;
-    checks.check("[13] native Enter edits title and Escape restores rename focus", editing == true && rename_return == true, format!("editing={editing} returned={rename_return}"));
-    key(app, Key::Tab).await;
-    key(app, Key::Tab).await;
+    let rename_return = js(app, "return !$('[data-modal-kind][role=dialog]') && document.activeElement === $('.workspace-session-tabs [role=tab][aria-selected=true]');").await;
+    checks.check("[13] native menu Enter edits title and Escape restores tab focus", editing == true && rename_return == true, format!("editing={editing} returned={rename_return}"));
+    js(app, "const tab = $('.workspace-session-tabs [role=tab][aria-selected=true]'); tab.dispatchEvent(new MouseEvent('contextmenu', {bubbles:true,clientX:100,clientY:100})); await until(() => $('[role=menu]')); return true;").await;
+    key(app, Key::Up).await;
     key(app, Key::Enter).await;
     let modal = js(app, "return !!$('[data-modal-kind][role=dialog]') && !!document.activeElement.closest('[data-modal-kind]');").await;
     key(app, Key::Escape).await;
-    let delete_return = js(app, "return !$('[data-modal-kind][role=dialog]') && document.activeElement === btn('删除会话');").await;
-    checks.check("[13] native Tab reaches delete Modal and Escape restores its opener", modal == true && delete_return == true, format!("modal={modal} restored={delete_return}"));
+    let delete_return = js(app, "return !$('[data-modal-kind][role=dialog]') && document.activeElement === $('.workspace-session-tabs [role=tab][aria-selected=true]');").await;
+    checks.check("[13] native menu reaches delete Modal and Escape restores tab focus", modal == true && delete_return == true, format!("modal={modal} restored={delete_return}"));
     // The supported maximum text sizes remain active. Exercise narrow / high density geometry once.
     if let Some(window) = app.get_webview_window(MAIN) {
         window.set_min_size(Some(tauri::LogicalSize::new(380.0, 400.0))).ok();
@@ -1947,13 +1991,13 @@ async fn block_layout(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
     }
     let narrow = js(app, &format!(r##"
         {helpers}
-        document.documentElement.dataset.density = '175';
+        document.documentElement.dataset.density = '150';
         await wait(300);
         const area = input(); area.focus(); await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
         const r = area.getBoundingClientRect();
         return {{width: innerWidth, density: document.documentElement.dataset.density, inputVisible: visible(area), scrollWidth: document.documentElement.scrollWidth, inputSize: getComputedStyle(area).fontSize, inputHeight: r.height, rect:r.toJSON(), ancestors:[area.parentElement,area.closest('.chat-composer-body'),area.closest('.chat-composer'),area.closest('.chat-surface')].map(e=>({{class:e.className,rect:e.getBoundingClientRect().toJSON(),scroll:e.scrollTop,rows:getComputedStyle(e).gridTemplateRows}}))}};
     "##)).await;
-    checks.check("[13] narrow native chat / 175% geometry and enlarged text retains reachable input without horizontal overflow", narrow["density"] == "175" && narrow["inputSize"] == "20px" && narrow["width"].as_f64().is_some_and(|v| v <= 521.0) && narrow["inputVisible"] == true && narrow["scrollWidth"].as_f64().zip(narrow["width"].as_f64()).is_some_and(|(a,b)|a <= b + 1.0), narrow.to_string());
+    checks.check("[13] narrow native chat / 150% layout and enlarged text retains reachable input without horizontal overflow", narrow["density"] == "150" && narrow["inputSize"] == "20px" && narrow["width"].as_f64().is_some_and(|v| v <= 521.0) && narrow["inputVisible"] == true && narrow["scrollWidth"].as_f64().zip(narrow["width"].as_f64()).is_some_and(|(a,b)|a <= b + 1.0), narrow.to_string());
     js(app, "$('button[aria-label=\"会话目标\"]').focus(); return true;").await;
     key(app, Key::Enter).await;
     let popup = js(app, "return !!document.activeElement.closest('[role=dialog]');").await;
@@ -2301,6 +2345,7 @@ pub fn run_chat() {
             commands::get_cli_preferences,
             commands::set_cli_preferences,
             commands::probe_cli,
+            commands::probe_node_directory,
             commands::get_storage_overview,
             commands::preview_storage_cleanup,
             commands::execute_storage_cleanup,

@@ -1,7 +1,7 @@
 import { Select as SelectPrimitive } from 'radix-ui';
 import { useId } from 'react';
 import { cn } from '../lib/cn';
-import { FOCUS_RING_INSET } from '../lib/focus';
+import { FOCUS_ITEM } from '../lib/focus';
 import { accessibleName, type Named } from '../lib/props';
 import { CONTROL_SURFACE, Field, controlBorder, useFieldIds } from './Field';
 import { CheckGlyph, ChevronGlyph } from './glyphs';
@@ -77,7 +77,7 @@ export function Select(props: SelectProps) {
                   className={cn(
                     'relative flex cursor-pointer select-none items-center rounded-sm py-1.5 pl-8 pr-3 text-sm',
                     'data-[highlighted]:bg-surface-hover data-[highlighted]:text-ink-primary',
-                    FOCUS_RING_INSET,
+                    FOCUS_ITEM,
                   )}
                 >
                   <SelectPrimitive.ItemIndicator className="absolute left-2 inline-flex items-center">

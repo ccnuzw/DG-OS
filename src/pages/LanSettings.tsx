@@ -23,6 +23,7 @@ import {
 } from '../lan/lanApi';
 import { formatDateTime, t, useLocale as usePageLocale } from '../i18n';
 import { usePageError } from '../pageError';
+import './lan-settings.css';
 
 // V1-FR-007 §2.3 item 6 / AC15 and V1-FR-010 (D039, D099, D107): the host side of LAN collaboration. The page
 // reads the service through the LAN host commands, polls status and devices while it is open, and issues an access
@@ -72,8 +73,6 @@ async function copyText(text: string): Promise<void> {
   }
 }
 
-const cell = 'border-b border-edge-control px-3 py-2 text-left align-top wrap-anywhere';
-const head = `${cell} font-semibold text-ink-secondary`;
 
 function AuditLog({ reportError }: { reportError: (error: unknown) => void }) {
   usePageLocale();
@@ -112,47 +111,35 @@ function AuditLog({ reportError }: { reportError: (error: unknown) => void }) {
   }, []);
 
   return (
-    <Card>
-      <Card.Header>
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="m-0 text-base font-semibold">{t('lan.audit')}</h2>
-          <Button variant="secondary" size="sm" disabled={busy} onClick={() => void load()}>{t('lan.refresh')}</Button>
-        </div>
-      </Card.Header>
-      <Card.Body>
+    <section className="lan-section" aria-labelledby="lan-audit-heading">
+      <header className="lan-heading">
+        <h2 id="lan-audit-heading">{t('lan.audit')}</h2>
+        <Button variant="secondary" size="sm" disabled={busy} onClick={() => void load()}>{t('lan.refresh')}</Button>
+      </header>
         <Stack gap={3}>
           {loaded && items.length === 0 ? (
             <p className="m-0 text-sm text-ink-secondary">{t('lan.noAudit')}</p>
           ) : null}
           {items.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-sm" aria-label={t('lan.audit')}>
-                <thead>
-                  <tr>
-                    <th scope="col" className={head}>{t('lan.time')}</th>
-                    <th scope="col" className={head}>{t('lan.event')}</th>
-                    <th scope="col" className={head}>{t('lan.reason')}</th>
-                    <th scope="col" className={head}>{t('lan.sourceIp')}</th>
-                    <th scope="col" className={head}>{t('lan.session')}</th>
-                    <th scope="col" className={head}>{t('lan.errorCode')}</th>
-                    <th scope="col" className={head}>{t('lan.count')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((item) => (
-                    <tr key={item.id}>
-                      <td className={cell}>{formatTime(item.last_at)}</td>
-                      <td className={cell}>{AUDIT_EVENT_KEYS[item.event] ? t(AUDIT_EVENT_KEYS[item.event]) : item.event}</td>
-                      <td className={cell}>{item.reason ? (AUDIT_REASON_KEYS[item.reason] ? t(AUDIT_REASON_KEYS[item.reason]) : item.reason) : '—'}</td>
-                      <td className={cell}>{item.peer_ip ?? '—'}</td>
-                      <td className={cell}>{item.session_short_id ?? '—'}</td>
-                      <td className={cell}>{item.error_code ?? '—'}</td>
-                      <td className={cell}>{item.count}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ul className="lan-list" aria-label={t('lan.audit')}>
+              {items.map(item => <li key={item.id} className="lan-record">
+                <div className="lan-heading">
+                  <strong>{AUDIT_EVENT_KEYS[item.event] ? t(AUDIT_EVENT_KEYS[item.event]) : item.event}</strong>
+                  <time className="lan-muted" dateTime={new Date(item.last_at * 1000).toISOString()}>{formatTime(item.last_at)}</time>
+                </div>
+                <div className="lan-record-context">
+                  <span>{item.reason ? (AUDIT_REASON_KEYS[item.reason] ? t(AUDIT_REASON_KEYS[item.reason]) : item.reason) : '—'}</span>
+                  <span className="lan-muted">{t('lan.sourceIp')}：{item.peer_ip ?? '—'}</span>
+                </div>
+                <details className="lan-record-details"><summary>{t('lan.details')}</summary>
+                  <dl className="lan-metadata">
+                    <div><dt>{t('lan.session')}</dt><dd>{item.session_short_id ?? '—'}</dd></div>
+                    <div><dt>{t('lan.errorCode')}</dt><dd>{item.error_code ?? '—'}</dd></div>
+                    <div><dt>{t('lan.count')}</dt><dd>{item.count}</dd></div>
+                  </dl>
+                </details>
+              </li>)}
+            </ul>
           ) : null}
           {cursor !== null ? (
             <div>
@@ -160,8 +147,7 @@ function AuditLog({ reportError }: { reportError: (error: unknown) => void }) {
             </div>
           ) : null}
         </Stack>
-      </Card.Body>
-    </Card>
+    </section>
   );
 }
 
@@ -395,11 +381,8 @@ export default function LanSettings() {
   const actualPort = currentPort;
 
   return (
-    <div className="settings-content settings-sections text-ink-primary">
+    <div className="lan-settings settings-content text-ink-primary">
       <h1 className="m-0 text-lg font-semibold text-ink-primary">{t('lan.title')}</h1>
-        <div role="note" className="rounded-lg border border-status-warning bg-status-warning-surface p-3 text-sm text-status-warning-text wrap-anywhere">
-         {t('lan.trustedNetwork')}
-      </div>
 
       {status === null ? (
         <Card>
@@ -418,96 +401,36 @@ export default function LanSettings() {
         </Card>
       ) : (
         <>
-          <Card>
-            <Card.Header>
-              <h2 className="m-0 text-base font-semibold">{t('lan.service')}</h2>
-            </Card.Header>
-            <Card.Body>
-              <Stack gap={4}>
+          <section className="lan-section" aria-labelledby="lan-service-heading">
+            <header className="lan-heading">
+              <h2 id="lan-service-heading">{t('lan.service')}</h2>
+              <div className="lan-service-controls">
+                <span className={`lan-service-state is-${status.state}`} role="status"><span aria-hidden="true" />{t(STATE_KEYS[status.state])}</span>
                 <Switch label={t('lan.enabled')} checked={status.enabled} disabled={switching} onChange={toggle} />
-                <dl className="m-0 flex flex-col gap-2 text-sm">
-                  <div className="flex gap-4">
-                    <dt className="w-28 shrink-0 text-ink-secondary">{t('lan.serviceStatus')}</dt>
-                    <dd className="m-0">{t(STATE_KEYS[status.state])}</dd>
-                  </div>
-                  {status.failure_code !== null ? (
-                    <div className="flex gap-4">
-                      <dt className="w-28 shrink-0 text-ink-secondary">{t('lan.failureReason')}</dt>
-                 <dd className="m-0 text-status-error-text">{LAN_FAILURE_TEXT[status.failure_code] ?? t('lan.failureReason')}</dd>
-                    </div>
-                  ) : null}
-                  {running && status.address ? (
-                    <>
-                      <div className="flex gap-4">
-                        <dt className="w-28 shrink-0 text-ink-secondary">{t('lan.address')}</dt>
-                        <dd className="m-0 select-all break-all">{`http://${status.address}`}</dd>
-                      </div>
-                      <div className="flex gap-4">
-                        <dt className="w-28 shrink-0 text-ink-secondary">{t('lan.currentPort')}</dt>
-                        <dd className="m-0">{actualPort ?? '—'}</dd>
-                      </div>
-                    </>
-                  ) : null}
-                  <div className="flex gap-4">
-                    <dt className="w-28 shrink-0 text-ink-secondary">{t('lan.preferredPort')}</dt>
-                    <dd className="m-0">{status.preferred_port}</dd>
-                  </div>
-                  <div className="flex gap-4">
-                    <dt className="w-28 shrink-0 text-ink-secondary">{t('lan.devices')}</dt>
-                    <dd className="m-0">{status.session_count}</dd>
-                  </div>
-                </dl>
-                {running && status.port_fallback && actualPort !== null ? (
-                  <p role="status" className="m-0 text-sm text-status-warning-text">
-                    {t('lan.fallback', { preferred: status.preferred_port, actual: actualPort })}
-                  </p>
-                ) : null}
-              </Stack>
-            </Card.Body>
-          </Card>
-
-          <Card>
-            <Card.Header>
-              <h2 className="m-0 text-base font-semibold">{t('lan.preferredPort')}</h2>
-            </Card.Header>
-            <Card.Body>
-              <form onSubmit={submitPort} noValidate>
-                <Stack gap={3}>
-                  <Input
-                    label={t('lan.preferredPort')}
-                    type="number"
-                    inputMode="numeric"
-                    min={LAN_PORT_MIN}
-                    max={LAN_PORT_MAX}
-                    value={portText}
-                    error={portError}
-                    onChange={(event) => {
-                      portDirty.current = true;
-                      setPortText(event.target.value);
-                      setPortError(undefined);
-                    }}
-                  />
-                  <p className="m-0 text-xs text-ink-secondary">
-                    {t('lan.portHelp', { min: LAN_PORT_MIN, max: LAN_PORT_MAX })}
-                  </p>
-                  <div>
-                    <Button type="submit" variant="primary" loading={portBusy}>{t('common.save')}</Button>
-                  </div>
-                </Stack>
-              </form>
-            </Card.Body>
-          </Card>
-
-          <Card>
-            <Card.Header>
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="m-0 text-base font-semibold">{t('lan.credentials')}</h2>
-                <Button variant="secondary" size="sm" loading={issuing} disabled={!running} onClick={regenerate}>
-                   {t('lan.regenerate')}
-                </Button>
               </div>
-            </Card.Header>
-            <Card.Body>
+            </header>
+            {status.failure_code !== null ? <p role="alert" className="lan-error">{LAN_FAILURE_TEXT[status.failure_code] ?? t('lan.failureReason')}</p> : null}
+            {running && status.address ? <dl className="lan-address"><dt>{t('lan.address')}</dt><dd>{`http://${status.address}`}</dd></dl> : null}
+            <form className="lan-port-form" onSubmit={submitPort} noValidate>
+              <div className="lan-port-controls">
+                <Input label={t('lan.preferredPort')} type="number" inputMode="numeric" min={LAN_PORT_MIN} max={LAN_PORT_MAX} value={portText} error={portError} onChange={event => {
+                  portDirty.current = true;
+                  setPortText(event.target.value);
+                  setPortError(undefined);
+                }} />
+                <Button type="submit" loading={portBusy} disabled={switching || portText.trim() === String(status.preferred_port)}>{t('lan.savePort')}</Button>
+              </div>
+              <p className="lan-muted">{t('lan.portHelp', { min: LAN_PORT_MIN, max: LAN_PORT_MAX })}</p>
+            </form>
+            {running && status.port_fallback && actualPort !== null ? <p role="status" className="lan-warning">{t('lan.fallback', { preferred: status.preferred_port, actual: actualPort })}</p> : null}
+            <p role="note" className="lan-warning">{t('lan.trustedNetwork')}</p>
+          </section>
+
+          <section className="lan-section" aria-labelledby="lan-connect-heading">
+            <header className="lan-heading">
+              <h2 id="lan-connect-heading">{t('lan.connectDevice')}</h2>
+              <Button variant="secondary" size="sm" loading={issuing} disabled={!running} onClick={regenerate}>{t('lan.regenerate')}</Button>
+            </header>
               <Stack gap={3}>
                 {!running ? (
                   <p className="m-0 text-sm text-ink-secondary">{t('lan.noCode')}</p>
@@ -521,76 +444,50 @@ export default function LanSettings() {
                   <p role="status" className="m-0 text-sm text-status-warning-text">{t('lan.codeExpired')}</p>
                 ) : (
                   <>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <code data-testid="lan-code" className="select-all rounded-md bg-surface-inset px-3 py-2 font-mono text-lg tracking-wider">
+                    <span className="lan-muted">{t('lan.credentials')}</span>
+                    <div className="lan-copy-row">
+                      <code data-testid="lan-code" className="lan-code">
                         {groupCode(code.code)}
                       </code>
                       <Button variant="secondary" size="sm" onClick={() => void copyText(groupCode(code.code))}>{t('lan.copyCode')}</Button>
                     </div>
                     <p className="m-0 text-sm text-ink-secondary">{t('lan.validUntil', { time: formatTime(code.expires_at) })}</p>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <code data-testid="lan-pair-url" className="select-all break-all rounded-md bg-surface-inset px-3 py-2 font-mono text-sm">
+                    <span className="lan-muted">{t('lan.pairLink')}</span>
+                    <div className="lan-copy-row">
+                      <code data-testid="lan-pair-url" className="lan-pair-url">
                         {code.pair_url}
                       </code>
                       <Button variant="secondary" size="sm" onClick={() => void copyText(code.pair_url)}>{t('lan.copyLink')}</Button>
                     </div>
+                    <p className="lan-muted">{t('lan.regenerateHelp')}</p>
                   </>
                 )}
               </Stack>
-            </Card.Body>
-          </Card>
+          </section>
 
-          <Card>
-            <Card.Header>
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="m-0 text-base font-semibold">{t('lan.devices')}</h2>
-                <Button variant="danger" size="sm" disabled={devices.length === 0} onClick={disconnectAll}>
-                   {t('lan.disconnectAll')}
-                </Button>
-              </div>
-            </Card.Header>
-            <Card.Body>
+          <section className="lan-section" aria-labelledby="lan-devices-heading">
+            <header className="lan-heading">
+              <h2 id="lan-devices-heading">{t('lan.devices')} <span className="lan-count">{status.session_count}</span></h2>
+              <Button variant="danger" size="sm" disabled={devices.length === 0} onClick={disconnectAll}>{t('lan.disconnectAll')}</Button>
+            </header>
               {devices.length === 0 ? (
-                <p className="m-0 text-sm text-ink-secondary">{t('lan.noDevices')}</p>
+                <p className="lan-muted">{t(running ? 'lan.noDevices' : 'lan.serviceNotRunning')}</p>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse text-sm" aria-label={t('lan.devices')}>
-                    <thead>
-                      <tr>
-                        <th scope="col" className={head}>{t('lan.device')}</th>
-                        <th scope="col" className={head}>{t('lan.ip')}</th>
-                        <th scope="col" className={head}>{t('lan.shortId')}</th>
-                        <th scope="col" className={head}>{t('lan.connectedAt')}</th>
-                        <th scope="col" className={head}>{t('lan.lastActivity')}</th>
-                        <th scope="col" className={head}>{t('lan.actions')}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {devices.map((device) => (
-                        <tr key={device.session_id}>
-                          <td className={cell}>{device.label}</td>
-                          <td className={cell}>{device.peer_ip}</td>
-                          <td className={cell}>{device.short_id}</td>
-                          <td className={cell}>{formatTime(device.created_at)}</td>
-                          <td className={cell}>{formatTime(device.last_active_at)}</td>
-                          <td className={cell}>
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                               aria-label={`${t('lan.disconnect')} ${device.label}`}
-                              onClick={() => disconnectOne(device)}
-                            >
-                              {t('lan.disconnect')}
-                            </Button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <ul className="lan-list" aria-label={t('lan.devices')}>
+                  {devices.map(device => <li key={device.session_id} className="lan-device">
+                    <div className="lan-heading">
+                      <div className="lan-device-identity"><strong>{device.label}</strong><span className="lan-muted">{device.peer_ip}</span></div>
+                      <Button variant="secondary" size="sm" aria-label={`${t('lan.disconnect')} ${device.label}`} onClick={() => disconnectOne(device)}>{t('lan.disconnect')}</Button>
+                    </div>
+                    <dl className="lan-metadata">
+                      <div><dt>{t('lan.connectedAt')}</dt><dd>{formatTime(device.created_at)}</dd></div>
+                      <div><dt>{t('lan.lastActivity')}</dt><dd>{formatTime(device.last_active_at)}</dd></div>
+                      <div><dt>{t('lan.shortId')}</dt><dd>{device.short_id}</dd></div>
+                    </dl>
+                  </li>)}
+                </ul>
               )}
-            </Card.Body>
-          </Card>
+          </section>
         </>
       )}
 

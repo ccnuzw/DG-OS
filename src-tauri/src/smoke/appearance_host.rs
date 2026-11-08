@@ -6,8 +6,9 @@
 //! `window.__TAURI_INTERNALS__.invoke`. Page reloads run the shipped appearance controller against the real
 //! host, so what the page shows after a reload is what the database returned.
 //!
-//! The orchestrator starts fresh Tauri processes over one temporary database, proving full snapshot and
-//! language persistence across process restarts. Other platforms' WebViews remain outside this harness.
+//! The orchestrator starts fresh Tauri processes over one temporary database, proving native shortcut CAS
+//! and language persistence before exercising read-only legacy migration. `appearance_scale` sends real
+//! macOS NSEvents and inspects AppKit menu accelerators and WKWebView pageZoom; it cannot pass elsewhere.
 
 use super::{eval, goto, ipc, wait_load, Checks, LoadEvents, Pending, WATCHDOG};
 use crate::commands;
@@ -48,7 +49,7 @@ async fn sql(probe: &DatabaseConnection, statement: &str) -> bool {
 }
 
 /// Wait for the first-frame gate to lift, then report what the shipped controller applied.
-async fn page(app: &AppHandle) -> Value {
+pub(super) async fn page(app: &AppHandle) -> Value {
     let reply = eval(
         app,
         "main",
@@ -85,6 +86,19 @@ async fn scenario(app: AppHandle, ready: bool) {
         let expected: Value = serde_json::from_slice(&std::fs::read(fixture.dir.join("expected.json")).unwrap()).unwrap();
         let read = ipc(&app, "main", "get_appearance_preferences", json!({})).await;
         checks.check("fresh process reads the complete saved snapshot and revision", read.data()["snapshot"] == expected, read.describe());
+        if std::env::var(PHASE_ENV).as_deref() == Ok("restart-legacy") {
+            let raw = std::fs::read_to_string(fixture.dir.join("legacy.json")).unwrap();
+            let stored = probe.query_one(Statement::from_string(probe.get_database_backend(), "SELECT setting_value FROM system_settings WHERE user_id='default-user' AND setting_key='appearance.snapshot.v2'")).await.unwrap().unwrap().try_get::<String>("", "setting_value").unwrap();
+            let first = page(&app).await;
+            let revision = expected["revision"].as_u64().unwrap();
+            checks.check("fresh process maps original schema4/175 directly to 150 without rewriting bytes or revision", stored == raw && read.data()["snapshot"]["revision"] == revision && read.data()["repairWarnings"] == json!(["density_migrated"]) && first["lifted"] == true && first["density"] == "150", read.describe());
+            let mut values = expected.clone(); values.as_object_mut().unwrap().remove("revision");
+            let saved = ipc(&app, "main", "set_appearance_preferences", json!({"snapshot":values,"expectedRevision":revision})).await;
+            let mut committed = expected; committed["revision"] = json!(revision + 1);
+            checks.check("fresh process explicit save commits schema6 exactly once", saved.data()["kind"] == "saved" && saved.data()["snapshot"] == committed, saved.describe());
+            std::fs::write(fixture.dir.join("expected.json"), serde_json::to_vec(&committed).unwrap()).unwrap();
+            finish(checks, &fixture.dir);
+        }
         let first = page(&app).await;
         checks.check("fresh process applies saved dark/150 before lifting the gate", first["lifted"] == true && first["theme"] == "dark" && first["density"] == "150", first.to_string());
         let expected_language = if std::env::var(PHASE_ENV).as_deref() == Ok("restart-en") { "en-US" } else { "zh-CN" };
@@ -92,9 +106,12 @@ async fn scenario(app: AppHandle, ready: bool) {
         let titles = if expected_language == "en-US" { ["Settings", "Reading account status"] } else { ["设置", "正在读取账户状态"] };
         checks.check("fresh process first visible frame uses persisted language", first["value"]["lang"] == expected_language && titles.iter().any(|title| first["value"]["text"].as_str().unwrap_or("").contains(title)), first.to_string());
         checks.check("fresh renderer applies saved preset, independent typography and effects", first["value"]["preset"] == "forest" && first["value"]["reading"] == "20px" && first["value"]["code"] == "18px" && first["value"]["motion"] == "reduce", first.to_string());
+        checks.check("fresh process preserves schema6 scale, typography and independent reading", read.data()["snapshot"]["schemaVersion"] == 6 && read.data()["snapshot"]["density"] == 150 && read.data()["snapshot"]["typography"]["uiFont"] == json!({"kind":"local","family":"Host Smoke UI"}) && read.data()["snapshot"]["typography"]["codeFont"] == json!({"kind":"local","family":"Host Smoke Mono"}) && read.data()["snapshot"]["typography"]["readingFollowUi"] == false && read.data()["repairWarnings"] == json!([]), read.describe());
         if expected_language == "en-US" {
             let saved = ipc(&app, "main", "set_language_preferences", json!({"language":"zh-CN"})).await;
             checks.check("save Chinese for the next fresh process", saved.data()["locale"] == "zh-CN", saved.describe());
+            let legacy=std::fs::read_to_string(fixture.dir.join("legacy.json")).unwrap();
+            probe.execute(Statement::from_sql_and_values(probe.get_database_backend(),"UPDATE system_settings SET setting_value=? WHERE user_id='default-user' AND setting_key='appearance.snapshot.v2'",[legacy.into()])).await.unwrap();
         }
         finish(checks, &fixture.dir);
     }
@@ -104,7 +121,32 @@ async fn scenario(app: AppHandle, ready: bool) {
     checks.check("new snapshot revision zero",read.data()["kind"]=="ready" && read.data()["snapshot"]["revision"]==0,read.describe());
     let mut values=serde_json::to_value(dgos_types::AppearanceValues::default()).unwrap();
     values["mode"]=json!("dark");values["density"]=json!(150);
+    for (name, field, value) in [
+        ("missing readingFollowUi", "readingFollowUi", None),
+        ("fractional UI size", "uiSize", Some(json!(12.5))),
+        ("unknown typography field", "unknown", Some(json!(true))),
+    ] {
+        let mut invalid = values.clone();
+        if let Some(value) = value { invalid["typography"][field] = value; }
+        else { invalid["typography"].as_object_mut().unwrap().remove(field); }
+        let response = ipc(&app, "main", "set_appearance_preferences", json!({"snapshot":invalid,"expectedRevision":0})).await;
+        checks.check(&format!("IPC rejects {name}"), !response.success(), response.describe());
+    }
+    for schema in [2, 3, 4, 5] {
+        let mut invalid = values.clone(); invalid["schemaVersion"] = json!(schema);
+        let response = ipc(&app, "main", "set_appearance_preferences", json!({"snapshot":invalid,"expectedRevision":0})).await;
+        checks.check(&format!("IPC rejects legacy schema{schema} writes"), !response.success(), response.describe());
+    }
+    for density in [50, 75, 115, 125, 160, 175] {
+        let mut invalid = values.clone(); invalid["density"] = json!(density);
+        let response = ipc(&app, "main", "set_appearance_preferences", json!({"snapshot":invalid,"expectedRevision":0})).await;
+        checks.check(&format!("IPC rejects legacy density {density} writes"), !response.success(), response.describe());
+    }
     values["variants"]["dark"]["presetId"] = json!("forest");
+    values["typography"]["uiFont"] = json!({"kind":"local","family":"Host Smoke UI"});
+    values["typography"]["readingFont"] = json!({"kind":"local","family":"Host Smoke Reading"});
+    values["typography"]["codeFont"] = json!({"kind":"local","family":"Host Smoke Mono"});
+    values["typography"]["readingFollowUi"] = json!(false);
     values["typography"]["readingSize"] = json!(20);
     values["typography"]["codeSize"] = json!(18);
     values["effects"]["reducedMotion"] = json!("reduce");
@@ -131,7 +173,17 @@ async fn scenario(app: AppHandle, ready: bool) {
     let token=corrupt.data()["recoveryToken"].as_str().unwrap_or("").to_owned();
     let rejected=ipc(&app,"main","set_appearance_preferences",json!({"snapshot":values,"expectedRevision":0})).await;
     checks.check("corrupt read keeps raw row and rejects ordinary save",corrupt.data()["kind"]=="corrupt" && !token.is_empty() && rejected.code()==Some(1005008) && count(&probe,"SELECT COUNT(*) AS n FROM system_settings WHERE setting_value='broken'").await==1,format!("{} {}",corrupt.describe(),rejected.describe()));
-    let maintenance=app.state::<dgos_db::MaintenanceGate>().begin_maintenance().unwrap();
+    // The loaded application can still hold short read admissions after IPC resolves.
+    // Acquire the real exclusive lease before testing rejection; never bypass the gate.
+    let deadline=tokio::time::Instant::now()+std::time::Duration::from_secs(5);
+    let maintenance=loop {
+        if let Ok(lease)=app.state::<dgos_db::MaintenanceGate>().begin_maintenance(){break lease;}
+        if tokio::time::Instant::now()>=deadline {
+            checks.check("maintenance fixture obtains exclusive admission",false,"activity did not drain within five seconds");
+            finish(checks,&fixture.dir);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    };
     let blocked=ipc(&app,"main","recover_appearance_preferences",json!({"recoveryToken":token})).await;
     drop(maintenance);
     checks.check("maintenance refuses recovery without consuming its token",blocked.code()==Some(dgos_types::DgosError::ProviderRequestRejected.error_code() as u64),blocked.describe());
@@ -140,13 +192,79 @@ async fn scenario(app: AppHandle, ready: bool) {
     checks.check("explicit recovery writes full defaults at revision zero exactly once",recovered.data()["revision"]==0 && recovered.data()["mode"]=="light" && reused.code()==Some(1005008),format!("{} {}",recovered.describe(),reused.describe()));
     sql(&probe,"UPDATE system_settings SET setting_value='broken' WHERE user_id='default-user' AND setting_key='appearance.snapshot.v2'").await;
     let stale=ipc(&app,"main","get_appearance_preferences",json!({})).await;
-    let future=r#"{"schemaVersion":3,"revision":9}"#;
+    let future=r#"{"schemaVersion":7,"revision":9}"#;
     probe.execute(Statement::from_sql_and_values(probe.get_database_backend(),"UPDATE system_settings SET setting_value=? WHERE user_id='default-user' AND setting_key='appearance.snapshot.v2'",[future.into()])).await.unwrap();
     let read_future=ipc(&app,"main","get_appearance_preferences",json!({})).await;
     let write_future=ipc(&app,"main","set_appearance_preferences",json!({"snapshot":values,"expectedRevision":9})).await;
     let recover_future=ipc(&app,"main","recover_appearance_preferences",json!({"recoveryToken":stale.data()["recoveryToken"]})).await;
-    checks.check("future schema rejects save and stale recovery without rewriting",read_future.data()["kind"]=="unsupported_schema" && write_future.code()==Some(1005009) && recover_future.code()==Some(1005008) && count(&probe,"SELECT COUNT(*) AS n FROM system_settings WHERE json_extract(setting_value,'$.schemaVersion')=3").await==1,format!("{} {} {}",read_future.describe(),write_future.describe(),recover_future.describe()));
-    probe.execute(Statement::from_sql_and_values(probe.get_database_backend(),"UPDATE system_settings SET setting_value=? WHERE user_id='default-user' AND setting_key='appearance.snapshot.v2'",[saved.data()["snapshot"].to_string().into()])).await.unwrap();
+    checks.check("future schema7 rejects save and stale recovery without rewriting",read_future.data()["kind"]=="unsupported_schema"&&read_future.data()["schemaVersion"]==7&&write_future.code()==Some(1005009)&&recover_future.code()==Some(1005008)&&count(&probe,"SELECT COUNT(*) AS n FROM system_settings WHERE json_extract(setting_value,'$.schemaVersion')=7").await==1,format!("{} {} {}",read_future.describe(),write_future.describe(),recover_future.describe()));
+    let mut legacy = saved.data()["snapshot"].clone();
+    legacy["schemaVersion"] = json!(2);
+    legacy["density"] = json!(150);
+    for field in ["uiFont", "readingFont", "codeFont"] { legacy["typography"].as_object_mut().unwrap().remove(field); }
+    legacy["typography"].as_object_mut().unwrap().remove("readingFollowUi");
+    legacy["typography"]["uiFontId"] = json!("humanist");
+    legacy["typography"]["readingFontId"] = json!("serif");
+    legacy["typography"]["codeFontId"] = json!("system");
+    let legacy_raw = legacy.to_string();
+    probe.execute(Statement::from_sql_and_values(probe.get_database_backend(), "UPDATE system_settings SET setting_value=? WHERE user_id='default-user' AND setting_key='appearance.snapshot.v2'", [legacy_raw.clone().into()])).await.unwrap();
+    let legacy_read = ipc(&app, "main", "get_appearance_preferences", json!({})).await;
+    let stored_legacy = probe.query_one(Statement::from_string(probe.get_database_backend(), "SELECT setting_value FROM system_settings WHERE user_id='default-user' AND setting_key='appearance.snapshot.v2'")).await.unwrap().unwrap().try_get::<String>("", "setting_value").unwrap();
+    checks.check("original schema2/150 migrates fonts but retains legal scale with no density warning or row write", legacy_read.data()["snapshot"]["revision"]==1&&legacy_read.data()["snapshot"]["schemaVersion"]==6&&legacy_read.data()["snapshot"]["density"]==150&&legacy_read.data()["repairWarnings"]==json!([])&&legacy_read.data()["snapshot"]["typography"]["uiFont"]==json!({"kind":"local","family":"Segoe UI"})&&legacy_read.data()["snapshot"]["typography"]["readingFont"]==json!({"kind":"local","family":"Georgia"})&&legacy_read.data()["snapshot"]["typography"]["codeFont"]==json!({"kind":"system-mono"})&&legacy_read.data()["snapshot"]["typography"]["readingFollowUi"]==false&&stored_legacy==legacy_raw,legacy_read.describe());
+    let mut migrated_values = legacy_read.data()["snapshot"].clone();
+    migrated_values.as_object_mut().unwrap().remove("revision");
+    migrated_values["mode"] = json!("dark");
+    let migrated_save = ipc(&app, "main", "set_appearance_preferences", json!({"snapshot":migrated_values,"expectedRevision":1})).await;
+    checks.check("explicit CAS writes normalized schema6 after schema2 read", migrated_save.data()["kind"] == "saved" && migrated_save.data()["snapshot"]["schemaVersion"] == 6 && migrated_save.data()["snapshot"]["revision"] == 2 && migrated_save.data()["snapshot"]["typography"]["readingFollowUi"] == false, migrated_save.describe());
+    let schema3_raw = serde_json::to_vec(&migrated_save.data()["snapshot"]).unwrap();
+    let mut schema3: Value = serde_json::from_slice(&schema3_raw).unwrap();
+    schema3["schemaVersion"] = json!(3);
+    schema3["density"] = json!(75);
+    schema3["typography"]["uiFontId"] = json!("inter");
+    schema3["typography"]["readingFontId"] = json!("source-sans-3");
+    schema3["typography"]["codeFontId"] = json!("source-code-pro");
+    for field in ["uiFont", "readingFont", "codeFont"] { schema3["typography"].as_object_mut().unwrap().remove(field); }
+    schema3["revision"] = json!(2);
+    let schema3_raw = schema3.to_string();
+    probe.execute(Statement::from_sql_and_values(probe.get_database_backend(), "UPDATE system_settings SET setting_value=? WHERE user_id='default-user' AND setting_key='appearance.snapshot.v2'", [schema3_raw.clone().into()])).await.unwrap();
+    let schema3_read = ipc(&app, "main", "get_appearance_preferences", json!({})).await;
+    let stored_schema3 = probe.query_one(Statement::from_string(probe.get_database_backend(), "SELECT setting_value FROM system_settings WHERE user_id='default-user' AND setting_key='appearance.snapshot.v2'")).await.unwrap().unwrap().try_get::<String>("", "setting_value").unwrap();
+    checks.check("original schema3/75 maps directly to 80, preserving families, revision and raw row",schema3_read.data()["snapshot"]["schemaVersion"]==6&&schema3_read.data()["snapshot"]["density"]==80&&schema3_read.data()["snapshot"]["revision"]==2&&schema3_read.data()["repairWarnings"]==json!(["density_migrated"])&&schema3_read.data()["snapshot"]["typography"]["uiFont"]==json!({"kind":"local","family":"Inter"})&&schema3_read.data()["snapshot"]["typography"]["readingFont"]==json!({"kind":"local","family":"Source Sans 3"})&&schema3_read.data()["snapshot"]["typography"]["codeFont"]==json!({"kind":"local","family":"Source Code Pro"})&&stored_schema3==schema3_raw,schema3_read.describe());
+    let mut migrated_values = schema3_read.data()["snapshot"].clone();
+    migrated_values.as_object_mut().unwrap().remove("revision");
+    let migrated_save = ipc(&app, "main", "set_appearance_preferences", json!({"snapshot":migrated_values,"expectedRevision":2})).await;
+    checks.check("explicit save writes schema6 after schema3 read", migrated_save.data()["kind"] == "saved" && migrated_save.data()["snapshot"]["schemaVersion"] == 6 && migrated_save.data()["snapshot"]["revision"] == 3, migrated_save.describe());
+    let mut schema4 = migrated_save.data()["snapshot"].clone();
+    schema4["schemaVersion"] = json!(4);
+    schema4["density"] = json!(175);
+    schema4["typography"] = values["typography"].clone();
+    schema4["variants"]["light"]["overrides"]["interface"]["accent"] = json!("#1555d9");
+    schema4["variants"]["dark"]["overrides"]["code"]["background"] = json!("#19251f");
+    schema4["variants"]["dark"]["overrides"]["code"]["foreground"] = json!("#e0eee5");
+    let schema4_raw = schema4.to_string();
+    probe.execute(Statement::from_sql_and_values(probe.get_database_backend(), "UPDATE system_settings SET setting_value=? WHERE user_id='default-user' AND setting_key='appearance.snapshot.v2'", [schema4_raw.clone().into()])).await.unwrap();
+    let schema4_read = ipc(&app, "main", "get_appearance_preferences", json!({})).await;
+    let stored_schema4 = probe.query_one(Statement::from_string(probe.get_database_backend(), "SELECT setting_value FROM system_settings WHERE user_id='default-user' AND setting_key='appearance.snapshot.v2'")).await.unwrap().unwrap().try_get::<String>("", "setting_value").unwrap();
+    let mut expected_schema6 = schema4.clone(); expected_schema6["schemaVersion"] = json!(6); expected_schema6["density"] = json!(150);
+    checks.check("original schema4/175 clamps directly to 150, preserving colors, typography and raw row", schema4_read.data()["snapshot"] == expected_schema6 && schema4_read.data()["repairWarnings"] == json!(["density_migrated"]) && stored_schema4 == schema4_raw, schema4_read.describe());
+    let migrated_page = reload(&app).await;
+    checks.check("renderer applies schema4 migration before lifting the gate", migrated_page["lifted"] == true && migrated_page["theme"] == "dark" && migrated_page["density"] == "150", migrated_page.to_string());
+    // Preserve the original schema5/115 fixture and map directly to 120, without rewriting its raw row.
+    let mut schema5=schema4.clone();schema5["schemaVersion"]=json!(5);schema5["density"]=json!(115);
+    let schema5_raw=schema5.to_string();
+    probe.execute(Statement::from_sql_and_values(probe.get_database_backend(),"UPDATE system_settings SET setting_value=? WHERE user_id='default-user' AND setting_key='appearance.snapshot.v2'",[schema5_raw.clone().into()])).await.unwrap();
+    let schema5_read=ipc(&app,"main","get_appearance_preferences",json!({})).await;
+    let stored_schema5=probe.query_one(Statement::from_string(probe.get_database_backend(),"SELECT setting_value FROM system_settings WHERE user_id='default-user' AND setting_key='appearance.snapshot.v2'")).await.unwrap().unwrap().try_get::<String>("","setting_value").unwrap();
+    let mut expected=schema5;expected["schemaVersion"]=json!(6);expected["density"]=json!(120);
+    checks.check("original schema5/115 maps directly to 120 preserving raw bytes and all other fields",schema5_read.data()["snapshot"]==expected&&schema5_read.data()["repairWarnings"]==json!(["density_migrated"])&&stored_schema5==schema5_raw,schema5_read.describe());
+    probe.execute(Statement::from_sql_and_values(probe.get_database_backend(),"UPDATE system_settings SET setting_value=? WHERE user_id='default-user' AND setting_key='appearance.snapshot.v2'",[schema4_raw.into()])).await.unwrap();
+    migrated_values = schema4_read.data()["snapshot"].clone();
+    migrated_values.as_object_mut().unwrap().remove("revision");
+    let saved=ipc(&app,"main","set_appearance_preferences",json!({"snapshot":migrated_values,"expectedRevision":3})).await;
+    checks.check("explicit save writes schema6 after schema4 migration for restart",saved.data()["kind"]=="saved"&&saved.data()["snapshot"]["revision"]==4&&saved.data()["snapshot"]["schemaVersion"]==6&&saved.data()["snapshot"]["density"]==150,saved.describe());
+    std::fs::write(fixture.dir.join("expected.json"), serde_json::to_vec(&saved.data()["snapshot"]).unwrap()).unwrap();
+    let restart_snapshot=super::appearance_scale::run(&app,&mut checks).await;
+    std::fs::write(fixture.dir.join("expected.json"),serde_json::to_vec(&restart_snapshot).unwrap()).unwrap();
     let language=ipc(&app,"main","set_language_preferences",json!({"language":"en-US"})).await;
     checks.check("language saved by real host",language.data()["locale"]=="en-US",language.describe());
     reload(&app).await;
@@ -160,6 +278,10 @@ async fn scenario(app: AppHandle, ready: bool) {
     checks.check("single fixed snapshot key",count(&probe,"SELECT COUNT(*) AS n FROM system_settings WHERE user_id='default-user'").await==1,"expected one full snapshot");
     let language = ipc(&app,"main","set_language_preferences",json!({"language":"en-US"})).await;
     checks.check("save English for a fresh process", language.data()["locale"] == "en-US", language.describe());
+    let mut restart_legacy = restart_snapshot;
+    restart_legacy["schemaVersion"] = json!(4); restart_legacy["density"] = json!(175);
+    let restart_raw = restart_legacy.to_string();
+    std::fs::write(fixture.dir.join("legacy.json"), restart_raw).unwrap();
     finish(checks, &fixture.dir);
 }
 
@@ -184,7 +306,7 @@ pub fn run_appearance_host() {
     std::fs::create_dir(&dir).expect("fresh temporary directory");
     let exe = std::env::current_exe().expect("current executable");
     let mut failed = false;
-    for phase in ["save", "restart-en", "restart-zh"] {
+    for phase in ["save", "restart-en", "restart-legacy", "restart-zh"] {
         println!("== appearance phase {phase} (new process)");
         let mut child = std::process::Command::new(&exe)
             .env(PHASE_ENV, phase).env(DIR_ENV, &dir)
@@ -197,11 +319,10 @@ pub fn run_appearance_host() {
         let status = child.wait().expect("phase completion");
         if !status.success() || !result {
             failed = true;
-            break;
         }
     }
     std::fs::remove_dir_all(dir).expect("remove temporary database");
-    println!("APPEARANCE RESTART RESULT: {}", if failed { "failed" } else { "three fresh processes passed" });
+    println!("APPEARANCE RESTART RESULT: {}", if failed { "failed" } else { "four fresh processes passed (native CAS restart, legacy migration, language restart)" });
     std::process::exit(i32::from(failed));
 }
 
@@ -267,7 +388,7 @@ fn run_phase() -> ! {
                     });
                     observer.observe(document,{subtree:true,childList:true,attributes:true,characterData:true});
                 "#)
-                .visible(false)
+                .visible(true)
                 .build()?;
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -282,6 +403,7 @@ fn run_phase() -> ! {
             commands::recover_appearance_preferences,
             commands::get_language_preferences,
             commands::set_language_preferences,
+            commands::list_local_fonts,
             super::smoke_report,
         ])
         .run(context);

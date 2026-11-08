@@ -30,7 +30,7 @@ export function Checkbox(props: CheckboxProps) {
         onCheckedChange={(next) => onChange(next === true)}
         {...accessibleName(props)}
         className={cn(
-          'flex size-4 shrink-0 appearance-none items-center justify-center rounded-sm border border-solid border-edge-control bg-surface-field p-0 text-accent-on',
+          'control-hit-target flex size-4 shrink-0 appearance-none items-center justify-center rounded-sm border border-solid border-edge-control bg-surface-field p-0 text-accent-on',
           'data-[state=checked]:border-accent-default data-[state=checked]:bg-accent-default',
           'data-[state=indeterminate]:border-accent-default data-[state=indeterminate]:bg-accent-default',
           'disabled:cursor-not-allowed disabled:opacity-disabled',

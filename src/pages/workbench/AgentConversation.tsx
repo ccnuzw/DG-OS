@@ -5,7 +5,6 @@ import { useAgentRunner, type AgentSession, type Engine, type Json, type Pending
 import Markdown from '../../components/chat/Markdown';
 import ExecutionDetails, { NativeValue } from '../../components/chat/ExecutionDetails';
 import { SessionCapabilitySnapshot } from '../../components/development/CapabilitySnapshotView';
-import { HostCapabilityConfirmations, HostConfirmationRequests, type HostConfirmationProjection } from '../../components/development/HostCapabilityConfirmations';
 import { contextGeneration, useContextSelection } from '../../stores/developmentSelection';
 import { useDevelopment } from '../../stores/developmentStore';
 import { AgentOutputReferences } from '../../components/development/AgentOutputReferences';
@@ -13,6 +12,7 @@ import { agentEventFailed, type AgentReferenceActions } from '../../components/d
 import './AgentConversation.css';
 import { useSurfaceActive } from '../../workspace/SurfaceContext';
 
+import { CapabilityLinks } from '../../components/chat/RuntimeNavigation';
 function object(value: Json | undefined): { [key: string]: Json } { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
 function text(value: Json | undefined) { return typeof value === 'string' ? value : ''; }
 function blocks(event: Event): Json[] { const content = object(event.data).content; return Array.isArray(content) ? content : []; }
@@ -82,11 +82,13 @@ function transcript(events: Event[]) {
 }
 
 // Parent-owned drafts are keyed by session and reset with the account/context projection.
-export function AgentConversation({ session, drafts, setDraft, busy, error, confirmations, onOpenReference, onSelectRun }: AgentReferenceActions & { session: AgentSession; drafts: { [id: string]: string }; setDraft: (id: string, value: string) => void; busy: boolean; error: boolean; confirmations?: HostConfirmationProjection }) {
+export function AgentConversation({ session, drafts, setDraft, busy, error, onOpenReference, onSelectRun }: AgentReferenceActions & { session: AgentSession; drafts: { [id: string]: string }; setDraft: (id: string, value: string) => void; busy: boolean; error: boolean }) {
   const { t } = useLocale();
   const action = useAgentRunner(state => state.action);
+  const acting = useAgentRunner(state => state.acting);
   const epoch = useAgentRunner(state => state.epoch);
   const devEpoch = useDevelopment(state => state.epoch);
+  const projectId = useDevelopment(state => state.sessions.find(item => item.id === session.id)?.project_id ?? state.selection.project_id);
   const { generation } = useContextSelection();
   const prompt = drafts[session.id] ?? '';
   const [sending, setSending] = useState(false);
@@ -108,35 +110,35 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, conf
   const [atBottom, setAtBottom] = useState(true);
   const [inspect, setInspect] = useState(false);
   const { rows, toolResults, toolNames } = useMemo(() => transcript(session.events), [session.events]);
-  const reason = busy || sending ? t('agent.sendBusy') : session.pending.length || session.status === 'waiting' ? t('agent.sendWaiting') : session.status === 'running' ? t('agent.sendRunning') : session.status !== 'idle' ? t('agent.sendUnavailable') : !prompt.trim() ? t('agent.sendEmpty') : '';
+  const reason = busy || sending || acting ? t('agent.sendBusy') : session.pending.length || session.status === 'waiting' ? t('agent.sendWaiting') : session.status === 'running' ? t('agent.sendRunning') : session.status !== 'idle' ? t('agent.sendUnavailable') : !prompt.trim() ? t('agent.sendEmpty') : '';
   function latest() { const node = viewport.current; if (node) node.scrollTop = node.scrollHeight; follow.current = true; setAtBottom(true); }
   useEffect(() => { follow.current = true; setInspect(false); latest(); }, [session.id, epoch, generation]);
   useEffect(() => { if (follow.current) latest(); }, [session.events[session.events.length - 1]?.seq]);
   const navigationOwner = useRef({ sessionId: session.id, epoch, devEpoch, generation, mounted: true });
   navigationOwner.current = { sessionId: session.id, epoch, devEpoch, generation, mounted: true };
   useEffect(() => { navigationOwner.current.mounted = true; return () => { navigationOwner.current.mounted = false; }; }, []);
-  const currentOwner = () => navigationOwner.current.mounted && navigationOwner.current.sessionId === session.id && navigationOwner.current.epoch === epoch && navigationOwner.current.devEpoch === devEpoch && navigationOwner.current.generation === generation && epoch === useAgentRunner.getState().epoch && devEpoch === useDevelopment.getState().epoch && generation === contextGeneration() && useAgentRunner.getState().selected === session.id;
+  const currentOwner = () => navigationOwner.current.mounted && navigationOwner.current.sessionId === session.id && navigationOwner.current.epoch === epoch && navigationOwner.current.devEpoch === devEpoch && navigationOwner.current.generation === generation && epoch === useAgentRunner.getState().epoch && devEpoch === useDevelopment.getState().epoch && generation === contextGeneration() && useAgentRunner.getState().selected === session.id && useAgentRunner.getState().session?.generation === session.generation;
   const referenceActions: AgentReferenceActions = {
     onOpenReference: onOpenReference ? (reference, mode) => currentOwner() ? onOpenReference(reference, mode) : undefined : undefined,
     onSelectRun: onSelectRun ? runId => { if (currentOwner() && session.events.some(event => event.run === runId)) onSelectRun(runId); } : undefined,
   };
   async function send() {
-    if (sendingRef.current || reason || !prompt.trim() || epoch !== useAgentRunner.getState().epoch || devEpoch !== useDevelopment.getState().epoch || generation !== contextGeneration()) return;
+    if (sendingRef.current || reason || !prompt.trim() || !currentOwner()) return;
     const id = session.id;
     const sentPrompt = prompt;
     sendingRef.current = true; setSending(true);
     try {
-      const sent = await action('send_agent_message', { input: { session_id: id, request_id: crypto.randomUUID(), text: sentPrompt } });
-      if (sent && epoch === useAgentRunner.getState().epoch && devEpoch === useDevelopment.getState().epoch && generation === contextGeneration() && useAgentRunner.getState().selected === id && draftRef.current.id === id && draftRef.current.prompt === sentPrompt && draftRef.current.epoch === epoch && draftRef.current.generation === generation) setDraft(id, '');
+      const sent = await action('send_agent_message', { input: { session_id: id, generation: session.generation, request_id: crypto.randomUUID(), text: sentPrompt } });
+      if (sent && currentOwner() && draftRef.current.id === id && draftRef.current.prompt === sentPrompt && draftRef.current.epoch === epoch && draftRef.current.generation === generation) setDraft(id, '');
     } finally { sendingRef.current = false; setSending(false); }
   }
   return <div ref={root} className="agent-conversation-product" onFocusCapture={event => { requestFocus.current = (event.target as HTMLElement).closest('.agent-dialogue-requests') ? event.target as HTMLElement : null; }}>
     <header className="agent-dialogue-header">
       <div className="agent-dialogue-identity"><strong>{t(`agent.engine.${session.engine}`)}</strong><span className="agent-dialogue-status" data-state={session.status}>{t(`agent.state.${session.status}`)}</span></div>
-      <div className="agent-dialogue-actions"><Button size="xs" variant="secondary" disabled={busy || !['running', 'waiting'].includes(session.status)} onClick={() => void action('interrupt_agent_session', { sessionId: session.id })}>{t('agent.interrupt')}</Button><Button size="xs" variant="secondary" disabled={busy || session.status === 'closed'} onClick={() => void action('close_agent_session', { sessionId: session.id })}>{t('agent.close')}</Button></div>
+      <div className="agent-dialogue-actions"><Button size="xs" variant="secondary" disabled={busy || !['running', 'waiting'].includes(session.status)} onClick={() => { if (currentOwner()) void action('interrupt_agent_session', { sessionId: session.id }); }}>{t('agent.interrupt')}</Button><Button size="xs" variant="secondary" disabled={busy || session.status === 'closed'} onClick={() => { if (currentOwner()) void action('close_agent_session', { sessionId: session.id }); }}>{t('agent.close')}</Button></div>
     </header>
     <div className="agent-dialogue-transcript" ref={viewport} role="region" tabIndex={0} aria-label={t('agent.messages')} onScroll={event => { const node = event.currentTarget; const bottom = node.scrollHeight - node.scrollTop - node.clientHeight < 64; follow.current = bottom; setAtBottom(bottom); }}>
-      <details className="agent-dialogue-capabilities"><summary>{t('capabilities.actual')}</summary><SessionCapabilitySnapshot key={session.id} sessionId={session.id} snapshot={session.capabilities} /></details>
+      <details className="agent-dialogue-capabilities"><summary>{t('capabilities.actual')}</summary><SessionCapabilitySnapshot key={session.id} sessionId={session.id} snapshot={session.configuration} /></details>
       <div className="agent-dialogue-messages">
         {session.history_truncated ? <p className="text-sm text-ink-secondary">{t('agent.truncated')}</p> : null}
         {rows.map(({ event, suppressText }) => <EventContent key={`${session.id}:${event.seq}`} event={event} suppressText={suppressText} toolResults={toolResults} toolNames={toolNames} {...referenceActions} />)}
@@ -147,10 +149,10 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, conf
     <footer className="agent-dialogue-footer">
       {!atBottom ? <Button size="xs" variant="secondary" className="agent-dialogue-latest" onClick={latest}>{t('agent.latest')}</Button> : null}
       <div className="agent-dialogue-requests">
-        {session.status !== 'closed' ? session.pending.map(pending => <Request key={`${epoch}:${generation}:${session.id}:${pending.id}`} engine={session.engine} pending={pending} submit={response => epoch === useAgentRunner.getState().epoch && devEpoch === useDevelopment.getState().epoch && generation === contextGeneration() ? action('respond_agent_request', { input: { session_id: session.id, request_id: pending.id, response } }) : Promise.resolve(false)} />) : null}
-        {session.status !== 'closed' ? confirmations ? <HostConfirmationRequests confirmations={confirmations} /> : <HostCapabilityConfirmations key={`${epoch}:${generation}:${session.id}`} sessionId={session.id} /> : null}
+        {['idle', 'running', 'waiting'].includes(session.status) ? session.pending.map(pending => <Request key={`${epoch}:${generation}:${session.id}:${session.generation}:${pending.id}:${JSON.stringify(pending.data)}`} engine={session.engine} pending={pending} submit={response => currentOwner() && ['idle', 'running', 'waiting'].includes(useAgentRunner.getState().session?.status ?? '') && useAgentRunner.getState().session?.pending.some(item => item.id === pending.id && item.kind === pending.kind && JSON.stringify(item.data) === JSON.stringify(pending.data)) ? action('respond_agent_request', { input: { session_id: session.id, generation: session.generation, request_id: pending.id, response } }) : Promise.resolve(false)} />) : null}
       </div>
       {session.error && !error ? <p role="alert" className="agent-dialogue-error text-status-error">{t('agent.failure')}<br />{session.error}</p> : null}
+      <CapabilityLinks engine={session.engine} projectId={projectId} sessionId={session.id} />
       <div className="agent-dialogue-composer"><Input multiline rows={2} id="agent-message" label={t('agent.prompt')} className="type-reading" aria-describedby="agent-send-hint" value={prompt} onChange={event => setDraft(session.id, event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); if (!event.repeat) void send(); } }} />
         <div className="agent-dialogue-send"><p id="agent-send-hint">{reason || t('agent.sendShortcut')}</p><Button disabled={Boolean(reason)} onClick={() => void send()}>{t('agent.send')}</Button></div>
       </div>
@@ -224,9 +226,15 @@ export function Request({ engine, pending, submit }: { engine: Engine; pending: 
     return { decision: 'accept' };
   };
   const approval = engine === 'codex' && ['item/commandExecution/requestApproval', 'item/fileChange/requestApproval'].includes(pending.kind);
-  const decisions = Array.isArray(data.availableDecisions) ? data.availableDecisions.filter(value => typeof value === 'string' && ['accept', 'acceptForSession', 'decline', 'cancel'].includes(value)) : ['accept', 'decline'];
-  return <section className="grid gap-3 rounded-md border border-border-subtle p-3" aria-label={t('agent.approval')}><strong>{engine === 'claude' ? pending.title : t('agent.approval')}</strong>
-    {text(input.command) ? <pre className="overflow-x-auto whitespace-pre-wrap text-sm">{text(input.command)}</pre> : null}
+  const permissions = engine === 'codex' && pending.kind === 'item/permissions/requestApproval';
+  const decisions = Array.isArray(data.availableDecisions) ? data.availableDecisions.filter(value => typeof value === 'string' && ['accept', 'acceptForSession', 'decline', 'cancel'].includes(value)) : ['accept', 'decline', 'cancel'];
+  return <section className="grid gap-3 rounded-md border border-border-subtle p-3" aria-label={t('agent.approval')} aria-busy={busy}><strong>{engine === 'claude' ? pending.title : t('agent.approval')}</strong>
+    {text(input.command) ? <div><strong>{t('agent.requestCommand')}</strong><pre className="overflow-x-auto whitespace-pre-wrap text-sm">{text(input.command)}</pre></div> : null}
+    {text(input.cwd) ? <p className="m-0 break-all text-sm">{t('agent.requestDirectory')}: {text(input.cwd)}</p> : null}
+    {text(input.file_path) || text(input.path) || text(input.grantRoot) ? <p className="m-0 break-all text-sm">{t('agent.requestPath')}: {text(input.file_path) || text(input.path) || text(input.grantRoot)}</p> : null}
+    {engine === 'claude' && !questions.length ? <div><strong>{t('agent.requestInput')}</strong><NativeValue value={data.input} /></div> : null}
+    {pending.kind === 'item/fileChange/requestApproval' && Array.isArray(data.changes) ? <NativeValue value={data.changes} /> : null}
+    {permissions ? <div className="grid gap-2"><strong>{t('agent.permissionExpansion')}</strong><p className="m-0 text-sm">{t('agent.permissionScope')}</p><p className="m-0 break-all text-sm">{t('agent.permissionIdentity')}: {text(data.threadId)} / {text(data.turnId)} / {text(data.itemId)}</p><NativeValue value={data.permissions} /></div> : null}
     {text(data.message) || text(data.reason) ? <p className="m-0 text-sm">{text(data.message) || text(data.reason)}</p> : null}
     {text(data.url) ? <p className="break-all text-sm">{text(data.url)}</p> : null}
     <details><summary className="cursor-pointer text-xs">{t('agent.details')}</summary><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify(pending.data, null, 2)}</pre></details>
@@ -242,6 +250,9 @@ export function Request({ engine, pending, submit }: { engine: Engine; pending: 
     })}
     {Object.entries(fields).map(([key, value]) => { const field = object(value); const label = text(field.title) || key; return field.type === 'boolean' ? <label key={key} className="flex gap-2 text-sm"><input type="checkbox" checked={form[key] === true} onChange={e => setForm(current => ({ ...current, [key]: e.target.checked }))} />{label}</label> : <Input key={key} label={label} type={field.type === 'number' || field.type === 'integer' ? 'number' : 'text'} value={String(form[key] ?? '')} onChange={e => setForm(current => ({ ...current, [key]: field.type === 'number' || field.type === 'integer' ? Number(e.target.value) : field.type === 'array' ? e.target.value.split(',').map(s => s.trim()) : e.target.value }))} />; })}
     {failed ? <p role="alert" className="text-sm text-status-error">{t('agent.failure')}</p> : null}
-    <div className="flex flex-wrap gap-2">{approval ? decisions.map(decision => <Button key={String(decision)} variant="secondary" disabled={busy} onClick={() => void respond({ decision })}>{decision === 'accept' ? t('agent.allow') : decision === 'decline' ? t('agent.deny') : decision === 'cancel' ? t('common.cancel') : t('agent.allowSession')}</Button>) : <><Button disabled={busy} onClick={() => void respond(accept())}>{t(questions.length ? 'agent.answer' : 'agent.allow')}</Button><Button variant="secondary" disabled={busy} onClick={() => void respond(engine === 'claude' ? { behavior: 'deny' } : pending.kind === 'mcpServer/elicitation/request' ? { action: 'decline', content: null } : pending.kind === 'tool/requestUserInput' ? { answers: {} } : { decision: 'decline' })}>{t('agent.deny')}</Button></>}</div>
+    {busy ? <p role="status" className="m-0 text-sm">{t('agent.requestSending')}</p> : null}
+    {permissions ? <div className="flex flex-wrap gap-2"><Button disabled={busy} onClick={() => void respond({ permissions: data.permissions, scope: 'turn' })}>{t('agent.allowTurn')}</Button><Button variant="secondary" disabled={busy} onClick={() => void respond({ permissions: data.permissions, scope: 'session' })}>{t('agent.allowSession')}</Button><Button variant="secondary" disabled={busy} onClick={() => void respond({ permissions: {}, scope: 'turn' })}>{t('agent.deny')}</Button></div> :
+    <div className="flex flex-wrap gap-2">{approval ? decisions.map(decision => <Button key={String(decision)} variant="secondary" disabled={busy} onClick={() => void respond({ decision })}>{decision === 'accept' ? t('agent.allow') : decision === 'decline' ? t('agent.deny') : decision === 'cancel' ? t('common.cancel') : t('agent.allowSession')}</Button>) : <><Button disabled={busy} onClick={() => void respond(accept())}>{t(questions.length ? 'agent.answer' : 'agent.allow')}</Button><Button variant="secondary" disabled={busy} onClick={() => void respond(engine === 'claude' ? { behavior: 'deny' } : pending.kind === 'mcpServer/elicitation/request' ? { action: 'decline', content: null } : pending.kind === 'tool/requestUserInput' ? { answers: {} } : { decision: 'decline' })}>{t('agent.deny')}</Button>{pending.kind === 'mcpServer/elicitation/request' ? <Button variant="secondary" disabled={busy} onClick={() => void respond({ action: 'cancel', content: null })}>{t('common.cancel')}</Button> : null}</>}</div>
+    }
   </section>;
 }

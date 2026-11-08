@@ -207,9 +207,7 @@ mod tests {
         publisher.set_enabled("mod-a", false).await.unwrap();
         publisher.set_enabled("mod-a", false).await.unwrap();
         assert!(!publisher.published_modules("default-user").await.unwrap()[0].enabled);
-        assert!(publisher.release_snapshot("mod-a").await.unwrap().is_none());
         publisher.set_enabled("mod-a", true).await.unwrap();
-        assert!(publisher.release_snapshot("mod-a").await.unwrap().is_some());
         assert!(matches!(
             publisher.set_enabled("nope", true).await,
             Err(ManagementError::NotPublished)

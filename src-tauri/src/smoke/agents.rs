@@ -13,6 +13,9 @@
 //! `terminal-activity` uses only /bin/sh PTYs and the production terminal UI; no CLI/provider run.
 //! Build the production dist first, then use a fresh root and the existing webview_smoke_agents test.
 //! Evidence: stage3-result-terminal-activity.json plus terminal-activity-checkpoint.json and IPC trace.
+//! Set `DGOS_TERMINAL_TYPOGRAPHY_ONLY=1` with `terminal-activity` for live installed-font/size
+//! changes, native PTY identity/stty and rendered Latin/CJK evidence. Retains terminal-typography.json/png.
+//! Requires a foreground macOS desktop and Screen Recording permission; no model provider or CLI run.
 //! `worktree-runtime` verifies actual task-worktree npm/Cargo execution, captures macOS editor
 //! open events with a temporary local application, and checks real IPC owner/lease rejection.
 //! The real CLIs, AccountService, SessionResolver, HostSessionPort and AgentManager run
@@ -67,10 +70,14 @@ async fn open_fx(root: &Path) -> Fx {
 }
 
 /// Production construction: the repository is injected, `load` reads the legacy index once.
-async fn load_agents(fx: &Fx) -> AgentManager {
-    let manager = AgentManager::new(fx.root.join("agents.json"), DevelopmentRepository::new(fx.db.clone()));
+async fn load_agents(fx: &Fx) -> (AgentManager, dgos_agents::capabilities::CliProviders, dgos_providers::ProviderManager, Arc<dgos_providers::test_support::MemoryCredentialVault>) {
+    let repository = DevelopmentRepository::new(fx.db.clone());
+    let vault = Arc::new(dgos_providers::test_support::MemoryCredentialVault::default());
+    let providers = dgos_providers::ProviderManager::with_vault(&format!("sqlite://{}?mode=rwc",fx.root.join("dgos.db").display()),vault.clone()).await.expect("smoke providers");
+    let service = dgos_agents::capabilities::CliProviders::new(repository.clone(), providers.clone()).expect("CLI provider service");
+    let manager = AgentManager::new(fx.root.join("agents.json"), repository, service.clone());
     manager.load().await.expect("agent index");
-    manager
+    (manager, service, providers, vault)
 }
 
 /// Records one check on stdout and in the evidence list.
@@ -118,7 +125,7 @@ async fn eval_long(app: &AppHandle, body: &str) -> Value {
         app.state::<Pending>().0.lock().unwrap().remove(&id);
         return json!({"ok": false, "error": "eval failed"});
     }
-    let timeout = if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| phase.starts_with("stage6-")) { Duration::from_secs(60) } else { STEP_TIMEOUT };
+    let timeout = if std::env::var_os("DGOS_TERMINAL_TYPOGRAPHY_PREFLIGHT").is_some() { Duration::from_secs(30) } else if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| phase.starts_with("stage6-")) { Duration::from_secs(60) } else { STEP_TIMEOUT };
     match tokio::time::timeout(timeout, receiver).await {
         Ok(Ok(payload)) => serde_json::from_str(&payload).unwrap_or(Value::Null),
         _ => {
@@ -243,12 +250,98 @@ setTimeout(() => item.click(), 100);
 return {ok: true};
 "#;
 
-/// Imports a project through the dev workbench form (directory path typed into the form).
+/// Imports an existing fixture through Add project → Open folder and the real NSOpenPanel.
 async fn ui_import_project(app: &AppHandle, ck: &mut Checks, ev: &mut Vec<Value>, name: &str, path: &Path) -> bool {
-    let reply = ui(app, json!({"name": name, "path": path.to_string_lossy()}), IMPORT_PROJECT).await;
-    record(ck, ev, &format!("{name} imported via project form"), ui_ok(&reply), reply.to_string());
-    ui_ok(&reply)
+    let opened = ui(app, json!({}), IMPORT_PROJECT).await;
+    record(ck, ev, &format!("{name} opens current project menu and native folder picker"), ui_ok(&opened), opened.to_string());
+    if !ui_ok(&opened) { return false; }
+    let picked = pick_project_directory(app, path).await;
+    record(ck, ev, "real native directory panel selects fixture folder", picked, path.display().to_string());
+    if !picked { return false; }
+    // Allow the dialog plugin completion callback to publish the selected path before the list receipt.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let receipt = ui(app, json!({"name":path.file_name().unwrap_or_default().to_string_lossy(),"path":path.to_string_lossy()}), r#"
+const norm=value=>{let s=String(value||'');while(s.endsWith('/'))s=s.slice(0,-1);return s;};
+const rows=()=>$$('[data-testid^="dev-project-item-"]').map(e=>({id:e.getAttribute('data-testid'),path:e.querySelector('[title]')?.getAttribute('title'),text:txt(e),pressed:e.getAttribute('aria-pressed'),disabled:e.disabled}));
+const expected=norm(A.path);
+const row=await until(()=>rows().find(e=>norm(e.path)===expected),60000);
+if(!row)return {ok:false,reason:'project row absent after native selection',expected,rows:rows(),location:location.pathname};
+const selected=await until(()=>{const current=rows().find(e=>e.id===row.id);return current?.pressed==='true'?current:null},60000);
+return {ok:!!selected,name:selected?.text,path:selected?.path,pressed:selected?.pressed,rows:rows(),expected};
+"#).await;
+    record(ck, ev, &format!("{name} imports and selects exact folder via production UI"), ui_ok(&receipt), receipt.to_string());
+    ui_ok(&receipt)
 }
+
+#[cfg(target_os = "macos")]
+async fn pick_project_directory(app: &AppHandle, path: &Path) -> bool {
+    use objc2::{class, msg_send};
+    use objc2::runtime::{AnyObject, Bool};
+    let Some(window)=app.get_webview_window("main") else { return false; };
+    let Ok(path)=std::fs::canonicalize(path) else { return false; };
+    // Live NSOpenPanel navigation is hosted by macOS; directoryURL is configuration-only.
+    // Target this acceptance process, then verify the selected URL before confirming.
+    let navigate = r#"on run argv
+tell application "System Events"
+    tell (first application process whose unix id is (item 1 of argv as integer))
+        set frontmost to true
+        keystroke "g" using {command down, shift down}
+        delay 0.5
+        keystroke "a" using command down
+        keystroke (item 2 of argv)
+        delay 1
+        key code 36
+    end tell
+end tell
+end run"#;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let result=tokio::process::Command::new("/usr/bin/osascript")
+        .args(["-e",navigate,&std::process::id().to_string(),&path.to_string_lossy()]).output().await;
+    match result {
+        Ok(output) if output.status.success()=>{},
+        other=>{println!("INFO native folder navigation failed: {other:?}");return false;}
+    }
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    if let Some(root)=std::env::var_os("DGOS_PROJECT_ACCEPTANCE_ROOT") {
+        let _=super::capture_native(app,Path::new(&root),"native-folder-before-confirm").await;
+    }
+    let expected=path.to_string_lossy().into_owned();
+    let (send,receive)=oneshot::channel();
+    if window.with_webview(move |_| unsafe {
+            let app:*mut AnyObject=msg_send![class!(NSApplication),sharedApplication];
+            let windows:*mut AnyObject=msg_send![app,windows];
+            let count:usize=msg_send![windows,count];
+            let mut panel:*mut AnyObject=std::ptr::null_mut();
+            for index in 0..count {
+                let candidate:*mut AnyObject=msg_send![windows,objectAtIndex:index];
+                let is_panel:Bool=msg_send![candidate,isKindOfClass:class!(NSOpenPanel)];
+                let visible:Bool=msg_send![candidate,isVisible];
+                if is_panel.as_bool()&&visible.as_bool(){panel=candidate;break;}
+            }
+            if panel.is_null(){println!("INFO no visible NSOpenPanel among {count} owned windows");let _=send.send(false);return;}
+                let chosen:*mut AnyObject=msg_send![panel,URL];
+                if chosen.is_null(){let _=send.send(false);return;}
+                let chosen_path:*mut AnyObject=msg_send![chosen,path];
+                let bytes:*const std::ffi::c_char=msg_send![chosen_path,UTF8String];
+                let actual=if bytes.is_null(){String::new()}else{std::ffi::CStr::from_ptr(bytes).to_string_lossy().into_owned()};
+                if actual.trim_end_matches('/')!=expected.trim_end_matches('/'){println!("INFO native selected URL remains {actual:?}; refusing wrong-directory import");let _:()=msg_send![panel,cancel:std::ptr::null_mut::<AnyObject>()];let _=send.send(false);return;}
+            let _=send.send(true);
+        }).is_err(){return false;}
+        if !receive.await.unwrap_or(false){return false;}
+    let confirm=r#"on run argv
+tell application "System Events"
+    tell (first application process whose unix id is (item 1 of argv as integer))
+        set frontmost to true
+        key code 36
+    end tell
+end tell
+end run"#;
+    tokio::process::Command::new("/usr/bin/osascript")
+        .args(["-e",confirm,&std::process::id().to_string()]).status().await.is_ok_and(|s|s.success())
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn pick_project_directory(_: &AppHandle, _: &Path) -> bool { false }
 
 /// Creates a task under the selected project through the task form.
 async fn ui_new_task(app: &AppHandle, ck: &mut Checks, ev: &mut Vec<Value>, goal: &str) -> bool {
@@ -287,13 +380,11 @@ async fn ui_close_run(app: &AppHandle, ck: &mut Checks, ev: &mut Vec<Value>) -> 
 }
 
 const IMPORT_PROJECT: &str = r#"
-await click('dev-project-create-open');
-await need('dev-project-form');
-await fill('dev-project-name', A.name);
-await fill('dev-project-path', A.path);
-await click('dev-project-submit');
-const row = await until(() => $$('[data-testid^="dev-project-item-"]').find((e) => txt(e).includes(A.name)));
-return {ok: !!row};
+const panel=await need('dev-project-list');const add=panel.querySelector('button[aria-haspopup="menu"]');if(!add)throw Error('current Add project menu absent');
+add.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerType:'mouse',ctrlKey:false}));
+add.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,button:0,pointerType:'mouse'}));
+const item=await until(()=>$$('[role=menuitem]').find(e=>/打开文件夹|Open folder/.test(txt(e))));if(!item)throw Error('Open folder menu item absent');item.click();
+return {ok:true};
 "#;
 
 const NEW_TASK: &str = r#"

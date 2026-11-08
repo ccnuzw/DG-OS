@@ -20,6 +20,7 @@ sha2 = { workspace = true }
 base64 = "0.22"
 url = "2"
 futures = "0.3"
+async-trait = { workspace = true }
 
 [dev-dependencies]
 dgos-providers = { path = "../dgos-providers", features = ["test-support"] }

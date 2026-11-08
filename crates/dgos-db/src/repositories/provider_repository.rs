@@ -283,6 +283,14 @@ impl ProviderRepository {
         user_id: &str,
     ) -> DgosResult<Provider> {
         let tx = self.db.begin().await.map_err(db_error)?;
+        // Reserve the writer before reading: a CLI invalidation sink can write
+        // through another pool between this read and the enabled/revision update.
+        // A deferred read transaction cannot safely upgrade in that case.
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE providers SET config_revision=config_revision WHERE id=? AND user_id=?",
+            [id.into(), user_id.into()],
+        )).await.map_err(db_error)?;
         let provider = providers::Entity::find_by_id(id)
             .filter(providers::Column::UserId.eq(user_id))
             .one(&tx)

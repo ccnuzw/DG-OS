@@ -3,8 +3,10 @@ use crate::AgentManager;
 use dgos_db::development_repository::{DevelopmentTask, DevelopmentWorkspace, Project, ProjectOperation, Selection};
 use serde::{Deserialize, Serialize};
 use std::{path::Path, time::{Duration, SystemTime, UNIX_EPOCH}};
-use tokio::{io::AsyncReadExt, process::Command};
+use tokio::sync::OwnedMutexGuard;
 use tokio_util::sync::CancellationToken;
+use tokio::process::Command;
+use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
 #[derive(Deserialize)]
@@ -21,6 +23,12 @@ pub struct SaveTaskInput { pub id: Option<String>, pub project_id: String, pub g
 pub struct ClassifySessionInput { pub session_id: String, pub task_id: String }
 #[derive(Serialize, Debug)]
 pub struct ProjectInspection { pub path_state: String, pub kind: String, pub repository_root: Option<String>, pub branch: Option<String>, pub changes: Vec<String>, pub truncated: bool, pub error: Option<String> }
+
+/// Holds project admission through native extension filesystem work.
+pub struct NativeProjectAdmission {
+    pub project: Project,
+    _admission: OwnedMutexGuard<()>,
+}
 fn now() -> i64 { SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64 }
 fn check_lease(lease: &CancellationToken) -> Result<(), String> { if lease.is_cancelled() { Err("session_invalid".into()) } else { Ok(()) } }
 pub(crate) async fn directory(path: &str) -> Result<(String, String), String> {
@@ -42,6 +50,22 @@ pub(crate) async fn validate_directory(project: &Project) -> Result<(), String> 
     Ok(())
 }
 impl AgentManager {
+    /// Serializes project-scoped native extension work with project updates.
+    /// Hold the returned permit until the filesystem operation completes.
+    pub async fn admit_native_project(&self, owner: &str, project_id: &str, lease: &CancellationToken) -> Result<NativeProjectAdmission, String> {
+        let admission = tokio::select! {
+            biased;
+            _ = lease.cancelled() => return Err("session_invalid".into()),
+            guard = self.inner.admission.clone().lock_owned() => guard,
+        };
+        self.ready().await?;
+        if lease.is_cancelled() { return Err("session_invalid".into()); }
+        let project = self.inner.repository.project(owner, project_id).await?;
+        if project.archived { return Err("project_archived".into()); }
+        validate_directory(&project).await?;
+        if lease.is_cancelled() { return Err("session_invalid".into()); }
+        Ok(NativeProjectAdmission { project, _admission: admission })
+    }
     pub async fn development_workspace(&self, owner: &str) -> Result<DevelopmentWorkspace, String> {
         self.ready().await?;
         self.inner.repository.workspace(owner).await
