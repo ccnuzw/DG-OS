@@ -3,13 +3,14 @@
 //   node scripts/release-build.mjs build [tauri build args...]
 //   node scripts/release-build.mjs verify <bundled-modules dir>
 //
-// `build` runs the bundled-modules check, the host contract check, `tauri build`, then
-// runs the D049 release gate (`verify_release_bundle`) against the bundled-modules directory
-// inside the artifacts that were actually produced (the .app, and the .dmg when present).
+// `build` checks modules and host contracts, runs `tauri build`, then checks the
+// actual .app/.dmg resources, executable permissions and D049 module pins.
+// `verify` accepts a .app for the same checks, or a module directory for D049 only.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -20,6 +21,8 @@ export const NOT_COVERED = [
   'byte comparison of the notarized installer',
   'Windows and Linux artifacts',
   'the gate binary is built from the same source as the shipped binary but is not the shipped binary',
+  'launching the installed app, Finder environment discovery and lifecycle recovery',
+  'proving that the main executable was compiled from the current checkout',
 ];
 
 const RESOURCES = join('Contents', 'Resources', 'bundled-modules');
@@ -105,11 +108,73 @@ export async function verifyDir(dir, run) {
   }
 }
 
+// Compare complete resource trees, not just their entry points. A missing asset or
+// a stale bridge must fail even if the module-only gate succeeds. No code is run.
+function resourceDigest(path) {
+  const hash = createHash('sha256');
+  function frame(value) {
+    const bytes = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
+    const length = Buffer.alloc(8);
+    length.writeBigUInt64BE(BigInt(bytes.length));
+    hash.update(length).update(bytes);
+  }
+  function visit(full, relative) {
+    const stat = lstatSync(full);
+    if (stat.isSymbolicLink()) throw new Error(`resource symlink is not allowed: ${full}`);
+    frame(relative);
+    if (stat.isDirectory()) {
+      frame('directory');
+      const names = readdirSync(full).sort();
+      frame(names.length);
+      for (const name of names) visit(join(full, name), `${relative}/${name}`);
+    } else if (stat.isFile()) {
+      frame('file');
+      frame(readFileSync(full));
+    } else throw new Error(`resource is not a regular file or directory: ${full}`);
+  }
+  visit(path, '');
+  return hash.digest('hex');
+}
+
+function requireExecutable(path) {
+  const stat = lstatSync(path);
+  if (!stat.isFile() || stat.size === 0 || (stat.mode & 0o111) === 0) {
+    throw new Error(`missing, empty or non-executable binary: ${path}`);
+  }
+}
+
+export async function verifyApp(app, run, expectedResources = repoRoot) {
+  const resources = join(app, 'Contents', 'Resources');
+  const modules = await verifyDir(join(resources, 'bundled-modules'), run);
+  if (!modules.ok) return { ...modules, dir: app };
+  try {
+    const config = JSON.parse(readFileSync(join(repoRoot, 'src-tauri', 'tauri.conf.json'), 'utf8'));
+    const binaryName = config.mainBinaryName ?? 'dgos';
+    requireExecutable(join(app, 'Contents', 'MacOS', binaryName));
+    requireExecutable(join(resources, 'agent-bridge', 'dgos-claude-bridge'));
+    for (const [source, target] of [
+      [join(expectedResources, 'tools/agent-bridge/bin/dgos-claude-bridge'), 'agent-bridge/dgos-claude-bridge'],
+      [join(expectedResources, 'skills'), 'skills'],
+      [join(expectedResources, 'dist-lan'), 'dist-lan'],
+    ]) {
+      if (resourceDigest(source) !== resourceDigest(join(resources, target))) {
+        throw new Error(`bundled ${target} differs from this checkout's build resources; rebuild before verifying`);
+      }
+    }
+    if (!statSync(join(resources, 'dist-lan', 'index.html')).isFile()) {
+      throw new Error('bundled LAN index.html is missing');
+    }
+    return { dir: app, ok: true };
+  } catch (error) {
+    return { dir: app, ok: false, reason: `application resources invalid: ${error?.message ?? error}` };
+  }
+}
+
 /**
  * Mounts `dmg` through `mount(dmg) -> mountpoint`, verifies every `.app` inside, and always
  * calls `unmount(mountpoint)`. An unmount failure is itself a failure.
  */
-export async function verifyDmg(dmg, { run, mount, unmount }) {
+export async function verifyDmg(dmg, { run, mount, unmount, expectedResources = repoRoot }) {
   let mountpoint;
   try {
     mountpoint = await mount(dmg);
@@ -123,8 +188,8 @@ export async function verifyDmg(dmg, { run, mount, unmount }) {
       results.push({ dir: dmg, ok: false, reason: 'no .app found inside the disk image' });
     }
     for (const app of apps) {
-      const result = await verifyDir(join(mountpoint, app, RESOURCES), run);
-      results.push({ ...result, dir: `${dmg}:${app}/${RESOURCES}` });
+      const result = await verifyApp(join(mountpoint, app), run, expectedResources);
+      results.push({ ...result, dir: `${dmg}:${app}` });
     }
   } catch (error) {
     results.push({ dir: dmg, ok: false, reason: `verification aborted: ${error?.message ?? error}` });
@@ -142,14 +207,14 @@ export async function verifyDmg(dmg, { run, mount, unmount }) {
  * Locates and verifies the delivered resources under each target root.
  * Fails when nothing was found, or when any directory fails.
  */
-export async function runArtifactGate({ roots, run, mount, unmount, appName, notBefore, log = console.log }) {
+export async function runArtifactGate({ roots, run, mount, unmount, appName, notBefore, expectedResources = repoRoot, log = console.log }) {
   const options = { appName, notBefore };
   const results = [];
   const dirs = roots.flatMap((root) => findBundledModuleDirs(root, options));
   const dmgs = roots.flatMap((root) => findDmgs(root, options));
-  for (const dir of dirs) results.push(await verifyDir(dir, run));
+  for (const dir of dirs) results.push(await verifyApp(dirname(dirname(dirname(dir))), run, expectedResources));
   if (dmgs.length > 0) {
-    for (const dmg of dmgs) results.push(...(await verifyDmg(dmg, { run, mount, unmount })));
+    for (const dmg of dmgs) results.push(...(await verifyDmg(dmg, { run: (dir) => run(dir), mount, unmount, expectedResources })));
   }
   if (dirs.length === 0) {
     results.push({
@@ -204,10 +269,13 @@ async function defaultUnmount(mountpoint) {
 
 async function mainVerify(args) {
   if (args.length !== 1) {
-    console.error('usage: release-build.mjs verify <bundled-modules dir>');
+    console.error('usage: release-build.mjs verify <app.app | bundled-modules dir>');
     return 2;
   }
-  const result = await verifyDir(resolve(args[0]), runVerifyExample);
+  const target = resolve(args[0]);
+  const result = basename(target).endsWith('.app')
+    ? await verifyApp(target, runVerifyExample)
+    : await verifyDir(target, runVerifyExample);
   console.log(result.ok ? `verified: ${result.dir}` : `FAILED:   ${result.dir}: ${result.reason}`);
   printNotCovered();
   return result.ok ? 0 : 1;
@@ -235,7 +303,7 @@ async function mainBuild(args) {
   // build and `dist-lan/` exists only after the frontend build.
   const lanResource = JSON.stringify({
     bundle: {
-      resources: { '../skills/': 'skills/', '../bundled-modules/': 'bundled-modules/', '../dist-lan/': 'dist-lan/' },
+      resources: { ...JSON.parse(readFileSync(join(repoRoot, 'src-tauri', 'tauri.conf.json'), 'utf8')).bundle.resources, '../dist-lan/': 'dist-lan/' },
     },
   });
   const code = await command(tauri, ['build', '--config', lanResource, ...args]);
@@ -263,7 +331,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const [mode, ...rest] = process.argv.slice(2);
   const handler = mode === 'build' ? mainBuild : mode === 'verify' ? mainVerify : null;
   if (!handler) {
-    console.error('usage: release-build.mjs build [tauri args...] | verify <bundled-modules dir>');
+    console.error('usage: release-build.mjs build [tauri args...] | verify <app.app | bundled-modules dir>');
     process.exit(2);
   }
   handler(rest).then(

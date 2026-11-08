@@ -1,4 +1,4 @@
-import { DEFAULTS, type AppearanceSnapshot } from '../../src/ui/appearance/model';
+import { DEFAULTS, DENSITIES, type AppearanceSnapshot } from '../../src/ui/appearance/model';
 import type { ChatMessage, ChatSession } from '../../src/stores/chatStore';
 export const clock = 1793966400000;
 const params = new URLSearchParams(location.search);
@@ -8,14 +8,24 @@ const en = locale === 'en-US';
 const preferences = structuredClone(DEFAULTS);
 preferences.mode = params.get('theme') === 'dark' ? 'dark' : 'light';
 const density = Number(params.get('density'));
-if ([75, 100, 125, 150, 175].includes(density)) preferences.density = density as typeof preferences.density;
-for (const [key, values] of Object.entries({ uiSize: [12,13,14,16], readingSize: [13,14,16,18,20], codeSize: [12,13,14,16,18] })) {
+if ((DENSITIES as readonly number[]).includes(density)) preferences.density = density as typeof preferences.density;
+for (const key of ['uiSize', 'readingSize', 'codeSize'] as const) {
   const value = Number(params.get(key));
-  if (values.includes(value)) preferences.typography[key as 'uiSize'|'readingSize'|'codeSize'] = value;
+  if (Number.isInteger(value) && value >= 12 && value <= (key === 'uiSize' ? 20 : 24)) preferences.typography[key] = value;
 }
+if (params.has('readingSize')) preferences.typography.readingFollowUi = false;
 preferences.effects.reducedMotion = 'reduce';
 let appearance: AppearanceSnapshot = { ...preferences, revision: 1 };
-let saved = { revision: 1, paths: { codex: '/preview/configured/codex', claude: null, gemini: null, node: null } };
+let languagePreference: 'zh-CN' | 'en-US' | 'system' = locale;
+let languageLocale: 'zh-CN' | 'en-US' = locale;
+interface CliProbe { status: string; path: string | null; version: string | null }
+interface CliUpdate { status: string; current_version: string | null; latest_version: string | null; method: string | null }
+type CliTool = 'codex' | 'claude' | 'gemini' | 'node';
+interface CliSnapshot { revision: number; paths: Record<CliTool, string | null>; detections: Partial<Record<CliTool, CliProbe & { update: CliUpdate | null }>> }
+const cliStorage = params.get('cliStorage');
+const storedCli = cliStorage ? localStorage.getItem(`dgos-cli-preview-${cliStorage}`) : null;
+let saved: CliSnapshot = storedCli ? JSON.parse(storedCli) : { revision: 1, paths: { codex: '/preview/configured/codex', claude: null, gemini: null, node: null }, detections: {} };
+function persistCli() { if (cliStorage) localStorage.setItem(`dgos-cli-preview-${cliStorage}`, JSON.stringify(saved)); }
 let desktop = { revision: 1, values: { pinnedModuleIds: [] as string[], showEntries: true, showRecent: true, sidebarCollapsed: false } };
 export const sessions: ChatSession[] = [1,2].map(n => ({ id: `preview-${n}`, title: en ? `Preview conversation ${n} — long title for keyboard navigation` : `预览会话${n}：长标题与键盘导航`, title_source: 'user', provider_id: 'preview-provider', model_id: 'preview-model', skills: [], no_skill_confirmed: true, generation: {}, created_at: clock/1000, updated_at: clock/1000 }));
 const paragraph = en ? 'This preview uses the production chat surface. Long text wraps in the reading column; code keeps its own font and scroll area. ' : '此预览使用生产聊天组件。长正文沿阅读列换行，代码保留独立字体和滚动区域。';
@@ -29,6 +39,9 @@ const ok = (data: unknown) => ({ success: true, data });
 export class Channel<T> { onmessage: (event: T) => void = () => {}; }
 const streams = new Map<string, { channel: Channel<any>; assistantId: string; sessionId: string }>();
 let sequence = 0;
+const cliVersions = new Map<string, string>();
+const cliTickets = new Map<string, { tool: string; path: string }>();
+let cliTicketSequence = 0;
 export async function invoke<T>(command: string, args: Record<string, any> = {}): Promise<T> {
   diagnostics.calls.push({ command });
   const input = args.input ?? args;
@@ -42,13 +55,50 @@ export async function invoke<T>(command: string, args: Record<string, any> = {})
       result = ok({ kind: 'saved', snapshot: structuredClone(desktop) }); break;
     case 'get_appearance_preferences': result = ok({ kind: 'ready', snapshot: appearance, repairWarnings: [] }); break;
     case 'set_appearance_preferences': appearance = { ...args.snapshot, revision: appearance.revision+1 }; result = ok({ kind: 'saved', snapshot: appearance }); break;
-    case 'get_language_preferences': case 'set_language_preferences': result = ok({ preference: locale, locale, catalog_version: 'v1' }); break;
+    case 'get_language_preferences': result = ok({ preference: languagePreference, locale: languageLocale, catalog_version: 'v1' }); break;
+    case 'set_language_preferences':
+      languagePreference = args.language;
+      languageLocale = args.language === 'system' ? locale : args.language;
+      result = ok({ preference: languagePreference, locale: languageLocale, catalog_version: 'v1' }); break;
     case 'get_cli_preferences': result = ok(structuredClone(saved)); break;
     case 'set_cli_preferences':
       if (diagnostics.fault === 'unknown') throw Error('Preview result unknown');
       if (diagnostics.fault === 'conflict') { result = ok({ saved: false, snapshot: saved }); break; }
-      saved = { revision: saved.revision+1, paths: structuredClone(args.paths) }; result = ok({ saved: true, snapshot: saved }); break;
-    case 'probe_cli': result = ok({ status: 'available', path: args.path ?? `/preview/bin/${args.tool}`, version: 'preview-1.0.0', managed: false }); break;
+      if (args.expectedRevision !== saved.revision) { result = ok({ saved: false, snapshot: structuredClone(saved) }); break; }
+      saved = { ...saved, revision: saved.revision+1, paths: structuredClone(args.paths) };
+      saved.detections.node = { status: 'available', path: saved.paths.node, version: 'v22.1.0', update: null };
+      persistCli(); result = ok({ saved: true, snapshot: structuredClone(saved) }); break;
+    case 'probe_cli': {
+      const tool = args.tool as CliTool;
+      const probe = { status: 'available', path: args.path ?? `/preview/bin/${tool}`, version: cliVersions.get(tool) ?? '1.0.0' };
+      saved.paths[tool] = probe.path; saved.detections[tool] = { ...probe, update: null }; saved.revision += 1; persistCli();
+      result = ok({ ...probe, managed: false }); break;
+    }
+    case 'check_cli_update': {
+      const delay = Number(params.get('cliCheckDelay'));
+      if (delay > 0) await new Promise<void>(resolve => setTimeout(resolve, Math.min(delay, 25000)));
+      const status = diagnostics.fault === 'check-error' ? 'check_failed' : diagnostics.fault === 'unsupported' ? 'unsupported' : diagnostics.fault === 'up-to-date' || cliVersions.has(args.tool) ? 'up_to_date' : 'available';
+      const ticket = status === 'available' ? `preview-ticket-${++cliTicketSequence}` : null;
+      if (ticket) cliTickets.set(ticket, { tool: args.tool, path: args.path ?? `/preview/bin/${args.tool}` });
+      const update = { status, current_version: cliVersions.get(args.tool) ?? '1.0.0', latest_version: '1.1.0', method: 'npm' };
+      const record = saved.detections[args.tool as CliTool];
+      if (record) { record.update = update; saved.revision += 1; persistCli(); }
+      result = ok({ ...update, ticket }); break;
+    }
+    case 'update_cli': {
+      const installation = cliTickets.get(args.ticket);
+      cliTickets.delete(args.ticket);
+      const status = !installation ? 'stale' : diagnostics.fault === 'unknown' ? 'unknown' : diagnostics.fault === 'update-failed' ? 'failed' : diagnostics.fault === 'stale' ? 'stale' : diagnostics.fault === 'busy' ? 'busy' : 'updated';
+      if (status === 'updated' && installation) {
+        cliVersions.set(installation.tool, '1.1.0');
+        const tool = installation.tool as CliTool;
+        saved.paths[tool] = installation.path; saved.detections[tool] = { status: 'available', path: installation.path, version: '1.1.0', update: null }; saved.revision += 1; persistCli();
+      }
+      result = ok({ status, probe: status === 'updated' && installation ? { status: 'available', path: installation.path, version: '1.1.0' } : null }); break;
+    }
+    case 'probe_node_directory':
+      result = ok(diagnostics.fault === 'node-invalid' ? { status: 'not_installed', path: null, version: null } : { status: 'available', path: '/preview/node-install/bin/node', version: 'v22.1.0' }); break;
+    case 'list_local_fonts': result = ok([{family:'Arial',monospace:false},{family:'Menlo',monospace:true}]); break;
     case 'list_mcp_servers': case 'list_installed_skills': result = []; break;
     case 'list_modules': case 'list_provider_vendors': result = ok([]); break;
     case 'list_providers': result = ok([{ id: 'preview-provider', name: en ? 'Preview only provider' : '仅预览 Provider', provider_type: 'openai', base_url: 'https://example.invalid', enabled: true, credential_status: 'stored', config_revision: 1 }]); break;
@@ -88,3 +138,8 @@ export const getName = async () => 'DG-OS Preview';
 export const getVersion = async () => 'preview';
 export const getTauriVersion = async () => 'preview — no native host';
 export async function openUrl(_url: string): Promise<void> { diagnostics.blocked.push('openUrl'); throw Error('External navigation disabled in preview'); }
+export async function open(): Promise<string | null> {
+  diagnostics.calls.push({ command: 'plugin-dialog.open' });
+  if (diagnostics.fault === 'node-picker-error') throw Error('Preview picker failure');
+  return diagnostics.fault === 'node-cancel' ? null : '/preview/node-install';
+}

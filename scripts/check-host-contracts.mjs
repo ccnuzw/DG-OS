@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { checkReactVersions } from './react-version.mjs';
 
 // Static contract checks supplement compilation; they do not prove WebView isolation.
-const files = ['provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'chat_assets', 'agents', 'development_review', 'development_runtime', 'development_takeover', 'development_capabilities', 'development_delivery', 'desktop', 'cli', 'storage', 'modules', 'module_host', 'module_capabilities', 'appearance', 'accounts', 'lan', 'locale'];
+const files = ['native_extensions', 'ai', 'provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'chat_assets', 'agents', 'development_review', 'development_runtime', 'development_takeover', 'development_capabilities', 'development_delivery', 'desktop', 'cli', 'storage', 'modules', 'module_host', 'module_capabilities', 'appearance', 'accounts', 'lan', 'locale'];
 // FR-010 / interface contract §14.8: the eight LAN host commands. Exact parameter lists; no user
 // id, caller, session token or access code. Every one enters through the Settings caller with
 // `Capability::LanManage`, which `allows` grants to Settings only.
@@ -88,6 +88,7 @@ const appearanceParams = new Map([
   ['get_appearance_preferences', new Set(['app', 'window'])],
   ['set_appearance_preferences', new Set(['app', 'window', 'snapshot', 'expected_revision'])],
   ['recover_appearance_preferences', new Set(['app', 'window', 'recovery_token'])],
+  ['list_local_fonts', new Set(['window'])],
 ]);
 // D118: host-level language preference. It is available before account sign-in,
 // so it uses the trusted main-window gate rather than a user-session gate.
@@ -134,6 +135,12 @@ const chatExactParams = new Map([
   ['advance_chat_tool_turn', ['app', 'window', 'input']],
   ['cancel_chat_generation', ['app', 'window', 'task_id']],
 ]);
+const aiParams = new Map([
+  ['module_run_ai', ['app', 'window', 'attachment_id', 'route', 'call_id', 'input', 'on_event']],
+  ...['module_list_ai_providers', 'module_list_ai_skills', 'module_list_ai_tools'].map(name => [name, ['app', 'window', 'attachment_id', 'route', 'call_id']]),
+  ['module_list_ai_runs', ['app', 'window', 'attachment_id', 'route', 'call_id', 'input']],
+  ...['module_get_ai_run', 'module_cancel_ai_run'].map(name => [name, ['app', 'window', 'attachment_id', 'route', 'call_id', 'run_id']]),
+]);
 let commands = 0;
 for (const file of files) {
   const source = readFileSync(new URL(`../src-tauri/src/commands/${file}.rs`, import.meta.url), 'utf8');
@@ -141,7 +148,28 @@ for (const file of files) {
   assert.ok(handlers.length, `${file}: no command handlers checked`);
   for (const [, name, args, body] of handlers) {
     assert.match(args, /window:\s*WebviewWindow/, `${name}: host window context is required`);
-    if (file === 'module_host') {
+    if (file === 'native_extensions') {
+      const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
+      assert.deepEqual(names.sort(), ['app', 'input', 'window'], `${name}: native commands accept only typed business input`);
+      assert.match(body, /(?:authorize\(&app, &window,|operation\(app, window, input,)/, `${name}: native host authorization required`);
+    } else if (file === 'ai') {
+      const exact = aiParams.get(name);
+      assert.ok(exact, `${name}: AI command must have an exact parameter contract`);
+      const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
+      assert.deepEqual(names.sort(), [...exact].sort(), `${name}: only binding and business selectors allowed`);
+      assert.match(body, /invocation\(&app, &window, &attachment_id, &route, &call_id\)/, `${name}: fresh bound invocation required`);
+      assert.doesNotMatch(body, /\.emit(?:_to|_filter)?\(|emit_all/, `${name}: no global AI events`);
+      if (name === 'module_run_ai') {
+        assert.match(args, /on_event:\s*Channel<AiEvent>/, `${name}: private event channel`);
+        assert.match(body, /async_runtime::spawn/, `${name}: host-owned settlement driver`);
+      }
+      const binding = source.match(/\nfn invocation\([\s\S]*?\n\}/)?.[0];
+      assert.ok(binding, 'AI binding helper is required');
+      assert.match(binding, /host::module_host_window\(window\)\?/, 'AI window gate');
+      assert.match(binding, /\.admit_once\(route, attachment_id, call_id\)/, 'AI runtime admission');
+      assert.match(binding, /host::module_call_leases\(window, &call\)/, 'AI real host leases');
+      assert.match(binding, /AiInvocation::bind\(call, &session, account, attachment\)/, 'AI trusted binding');
+    } else if (file === 'module_host') {
       const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
       const allowed = callCommands.get(name) ?? recordCommands.get(name) ?? cancelCommands.get(name) ?? (name.startsWith('module_call') ? null : bridgeAllowed);
       assert.ok(allowed, `${name}: module call commands must be registered in callCommands (no generic forwarding)`);
@@ -220,7 +248,7 @@ for (const file of files) {
       assert.match(body, /host::workspace_catalog_session\(\s*&window\s*\)/, `${name}: dedicated workspace session gate`);
     } else if (file === 'cli') {
       const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
-      const exact = name === 'get_cli_preferences' ? ['app', 'window'] : name === 'set_cli_preferences' ? ['app', 'window', 'paths', 'expected_revision'] : name === 'probe_cli' ? ['app', 'window', 'tool', 'path'] : null;
+      const exact = name === 'get_cli_preferences' ? ['app', 'window'] : name === 'set_cli_preferences' ? ['app', 'window', 'paths', 'expected_revision'] : ['probe_cli', 'check_cli_update'].includes(name) ? ['app', 'window', 'tool', 'path'] : name === 'probe_node_directory' ? ['app', 'window', 'directory'] : name === 'update_cli' ? ['app', 'window', 'ticket'] : null;
       assert.ok(exact, `${name}: unknown CLI command`);
       assert.deepEqual([...names].sort(), exact.sort(), `${name}: fixed CLI parameters only`);
       assert.match(body, /host::workspace_catalog_session\(\s*&window\s*\)/, `${name}: dedicated session gate`);
@@ -248,7 +276,14 @@ for (const file of files) {
         assert.ok(allowed.has(param), `${name}: appearance command parameter \`${param}\` is not allowed`);
       }
       assert.equal(names.length, allowed.size, `${name}: every allowed parameter must be present`);
-      assert.match(body, /host::context\(\s*&window,/, `${name}: missing host entry gate`);
+      assert.match(body, /host::context\(\s*&window,\s*BuiltinCaller::Settings,\s*Capability::Appearance\s*\)/, `${name}: Settings Appearance host entry gate required`);
+      if (name === 'list_local_fonts') {
+        const gateAt = body.indexOf('host::context(');
+        const scanAt = body.indexOf('tokio::task::spawn_blocking(');
+        assert.ok(scanAt > gateAt, `${name}: blocking font scan must follow the host gate`);
+        assert.match(body, /spawn_blocking\(crate::local_fonts::catalogue\)/, `${name}: shared process catalogue required`);
+        assert.doesNotMatch(args, /\b(?:path|family|caller|user_id|module_id)\s*:/, `${name}: font enumeration accepts no renderer selectors or identity`);
+      }
     } else if (file === 'locale') {
       const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
       const allowed = localeParams.get(name);
@@ -348,10 +383,11 @@ for (const file of files) {
         assert.match(body, /lease(?:\.clone\(\))?/, `${name}: runtime lease must be retained`);
       }
       if (file === 'development_capabilities') {
-        const expected = ['read_development_capabilities','revoke_development_capabilities'].includes(name) ? ['app','window','project_id']
-          : ['save_development_capabilities','respond_development_capability_confirmation'].includes(name) ? ['app','window','input']
-          : ['get_development_session_capabilities','list_development_capability_confirmations'].includes(name) ? ['app','window','session_id']
-          : name === 'read_development_capability_catalog' ? ['app','window'] : null;
+        const expected = ['read_development_cli_provider','revoke_development_cli_provider'].includes(name) ? ['app','window','project_id']
+          : name === 'save_development_cli_provider' ? ['app','window','input']
+          : name === 'get_development_session_configuration' ? ['app','window','session_id']
+          : name === 'recheck_development_cli_cleanup' ? ['app','window']
+          : name === 'read_development_cli_provider_catalog' ? ['app','window','project_id','engine'] : null;
         assert.ok(expected, `${name}: unrecognized project capability command`);
         const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
         assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: project capability parameter allow-list`);
@@ -428,6 +464,7 @@ const allowsBody = hostSource.match(/fn allows\([^)]*\)[^{]*\{([\s\S]*?)\n\}/);
 assert.ok(allowsBody, 'host.rs: allows not found');
 const workbenchArm = allowsBody[1].match(/BuiltinCaller::Workbench => matches!\(([\s\S]*?)\),/);
 assert.ok(workbenchArm && !/LanManage/.test(workbenchArm[1]), 'LanManage must not be granted to the Workbench caller');
+assert.ok(!/\bAppearance\b/.test(workbenchArm[1]), 'Appearance font access must not be granted to the Workbench caller');
 assert.match(allowsBody[1], /BuiltinCaller::Module => false/, 'module contexts get no host capability');
 // FR-010 / contract §14.4, §14.9: the LAN routes are exactly the whitelist; route code reaches chat
 // only through `ChatBackend` and never names an account, module, MCP or management service; there
