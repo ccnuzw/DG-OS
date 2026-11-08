@@ -90,6 +90,16 @@ fn resolved_session(window: &WebviewWindow) -> Result<HostSession, DgosError> {
         .current()
 }
 
+/// Bind both lifecycle tokens from managed host state; renderer identifiers select nothing else.
+pub fn module_call_leases(window: &WebviewWindow, call: &dgos_modules::BoundModuleCall) -> Result<(HostSession, tokio_util::sync::CancellationToken, tokio_util::sync::CancellationToken), DgosError> {
+    module_host_window(window)?;
+    let app = window.app_handle();
+    let (session, account) = app.try_state::<Arc<SessionResolver>>().ok_or(DgosError::SessionInvalid)?.agent_session()?;
+    if session.user_id() != call.context().user_id() || account.is_cancelled() { return Err(DgosError::SessionInvalid); }
+    let attachment = app.try_state::<crate::module_host::ModuleHostBridge>().ok_or(DgosError::ModuleCallCancelled)?.attachment_lease(call.attachment_id())?;
+    Ok((session, account, attachment))
+}
+
 /// Packaged app origins, plus the Vite dev server on port 1420 in debug
 /// builds only.
 fn trusted_origin(url: &tauri::Url, allow_development: bool) -> bool {
@@ -229,6 +239,13 @@ mod tests {
         assert!(allows(BuiltinCaller::Settings, Capability::LanManage));
         assert!(!allows(BuiltinCaller::Workbench, Capability::LanManage));
         assert!(!allows(BuiltinCaller::Module, Capability::LanManage));
+    }
+
+    #[test]
+    fn only_the_settings_caller_may_read_the_appearance_font_catalogue() {
+        assert!(allows(BuiltinCaller::Settings, Capability::Appearance));
+        assert!(!allows(BuiltinCaller::Workbench, Capability::Appearance));
+        assert!(!allows(BuiltinCaller::Module, Capability::Appearance));
     }
 
     fn url(value: &str) -> tauri::Url {

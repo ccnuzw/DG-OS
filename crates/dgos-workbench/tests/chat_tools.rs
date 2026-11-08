@@ -22,8 +22,9 @@ use dgos_skills::SkillsManager;
 use dgos_types::{Model, ProviderConfig};
 use dgos_workbench::{
     AdvanceChatToolTurnInput, ChatError, ChatEvent, ChatManager, ChatSink, ChatTargetInput,
-    CreateChatSessionInput, ListChatMessagesInput, SendChatInput, Sent, ToolAction, ToolSelection,
+    CreateChatSessionInput, ListChatMessagesInput, SendChatInput, Sent, ToolAction,
 };
+use dgos_types::AiToolSelection;
 use serde_json::{json, Value};
 use std::{
     sync::{Arc, Mutex},
@@ -165,8 +166,8 @@ async fn fx() -> Fx {
     }
 }
 
-fn selection(fx: &Fx) -> ToolSelection {
-    ToolSelection {
+fn selection(fx: &Fx) -> AiToolSelection {
+    AiToolSelection {
         server_id: fx.tool.server_id.clone(),
         tool_name: fx.tool.tool_name.clone(),
         schema_hash: fx.tool.schema_hash.clone(),
@@ -247,7 +248,7 @@ async fn session(fx: &Fx) -> String {
         .id
 }
 
-fn input(session: &str, text: &str, tools: Vec<ToolSelection>) -> SendChatInput {
+fn input(session: &str, text: &str, tools: Vec<AiToolSelection>) -> SendChatInput {
     SendChatInput {
         session_id: session.into(),
         content: text.into(),
@@ -727,7 +728,7 @@ async fn destroying_the_window_or_shutting_down_ends_a_parked_turn() {
 async fn selections_are_checked_on_every_send_before_anything_is_written() {
     let fx = fx().await;
     let s = session(&fx).await;
-    let drifted = ToolSelection {
+    let drifted = AiToolSelection {
         schema_hash: "0".repeat(64),
         ..selection(&fx)
     };
@@ -736,7 +737,7 @@ async fn selections_are_checked_on_every_send_before_anything_is_written() {
         Some(ChatError::ToolTurnInvalid),
         "schema drift is refused"
     );
-    let unknown = ToolSelection {
+    let unknown = AiToolSelection {
         tool_name: "no_such_tool".into(),
         ..selection(&fx)
     };

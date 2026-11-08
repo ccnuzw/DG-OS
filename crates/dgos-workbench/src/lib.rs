@@ -17,7 +17,12 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 
 mod tools;
-pub use tools::{ToolAction, ToolProposal, ToolSelection, ToolTaskInput, ToolTaskUpdate};
+pub mod execution;
+pub use execution::{AiExecutor, CoreEvent, ExecutionGuard, ExecutionRequest, ExecutionResult, ExecutionSink};
+pub const TOOL_POLICY: &str = tools::TOOL_HOST_POLICY;
+pub const TEXT_POLICY: &str = HOST_POLICY;
+pub use dgos_types::AiToolSelection;
+pub use tools::{ToolAction, ToolProposal, ToolTaskInput, ToolTaskUpdate};
 
 mod assets;
 pub use assets::{
@@ -341,45 +346,23 @@ impl WorkbenchManager {
                 return Err(error);
             }
         };
+        let sink = |_: execution::CoreEvent| true;
+        let binding = execution::StepBinding { user, provider_id: &input.provider_id, model_id: &input.model_id,
+            revision: prepared.record.task.provider_config_revision, provenance: &provenance, cancellation: &cancellation,
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(120), guard: &execution::LegacyGuard, sink: &sink };
+        let mut dispatched = false;
         let result = tokio::select! {
-            _ = self.stopping.cancelled() => Err("process_interrupted"),
-            _ = cancellation.cancelled() => Err("task_cancelled"),
-            response = tokio::time::timeout(
-                std::time::Duration::from_secs(120),
-                providers.call_provider_bound_with_provenance(
-                    &input.provider_id,
-                    &input.model_id,
-                    prepared.request,
-                    user,
-                    prepared.record.task.provider_config_revision,
-                    Some(&provenance),
-                ),
-            ) => Ok(response),
+            _ = self.stopping.cancelled() => Err("process_interrupted".to_owned()),
+            response = execution::call_model(providers, &binding, execution::ModelRequest::Text(prepared.request), &mut dispatched) => response,
         };
         let (status, error, content, tokens, audit_warning) = match result {
-            Err(reason) => ("interrupted", Some(reason.into()), None, None, false),
-            Ok(Ok(Ok(response))) if !response.content.trim().is_empty() => (
-                "succeeded",
-                None,
-                Some(response.content),
-                Some(response.usage.total_tokens as i64),
-                response.audit_warning,
+            Ok(execution::ModelResponse::Text(response)) if !response.content.trim().is_empty() => (
+                "succeeded", None, Some(response.content), Some(i64::from(response.usage.total_tokens)), response.audit_warning,
             ),
-            Ok(Ok(Ok(response))) => (
-                "failed",
-                Some("empty_response".into()),
-                None,
-                None,
-                response.audit_warning,
-            ),
-            Ok(Ok(Err(error))) => (
-                "failed",
-                Some(format!("provider_{}", error.error_code())),
-                None,
-                None,
-                false,
-            ),
-            Ok(Err(_)) => ("failed", Some("provider_timeout".into()), None, None, false),
+            Ok(execution::ModelResponse::Text(response)) => ("failed", Some("empty_response".into()), None, None, response.audit_warning),
+            Ok(execution::ModelResponse::Tools(_)) => unreachable!("text request returns text response"),
+            Err(reason) if matches!(reason.as_str(), "task_cancelled" | "process_interrupted") => ("interrupted", Some(reason), None, None, false),
+            Err(reason) => ("failed", Some(if reason == "generation_limit" { "provider_timeout".into() } else { reason }), None, None, false),
         };
         self.text_tasks.lock().await.remove(&task_id);
         self.finish(&prepared.record.task.id, user, status, error, tokens)
@@ -472,6 +455,7 @@ impl WorkbenchManager {
     async fn record(&self, id: &str, user: &str) -> Result<TaskRecord> {
         let task = tasks::Entity::find_by_id(id)
             .filter(tasks::Column::UserId.eq(user))
+            .filter(tasks::Column::AppId.eq("ai-workbench"))
             .one(&self.db)
             .await
             .map_err(|_| "Unable to read task audit".to_string())?
@@ -497,8 +481,7 @@ impl WorkbenchManager {
     pub async fn list(&self, user: &str) -> Result<Vec<TaskRecord>> {
         let rows = tasks::Entity::find()
             .filter(tasks::Column::UserId.eq(user))
-            // Chat generations share this table (kind = 'chat', D073/D077); the single-task
-            // history shows only its own rows.
+            .filter(tasks::Column::AppId.eq("ai-workbench"))
             .filter(tasks::Column::Kind.eq("single"))
             .order_by_desc(tasks::Column::CreatedAt)
             .order_by_desc(tasks::Column::Id)
@@ -517,6 +500,7 @@ impl WorkbenchManager {
     pub async fn recover_interrupted(&self) -> Result<()> {
         tasks::Entity::update_many()
             .filter(tasks::Column::Status.eq("running"))
+            .filter(tasks::Column::AppId.eq("ai-workbench"))
             .col_expr(
                 tasks::Column::Status,
                 dgos_db::sea_orm::sea_query::Expr::value("interrupted"),
@@ -600,5 +584,27 @@ mod tests {
             manager.cancel_text_task("task-1", "bob").await.is_err(),
             "owner check intact"
         );
+    }
+
+    #[tokio::test]
+    async fn workbench_never_lists_or_recovers_module_runs() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        Migrator::up(&db, None).await.unwrap();
+        for (id, app) in [("own", "ai-workbench"), ("module", "module-example")] {
+            tasks::ActiveModel {
+                id: Set(id.into()), user_id: Set("alice".into()), app_id: Set(app.into()), provider_id: Set("provider".into()),
+                model_id: Set("model".into()), status: Set("running".into()), created_at: Set(1), finished_at: Set(None),
+                error_code: Set(None), total_tokens: Set(None), provider_config_revision: Set(None), session_id: Set(None),
+                kind: Set("single".into()), endpoint_fingerprint: Set(None),
+            }.insert(&db).await.unwrap();
+        }
+        let manager = WorkbenchManager::new(db.clone());
+        assert!(manager.record("module", "alice").await.is_err());
+        let listed = manager.list("alice").await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].task.id, "own");
+        manager.recover_interrupted().await.unwrap();
+        assert_eq!(tasks::Entity::find_by_id("module").one(&db).await.unwrap().unwrap().status, "running");
+        assert_eq!(manager.record("own", "alice").await.unwrap().task.status, "interrupted");
     }
 }

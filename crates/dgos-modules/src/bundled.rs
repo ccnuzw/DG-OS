@@ -58,15 +58,25 @@ impl ModulePublisher {
     /// Provision the modules pinned in this build from `root`
     /// (`<root>/<module_id>/<version>/`).
     pub async fn provision_builtin(&self, root: &Path) -> Result<ProvisionReport, ProvisionError> {
-        self.provision(BUILTIN_PINS, root).await
+        self.provision_with_bundle(BUILTIN_PINS, &crate::release_gate::builtin_bundle_pins(), root).await
     }
 
+    #[cfg(test)]
     pub(crate) async fn provision(
         &self,
         pins: &[ReleasePin<'_>],
         root: &Path,
     ) -> Result<ProvisionReport, ProvisionError> {
-        let violations = verify_release_bundle(pins, root);
+        self.provision_with_bundle(pins, pins, root).await
+    }
+
+    async fn provision_with_bundle(
+        &self,
+        pins: &[ReleasePin<'_>],
+        bundle_pins: &[ReleasePin<'_>],
+        root: &Path,
+    ) -> Result<ProvisionReport, ProvisionError> {
+        let violations = verify_release_bundle(bundle_pins, root);
         if !violations.is_empty() {
             return Err(ProvisionError::Bundle(violations));
         }

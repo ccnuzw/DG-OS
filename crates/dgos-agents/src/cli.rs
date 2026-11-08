@@ -70,6 +70,20 @@ pub async fn probe(tool: CliTool, explicit: Option<&str>) -> CliProbe {
     let shown = Some(path.to_string_lossy().into_owned());
     let mut command = Command::new(&path);
     command.arg("--version").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
+    // Finding a CLI outside the inherited GUI PATH does not make its env-node
+    // shebang runnable. Expose the host-discovered runtime to this child only.
+    if !matches!(tool, CliTool::Node) {
+        if let Ok(node) = crate::session::resolve_executable("node", None) {
+            if let Some(directory) = node.parent() {
+                let inherited = std::env::var_os("PATH").unwrap_or_default();
+                if !std::env::split_paths(&inherited).any(|path| path == directory) {
+                    if let Ok(path) = std::env::join_paths(std::env::split_paths(&inherited).chain(std::iter::once(directory.to_path_buf()))) {
+                        command.env("PATH", path);
+                    }
+                }
+            }
+        }
+    }
     #[cfg(unix)]
     command.process_group(0);
     let spawn = diagnostic.phase("spawn", None);
@@ -100,6 +114,19 @@ pub async fn probe(tool: CliTool, explicit: Option<&str>) -> CliProbe {
     cleanup.finish(cleanup_error);
     operation.finish((status != "available").then_some(status));
     finish(tool, shown, status, version)
+}
+pub async fn probe_node_directory(directory: &str) -> CliProbe {
+    let root = Path::new(directory);
+    if !root.is_absolute() { return finish(CliTool::Node, Some(directory.to_owned()), "not_installed", None); }
+    let executable = if cfg!(windows) { "node.exe" } else { "node" };
+    let mut failure = finish(CliTool::Node, Some(directory.to_owned()), "not_installed", None);
+    for path in [root.join(executable), root.join("bin").join(executable)] {
+        if !path.is_file() { continue; }
+        let result = probe(CliTool::Node, path.to_str()).await;
+        if result.status == "available" { return result; }
+        failure = result;
+    }
+    failure
 }
 
 async fn read_version(tool: CliTool, child: &mut Child, diagnostic: &ProcessDiagnostic) -> Result<String, &'static str> {
@@ -155,6 +182,61 @@ mod tests {
         ] {
             assert!(!tool.accepts(line), "{line}");
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn node_directory_verifies_only_selected_candidates_in_priority_order() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("dgos-node-directory-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        let executable = root.join("node");
+        let nested = root.join("bin/node");
+        for (path, version) in [(&executable, "v20.0.0"), (&nested, "v22.1.0")] {
+            std::fs::write(path, format!("#!/bin/sh\nprintf '{version}\\n'\n")).unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let selected = super::probe_node_directory(root.to_str().unwrap()).await;
+        assert_eq!(selected.path.as_deref(), executable.to_str());
+        assert_eq!(selected.version.as_deref(), Some("v20.0.0"));
+        std::fs::write(&executable, "#!/bin/sh\nprintf 'not-node\\n'\n").unwrap();
+        let fallback = super::probe_node_directory(root.to_str().unwrap()).await;
+        assert_eq!(fallback.path.as_deref(), nested.to_str());
+        assert_eq!(fallback.version.as_deref(), Some("v22.1.0"));
+        std::fs::remove_file(executable).unwrap();
+        std::fs::remove_file(nested).unwrap();
+        assert_eq!(super::probe_node_directory(root.to_str().unwrap()).await.status, "not_installed");
+        assert_eq!(super::probe_node_directory("relative/path").await.status, "not_installed");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn gui_path_resolves_node_for_version_scripts() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        const CHILD: &str = "DGOS_TEST_CLI_GUI_PATH";
+        if std::env::var_os(CHILD).is_some() {
+            let result = super::probe(CliTool::Gemini, None).await;
+            assert_eq!(result.status, "available");
+            assert_eq!(result.version.as_deref(), Some("0.1.11"));
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("dgos gui probe-{}", uuid::Uuid::new_v4()));
+        let bin = root.join(".local/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        // Exercise the real env shebang without depending on an installed Node:
+        // /bin/sh supplies the interpreter under the discovered runtime name.
+        symlink("/bin/sh", bin.join("node")).unwrap();
+        let cli = bin.join("gemini");
+        std::fs::write(&cli, "#!/usr/bin/env node\n[ \"$1\" = --version ] || exit 2\nprintf '0.1.11\\n'\n").unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // Only the fresh test subprocess receives the synthetic HOME/PATH.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "cli::tests::gui_path_resolves_node_for_version_scripts", "--nocapture"])
+            .env(CHILD, "1").env("HOME", &root).env("PATH", root.join("empty-path"))
+            .output().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     }
 
     #[cfg(unix)]
@@ -233,7 +315,8 @@ mod tests {
     #[tokio::test]
     async fn probe_diagnostics_distinguish_stdout_exit_and_spawn_failures() {
         use std::os::unix::fs::PermissionsExt;
-        let (log, _guard) = crate::test_support::DiagnosticLog::capture();
+        use tracing::instrument::WithSubscriber;
+        let (log, subscriber) = crate::test_support::DiagnosticLog::capture();
         let root = std::env::temp_dir().join(format!("dgos-probe-private-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&root).unwrap();
         let path = root.join("credential-SENTINEL");
@@ -245,7 +328,7 @@ mod tests {
         ] {
             std::fs::write(&path, body).unwrap();
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
-            assert_eq!(super::probe(CliTool::Codex, path.to_str()).await.status, expected);
+            assert_eq!(super::probe(CliTool::Codex, path.to_str()).with_subscriber(subscriber.clone()).await.status, expected);
         }
         std::fs::remove_dir_all(&root).unwrap();
         let text = log.text();
@@ -262,9 +345,10 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires installed Node and Codex; emits fixed-field phase diagnostics"]
     async fn installed_node_codex_probe_diagnostic() {
-        let (log, _guard) = crate::test_support::DiagnosticLog::capture();
-        let node = super::probe(CliTool::Node, None).await;
-        let codex = super::probe(CliTool::Codex, None).await;
+        use tracing::instrument::WithSubscriber;
+        let (log, subscriber) = crate::test_support::DiagnosticLog::capture();
+        let node = super::probe(CliTool::Node, None).with_subscriber(subscriber.clone()).await;
+        let codex = super::probe(CliTool::Codex, None).with_subscriber(subscriber).await;
         eprint!("{}", log.text());
         assert_eq!(node.status, "available", "Node probe: {}", node.status);
         assert_eq!(codex.status, "available", "Codex probe: {}", codex.status);

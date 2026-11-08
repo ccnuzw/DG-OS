@@ -27,7 +27,11 @@ pub use credentials::{
     new_credential_ref, ProviderCredentialScope, ProviderCredentialVault, SecretValue,
     UnavailableCredentialVault,
 };
-pub use manager::{CliProviderLaunch, CliProviderLaunchMetadata, CliProviderProtocol, ProviderManager};
+pub use manager::{
+    CliProviderBinding, CliProviderBindingGate, CliProviderChange, CliProviderChangeKind,
+    CliProviderChangeSink, CliProviderLease, CliProviderLaunch, CliProviderLaunchMetadata,
+    CliProviderProtocol, ProviderManager,
+};
 pub use retry::{is_retryable, AttemptError, RetryPolicy};
 pub use traits::{BoxStream, CallFailure, ProviderAdapter};
 pub use transport::AdapterOptions;

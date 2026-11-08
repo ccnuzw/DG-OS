@@ -9,6 +9,8 @@ dgos-mcp = { path = "../dgos-mcp" }
 dgos-modules = { path = "../dgos-modules" }
 dgos-providers = { path = "../dgos-providers" }
 dgos-types = { path = "../dgos-types" }
+dgos-workbench = { path = "../dgos-workbench" }
+dgos-skills = { path = "../dgos-skills" }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 chrono = { workspace = true }

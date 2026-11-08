@@ -41,9 +41,10 @@ pub enum GitAction {
     Switch { branch: String },
     Merge { branch: String },
     Discard { baseline_version: String, files: Vec<DiscardFile>, confirmed: bool },
+    Pull { remote: String, branch: String, preview_token: String, trust_directory: bool, trust_network: bool },
 }
 impl GitAction {
-    fn operation_kind(&self) -> &'static str { match self { Self::Stage { .. } => "git_stage", Self::Unstage { .. } => "git_unstage", Self::Commit { .. } => "git_commit", Self::Push { .. } => "git_push", Self::Switch { .. } => "git_switch", Self::Merge { .. } => "git_merge", Self::Discard { .. } => "git_discard" } }
+    fn operation_kind(&self) -> &'static str { match self { Self::Stage { .. } => "git_stage", Self::Unstage { .. } => "git_unstage", Self::Commit { .. } => "git_commit", Self::Push { .. } => "git_push", Self::Pull { .. } => "git_pull", Self::Switch { .. } => "git_switch", Self::Merge { .. } => "git_merge", Self::Discard { .. } => "git_discard" } }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -52,7 +53,20 @@ pub struct ExecuteGitInput { pub id: String, pub task_id: String, pub review_tok
 #[serde(deny_unknown_fields)]
 pub struct ReconcileGitInput { pub id: String, pub trust_directory: bool, pub trust_network: bool }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitHistoryInput { pub task_id: String, pub start_oid: Option<String>, pub cursor: Option<String>, #[serde(default = "history_default_limit")] pub limit: usize }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GitHistoryEntry { pub oid: String, pub author: String, #[serde(rename = "timestamp")] pub authored_at: i64, pub subject: String, pub parents: Vec<String> }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GitHistoryPage { #[serde(rename = "anchor")] pub start_oid: String, pub next_cursor: Option<String>, #[serde(rename = "commits")] pub entries: Vec<GitHistoryEntry> }
 fn digest(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GitPullPreview { pub review_token: String, pub remote: String, pub branch: String, pub remote_ref: String, pub remote_display: String, pub preview_token: String }
+fn history_default_limit() -> usize { 30 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitPullPreviewInput { pub task_id: String, pub remote: String, pub branch: String }
 fn text(bytes: Vec<u8>) -> Result<String, String> { String::from_utf8(bytes).map_err(|_| "git_non_utf8_path".into()) }
 fn check_lease(lease: &CancellationToken) -> Result<(), String> { if lease.is_cancelled() { Err("session_invalid".into()) } else { Ok(()) } }
 fn valid_oid(value: &str) -> bool { matches!(value.len(), 40 | 64) && value.bytes().all(|b| b.is_ascii_hexdigit()) }
@@ -65,7 +79,7 @@ fn valid_remote(value: &str) -> Result<(), String> {
     Ok(())
 }
 fn valid_url(value: &str) -> Result<(), String> {
-    if value.is_empty() || value.starts_with('-') || value.bytes().any(|b| b <= 32 || b == 127) || value.contains('\\') { return Err("unsafe_git_remote".into()); }
+    if value.is_empty() || value.starts_with('-') || value.bytes().any(|b| b <= 32 || b == 127) || value.contains(['\\', '?', '#']) { return Err("unsafe_git_remote".into()); }
     if let Some((scheme, remainder)) = value.split_once("://") {
         if !matches!(scheme, "https" | "http" | "ssh" | "file") || remainder.is_empty() { return Err("unsafe_git_remote".into()); }
         if matches!(scheme, "http" | "https") && remainder.split('/').next().is_some_and(|host| host.contains('@')) { return Err("unsafe_git_remote".into()); }
@@ -95,12 +109,49 @@ pub(crate) async fn safe_command(path: &Path) -> Result<Command, String> {
     }
     Ok(command)
 }
+struct PullPreviewBinding { owner: String, task: String, review: String, remote: String, branch: String, url_hash: String, expires: std::time::Instant, lease: CancellationToken }
+#[cfg(test)]
+type PullFetchBarrier = (tokio::sync::oneshot::Sender<()>, tokio::sync::oneshot::Receiver<()>);
+#[cfg(test)]
+static PULL_FETCH_BARRIERS: std::sync::LazyLock<std::sync::Mutex<BTreeMap<String, PullFetchBarrier>>> = std::sync::LazyLock::new(Default::default);
+#[cfg(test)]
+static PULL_RESERVED_BARRIERS: std::sync::LazyLock<std::sync::Mutex<BTreeMap<String, PullFetchBarrier>>> = std::sync::LazyLock::new(Default::default);
+#[cfg(test)]
+static PULL_INSTALL_BARRIERS: std::sync::LazyLock<std::sync::Mutex<BTreeMap<String, PullFetchBarrier>>> = std::sync::LazyLock::new(Default::default);
+#[cfg(test)]
+async fn pull_reserved_barrier(id: &str) {
+    let barrier = PULL_RESERVED_BARRIERS.lock().unwrap().remove(id);
+    if let Some((reached, release)) = barrier { let _ = reached.send(()); let _ = release.await; }
+}
+#[cfg(test)]
+async fn pull_install_barrier(id: &str) {
+    let barrier = PULL_INSTALL_BARRIERS.lock().unwrap().remove(id);
+    if let Some((reached, release)) = barrier { let _ = reached.send(()); let _ = release.await; }
+}
+#[cfg(test)]
+async fn pull_fetch_barrier(id: &str) {
+    let barrier = PULL_FETCH_BARRIERS.lock().unwrap().remove(id);
+    if let Some((reached, release)) = barrier { let _ = reached.send(()); let _ = release.await; }
+}
+static PULL_PREVIEWS: std::sync::LazyLock<std::sync::Mutex<BTreeMap<String, PullPreviewBinding>>> = std::sync::LazyLock::new(Default::default);
+fn history_binding(owner: &str, task: &str, path: &str, identity: &str, common: &(String, String), anchor: &str, offset: usize) -> Result<String, String> {
+    Ok(digest(&serde_json::to_vec(&json!([owner, task, path, identity, common, anchor, offset])).map_err(|_| "storage_failed")?))
+}
+fn redact_remote(value: &str) -> String {
+    let value = value.split(['?', '#']).next().unwrap_or_default();
+    if let Some((scheme, rest)) = value.split_once("://") {
+        let (authority, _) = rest.split_once('/').map_or((rest, ""), |(host, path)| (host, path));
+        format!("{scheme}://{}/…", authority.rsplit('@').next().unwrap_or(authority))
+    } else { "[local or SSH remote]".into() }
+}
 fn hardened_command(path: &Path) -> Command {
     let mut command = git_command(path);
     for (key, _) in std::env::vars_os().filter(|(key, _)| key.to_string_lossy().starts_with("GIT_")) { command.env_remove(key); }
     command.args(["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "core.pager=cat", "-c", "core.editor=false", "-c", "core.askPass=", "-c", "core.attributesFile=/dev/null", "-c", "core.sshCommand=ssh -F /dev/null -oBatchMode=yes", "-c", "credential.helper=", "-c", "credential.interactive=false", "-c", "commit.gpgSign=false", "-c", "tag.gpgSign=false", "-c", "push.gpgSign=false", "-c", "push.recurseSubmodules=no", "-c", "submodule.recurse=false", "-c", "diff.external=", "-c", "diff.renames=false", "-c", "merge.renames=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false"])
         .args(["-c", "merge.verifySignatures=false", "-c", "commit.status=false", "-c", "core.quotePath=true", "-c", "merge.default=text", "-c", "rerere.enabled=false", "-c", "rerere.autoUpdate=false"])
-        .env("GIT_OPTIONAL_LOCKS", "0").env("GIT_TERMINAL_PROMPT", "0").env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_ATTR_NOSYSTEM", "1").env("GIT_LITERAL_PATHSPECS", "1").env("GIT_MERGE_AUTOEDIT", "no").env_remove("SSH_ASKPASS").env_remove("GIT_ASKPASS");
+        .args(["-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "-c", "protocol.http.allow=always", "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always", "-c", "merge.autoStash=false", "-c", "fetch.recurseSubmodules=false"])
+        .env("GIT_OPTIONAL_LOCKS", "0").env("GIT_TERMINAL_PROMPT", "0").env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_ATTR_NOSYSTEM", "1").env("GIT_LITERAL_PATHSPECS", "1").env("GIT_MERGE_AUTOEDIT", "no").env_remove("SSH_ASKPASS").env_remove("GIT_ASKPASS")
+        .env("GIT_NO_REPLACE_OBJECTS", "1").env("GIT_GRAFT_FILE", "/dev/null");
     command
 }
 async fn output(path: &Path, args: &[&str], lease: &CancellationToken, stop: &CancellationToken, write: bool) -> Result<Vec<u8>, String> {
@@ -227,11 +278,69 @@ impl AgentManager {
         review.review_token = digest(&serde_json::to_vec(&version).map_err(|_| "storage_failed")?);
         Ok(review)
     }
+    pub async fn read_development_git_history(&self, owner: &str, input: GitHistoryInput) -> Result<GitHistoryPage, String> {
+        let _admission = self.inner.admission.lock().await;
+        self.ready().await?;
+        if input.limit == 0 || input.limit > 100 { return Err("invalid_git_history_limit".into()); }
+        let project = self.task_project(owner, &input.task_id).await?;
+        let path = Path::new(&project.path);
+        let (_, identity) = crate::projects::directory(&project.path).await?;
+        let common = git_common(&project.path).await?;
+        let current = optional_ref(path, &["rev-parse", "--verify", "HEAD"], &CancellationToken::new(), &self.inner.stop).await?;
+        let cursor_anchor = input.cursor.as_deref().and_then(|cursor| cursor.split(':').next()).map(str::to_owned);
+        let Some(start_oid) = input.start_oid.or(cursor_anchor).or(current) else { return Ok(GitHistoryPage { start_oid: String::new(), next_cursor: None, entries: vec![] }); };
+        if !valid_oid(&start_oid) { return Err("invalid_git_ref".into()); }
+        let offset = if let Some(cursor) = input.cursor.as_deref() {
+            let fields: Vec<_> = cursor.split(':').collect();
+            if fields.len() != 3 || fields[0] != start_oid { return Err("invalid_git_history_cursor".into()); }
+            let offset: usize = fields[1].parse().map_err(|_| "invalid_git_history_cursor")?;
+            if offset == 0 || offset >= 10_000 { return Err("git_history_limit".into()); }
+            if fields[2] != history_binding(owner, &input.task_id, &project.path, &identity, &common, &start_oid, offset)? { return Err("invalid_git_history_cursor".into()); }
+            offset
+        } else { 0 };
+        if output(path, &["cat-file", "-e", &format!("{start_oid}^{{commit}}")], &CancellationToken::new(), &self.inner.stop, false).await.is_err() { return Err("invalid_git_ref".into()); }
+        let format = "--format=%H%x00%an%x00%at%x00%s%x00%P";
+        let max = (input.limit + 1).to_string();
+        let skip = offset.to_string();
+        let bytes = output(path, &["log", "-z", format, "--topo-order", "--no-decorate", "--no-show-signature", "--no-notes", "--max-count", &max, "--skip", &skip, &start_oid, "--"], &CancellationToken::new(), &self.inner.stop, false).await?;
+        let raw = text(bytes)?;
+        let fields: Vec<_> = raw.split_terminator('\0').collect();
+        if fields.len() % 5 != 0 { return Err("git_invalid_output".into()); }
+        let mut entries = Vec::new();
+        for fields in fields.chunks_exact(5) {
+            let oid = fields[0];
+            let parents = fields[4].split_whitespace().map(str::to_owned).collect::<Vec<_>>();
+            if !valid_oid(oid) || parents.iter().any(|parent| !valid_oid(parent)) { return Err("git_invalid_output".into()); }
+            entries.push(GitHistoryEntry { oid: oid.into(), author: fields[1].into(), authored_at: fields[2].parse().map_err(|_| "git_invalid_output")?, subject: fields[3].chars().take(512).collect(), parents });
+        }
+        let has_more = entries.len() > input.limit;
+        entries.truncate(input.limit);
+        let next_cursor = if has_more { let next = offset + entries.len(); if next >= 10_000 { return Err("git_history_limit".into()); } Some(format!("{start_oid}:{next}:{}", history_binding(owner, &input.task_id, &project.path, &identity, &common, &start_oid, next)?)) } else { None };
+        Ok(GitHistoryPage { start_oid, next_cursor, entries })
+    }
     async fn initial_git_index(&self, owner: &str, task_id: &str) -> Result<Option<Value>, String> {
         for op in self.inner.repository.list_git_operations(owner, task_id).await? {
             if let Some(value) = op.get("details").and_then(|d| d.get("initial_index")) { return Ok(Some(value.clone())); }
         }
         Ok(None)
+    }
+    pub async fn preview_development_git_pull(&self, owner: &str, task_id: &str, remote: &str, branch: &str, lease: CancellationToken) -> Result<GitPullPreview, String> {
+        let review = self.read_development_git(owner, task_id).await?;
+        if review.kind != "git" { return Err("not_git_repository".into()); }
+        valid_remote(remote)?; valid_branch(branch)?;
+        let path = Path::new(&review.path);
+        let urls = text(output(path, &["remote", "get-url", "--all", remote], &CancellationToken::new(), &self.inner.stop, false).await?)?;
+        let urls: Vec<_> = urls.lines().collect();
+        if urls.len() != 1 { return Err("unsafe_git_remote".into()); }
+        valid_url(urls[0])?;
+        let remote_ref = format!("refs/heads/{branch}");
+        check_lease(&lease)?;
+        let preview_token = uuid::Uuid::new_v4().to_string();
+        let mut previews = PULL_PREVIEWS.lock().map_err(|_| "storage_failed")?;
+        previews.retain(|_, value| value.expires > std::time::Instant::now() && !value.lease.is_cancelled());
+        if previews.len() >= 1024 { return Err("workspace_busy".into()); }
+        previews.insert(preview_token.clone(), PullPreviewBinding { owner: owner.into(), task: task_id.into(), review: review.review_token.clone(), remote: remote.into(), branch: branch.into(), url_hash: digest(urls[0].as_bytes()), expires: std::time::Instant::now() + Duration::from_secs(600), lease });
+        Ok(GitPullPreview { review_token: review.review_token, remote: remote.into(), branch: branch.into(), remote_ref, remote_display: redact_remote(urls[0]), preview_token })
     }
     pub async fn read_development_git(&self, owner: &str, task_id: &str) -> Result<GitReview, String> {
         let _admission = self.inner.admission.lock().await;
@@ -259,6 +368,7 @@ impl AgentManager {
         let initial_index = self.initial_git_index(owner, &input.task_id).await?.unwrap_or_else(|| json!({"entries":before.index,"staged_paths":staged_paths}));
         let mut details = json!({"request":input,"before":before,"initial_index":initial_index});
         self.prepare_git_action(owner, &project, &input, &before, &mut details, &lease).await?;
+        if matches!(input.action, GitAction::Pull { .. }) { details["phase"] = json!("prepared"); }
         self.capture_task_baseline(owner, &input.task_id).await?;
         let workspace = self.inner.repository.task_workspace(owner, &input.task_id).await?;
         check_lease(&lease)?;
@@ -283,6 +393,7 @@ impl AgentManager {
         let mut status = "succeeded";
         if let Err(error) = result {
             status = if matches!(error.as_str(), "cancelled" | "session_invalid" | "git_timeout" | "git_output_limit" | "file_save_unknown" | "git_unknown") || (error == "git_failed" && details["action_started"].as_bool() == Some(true)) { "unknown" } else { "failed" };
+            if matches!(input.action, GitAction::Pull { .. }) && matches!(details["phase"].as_str(), Some("fetch_started" | "fetched" | "ff_started" | "completed")) && error != "git_pull_diverged" { status = "unknown"; }
             details["error"] = json!(error);
         }
         if let Ok(after) = self.git_snapshot(owner, &input.task_id, &CancellationToken::new()).await {
@@ -290,6 +401,9 @@ impl AgentManager {
             details["after"] = serde_json::to_value(after).map_err(|_| "storage_failed")?;
         }
         self.inner.repository.finish_git_operation(owner, &input.id, status, &details).await?;
+        if matches!(input.action, GitAction::Pull { .. }) && status != "unknown" {
+            operations::cleanup_pull_ref(Path::new(&project.path), &input.id, &details, &self.inner.stop).await;
+        }
         self.inner.repository.git_operation(owner, &input.id).await?.ok_or_else(|| "storage_failed".into())
     }
 }

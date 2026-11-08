@@ -38,13 +38,18 @@ mod agents;
 pub use agents::run_agents;
 mod appearance;
 mod appearance_host;
+mod appearance_scale;
 mod call;
 mod capabilities;
 mod chat;
 mod lan;
+mod lifecycle;
+pub use lifecycle::{drive_lifecycle, run_lifecycle};
 #[cfg(feature = "mcp-smoke")]
 mod mcp;
 mod modules;
+mod native_capture;
+use native_capture::capture_native;
 mod provider_stream;
 #[cfg(feature = "provider-smoke")]
 mod providers;

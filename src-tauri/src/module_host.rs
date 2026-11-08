@@ -363,6 +363,8 @@ pub struct ModuleHostBridge {
     transport: Arc<ChannelTransport>,
     /// Pending `mcp.call` confirmations end as lost with their attachment.
     mcp_confirmations: Option<Arc<dgos_application::ModuleMcpConfirmations>>,
+    attachment_leases: Mutex<HashMap<String, tokio_util::sync::CancellationToken>>,
+    lifecycle: Mutex<()>,
 }
 
 impl ModuleHostBridge {
@@ -371,6 +373,8 @@ impl ModuleHostBridge {
             loader,
             transport,
             mcp_confirmations: None,
+            attachment_leases: Mutex::new(HashMap::new()),
+            lifecycle: Mutex::new(()),
         }
     }
 
@@ -383,10 +387,9 @@ impl ModuleHostBridge {
     }
 
     fn attachments_lost<'a>(&self, attachments: impl IntoIterator<Item = &'a str>) {
-        if let Some(confirmations) = &self.mcp_confirmations {
-            for attachment_id in attachments {
-                confirmations.attachment_lost(attachment_id);
-            }
+        let mut leases = self.attachment_leases.lock().unwrap_or_else(|p| p.into_inner());
+        for attachment_id in attachments {
+            if let Some(lease) = leases.remove(attachment_id) { lease.cancel(); }
         }
     }
 
@@ -394,14 +397,37 @@ impl ModuleHostBridge {
     /// the loader learns about the attachment, so no instruction can race
     /// ahead of its own channel.
     pub fn attach(&self, channel: Channel<InstructionDto>) -> String {
+        let _lifecycle = self.lifecycle.lock().unwrap_or_else(|p| p.into_inner());
         let mut channels = self.transport.channels();
         let attachment = self.loader.attach(MODULE_WINDOW);
         if let Some(superseded) = &attachment.superseded {
             channels.remove(superseded);
-            self.attachments_lost([superseded.as_str()]);
+            // Confirmation delivery also accesses channels; close it after unlocking below.
         }
         channels.insert(attachment.attachment_id.clone(), channel);
+        self.attachment_leases.lock().unwrap_or_else(|p| p.into_inner())
+            .insert(attachment.attachment_id.clone(), tokio_util::sync::CancellationToken::new());
+        drop(channels);
+        if let Some(superseded) = &attachment.superseded {
+            self.attachments_lost([superseded.as_str()]);
+            if let Some(confirmations) = &self.mcp_confirmations { confirmations.attachment_lost(superseded); }
+        }
         attachment.attachment_id
+    }
+
+    pub fn attachment_lease(&self, attachment_id: &str) -> Result<tokio_util::sync::CancellationToken, dgos_types::DgosError> {
+        let _lifecycle = self.lifecycle.lock().unwrap_or_else(|p| p.into_inner());
+        let leases = self.attachment_leases.lock().unwrap_or_else(|p| p.into_inner());
+        if !self.loader.is_current(attachment_id) { return Err(dgos_types::DgosError::ModuleCallCancelled); }
+        leases.get(attachment_id).filter(|lease| !lease.is_cancelled()).cloned().ok_or(dgos_types::DgosError::ModuleCallCancelled)
+    }
+
+    fn revoke_attachments(&self) {
+        let ids: Vec<_> = self.attachment_leases.lock().unwrap_or_else(|p| p.into_inner()).keys().cloned().collect();
+        self.attachments_lost(ids.iter().map(String::as_str));
+        if let Some(confirmations) = &self.mcp_confirmations {
+            for id in &ids { confirmations.attachment_lost(id); }
+        }
     }
 
     pub fn report(
@@ -421,6 +447,8 @@ impl ModuleHostBridge {
     /// never reach this hook.
     pub fn page_started(&self, window: &str) {
         if window == MODULE_WINDOW {
+            let _lifecycle = self.lifecycle.lock().unwrap_or_else(|p| p.into_inner());
+            self.revoke_attachments();
             self.loader.page_started(window);
             self.prune();
         }
@@ -428,6 +456,8 @@ impl ModuleHostBridge {
 
     pub fn window_destroyed(&self, window: &str) {
         if window == MODULE_WINDOW {
+            let _lifecycle = self.lifecycle.lock().unwrap_or_else(|p| p.into_inner());
+            self.revoke_attachments();
             self.loader.window_destroyed(window);
             self.prune();
         }
@@ -601,6 +631,7 @@ mod tests {
         let (transport, bridge) = bridge();
         let (first, first_sink) = capture();
         let first_id = bridge.attach(first);
+        let first_lease = bridge.attachment_lease(&first_id).unwrap();
         transport.send(&first_id, unload("t1")).unwrap();
         assert_eq!(first_sink.lock().unwrap().len(), 1);
 
@@ -608,6 +639,9 @@ mod tests {
         let (second, second_sink) = capture();
         let second_id = bridge.attach(second);
         assert_ne!(first_id, second_id);
+        assert!(first_lease.is_cancelled());
+        assert!(bridge.attachment_lease(&first_id).is_err());
+        assert!(!bridge.attachment_lease(&second_id).unwrap().is_cancelled());
         assert_eq!(transport.send(&first_id, unload("t2")), Err(PageSendError));
         transport.send(&second_id, unload("t3")).unwrap();
         assert_eq!(first_sink.lock().unwrap().len(), 1);
@@ -620,17 +654,24 @@ mod tests {
         let (transport, bridge) = bridge();
         let (channel, _sink) = capture();
         let id = bridge.attach(channel);
+        let lease = bridge.attachment_lease(&id).unwrap();
         bridge.page_started("secondary");
         transport.send(&id, unload("t1")).unwrap();
+        assert!(!lease.is_cancelled());
 
         bridge.page_started(MODULE_WINDOW);
         assert_eq!(transport.send(&id, unload("t2")), Err(PageSendError));
+        assert!(lease.is_cancelled());
+        assert!(bridge.attachment_lease(&id).is_err());
 
         let (channel, _sink) = capture();
         let id = bridge.attach(channel);
+        let lease = bridge.attachment_lease(&id).unwrap();
         transport.send(&id, unload("t3")).unwrap();
         bridge.window_destroyed(MODULE_WINDOW);
         assert_eq!(transport.send(&id, unload("t4")), Err(PageSendError));
+        assert!(lease.is_cancelled());
+        assert!(bridge.attachment_lease(&id).is_err());
     }
 
     #[test]

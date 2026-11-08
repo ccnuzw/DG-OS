@@ -52,6 +52,9 @@ impl DevelopmentRepository {
     pub async fn unlink_project(&self, owner: &str, project_id: &str) -> Result<(), String> {
         let txn = self.db.begin().await.map_err(db)?;
         project_row(&txn, owner, project_id).await?;
+        execute(&txn, "UPDATE development_capability_heads SET permission_epoch=permission_epoch+1,revision=NULL WHERE owner=? AND project_id=?", vec![v(owner),v(project_id)]).await?;
+        execute(&txn, "INSERT OR IGNORE INTO development_cli_legacy_history(owner,session_id,original_project_id,original_task_id,session_record,capability_snapshot,referenced_configuration,original_revision,original_permission_epoch,archived_at) SELECT s.owner,s.id,s.project_id,s.task_id,json_object('engine',s.engine,'native_id',s.native_id,'workspace',s.workspace,'executable',s.executable,'model',s.model),c.snapshot,r.configuration,c.revision,c.permission_epoch,unixepoch() FROM development_agent_sessions s LEFT JOIN development_session_capabilities c ON c.owner=s.owner AND c.session_id=s.id LEFT JOIN development_capability_revisions r ON r.owner=c.owner AND r.project_id=c.project_id AND r.revision=c.revision WHERE s.owner=? AND s.project_id=?", vec![v(owner),v(project_id)]).await?;
+        execute(&txn, "UPDATE development_cli_session_bindings SET state='revoked',cleanup_state=CASE WHEN state IN ('opening','active') THEN 'pending' ELSE cleanup_state END,cleanup_reason=CASE WHEN state IN ('opening','active') THEN 'project_unlinked' ELSE cleanup_reason END,updated_at=unixepoch() WHERE owner=? AND project_id=? AND execution_policy='provider_bound' AND state IN ('opening','active')", vec![v(owner),v(project_id)]).await?;
         execute(
             &txn,
             "UPDATE development_selection SET project_id=NULL,task_id=NULL,session_id=NULL WHERE owner=? AND (project_id=? OR session_id IN (SELECT id FROM development_agent_sessions WHERE owner=? AND project_id=?))",

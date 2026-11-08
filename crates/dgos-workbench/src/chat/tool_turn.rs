@@ -3,8 +3,8 @@
 //! A tool turn is not streamed. The model proposes one call; the renderer shows the exact server,
 //! tool and JSON arguments; `advance_chat_tool_turn` approves or denies that single proposal
 //! (consumed on use, 120 s limit); the host re-checks Provider revision, permission, connection
-//! and schema hash before the one MCP call. The model/MCP mechanics are the single-task code in
-//! `tools.rs` (`advance_tool_context`); this module only adds the chat lifecycle around it:
+//! and schema hash before the one MCP call. Model/MCP mechanics live in `execution.rs`; this
+//! module only adds the chat lifecycle around the shared tool step:
 //! registry slot, parked state, expiry, cancellation and the one terminal transaction.
 //!
 //! Arguments, results and proposals live in memory only. The chat database receives the final
@@ -12,7 +12,7 @@
 
 use super::*;
 use crate::tools::{SelectedTool, ToolAction, ToolContext, ToolSession};
-use crate::{TaskRecord, WorkbenchManager};
+use crate::TaskRecord;
 use dgos_db::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use dgos_types::ToolMessage;
 
@@ -225,14 +225,7 @@ impl ChatManager {
         mut context: ToolContext,
         action: ToolAction,
     ) {
-        let result = WorkbenchManager::advance_tool_context(
-            providers,
-            mcp,
-            &turn.session,
-            &mut context,
-            action,
-        )
-        .await;
+        let result = turn.session.advance(providers, mcp, &mut context, action).await;
         self.after_step(turn, context, result).await;
     }
 

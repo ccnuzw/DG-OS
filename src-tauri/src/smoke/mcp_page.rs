@@ -176,7 +176,7 @@ async fn appearance(app: &AppHandle, fx: &Fixture, checks: &mut Checks, mode: &s
     let read=ipc(app,MAIN,"get_appearance_preferences",json!({})).await;
     let mut snapshot=read.data()["snapshot"].clone();
     let revision=snapshot.as_object_mut().and_then(|s|s.remove("revision")).ok_or("appearance snapshot absent")?;
-    snapshot["mode"]=json!(mode); snapshot["density"]=json!(if large {175}else{100});
+    snapshot["mode"]=json!(mode); snapshot["density"]=json!(if large {150}else{100});
     snapshot["typography"]["uiSize"]=json!(if large {16}else{12});
     snapshot["typography"]["readingSize"]=json!(if large {20}else{13});
     snapshot["typography"]["codeSize"]=json!(if large {18}else{12});
@@ -186,7 +186,7 @@ async fn appearance(app: &AppHandle, fx: &Fixture, checks: &mut Checks, mode: &s
     // Apply through the production bootstrap on a real reload, never patch theme DOM/CSS in the driver.
     app.get_webview_window(MAIN).ok_or("main window absent")?.eval("location.reload()").map_err(|e|e.to_string())?;
     tokio::time::sleep(Duration::from_millis(500)).await;
-    step(app,fx,checks,"production appearance bootstrap applies saved host snapshot",json!({"mode":mode,"density":if large{175}else{100}}),"return {ok:!!await until(()=>document.documentElement.dataset.theme===A.mode&&document.documentElement.dataset.density===String(A.density)&&!!document.querySelector('.workspace-tabbar'))};").await?;
+    step(app,fx,checks,"production appearance bootstrap applies saved host snapshot",json!({"mode":mode,"density":if large{150}else{100}}),"return {ok:!!await until(()=>document.documentElement.dataset.theme===A.mode&&document.documentElement.dataset.density===String(A.density)&&!!document.querySelector('.workspace-tabbar'))};").await?;
     navigate(app,fx,checks,"/mcp").await?;
     step(app,fx,checks,"MCP hydrates after production reload",json!({}),"return {ok:!!await until(()=>rows().length===3)};").await?;
     Ok(())
@@ -343,7 +343,7 @@ async fn matrix(app: &AppHandle, fx: &Fixture, checks: &mut Checks) -> Journey<(
     for mode in ["light","dark"] { for large in [false,true] { for width in [1440,800,520] {
         window.set_size(tauri::LogicalSize::new(width as f64,900.0)).map_err(|e|e.to_string())?;
         appearance(app,fx,checks,mode,large).await?;
-        let name=format!("matrix-{mode}-{}-{width}",if large{"large175"}else{"default100"});
+        let name=format!("matrix-{mode}-{}-{width}",if large{"relaxed115"}else{"standard100"});
         step(app,fx,checks,"wide or compact server list wraps long names",json!({"width":width}),"if(document.querySelector('.mcp-back-list')&&!document.querySelector('.mcp-server-list').hidden){}else if(document.querySelector('.mcp-back-list'))document.querySelector('.mcp-back-list').click();await frame();return audit('list',A.width);").await?;
         screenshot(app,fx,&format!("{name}-list")).await?;
         step(app,fx,checks,"actual long URL config is editable without page overflow",json!({"name":URL_NAME,"width":width}),"row(A.name).click();await frame();await until(()=>!detail().hidden&&row(A.name).getAttribute('aria-pressed')==='true');button('Edit',detail()).click();await until(()=>field('Name')?.value===A.name);await frame();return {...audit('form',A.width),urlLength:field('Server URL')?.value.length,ok:audit('form',A.width).ok&&field('Server URL')?.value.length>300};").await?;
@@ -385,7 +385,7 @@ async fn matrix(app: &AppHandle, fx: &Fixture, checks: &mut Checks) -> Journey<(
         ui_keys::key(app,Key::Tab).await;
         step(app,fx,checks,"native modal focus has visible ring and unclipped control",json!({}),"await frame();const e=document.activeElement,r=rect(e),s=getComputedStyle(e);const clips=all('*',dialog()).filter(p=>p!==e&&p.contains(e)&&/auto|scroll|hidden/.test(getComputedStyle(p).overflowY)).map(rect);return {ok:dialog().contains(e)&&e.matches(':focus-visible')&&(parseFloat(s.outlineWidth)>0||s.boxShadow!=='none')&&r.x>=0&&r.right<=innerWidth&&r.y>=0&&r.bottom<=innerHeight&&clips.every(c=>r.y>=c.y-2&&r.bottom<=c.bottom+2),target:e.tagName,rect:r,outline:s.outline,shadow:s.boxShadow,clips};").await?;
     }
-    screenshot(app,fx,"native-scroll-focus-dark-large175-800").await?;
+    screenshot(app,fx,"native-scroll-focus-dark-relaxed115-800").await?;
     ui_keys::key(app,Key::Escape).await;
     step(app,fx,checks,"supplemental modal closes without dispatch",json!({}),"return {ok:!!await until(()=>!dialog())};").await?;
     Ok(())

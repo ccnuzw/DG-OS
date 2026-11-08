@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 pub const SNAPSHOT_KEY: &str = "appearance.snapshot.v2";
 pub const MAX_REVISION: u64 = 9_007_199_254_740_991;
-pub const DENSITIES: [u16; 5] = [75, 100, 125, 150, 175];
+pub const DENSITIES: [u16; 10] = [60, 70, 80, 90, 100, 110, 120, 130, 140, 150];
 pub const PRESETS: [&str; 5] = ["precision", "studio", "paper", "forest", "slate"];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -41,10 +41,18 @@ pub struct ContentColors {
     #[serde(skip_serializing_if = "Option::is_none")] pub foreground: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum FontSelection {
+    SystemUi,
+    SystemMono,
+    Local { family: String },
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Typography {
-    pub ui_font_id: String, pub reading_font_id: String, pub code_font_id: String,
+    pub ui_font: FontSelection, pub reading_font: FontSelection, pub code_font: FontSelection,
     pub ui_size: u16, pub reading_size: u16, pub code_size: u16, pub line_height: f64,
+    pub reading_follow_ui: bool,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -73,23 +81,23 @@ pub enum AppearanceSave {
 impl Default for AppearanceValues {
     fn default() -> Self {
         serde_json::from_value(json!({
-            "schemaVersion":2,"mode":"light","density":100,
+            "schemaVersion":6,"mode":"light","density":100,
             "variants":{"light":{"presetId":"studio","overrides":{"interface":{},"reading":{},"code":{}}},"dark":{"presetId":"studio","overrides":{"interface":{},"reading":{},"code":{}}}},
-            "typography":{"uiFontId":"system","readingFontId":"system","codeFontId":"mono","uiSize":12,"readingSize":13,"codeSize":12,"lineHeight":1.75},
+            "typography":{"uiFont":{"kind":"system-ui"},"readingFont":{"kind":"system-ui"},"codeFont":{"kind":"system-mono"},"uiSize":12,"readingSize":12,"codeSize":12,"lineHeight":1.75,"readingFollowUi":true},
             "effects":{"sidebarTreatment":"solid","reducedMotion":"system"}
         })).expect("valid built-in appearance")
     }
 }
 impl AppearanceValues {
     pub fn parse(raw: &Value) -> DgosResult<Self> {
-        if raw.get("schemaVersion").and_then(Value::as_u64).is_some_and(|v| v > 2) { return Err(DgosError::AppearanceSchemaUnsupported); }
+        if raw.get("schemaVersion").and_then(Value::as_u64).is_some_and(|v| v > 6) { return Err(DgosError::AppearanceSchemaUnsupported); }
         let mut values: Self = serde_json::from_value(raw.clone()).map_err(|_| DgosError::InvalidAppearancePatch)?;
-        if values.schema_version != 2 { return Err(DgosError::InvalidAppearancePatch); }
+        if values.schema_version != 6 { return Err(DgosError::InvalidAppearancePatch); }
         if !["light", "dark", "auto"].contains(&values.mode.as_str()) { return Err(DgosError::ThemeNotFound); }
         if !DENSITIES.contains(&values.density) { return Err(DgosError::InvalidDensity); }
         let t = &values.typography;
-        if !["system", "humanist"].contains(&t.ui_font_id.as_str()) || !["system", "humanist", "serif"].contains(&t.reading_font_id.as_str()) || !["mono", "system"].contains(&t.code_font_id.as_str())
-            || ![12,13,14,16].contains(&t.ui_size) || ![13,14,16,18,20].contains(&t.reading_size) || ![12,13,14,16,18].contains(&t.code_size) || ![1.5,1.75,2.0].contains(&t.line_height)
+        if !valid_font(&t.ui_font, false) || !valid_font(&t.reading_font, false) || !valid_font(&t.code_font, true)
+            || !(12..=20).contains(&t.ui_size) || !(12..=24).contains(&t.reading_size) || !(12..=24).contains(&t.code_size) || ![1.5,1.75,2.0].contains(&t.line_height)
             || !["solid","soft"].contains(&values.effects.sidebar_treatment.as_str()) || !["system","reduce"].contains(&values.effects.reduced_motion.as_str()) { return Err(DgosError::InvalidAppearancePatch); }
         for variant in [&mut values.variants.light, &mut values.variants.dark] {
             if !PRESETS.contains(&variant.preset_id.as_str()) { return Err(DgosError::ThemeNotFound); }
@@ -98,10 +106,18 @@ impl AppearanceValues {
                 color.make_ascii_lowercase();
             }
         }
-        for (mode, variant) in [("light", &values.variants.light), ("dark", &values.variants.dark)] {
-            validate_colors(mode, variant)?;
-        }
+        for (mode, variant) in [("light", &values.variants.light), ("dark", &values.variants.dark)] { validate_colors(mode, variant)?; }
         Ok(values)
+    }
+}
+fn valid_font(font: &FontSelection, code: bool) -> bool {
+    match font {
+        FontSelection::SystemMono => code,
+        FontSelection::SystemUi => !code,
+        FontSelection::Local { family } => {
+            let trimmed = family.trim();
+            (1..=200).contains(&trimmed.chars().count()) && family == trimmed && !family.chars().any(char::is_control)
+        }
     }
 }
 impl AppearanceSnapshot {
@@ -153,6 +169,7 @@ mod tests {
     }
     #[test]
     fn validates_typography_and_preserves_every_density() {
+        assert_eq!(DENSITIES, [60, 70, 80, 90, 100, 110, 120, 130, 140, 150]);
         for density in DENSITIES {
             let mut value = serde_json::to_value(AppearanceValues::default()).unwrap();
             value["density"] = json!(density);
@@ -162,12 +179,71 @@ mod tests {
         }
     }
     #[test]
+    fn requires_complete_schema6_typography_and_integer_ranges() {
+        let mut value = serde_json::to_value(AppearanceValues::default()).unwrap();
+        value["schemaVersion"] = json!(3);
+        assert!(AppearanceValues::parse(&value).is_err());
+        value["schemaVersion"] = json!(6);
+        value["typography"].as_object_mut().unwrap().remove("readingFollowUi");
+        assert!(AppearanceValues::parse(&value).is_err());
+        value["typography"]["readingFollowUi"] = json!(true);
+        value["typography"]["uiSize"] = json!(12.5);
+        assert!(AppearanceValues::parse(&value).is_err());
+        value["typography"]["uiSize"] = json!(21);
+        assert!(AppearanceValues::parse(&value).is_err());
+        value["typography"]["uiSize"] = json!(12);
+        value["typography"]["unknown"] = json!(1);
+        assert!(AppearanceValues::parse(&value).is_err());
+    }
+    #[test]
+    fn validates_font_role_and_local_family_constraints() {
+        let mut value = serde_json::to_value(AppearanceValues::default()).unwrap();
+        value["typography"]["uiFont"] = json!({"kind":"system-mono"});
+        assert!(AppearanceValues::parse(&value).is_err());
+        value["typography"]["uiFont"] = json!({"kind":"local","family":"  Inter"});
+        assert!(AppearanceValues::parse(&value).is_err());
+        value["typography"]["uiFont"] = json!({"kind":"local","family":"Inter\n"});
+        assert!(AppearanceValues::parse(&value).is_err());
+        value["typography"]["uiFont"] = json!({"kind":"local","family":"x".repeat(201)});
+        assert!(AppearanceValues::parse(&value).is_err());
+        value["typography"]["uiFont"] = json!({"kind":"local","family":"Noto Sans 日本語"});
+        assert!(AppearanceValues::parse(&value).is_ok());
+        value["typography"]["codeFont"] = json!({"kind":"system-ui"});
+        assert!(AppearanceValues::parse(&value).is_err());
+    }
+    #[test]
+    fn rejects_unknown_font_selection_variants_and_fields() {
+        let mut value = serde_json::to_value(AppearanceValues::default()).unwrap();
+        value["typography"]["uiFont"] = json!({"kind":"local","family":"Inter","extra":true});
+        assert!(AppearanceValues::parse(&value).is_err());
+        value["typography"]["uiFont"] = json!({"kind":"bundled"});
+        assert!(AppearanceValues::parse(&value).is_err());
+    }
+    #[test]
+    fn strict_writes_reject_legacy_schemas_and_density_values() {
+        for schema in [2, 3, 4, 5] {
+            let mut value = serde_json::to_value(AppearanceValues::default()).unwrap();
+            value["schemaVersion"] = json!(schema);
+            assert!(AppearanceValues::parse(&value).is_err());
+        }
+        for density in [0, 59, 61, 75, 95, 115, 125, 151, 175] {
+            let mut value = serde_json::to_value(AppearanceValues::default()).unwrap();
+            value["density"] = json!(density);
+            assert_eq!(AppearanceValues::parse(&value).unwrap_err().error_code(), DgosError::InvalidDensity.error_code());
+        }
+        for density in [json!(60.5), json!("100"), Value::Null] {
+            let mut value = serde_json::to_value(AppearanceValues::default()).unwrap();
+            value["density"] = density;
+            assert!(AppearanceValues::parse(&value).is_err());
+        }
+    }
+    #[test]
     fn revision_is_host_safe_integer_and_future_schema_is_protected() {
         let mut value = serde_json::to_value(AppearanceSnapshot { revision:0, values:AppearanceValues::default() }).unwrap();
         value["revision"] = json!(MAX_REVISION+1);
         assert!(AppearanceSnapshot::parse(&value).is_err());
         value["revision"] = json!(0);
-        value["schemaVersion"] = json!(3);
+        value["schemaVersion"] = json!(7);
         assert_eq!(AppearanceSnapshot::parse(&value).unwrap_err().error_code(),1005009);
     }
 }

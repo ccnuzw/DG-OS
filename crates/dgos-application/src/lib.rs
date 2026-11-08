@@ -5,6 +5,8 @@
 //! managers independently. The services bind trusted execution context and
 //! leave resource ownership and provider invariants to their domain managers.
 
+pub mod ai;
+pub use ai::{AiEventSink, AiInvocation, AiService, AI_CATALOG_DEADLINE, AI_RUN_DEADLINE};
 pub mod accounts;
 mod module_crashes;
 mod module_management;

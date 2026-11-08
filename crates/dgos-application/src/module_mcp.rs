@@ -227,6 +227,7 @@ pub struct ModuleMcpResult {
     pub is_error: bool,
     pub content: Value,
     pub structured_content: Option<Value>,
+    pub audit_warning: bool,
 }
 
 #[derive(Clone)]
@@ -275,16 +276,43 @@ impl ModuleMcpService {
         server_id: String,
         tool_name: String,
         arguments: Value,
+        account_lease: tokio_util::sync::CancellationToken,
+        attachment_lease: tokio_util::sync::CancellationToken,
     ) -> DgosResult<ModuleMcpResult> {
         let started = admitted_at;
         let control = call.control();
-        let module_name = self.module_name(&grant.module_id).await;
+        if grant.user_id != call.context().user_id()
+            || grant.request_id != call.context().request_id()
+            || call.context().module_identity() != Some((grant.module_id.as_str(), grant.version.as_str(), grant.integrity.as_str()))
+            || grant.permission != dgos_db::ModulePermission::McpCall
+        { return crate::settle_bound(call, Err(DgosError::PermissionDenied)); }
+        let repository = dgos_db::AiRunRepository::new(self.db.clone());
+        let preflight = async {
+            let epoch = repository.authorization_epoch(&grant.user_id, &grant.module_id).await?;
+            let tools = self.mcp.list_tools(&grant.user_id, &server_id).await.map_err(mcp_failure)?;
+            let schema = tools.into_iter().find(|tool| tool.tool_name == tool_name)
+                .ok_or(DgosError::CapabilityFailed { code: 1003004, message: "MCP tool call failed".into() })?.schema_hash;
+            Ok::<_, DgosError>((epoch, schema, self.module_name(&grant.module_id).await))
+        };
+        let prepared = tokio::select! {
+            biased;
+            _ = account_lease.cancelled() => Err(DgosError::SessionInvalid),
+            _ = attachment_lease.cancelled() => Err(DgosError::ModuleCallCancelled),
+            _ = control.cancelled() => Err(DgosError::ModuleCallCancelled),
+            result = tokio::time::timeout(self.deadline.saturating_sub(started.elapsed()), preflight) => result.unwrap_or(Err(DgosError::Timeout)),
+        };
+        let (epoch, schema, module_name) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => return crate::settle_bound(call, Err(error)),
+        };
         // A cancel during the user's confirmation ends the call `Cancelled`:
         // dropping `ask` removes the pending entry and closes the prompt, and
         // no tool call was made (D113).
         let verdict = tokio::select! {
             biased;
             _ = control.cancelled() => None,
+            _ = account_lease.cancelled() => None,
+            _ = attachment_lease.cancelled() => None,
             verdict = self.confirmations.ask(
                 McpConfirmationRequest {
                     user_id: &grant.user_id,
@@ -313,32 +341,51 @@ impl ModuleMcpService {
             });
         }
         let remaining = self.deadline.saturating_sub(started.elapsed());
+        if remaining.is_zero() { return crate::settle_bound(call, Err(DgosError::Timeout)); }
+        let admission = async {
+            let permissions = dgos_db::ModulePermissionRepository::new(self.db.clone());
+            if call.runtime().state() != dgos_modules::ModuleRuntimeState::Ready
+                || !permissions.validate_module_capability(&grant.module_id, &grant.version, &grant.integrity, dgos_db::ModulePermission::McpCall).await?
+            { return Err(DgosError::PermissionDenied); }
+            repository.admit_capability_step(&grant.user_id, &grant.module_id, epoch, dgos_db::ModulePermission::McpCall).await
+        };
+        let admitted = tokio::select! {
+            biased;
+            _ = account_lease.cancelled() => Err(DgosError::SessionInvalid),
+            _ = attachment_lease.cancelled() => Err(DgosError::ModuleCallCancelled),
+            _ = control.cancelled() => Err(DgosError::ModuleCallCancelled),
+            result = tokio::time::timeout(remaining, admission) => result.unwrap_or(Err(DgosError::Timeout)),
+        };
+        if let Err(error) = admitted { return crate::settle_bound(call, Err(error)); }
+        let remaining = self.deadline.saturating_sub(started.elapsed());
+        if remaining.is_zero() { return crate::settle_bound(call, Err(DgosError::Timeout)); }
         let marker = control.clone();
+        let cancellation = tokio_util::sync::CancellationToken::new();
         let invocation = async {
             // The tool call starts here; a cancel from now on only stops the
             // wait and the call settles `Interrupted` (D113).
             marker.mark_started();
-            self.invoke(&grant, server_id, tool_name, arguments, remaining)
+            self.invoke(&grant, server_id, tool_name, arguments, remaining, &schema, &cancellation)
                 .await
         };
-        tokio::select! {
+        tokio::pin!(invocation);
+        let interrupted = tokio::select! {
             biased;
-            _ = control.cancelled() => {
-                call.finish_cancelled();
-                Err(DgosError::ModuleCallCancelled)
-            }
-            outcome = tokio::time::timeout(remaining, invocation) => match outcome {
-                // A tool that answers `is_error` still completed the call.
-                Ok(result) => crate::settle_bound(call, result),
-                Err(_) => {
-                    if call.finish(ModuleRequestOutcome::Interrupted) {
-                        Err(DgosError::Timeout)
-                    } else {
-                        Err(DgosError::ModuleCallCancelled)
-                    }
-                }
+            _ = account_lease.cancelled() => Some(DgosError::SessionInvalid),
+            _ = attachment_lease.cancelled() => Some(DgosError::ModuleCallCancelled),
+            _ = control.cancelled() => Some(DgosError::ModuleCallCancelled),
+            _ = tokio::time::sleep(remaining) => Some(DgosError::Timeout),
+            result = &mut invocation => return match result {
+                Ok(result) => crate::settle_bound(call, Ok(result)),
+                Err((error, true)) => { call.finish(ModuleRequestOutcome::Interrupted); Err(error) }
+                Err((error, false)) => crate::settle_bound(call, Err(error)),
             },
-        }
+        };
+        cancellation.cancel();
+        let _settled = invocation.await;
+        if control.is_started() { call.finish(ModuleRequestOutcome::Interrupted); }
+        else { call.finish_cancelled(); }
+        Err(interrupted.unwrap_or(DgosError::ModuleCallCancelled))
     }
 
     /// Mint the one-time token and use it at once. The request is identical
@@ -350,7 +397,9 @@ impl ModuleMcpService {
         tool_name: String,
         arguments: Value,
         remaining: Duration,
-    ) -> DgosResult<ModuleMcpResult> {
+        schema: &str,
+        cancellation: &tokio_util::sync::CancellationToken,
+    ) -> Result<ModuleMcpResult, (DgosError, bool)> {
         let mut request = CallMcpToolRequest {
             server_id,
             tool_name,
@@ -371,31 +420,32 @@ impl ModuleMcpService {
             self.mcp
                 .confirm_call(&grant.user_id, &request)
                 .await
-                .map_err(mcp_failure)?,
+                .map_err(|error| (mcp_failure(error), false))?,
         );
         let provenance = grant.provenance();
         let response = self
             .mcp
-            .call_tool_with_provenance(&grant.user_id, request, &provenance)
+            .call_tool_at_schema_cancellable_with_provenance(&grant.user_id, request, schema, cancellation, &provenance)
             .await
-            .map_err(mcp_failure)?;
+            .map_err(|error| (mcp_failure(error), false))?;
         // A host-level failure inside the call (timeout, cancellation,
         // transport) is reported by the manager as an error object, not as the
         // tool's own content array. Keep its category, drop its text.
         if response.is_error && !response.content.is_array() {
-            return Err(DgosError::CapabilityFailed {
+            return Err((DgosError::CapabilityFailed {
                 code: match response.outcome.as_str() {
                     "timeout" => 1003006,
                     "cancelled" => 1003016,
                     _ => 1003005,
                 },
-                message: "MCP tool call failed".to_owned(),
-            });
+                message: "MCP tool result is unknown; do not replay the request".to_owned(),
+            }, true));
         }
         Ok(ModuleMcpResult {
             is_error: response.is_error,
             content: response.content,
             structured_content: response.structured_content,
+            audit_warning: response.audit_warning,
         })
     }
 
@@ -727,6 +777,7 @@ mod tests {
             PageLost,
             /// The grant is revoked while the prompt is open, then approved.
             RevokeThenApprove,
+            RevokeGrantThenApprove,
             /// The page cancels the call while the prompt is open.
             CancelWhileAsking,
             /// The user approves, the tool starts, then the page cancels.
@@ -747,6 +798,8 @@ mod tests {
             router: ModuleCallRouter,
             route: String,
             attachment: String,
+            account_lease: tokio_util::sync::CancellationToken,
+            attachment_lease: tokio_util::sync::CancellationToken,
             server_id: String,
             opened: mpsc::UnboundedReceiver<Opened>,
             _supervisor: ModuleRuntimeSupervisor,
@@ -769,6 +822,9 @@ mod tests {
                 );
                 let db = dgos_db::establish_connection(&url).await.unwrap();
                 Migrator::up(&db, None).await.unwrap();
+                dgos_db::UserRepository::new(db.clone()).insert(dgos_db::NewUser {
+                    id: USER, username: "Mcp test", username_key: "mcp-test", password_hash: "test-only-hash", now: 1,
+                }).await.unwrap();
                 let store = tempdir().unwrap();
                 let publisher = Arc::new(ModulePublisher::new(store.path(), db.clone()));
                 let release = ModuleReleaseService::new(publisher.clone())
@@ -858,6 +914,8 @@ mod tests {
                     router,
                     route: route.as_str().to_owned(),
                     attachment,
+                    account_lease: tokio_util::sync::CancellationToken::new(),
+                    attachment_lease: tokio_util::sync::CancellationToken::new(),
                     server_id: server.id,
                     opened,
                     _supervisor: supervisor,
@@ -890,6 +948,8 @@ mod tests {
                 let confirmations = service.confirmations().clone();
                 let permissions = self.permissions.clone();
                 let attachment = self.attachment.clone();
+                let account_lease = self.account_lease.clone();
+                let attachment_lease = self.attachment_lease.clone();
                 let opened = &mut self.opened;
                 let dispatch = self.dispatch.clone();
                 let admitted_at = Instant::now();
@@ -900,7 +960,7 @@ mod tests {
                         .authorize_bound(call, ModulePermission::McpCall)
                         .await?;
                     service
-                        .call_tool(call, grant, admitted_at, server_id, tool, arguments)
+                        .call_tool(call, grant, admitted_at, server_id, tool, arguments, account_lease, attachment_lease)
                         .await
                 };
                 let answering = async move {
@@ -927,11 +987,14 @@ mod tests {
                             tokio::time::sleep(Duration::from_millis(500)).await;
                             assert_eq!(router.cancel(&route, &attachment, &call_id), Ok(true));
                         }
-                        Answer::RevokeThenApprove => {
+                        Answer::RevokeThenApprove | Answer::RevokeGrantThenApprove => {
                             permissions
                                 .revoke(USER, MODULE, ModulePermission::McpCall)
                                 .await
                                 .unwrap();
+                            if matches!(answer, Answer::RevokeGrantThenApprove) {
+                                permissions.grant(USER, MODULE, ModulePermission::McpCall).await.unwrap();
+                            }
                             confirmations
                                 .resolve(USER, &prompt.confirmation_id, true)
                                 .unwrap();
@@ -1023,10 +1086,6 @@ mod tests {
             let result = result.unwrap();
             assert!(!result.is_error);
             assert_eq!(result.content[0]["text"], SECRET);
-            let wire = serde_json::to_value(&result).unwrap();
-            let mut keys: Vec<_> = wire.as_object().unwrap().keys().cloned().collect();
-            keys.sort();
-            assert_eq!(keys, ["content", "is_error", "structured_content"]);
 
             let logs = world
                 .mcp
@@ -1038,6 +1097,23 @@ mod tests {
             let stats = world.handle.request_stats();
             assert_eq!((stats.succeeded, stats.in_flight), (1, 0));
             assert!(world.service.confirmations().len() == 0);
+            world.finish().await;
+        }
+
+        #[tokio::test]
+        async fn completed_tool_keeps_result_and_reports_audit_write_failure() {
+            let mut world = World::new().await;
+            world.grant().await;
+            world.db.execute(Statement::from_string(world.db.get_database_backend(),
+                "CREATE TRIGGER reject_mcp_terminal BEFORE UPDATE OF outcome ON mcp_usage_logs BEGIN SELECT RAISE(ABORT,'audit unavailable'); END".to_owned())).await.unwrap();
+            let (result, _) = world.call("echo", echo(), Answer::Resolve(true)).await;
+            let result = result.unwrap();
+            assert_eq!(result.content[0]["text"], SECRET);
+            assert!(!result.is_error);
+            assert!(result.audit_warning);
+            assert_eq!(world.tool_calls().await, 1);
+            world.db.execute(Statement::from_string(world.db.get_database_backend(),
+                "DROP TRIGGER reject_mcp_terminal".to_owned())).await.unwrap();
             world.finish().await;
         }
 
@@ -1199,7 +1275,7 @@ mod tests {
             let mut world = World::new().await;
             world.grant().await;
             let (result, _) = world
-                .call("no_such_tool", echo(), Answer::Resolve(true))
+                .call("no_such_tool", echo(), Answer::NoPrompt)
                 .await;
             let error = result.unwrap_err();
             assert!(matches!(
@@ -1208,28 +1284,35 @@ mod tests {
                     if message == "MCP tool call failed"
             ));
             assert!(!format!("{error:?}").contains(SECRET));
-            assert_eq!(world.handle.request_stats().failed, 1);
+            assert_eq!(world.tool_calls().await, 0);
             world.finish().await;
         }
 
         #[tokio::test]
-        async fn revocation_affects_the_next_call_only() {
+        async fn revocation_while_confirming_prevents_dispatch() {
             let mut world = World::new().await;
             world.grant().await;
-            // Revoked while the prompt is open: this call keeps the outcome
-            // it already had (layers 1-3 were checked at its start).
             let (result, _) = world.call("echo", echo(), Answer::RevokeThenApprove).await;
-            assert!(result.is_ok());
-            assert_eq!(world.tool_calls().await, 1);
-
+            assert!(matches!(result, Err(DgosError::PermissionDenied)));
+            assert_eq!(world.tool_calls().await, 0);
             let (next, prompt) = world.call("echo", echo(), Answer::NoPrompt).await;
             assert!(prompt.is_none());
             assert!(matches!(next, Err(DgosError::PermissionDenied)));
             world.no_prompt_pending();
+            assert_eq!(world.tool_calls().await, 0);
+            world.finish().await;
+        }
+
+        #[tokio::test]
+        async fn revoking_then_granting_does_not_revive_the_old_approval() {
+            let mut world = World::new().await;
+            world.grant().await;
+            let (result, _) = world.call("echo", echo(), Answer::RevokeGrantThenApprove).await;
+            assert!(matches!(result, Err(DgosError::PermissionDenied)));
+            assert_eq!(world.tool_calls().await, 0);
+            let (fresh, _) = world.call("echo", echo(), Answer::Resolve(true)).await;
+            assert_eq!(fresh.unwrap().content[0]["text"], SECRET);
             assert_eq!(world.tool_calls().await, 1);
-            assert_eq!(world.audit_rows("denied").await.len(), 1);
-            let stats = world.handle.request_stats();
-            assert_eq!((stats.succeeded, stats.denied), (1, 1));
             world.finish().await;
         }
     }

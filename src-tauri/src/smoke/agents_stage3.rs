@@ -406,10 +406,19 @@ const original=window.fetch;
 const p={events:[],marks:[],original};window.__terminalActivity=p;
 window.fetch=function(url,options,...rest){
  const command=String(url).split('/').filter(Boolean).at(-1);
- const watched=['start_development_process','write_development_terminal','resize_development_terminal','stop_development_process','read_development_process'].includes(command);
+ const watched=['start_development_process','write_development_terminal','resize_development_terminal','stop_development_process','read_development_process','get_appearance_preferences','set_appearance_preferences'].includes(command);
  const event=watched?{command,args:JSON.parse(options?.body||'{}'),at:performance.now(),phase:p.phase||'setup'}:null;
  if(event)p.events.push(event);
- return original.call(this,url,options,...rest).then(response=>{if(event){event.done=performance.now();event.ok=response.headers.get('Tauri-Response')==='ok';}return response;},error=>{if(event){event.done=performance.now();event.ok=false;}throw error;});
+ return original.call(this,url,options,...rest).then(response=>{
+   if(event){
+     event.ok=response.headers.get('Tauri-Response')==='ok';
+     if(command==='set_appearance_preferences'||command==='get_appearance_preferences'){
+       event.status=response.status;event.headers=Object.fromEntries(response.headers.entries());
+       void response.clone().text().then(body=>{event.responseBody=body;event.done=performance.now();},error=>{event.responseReadError=String(error);event.done=performance.now();});
+     }else event.done=performance.now();
+   }
+   return response;
+ },error=>{if(event){event.done=performance.now();event.ok=false;event.transportError=String(error);}throw error;});
 };
 p.mark=name=>{p.phase=name;const mark={name,index:p.events.length,at:performance.now()};p.marks.push(mark);return mark;};
 p.send=(line,focus=true)=>{
@@ -430,7 +439,7 @@ async fn activity_input(app: &AppHandle, ck: &mut Checks, ev: &mut Vec<Value>, l
 }
 
 async fn activity_show(app: &AppHandle, ck: &mut Checks, ev: &mut Vec<Value>, id: &str, needle: &str) -> bool {
-    let selected=tab(app,"develop").await;
+    // The runtime process panel is separate from the retired review tab; preserve its live surface.
     let reply=ui(app,json!({"id":id,"needle":needle}),r#"
 const row=await need('dev-process-history-'+A.id);row.click();
 // xterm pauses offscreen rendering; its accessibility rows can still describe
@@ -441,8 +450,8 @@ let layers=null;
 const terminal=await until(()=>{const t=tid('dev-terminal');const tree=t?.querySelector('.xterm-accessibility-tree');const text=tree?.innerText;const observed=/^TICK:\d+\s*$/.test(A.needle)?text?.split('\n').some(line=>line.trim()===A.needle.trim()):text?.includes(A.needle);const accessible=[...(tree?.children||[])];const rendered=[...(t?.querySelectorAll('.xterm-rows > div')||[])];layers={accessible:ticks(accessible),rendered:ticks(rendered)};return observed&&accessible.length&&rendered.length&&JSON.stringify(layers.accessible)===JSON.stringify(layers.rendered)&&t;});
 return {ok:!!terminal,layers,focused:document.activeElement?.className,text:terminal?.querySelector('.xterm-accessibility-tree')?.innerText.slice(-1500)};
 "#).await;
-    record(ck,ev,"same PTY history renders after activation",ui_ok(&selected)&&ui_ok(&reply),reply.to_string());
-    ui_ok(&selected)&&ui_ok(&reply)
+    record(ck,ev,"same PTY history renders after activation",ui_ok(&reply),reply.to_string());
+    ui_ok(&reply)
 }
 
 async fn activity_start_ui(app: &AppHandle, ck: &mut Checks, ev: &mut Vec<Value>, task: &str) -> String {
@@ -536,12 +545,153 @@ return {{ok:true,result,production:{{scope:'production DOM only; public instance
     stop(app,ck,ev,id).await;
 }
 
+async fn typography_matrix(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>) {
+    let Some(window)=app.get_webview_window("main") else { return; };
+    let mut cells=Vec::new();
+    for (width,height) in [(1280,900),(800,600)] { for mode in ["light","dark"] { for follow in [true,false] {
+        let tag=format!("{width}x{height}-{mode}-{}",if follow {"follow"} else {"independent"});
+        let resized=window.set_size(tauri::LogicalSize::new(width as f64,height as f64)).is_ok();
+        let result=ui(app,json!({"mode":mode,"follow":follow}),r#"
+document.querySelector('a[href="/settings"]').click();
+const category=await until(()=>document.querySelector('.workspace-settings-category[data-settings-category="appearance"]'));category?.click();
+const page=await until(()=>document.querySelector('.appearance-editor'));if(!page)throw Error('appearance page absent');
+const group=[...page.querySelectorAll('[role=radiogroup]')].find(e=>/^(主题|Theme)$/.test(e.getAttribute('aria-label')||txt(document.getElementById(e.getAttribute('aria-labelledby')))));
+const radio=group&&[...group.querySelectorAll('[role=radio]')].find(e=>new RegExp(A.mode==='light'?'亮色|浅色|Light':'暗色|深色|Dark','i').test(labelOf(e)));if(!radio)throw Error('theme radio absent');radio.click();
+await fill('appearance-ui-size-input','20');await fill('appearance-code-size-input','24');
+const reading=page.querySelector('.appearance-reading-settings');reading.open=true;
+const readingRadio=[...reading.querySelectorAll('[role=radio]')].find(e=>new RegExp(A.follow?'跟随界面|Follow interface':'独立|Independent','i').test(labelOf(e)));if(!readingRadio)throw Error('reading mode radio absent');readingRadio.click();
+if(!A.follow)await fill('appearance-reading-size-input','18');
+const more=page.querySelector('.appearance-more-fields');if(!more)throw Error('more appearance section absent');
+const density=more.querySelector('.appearance-layout-scale [role=slider]');if(!density)throw Error('layout scale Slider absent');
+const increase=[...more.querySelectorAll('.appearance-scale-inputs button')].find(e=>txt(e)==='+');if(!increase)throw Error('layout scale increase button absent');for(let i=0;i<9&&density.getAttribute('aria-valuenow')!=='150';i++){increase.click();await new Promise(r=>setTimeout(r,50));}if(density.getAttribute('aria-valuenow')!=='150')throw Error('layout scale did not reach 150');
+const fontReady=new Promise(resolve=>{const done=()=>{document.documentElement.removeEventListener('appearance-font-ready',done);resolve()};document.documentElement.addEventListener('appearance-font-ready',done,{once:true});setTimeout(done,2500)});const apply=await until(()=>[...page.querySelectorAll('.appearance-footer button')].find(e=>/^(保存更改|Save changes)$/i.test(txt(e))&&!e.disabled));if(!apply)throw Error('save changes absent');const index=window.__terminalActivity.events.length;apply.click();
+if(!await until(()=>window.__terminalActivity.events.slice(index).some(e=>e.command==='set_appearance_preferences'&&e.ok)))throw Error('matrix save incomplete');await fontReady;
+const root=document.documentElement;const expected=A.follow?'20px':'18px';
+if(!await until(()=>getComputedStyle(root).getPropertyValue('--font-size-reading').trim()===expected))throw Error('reading size mismatch');
+page.querySelector('.appearance-reading-settings').scrollIntoView({block:'center'});await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));const css=getComputedStyle(root),sample=page.querySelector('[data-testid="appearance-ui-font-sample"]'),sampleStyle=sample&&getComputedStyle(sample),sampleRect=sample?.getBoundingClientRect().toJSON();
+return {ok:root.dataset.theme===A.mode&&root.dataset.density==='150'&&css.getPropertyValue('--font-size-ui').trim()==='20px'&&css.getPropertyValue('--font-size-code').trim()==='24px'&&(!A.follow||css.getPropertyValue('--font-family-reading')===css.getPropertyValue('--font-family-ui'))&&!!sampleRect?.width&&sampleStyle?.fontSize==='20px',viewport:{width:innerWidth,height:innerHeight},theme:root.dataset.theme,density:root.dataset.density,ui:css.getPropertyValue('--font-size-ui'),reading:css.getPropertyValue('--font-size-reading'),code:css.getPropertyValue('--font-size-code'),follow:A.follow,sample:{text:sample?.textContent,rect:sampleRect,font:sampleStyle?.fontFamily},horizontal:root.scrollWidth>innerWidth+1};
+"#).await;
+        record(ck,ev,&format!("native typography matrix {tag}"),resized&&ui_ok(&result),result.to_string());
+        cells.push(json!({"tag":tag,"result":result}));
+        let controls=ui(app,json!({}),r#"const reading=document.querySelector('.appearance-reading-settings');reading.open=false;document.getElementById('appearance-typography-heading').scrollIntoView({block:'start'});await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {ok:true};"#).await;
+        record(ck,ev,&format!("show four typography controls {tag}"),ui_ok(&controls),controls.to_string());
+        let shot=Command::new("/usr/sbin/screencapture").arg("-x").arg(fx.root.join(format!("typography-controls-{tag}.png"))).status();
+        record(ck,ev,&format!("capture four typography controls {tag}"),shot.is_ok_and(|s|s.success()),&tag);
+        let reading=ui(app,json!({}),r#"const reading=document.querySelector('.appearance-reading-settings');reading.open=true;reading.scrollIntoView({block:'start'});await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {ok:true};"#).await;
+        record(ck,ev,&format!("show reading typography controls {tag}"),ui_ok(&reading),reading.to_string());
+        let shot=Command::new("/usr/sbin/screencapture").arg("-x").arg(fx.root.join(format!("typography-settings-{tag}.png"))).status();
+        record(ck,ev,&format!("capture typography settings {tag}"),shot.is_ok_and(|s|s.success()),&tag);
+        let closed=ui(app,json!({}),r#"document.querySelector('.workspace-settings-header button')?.click();if(!await until(()=>!document.querySelector('.workspace-settings-dialog')))throw Error('settings close absent');tid('dev-terminal')?.scrollIntoView({block:'center'});await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {ok:tid('dev-terminal')?.querySelector('.xterm')===window.__terminalActivity.typography.terminal};"#).await;
+        record(ck,ev,&format!("matrix preserves live terminal {tag}"),ui_ok(&closed),closed.to_string());
+        let shot=Command::new("/usr/sbin/screencapture").arg("-x").arg(fx.root.join(format!("typography-terminal-{tag}.png"))).status();
+        record(ck,ev,&format!("capture typography terminal {tag}"),shot.is_ok_and(|s|s.success()),&tag);
+    } } }
+    let font=ui(app,json!({}),r#"
+document.querySelector('a[href="/settings"]').click();const category=await until(()=>document.querySelector('.workspace-settings-category[data-settings-category="appearance"]'));category?.click();const page=await until(()=>document.querySelector('.appearance-editor'));page.querySelector('.appearance-reading-settings').open=false;document.getElementById('appearance-typography-heading').scrollIntoView({block:'start'});
+const response=await window.__TAURI_INTERNALS__.invoke('list_local_fonts');if(!response?.success||!Array.isArray(response.data))throw Error('native font catalogue unavailable');
+const candidates=response.data.filter(f=>f&&f.monospace&&typeof f.family==='string');if(!candidates.length)throw Error('no installed monospace font in native catalogue');
+const picker=await need('appearance-ui-font');picker.click();const search=await until(()=>document.querySelector('input[aria-label="搜索本机字体"],input[aria-label="Search installed fonts"]'));if(!search)throw Error('font search absent');
+const selected=await (async()=>{for(const font of candidates){Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(search,font.family);search.dispatchEvent(new Event('input',{bubbles:true}));const option=await until(()=>$$('button[role="option"][data-font-family]').find(e=>e.getAttribute('data-font-family')===font.family),1000);if(!option)continue;const ctx=document.createElement('canvas').getContext('2d'),sample='Aa0MW中文';const raster=name=>{ctx.clearRect(0,0,240,48);ctx.font=`24px ${name}`;ctx.fillText(sample,2,34);return [...ctx.getImageData(0,0,240,48).data]};const actual=raster(`${JSON.stringify(font.family)}, monospace`),fallback=raster('monospace');if(actual.some((v,i)=>v!==fallback[i]))return {font,option};}return null})();if(!selected)throw Error('no installed monospace font produced distinct glyph raster');const fontReady=new Promise(resolve=>{const done=()=>{document.documentElement.removeEventListener('appearance-font-ready',done);resolve()};document.documentElement.addEventListener('appearance-font-ready',done,{once:true});setTimeout(done,2500)});selected.option.click();if(!await until(()=>txt(picker).includes(selected.font.family)))throw Error('local UI font preview selection did not commit');await fontReady;const css=getComputedStyle(document.documentElement).getPropertyValue('--font-family-ui'),sample=document.querySelector('[data-testid="appearance-ui-font-sample"]'),style=sample&&getComputedStyle(sample),rect=sample?.getBoundingClientRect().toJSON();return {ok:css.includes(selected.font.family)&&!!rect?.width&&style.fontFamily.includes(selected.font.family),font:selected.font,rasterDifferent:true,family:css,sample:{text:sample?.textContent,font:style?.fontFamily,size:style?.fontSize,rect}};
+"#).await;
+    record(ck,ev,"production UI font preview selects installed local font",ui_ok(&font),font.to_string());
+    let preview_path=fx.root.join("typography-local-font-preview.png");
+    let shot=Command::new("/usr/sbin/screencapture").arg("-x").arg(&preview_path).status();
+    record(ck,ev,"capture actual local UI font preview",shot.is_ok_and(|s|s.success()),preview_path.display().to_string());
+    let save=ui(app,json!({}),r#"const apply=[...document.querySelectorAll('.appearance-editor .appearance-footer button')].find(e=>/^(保存更改|Save changes)$/i.test(txt(e))&&!e.disabled);if(!apply)throw Error('save changes absent');const index=window.__terminalActivity.events.length;apply.click();const event=await until(()=>window.__terminalActivity.events.slice(index).find(e=>e.command==='set_appearance_preferences'&&e.done));if(!event?.ok)throw Error('UI font save failed');const closed=document.querySelector('.workspace-settings-header button');closed.click();if(!await until(()=>!document.querySelector('.workspace-settings-dialog')))throw Error('settings close absent');return {ok:true,snapshot:event.args?.input?.snapshot||null};"#).await;
+    let persisted=value(&ipc(app,"main","get_appearance_preferences",json!({})).await)["data"]["snapshot"].clone();
+    record(ck,ev,"save UI local font preview through production settings",ui_ok(&save)&&persisted["typography"]["uiFont"]==json!({"kind":"local","family":font["value"]["font"]["family"]}),json!({"save":save,"snapshot":persisted}).to_string());
+    write_json(fx.root.join("typography-matrix.json"),&json!(cells));
+}
+
+// Add DGOS_TERMINAL_TYPOGRAPHY_ONLY=1 to the terminal-activity phase for this journey.
+async fn terminal_typography(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>, id: &str, path: &Path) {
+    let baseline=process(app,id).await;
+    let setup=ui(app,json!({}),r#"
+const p=window.__terminalActivity,t=tid('dev-terminal');p.typography={terminal:t.querySelector('.xterm'),input:t.querySelector('.xterm-helper-textarea'),events:p.events.length,layouts:[]};
+const s=p.typography;s.layout=new MutationObserver(()=>s.layouts.push({at:performance.now(),screen:tid('dev-terminal')?.querySelector('.xterm-screen')?.getAttribute('style')}));s.layout.observe(t,{subtree:true,attributes:true,attributeFilter:['style'],childList:true,characterData:true});
+const row=t.querySelector('.xterm-rows');s.before={family:getComputedStyle(row).fontFamily,size:getComputedStyle(row).fontSize,screen:t.querySelector('.xterm-screen').getBoundingClientRect().toJSON()};return {ok:true,before:s.before};
+"#).await;
+    record(ck,ev,"observe real xterm instance and loaded-font layout",ui_ok(&setup),setup.to_string());
+    activity_input(app,ck,ev,"stty -echo; PS1=''; printf 'ECHO_OFF_READY\\n'").await;
+    wait_process(app,id,|v|v["output"].as_str().is_some_and(|s|s.contains("ECHO_OFF_READY\r\n"))).await;
+    activity_input(app,ck,ev,"stty -echo; PS1=''; printf '%s\\n' \"$$\" > typography.pid; printf 'once\\n' >> typography.input; printf 'WIDTH:I中W文0\\n'").await;
+    let initial=wait_process(app,id,|v|v["output"].as_str().is_some_and(|s|s.contains("WIDTH:I中W文0"))).await;
+    let pid=fs::read_to_string(path.join("typography.pid")).unwrap_or_default();
+    activity_show(app,ck,ev,id,"WIDTH:I中W文0").await;
+    let catalogue=ui(app,json!({}),r#"document.querySelector('a[href="/settings"]').click();const category=await until(()=>document.querySelector('.workspace-settings-category[data-settings-category="appearance"]'));category?.click();await until(()=>document.querySelector('.appearance-editor'));const result=await window.__TAURI_INTERNALS__.invoke('list_local_fonts');if(!result?.success||!Array.isArray(result.data))throw Error('native font catalogue unavailable');const raster=font=>{const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');ctx.font=`24px ${font}`;ctx.fillText('Aa0MW中文',2,34);return [...ctx.getImageData(0,0,240,48).data]};const fallback=raster('monospace');return {ok:true,families:result.data.filter(f=>{if(f?.monospace!==true||typeof f.family!=='string')return false;const pixels=raster(`${JSON.stringify(f.family)}, monospace`);return pixels.some((v,i)=>v!==fallback[i])}).map(f=>f.family)};"#).await;
+    let mut families=catalogue["value"]["families"].as_array().cloned().unwrap_or_default();
+    families.truncate(3);
+    record(ck,ev,"native catalogue supplies installed monospace candidates",!families.is_empty()&&ui_ok(&catalogue),catalogue.to_string());
+    let mut font_results=Vec::new();let mut metrics=Value::Null;
+    for family_value in families {
+    let family=family_value.as_str().unwrap_or_default().to_owned();
+    let changed=ui(app,json!({"family":family}),r#"
+document.querySelector('a[href="/settings"]').click();
+const category=await until(()=>document.querySelector('.workspace-settings-category[data-settings-category="appearance"]'));if(!category)throw Error('appearance category absent');category.click();
+const fontReady=new Promise(resolve=>{const done=()=>{document.documentElement.removeEventListener('appearance-font-ready',done);resolve()};document.documentElement.addEventListener('appearance-font-ready',done,{once:true});setTimeout(done,2500)});const control=await need('appearance-code-font');control.click();const search=await until(()=>document.querySelector('input[aria-label="搜索本机字体"],input[aria-label="Search installed fonts"]'));if(!search)throw Error('font search absent');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(search,A.family);search.dispatchEvent(new Event('input',{bubbles:true}));
+const option=await until(()=>$$('button[role="option"][data-font-family]').find(e=>e.getAttribute('data-font-family')===A.family));if(!option)throw Error('installed code font option absent '+A.family);option.click();if(!await until(()=>txt(control).includes(A.family)))throw Error('font selection did not commit');
+await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+await fill('appearance-code-size-input','24');
+await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+const apply=await until(()=>$$('.appearance-editor .appearance-footer button').find(e=>/^(保存更改|Save changes)$/i.test(txt(e))&&!e.disabled));if(!apply)throw Error('appearance save changes absent');const index=window.__terminalActivity.events.length;apply.click();
+const saved=await until(()=>window.__terminalActivity.events.slice(index).find(e=>e.command==='set_appearance_preferences'&&e.done));
+if(!saved?.ok)return {ok:false,reason:'appearance save did not succeed',events:window.__terminalActivity.events.slice(index),alerts:$$('.appearance-editor [role=alert]').map(txt),buttons:$$('.appearance-editor .appearance-footer button').map(e=>({text:txt(e),disabled:e.disabled}))};
+if(!await until(()=>$$('.appearance-editor .appearance-footer button').find(e=>/^(保存更改|Save changes)$/i.test(txt(e))&&e.disabled&&!e.hasAttribute('aria-busy'))))throw Error('appearance save did not settle');
+document.querySelector('.workspace-settings-header button').click();if(!await until(()=>!document.querySelector('.workspace-settings-dialog')))throw Error('settings did not close');await fontReady;const ready=await until(()=>{const row=tid('dev-terminal')?.querySelector('.xterm-rows');return row&&getComputedStyle(row).fontSize==='24px'&&getComputedStyle(row).fontFamily.includes(A.family)});return {ok:!!ready,family:A.family};
+"#).await;
+    record(ck,ev,"production appearance controls apply installed local font and continuous code size",ui_ok(&changed),changed.to_string());
+    if !ui_ok(&changed) {
+        write_json(fx.root.join("terminal-typography-save-failure.json"),&changed);
+        let capture=Command::new("/usr/sbin/screencapture").arg("-x").arg(fx.root.join("terminal-typography-save-failure.png")).status();
+        record(ck,ev,"capture failed real appearance save",capture.is_ok_and(|status|status.success()),"terminal-typography-save-failure.png");
+        return;
+    }
+    let preferences=value(&ipc(app,"main","get_appearance_preferences",json!({})).await)["data"].clone();
+    record(ck,ev,"real host confirms selected local code font and size",preferences["snapshot"]["typography"]["codeFont"]==json!({"kind":"local","family":family})&&preferences["snapshot"]["typography"]["codeSize"]==24,preferences.to_string());
+    activity_show(app,ck,ev,id,"WIDTH:I中W文0").await;
+    metrics=ui(app,json!({"family":family}),r#"
+const p=window.__terminalActivity,s=p.typography,t=tid('dev-terminal'),row=[...t.querySelectorAll('.xterm-rows > div')].find(e=>e.textContent.includes('WIDTH:I中W文0'));
+const widths={};if(row){const walker=document.createTreeWalker(row,NodeFilter.SHOW_TEXT);while(walker.nextNode()){const n=walker.currentNode;for(let i=0;i<n.length;i++){if(!['I','中','W','文','0'].includes(n.data[i]))continue;const range=document.createRange();range.setStart(n,i);range.setEnd(n,i+1);widths[n.data[i]]=range.getBoundingClientRect().width;}}}
+const events=p.events.slice(s.events),size=events.filter(e=>e.command==='resize_development_terminal'&&e.ok).at(-1),style=getComputedStyle(t.querySelector('.xterm-rows'));
+const same=t.querySelector('.xterm')===s.terminal&&t.querySelector('.xterm-helper-textarea')===s.input;
+const english=widths.I>0&&Math.abs(widths.I-widths.W)<1&&Math.abs(widths.I-widths['0'])<1;
+const chinese=widths['中']>0&&Math.abs(widths['中']-2*widths.I)<1.5&&Math.abs(widths['文']-2*widths.I)<1.5;
+const changedRaster=(()=>{const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d'),sample='Aa0MW中文';const raster=font=>{ctx.clearRect(0,0,240,48);ctx.font=`24px ${font}`;ctx.fillText(sample,2,34);return [...ctx.getImageData(0,0,240,48).data]};const selected=raster(`${JSON.stringify(A.family)}, monospace`),fallback=raster('monospace');return selected.some((v,i)=>v!==fallback[i]);})();
+const remeasured=s.layouts.length>0&&!!size;const glyphWidths=Object.fromEntries(['I','W','0','中','文'].map(c=>[c,widths[c]]));
+return {ok:same&&english&&chinese&&changedRaster&&remeasured&&!!size&&style.fontSize==='24px'&&style.fontFamily.includes(A.family)&&!events.some(e=>['start_development_process','stop_development_process'].includes(e.command)),same,widths,glyphWidths,changedRaster,remeasured,layouts:s.layouts,before:s.before,after:{family:style.fontFamily,size:style.fontSize,screen:t.querySelector('.xterm-screen').getBoundingClientRect().toJSON()},resize:size?.args.input};
+"#).await;
+    record(ck,ev,"same xterm measures actual Latin cells and double-width Chinese after font loading",ui_ok(&metrics),metrics.to_string());
+    font_results.push(json!({"family":family,"metrics":metrics}));
+    let capture=Command::new("/usr/sbin/screencapture").arg("-x").arg(fx.root.join(format!("terminal-typography-{}.png",font_results.len()))).status();
+    record(ck,ev,&format!("capture real {} terminal",family),capture.is_ok_and(|s|s.success()),family);
+    }
+    let rows=metrics["value"]["resize"]["rows"].as_u64().unwrap_or(0);let cols=metrics["value"]["resize"]["cols"].as_u64().unwrap_or(0);
+    activity_input(app,ck,ev,"printf 'FONT_SIZE:'; stty size; printf 'MIXED:中文 Aa 0123 {} =>\\n'; printf 'after\\n' >> typography.input").await;
+    let after=wait_process(app,id,|v|v["output"].as_str().is_some_and(|s|s.contains("MIXED:中文 Aa 0123 {} =>"))).await;
+    let text=after["output"].as_str().unwrap_or_default();
+    record(ck,ev,"same native PTY adopts font-driven stty size and executes mixed input once",after["id"]==baseline["id"]&&after["started_at"]==baseline["started_at"]&&after["status"]=="running"&&rows>0&&cols>0&&text.contains(&format!("FONT_SIZE:{rows} {cols}"))&&text.matches("WIDTH:I中W文0").count()==1&&text.matches("MIXED:中文 Aa 0123 {} =>").count()==1&&fs::read_to_string(path.join("typography.pid")).unwrap_or_default()==pid&&pid.trim().parse::<i64>().is_ok_and(alive)&&fs::read_to_string(path.join("typography.input")).unwrap_or_default()=="once\nafter\n",after.to_string());
+    activity_show(app,ck,ev,id,"MIXED:中文 Aa 0123 {} =>").await;
+    let layers=ui(app,json!({}),r#"
+const t=tid('dev-terminal'),lines=selector=>[...t.querySelectorAll(selector)].map(e=>(e.textContent||'').replaceAll('\u00a0','').trimEnd());const renderer=lines('.xterm-rows > div'),tree=lines('.xterm-accessibility-tree > div');
+const once=rows=>rows.filter(e=>e.includes('WIDTH:I中W文0')).length===1&&rows.filter(e=>e.includes('MIXED:中文 Aa 0123 {} =>')).length===1;
+const p=window.__terminalActivity,s=p.typography;s.layout.disconnect();return {ok:once(renderer)&&once(tree)&&JSON.stringify(renderer)===JSON.stringify(tree),renderer,tree,events:p.events.slice(s.events)};
+"#).await;
+    record(ck,ev,"real renderer and accessibility tree preserve mixed output without duplicates",ui_ok(&layers),layers.to_string());
+    write_json(fx.root.join("terminal-typography.json"),&json!({"initial":initial,"fonts":font_results,"metrics":metrics,"after":after,"layers":layers,"pid":pid}));
+    let capture=Command::new("/usr/sbin/screencapture").arg("-x").arg(fx.root.join("terminal-typography.png")).status();
+    record(ck,ev,"capture real terminal typography desktop",capture.is_ok_and(|s|s.success()),"terminal-typography.png");
+    typography_matrix(app,fx,ck,ev).await;
+    activity_input(app,ck,ev,"exit 0").await;
+    terminal(app,id).await;
+}
+
+
 pub(super) async fn terminal_activity(app: &AppHandle, fx: &Fx, mut ck: Checks, mut ev: Vec<Value>) {
     let path=fx.root.join("terminal-activity");make_repo(&path);
-    if !ui_import_project(app,&mut ck,&mut ev,"Terminal activity",&path).await || !ui_new_task(app,&mut ck,&mut ev,"Terminal activity isolated PTY").await {
+    if !ui_import_project(app,&mut ck,&mut ev,"Terminal activity",&path).await {
         finish(app,fx,ck,ev,"terminal-activity");return;
     }
-    if !ui_select_task(app,&mut ck,&mut ev,"Terminal activity isolated PTY").await { finish(app,fx,ck,ev,"terminal-activity");return; }
+    if !ui_new_task(app,&mut ck,&mut ev,"Terminal activity isolated PTY").await || !ui_select_task(app,&mut ck,&mut ev,"Terminal activity isolated PTY").await { finish(app,fx,ck,ev,"terminal-activity");return; }
     let selected=value(&ipc(app,"main","read_development_workspace",json!({})).await)["selection"].clone();
     let task=selected["task_id"].as_str().unwrap_or_default();
     let runtime=ui(app,json!({}),r#"const toggle=await need('dev-toggle-runtime');if(toggle.getAttribute('aria-expanded')!=='true')toggle.click();const processes=await need('dev-runtime-processes');processes.click();return {ok:!!(await until(()=>tid('dev-development-runtime')))};"#).await;
@@ -552,6 +702,10 @@ pub(super) async fn terminal_activity(app: &AppHandle, fx: &Fx, mut ck: Checks, 
     if id.is_empty() {finish(app,fx,ck,ev,"terminal-activity");return;}
     if std::env::var_os("DGOS_TERMINAL_ACCESSIBILITY_ONLY").is_some() {
         terminal_accessibility(app,fx,&mut ck,&mut ev,&id).await;
+        finish(app,fx,ck,ev,"terminal-activity");return;
+    }
+    if std::env::var_os("DGOS_TERMINAL_TYPOGRAPHY_ONLY").is_some() {
+        terminal_typography(app,fx,&mut ck,&mut ev,&id,&path).await;
         finish(app,fx,ck,ev,"terminal-activity");return;
     }
     let initial_size=ui(app,json!({}),r#"const e=window.__terminalActivity.events.find(e=>e.command==='resize_development_terminal'&&e.ok);return {ok:!!e,rows:e?.args.input.rows,cols:e?.args.input.cols};"#).await;

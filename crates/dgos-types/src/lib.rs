@@ -1,6 +1,8 @@
 // DG-OS Common Types
 // Shared types across all modules
 
+pub mod ai;
+pub use ai::*;
 pub mod appearance;
 pub mod error;
 pub mod execution;
@@ -11,7 +13,7 @@ pub mod model_catalog;
 pub mod module_operation;
 pub mod provider;
 
-pub use appearance::{AppearanceRead, AppearanceSave, AppearanceSnapshot, AppearanceValues};
+pub use appearance::{AppearanceRead, AppearanceSave, AppearanceSnapshot, AppearanceValues, FontSelection};
 pub use error::{DgosError, DgosResult};
 pub use execution::{
     BuiltinCaller, ExecutionProvenance, ExecutionSource, HostExecutionContext, HostSession,

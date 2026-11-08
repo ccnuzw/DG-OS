@@ -60,7 +60,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     if (!initialized) { process.exit(4); }
     if (mode === 'no-tools') process.exit(6);
     if (mode === 'bad-schema') { reply(request.id, { tools: [{ name: 'broken', inputSchema: { type: 'impossible' } }] }); return; }
-    const second = Boolean(request.params.cursor);
+    const second = Boolean(request.params?.cursor);
     if (!second) listRound += 1;
     if (mode === 'refresh-failure' && listRound === 2 && second) {
       process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: request.id, error: { code: -32603, message: 'fixture discovery failure' } })}\n`);

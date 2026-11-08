@@ -48,6 +48,25 @@ impl AgentManager {
                 details["expected_remote_ref"] = json!(format!("refs/heads/{branch}"));
                 details["expected_remote_oid"] = json!(head);
             },
+            GitAction::Pull { remote, branch, preview_token, trust_directory, trust_network } => {
+                if !trust_directory || !trust_network { return Err("git_pull_trust_required".into()); }
+                valid_remote(remote)?; valid_branch(branch)?;
+                if before.kind != "git" { return Err("not_git_repository".into()); }
+                if before.branch.is_none() { return Err("git_detached_head".into()); }
+                if before.head.is_none() { return Err("git_unborn_head".into()); }
+                if !before.files.is_empty() { return Err("git_worktree_dirty".into()); }
+                if !before.conflicts.is_empty() || !before.merge_heads.is_empty() { return Err("git_unmerged".into()); }
+                let urls = text(output(path, &["remote", "get-url", "--all", remote], lease, &self.inner.stop, false).await?)?;
+                let urls: Vec<_> = urls.lines().collect();
+                if urls.len() != 1 { return Err("unsafe_git_remote".into()); }
+                valid_url(urls[0])?;
+                let previews = PULL_PREVIEWS.lock().map_err(|_| "storage_failed")?;
+                let preview = previews.get(preview_token).ok_or("git_pull_preview_stale")?;
+                if preview.owner != owner || preview.task != input.task_id || preview.review != before.review_token || preview.remote != *remote || preview.branch != *branch || preview.url_hash != digest(urls[0].as_bytes()) || preview.expires <= std::time::Instant::now() || preview.lease.is_cancelled() { return Err("git_pull_preview_stale".into()); }
+                details["remote_url_hash"] = json!(digest(urls[0].as_bytes()));
+                details["remote_ref"] = json!(format!("refs/heads/{branch}"));
+                details["fetch_refspec"] = json!(format!("refs/heads/{branch}"));
+            },
             GitAction::Switch { branch } | GitAction::Merge { branch } => {
                 valid_branch(branch)?;
                 if !before.files.is_empty() || !before.conflicts.is_empty() || !before.merge_heads.is_empty() { return Err("git_worktree_dirty".into()); }
@@ -113,6 +132,75 @@ impl AgentManager {
                 let refspec = format!("{branch_ref}:{branch_ref}");
                 output(path, &["push", "--porcelain", "--no-verify", "--recurse-submodules=no", "--", url, &refspec], lease, &self.inner.stop, true).await?
             },
+            GitAction::Pull { remote, .. } => {
+                let urls = text(output(path, &["remote", "get-url", "--all", remote], lease, &self.inner.stop, false).await?)?;
+                let urls: Vec<_> = urls.lines().collect();
+                if urls.len() != 1 || details["remote_url_hash"].as_str() != Some(digest(urls[0].as_bytes()).as_str()) { return Err("git_pull_preview_stale".into()); }
+                let url = urls[0]; valid_url(url)?;
+                let remote_ref = details["fetch_refspec"].as_str().ok_or("storage_failed")?.to_owned();
+                let reference = format!("refs/dgos-pull/{}", input.id);
+                let reservation = pull_anchor(path, before.head.as_deref().ok_or("git_unborn_head")?, lease, &self.inner.stop).await?;
+                let absent = "0".repeat(reservation.len());
+                output(path, &["update-ref", "--no-deref", &reference, &reservation, &absent], lease, &self.inner.stop, true).await.map_err(|error| if error == "git_failed" { "git_pull_ref_conflict".into() } else { error })?;
+                details["owned_ref_oid"] = json!(reservation);
+                details["phase"] = json!("reserved");
+                self.inner.repository.update_git_operation_details(owner, &input.id, details).await?;
+                #[cfg(test)] pull_reserved_barrier(&input.id).await;
+                let listing = text(output(path, &["ls-remote", "--refs", "--", url, &remote_ref], lease, &self.inner.stop, false).await?)?;
+                let lines: Vec<_> = listing.lines().collect();
+                let (target, advertised_ref) = if lines.len() == 1 { lines[0].split_once('\t').ok_or("git_invalid_output")? } else { return Err("git_invalid_output".into()); };
+                if !valid_oid(target) || advertised_ref != remote_ref { return Err("git_invalid_output".into()); }
+                let target = target.to_owned();
+                details["phase"] = json!("fetch_started");
+                self.inner.repository.update_git_operation_details(owner, &input.id, details).await?;
+                // Fetch objects only: Git must never force-update a caller-named ref.
+                // Pin the advertised OID so a moving remote cannot change our target.
+                let mut command = safe_command(path).await?;
+                command.args(["-c", "fetch.fsckObjects=true", "fetch", "--refmap=", "--no-tags", "--no-recurse-submodules", "--no-auto-maintenance", "--no-write-fetch-head", "--", url, &target]);
+                complete(git_output(command, Duration::from_secs(120), lease, &self.inner.stop).await?)?;
+                #[cfg(test)] pull_install_barrier(&input.id).await;
+                // A unique commit both proves ownership and roots the fetched commit
+                // until a terminal receipt (or successful reconciliation) is durable.
+                let anchor = pull_anchor(path, &target, lease, &self.inner.stop).await?;
+                output(path, &["update-ref", "--no-deref", &reference, &anchor, &reservation], lease, &self.inner.stop, true).await.map_err(|error| if error == "git_failed" { "git_unknown".into() } else { error })?;
+                details["owned_ref_oid"] = json!(anchor);
+                details["target_oid"] = json!(target);
+                details["phase"] = json!("fetched");
+                self.inner.repository.update_git_operation_details(owner, &input.id, details).await?;
+                #[cfg(test)] pull_fetch_barrier(&input.id).await;
+                check_lease(lease)?;
+                let after_fetch = self.git_snapshot(owner, &input.task_id, lease).await.map_err(|_| "git_unknown")?;
+                if !same_version(&before, &after_fetch) { return Err("git_unknown".into()); }
+                let mut checked = details.clone();
+                self.prepare_git_action(owner, project, input, &after_fetch, &mut checked, lease).await?;
+                if checked != *details { return Err("git_unknown".into()); }
+                let head = before.head.as_deref().ok_or("git_unborn_head")?;
+                let already = output(path, &["merge-base", "--is-ancestor", &target, head], lease, &self.inner.stop, false).await;
+                match already {
+                    Ok(_) => { details["result"] = json!("already_up_to_date"); },
+                    Err(error) if error == "git_failed" => {
+                        match output(path, &["merge-base", "--is-ancestor", head, &target], lease, &self.inner.stop, false).await {
+                            Ok(_) => {},
+                            Err(error) if error == "git_failed" => return Err("git_pull_diverged".into()),
+                            Err(error) => return Err(error),
+                        }
+                        let checked = self.git_snapshot(owner, &input.task_id, lease).await?;
+                        if !same_version(&before, &checked) { return Err("git_unknown".into()); }
+                        details["phase"] = json!("ff_started");
+                        self.inner.repository.update_git_operation_details(owner, &input.id, details).await?;
+                        output(path, &["-c", "merge.autoStash=false", "merge", "--ff-only", "--no-edit", "--no-stat", "--no-progress", "--", &target], lease, &self.inner.stop, true).await?;
+                        details["result"] = json!("fast_forwarded");
+                    },
+                    Err(error) => return Err(error),
+                }
+                let after = self.git_snapshot(owner, &input.task_id, &CancellationToken::new()).await.map_err(|_| "git_unknown")?;
+                let expected_head = if details["result"] == "already_up_to_date" { before.head.as_deref() } else { Some(target.as_str()) };
+                if after.head.as_deref() != expected_head || after.branch != before.branch || !after.files.is_empty() || !after.conflicts.is_empty() || !after.merge_heads.is_empty() || after.common_identity != before.common_identity { return Err("git_unknown".into()); }
+                details["phase"] = json!("completed");
+                details["after"] = json!(after);
+                self.inner.repository.update_git_operation_details(owner, &input.id, details).await?;
+                vec![]
+            },
             GitAction::Switch { branch } => output(path, &["switch", "--no-guess", "--", branch], lease, &self.inner.stop, true).await?,
             GitAction::Merge { branch } => output(path, &["-c", "merge.autoStash=false", "merge", "--no-commit", "--no-ff", "--no-edit", "--no-stat", "--no-progress", "--", &format!("refs/heads/{branch}")], lease, &self.inner.stop, true).await?,
             GitAction::Discard { files: selected, .. } => {
@@ -169,5 +257,26 @@ impl AgentManager {
         // Verbatim cleanup preserves supplied blank lines and adds a missing LF.
         let expected_message = if message.ends_with('\n') { message.to_owned() } else { format!("{message}\n") };
         Ok(parents == expected_parents && actual_message == expected_message)
+    }
+}
+
+async fn pull_anchor(path: &Path, target: &str, lease: &CancellationToken, stop: &CancellationToken) -> Result<String, String> {
+    let tree = text(output(path, &["rev-parse", "--verify", &format!("{target}^{{tree}}")], lease, stop, false).await?)?.trim().to_owned();
+    if !valid_oid(&tree) { return Err("git_invalid_output".into()); }
+    let mut command = safe_command(path).await?;
+    command.args(["commit-tree", &tree, "-p", target, "-m", &format!("DGOS pull ownership {}", uuid::Uuid::new_v4())])
+        .env("GIT_AUTHOR_NAME", "DGOS").env("GIT_AUTHOR_EMAIL", "dgos@localhost")
+        .env("GIT_COMMITTER_NAME", "DGOS").env("GIT_COMMITTER_EMAIL", "dgos@localhost");
+    let oid = text(complete(git_output(command, Duration::from_secs(10), lease, stop).await?)?)?.trim().to_owned();
+    if !valid_oid(&oid) { return Err("git_invalid_output".into()); }
+    Ok(oid)
+}
+
+pub(super) async fn cleanup_pull_ref(path: &Path, id: &str, details: &Value, stop: &CancellationToken) {
+    // Never infer ownership from target_oid: legacy receipts and rejected
+    // reservations do not own refs, even when their target happens to match.
+    if let Some(owned) = details["owned_ref_oid"].as_str().filter(|oid| valid_oid(oid)) {
+        let reference = format!("refs/dgos-pull/{id}");
+        let _ = output(path, &["update-ref", "--no-deref", "-d", &reference, owned], &CancellationToken::new(), stop, true).await;
     }
 }

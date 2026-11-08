@@ -51,35 +51,8 @@ async fn step(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>, na
     Ok(result["value"].clone())
 }
 
-#[cfg(target_os = "macos")]
 pub(super) async fn capture(app: &AppHandle, fx: &Fx, name: &str) -> Journey<String> {
-    use objc2::runtime::AnyObject;
-    use objc2::msg_send;
-    let window = app.get_webview_window("main").ok_or("main window absent")?;
-    window.show().map_err(|e|e.to_string())?;
-    let (send, receive)=oneshot::channel();
-    let target=window.clone();
-    window.run_on_main_thread(move || {
-        let number=target.ns_window().map_err(|e|e.to_string()).and_then(|pointer| {
-            let native=pointer as *mut AnyObject;
-            if native.is_null() { return Err("native target window absent".into()); }
-            let number:isize=unsafe { msg_send![native,windowNumber] };
-            if number>0 { Ok(number) } else { Err("native target window number absent".into()) }
-        });
-        let _=send.send(number);
-    }).map_err(|e|e.to_string())?;
-    let number=tokio::time::timeout(Duration::from_secs(10),receive).await.map_err(|e|e.to_string())?.map_err(|e|e.to_string())??;
-    tokio::time::sleep(Duration::from_millis(350)).await;
-    let path = fx.root.join(format!("layout-round2-{name}.png"));
-    let status = Command::new("/usr/sbin/screencapture").args(["-x","-o","-l"]).arg(number.to_string()).arg(&path).status().map_err(|e|e.to_string())?;
-    if !status.success() { return Err(format!("native target-window screencapture failed: {status}")); }
-    write_json(path.with_extension("capture.json"),&json!({"png":path,"window_label":"main","window_number":number,"window_number_source":"actual target NSWindow.windowNumber via run_on_main_thread","process_id":std::process::id(),"capture":"/usr/sbin/screencapture -x -o -l <window_number>"}));
-    Ok(path.to_string_lossy().into_owned())
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(super) async fn capture(_app: &AppHandle, _fx: &Fx, _name: &str) -> Journey<String> {
-    Err("layout-round2 native window capture requires macOS WKWebView".into())
+    super::super::capture_native(app, &fx.root, &format!("layout-round2-{name}")).await
 }
 
 async fn navigation(app: &AppHandle) -> Journey<()> {
@@ -214,11 +187,12 @@ async fn reload(app: &AppHandle) -> Journey<()> {
     if goto(app,"main","/tasks/agent").await { Ok(()) } else { Err("production App reload failed".into()) }
 }
 
-async fn appearance(app: &AppHandle, mode: &str, large: bool) -> Journey<()> {
+async fn appearance(app: &AppHandle, mode: &str, large: bool, density: u16) -> Journey<()> {
     let read=ipc(app,"main","get_appearance_preferences",json!({})).await;
     let mut snapshot=read.data()["snapshot"].clone();
     let revision=snapshot.as_object_mut().and_then(|s|s.remove("revision")).ok_or("appearance revision absent")?;
     snapshot["mode"]=json!(mode);
+    snapshot["density"]=json!(density);
     snapshot["typography"]["uiSize"]=json!(if large {16} else {12});
     snapshot["typography"]["readingSize"]=json!(if large {20} else {13});
     snapshot["typography"]["codeSize"]=json!(if large {18} else {12});
@@ -235,7 +209,14 @@ const panels=['dev-panel-agent','dev-panel-code','dev-panel-runtime'].map(id=>({
 const vw=document.documentElement.clientWidth,vh=document.documentElement.clientHeight;
 const clipped=panels.filter(p=>p.x< -1||p.right>vw+1||p.y< -1||p.bottom>vh+1||p.width<1||p.height<1);
 const overlaps=[];for(let i=0;i<panels.length;i++)for(let j=i+1;j<panels.length;j++){const a=panels[i],b=panels[j];if(Math.min(a.right,b.right)-Math.max(a.x,b.x)>1&&Math.min(a.bottom,b.bottom)-Math.max(a.y,b.y)>1)overlaps.push([a.id,b.id]);}
-return {ok:!!document.querySelector('[data-workspace-surface="cli-agent"]')&&document.documentElement.scrollWidth<=vw+1&&!clipped.length&&!overlaps.length,viewport:{width:vw,height:vh},theme:document.documentElement.dataset.theme,uiSize:getComputedStyle(document.documentElement).getPropertyValue('--font-size-ui'),panels,clipped,overlaps,scrollWidth:document.documentElement.scrollWidth,layout:localStorage.getItem(A.key),alerts:$$('[role=alert]').map(txt)};
+const root=document.querySelector('.agent-workbench'),g=parseFloat(getComputedStyle(document.documentElement).fontSize),u=parseFloat(getComputedStyle(root).getPropertyValue('--font-size-ui'));
+const minimum=Math.max(16*g,16*u)+Math.max(32*g,32*u)+Math.max(20*g,22*u)+.5*g+2;
+const compact=root.getAttribute('data-compact')==='true',saved=JSON.parse(localStorage.getItem(A.key)||'null');
+const code=tid('dev-panel-code'),agent=tid('dev-panel-agent'),split=tid('dev-agent-resizer');
+const available=visible(split)?root.querySelector('.dev-collaboration').clientWidth-split.getBoundingClientRect().width:0;
+const expectedAgent=available?Math.max(Math.max(20*g,22*u),Math.min(available-Math.max(32*g,32*u),available*saved.agentWidth/100)):null;
+const splitFits=expectedAgent===null||Math.abs(agent.getBoundingClientRect().width-expectedAgent)<=2;
+return {ok:!!document.querySelector('[data-workspace-surface="cli-agent"]')&&document.documentElement.scrollWidth<=vw+1&&!clipped.length&&!overlaps.length&&compact===(root.clientWidth<minimum)&&splitFits,viewport:{width:vw,height:vh},theme:document.documentElement.dataset.theme,density:document.documentElement.dataset.density,uiSize:getComputedStyle(document.documentElement).getPropertyValue('--font-size-ui'),budget:{width:root.clientWidth,minimum,compact},split:{available,expectedAgent,actualAgent:agent.getBoundingClientRect().width,preference:saved.agentWidth,splitFits},lineHeights:{code:getComputedStyle(code).lineHeight,agent:getComputedStyle(agent).lineHeight},panels,clipped,overlaps,scrollWidth:document.documentElement.scrollWidth,layout:localStorage.getItem(A.key),alerts:$$('[role=alert]').map(txt)};
 "#;
 
 async fn matrix(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>) -> Journey<()> {
@@ -245,16 +226,17 @@ async fn matrix(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>) 
         window.set_size(tauri::LogicalSize::new(width as f64,height as f64)).map_err(|e|e.to_string())?;
         for mode in ["light","dark"] {
             for large in [false,true] {
-                appearance(app,mode,large).await?;
+            for density in [60,100,150] {
+                appearance(app,mode,large,density).await?;
                 step(app,fx,ck,ev,"prepare responsive production panel visibility",json!({"width":width}),r#"
-if(!await until(()=>{const e=document.querySelector('.agent-workbench');return e&&e.getAttribute('data-compact')===String(e.clientWidth<1000)}))throw Error('responsive measurement unsettled');
+if(!await until(()=>{const e=document.querySelector('.agent-workbench');if(!e)return false;const g=parseFloat(getComputedStyle(document.documentElement).fontSize),u=parseFloat(getComputedStyle(e).getPropertyValue('--font-size-ui')),minimum=Math.max(16*g,16*u)+Math.max(32*g,32*u)+Math.max(20*g,22*u)+.5*g+2;return e.getAttribute('data-compact')===String(e.clientWidth<minimum)}))throw Error('responsive content budget unsettled');
 const compact=document.querySelector('.agent-workbench')?.getAttribute('data-compact')==='true';
 const nav=await need('dev-toggle-navigation');if(compact&&nav.getAttribute('aria-expanded')==='true')nav.click();
 if(compact&&!visible(tid('dev-panel-code'))){const code=await until(()=>$$('button',document.querySelector('.dev-view-switch')).find(e=>e.getAttribute('aria-pressed')==='false'&&!e.hasAttribute('data-testid')));if(!code)throw Error('compact code view toggle absent');code.click();}
 if(!compact){for(const name of ['agent','runtime']){const t=await need('dev-toggle-'+name);if(t.getAttribute('aria-expanded')==='false')t.click();}}
 return {ok:!!await until(()=>visible(tid('dev-panel-code')))};
 "#).await?;
-                let name=format!("{width}x{height}-{mode}-{}",if large {"large"} else {"default"});
+                let name=format!("{width}x{height}-{mode}-{}-density{density}",if large {"large"} else {"default"});
                 let measured=step(app,fx,ck,ev,&format!("full App layout {name}"),json!({"key":LAYOUT_KEY}),MEASURE).await?;
                 let scale=window.scale_factor().map_err(|e|e.to_string())?;
                 let inner=window.inner_size().map_err(|e|e.to_string())?;
@@ -267,7 +249,7 @@ return {ok:!!await until(()=>visible(tid('dev-panel-code')))};
                 let dom_width=measured["viewport"]["width"].as_f64().ok_or("DOM viewport width absent")?;
                 let dom_height=measured["viewport"]["height"].as_f64().ok_or("DOM viewport height absent")?;
                 let native=json!({"requested_logical":{"width":width,"height":height},"scale_factor":scale,"inner_physical":{"width":inner.width,"height":inner.height},"outer_physical":{"width":outer.width,"height":outer.height},"inner_logical":{"width":logical_inner.width,"height":logical_inner.height},"webview_bounds_logical":{"x":position.x,"y":position.y,"width":client.width,"height":client.height},"window_to_dom_delta_logical":{"width":logical_inner.width-dom_width,"height":logical_inner.height-dom_height},"webview_to_dom_delta_logical":{"width":client.width-dom_width,"height":client.height-dom_height},"viewport_source":"DOM clientWidth/clientHeight; native window and WebView bounds recorded independently"});
-                require(fx,ck,ev,"native window exactly matches requested size and shipped appearance",logical_inner.width==width as f64&&logical_inner.height==height as f64&&measured["theme"]==mode&&measured["uiSize"].as_str().is_some_and(|v|v.trim()==if large {"16px"} else {"12px"}),json!({"native":native,"measurement":measured}))?;
+                require(fx,ck,ev,"native window exactly matches requested size and shipped appearance",logical_inner.width==width as f64&&logical_inner.height==height as f64&&measured["theme"]==mode&&measured["density"].as_str().is_some_and(|v|v==density.to_string())&&measured["uiSize"].as_str().is_some_and(|v|v.trim()==if large {"16px"} else {"12px"}),json!({"native":native,"measurement":measured}))?;
                 let png=capture(app,fx,&name).await?;
                 if width==800 {
                     step(app,fx,ck,ev,"compact agent and code views switch without losing runtime",json!({}),r#"
@@ -280,9 +262,10 @@ return {ok:!!await until(()=>visible(tid('dev-panel-code'))&&!visible(tid('dev-p
                 cells.push(json!({"cell":name,"native":native,"measurement":measured,"png":png}));
                 write_json(fx.root.join("layout-round2-matrix.json"),&json!(cells));
             }
+            }
         }
     }
-    appearance(app,"light",false).await?;
+    appearance(app,"light",false,100).await?;
     window.set_size(tauri::LogicalSize::new(1440.0,900.0)).map_err(|e|e.to_string())?;
     Ok(())
 }
@@ -321,7 +304,7 @@ async fn journey(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>)
     step(app,fx,ck,ev,"initialize isolated phase presentation defaults",json!({"key":LAYOUT_KEY}),r#"
 const previous=localStorage.getItem(A.key);localStorage.removeItem(A.key);return {ok:localStorage.getItem(A.key)===null,previous};
 "#).await?;
-    appearance(app,"light",false).await?;
+    appearance(app,"light",false,100).await?;
     let a=fx.root.join("layout-project-a");let b=fx.root.join("layout-project-b");
     require(fx,ck,ev,"layout phase requires fresh project paths",!a.exists()&&!b.exists(),fx.root.display())?;
     make_repo(&a);make_repo(&b);

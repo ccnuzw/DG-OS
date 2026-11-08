@@ -7,6 +7,10 @@ pub mod repositories;
 pub mod startup;
 
 #[cfg(test)]
+mod ai_run_tests;
+#[cfg(test)]
+mod cli_cutover_tests;
+#[cfg(test)]
 mod appearance_tests;
 #[cfg(test)]
 mod desktop_tests;

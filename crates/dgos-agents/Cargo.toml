@@ -18,10 +18,16 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 uuid = { workspace = true }
 tracing = { workspace = true }
+reqwest = { workspace = true }
 sha2 = { workspace = true }
 cap-std = "3"
 ignore = "0.4"
 similar = "2.7"
+toml_edit = "0.25.17"
+semver = "1.0"
+zip = { version = "9.2.1", default-features = false, features = ["deflate-flate2"] }
+serde_yaml = "0.9"
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

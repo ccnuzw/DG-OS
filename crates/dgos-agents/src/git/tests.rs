@@ -1,5 +1,7 @@
 use super::*;
 use std::process::Command as StdCommand;
+#[path = "pull_tests.rs"]
+mod pull;
 
 struct Fixture { root: PathBuf, path: PathBuf }
 impl Fixture {

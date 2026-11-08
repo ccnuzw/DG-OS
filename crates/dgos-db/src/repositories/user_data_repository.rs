@@ -63,7 +63,7 @@ impl UserDataDomain {
     /// Tables keyed by `owner`, purged with the workbench domain and included in orphan accounting.
     pub fn owner_tables(self) -> &'static [&'static str] {
         match self {
-            UserDataDomain::Workbench => &["development_handoffs", "development_file_writes", "development_task_workspaces", "development_workspaces", "development_run_capabilities", "development_session_capabilities", "development_capability_heads", "development_capability_revisions", "development_selection", "development_commands", "development_runs", "development_review_observations", "development_review_baselines", "development_agent_sessions", "development_project_operations", "development_tasks", "development_projects"],
+            UserDataDomain::Workbench => &["development_cli_legacy_history", "development_cli_session_bindings", "development_handoffs", "development_file_writes", "development_task_workspaces", "development_workspaces", "development_run_capabilities", "development_session_capabilities", "development_capability_heads", "development_capability_revisions", "development_selection", "development_commands", "development_runs", "development_review_observations", "development_review_baselines", "development_agent_sessions", "development_project_operations", "development_tasks", "development_projects"],
             _ => &[],
         }
     }
@@ -72,7 +72,7 @@ impl UserDataDomain {
     pub fn user_tables(self) -> &'static [&'static str] {
         match self {
             UserDataDomain::Chat => &["chat_message_assets", "asset_leases", "chat_assets", "chat_messages", "chat_sessions"],
-            UserDataDomain::Workbench => &["workbench_tasks"],
+            UserDataDomain::Workbench => &["ai_run_bindings", "workbench_tasks"],
             UserDataDomain::Mcp => &["mcp_usage_logs", "mcp_connection_logs", "mcp_servers"],
             UserDataDomain::Providers => &["provider_usage_logs", "usage_logs", "providers"],
             UserDataDomain::Skills => &[
@@ -86,6 +86,7 @@ impl UserDataDomain {
                 "module_permission_audits",
                 "module_storage",
                 "module_crash_logs",
+                "module_authorization_epochs",
             ],
             UserDataDomain::Settings => &["system_settings"],
             UserDataDomain::Lan => &["lan_audit_events"],
@@ -211,6 +212,8 @@ fn statements(domain: UserDataDomain) -> &'static [&'static str] {
     match domain {
         UserDataDomain::Chat => &[],
         UserDataDomain::Workbench => &[
+            "DELETE FROM development_cli_legacy_history WHERE owner = ?1",
+            "DELETE FROM development_cli_session_bindings WHERE owner = ?1",
             "DELETE FROM development_handoffs WHERE owner = ?1",
             "DELETE FROM development_file_writes WHERE owner = ?1",
             "DELETE FROM development_task_workspaces WHERE owner = ?1",
@@ -232,6 +235,7 @@ fn statements(domain: UserDataDomain) -> &'static [&'static str] {
              (SELECT id FROM workbench_tasks WHERE user_id = ?1)",
             "DELETE FROM workbench_task_tools WHERE task_id IN \
              (SELECT id FROM workbench_tasks WHERE user_id = ?1)",
+            "DELETE FROM ai_run_bindings WHERE user_id = ?1",
             "DELETE FROM workbench_tasks WHERE user_id = ?1",
         ],
         UserDataDomain::Mcp => &[
@@ -260,6 +264,7 @@ fn statements(domain: UserDataDomain) -> &'static [&'static str] {
             "DELETE FROM module_permission_audits WHERE user_id = ?1",
             "DELETE FROM module_storage WHERE user_id = ?1",
             "DELETE FROM module_crash_logs WHERE user_id = ?1",
+            "DELETE FROM module_authorization_epochs WHERE user_id = ?1",
         ],
         UserDataDomain::Settings => &["DELETE FROM system_settings WHERE user_id = ?1"],
         UserDataDomain::Lan => &["DELETE FROM lan_audit_events WHERE user_id = ?1"],

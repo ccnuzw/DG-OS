@@ -11,7 +11,7 @@
 //! - identity comes from the `HostSession` the host passes in; the only
 //!   renderer-derived input is a `module_id` selector, validated with the
 //!   publisher's id rule and never used as an authority;
-//! - updates read only from the host-owned `LocalModuleSources` root;
+//! - official updates use the verified shipped bundle; other updates use host-owned local sources;
 //! - operations run one at a time in submission order, and a module can have
 //!   at most one non-terminal operation (conflicts are refused, not queued);
 //! - start and update are refused until startup recovery succeeded
@@ -21,7 +21,7 @@
 
 use chrono::Utc;
 use dgos_modules::{
-    valid_module_id, LocalModuleSources, ModuleLoader, ModulePackageError, ModulePublisher,
+    valid_module_id, BuiltinModuleSources, LocalModuleSources, ModuleLoader, ModulePackageError, ModulePublisher,
     ModuleRuntimeState, ModuleRuntimeSupervisor, ModuleSourceError, ModuleSupervisorError,
     ModuleUpdateOutcome, RuntimeLost,
 };
@@ -65,6 +65,7 @@ struct Inner {
     publisher: Arc<ModulePublisher>,
     supervisor: ModuleRuntimeSupervisor,
     sources: LocalModuleSources,
+    builtin_sources: Option<BuiltinModuleSources>,
     state: Mutex<State>,
 }
 
@@ -96,6 +97,7 @@ impl ModuleOperationManager {
                 supervisor,
                 publisher,
                 sources,
+                builtin_sources: None,
                 state: Mutex::new(State {
                     availability: Availability::Uninitialized,
                     records: HashMap::new(),
@@ -106,6 +108,15 @@ impl ModuleOperationManager {
             }),
             maintenance: dgos_db::MaintenanceGate::new(),
         }
+    }
+
+    /// Host assembly only, before cloning or accepting operations. The source
+    /// constructor validates the full shipped bundle against compiled pins.
+    pub fn with_builtin_sources(mut self, sources: BuiltinModuleSources) -> Result<Self, ErrorKind> {
+        let inner=Arc::get_mut(&mut self.inner).ok_or(ErrorKind::OperationInProgress)?;
+        if inner.state().availability != Availability::Uninitialized { return Err(ErrorKind::OperationInProgress); }
+        inner.builtin_sources=Some(sources);
+        Ok(self)
     }
 
     /// Admits every operation through the shared maintenance gate. The permit is taken at
@@ -203,8 +214,7 @@ impl ModuleOperationManager {
         self.submit(ModuleOperationKind::Stop, session, module_id)
     }
 
-    /// Update `module_id` from its directory in the host-owned local source
-    /// root. The caller supplies no path or URL.
+    /// Explicit update by module id. Official packages never use local module-sources.
     pub fn update(
         &self,
         session: &HostSession,
@@ -614,10 +624,18 @@ impl Inner {
                     .map_err(map_management_error)
             }
             ModuleOperationKind::Update => {
-                let source = self.sources.resolve(module_id).map_err(map_source_error)?;
-                self.supervisor
-                    .update_with_operation_id(session, module_id, &source, operation_id)
-                    .await
+                let listed=self.publisher.published_modules(session.user_id()).await.map_err(map_management_error)?;
+                let module=listed.iter().find(|module|module.module_id==module_id).ok_or(ErrorKind::ModuleNotFound)?;
+                let official=module.official || self.builtin_sources.as_ref().is_some_and(|sources|sources.contains(module_id))
+                    || BuiltinModuleSources::is_builtin(module_id);
+                let result=if official {
+                    let sources=self.builtin_sources.as_ref().ok_or(ErrorKind::NotAdmitted)?;
+                    self.supervisor.update_builtin_with_operation_id(session,module_id,sources,operation_id).await
+                } else {
+                    let source=self.sources.resolve(module_id).map_err(map_source_error)?;
+                    self.supervisor.update_with_operation_id(session,module_id,&source,operation_id).await
+                };
+                result
                     .map(|report| match report.outcome {
                         ModuleUpdateOutcome::Unchanged => ModuleOperationOutcome::Unchanged,
                         ModuleUpdateOutcome::Switched {
@@ -1640,5 +1658,67 @@ mod tests {
             map_source_error(ModuleSourceError::Io(io())),
             ErrorKind::Internal
         );
+    }
+    #[tokio::test]
+    async fn update_of_stopped_module_does_not_start_previous_release() {
+        let fixture=Fixture::new(&[MODULE]).await;
+        fixture.stage_update(MODULE,"2.0.0");
+        let accepted=fixture.manager.update(&fixture.session,MODULE).unwrap();
+        let result=fixture.finish(&accepted.operation_id).await;
+        assert_eq!(result.outcome,Some(ModuleOperationOutcome::Updated));
+        assert_eq!(fixture.loader.entered(),1);
+        assert_eq!(fixture.manager.modules(&fixture.session).await.unwrap()[0].version,"2.0.0");
+    }
+
+    #[tokio::test]
+    async fn official_update_without_bundle_never_uses_local_replacement() {
+        let fixture=Fixture::new(&[MODULE]).await;
+        fixture.db.execute_unprepared("UPDATE modules SET is_official=1 WHERE id='module-1'").await.unwrap();
+        fixture.stage_update(MODULE,"2.0.0");
+        let accepted=fixture.manager.update(&fixture.session,MODULE).unwrap();
+        let result=fixture.finish(&accepted.operation_id).await;
+        assert_eq!(result.failure.unwrap().kind,ErrorKind::NotAdmitted);
+        assert_eq!(fixture.manager.modules(&fixture.session).await.unwrap()[0].version,"1.0.0");
+        assert_eq!(fixture.loader.entered(),0);
+    }
+
+    #[tokio::test]
+    async fn host_bundle_assembly_uses_compiled_pins_and_does_not_accept_local_override() {
+        let bundle=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bundled-modules");
+        let sources=BuiltinModuleSources::new(&bundle).unwrap();
+        let fixture=Fixture::unrecovered(&[]).await;
+        let publisher=fixture.manager.inner.publisher.clone();
+        publisher.provision_builtin(&bundle).await.unwrap();
+        let manager=fixture.manager.with_builtin_sources(sources).unwrap();
+        manager.recover().await.unwrap();
+        write_package(&fixture.sources.path().join("provider-console"),"provider-console","99.0.0");
+        let accepted=manager.update(&fixture.session,"provider-console").unwrap();
+        let result=manager.wait(&accepted.operation_id).await.unwrap();
+        assert_eq!(result.outcome,Some(ModuleOperationOutcome::Unchanged));
+        assert_ne!(manager.modules(&fixture.session).await.unwrap()[0].version,"99.0.0");
+        assert_eq!(fixture.loader.entered(),0);
+    }
+
+    #[tokio::test]
+    async fn real_retired_console_updates_by_id_without_loading_old_code_or_granting_new_capabilities() {
+        let bundle = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bundled-modules");
+        let fixture = Fixture::unrecovered(&[]).await;
+        let publisher = fixture.manager.inner.publisher.clone();
+        publisher.commit(publisher.stage(&bundle.join("provider-console/1.0.0")).unwrap()).await.unwrap();
+        fixture.db.execute_unprepared("UPDATE modules SET is_official=1 WHERE id='provider-console'").await.unwrap();
+        publisher.permissions().grant("default-user", "provider-console", "providers.call").await.unwrap();
+        write_package(&fixture.sources.path().join("provider-console"), "provider-console", "99.0.0");
+        let manager = fixture.manager.with_builtin_sources(BuiltinModuleSources::new(&bundle).unwrap()).unwrap();
+        manager.recover().await.unwrap();
+        let accepted = manager.update(&fixture.session, "provider-console").unwrap();
+        let result = manager.wait(&accepted.operation_id).await.unwrap();
+        assert_eq!(result.outcome, Some(ModuleOperationOutcome::Updated));
+        assert_eq!(fixture.loader.entered(), 1);
+        let module = manager.modules(&fixture.session).await.unwrap().remove(0);
+        assert_eq!(module.version, "1.1.0");
+        assert!(module.official && module.enabled);
+        assert_eq!(module.permissions.iter().filter(|permission| permission.granted).map(|permission| permission.permission.as_str()).collect::<Vec<_>>(), ["providers.call"]);
+        assert_eq!(module.permissions.len(), 3);
+        assert_eq!(manager.wait(&accepted.operation_id).await.unwrap().outcome, result.outcome);
     }
 }

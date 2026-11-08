@@ -10,6 +10,7 @@ struct Context {
     started: Instant,
     operation: &'static str,
     tool: &'static str,
+    dispatch: tracing::Dispatch,
 }
 impl ProcessDiagnostic {
     pub(crate) fn new(operation: &'static str, tool: &'static str) -> Self {
@@ -18,6 +19,7 @@ impl ProcessDiagnostic {
             started: Instant::now(),
             operation,
             tool,
+            dispatch: tracing::dispatcher::get_default(Clone::clone),
         }))
     }
     pub(crate) fn phase(&self, stage: &'static str, pid: Option<u32>) -> Phase {
@@ -26,11 +28,15 @@ impl ProcessDiagnostic {
         phase
     }
     pub(crate) fn record(&self, stage: &'static str, pid: Option<u32>, outcome: &'static str, error_class: &'static str) {
-        tracing::info!(target: "dgos_agents::process",
-            correlation_id = self.0.id, host_pid = std::process::id(), child_pid = ?pid,
-            elapsed_ms = self.0.started.elapsed().as_millis() as u64,
-            operation = self.0.operation, tool = self.0.tool, stage, outcome, error_class,
-            "agent process phase");
+        // Child tasks and cancellation cleanup outlive the future that started
+        // them. Keep every phase on the dispatch selected for this operation.
+        tracing::dispatcher::with_default(&self.0.dispatch, || {
+            tracing::info!(target: "dgos_agents::process",
+                correlation_id = self.0.id, host_pid = std::process::id(), child_pid = ?pid,
+                elapsed_ms = self.0.started.elapsed().as_millis() as u64,
+                operation = self.0.operation, tool = self.0.tool, stage, outcome, error_class,
+                "agent process phase");
+        });
     }
 }
 

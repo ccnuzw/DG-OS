@@ -86,7 +86,9 @@ pub async fn get_language_preferences(
     if let Err(error) = host::account_window(&window) {
         return CommandResponse::from(Err(error));
     }
-    let repository = app.state::<HostSettingsRepository>();
+    let Some(repository) = app.try_state::<HostSettingsRepository>() else {
+        return CommandResponse::from(Err(DgosError::InternalError("language preference unavailable".into())));
+    };
     CommandResponse::from(read(&repository).await)
 }
 
@@ -102,8 +104,10 @@ pub async fn set_language_preferences(
     let Some(preference) = LanguagePreference::parse(&language) else {
         return CommandResponse::from(Err(DgosError::InvalidLanguagePreference));
     };
+    let Some(repository) = app.try_state::<HostSettingsRepository>() else {
+        return CommandResponse::from(Err(DgosError::InternalError("language preference unavailable".into())));
+    };
     let _permit = match host::admit_activity(&app) { Ok(permit) => permit, Err(error) => return CommandResponse::from(Err(error)) };
-    let repository = app.state::<HostSettingsRepository>();
     CommandResponse::from(write(&repository, preference).await)
 }
 

@@ -1,15 +1,15 @@
-//! Real module JS calling `providers.call` in a real WebView (D050, D051).
+//! Real module `providers.call` and bundled `host.ai` consumption in a real WebView.
 //!
 //! Third smoke target. It wires the production pieces: `PageModuleLoader` and
 //! `ModuleHostBridge`, the route observer, `ModuleCallRouter`, the typed
 //! `module_call_provider` command, `ModuleCapabilityDispatchService`, the real
 //! `ProviderManager` and a SQLite database with the real permission
-//! repository. The module is `tests/fixtures/modules/provider-caller.js`; its
-//! `host.providers.call` goes through the real Tauri IPC.
+//! repository. Raw capability regressions retain `provider-caller.js`; the pinned
+//! provider-console@1.1.0 consumes public AI through real Tauri commands.
 //!
-//! Replaced or shortened for the run: the Provider is a loopback fake server
-//! (not a real vendor), the credential vault is in memory, and the host
-//! deadline is 1 second instead of the production 120 seconds.
+//! The Provider is a loopback protocol fixture (not a vendor); its vault is in
+//! memory. Raw Provider calls use a 1 s deadline; public AI retains its production
+//! deadline. Skill content and the local node MCP fixture use temporary storage.
 //!
 //! What it proves: admission, per-call authorization, revocation, replaced
 //! runtimes, page reload, the host deadline, the in-flight limit, error
@@ -70,29 +70,37 @@ async fn drive_console(app: &AppHandle, prompt: &str) -> Value {
          if (!root) return {{missing: true, path: location.pathname}};\
          const set = (el, v) => {{ const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;\
            Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v); el.dispatchEvent(new Event('input', {{bubbles: true}})); }};\
-         const refresh = [...root.querySelectorAll('button')].find(b => /Refresh catalog|刷新目录/.test(b.textContent));\
+         const refresh = [...root.querySelectorAll('button')].find(b => /Refresh selections|刷新选择目录/.test(b.textContent));\
          const catalogDeadline = performance.now() + 2500;\
          while (refresh.disabled && performance.now() < catalogDeadline) await new Promise(r => setTimeout(r, 50));\
          if (refresh.disabled) return {{timeout: 'initial catalog'}};\
          refresh.click(); await new Promise(r => setTimeout(r, 50));\
          while (refresh.disabled && performance.now() < catalogDeadline) await new Promise(r => setTimeout(r, 50));\
          if (refresh.disabled) return {{timeout: 'refreshed catalog'}};\
-         const catalogError = root.querySelector('[role=alert]'); if (catalogError) return {{catalogError:catalogError.textContent}};\
+         const catalogError = root.querySelector('.provider-console-config > div > [role=alert]'); if (catalogError) return {{catalogError:catalogError.textContent}};\
          const choose = async (trigger, value) => {{ const key = (el, name) => el.dispatchEvent(new KeyboardEvent('keydown', {{key: name, bubbles: true, cancelable: true}})); key(trigger, 'ArrowDown'); await new Promise(r=>setTimeout(r,30)); const option = [...document.querySelectorAll('[role=option]')].find(o=>o.textContent.trim() === value); if (!option) throw new Error('Missing catalog option: ' + value); key(option, 'Enter'); await new Promise(r=>setTimeout(r,30)); }};\
          const selects = root.querySelectorAll('[role=combobox]');\
          await choose(selects[0], 'Synthetic smoke'); await choose(selects[1], 'fixture-chat'); set(root.querySelector('textarea'), {prompt:?});\
+         const useTools = {prompt:?}.includes('console-tools');\
+         if (useTools) {{ const groups = root.querySelectorAll('.provider-console-choices'); for (const group of groups) {{ const checkbox = group.querySelector('[role=checkbox]'); if (!checkbox || checkbox.disabled) return {{missingSelection: true}}; checkbox.click(); }} await new Promise(r=>setTimeout(r,50)); }}\
          await new Promise((r) => setTimeout(r, 80));\
-         const stale = root.querySelector('[role=alert]');\
-         const staleReply = root.querySelector('[data-testid=provider-console-reply]');\
          const send = [...root.querySelectorAll('button')].find(b => /^(Send|发送)$/.test(b.textContent));\
          if (!send || send.disabled) return {{disabledSend: true}}; send.click();\
+         const startDeadline = performance.now() + 2500; while (root.querySelector('.provider-console-result').getAttribute('aria-busy') !== 'true' && performance.now() < startDeadline) await new Promise(r => setTimeout(r, 10));\
+         if (root.querySelector('.provider-console-result').getAttribute('aria-busy') !== 'true') return {{timeout: 'new run did not start'}};\
+         let approvals = 0, privateDialog = true, partial = false, cancelled = false; const answered = new WeakSet();\
          for (let i = 0; i < 100; i++) {{\
-           const reply = root.querySelector('[data-testid=provider-console-reply]');\
-           const alert = root.querySelector('[role=alert]');\
-           if ((reply && reply !== staleReply) || (alert && alert !== stale)) return {{reply: reply && reply.textContent, alert: alert && alert.textContent}};\
+           const result = root.querySelector('.provider-console-result');\
+           const reply = result.querySelector('[data-testid=provider-console-reply]');\
+           const alert = result.querySelector('[role=alert]');\
+           if (reply && reply.textContent === 'SECRET-') partial = true;\
+           const dialog = [...document.querySelectorAll('[role=dialog]')].find(d => d.querySelector('pre')?.textContent.includes('console-approved'));\
+           if (dialog && !answered.has(dialog)) {{ privateDialog = privateDialog && !dialog.closest('[data-module-runtime],[data-module-id]'); const approve = [...dialog.querySelectorAll('button')].find(b => /^(Approve|批准)$/.test(b.textContent)); if (approve) {{ answered.add(dialog); approve.click(); approvals++; }} }}\
+           if ({prompt:?}.includes('console-cancel') && partial && !cancelled) {{ const cancel = [...root.querySelectorAll('button')].find(b => /^(Cancel run|取消运行)$/.test(b.textContent)); if (cancel) {{ cancel.click(); cancelled = true; }} }}\
+           if (result.getAttribute('aria-busy') === 'false' && (reply || alert)) return {{reply: reply && reply.textContent, alert: alert && alert.textContent, approvals, privateDialog, partial, cancelled, status: result.querySelector('[role=status]')?.textContent}};\
            await new Promise((r) => setTimeout(r, 50));\
          }}\
-         return {{timeout: 'provider response'}};"
+         return {{timeout: 'AI response'}};"
     );
     let result = eval(app, MAIN, &body).await;
     if result["ok"] == true { result["value"].clone() } else { result }
@@ -116,7 +124,7 @@ struct CallTrace(Mutex<Vec<Value>>);
 
 impl CallTrace {
     fn record(&self, command: &str, payload: &tauri::ipc::InvokeBody) {
-        if matches!(command, "module_call_provider" | "cancel_module_call") {
+        if matches!(command, "module_call_provider" | "cancel_module_call" | "module_run_ai" | "module_get_ai_run" | "module_cancel_ai_run") {
             if let tauri::ipc::InvokeBody::Json(args) = payload {
                 self.0.lock().unwrap().push(json!({"cmd": command, "callId": args["callId"]}));
             }
@@ -165,6 +173,8 @@ struct ProviderStats {
     /// Marker class of every authenticated request, in arrival order. Never
     /// the prompt text itself.
     trail: Mutex<Vec<&'static str>>,
+    skill_inputs: AtomicUsize,
+    tool_proposals: AtomicUsize,
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -213,6 +223,20 @@ async fn serve_provider(listener: TcpListener, stats: Arc<ProviderStats>) {
             let body = String::from_utf8_lossy(&data[head_end..]).into_owned();
             let authorized = head.contains(&format!("authorization: bearer {SECRET_KEY}"));
 
+            let request: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+            if authorized && body.contains("Selected skill guidance") { stats.skill_inputs.fetch_add(1, Ordering::SeqCst); }
+            if authorized && request["stream"] == true {
+                stats.hits.fetch_add(1, Ordering::SeqCst);
+                let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n").await;
+                for part in ["SECRET-", "REPLY-77af"] {
+                    let frame = format!("data: {}\n\n", json!({"choices":[{"delta":{"content":part},"finish_reason":null}]}));
+                    if socket.write_all(frame.as_bytes()).await.is_err() { return; }
+                    tokio::time::sleep(Duration::from_millis(if body.contains("console-cancel") { 1000 } else { 100 })).await;
+                }
+                let _ = socket.write_all(b"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n").await;
+                let _ = socket.shutdown().await;
+                return;
+            }
             let (status, payload) = if !authorized {
                 stats.unauthenticated.fetch_add(1, Ordering::SeqCst);
                 (
@@ -239,12 +263,15 @@ async fn serve_provider(listener: TcpListener, stats: Arc<ProviderStats>) {
                     } else if body.contains("SLOW") {
                         tokio::time::sleep(Duration::from_millis(SLOW_MS)).await;
                     }
-                    (
-                        "200 OK",
-                        format!(
-                            r#"{{"choices":[{{"message":{{"content":"{SECRET_REPLY}"}}}}],"usage":{{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}}}"#
-                        ),
-                    )
+                    let tool_messages = request["messages"].as_array().map(|messages| messages.iter().filter(|message| message["role"] == "tool").count()).unwrap_or(0);
+                    let selected_tool = request["tools"][0]["function"]["name"].as_str();
+                    let response = if let Some(name) = selected_tool.filter(|_| tool_messages < 2) {
+                        stats.tool_proposals.fetch_add(1, Ordering::SeqCst);
+                        json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":format!("console-tool-{tool_messages}"),"type":"function","function":{"name":name,"arguments":"{\"text\":\"console-approved\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}})
+                    } else {
+                        json!({"choices":[{"message":{"role":"assistant","content":SECRET_REPLY},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}})
+                    };
+                    ("200 OK", response.to_string())
                 };
                 stats.in_flight.fetch_sub(1, Ordering::SeqCst);
                 result
@@ -259,6 +286,14 @@ async fn serve_provider(listener: TcpListener, stats: Arc<ProviderStats>) {
     }
 }
 
+struct RefusingMcpVault;
+#[async_trait::async_trait]
+impl dgos_mcp::McpCredentialVault for RefusingMcpVault {
+    async fn store(&self, _: &dgos_mcp::CredentialScope, _: dgos_mcp::SecretToken) -> dgos_mcp::Result<()> { Err(dgos_mcp::McpError::CredentialUnavailable) }
+    async fn load(&self, _: &dgos_mcp::CredentialScope) -> dgos_mcp::Result<dgos_mcp::SecretToken> { Err(dgos_mcp::McpError::CredentialUnavailable) }
+    async fn remove(&self, _: &dgos_mcp::CredentialScope) -> dgos_mcp::Result<()> { Err(dgos_mcp::McpError::CredentialUnavailable) }
+}
+
 struct CallWorld {
     root: PathBuf,
     db: DatabaseConnection,
@@ -271,6 +306,9 @@ struct CallWorld {
     manager: ModuleOperationManager,
     management: ModuleManagementService,
     maintenance: dgos_db::MaintenanceGate,
+    ai: dgos_application::AiService,
+    confirmations: Arc<dgos_application::ModuleMcpConfirmations>,
+    mcp: Arc<dgos_mcp::McpManager>,
 }
 
 async fn build_world() -> (CallWorld, ModuleHostBridge, ProviderManager) {
@@ -287,6 +325,10 @@ async fn build_world() -> (CallWorld, ModuleHostBridge, ProviderManager) {
     let db = dgos_db::establish_connection(&url).await.unwrap();
     let maintenance = dgos_db::MaintenanceGate::new();
     dgos_db::migrations::Migrator::up(&db, None).await.unwrap();
+    // AI audit admission requires an existing account, even in this isolated host.
+    dgos_db::UserRepository::new(db.clone()).insert(dgos_db::NewUser {
+        id: USER, username: "Smoke", username_key: "smoke", password_hash: "fixture", now: 1,
+    }).await.unwrap();
 
     // Fake Provider on loopback.
     let stats = Arc::new(ProviderStats::default());
@@ -356,16 +398,15 @@ async fn build_world() -> (CallWorld, ModuleHostBridge, ProviderManager) {
             stop: Duration::from_secs(5),
         });
     let permissions = Arc::new(ModulePermissionRepository::new(db.clone()));
-    let dispatch = ModuleCapabilityDispatchService::new(HostCapabilityService::with_publisher(
-        permissions.clone(),
-        publisher.clone(),
-    ))
-    .with_provider_deadline(Duration::from_secs(1));
+    let capabilities = HostCapabilityService::with_publisher(permissions.clone(), publisher.clone());
+    let dispatch = ModuleCapabilityDispatchService::new(capabilities.clone())
+        .with_provider_deadline(Duration::from_secs(1));
     let manager = ModuleOperationManager::with_supervisor(
         publisher,
         supervisor,
         LocalModuleSources::new(sources),
     )
+    .with_builtin_sources(dgos_modules::BuiltinModuleSources::new(&bundled).unwrap()).unwrap()
     .with_maintenance(maintenance.clone());
     manager.spawn_lost_runtime_reporter(lost).unwrap();
     let management = ModuleManagementService::new(
@@ -373,6 +414,22 @@ async fn build_world() -> (CallWorld, ModuleHostBridge, ProviderManager) {
         manager.clone(),
         ModuleCrashService::new(ModuleCrashRepository::new(db.clone()), manager.clone()),
     );
+    let confirmations = Arc::new(dgos_application::ModuleMcpConfirmations::new(transport.clone()));
+    let mcp = Arc::new(dgos_mcp::McpManager::with_policy_and_vault(
+        db.clone(), Arc::new(commands::DesktopMcpPolicy(crate::session::SessionResolver::no_accounts())), Arc::new(RefusingMcpVault),
+    ).with_maintenance(maintenance.clone()));
+    let server = mcp.create_server(USER, dgos_mcp::CreateMcpServerRequest {
+        name: "console-local-tools".into(), transport: dgos_mcp::TransportKind::Stdio,
+        stdio: Some(dgos_mcp::StdioConfig { executable: "node".into(), args: vec![concat!(env!("CARGO_MANIFEST_DIR"), "/../crates/dgos-mcp/tests/fixtures/mcp-server.mjs").into(), "cancellation-observable".into()], cwd: None }),
+        http: None, enabled: Some(true), auto_connect: None,
+    }).await.unwrap();
+    mcp.connect(USER, &server.id).await.expect("connect local console MCP fixture");
+    let skills = dgos_skills::SkillsManager::new(db.clone(), root.join("skills"));
+    skills.register_bundled_catalog(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../skills")).await.unwrap();
+    skills.install_skill("dgos.official.writing.summarize", USER).await.unwrap();
+    let ai = dgos_application::AiService::new(capabilities, dgos_db::AiRunRepository::new(db.clone()), Arc::new(providers.clone()),
+        Arc::new(tokio::sync::RwLock::new(skills)), mcp.clone(), confirmations.clone(), maintenance.clone());
+    ai.recover_interrupted().await.unwrap();
     (
         CallWorld {
             root,
@@ -386,8 +443,11 @@ async fn build_world() -> (CallWorld, ModuleHostBridge, ProviderManager) {
             manager,
             management,
             maintenance,
+            ai,
+            confirmations: confirmations.clone(),
+            mcp,
         },
-        ModuleHostBridge::new(loader, transport),
+        ModuleHostBridge::new(loader, transport).with_mcp_confirmations(confirmations),
         providers,
     )
 }
@@ -1146,11 +1206,13 @@ async fn scenario(app: AppHandle, world: CallWorld, bridge_ready: bool) {
         format!("{started} {o:?}"),
     );
 
+    // Raw providers.call requests have one log each. AI tool turns intentionally share one request id.
+    let raw_call_logs = usage(&app).await;
     // -- The shipped first-party module under its real pin (D052) -----------------
     let manifest: Value = serde_json::from_str(
         &fs::read_to_string(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../bundled-modules/provider-console/1.0.0/manifest.json"),
+                .join("../bundled-modules/provider-console/1.1.0/manifest.json"),
         )
         .unwrap(),
     )
@@ -1166,7 +1228,7 @@ async fn scenario(app: AppHandle, world: CallWorld, bridge_ready: bool) {
         "the provisioned bundled module starts under the compiled-in pin",
         started["outcome"] == "started"
             && st["state"] == "ready"
-            && st["version"] == "1.0.0"
+            && st["version"] == "1.1.0"
             && st["integrity"] == pinned_digest.as_str(),
         format!("{started} {st}"),
     );
@@ -1174,6 +1236,8 @@ async fn scenario(app: AppHandle, world: CallWorld, bridge_ready: bool) {
     // without invalidating the shell catalog, so the live module UI must
     // prove the host rechecks authorization on its next catalog request.
     world.permissions.grant(USER, CONSOLE, ModulePermission::ProvidersCall).await.unwrap();
+    world.permissions.grant(USER, CONSOLE, ModulePermission::SkillsExecute).await.unwrap();
+    world.permissions.grant(USER, CONSOLE, ModulePermission::McpCall).await.unwrap();
     let opened = open_console(&app).await;
     world.permissions.revoke(USER, CONSOLE, ModulePermission::ProvidersCall).await.unwrap();
     let audits_before = denied_audits(&world.db, CONSOLE).await;
@@ -1197,12 +1261,32 @@ async fn scenario(app: AppHandle, world: CallWorld, bridge_ready: bool) {
         shown["reply"] == SECRET_REPLY && hits() == hits_before + 1,
         format!("{shown} hits+={}", hits() - hits_before),
     );
+    let shown = drive_console(&app, "console-cancel").await;
+    let hits_after_cancel = hits();
+    let lookup_trace_before = app.state::<CallTrace>().len();
+    let queried = eval(&app, MAIN, "const root = document.querySelector('[data-module-view] [data-testid=provider-console]'); const result = root.querySelector('.provider-console-result'); const check = [...result.querySelectorAll('button')].find(b=> /核实状态|Check status/.test(b.textContent)); if (!check) return false; check.click(); await new Promise(r=>setTimeout(r,200)); return root.textContent.includes('未知') || root.textContent.includes('unknown');").await;
+    checks.check("real host.ai stream shows a delta before cancellation and unknown can be queried without replay",
+        shown["partial"] == true && shown["cancelled"] == true && shown["alert"].as_str().is_some() && queried["value"] == true && hits() == hits_after_cancel
+            && app.state::<CallTrace>().since(lookup_trace_before).iter().any(|entry| entry["cmd"] == "module_get_ai_run"),
+        format!("{shown} query={queried}"));
+    let skill_before = stats.skill_inputs.load(Ordering::SeqCst);
+    let proposed_before = stats.tool_proposals.load(Ordering::SeqCst);
+    let mcp_before = scalar(&world.db, "SELECT COUNT(*) AS n FROM mcp_usage_logs WHERE caller='module'").await;
+    let shown = drive_console(&app, "console-tools").await;
+    checks.check("the real bundled consumer pins a content Skill and approves each of two local MCP calls outside the module",
+        shown["reply"] == SECRET_REPLY && shown["approvals"] == 2 && shown["privateDialog"] == true
+            && stats.skill_inputs.load(Ordering::SeqCst) > skill_before && stats.tool_proposals.load(Ordering::SeqCst) == proposed_before + 2
+            && scalar(&world.db, "SELECT COUNT(*) AS n FROM mcp_usage_logs WHERE caller='module'").await == mcp_before + 2,
+        format!("{shown}; proposed={} mcp={}", stats.tool_proposals.load(Ordering::SeqCst)-proposed_before, scalar(&world.db, "SELECT COUNT(*) AS n FROM mcp_usage_logs WHERE caller='module'").await-mcp_before));
+    checks.check("module runs never create chat sessions or messages",
+        scalar(&world.db, "SELECT COUNT(*) AS n FROM chat_sessions").await == 0 && scalar(&world.db, "SELECT COUNT(*) AS n FROM chat_messages").await == 0,
+        "isolated temporary database");
     let _ = eval(&app, MAIN, "history.pushState({}, '', '/settings'); window.dispatchEvent(new PopStateEvent('popstate')); return true;").await;
     let _ = run_op(&app, "stop_module", CONSOLE).await;
 
     // -- Attribution and redaction ------------------------------------------------
     let logs = usage(&app).await;
-    let module_logs: Vec<_> = logs
+    let module_logs: Vec<_> = raw_call_logs
         .iter()
         .filter(|l| l.caller.as_deref() == Some("module"))
         .collect();
@@ -1220,6 +1304,8 @@ async fn scenario(app: AppHandle, world: CallWorld, bridge_ready: bool) {
     );
     let mut haystack = format!("{logs:?}\n{}", audit_dump(&world.db).await);
     haystack.push_str(&format!("{:?}", world.router.len()));
+    let ai_rows = world.db.query_all(Statement::from_string(world.db.get_database_backend(), "SELECT skill_refs,tool_refs,terminal_status,terminal_reason FROM ai_run_bindings".to_owned())).await.unwrap();
+    haystack.push_str(&format!("{ai_rows:?}"));
     let mut leaked = Vec::new();
     for secret in [SECRET_PROMPT, SECRET_KEY, SECRET_REPLY, "attacker"] {
         if haystack.contains(secret) {
@@ -1242,6 +1328,7 @@ async fn scenario(app: AppHandle, world: CallWorld, bridge_ready: bool) {
         format!("{}", stats.unauthenticated.load(Ordering::SeqCst)),
     );
     let _ = run_op(&app, "stop_module", GRANTED).await;
+    let _ = world.mcp.shutdown().await;
     finish(checks, &world.root);
 }
 
@@ -1263,6 +1350,9 @@ pub fn run_call() {
     let dispatch = world.dispatch.clone();
     let management = world.management.clone();
     let maintenance = world.maintenance.clone();
+    let ai = world.ai.clone();
+    let confirmations = world.confirmations.clone();
+    let mcp_service = dgos_application::ModuleMcpService::new(confirmations.clone(), world.mcp.clone(), world.db.clone());
     let scenario_world = Mutex::new(Some(world));
     let result = tauri::Builder::default()
         .manage(Pending::default())
@@ -1276,6 +1366,9 @@ pub fn run_call() {
         .manage(dispatch)
         .manage(management)
         .manage(providers)
+        .manage(ai)
+        .manage(confirmations)
+        .manage(mcp_service)
         .on_page_load(|webview, payload| {
             module_host::handle_page_load(webview, payload);
             if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
@@ -1290,7 +1383,7 @@ pub fn run_call() {
         .setup(move |app| {
             let events = app.state::<LoadEvents>().0.subscribe();
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("settings".into()))
-                .visible(false)
+                .visible(true)
                 .build()?;
             let handle = app.handle().clone();
             let world = scenario_world.lock().unwrap().take().unwrap();
@@ -1314,6 +1407,14 @@ pub fn run_call() {
             commands::module_call_provider,
             commands::module_list_provider_catalog,
             commands::cancel_module_call,
+            commands::module_run_ai,
+            commands::module_list_ai_providers,
+            commands::module_list_ai_skills,
+            commands::module_list_ai_tools,
+            commands::module_list_ai_runs,
+            commands::module_get_ai_run,
+            commands::module_cancel_ai_run,
+            commands::resolve_module_mcp_confirmation,
             super::smoke_report,
             ];
             handler(invoke)

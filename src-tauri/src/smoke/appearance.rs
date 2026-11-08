@@ -153,15 +153,27 @@ async fn scenario(app: AppHandle, ready: bool) {
         contrast.to_string(),
     );
 
-    // AC03 and the 14px-root arithmetic (D064, D066): px values at every density.
+    // All ten layout scales affect geometry only; UI, reading and code text remain independent.
     let density = js(
         &app,
-        "const out = {}; for (const d of [75, 100, 125, 150, 175]) { root.setAttribute('data-density', String(d)); \
-         const sp = probe('padding: var(--spacing-2)'); const u = probe('padding: var(--spacing-unit)'); \
-         const sizes = {}; for (const s of ['xs', 'sm', 'base', 'lg', 'xl', '2xl', '3xl', '4xl']) { const e = probe(`font-size: var(--font-size-${s})`); sizes[s] = px(css(e, 'fontSize')); } \
-         const rad = probe('border-radius: var(--radius-md); width: 10px; height: 10px'); \
-         out[d] = { root: px(css(root, 'fontSize')), spacing2: px(css(sp, 'paddingTop')), unit: px(css(u, 'paddingTop')), radiusMd: px(css(rad, 'borderTopLeftRadius')), body: px(css(document.body, 'fontSize')), sizes }; } \
-         root.setAttribute('data-density', '100'); document.querySelectorAll('[data-smoke-probe]').forEach(e => e.remove()); return out;",
+        r#"const out = {}; const saved = root.getAttribute('style');
+         const ui = probe(''); ui.className = 'text-xs'; ui.textContent = 'Interface';
+         const reading = probe(''); reading.className = 'type-reading'; reading.textContent = 'Reading';
+         const code = probe(''); code.className = 'type-code'; code.textContent = 'const value = 1';
+         const box = probe('width: calc(280rem / 14); display: flex; gap: var(--spacing-2); padding: var(--spacing-2); border-radius: var(--radius-md)');
+         for (const d of [60, 70, 80, 90, 100, 110, 120, 130, 140, 150]) { root.setAttribute('data-density', String(d));
+           const unit = probe('padding: var(--spacing-unit)');
+           const sizes = {}; for (const s of ['xs', 'sm', 'base', 'lg', 'xl', '2xl', '3xl', '4xl']) { const e = probe(`font-size: var(--font-size-${s})`); sizes[s] = px(css(e, 'fontSize')); }
+           const domains = {};
+           for (const [name, values] of Object.entries({custom:[16,20,18],ui:[20,20,18],reading:[16,24,18],code:[16,20,24]})) {
+             ['ui','reading','code'].forEach((role,index) => root.style.setProperty(`--font-size-${role}`, `${values[index]}px`));
+             domains[name] = {text:[ui,reading,code].map(el=>px(css(el,'fontSize'))),box:box.getBoundingClientRect().width,gap:px(css(box,'columnGap'))};
+           }
+           root.style.removeProperty('--font-size-ui'); root.style.removeProperty('--font-size-reading'); root.style.removeProperty('--font-size-code');
+           out[d] = {root:px(css(root,'fontSize')),spacing2:px(css(box,'paddingTop')),unit:px(css(unit,'paddingTop')),radiusMd:px(css(box,'borderTopLeftRadius')),body:px(css(document.body,'fontSize')),box:box.getBoundingClientRect().width,sizes,domains};
+         }
+         if(saved===null)root.removeAttribute('style');else root.setAttribute('style',saved);
+         root.setAttribute('data-density', '100'); document.querySelectorAll('[data-smoke-probe]').forEach(e => e.remove()); return out;"#,
     )
     .await;
     println!("INFO density {density}");
@@ -191,50 +203,53 @@ async fn scenario(app: AppHandle, ready: bool) {
         want.iter().all(|(k, px)| near(&d100["sizes"][*k], *px)),
         d100["sizes"].to_string(),
     );
-    for (level, scale) in [("75", 0.75), ("125", 1.25), ("150", 1.5), ("175", 1.75)] {
-        let d = &density[level];
+    for level in [60, 70, 80, 90, 100, 110, 120, 130, 140, 150] {
+        let scale = f64::from(level) / 100.0;
+        let d = &density[level.to_string()];
         checks.check(
-            &format!("{level}%: root and spacing scale by {scale} (interface zoom)"),
+            &format!("{level}%: rendered box, spacing and corner geometry scale by {scale}"),
             near(&d["root"], 14.0 * scale)
+                && near(&d["box"], d100["box"].as_f64().unwrap_or(0.0) * scale)
+                && near(&d["radiusMd"], 8.0 * scale)
                 && near(&d["spacing2"], 8.0 * scale)
                 && near(&d["unit"], 4.0 * scale),
             d.to_string(),
         );
+        checks.check(
+            &format!("{level}%: every rendered type token and body size stay unchanged"),
+            d["sizes"] == d100["sizes"] && near(&d["body"], 12.0),
+            d.to_string(),
+        );
+        for (role, sizes) in [("custom", [16.0,20.0,18.0]), ("ui", [20.0,20.0,18.0]), ("reading", [16.0,24.0,18.0]), ("code", [16.0,20.0,24.0])] {
+            let domains = &d["domains"][role];
+            checks.check(
+                &format!("{level}%: {role} text adjustment preserves the other text domains and layout geometry"),
+                sizes.iter().enumerate().all(|(index,size)| near(&domains["text"][index], *size))
+                    && near(&domains["box"], d["box"].as_f64().unwrap_or(0.0))
+                    && near(&domains["gap"], 8.0 * scale),
+                domains.to_string(),
+            );
+        }
     }
-    // D064 floor: nothing below 11px at 75%, and still non-decreasing in the scale.
-    let floor_ok = ["75", "100", "125", "150", "175"].iter().all(|level| {
-        let sizes: Vec<f64> = want
-            .iter()
-            .map(|(k, _)| density[*level]["sizes"][*k].as_f64().unwrap_or(0.0))
-            .collect();
-        sizes.iter().all(|s| *s >= 10.99) && sizes.windows(2).all(|w| w[0] <= w[1] + 0.001)
-    });
-    checks.check(
-        "every size token >= 11px at every density, scale stays ordered",
-        floor_ok,
-        density.to_string(),
-    );
-    println!("INFO 75% sizes {}", density["75"]["sizes"]);
 
-    // 800x600 is the minimum window; report horizontal overflow per density on the real page. Reading
-    // scrollWidth forces layout; requestAnimationFrame is not used because a hidden window never fires it.
-    // Asserted only where the legacy (un-migrated) shell is expected to fit; the rest is information (Phase 7/8).
+    // Measure the production shell's horizontal overflow at every supported layout level.
+    // scrollWidth forces layout even when this calibration window is hidden.
     let overflow = js(
         &app,
-        "const out = {}; for (const d of [75, 100, 125, 150, 175]) { root.setAttribute('data-density', String(d)); \
+        "const out = {}; for (const d of [60, 70, 80, 90, 100, 110, 120, 130, 140, 150]) { root.setAttribute('data-density', String(d)); \
          out[d] = { scrollW: root.scrollWidth, clientW: root.clientWidth, over: root.scrollWidth > root.clientWidth }; } root.setAttribute('data-density', '100'); return out;",
     )
     .await;
     println!("INFO overflow (window as created) {overflow}");
     checks.check(
-        "no horizontal overflow of the shell at 100% in the harness window",
-        overflow["100"]["over"] == false,
-        overflow["100"].to_string(),
+        "no horizontal overflow of the shell at every layout level in the harness window",
+        [60,70,80,90,100,110,120,130,140,150].iter().all(|level| overflow[level.to_string()]["over"] == false),
+        overflow.to_string(),
     );
 
     let loaded = super::goto(&app, "main", "/settings/appearance").await;
     checks.check("control scenario loads appearance editor", loaded, "navigation failed");
-    let roles = js(&app, "for(let i=0;i<100&&!document.querySelector('.appearance-editor input');i++)await new Promise(r=>setTimeout(r,50));root.dataset.density='75';root.style.setProperty('--font-size-ui','16px');root.style.setProperty('--font-size-code','18px');const code=document.createElement('code');code.className='text-xs';code.textContent='path/example';document.body.append(code);const input=document.querySelector('.appearance-editor input');const button=document.querySelector('.appearance-editor .settings-actions button');root.dataset.reducedMotion='reduce';return {code:css(code,'fontSize'),input:input.getBoundingClientRect().height,line:px(css(input,'lineHeight')),button:button.getBoundingClientRect().height,transition:css(button,'transitionProperty')};").await;
+    let roles = js(&app, "for(let i=0;i<100&&!document.querySelector('.appearance-editor input');i++)await new Promise(r=>setTimeout(r,50));root.dataset.density='90';root.style.setProperty('--font-size-ui','16px');root.style.setProperty('--font-size-code','18px');const code=document.createElement('code');code.className='text-xs';code.textContent='path/example';document.body.append(code);const input=document.querySelector('.appearance-editor input');const button=document.querySelector('.appearance-footer button');root.dataset.reducedMotion='reduce';return {code:css(code,'fontSize'),input:input.getBoundingClientRect().height,line:px(css(input,'lineHeight')),button:button.getBoundingClientRect().height,transition:css(button,'transitionProperty')};").await;
     checks.check("large independent code and UI text fit compact controls with reduced motion",roles["code"]=="18px"&&roles["input"].as_f64().unwrap_or(0.0)>roles["line"].as_f64().unwrap_or(999.0)&&roles["button"]==roles["input"]&&roles["transition"]=="none",roles.to_string());
 
     // The gate itself: with the attribute back on, nothing paints and the body is not the light token.

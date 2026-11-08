@@ -95,6 +95,20 @@ impl SessionView {
             run,
         });
     }
+    pub(crate) fn replace_history_event(&mut self, seq: u64, kind: &str, text: Option<String>, data: Value) -> bool {
+        let Some(event) = self.events.iter_mut().find(|event| event.seq == seq) else { return false; };
+        let old = event.text.as_ref().map_or(0, String::len) + json_size(&event.data);
+        let incoming = text.as_ref().map_or(0, String::len) + json_size(&data);
+        if self.retained_bytes - old + incoming > 16 * 1024 * 1024 {
+            self.history_truncated = true;
+            return false;
+        }
+        self.retained_bytes = self.retained_bytes - old + incoming;
+        event.kind = kind.into();
+        event.text = text;
+        event.data = data;
+        true
+    }
 }
 pub fn resolve_executable(name: &str, explicit: Option<&str>) -> Result<PathBuf, String> {
     if let Some(explicit) = explicit.filter(|s| !s.is_empty()) {

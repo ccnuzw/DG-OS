@@ -15,14 +15,14 @@ async fn legacy_migration_failure_preserves_bytes_and_rejects_admission() {
     ])).unwrap();
     std::fs::write(&old, &bytes).unwrap();
     let repository = crate::test_support::repository(&root).await;
-    let manager = AgentManager::new(old.clone(), repository.clone());
+    let manager = AgentManager::new(old.clone(), repository.clone(), crate::test_support::providers(&root, repository.clone()).await);
     assert!(manager.load().await.is_err());
     assert_eq!(std::fs::read(&old).unwrap(), bytes);
     assert!(!repository.legacy_imported().await.unwrap());
     assert!(repository.sessions().await.unwrap().is_empty());
     assert!(manager.create_project("alice", import(&root), CancellationToken::new()).await.is_err());
     std::fs::write(&old, serde_json::to_vec(&serde_json::json!([{ "id":id,"owner":"alice","engine":"codex","native_id":"native-a","workspace":root }])).unwrap()).unwrap();
-    let reloaded = AgentManager::new(old.clone(), repository.clone());
+    let reloaded = AgentManager::new(old.clone(), repository.clone(), crate::test_support::providers(&root, repository.clone()).await);
     reloaded.load().await.unwrap();
     let workspace = reloaded.development_workspace("alice").await.unwrap();
     assert!(workspace.projects.is_empty() && workspace.tasks.is_empty());
@@ -30,7 +30,7 @@ async fn legacy_migration_failure_preserves_bytes_and_rejects_admission() {
     assert_eq!(workspace.sessions[0].native_id.as_deref(), Some("native-a"));
     // A successful mark makes the retired JSON non-authoritative, even if later damaged.
     std::fs::write(&old, "retired file changed outside app").unwrap();
-    let next = AgentManager::new(old.clone(), repository);
+    let next = AgentManager::new(old.clone(), repository.clone(), crate::test_support::providers(&root, repository).await);
     next.load().await.unwrap();
     assert_eq!(next.list("alice").await[0].native_id.as_deref(), Some("native-a"));
     std::fs::remove_dir_all(root).unwrap();
@@ -39,20 +39,22 @@ async fn legacy_migration_failure_preserves_bytes_and_rejects_admission() {
 async fn database_commit_failure_leaves_legacy_and_all_rows_unimported() {
     use dgos_db::migrations::{Migrator, MigratorTrait};
     let root = root();
-    let db = dgos_db::establish_connection("sqlite::memory:").await.unwrap(); Migrator::up(&db, None).await.unwrap();
+    let db = dgos_db::establish_connection(&format!("sqlite://{}?mode=rwc", root.join("metadata.sqlite").display())).await.unwrap(); Migrator::up(&db, None).await.unwrap();
     db.execute(Statement::from_string(DbBackend::Sqlite, "CREATE TRIGGER deny_import BEFORE INSERT ON development_migrations BEGIN SELECT RAISE(ABORT, 'injected'); END".to_string())).await.unwrap();
     let old = root.join("index.json");
     let bytes = serde_json::to_vec(&serde_json::json!([{ "id":Uuid::new_v4(),"owner":"alice","engine":"codex","native_id":"saved","workspace":root }])).unwrap();
     std::fs::write(&old, &bytes).unwrap();
     let repository = dgos_db::DevelopmentRepository::new(db.clone());
-    let manager = AgentManager::new(old.clone(), repository.clone());
+    let manager = AgentManager::new(old.clone(), repository.clone(), crate::test_support::providers(&root, repository.clone()).await);
     assert!(manager.load().await.is_err());
     assert_eq!(std::fs::read(&old).unwrap(), bytes);
     assert!(repository.sessions().await.unwrap().is_empty());
     assert!(!repository.legacy_imported().await.unwrap());
     db.execute_unprepared("DROP TRIGGER deny_import").await.unwrap();
-    let next = AgentManager::new(old, repository); next.load().await.unwrap();
+    let next = AgentManager::new(old, repository.clone(), crate::test_support::providers(&root, repository).await); next.load().await.unwrap();
     assert_eq!(next.list("alice").await[0].native_id.as_deref(), Some("saved"));
+    assert!(manager.shutdown().await);
+    assert!(next.shutdown().await);
     std::fs::remove_dir_all(root).unwrap();
 }
 #[tokio::test]
@@ -137,5 +139,65 @@ async fn failed_clone_and_revoked_create_preserve_disk_and_report_operations() {
     let cancelled = root.join("cancelled");
     assert!(manager.create_project("alice", CreateProjectInput { kind: "create".into(), name: "Cancelled".into(), path: cancelled.to_string_lossy().into(), source: None }, revoked).await.is_err());
     assert!(!cancelled.exists());
+    std::fs::remove_dir_all(root).unwrap();
+}
+async fn admission_manager(root: &std::path::Path) -> AgentManager {
+    let repository = crate::test_support::repository(root).await;
+    let database_url = format!("sqlite://{}?mode=rwc", root.join("metadata.sqlite").display());
+    let provider_manager = dgos_providers::ProviderManager::new(&database_url).await.unwrap();
+    let providers = crate::capabilities::CliProviders::new(repository.clone(), provider_manager).unwrap();
+    let manager = AgentManager::new(root.join("index.json"), repository, providers);
+    manager.load().await.unwrap();
+    manager
+}
+
+#[tokio::test]
+async fn project_admission_checks_owner_archive_and_directory_identity() {
+    let root = root();
+    let path = root.join("project");
+    std::fs::create_dir(&path).unwrap();
+    let manager = admission_manager(&root).await;
+    let project = manager.create_project("alice", import(&path), CancellationToken::new()).await.unwrap();
+
+    assert!(manager.admit_native_project("bob", &project.id, &CancellationToken::new()).await.is_err());
+    let admission = manager.admit_native_project("alice", &project.id, &CancellationToken::new()).await.unwrap();
+    assert_eq!(admission.project.owner, "alice");
+    drop(admission);
+
+    manager.update_project("alice", UpdateProjectInput { project_id: project.id.clone(), action: "archive".into(), value: None }, CancellationToken::new()).await.unwrap();
+    assert!(matches!(manager.admit_native_project("alice", &project.id, &CancellationToken::new()).await, Err(error) if error == "project_archived"));
+    manager.update_project("alice", UpdateProjectInput { project_id: project.id.clone(), action: "restore".into(), value: None }, CancellationToken::new()).await.unwrap();
+
+    std::fs::remove_dir_all(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    assert!(matches!(manager.admit_native_project("alice", &project.id, &CancellationToken::new()).await, Err(error) if error == "workspace_changed"));
+    manager.shutdown().await;
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn project_admission_permit_serializes_archive_updates() {
+    let root = root();
+    let path = root.join("project");
+    std::fs::create_dir(&path).unwrap();
+    let manager = admission_manager(&root).await;
+    let project = manager.create_project("alice", import(&path), CancellationToken::new()).await.unwrap();
+    let admission = manager.admit_native_project("alice", &project.id, &CancellationToken::new()).await.unwrap();
+
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let update_manager = manager.clone();
+    let update_id = project.id.clone();
+    let update = tokio::spawn(async move {
+        let _ = started_tx.send(());
+        update_manager.update_project("alice", UpdateProjectInput { project_id: update_id, action: "archive".into(), value: None }, CancellationToken::new()).await
+    });
+    started_rx.await.unwrap();
+    let mut update = update;
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(50), &mut update).await.is_err());
+
+    drop(admission);
+    assert!(update.await.unwrap().is_ok());
+    assert!(matches!(manager.admit_native_project("alice", &project.id, &CancellationToken::new()).await, Err(error) if error == "project_archived"));
+    manager.shutdown().await;
     std::fs::remove_dir_all(root).unwrap();
 }

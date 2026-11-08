@@ -3,7 +3,7 @@ use super::*;
 pub fn run_agents() {
     let root = std::env::var_os("DGOS_PROJECT_ACCEPTANCE_ROOT").map(PathBuf::from).unwrap_or_else(|| std::env::temp_dir().join(format!("dgos-project-desktop-{}", uuid::Uuid::new_v4())));
     let fx = tauri::async_runtime::block_on(open_fx(&root));
-    let manager = tauri::async_runtime::block_on(load_agents(&fx));
+    let (manager, cli_providers, providers, vault) = tauri::async_runtime::block_on(load_agents(&fx));
     let watchdog = if std::env::var_os("DGOS_PROJECT_ACCEPTANCE_ROOT").is_some() { ACCEPTANCE_WATCHDOG } else { DEFAULT_WATCHDOG };
     std::thread::spawn(move || { std::thread::sleep(watchdog); eprintln!("SMOKE RESULT: watchdog expired"); std::process::exit(2); });
     let (sender, _) = broadcast::channel(64);
@@ -11,6 +11,7 @@ pub fn run_agents() {
     context.config_mut().app.windows.clear();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(Pending::default())
         .manage(SessionResolver::starting())
         .manage(LoadEvents(sender))
@@ -20,6 +21,9 @@ pub fn run_agents() {
         .manage(dgos_db::DesktopRepository::new(fx.db.clone()))
         .manage(CliRepository::new(fx.db.clone()))
         .manage(manager)
+        .manage(cli_providers)
+        .manage(providers)
+        .manage(vault)
         .manage(fx.clone())
         .on_page_load(|webview, payload| {
             if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
@@ -35,18 +39,9 @@ pub fn run_agents() {
             if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| phase.starts_with("stage6-") || matches!(phase.as_str(), "terminal-activity" | "worktree-runtime" | "layout-round2" | "terminal-round3" | "workflows-round3" | "round4-native" | "round4-pending-fixture")) || std::env::var_os("DGOS_AGENT_CLOSE_ONLY").is_some() {
                 let fx = app.state::<Fx>();
                 let skills = Arc::new(tokio::sync::RwLock::new(dgos_skills::SkillsManager::new(db.clone(), fx.root.join("skills"))));
-                let capabilities = tauri::async_runtime::block_on(async {
-                    dgos_agents::capabilities::ProjectCapabilities::new(
-                        DevelopmentRepository::new(db.clone()),
-                        dgos_providers::ProviderManager::new(&format!("sqlite://{}?mode=rwc", fx.root.join("dgos.db").display())).await.expect("stage6 providers"),
-                        skills.clone(),
-                        mcp.clone(), fx.root.join("capability-material"))
-                });
-                app.state::<AgentManager>().install_capabilities(capabilities.clone());
-                app.manage(capabilities);
-                app.manage(skills);
+                app.manage(skills.clone());
             }
-            if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| matches!(phase.as_str(), "layout-round2" | "terminal-round3" | "workflows-round3" | "round4-native" | "round4-pending-fixture")) {
+            if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| matches!(phase.as_str(), "layout-round2" | "terminal-round3" | "terminal-activity" | "workflows-round3" | "round4-native" | "round4-pending-fixture")) {
                 tauri::async_runtime::block_on(super::layout_round2::install(app));
             }
             let accounts = tauri::async_runtime::block_on(async {
@@ -65,7 +60,7 @@ pub fn run_agents() {
             Ok(())
         })
         .invoke_handler(|invoke| {
-            if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| matches!(phase.as_str(), "layout-round2" | "terminal-round3" | "workflows-round3" | "round4-native" | "round4-pending-fixture"))
+            if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| matches!(phase.as_str(), "layout-round2" | "terminal-round3" | "terminal-activity" | "workflows-round3" | "round4-native" | "round4-pending-fixture"))
                 && matches!(invoke.message.command(), "set_appearance_preferences" | "recover_appearance_preferences" | "read_workspace_app_catalog") {
                 let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![commands::set_appearance_preferences, commands::recover_appearance_preferences, commands::read_workspace_app_catalog];
                 return handler(invoke);
@@ -73,6 +68,7 @@ pub fn run_agents() {
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
             commands::get_account_state, commands::create_account, commands::sign_in, commands::sign_out,
             commands::get_appearance_preferences, commands::get_language_preferences, commands::set_language_preferences,
+            commands::list_local_fonts,
             commands::get_desktop_preferences, commands::set_desktop_preferences,
             commands::get_cli_preferences, commands::set_cli_preferences,
             commands::read_development_workspace, commands::create_development_project,
@@ -86,10 +82,9 @@ pub fn run_agents() {
             commands::start_development_process, commands::read_development_process, commands::list_development_processes,
             commands::stop_development_process, commands::write_development_terminal, commands::resize_development_terminal,
             commands::open_development_external,
-            commands::read_development_capabilities, commands::save_development_capabilities,
-            commands::revoke_development_capabilities, commands::read_development_capability_catalog,
-            commands::get_development_session_capabilities, commands::list_development_capability_confirmations,
-            commands::respond_development_capability_confirmation,
+            commands::read_development_cli_provider, commands::save_development_cli_provider,
+            commands::revoke_development_cli_provider, commands::read_development_cli_provider_catalog,
+            commands::get_development_session_configuration,
             commands::read_development_workspaces, commands::save_development_workspaces,
             commands::read_development_git, commands::execute_development_git, commands::reconcile_development_git,
             commands::prepare_development_handoff, commands::list_development_handoffs, commands::accept_development_handoff,

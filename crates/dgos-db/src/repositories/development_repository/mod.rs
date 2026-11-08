@@ -4,6 +4,7 @@
 //! account and project. Failures use the stable strings from the V7 project contract.
 mod projects;
 mod executions;
+mod cutover;
 mod sessions;
 mod runtime;
 mod capabilities;
@@ -16,8 +17,9 @@ mod tests;
 #[cfg(test)]
 mod capability_tests;
 
-pub use executions::StoredRun;
 pub use capabilities::{StoredCapabilityRevision, StoredSessionCapabilities};
+pub use executions::StoredRun;
+pub use cutover::{CleanupObservation, CleanupReceipt, CleanupTarget, CliProviderConfiguration, CliProviderSnapshot, CliRevocationScope, CutoverContext, CutoverReceipt, HostBootObservation, OpeningBinding, OpeningReceipt, OwnedCutoverView, SessionConfiguration, StoredCliBinding};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, QueryResult, Statement, TransactionTrait, Value};
 use serde::{Deserialize, Serialize};
 

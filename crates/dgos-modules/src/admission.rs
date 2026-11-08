@@ -61,10 +61,19 @@ impl ModuleAdmission for PinnedModuleAdmission {
     }
 }
 
-/// `(module_id, version, sha256)` of packages shipped with this build. Every
-/// entry must equal the digest the host recomputes from the shipped bundle
-/// (`release_gate`); the shape and artifact gates run in `cargo test`.
+/// Current executable releases. Provisioning and explicit updates select these
+/// pins only; retained releases below are verified artifacts, never execution grants.
 pub(crate) const BUILTIN_PINS: &[(&str, &str, &str)] = &[
+    (
+        "provider-console",
+        "1.1.0",
+        "v2:f911840c0ec1ff38fa11ce8cef9bd36a1834202b48191936683841601ad52d0c",
+    ),
+];
+
+/// Original packages retained for upgrade/recovery evidence. They are not
+/// installed on a fresh profile and cannot execute under production admission.
+pub(crate) const RETAINED_PINS: &[(&str, &str, &str)] = &[
     (
         "provider-console",
         "1.0.0",

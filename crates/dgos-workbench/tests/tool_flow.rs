@@ -15,12 +15,115 @@ use dgos_providers::{
     ProviderManager,
 };
 use dgos_skills::SkillsManager;
-use dgos_types::{Model, ProviderConfig};
+use dgos_types::{AiToolSelection, Model, ProviderConfig};
 use dgos_workbench::{
-    TaskInput, ToolAction, ToolSelection, ToolTaskInput, ToolTaskUpdate, WorkbenchManager,
+    TaskInput, ToolAction, ToolTaskInput, ToolTaskUpdate, WorkbenchManager,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
+
+struct CoreGuard { allow: bool, revoke: bool, expected_arguments: Value, approvals: std::sync::atomic::AtomicUsize }
+#[async_trait]
+impl dgos_workbench::ExecutionGuard for CoreGuard {
+    async fn before_model(&self) -> Result<(), String> { Ok(()) }
+    async fn before_tool(&self) -> Result<(), String> {
+        if self.revoke { Err("account_revoked".into()) } else { Ok(()) }
+    }
+    async fn approve(&self, proposal: &dgos_workbench::ToolProposal) -> Result<bool, String> {
+        assert_eq!(proposal.arguments, self.expected_arguments);
+        self.approvals.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(self.allow)
+    }
+}
+
+#[tokio::test]
+async fn public_executor_approval_is_exact_once_and_rechecks_before_dispatch() {
+    for (allow, revoke, expected) in [(false, false, "tool_denied"), (true, true, "account_revoked")] {
+        let mut server = mockito::Server::new_async().await;
+        let model = proposal_mock(&mut server, proposed("dgos_tool_0", json!({"text":"core-exact"}))).await;
+        let f = setup(&server.url()).await;
+        let guard = CoreGuard { allow, revoke, expected_arguments: json!({"text":"core-exact"}), approvals: Default::default() };
+        let request = dgos_workbench::ExecutionRequest {
+            user: "alice".into(), provider_id: f.input.provider_id.clone(), model_id: "chat".into(), revision: None,
+            messages: vec![dgos_types::ChatMessage { role: "user".into(), content: "use echo".into(), images: vec![] }],
+            tools: f.tool_input().tools, generation: Default::default(), context_window: Some(65536),
+            provenance: dgos_types::ExecutionProvenance { caller: dgos_types::BuiltinCaller::Workbench, request_id: uuid::Uuid::new_v4().to_string() },
+            cancellation: tokio_util::sync::CancellationToken::new(), deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(10),
+        };
+        let result = dgos_workbench::AiExecutor::run(&f.providers, &f.mcp, request, &guard, &|_| true).await;
+        assert_eq!(result.error.as_deref(), Some(expected));
+        assert!(!result.result_unknown);
+        assert_eq!(guard.approvals.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(f.mcp.list_usage_logs("alice", None, None).await.unwrap().is_empty());
+        model.assert_async().await;
+        f.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn public_executor_preserves_provider_auth_rejection_without_unknown_or_tool_dispatch() {
+    let mut server = mockito::Server::new_async().await;
+    let rejected = server.mock("POST", "/chat/completions").with_status(401)
+        .with_body(r#"{"error":{"message":"private upstream text"}}"#).expect(2).create_async().await;
+    let f = setup(&server.url()).await;
+    for tools in [vec![], f.tool_input().tools] {
+        let guard = CoreGuard { allow: true, revoke: false, expected_arguments: Value::Null, approvals: Default::default() };
+        let request = dgos_workbench::ExecutionRequest {
+            user: "alice".into(), provider_id: f.input.provider_id.clone(), model_id: "chat".into(), revision: None,
+            messages: vec![dgos_types::ChatMessage { role: "user".into(), content: "request".into(), images: vec![] }],
+            tools, generation: Default::default(), context_window: Some(65536),
+            provenance: dgos_types::ExecutionProvenance { caller: dgos_types::BuiltinCaller::Workbench, request_id: uuid::Uuid::new_v4().to_string() },
+            cancellation: tokio_util::sync::CancellationToken::new(), deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(10),
+        };
+        let result = dgos_workbench::AiExecutor::run(&f.providers, &f.mcp, request, &guard, &|_| true).await;
+        assert_eq!(result.error.as_deref(), Some("provider_1001002"));
+        assert!(!result.result_unknown);
+        assert_eq!(guard.approvals.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+    assert!(f.mcp.list_usage_logs("alice", None, None).await.unwrap().is_empty());
+    rejected.assert_async().await;
+    f.stop().await;
+}
+
+#[tokio::test]
+async fn public_executor_cancellation_waits_for_mcp_audit_and_keeps_result_unknown() {
+    let mut server = mockito::Server::new_async().await;
+    let model = proposal_mock(&mut server, proposed("dgos_tool_0", json!({"text":"cancel-after-dispatch","delay":5000}))).await;
+    let f = setup(&server.url()).await;
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let request = dgos_workbench::ExecutionRequest {
+        user: "alice".into(), provider_id: f.input.provider_id.clone(), model_id: "chat".into(), revision: None,
+        messages: vec![dgos_types::ChatMessage { role: "user".into(), content: "invoke the selected tool".into(), images: vec![] }],
+        tools: f.tool_input().tools, generation: Default::default(), context_window: Some(65536),
+        provenance: dgos_types::ExecutionProvenance { caller: dgos_types::BuiltinCaller::Workbench, request_id: "public-executor-cancel".into() },
+        cancellation: cancellation.clone(), deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(10),
+    };
+    let guard = CoreGuard { allow: true, revoke: false, expected_arguments: json!({"text":"cancel-after-dispatch","delay":5000}), approvals: Default::default() };
+    let execute = dgos_workbench::AiExecutor::run(&f.providers, &f.mcp, request, &guard, &|_| true);
+    tokio::pin!(execute);
+    tokio::select! {
+        _result = &mut execute => panic!("executor finished before the tool dispatch"),
+        _ = async {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    if f.mcp.list_usage_logs("alice", None, None).await.unwrap().iter().any(|row| row.outcome == "pending") { break; }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            }).await.unwrap();
+            cancellation.cancel();
+        } => {}
+    }
+    let result = execute.await;
+    assert!(result.result_unknown);
+    assert!(result.error.as_deref().is_some_and(|error| error.starts_with("mcp_")));
+    let logs = f.mcp.list_usage_logs("alice", None, None).await.unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].outcome, "cancelled");
+    assert_eq!(logs[0].task_ref.as_deref(), Some("public-executor-cancel"));
+    assert_eq!(guard.approvals.load(std::sync::atomic::Ordering::SeqCst), 1);
+    model.assert_async().await;
+    f.stop().await;
+}
 
 struct Allow;
 #[async_trait]
@@ -43,7 +146,7 @@ impl Fixture {
     fn tool_input(&self) -> ToolTaskInput {
         ToolTaskInput {
             task: self.input.clone(),
-            tools: vec![ToolSelection {
+            tools: vec![AiToolSelection {
                 server_id: self.tool.server_id.clone(),
                 tool_name: self.tool.tool_name.clone(),
                 schema_hash: self.tool.schema_hash.clone(),
@@ -538,7 +641,7 @@ async fn schema_pinning_rejects_changed_contract_before_dispatch() {
     assert_eq!(done.record.task.status, "failed");
     assert_eq!(
         done.record.task.error_code.as_deref(),
-        Some("mcp_tool_input_invalid")
+        Some("mcp_1003015")
     );
     assert!(f
         .mcp
@@ -589,7 +692,7 @@ async fn output_only_contract_refresh_revokes_pending_workbench_proposal() {
     assert_eq!(done.record.task.status, "failed");
     assert_eq!(
         done.record.task.error_code.as_deref(),
-        Some("mcp_tool_input_invalid")
+        Some("mcp_1003015")
     );
     let logs = f.mcp.list_usage_logs("alice", None, None).await.unwrap();
     assert_eq!(logs.len(), 1);
@@ -625,7 +728,7 @@ async fn invalid_tool_results_stop_before_model_followup_and_keep_redacted_audit
         assert_eq!(done.record.task.status, "failed", "{mode}");
         assert_eq!(
             done.record.task.error_code.as_deref(),
-            Some("mcp_unknown_result")
+            Some("mcp_1003005")
         );
         assert!(done.content.is_none());
         let logs = f.mcp.list_usage_logs("alice", None, None).await.unwrap();

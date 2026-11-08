@@ -142,8 +142,12 @@ fn prepare(root:&Path,engine:&str)->(PathBuf,String){
 }
 async fn configure(app:&AppHandle,ck:&mut Checks,ev:&mut Vec<Value>,engine:&str)->Journey<()> {
     tab(app,ck,ev,"capabilities").await?;
-    step(app,ck,ev,"save native-source project capability revision through UI",json!({"engine":engine}),r#"const s=await until(()=>$$('section[aria-label="项目能力"]')[0]);if(!s)throw Error('capability section absent');const c=$$('[role=combobox]',s).find(e=>labelOf(e)==='智能体');if(!c)throw Error('engine selector absent');c.click();const o=await until(()=>$$('[role=option]').find(e=>txt(e)===(A.engine==='codex'?'Codex':'Claude')));if(!o)throw Error('engine option absent');o.click();await button(s,'保存新修订');return {ok:!!await until(()=>txt(s).includes('项目能力修订已保存'))};"#).await?;
-    step(app,ck,ev,"explicitly select pinned native project revision",json!({}),r#"const s=await need('dev-session-list');const c=$$('[role=combobox]',s).find(e=>labelOf(e)==='新会话能力来源');if(!c)throw Error('capability source selector absent');c.click();const o=await until(()=>$$('[role=option]').find(e=>txt(e)==='项目配置 · 修订 1'));if(!o)throw Error('saved revision missing');o.click();return {ok:true};"#).await?;
+    let resolver=app.state::<Arc<SessionResolver>>();let(session,_)=resolver.agent_session().map_err(|_|"account_session_missing")?;let owner=session.user_id().to_owned();
+    let manager=app.state::<dgos_providers::ProviderManager>();let vault=app.state::<Arc<dgos_providers::test_support::MemoryCredentialVault>>();
+    let prefix=format!("DGOS_STAGE6_{}",engine.to_uppercase());let endpoint=std::env::var(format!("{prefix}_URL")).map_err(|_|"explicit_stage6_provider_required")?;let key=std::env::var(format!("{prefix}_KEY")).map_err(|_|"explicit_stage6_key_required")?;let model=std::env::var(format!("{prefix}_MODEL")).map_err(|_|"explicit_stage6_model_required")?;
+    let provider=dgos_providers::test_support::seed_provider(app.state::<Fx>().db.clone(),vault.inner(),dgos_types::ProviderConfig{name:format!("Stage6 {engine}"),provider_type:if engine=="codex"{"openai_compatible"}else{"anthropic"}.into(),base_url:endpoint,api_key:key,enabled:true,config:None},&owner).await.map_err(|_|"stage6_provider_seed_failed")?;
+    manager.add_manual_model(&provider.id,&owner,&model,None).await.map_err(|_|"stage6_model_seed_failed")?;
+    step(app,ck,ev,"save explicit Provider project revision through UI",json!({"engine":engine,"provider":provider.id,"model":model}),r#"const s=await until(()=>$$('section[aria-label="项目能力"]')[0]);if(!s)throw Error('Provider section absent');const c=$$('[role=combobox]',s).find(e=>labelOf(e)==='智能体');if(!c)throw Error('engine selector absent');c.click();const o=await until(()=>$$('[role=option]').find(e=>txt(e)===(A.engine==='codex'?'Codex':'Claude')));o.click();const p=await until(()=>$$('select',s).find(e=>[...e.options].some(o=>o.value===A.provider)));if(!p)throw Error('explicit Provider absent');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(p,A.provider);p.dispatchEvent(new Event('change',{bubbles:true}));await until(()=>$$('select',s).some(e=>e.value===A.model));await button(s,'保存新修订');return {ok:!!await until(()=>txt(s).includes('已保存'))};"#).await?;
     Ok(())
 }
 
@@ -275,15 +279,12 @@ pub(super) async fn run(app:&AppHandle,fx:&Fx,mut ck:Checks,mut ev:Vec<Value>,re
     let phase=if restart { "restart" } else { "first" };
     let result:Journey<()>=async {
         require(app,&mut ck,&mut ev,"stage6 Git fixtures are isolated under private temporary root",fx.root.starts_with("/private/tmp")&&fx.root!=Path::new("/private/tmp"),fx.root.display())?;
-        let window=app.get_webview_window("main").ok_or("main window missing")?;
-        let skills=app.state::<Arc<tokio::sync::RwLock<dgos_skills::SkillsManager>>>();
-        let admission=commands::capability_admission_regression(app,&window,skills.inner()).await?;
-        write_json(fx.root.join(format!("capability-admission-{phase}.json")),&admission);
-        require(app,&mut ck,&mut ev,"capability IPC retains admission and rejects revoked response",true,admission)?;
-        let signed_out=ipc(app,"main","sign_out",json!({})).await;
-        require(app,&mut ck,&mut ev,"renew account lease after capability regression",succeeded(&signed_out),signed_out.describe())?;
-        if !ui_sign_in(app,&mut ck,&mut ev,ALICE).await {return Err("sign in after capability regression".into());}
-        if !goto(app,"main","/tasks/agent").await {return Err("workbench after capability regression".into());}
+        let denied=ipc(app,"main","respond_agent_request",json!({"input":{"session_id":"missing-session","generation":uuid::Uuid::new_v4(),"request_id":"expired-approval","response":{"decision":"accept"}}})).await;
+        require(app,&mut ck,&mut ev,"Provider-only approval IPC rejects absent session and expired authority",!succeeded(&denied),denied.describe())?;
+        let guard=app.state::<dgos_db::MaintenanceGate>().begin_maintenance().map_err(|_|"maintenance_fixture_busy")?;
+        let blocked=ipc(app,"main","save_development_cli_provider",json!({"input":{"project_id":"missing-project","expected_revision":0,"configuration":{"engine":"codex","provider":{"provider_id":"missing-provider","model_id":"missing-model","provider_revision":0}}}})).await;
+        drop(guard);
+        require(app,&mut ck,&mut ev,"Provider IPC retains maintenance admission",!succeeded(&blocked),blocked.describe())?;
         if restart { restart_journey(app,fx,&mut ck,&mut ev).await?; }
         else if std::env::var_os("DGOS_STAGE6_BOUNDARIES_ONLY").is_some() { delivery_boundaries(app,fx,&mut ck,&mut ev).await?; }
         else if ENGINES.iter().any(|engine|fx.root.join(format!("original-{engine}")).exists()||fx.root.join(format!("work-{engine}")).exists()||fx.root.join(format!("remote-{engine}.git")).exists()) {

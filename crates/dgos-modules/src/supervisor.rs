@@ -1,11 +1,11 @@
 //! Module runtime supervisor (D033).
 //!
-//! The supervisor is the only driver of runtime lifecycle transitions. It
-//! starts publisher-issued handles through a `ModuleLoader`, drains and stops
-//! them, records host-detected failures, and performs the minimal hot update:
-//! the previous runtime keeps serving until the new package has been
-//! verified, smoke-loaded, committed and started; a failed start rolls the
-//! release back, and a failed rollback disables the module.
+//! The supervisor serializes start/stop/update and owns runtime cleanup.
+//! Explicit updates accept ready, stopped and disabled releases without loading
+//! old code. Candidates pass admission/preflight; disabled candidates are loaded
+//! and released before commit. Enabled activation failure restores the previous
+//! disk release even if it is no longer admitted for execution. Failed cleanup
+//! remains pending for an explicit stop; failed rollback disables the module.
 
 use crate::{
     admission::ModuleAdmission,
@@ -57,13 +57,11 @@ pub enum ModuleSupervisorError {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ModuleUpdateOutcome {
-    /// The same `(module_id, version, integrity)` is already active; nothing
-    /// was restarted.
+    /// The same release is already published; no runtime was started or restarted.
     Unchanged,
-    /// The new runtime is active. `previous_stopped` is false when the
-    /// previous runtime did not drain in time (or its loader failed to stop):
-    /// it stays `failed` and is kept as a pending release that the next
-    /// `stop`/`start` of the module retries once its requests have settled.
+    /// The new release is published, active only if the original was enabled.
+    /// `previous_stopped=false` keeps old loader resources pending for explicit
+    /// stop/start cleanup; a disabled update never leaves a candidate active.
     Switched { previous_stopped: bool },
 }
 
@@ -323,9 +321,7 @@ impl ModuleRuntimeSupervisor {
             .await
     }
 
-    /// Minimal hot update of a ready runtime. The previous runtime keeps
-    /// serving until the new one is ready; nothing admitted on the previous
-    /// runtime is moved to or replayed on the new one.
+    /// Explicit update of a ready or stopped release. Never starts the old release.
     pub async fn update_with_operation_id(
         &self,
         session: &HostSession,
@@ -333,20 +329,30 @@ impl ModuleRuntimeSupervisor {
         source: &Path,
         operation_id: impl Into<String>,
     ) -> Result<ModuleUpdateReport, ModuleSupervisorError> {
+        let official=self.publisher.published_modules(session.user_id()).await
+            .map_err(|_|ModuleSupervisorError::StaleRuntime)?.into_iter().find(|module|module.module_id==module_id)
+            .is_some_and(|module|module.official);
+        if official || crate::BuiltinModuleSources::is_builtin(module_id) { return Err(ModuleSupervisorError::NotAdmitted); }
+        self.update_from_source(session,module_id,source,operation_id.into(),None).await
+    }
+
+    /// Host-only official source. Full bundle and the copied staging bytes must match pins.
+    pub async fn update_builtin_with_operation_id(&self, session: &HostSession, module_id: &str,
+        sources: &crate::BuiltinModuleSources, operation_id: impl Into<String>) -> Result<ModuleUpdateReport,ModuleSupervisorError> {
+        let (path,version,integrity)=sources.resolve(module_id).map_err(|_|ModuleSupervisorError::NotAdmitted)?;
+        self.update_from_source(session,module_id,&path,operation_id.into(),Some((version,integrity))).await
+    }
+
+    async fn update_from_source(&self, session: &HostSession, module_id: &str, source: &Path,
+        operation_id: String, expected: Option<(&str,&str)>) -> Result<ModuleUpdateReport,ModuleSupervisorError> {
         let _lifecycle = self.lifecycle.lock().await;
-        let previous = self
-            .runtime(module_id)
-            .filter(|handle| handle.state() == ModuleRuntimeState::Ready)
-            .ok_or(ModuleSupervisorError::NotRunning)?;
-        let snapshot = self
-            .publisher
-            .release_snapshot(module_id)
-            .await?
-            .filter(|snapshot| {
-                previous.module_identity()
-                    == Some((module_id, snapshot.version(), snapshot.integrity()))
-            })
-            .ok_or(ModuleSupervisorError::StaleRuntime)?;
+        let previous = self.runtime(module_id);
+        if previous.as_ref().is_some_and(|handle|is_live(handle.state()) && handle.state()!=ModuleRuntimeState::Ready) { return Err(ModuleSupervisorError::AlreadyRunning); }
+        self.release_retired(module_id).await?;
+        if let Some(handle)=previous.as_ref().filter(|handle|handle.state()==ModuleRuntimeState::Failed) { self.retire(handle).await?; }
+        let snapshot = self.publisher.release_snapshot(module_id).await?.ok_or(ModulePackageError::NotPublished)?;
+        let previous=previous.filter(|handle|handle.state()==ModuleRuntimeState::Ready);
+        if previous.as_ref().is_some_and(|handle|handle.module_identity()!=Some((module_id,snapshot.version(),snapshot.integrity()))) { return Err(ModuleSupervisorError::StaleRuntime); }
 
         // 1. stage: manifest, local entry, symlink and digest validation.
         let staged = self
@@ -355,6 +361,10 @@ impl ModuleRuntimeSupervisor {
         if staged.module_id() != module_id {
             self.publisher.discard_staged(&staged);
             return Err(ModuleSupervisorError::ModuleMismatch);
+        }
+        if expected.is_some_and(|(version,integrity)|staged.version()!=version || staged.integrity()!=integrity) {
+            self.publisher.discard_staged(&staged);
+            return Err(ModuleSupervisorError::NotAdmitted);
         }
         let mut report = ModuleUpdateReport {
             operation_id: staged.operation_id().to_owned(),
@@ -376,19 +386,42 @@ impl ModuleRuntimeSupervisor {
             return Err(error);
         }
 
+        // A disabled candidate is load-tested without publishing or granting capability
+        // access. Release it before commit, so disabled never leaves a live runtime.
+        if !snapshot.enabled() {
+            let artifact=match self.publisher.verify_staged(&staged) {
+                Ok(artifact)=>artifact,
+                Err(error)=>{ self.publisher.discard_staged(&staged); return Err(error.into()); }
+            };
+            let context=dgos_types::HostExecutionContext::for_module_session(session,module_id,staged.version(),staged.integrity());
+            let candidate=ModuleRuntimeHandle::issue(context,artifact);
+            let loaded=bounded(LoadPhase::Start,self.timeouts.start,self.loader.start(candidate.runtime_id(),candidate.artifact())).await;
+            let cleanup=self.abort_start(&candidate).await;
+            if cleanup.is_err() { self.park_retired(module_id,candidate); }
+            if let Err(error)=loaded { self.publisher.discard_staged(&staged); return Err(error.into()); }
+            if let Err(error)=cleanup { self.publisher.discard_staged(&staged); return Err(error.into()); }
+        }
+
         // 3. commit pointer + DB (the publisher records its own failures).
-        if let Err(error) = self.publisher.commit(staged.clone()).await {
+        if let Err(error) = self.publisher.commit_update(staged.clone()).await {
             self.publisher.discard_staged(&staged);
             return Err(error.into());
         }
-        if let Ok(Some(current)) = self.publisher.release_snapshot(module_id).await {
-            if current.version() == snapshot.version()
-                && current.integrity() == snapshot.integrity()
-            {
-                // `commit` was an idempotent no-op for a version that exists
-                // but is not current; re-activation needs a new version.
-                return Err(ModuleSupervisorError::VersionNotCurrent);
+        match self.publisher.release_snapshot(module_id).await {
+            Ok(Some(current)) if current.version() == staged.version() && current.integrity() == staged.integrity() => {}
+            Ok(_) => {
+                return Err(self.roll_back(&report, &snapshot, previous.as_ref(), ModuleSupervisorError::StaleRuntime).await);
             }
+            Err(error) => {
+                return Err(self.roll_back(&report, &snapshot, previous.as_ref(), error.into()).await);
+            }
+        }
+        if !snapshot.enabled() {
+            if let Err(error)=self.publisher.finalize_update(module_id,staged.version(),staged.integrity()).await {
+                return Err(self.roll_back(&report,&snapshot,previous.as_ref(),error.into()).await);
+            }
+            report.outcome=ModuleUpdateOutcome::Switched { previous_stopped:true };
+            return Ok(report);
         }
 
         // 4. issue and start the new runtime; roll back on any failure.
@@ -399,31 +432,37 @@ impl ModuleRuntimeSupervisor {
             {
                 return Err(ModuleSupervisorError::StaleRuntime);
             }
-            if let Err(error) = self.activate(&candidate).await {
+            self.admit(candidate.artifact())?;
+            if let Err(error) = bounded(LoadPhase::Start,self.timeouts.start,self.loader.start(candidate.runtime_id(),candidate.artifact())).await {
                 if self.abort_start(&candidate).await.is_err() {
                     // Never registered: keep it pending so its release is retried.
                     self.park_retired(module_id, candidate);
                 }
-                return Err(error);
+                return Err(error.into());
             }
             Ok(candidate)
         }
         .await;
         let candidate = match activated {
             Ok(candidate) => candidate,
-            Err(error) => return Err(self.roll_back(&report, &snapshot, &previous, error).await),
+            Err(error) => return Err(self.roll_back(&report, &snapshot, previous.as_ref(), error).await),
         };
+        if let Err(error)=self.publisher.finalize_update(module_id,staged.version(),staged.integrity()).await {
+            if self.abort_start(&candidate).await.is_err() { self.park_retired(module_id,candidate); }
+            return Err(self.roll_back(&report,&snapshot,previous.as_ref(),error.into()).await);
+        }
+        candidate.mark_ready()?;
+        if let Some(observer)=&self.ready_observer { observer.runtime_ready(&candidate); }
 
         // 5. switch, then drain and stop the previous runtime.
         self.registry().insert(module_id.to_owned(), candidate);
-        let _ = previous.begin_draining();
-        let previous_stopped = match self.retire(&previous).await {
-            Ok(()) => true,
-            Err(_) => {
-                self.park_retired(module_id, previous);
-                false
+        let previous_stopped = if let Some(previous)=previous {
+            let _ = previous.begin_draining();
+            match self.retire(&previous).await {
+                Ok(())=>true,
+                Err(_)=>{ self.park_retired(module_id,previous); false }
             }
-        };
+        } else { true };
         report.outcome = ModuleUpdateOutcome::Switched { previous_stopped };
         Ok(report)
     }
@@ -466,13 +505,13 @@ impl ModuleRuntimeSupervisor {
     }
 
     /// Restore the previous release after a failed activation. On success
-    /// the previous runtime keeps serving; otherwise it fails and the module
-    /// is disabled so nothing can load an unknown release.
+    /// the previous runtime keeps serving; otherwise it is disabled only if
+    /// the failed candidate is still current, never over a concurrent publish.
     async fn roll_back(
         &self,
         report: &ModuleUpdateReport,
         snapshot: &ReleaseSnapshot,
-        previous: &ModuleRuntimeHandle,
+        previous: Option<&ModuleRuntimeHandle>,
         cause: ModuleSupervisorError,
     ) -> ModuleSupervisorError {
         self.audit(report, "activation", &cause).await;
@@ -489,8 +528,6 @@ impl ModuleRuntimeSupervisor {
         {
             return ModuleSupervisorError::RolledBack(Box::new(cause));
         }
-        let _ = previous.fail();
-        self.release_when_settled(previous.clone());
         let module_disabled = self
             .publisher
             .disable_module(
@@ -498,10 +535,18 @@ impl ModuleRuntimeSupervisor {
                 &report.module_id,
                 Some(&report.from_version),
                 &report.to_version,
+                &report.integrity,
+                &report.to_version,
                 "rollback_failed",
             )
             .await
             .is_ok();
+        if module_disabled {
+            if let Some(previous) = previous {
+                let _ = previous.fail();
+                self.release_when_settled(previous.clone());
+            }
+        }
         ModuleSupervisorError::RollbackFailed { module_disabled }
     }
 
@@ -1617,14 +1662,6 @@ mod tests {
         assert_eq!(fixture.loader.stops().len(), 1);
         assert_ne!(fixture.loader.stops()[0], previous.runtime_id());
 
-        // Republishing the same failed version does not re-activate it.
-        fixture.loader.fail_start(None);
-        assert!(matches!(
-            fixture.update(&source).await,
-            Err(ModuleSupervisorError::VersionNotCurrent)
-        ));
-        assert_eq!(previous.state(), ModuleRuntimeState::Ready);
-        assert_eq!(fixture.module_row().await.current_version, "1.0.0");
     }
 
     #[tokio::test]
@@ -1662,14 +1699,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn identical_update_is_unchanged_and_requires_matching_ready_runtime() {
+    async fn identical_update_is_unchanged_without_starting_a_stopped_release() {
         let fixture = Fixture::new(ModuleRuntimeSupervisor::DEFAULT_DRAIN_TIMEOUT).await;
         fixture.publish("1.0.0", &[]).await;
         let same = package(PackageSpec::default());
-        assert!(matches!(
-            fixture.update(&same).await,
-            Err(ModuleSupervisorError::NotRunning)
-        ));
+        assert_eq!(fixture.update(&same).await.unwrap().outcome,ModuleUpdateOutcome::Unchanged);
+        assert!(fixture.supervisor.runtime(MODULE).is_none());
 
         let previous = fixture.start().await;
         let report = fixture.update(&same).await.unwrap();
@@ -2030,4 +2065,5 @@ mod tests {
             .await
             .contains(&("load_smoke".into(), "failure".into())));
     }
+    include!("upgrade_tests.rs");
 }

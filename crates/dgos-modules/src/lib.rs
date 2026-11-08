@@ -59,7 +59,7 @@ pub use runtime::{
     ModuleRequest, ModuleRequestOutcome, ModuleRequestStats, ModuleRuntimeError,
     ModuleRuntimeHandle, ModuleRuntimeState,
 };
-pub use sources::{LocalModuleSources, ModuleSourceError};
+pub use sources::{BuiltinModuleSources, LocalModuleSources, ModuleSourceError};
 pub use supervisor::{
     LoaderTimeouts, ModuleReadyObserver, ModuleRuntimeSupervisor, ModuleSupervisorError,
     ModuleUpdateOutcome, ModuleUpdateReport,
@@ -394,24 +394,16 @@ impl ModulePublisher {
         let _ = fs::remove_dir_all(&package.staging_path);
     }
 
-    /// Authoritative state of an enabled release, captured before a hot
-    /// update so a failed activation can be rolled back exactly.
+    /// Capture release and permission state without requiring execution admission or enabled.
     pub(crate) async fn release_snapshot(
         &self,
         module_id: &str,
     ) -> Result<Option<ReleaseSnapshot>, ModulePackageError> {
-        Ok(modules::Entity::find_by_id(module_id)
-            .one(&self.db)
-            .await
-            .map_err(db_error)?
-            .filter(|row| row.is_enabled)
-            .map(|row| ReleaseSnapshot {
-                module_id: row.id,
-                version: row.current_version,
-                integrity: row.integrity,
-                manifest: row.manifest,
-                entry_url: row.entry_url,
-            }))
+        let Some(row) = modules::Entity::find_by_id(module_id).one(&self.db).await.map_err(db_error)? else { return Ok(None); };
+        Ok(Some(ReleaseSnapshot {
+            module_id: row.id, version: row.current_version, integrity: row.integrity,
+            manifest: row.manifest, entry_url: row.entry_url, enabled: row.is_enabled,
+        }))
     }
 
     /// Roll a failed activation back to `snapshot`. The DB update is a CAS on
@@ -438,27 +430,24 @@ impl ModulePublisher {
             false,
             Some(&snapshot.manifest),
         )?;
-        // If the DB step below fails, the caller disables the module, which
-        // removes this pointer again; startup recovery follows the DB row.
-        self.write_pointer(&snapshot.module_id, &snapshot.version)?;
         let tx = self.db.begin().await.map_err(db_error)?;
-        let row = modules::Entity::find_by_id(&snapshot.module_id)
-            .one(&tx)
-            .await
-            .map_err(db_error)?
-            .filter(|row| {
-                row.current_version == failed_version && row.integrity == failed_integrity
-            })
-            .ok_or_else(|| {
-                ModulePackageError::Database("module release changed during rollback".into())
-            })?;
-        let mut model: modules::ActiveModel = row.into();
-        model.current_version = Set(snapshot.version.clone());
-        model.integrity = Set(snapshot.integrity.clone());
-        model.manifest = Set(snapshot.manifest.clone());
-        model.entry_url = Set(snapshot.entry_url.clone());
-        model.updated_at = Set(chrono::Utc::now().timestamp());
-        model.update(&tx).await.map_err(db_error)?;
+        let update = modules::Entity::update_many()
+            .filter(modules::Column::Id.eq(&snapshot.module_id))
+            .filter(modules::Column::CurrentVersion.eq(failed_version))
+            .filter(modules::Column::Integrity.eq(failed_integrity))
+            .col_expr(modules::Column::CurrentVersion, dgos_db::sea_orm::sea_query::Expr::value(snapshot.version.clone()))
+            .col_expr(modules::Column::Integrity, dgos_db::sea_orm::sea_query::Expr::value(snapshot.integrity.clone()))
+            .col_expr(modules::Column::Manifest, dgos_db::sea_orm::sea_query::Expr::value(snapshot.manifest.clone()))
+            .col_expr(modules::Column::EntryUrl, dgos_db::sea_orm::sea_query::Expr::value(snapshot.entry_url.clone()))
+            .col_expr(modules::Column::IsEnabled, dgos_db::sea_orm::sea_query::Expr::value(snapshot.enabled))
+            .col_expr(modules::Column::UpdatedAt, dgos_db::sea_orm::sea_query::Expr::value(chrono::Utc::now().timestamp()))
+            .exec(&tx).await.map_err(db_error)?;
+        if update.rows_affected != 1 {
+            return Err(ModulePackageError::Database("module release changed during rollback".into()));
+        }
+        // The conditional update checks the failed identity without decoding
+        // candidate fields, which may be the reason snapshot reads failed.
+        self.write_pointer(&snapshot.module_id, &snapshot.version)?;
         // D086 applies to rollback as well: the restored manifest is the one
         // in force, so grants it does not declare are withdrawn.
         self.permissions
@@ -487,6 +476,8 @@ impl ModulePublisher {
         operation_id: &str,
         module_id: &str,
         from_version: Option<&str>,
+        candidate_version: &str,
+        candidate_integrity: &str,
         to_version: &str,
         error_class: &str,
     ) -> Result<(), ModulePackageError> {
@@ -494,16 +485,16 @@ impl ModulePublisher {
         let lease = self.acquire_release_lock().await?;
         lease.ensure_valid()?;
         let tx = self.db.begin().await.map_err(db_error)?;
-        if let Some(row) = modules::Entity::find_by_id(module_id)
+        let row = modules::Entity::find_by_id(module_id)
             .one(&tx)
             .await
             .map_err(db_error)?
-        {
-            let mut model: modules::ActiveModel = row.into();
-            model.is_enabled = Set(false);
-            model.updated_at = Set(chrono::Utc::now().timestamp());
-            model.update(&tx).await.map_err(db_error)?;
-        }
+            .filter(|row| row.current_version == candidate_version && row.integrity == candidate_integrity)
+            .ok_or(ModulePackageError::NotPublished)?;
+        let mut model: modules::ActiveModel = row.into();
+        model.is_enabled = Set(false);
+        model.updated_at = Set(chrono::Utc::now().timestamp());
+        model.update(&tx).await.map_err(db_error)?;
         insert_update_event(
             &tx,
             operation_id,
@@ -670,7 +661,27 @@ impl ModulePublisher {
     ) -> Result<(), ModulePackageError> {
         let _publish_guard = self.publish_lock.lock().await;
         let lease = self.acquire_release_lock().await?;
-        self.commit_locked(package, &lease, first).await
+        self.commit_locked(package, &lease, first, false).await
+    }
+
+    // Keep grants inert behind the candidate manifest until activation settles.
+    // This avoids re-granting permissions (and overriding a user revoke) on rollback.
+    pub(crate) async fn commit_update(&self, package: StagedPackage) -> Result<(), ModulePackageError> {
+        let _publish_guard = self.publish_lock.lock().await;
+        let lease = self.acquire_release_lock().await?;
+        self.commit_locked(package, &lease, FirstPublish::default(), true).await
+    }
+
+    pub(crate) async fn finalize_update(&self, module_id: &str, version: &str, integrity: &str) -> Result<(),ModulePackageError> {
+        let _publish_guard = self.publish_lock.lock().await;
+        let lease=self.acquire_release_lock().await?;
+        lease.ensure_valid()?;
+        let tx=self.db.begin().await.map_err(db_error)?;
+        let row=modules::Entity::find_by_id(module_id).one(&tx).await.map_err(db_error)?
+            .filter(|row|row.current_version==version && row.integrity==integrity).ok_or(ModulePackageError::NotPublished)?;
+        self.permissions.revoke_undeclared_in(&tx,module_id,&row.manifest).await.map_err(|error|ModulePackageError::Database(error.to_string()))?;
+        lease.ensure_valid()?;
+        tx.commit().await.map_err(db_error)
     }
 
     async fn commit_locked(
@@ -678,6 +689,7 @@ impl ModulePublisher {
         package: StagedPackage,
         lease: &ReleaseLease,
         first: FirstPublish,
+        defer_withdrawal: bool,
     ) -> Result<(), ModulePackageError> {
         lease.ensure_valid()?;
         let (validated_manifest, validated_integrity) =
@@ -695,15 +707,15 @@ impl ModulePublisher {
             .join(&package.module_id)
             .join(&package.version);
         fs::create_dir_all(version_dir.parent().unwrap())?;
+        let registered_match=self.existing_release_matches(&package.module_id,&package.version,&package.integrity).await?;
         if version_dir.exists() {
-            if self
-                .existing_release_matches(&package.module_id, &package.version, &package.integrity)
-                .await?
-            {
-                let _ = fs::remove_dir_all(&package.staging_path);
-                return Ok(());
+            if registered_match {
+                if !defer_withdrawal {
+                    let _ = fs::remove_dir_all(&package.staging_path);
+                    return Ok(());
+                }
             }
-            if self
+            else if self
                 .release_is_registered(&package.module_id, &package.version)
                 .await?
             {
@@ -714,9 +726,10 @@ impl ModulePublisher {
             // D057: no committed row refers to this directory, so it is the
             // leftover of an interrupted commit. Redo it from the staged copy
             // that was just validated instead of trusting the leftover.
-            fs::remove_dir_all(&version_dir)?;
+            if !registered_match { fs::remove_dir_all(&version_dir)?; }
         }
-        fs::rename(&package.staging_path, &version_dir)?;
+        if registered_match { self.discard_staged(&package); }
+        else { fs::rename(&package.staging_path, &version_dir)?; }
         fs::File::open(version_dir.parent().unwrap())?.sync_all()?;
         // The staged copy was validated before the rename. Read what is now
         // in place once more, so a change in between never becomes a release.
@@ -759,6 +772,7 @@ impl ModulePublisher {
                 .await
                 .map_err(db_error)?;
             }
+            if !registered_match {
             module_versions::ActiveModel {
                 id: Set(Uuid::new_v4().to_string()),
                 module_id: Set(package.module_id.clone()),
@@ -770,6 +784,7 @@ impl ModulePublisher {
             .insert(&tx)
             .await
             .map_err(db_error)?;
+            }
             if let Some(row) = row {
                 let mut model: modules::ActiveModel = row.into();
                 model.current_version = Set(package.version.clone());
@@ -778,12 +793,10 @@ impl ModulePublisher {
                 model.manifest = Set(package.manifest.clone());
                 model.updated_at = Set(chrono::Utc::now().timestamp());
                 model.update(&tx).await.map_err(db_error)?;
-                // D086: grants of permissions the new manifest dropped are
-                // withdrawn in the same transaction as the manifest switch.
-                self.permissions
-                    .revoke_undeclared_in(&tx, &package.module_id, &package.manifest)
-                    .await
-                    .map_err(|error| ModulePackageError::Database(error.to_string()))?;
+                if !defer_withdrawal {
+                    self.permissions.revoke_undeclared_in(&tx, &package.module_id, &package.manifest)
+                        .await.map_err(|error| ModulePackageError::Database(error.to_string()))?;
+                }
             }
             module_update_events::ActiveModel {
                 id: Set(Uuid::new_v4().to_string()),
@@ -1003,6 +1016,9 @@ impl ModulePublisher {
                     .unwrap_or(false);
                 if valid {
                     self.write_pointer(&row.id, &row.current_version)?;
+                    let tx=self.db.begin().await.map_err(db_error)?;
+                    self.permissions.revoke_undeclared_in(&tx,&row.id,&row.manifest).await.map_err(|error|ModulePackageError::Database(error.to_string()))?;
+                    tx.commit().await.map_err(db_error)?;
                     ready.push(row.id);
                 } else {
                     let pointer = self.root.join("current").join(&row.id).join("version");
@@ -1235,6 +1251,7 @@ impl Default for FirstPublish {
     }
 }
 
+
 /// Whether the manifest recorded for a release equals the one on disk,
 /// ignoring `artifact.sha256` (D057). A record that does not parse as a
 /// manifest never matches.
@@ -1253,6 +1270,7 @@ pub(crate) struct ReleaseSnapshot {
     integrity: String,
     manifest: serde_json::Value,
     entry_url: Option<String>,
+    enabled: bool,
 }
 
 impl ReleaseSnapshot {
@@ -1263,6 +1281,8 @@ impl ReleaseSnapshot {
     pub(crate) fn integrity(&self) -> &str {
         &self.integrity
     }
+
+    pub(crate) fn enabled(&self) -> bool { self.enabled }
 }
 
 #[allow(clippy::too_many_arguments)]

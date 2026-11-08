@@ -134,7 +134,8 @@ async fn capability_upgrade_preserves_runs_and_account_purge_removes_only_owned_
     Migrator::up(&db, Some(count as u32)).await.unwrap();
     let repo = DevelopmentRepository::new(db.clone());
     let (a, t, s) = chain(&repo, "alice", "/tmp/capability-upgrade").await;
-    let native = run(&t, &s, 1); repo.start_run(&native).await.unwrap();
+    let native = run(&t, &s, 1);
+    execute(&db, "INSERT INTO development_runs(id,owner,session_id,task_id,project_id,engine,source,status,started_at,summary,events,fingerprint,start_fingerprint,truncated,request_fingerprint) VALUES(?,?,?,?,?,'codex','native_agent','running',1,'','[]','before','before',0,'request')", vec![v(native.id.clone()),v(native.owner.clone()),v(s.id.clone()),v(t.id.clone()),v(a.id.clone())]).await.unwrap();
     Migrator::up(&db, None).await.unwrap();
     assert_eq!(repo.run("alice", &native.id).await.unwrap().unwrap().source, "native_agent");
     assert!(repo.capability_revision("alice", &a.id, None).await.unwrap().is_none());
