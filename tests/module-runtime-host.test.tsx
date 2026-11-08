@@ -11,6 +11,7 @@ import {
 } from '../src/modules/moduleRuntimeHost';
 import { evaluateFixtureSource, hooksControl, moduleProbe, readFixture, resetModuleProbe } from './helpers/moduleFixtures';
 import { resetLocaleForTesting, setLocaleForTesting } from '../src/i18n/runtime';
+import type { AiEvent, AiRunInput, AiTerminal } from '../src/types/ai';
 
 // The real import(blobUrl) cannot run in jsdom/Node. `importModule` is replaced by a double that
 // evaluates the fixture source (see evaluateFixtureSource); the real path is covered by the WebView smoke.
@@ -45,7 +46,7 @@ function unloadInstruction(runtimeId = 'rt-1', overrides: Partial<UnloadInstruct
 
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 25));
 
-function createHarness(attachScript: AttachStep[] = []) {
+function createHarness(attachScript: AttachStep[] = [], overrides: Partial<ModuleRuntimeHostDeps> = {}) {
   const sources = new Map<string, string>();
   const created: string[] = [];
   const revoked: string[] = [];
@@ -131,6 +132,7 @@ function createHarness(attachScript: AttachStep[] = []) {
       timers.delete(handle);
       globalThis.clearTimeout(handle as number);
     },
+    ...overrides,
   };
 
   const host = new ModuleRuntimeHost(deps);
@@ -820,5 +822,90 @@ describe('independent document views (D129)', () => {
     await expect(h.host.prepareViewClose('rt-1', 'a')).resolves.toEqual({ dirty: false });
     h.send(unloadInstruction());
     await h.waitForReceipts(2);
+  });
+});
+
+describe('module AI event lifecycle', () => {
+  async function aiHarness() {
+    const pending = Promise.withResolvers<unknown>();
+    const aiChannel = { onmessage: (_event: AiEvent): void => undefined };
+    let ai: { run: (input: AiRunInput, onEvent: (event: AiEvent) => void, options?: { signal?: AbortSignal }) => Promise<AiTerminal> };
+    const cancels: unknown[] = [];
+    const h = createHarness([], {
+      createAiChannel: () => aiChannel,
+      importModule: async () => ({ default: (host: { ai: typeof ai }) => {
+        ai = host.ai;
+        return { Component: () => null };
+      } }),
+    });
+    const invoke = h.invoke.getMockImplementation()!;
+    h.invoke.mockImplementation(async (command, args) => {
+      if (command === 'module_run_ai') return pending.promise;
+      if (command === 'cancel_module_call') { cancels.push(args); return { success: true, data: true, error: null }; }
+      return invoke(command, args);
+    });
+    await h.host.ensureAttached();
+    h.send(loadInstruction('counter.js'));
+    await h.waitForReceipts(1);
+    h.send({ kind: 'route', runtimeId: 'rt-1', route: 'route-ai' });
+    const terminal: AiTerminal = { status: 'cancelled', content: null, error: null, result_unknown: false, audit_warning: false, total_tokens: null };
+    const events: AiEvent[] = [];
+    const controller = new AbortController();
+    const run = ai!.run({ provider_id: 'p', model_id: 'm', provider_revision: 1, prompt: 'hello', skill_refs: [], tools: [], generation: {} }, event => events.push(event), { signal: controller.signal });
+    await vi.waitFor(() => expect(h.invoke.mock.calls.some(([name]) => name === 'module_run_ai')).toBe(true));
+    const emit = (seq: number, kind: 'delta' | 'terminal' = 'delta', id = 'run-ai') => aiChannel.onmessage({ run_id: id, request_id: id, seq, ...(kind === 'delta' ? { kind, text: 'piece' } : { kind, terminal }) });
+    return { h, pending, terminal, events, controller, cancels, run, emit };
+  }
+
+  it('ignores duplicate and foreign events and allows one terminal after abort', async () => {
+    const f = await aiHarness();
+    f.emit(1);
+    f.emit(1);
+    f.emit(2, 'delta', 'foreign');
+    f.controller.abort();
+    f.emit(2);
+    f.emit(3, 'terminal');
+    f.emit(4);
+    f.pending.resolve({ success: true, data: f.terminal, error: null });
+    await expect(f.run).resolves.toEqual(f.terminal);
+    expect(f.events.map(e => e.kind)).toEqual(['delta', 'terminal']);
+    expect(f.cancels).toHaveLength(1);
+  });
+
+  it('rejects a completed AI read after its AbortSignal is aborted', async () => {
+    const pending = Promise.withResolvers<unknown>();
+    let ai!: { listRuns: (input?: { limit?: number }, options?: { signal?: AbortSignal }) => Promise<unknown> };
+    const h = createHarness([], {
+      importModule: async () => ({ default: (host: { ai: typeof ai }) => {
+        ai = host.ai;
+        return { Component: () => null };
+      } }),
+    });
+    const invoke = h.invoke.getMockImplementation()!;
+    h.invoke.mockImplementation(async (command, args) => command === 'module_list_ai_runs' ? pending.promise : invoke(command, args));
+    await h.host.ensureAttached();
+    h.send(loadInstruction('counter.js'));
+    await h.waitForReceipts(1);
+    h.send({ kind: 'route', runtimeId: 'rt-1', route: 'route-ai-read' });
+
+    const controller = new AbortController();
+    const result = ai.listRuns({}, { signal: controller.signal });
+    await vi.waitFor(() => expect(h.invoke.mock.calls.some(([name]) => name === 'module_list_ai_runs')).toBe(true));
+    controller.abort();
+    pending.resolve({ success: true, data: { items: [], next_before: null }, error: null });
+    await expect(result).rejects.toMatchObject({ code: 1004028 });
+  });
+
+  it.each(['route', 'reset', 'unload'] as const)('rejects late AI results after %s', async boundary => {
+    const f = await aiHarness();
+    const rejected = expect(f.run).rejects.toMatchObject({ code: 1004028 });
+    if (boundary === 'route') f.h.send({ kind: 'route', runtimeId: 'rt-1', route: 'replacement' });
+    else if (boundary === 'reset') f.h.host.resetViews();
+    else { f.h.send(unloadInstruction()); await f.h.waitForReceipts(2); }
+    f.emit(1);
+    f.emit(2, 'terminal');
+    f.pending.resolve({ success: true, data: f.terminal, error: null });
+    await rejected;
+    expect(f.events).toEqual([]);
   });
 });

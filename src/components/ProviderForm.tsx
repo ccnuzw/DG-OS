@@ -3,16 +3,15 @@ import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Button, Checkbox, Input, Select, Stack, cn, extractErrorCode } from '@dgos/ui';
 import { usePageError } from '../pageError';
-import { MODEL_KINDS, resolveVendorId, useProviderStore } from '../stores/providerStore';
+import { resolveVendorId, useProviderStore } from '../stores/providerStore';
 import type { ProviderConfig, ProviderVendor, Model, Provider } from '../stores/providerStore';
-import { useLocale, formatNumber } from '../i18n';
+import ProviderModels from './ProviderModels';
 
 interface ProviderFormProps {
   provider: Provider | null;  // null = 新建模式
   initialModels?: Model[];  // 编辑模式时的初始模型列表
   onSave: (config: ProviderConfig, models: Model[], probeModel?: string) => Promise<boolean>;
-  onDelete?: () => Promise<boolean>;
-  onChange: () => void;
+  onChange: (dirty: boolean) => void;
   loading?: boolean;
   onModelsRefreshed?: () => Promise<void>;
 }
@@ -30,18 +29,6 @@ const DIAGNOSTIC_HINTS: Readonly<Record<number, string>> = {
 };
 
 const NO_MODEL_LIST_HINT = 'providerForm.noModelList';
-
-const AUTH_STYLE_OPTIONS = [
-  { value: 'default', label: 'provider.default' },
-  { value: 'bearer', label: 'Bearer' },
-  { value: 'x-api-key', label: 'x-api-key' },
-  { value: 'both', label: 'provider.both' },
-] as const;
-
-const KIND_OPTIONS = [
-  { value: 'auto', label: 'provider.auto' },
-  ...MODEL_KINDS.map((kind) => ({ value: kind, label: kind })),
-];
 
 /** True for an `http://` address whose host is loopback or a private literal: cleartext there is normal, so only a note. */
 function isLocalCleartext(baseUrl: string): boolean {
@@ -100,6 +87,23 @@ function savedProviderForm(provider: Provider): ProviderConfig {
   };
 }
 
+function sameValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+  const a = left as Record<string, unknown>;
+  const b = right as Record<string, unknown>;
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length
+    && keys.every((key) => Object.prototype.hasOwnProperty.call(b, key) && sameValue(a[key], b[key]));
+}
+
+function sameDraft(left: ProviderConfig, right: ProviderConfig, includeEnabled = false): boolean {
+  return left.name === right.name && left.provider_type === right.provider_type
+    && left.base_url === right.base_url && left.api_key === right.api_key
+    && (!includeEnabled || left.enabled === right.enabled)
+    && sameValue(left.config ?? {}, right.config ?? {});
+}
+
 interface CommandResponse<T> {
   success: boolean;
   data?: T;
@@ -107,16 +111,9 @@ interface CommandResponse<T> {
 }
 
 export default function ProviderForm({
-  provider,
-  initialModels = EMPTY_MODELS,
-  onSave,
-  onDelete,
-  onChange,
-  loading = false,
-  onModelsRefreshed,
+  provider, initialModels = EMPTY_MODELS, onSave, onChange, loading = false, onModelsRefreshed,
 }: ProviderFormProps) {
   usePageLocale();
-  const { locale } = useLocale();
   const isEditMode = !!provider;
   const isNewMode = !provider;
   const reportError = usePageError('ProviderManagement');
@@ -124,98 +121,102 @@ export default function ProviderForm({
   const vendorsStatus = useProviderStore((state) => state.vendorsStatus);
   const addManualModel = useProviderStore((state) => state.addManualModel);
   const removeManualModel = useProviderStore((state) => state.removeManualModel);
-
-  // 表单状态
   const [formData, setFormData] = useState<ProviderConfig>(() =>
     provider ? savedProviderForm(provider) : newProviderForm(vendors),
   );
-
-  // 操作状态
+  const [baseline, setBaseline] = useState(formData);
+  const baselineRef = useRef(baseline);
+  const currentProvider = useRef(provider);
+  currentProvider.current = provider;
+  const previousId = useRef(provider?.id);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
-  const [testMessage, setTestMessage] = useState<string>('');
-  const [testDetail, setTestDetail] = useState<string>('');
-  // The service has no model list endpoint, so a test needs one model name to send a small request to.
+  const [testMessage, setTestMessage] = useState('');
+  const [testDetail, setTestDetail] = useState('');
   const [needsProbe, setNeedsProbe] = useState(false);
   const [probeModel, setProbeModel] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
-
+  const [keyVisible, setKeyVisible] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
-  const [models, setModels] = useState<Model[]>([]);
+  const [models, setModels] = useState<Model[]>(initialModels);
+  const [draftModels, setDraftModels] = useState<Model[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
-
-  const [manualModelId, setManualModelId] = useState('');
-  const [manualKind, setManualKind] = useState('auto');
   const [manualBusy, setManualBusy] = useState<string | null>(null);
-
   const [saving, setSaving] = useState(false);
   const operationGeneration = useRef(0);
-
+  const mounted = useRef(true);
+  const dirty = !sameDraft(formData, baseline, isNewMode);
+  const busy = loading || saving;
   const configVendorId = typeof formData.config?.vendor_id === 'string' ? formData.config.vendor_id : '';
   const vendorId = configVendorId || (provider ? resolveVendorId(provider, vendors) : '');
   const vendor = vendors.find((row) => row.vendor_id === vendorId);
   const endpoints = vendor?.endpoints ?? [];
   const vendorOptions = vendors.map((row) => ({ value: row.vendor_id, label: row.display_name }));
-  if (vendorId && !vendor && (vendors.length > 0 || configVendorId)) {
-    vendorOptions.push({ value: vendorId, label: vendorId });
-  }
-
+  if (vendorId && !vendor && (vendors.length > 0 || configVendorId)) vendorOptions.push({ value: vendorId, label: vendorId });
   const endpointChanged = !!provider && (
-    formData.base_url !== provider.base_url
-    || formData.provider_type !== provider.provider_type
+    formData.base_url !== provider.base_url || formData.provider_type !== provider.provider_type
     || (configVendorId !== '' && configVendorId !== resolveVendorId(provider, vendors))
   );
+  const connectionDirty = !!provider && (endpointChanged || !!formData.api_key
+    || !sameValue(formData.config ?? {}, provider.config ?? {}));
+  const previewMode = isNewMode || connectionDirty;
+  const modelFetchBlocked = previewMode && (!formData.base_url.trim() || !formData.api_key.trim() || !formData.provider_type);
   const needsNewKey = endpointChanged && !formData.api_key;
+  const savedKeyTestBlocked = isEditMode && !formData.api_key && connectionDirty;
   const authStyle = typeof formData.config?.auth_style === 'string' ? formData.config.auth_style : 'default';
   const allowInsecureHttp = formData.config?.allow_insecure_http === true;
 
-  // 当 provider 变化时重置表单
+  useEffect(() => { onChange(dirty); }, [dirty, onChange]);
+
+  // Toggle and refresh revisions are not navigation: retain the draft and adopt the saved switch state.
   useEffect(() => {
-    if (provider) {
-      setFormData(savedProviderForm(provider));
-      // 编辑模式：加载初始模型列表
-    } else {
-      setFormData(newProviderForm(useProviderStore.getState().vendors));
-      // 新建模式：清空模型列表
-      setModels([]);
+    const changedIdentity = previousId.current !== provider?.id;
+    previousId.current = provider?.id;
+    const next = provider ? savedProviderForm(provider) : newProviderForm(useProviderStore.getState().vendors);
+    const previousBaseline = baselineRef.current;
+    baselineRef.current = next;
+    setBaseline(next);
+    setFormData((current) => changedIdentity || sameDraft(current, previousBaseline, !provider)
+      ? next : { ...current, enabled: provider?.enabled ?? current.enabled });
+    if (changedIdentity) {
+      setModels(provider ? initialModels : []);
+      setDraftModels([]);
+      setModelsError(null);
+      setKeyVisible(false);
+      setProbeModel('');
+      setNeedsProbe(false);
+      setAdvancedOpen(false);
     }
     setTestResult(null);
     setTestMessage('');
     setTestDetail('');
-    setNeedsProbe(false);
-    setProbeModel('');
-    setModelsError(null);
-  }, [provider?.id, provider?.config_revision]);
-
-  useEffect(() => {
-    if (provider) setModels(initialModels);
-  }, [initialModels, provider?.id]);
-
-  useEffect(() => {
     operationGeneration.current += 1;
     setTesting(false);
     setFetchingModels(false);
-    return () => { operationGeneration.current += 1; };
-  }, [provider?.id, provider?.config_revision]);
+    setManualBusy(null);
+  }, [provider?.id, provider?.config_revision, provider?.enabled]);
 
-  // The vendor table belongs to the host. The page also asks for it; the store collapses concurrent requests.
+  useEffect(() => { if (provider) setModels(initialModels); }, [initialModels, provider?.id]);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; operationGeneration.current += 1; };
+  }, []);
   useEffect(() => {
     if (!isNewMode) return;
     const { vendorsStatus: status, fetchVendors } = useProviderStore.getState();
     if (status === 'idle' || status === 'error') void fetchVendors();
   }, [isNewMode]);
-
-  // A new provider starts on the first vendor once the table is available, unless one was already chosen.
   useEffect(() => {
     if (!isNewMode || vendors.length === 0) return;
-    setFormData((current) => (
-      current.config?.vendor_id
-        ? current
-        : withVendor(current, vendors[0], current.provider_type, current.base_url ? 'keep' : 'default')
-    ));
+    setFormData((current) => current.config?.vendor_id ? current
+      : withVendor(current, vendors[0], current.provider_type, current.base_url ? 'keep' : 'default'));
+    if (!baselineRef.current.config?.vendor_id) {
+      const next = withVendor(baselineRef.current, vendors[0], baselineRef.current.provider_type, 'default');
+      baselineRef.current = next;
+      setBaseline(next);
+    }
   }, [isNewMode, vendors]);
 
-  // Anything that changes what a test or a model preview would talk to makes earlier results stale.
   const invalidateChecks = (resetProbe = true) => {
     operationGeneration.current += 1;
     setTesting(false);
@@ -223,59 +224,42 @@ export default function ProviderForm({
     setTestResult(null);
     setTestMessage('');
     setTestDetail('');
+    setDraftModels([]);
     setModelsError(null);
-    if (isNewMode) setModels([]);
-    if (resetProbe) {
-      setProbeModel('');
-      setNeedsProbe(false);
-    }
+    if (resetProbe) { setProbeModel(''); setNeedsProbe(false); }
   };
-
-  // 表单变化处理
   const handleChange = <K extends keyof ProviderConfig>(field: K, value: ProviderConfig[K]) => {
     if (field === 'base_url' || field === 'provider_type' || field === 'api_key') invalidateChecks();
-    setFormData({ ...formData, [field]: value });
-    onChange();
+    if (field === 'api_key' && !value) setKeyVisible(false);
+    setFormData((current) => ({ ...current, [field]: value }));
   };
-
   const handleVendorChange = (id: string) => {
     const next = vendors.find((row) => row.vendor_id === id);
     if (!next || id === vendorId) return;
     invalidateChecks();
     setFormData((current) => withVendor(current, next, current.provider_type, isNewMode ? 'default' : 'keep'));
-    onChange();
   };
-
   const handleEndpointChange = (type: string) => {
     if (type === formData.provider_type) return;
     const next = endpoints.find((row) => row.provider_type === type);
     const previousDefault = endpoints.find((row) => row.provider_type === formData.provider_type)?.default_base_url ?? null;
     invalidateChecks();
-    setFormData((current) => ({
-      ...current,
-      provider_type: type,
-      base_url: isNewMode
-        ? (next?.default_base_url ?? (current.base_url === previousDefault ? '' : current.base_url))
-        : current.base_url,
+    setFormData((current) => ({ ...current, provider_type: type,
+      base_url: isNewMode ? (next?.default_base_url ?? (current.base_url === previousDefault ? '' : current.base_url)) : current.base_url,
     }));
-    onChange();
   };
-
-  // Edits one key of `config` and leaves every other key (retry settings and so on) as it was.
   const setConfigKey = (key: string, value: unknown) => {
     invalidateChecks(false);
     setFormData((current) => {
       const next = { ...(current.config ?? {}) };
       if (value === undefined) delete next[key];
       else next[key] = value;
-      return { ...current, config: current.config === undefined && Object.keys(next).length === 0 ? undefined : next };
+      return { ...current, config: Object.keys(next).length ? next : undefined };
     });
-    onChange();
   };
 
-  // 测试连接
   const handleTestConnection = async () => {
-    if (needsNewKey) return;
+    if (busy || testing || savedKeyTestBlocked || needsNewKey || (!provider && !formData.api_key)) return;
     setTesting(true);
     setTestResult(null);
     setTestMessage('');
@@ -283,57 +267,26 @@ export default function ProviderForm({
     const generation = operationGeneration.current;
     const probe = probeModel.trim();
     const probeArgs = probe ? { probeModel: probe } : {};
-
     try {
-      let response: CommandResponse<boolean>;
-
-      if (isEditMode && provider) {
-        // 编辑模式：如果没有输入新的 API Key，使用数据库中的
-        if (!formData.api_key) {
-          response = await invoke<CommandResponse<boolean>>('test_provider_by_id', {
-            providerId: provider.id,
-            ...probeArgs,
-          });
-        } else {
-          // 输入了新的 API Key，使用新的配置测试
-          response = await invoke<CommandResponse<boolean>>('test_provider_connection', {
-            config: formData,
-            ...probeArgs,
-          });
-        }
-      } else {
-        // 新建模式：必须有 API Key
-        if (!formData.api_key) {
-          setTestResult('error');
-          setTestMessage(t('providerForm.enterApiKey'));
-          setTesting(false);
-          return;
-        }
-        response = await invoke<CommandResponse<boolean>>('test_provider_connection', {
-          config: formData,
-          ...probeArgs,
-        });
-      }
-
+      const response = provider && !formData.api_key
+        ? await invoke<CommandResponse<boolean>>('test_provider_by_id', { providerId: provider.id, ...probeArgs })
+        : await invoke<CommandResponse<boolean>>('test_provider_connection', { config: formData, ...probeArgs });
       if (generation !== operationGeneration.current) return;
       if (response.success && response.data) {
         setTestResult('success');
-        setTestMessage(t('providerForm.success'));
+        setTestMessage(t(probe ? 'providerForm.probeSuccess' : 'providerForm.listSuccess'));
       } else {
-        const hostMessage = response.error?.message || 'Connection failed';
+        const hostMessage = response.error?.message || t('providerForm.failed');
         const code = response.error?.code;
         setTestResult('error');
         if (code === CODE_REQUEST_NOT_SUPPORTED && !probe) {
-          // Ask for a model name once; with one already entered the host message is the answer.
           setNeedsProbe(true);
           setTestMessage(t(NO_MODEL_LIST_HINT));
           setTestDetail(hostMessage);
         } else if (code !== undefined && DIAGNOSTIC_HINTS[code]) {
           setTestMessage(t(DIAGNOSTIC_HINTS[code]));
           setTestDetail(hostMessage);
-        } else {
-          setTestMessage(hostMessage);
-        }
+        } else setTestMessage(hostMessage);
         if (response.error) reportError(response.error);
       }
     } catch (err) {
@@ -346,429 +299,224 @@ export default function ProviderForm({
     }
   };
 
-  // 拉取/刷新模型
   const handleFetchModels = async () => {
-    if (endpointChanged) return;
+    if (busy || fetchingModels || manualBusy || modelFetchBlocked) return;
     setFetchingModels(true);
     setModelsError(null);
     const generation = operationGeneration.current;
-
     try {
-      if (isEditMode && provider) {
-        // 编辑模式：调用 refresh_models（会保存到数据库）
-        const response = await invoke<CommandResponse<Model[]>>('refresh_models', {
-          providerId: provider.id,
-        });
-
-        if (generation !== operationGeneration.current) return;
-        if (response.success && response.data) {
+      const response = !previewMode && provider
+        ? await invoke<CommandResponse<Model[]>>('refresh_models', { providerId: provider.id })
+        : await invoke<CommandResponse<Model[]>>('list_models_for_config', { config: formData });
+      if (generation !== operationGeneration.current) return;
+      if (response.success && response.data) {
+        if (previewMode) setDraftModels(response.data.map((model) => ({ ...model, provider_id: 'preview' })));
+        else {
           setModels(response.data);
           await onModelsRefreshed?.();
-        } else {
-          setModelsError(response.error?.message || 'Failed to fetch models');
-          if (response.error) reportError(response.error);
         }
       } else {
-        // 新建模式：通过后端请求模型，避免 WebView fetch 的跨域/网络错误。
-        if (!formData.api_key) {
-          setModelsError('Please enter an API Key first');
-          setFetchingModels(false);
-          return;
-        }
-
-        const response = await invoke<CommandResponse<Model[]>>('list_models_for_config', {
-          config: formData,
-        });
-
-        if (generation !== operationGeneration.current) return;
-        if (response.success && response.data) {
-          setModels(response.data.map((model) => ({
-            ...model,
-            provider_id: 'preview',
-          })));
-        } else {
-          setModelsError(response.error?.message || 'Failed to fetch models');
-          if (response.error) reportError(response.error);
-        }
+        setModelsError(t('providerForm.fetchFailed'));
+        if (response.error) reportError(response.error);
       }
     } catch (err) {
       if (generation !== operationGeneration.current) return;
-      setModelsError(err instanceof Error ? err.message : t('providerForm.unknownError'));
+      setModelsError(t('providerForm.fetchFailed'));
       reportError(err);
     } finally {
       if (generation === operationGeneration.current) setFetchingModels(false);
     }
   };
 
-  // 保存
   const handleSave = async () => {
-    if (needsNewKey) return;
-    setSaving(true);
+    if (busy || !dirty || needsNewKey || manualBusy || fetchingModels) return;
+    const targetId = provider?.id;
+    const submitted = { ...formData, enabled: currentProvider.current?.enabled ?? formData.enabled };
     const probe = isNewMode ? probeModel.trim() : '';
-    const success = await onSave(formData, models, probe || undefined);
-    setSaving(false);
-
-    if (!success && isNewMode && !probe) {
-      // Creating verifies the endpoint; a service without a model list needs a model name to do that.
-      if (extractErrorCode(useProviderStore.getState().lastFailure) === CODE_REQUEST_NOT_SUPPORTED) {
-        setNeedsProbe(true);
-        setTestResult('error');
-        setTestMessage(t(NO_MODEL_LIST_HINT));
-        setTestDetail('');
+    setSaving(true);
+    try {
+      const success = await onSave(submitted, isNewMode ? draftModels : models, probe || undefined);
+      if (!mounted.current || currentProvider.current?.id !== targetId) return;
+      if (!success) {
+        if (isNewMode && !probe && extractErrorCode(useProviderStore.getState().lastFailure) === CODE_REQUEST_NOT_SUPPORTED) {
+          setNeedsProbe(true);
+          setTestResult('error');
+          setTestMessage(t(NO_MODEL_LIST_HINT));
+          setTestDetail('');
+        }
+        return;
       }
-    }
-
-    if (success && isEditMode) setFormData(current => ({ ...current, api_key: '' }));
-
-    if (success && isNewMode) {
-      // 新建成功后重置表单
-      setFormData(newProviderForm(vendors));
-      setModels([]);
-      setTestResult(null);
-      setTestMessage('');
-      setTestDetail('');
-      setNeedsProbe(false);
-      setProbeModel('');
-    }
-  };
-
-  // 删除
-  const handleDelete = async () => {
-    if (onDelete) {
-      await onDelete();
+      const next = targetId
+        ? { ...submitted, api_key: '', enabled: currentProvider.current?.enabled ?? submitted.enabled }
+        : newProviderForm(useProviderStore.getState().vendors);
+      baselineRef.current = next;
+      setBaseline(next);
+      // A save may finish after another edit: acknowledge only the submitted values.
+      setFormData((current) => ({
+        name: current.name === submitted.name ? next.name : current.name,
+        base_url: current.base_url === submitted.base_url ? next.base_url : current.base_url,
+        provider_type: current.provider_type === submitted.provider_type ? next.provider_type : current.provider_type,
+        api_key: current.api_key === submitted.api_key ? '' : current.api_key,
+        config: sameValue(current.config ?? {}, submitted.config ?? {}) ? next.config : current.config,
+        enabled: next.enabled,
+      }));
+      setKeyVisible(false);
+      invalidateChecks();
+    } finally {
+      if (mounted.current) setSaving(false);
     }
   };
-
-  // 手动模型（仅已保存的 Provider）
-  const handleAddManualModel = async () => {
-    const modelId = manualModelId.trim();
-    if (!provider || !modelId || manualBusy) return;
-    setManualBusy('add');
-    const ok = await addManualModel(provider.id, modelId, manualKind === 'auto' ? undefined : manualKind);
-    setManualBusy(null);
-    if (ok) setManualModelId('');
-    else reportError(useProviderStore.getState().lastFailure);
+  const handleDiscard = () => {
+    if (busy) return;
+    const next = provider ? savedProviderForm(provider) : newProviderForm(vendors);
+    baselineRef.current = next;
+    setBaseline(next);
+    setFormData(next);
+    setKeyVisible(false);
+    invalidateChecks();
   };
-
-  const handleRemoveManualModel = async (model: Model) => {
-    if (!provider || manualBusy) return;
-    setManualBusy(model.model_id);
-    const ok = await removeManualModel(provider.id, model.model_id);
-    setManualBusy(null);
-    if (!ok) reportError(useProviderStore.getState().lastFailure);
+  const handleModelMutation = async (action: 'add' | 'remove', modelId: string, kind?: string): Promise<boolean> => {
+    if (!provider || busy || connectionDirty || manualBusy || fetchingModels || !modelId.trim()) return false;
+    const generation = operationGeneration.current;
+    setManualBusy(action === 'add' ? 'add' : modelId);
+    setModelsError(null);
+    try {
+      const ok = action === 'add'
+        ? await addManualModel(provider.id, modelId.trim(), kind)
+        : await removeManualModel(provider.id, modelId);
+      if (generation !== operationGeneration.current) return false;
+      if (!ok) {
+        const failure = useProviderStore.getState().lastFailure;
+        setModelsError(t('providerForm.modelMutationFailed'));
+        reportError(failure);
+      }
+      return ok;
+    } catch (err) {
+      if (generation !== operationGeneration.current) return false;
+      setModelsError(t('providerForm.modelMutationFailed'));
+      reportError(err);
+      return false;
+    } finally {
+      if (generation === operationGeneration.current) setManualBusy(null);
+    }
   };
 
   return (
     <div className="provider-form">
-      {/* 标题 */}
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle pb-3">
-        <h2 className="m-0 min-w-0 wrap-anywhere text-lg font-semibold text-ink-primary">
-          {isNewMode ? t('providerForm.new') : provider.name}
-        </h2>
-        {isEditMode && (
-          <span className="font-mono text-xs text-ink-secondary">{t('detail.id')}{provider.id.slice(0, 8)}...</span>
+      <h3 className="settings-section-title">{t('providerForm.configuration')}</h3>
+      <section className="provider-connection-grid" aria-label={t('providerForm.configuration')}>
+        <Input id="name" label={<>{t('detail.name')}{' '}<span className="text-status-error-text">*</span></>}
+          value={formData.name} onChange={(e) => handleChange('name', e.target.value)}
+          placeholder={t('detail.myProvider')} disabled={busy} />
+        <Stack gap={1}>
+          <Select id="vendor" label={t('providerForm.vendor')} value={vendorId} onChange={handleVendorChange}
+            options={vendorOptions} placeholder={t('providerForm.chooseVendor')} disabled={busy} />
+          {vendorsStatus === 'error' && vendors.length === 0 && (
+            <p className="m-0 text-xs text-status-warning-text">{t('providerForm.vendorUnavailable')}</p>
+          )}
+        </Stack>
+        {endpoints.length > 1 && (
+          <div className="provider-connection-wide">
+            <Select id="provider_type" label={t('providerForm.type')} value={formData.provider_type}
+              onChange={handleEndpointChange} options={endpoints.map((row) => ({ value: row.provider_type, label: row.display_name }))}
+              disabled={busy} />
+          </div>
         )}
-      </header>
-
-      {/* 配置区 */}
-      <section className="settings-section" aria-label={t('providerForm.configuration')}>
-        <h3 className="settings-section-title">{t('providerForm.configuration')}</h3>
-          <Stack gap={4}>
-            <Stack gap={1}>
-              <Input
-                id="name"
-                label={<>{t('detail.name')}{' '}<span className="text-status-error-text">*</span></>}
-                value={formData.name}
-                onChange={(e) => handleChange('name', e.target.value)}
-                placeholder={t('detail.myProvider')}
-                disabled={loading || saving}
-              />
-            </Stack>
-
-            <Stack gap={1}>
-              <Select
-                id="vendor"
-                label={t('providerForm.vendor')}
-                value={vendorId}
-                onChange={handleVendorChange}
-                options={vendorOptions}
-                placeholder={t('providerForm.chooseVendor')}
-                disabled={loading || saving}
-              />
-              {vendorsStatus === 'error' && vendors.length === 0 && (
-                <p className="m-0 text-xs text-status-warning-text">{t('providerForm.vendorUnavailable')}</p>
-              )}
-            </Stack>
-
-            {endpoints.length > 1 && (
-              <Stack gap={1}>
-                <Select
-                  id="provider_type"
-                  label={t('providerForm.type')}
-                  value={formData.provider_type}
-                  onChange={handleEndpointChange}
-                  options={endpoints.map((row) => ({ value: row.provider_type, label: row.display_name }))}
-                  disabled={loading || saving}
-                />
-                <p className="m-0 text-xs text-ink-secondary">{t('providerForm.protocol')}</p>
-              </Stack>
-            )}
-
-            <Stack gap={1}>
-              <Input
-                id="base_url"
-                label={<>{t('providerForm.baseUrl')}{' '}<span className="text-status-error-text">*</span></>}
-                inputMode="url"
-                value={formData.base_url}
-                onChange={(e) => handleChange('base_url', e.target.value)}
-                placeholder={t('providerForm.baseUrlExample')}
-                disabled={loading || saving}
-              />
-              <p className="m-0 text-xs text-ink-secondary">{t('providerForm.baseUrlHelp')}</p>
-              {isLocalCleartext(formData.base_url) && (
-                <p role="note" className="m-0 text-xs text-ink-secondary">
-                  {t('providerForm.localHttp')}</p>
-              )}
-            </Stack>
-
-            <Stack gap={1}>
-              <Input
-                id="api_key"
-                type="password"
-                label={<>{t('providerForm.apiKey')}{' '}<span className="text-status-error-text">*</span></>}
-                value={formData.api_key}
-                onChange={(e) => handleChange('api_key', e.target.value)}
-                placeholder={isEditMode ? t('providerForm.keepKey') : 'sk-...'}
-                disabled={loading || saving}
-              />
-              {isEditMode ? (
-                <p className="m-0 text-xs text-ink-secondary">{t('providerForm.editKeyHelp')}</p>
-              ) : (
-                <p className="m-0 text-xs text-ink-secondary">{t('providerForm.keyStorage')}</p>
-              )}
-              {needsNewKey && (
-                <p role="status" className="m-0 text-sm text-status-warning-text">
-                  {t('providerForm.newKeyRequired')}</p>
-              )}
-            </Stack>
-
-            <Stack gap={1}>
-              <Checkbox
-                id="enabled"
-                label={t('providerForm.enabled')}
-                checked={formData.enabled}
-                onChange={(checked) => handleChange('enabled', checked)}
-                disabled={loading || saving}
-              />
-              <p className="m-0 text-xs text-ink-secondary">{t('providerForm.disabledCalls')}</p>
-            </Stack>
-
-            <Stack gap={3}>
-              <div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  aria-expanded={advancedOpen}
-                  aria-controls="provider-advanced-options"
-                  onClick={() => setAdvancedOpen((open) => !open)}
-                >
-                  <span aria-hidden="true">{advancedOpen ? '▾' : '▸'}</span>
-                  {t('providerForm.advanced')}</Button>
-              </div>
-              {advancedOpen && (
-                <div id="provider-advanced-options" className="flex flex-col gap-4 rounded-md border border-border-subtle p-3">
-                  <Stack gap={1}>
-                    <Select
-                      id="auth_style"
-                      label={t('providerForm.authStyle')}
-                      value={authStyle}
-                      onChange={(value) => setConfigKey('auth_style', value === 'default' ? undefined : value)}
-                      options={AUTH_STYLE_OPTIONS.map(option => ({ ...option, label: option.label.startsWith('provider.') ? t(option.label) : option.value === 'bearer' ? t('providerForm.authBearer') : t('providerForm.authApiKey') }))}
-                      disabled={loading || saving}
-                    />
-                    <p className="m-0 text-xs text-ink-secondary">{t('providerForm.authStyleHelp')}</p>
-                  </Stack>
-                  <Stack gap={1}>
-                    <Checkbox
-                      id="allow_insecure_http"
-                      label={t('providerForm.allowHttp')}
-                      checked={allowInsecureHttp}
-                      onChange={(checked) => setConfigKey('allow_insecure_http', checked ? true : undefined)}
-                      disabled={loading || saving}
-                    />
-                    {allowInsecureHttp && (
-                      <p role="note" className="m-0 rounded-md bg-status-warning-surface p-2 text-sm text-status-warning-text">
-                        {t('providerForm.httpWarning')}</p>
-                    )}
-                  </Stack>
-                </div>
-              )}
-            </Stack>
-          </Stack>
-      </section>
-
-      {/* 操作区 */}
-      <section className="settings-section" aria-label={t('providerForm.actions')}>
-        <h3 className="settings-section-title">{t('providerForm.actions')}</h3>
-          <Stack gap={3}>
-            {needsProbe && (
-              <Stack gap={1}>
-                <Input
-                  id="probe_model"
-                  label={t('providerForm.modelName')}
-                  value={probeModel}
-                  onChange={(e) => setProbeModel(e.target.value)}
-                  placeholder={t('providerForm.probePlaceholder')}
-                  disabled={saving}
-                />
-                <p className="m-0 text-xs text-ink-secondary">
-                  {t('providerForm.testOneSmallRequest')}</p>
-              </Stack>
-            )}
-
-            <div className="flex flex-wrap gap-3">
-              <Button
-                variant="secondary"
-                onClick={handleTestConnection}
-                loading={testing}
-                disabled={saving || needsNewKey || !formData.base_url || (!isEditMode && !formData.api_key)}
-              >
-                {testing ? t('providerForm.testing') : t('providerForm.testConnection')}
+        <div className="provider-connection-wide">
+          <Input id="base_url" label={<>{t('providerForm.baseUrl')}{' '}<span className="text-status-error-text">*</span></>}
+            inputMode="url" value={formData.base_url} onChange={(e) => handleChange('base_url', e.target.value)}
+            placeholder={t('providerForm.baseUrlExample')} disabled={busy} />
+          {isLocalCleartext(formData.base_url) && (
+            <p role="note" className="mb-0 mt-1 text-xs text-ink-secondary">{t('providerForm.localHttp')}</p>
+          )}
+        </div>
+        <div className="provider-connection-wide">
+          <Input id="api_key" type={keyVisible ? 'text' : 'password'}
+            label={<>{t('providerForm.apiKey')}{' '}{isEditMode && !needsNewKey
+              ? <span className="text-ink-secondary">{t('providerForm.optional')}</span>
+              : <span className="text-status-error-text">*</span>}</>}
+            value={formData.api_key} onChange={(e) => handleChange('api_key', e.target.value)}
+            placeholder={isEditMode ? t('providerForm.keepKey') : 'sk-...'} disabled={busy} />
+          <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+            <p className="m-0 text-xs text-ink-secondary">{t(isEditMode ? 'providerForm.editKeyHelp' : 'providerForm.keyStorage')}</p>
+            {!!formData.api_key && (
+              <Button variant="ghost" size="sm" aria-pressed={keyVisible} disabled={busy}
+                onClick={() => setKeyVisible((visible) => !visible)}>
+                {t(keyVisible ? 'providerForm.hideKey' : 'providerForm.showKey')}
               </Button>
-
-              <Button
-                variant="secondary"
-                onClick={handleFetchModels}
-                loading={fetchingModels}
-                disabled={saving || endpointChanged || (isEditMode && !!formData.api_key) || (!isEditMode && !formData.api_key)}
-              >
-                {fetchingModels ? t('providerForm.fetching') : t('providerForm.refreshModels')}
-              </Button>
+            )}
+          </div>
+          {needsNewKey && <p role="status" className="mb-0 mt-2 text-sm text-status-warning-text">{t('providerForm.newKeyRequired')}</p>}
+          {isEditMode && (endpointChanged || !!formData.api_key) && (
+            <p role="note" className="mb-0 mt-2 text-xs text-status-warning-text">{t('providerForm.modelCacheWarning')}</p>
+          )}
+        </div>
+        {isNewMode && (
+          <Checkbox id="enabled" label={t('providerForm.enabled')} checked={formData.enabled}
+            onChange={(checked) => handleChange('enabled', checked)} disabled={busy} />
+        )}
+        <div className="provider-connection-wide">
+          <Button variant="ghost" size="sm" aria-expanded={advancedOpen} aria-controls="provider-advanced-options"
+            onClick={() => setAdvancedOpen((open) => !open)}>
+            <span aria-hidden="true">{advancedOpen ? '▾' : '▸'}</span>{t('providerForm.advanced')}
+          </Button>
+          {advancedOpen && (
+            <div id="provider-advanced-options" className="mt-2 flex flex-col gap-3 border-l border-border-subtle pl-3">
+              <Select id="auth_style" label={t('providerForm.authStyle')} value={authStyle}
+                onChange={(value) => setConfigKey('auth_style', value === 'default' ? undefined : value)}
+                options={[
+                  { value: 'default', label: t('provider.default') },
+                  { value: 'bearer', label: t('providerForm.authBearer') },
+                  { value: 'x-api-key', label: t('providerForm.authApiKey') },
+                  { value: 'both', label: t('provider.both') },
+                ]}
+                disabled={busy} />
+              <p className="m-0 text-xs text-ink-secondary">{t('providerForm.authStyleHelp')}</p>
+              <Checkbox id="allow_insecure_http" label={t('providerForm.allowHttp')} checked={allowInsecureHttp}
+                onChange={(checked) => setConfigKey('allow_insecure_http', checked ? true : undefined)} disabled={busy} />
+              {allowInsecureHttp && <p role="note" className="m-0 text-sm text-status-warning-text">{t('providerForm.httpWarning')}</p>}
             </div>
-
-            {/* 测试结果 */}
-            {testResult && (
-              <div
-                className={cn(
-                  'wrap-anywhere rounded-md p-3 text-sm',
-                  testResult === 'success' ? 'bg-status-success-surface text-status-success-text' : 'bg-status-error-surface text-status-error-text',
-                )}
-              >
-                <span aria-hidden="true">{testResult === 'success' ? '✓' : '✗'}</span> <span>{testMessage}</span>
-                {testDetail && <div className="mt-1 text-xs">{testDetail}</div>}
-              </div>
-            )}
-
-            {/* 模型错误 */}
-            {modelsError && (
-              <div className="wrap-anywhere rounded-md bg-status-error-surface p-3 text-sm text-status-error-text">✗ {modelsError}</div>
-            )}
-          </Stack>
+          )}
+        </div>
       </section>
-
-      {/* 模型列表 */}
-      {(models.length > 0 || isEditMode) && (
-        <section className="settings-section" aria-label={t('providerForm.refreshModels')}>
-            <h3 className="settings-section-title">{t('detail.models')}{models.length})</h3>
-            <Stack gap={3}>
-              <div className="provider-models">
-                {models.map((model) => (
-                  <div
-                    key={model.id}
-                    className="provider-model-row"
-                  >
-                    <h4 className="m-0 wrap-anywhere text-sm font-semibold text-ink-primary">{model.model_name}</h4>
-                    <div className="wrap-anywhere font-mono text-xs text-ink-secondary">{model.model_id}</div>
-                    <div className="flex flex-wrap gap-1">
-                      <span className="rounded-sm bg-surface-inset px-2 py-1 text-xs text-ink-primary">
-                        {model.model_type === 'chat' ? 'text-generation' : model.model_type}
-                      </span>
-                      {model.source === 'manual' && (
-                        <span className="rounded-sm bg-status-warning-surface px-2 py-1 text-xs text-status-warning-text">{t('detail.manual')}</span>
-                      )}
-                      {model.supports_streaming && (
-                        <span className="rounded-sm bg-status-info-surface px-2 py-1 text-xs text-status-info-text">{t('providerForm.streaming')}</span>
-                      )}
-                      {model.supports_vision && (
-                        <span className="rounded-sm bg-status-info-surface px-2 py-1 text-xs text-status-info-text">{t('providerForm.vision')}</span>
-                      )}
-                    </div>
-                    {model.context_window && (
-                      <div className="text-xs text-ink-secondary">
-                        {t('provider.context', { count: formatNumber(model.context_window, locale) })}
-                      </div>
-                    )}
-                    {isEditMode && model.source === 'manual' && (
-                      <div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          aria-label={t('providerForm.removeModel', { id: model.model_id })}
-                          loading={manualBusy === model.model_id}
-                          disabled={manualBusy !== null}
-                          onClick={() => void handleRemoveManualModel(model)}
-                        >
-                          {t('providerForm.remove')}</Button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-              {isEditMode && (
-                <div className="flex flex-wrap items-end gap-3">
-                  <div className="min-w-0 grow basis-60">
-                    <Input
-                      id="manual_model_id"
-                      label={t('providerForm.modelId')}
-                      value={manualModelId}
-                      onChange={(e) => setManualModelId(e.target.value)}
-                      placeholder={t('providerForm.modelIdExample')}
-                      disabled={saving}
-                    />
-                  </div>
-                  <div className="w-56 max-w-full">
-                    <Select
-                      id="manual_model_kind"
-                      label={t('providerForm.kind')}
-                      value={manualKind}
-                      onChange={setManualKind}
-                      options={KIND_OPTIONS.map(option => ({ ...option, label: option.value === 'auto' ? t('provider.auto') : option.label }))}
-                      disabled={saving}
-                    />
-                  </div>
-                  <Button
-                    variant="secondary"
-                    onClick={() => void handleAddManualModel()}
-                    loading={manualBusy === 'add'}
-                    disabled={saving || manualBusy !== null || !manualModelId.trim()}
-                  >
-                    {t('providerForm.addModel')}</Button>
-                </div>
-              )}
-              {isNewMode && (
-                <p className="m-0 text-xs text-ink-secondary">
-                  {t('providerForm.modelsSavedOnCreate')}</p>
-              )}
-              {isEditMode && (
-                <p className="m-0 text-xs text-ink-secondary">
-                  {t('providerForm.modelsUpdated')}</p>
-              )}
-            </Stack>
-        </section>
-      )}
-
-      {/* 底部操作 */}
-      <footer className="settings-actions">
-        {isEditMode && onDelete && (
-          <Button variant="danger" onClick={handleDelete} disabled={saving}>
-            {t('detail.delete')}</Button>
-        )}
-        <Button
-          className="ml-auto"
-          onClick={handleSave}
-          loading={saving}
-          disabled={loading || needsNewKey || !formData.name || !formData.base_url || (!isEditMode && !formData.api_key)}
-        >
+      <section className="provider-connection-check" aria-label={t('providerForm.testConnection')}>
+        <Stack gap={2}>
+          {needsProbe && (
+            <>
+              <Input id="probe_model" label={t('providerForm.modelName')} value={probeModel}
+                onChange={(e) => { invalidateChecks(false); setProbeModel(e.target.value); }}
+                placeholder={t('providerForm.probePlaceholder')} disabled={busy || testing} />
+              <p className="m-0 text-xs text-ink-secondary">{t('providerForm.testOneSmallRequest')}</p>
+            </>
+          )}
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="secondary" onClick={() => void handleTestConnection()} loading={testing}
+              disabled={busy || savedKeyTestBlocked || needsNewKey || !formData.base_url || (!isEditMode && !formData.api_key)}>
+              {testing ? t('providerForm.testing') : t('providerForm.testConnection')}
+            </Button>
+            <span className="text-xs text-ink-secondary">{t(isEditMode && !formData.api_key
+              ? 'providerForm.testSavedTarget' : 'providerForm.testDraftTarget')}</span>
+          </div>
+          {savedKeyTestBlocked && <p role="status" className="m-0 text-xs text-status-warning-text">{t('providerForm.saveBeforeTest')}</p>}
+          {testResult && (
+            <div role={testResult === 'error' ? 'alert' : 'status'} className={cn('wrap-anywhere rounded-md p-3 text-sm',
+              testResult === 'success' ? 'bg-status-success-surface text-status-success-text' : 'bg-status-error-surface text-status-error-text')}>
+              {testMessage}{testDetail && <div className="mt-1 text-xs">{testDetail}</div>}
+            </div>
+          )}
+        </Stack>
+      </section>
+      <ProviderModels models={previewMode ? draftModels : models} editMode={!previewMode} busy={busy} refreshing={fetchingModels}
+        mutationBusy={manualBusy} blockedReason={modelFetchBlocked ? t('providerForm.modelPreviewRequired') : undefined}
+        error={modelsError} onRefresh={() => void handleFetchModels()}
+        onAdd={(modelId, kind) => handleModelMutation('add', modelId, kind)}
+        onRemove={(model) => handleModelMutation('remove', model.model_id)} />
+      {isNewMode && draftModels.length > 0 && <p className="m-0 text-xs text-ink-secondary">{t('providerForm.modelsSavedOnCreate')}</p>}
+      <footer className="settings-actions provider-form-footer">
+        <Button variant="secondary" onClick={handleDiscard} disabled={busy || !dirty}>{t('providerForm.discard')}</Button>
+        <Button onClick={() => void handleSave()} loading={saving}
+          disabled={busy || !dirty || needsNewKey || !!manualBusy || fetchingModels || !formData.name.trim()
+            || !formData.base_url.trim() || (!isEditMode && !formData.api_key)}>
           {saving ? t('providerForm.saving') : isNewMode ? t('providerForm.create') : t('providerForm.saveChanges')}
         </Button>
       </footer>

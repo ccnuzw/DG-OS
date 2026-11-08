@@ -1,5 +1,6 @@
-// Shell-only glyphs. Deliberately not a general icon set: each one is here because a workspace
-// component renders it. Strokes follow currentColor so tone comes from the surrounding text colour.
+import { Settings } from 'lucide-react';
+
+// Shell-only glyphs use semantic colors so they follow the active theme.
 
 interface GlyphProps {
   className?: string;
@@ -16,7 +17,10 @@ const stroke = {
 export function DesktopGlyph({ className }: GlyphProps) {
   return (
     <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" className={className} {...stroke}>
-      <path d="M4 4h6v6H4zm10 0h6v6h-6zM4 14h6v6H4zm10 0h6v6h-6z" />
+      <path d="M4 4h6v6H4z" fill="currentColor" stroke="none" className="text-status-info-text" />
+      <path d="M14 4h6v6h-6z" fill="currentColor" stroke="none" className="text-status-success-text" />
+      <path d="M4 14h6v6H4z" fill="currentColor" stroke="none" className="text-status-warning-text" />
+      <path d="M14 14h6v6h-6z" fill="currentColor" stroke="none" className="text-accent-default" />
     </svg>
   );
 }
@@ -38,11 +42,7 @@ export function SkillGlyph({ className }: GlyphProps) {
 }
 
 export function SettingsGlyph({ className }: GlyphProps) {
-  return (
-    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" className={className} {...stroke}>
-      <path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 3v2m0 14v2M3 12h2m14 0h2" />
-    </svg>
-  );
+  return <Settings aria-hidden="true" focusable="false" className={`${className ?? ''} workspace-settings-glyph`} strokeWidth={1.6} />;
 }
 
 export function CloseGlyph({ className }: GlyphProps) {

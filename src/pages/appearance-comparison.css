@@ -1,0 +1,178 @@
+.appearance-comparison {
+  container: appearance-comparison / inline-size;
+  min-width: 0;
+  max-width: 100%;
+  padding-top: var(--spacing-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.appearance-comparison-header {
+  display: grid;
+  gap: var(--spacing-1);
+  margin-bottom: var(--spacing-3);
+}
+
+.appearance-comparison-header h3,
+.appearance-comparison-mode-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-normal);
+}
+
+.appearance-comparison-header p,
+.appearance-comparison-pair-label {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+.appearance-comparison-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--spacing-4);
+  align-items: start;
+}
+
+.appearance-comparison-mode {
+  display: grid;
+  min-width: 0;
+  gap: var(--spacing-2);
+}
+
+.appearance-comparison-scope {
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-family-ui);
+  font-size: max(var(--font-size-ui), var(--font-size-min));
+  line-height: var(--line-height-ui);
+  isolation: isolate;
+}
+
+.appearance-comparison-scope[data-theme='light'] { color-scheme: light; }
+.appearance-comparison-scope[data-theme='dark'] { color-scheme: dark; }
+
+.appearance-comparison-nav {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: var(--spacing-1);
+  padding: var(--spacing-2);
+  border-bottom: 1px solid var(--border-divider);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  background: var(--surface-rail);
+}
+
+.appearance-comparison-scope[data-sidebar-treatment='soft'] .appearance-comparison-nav {
+  background: color-mix(in srgb, var(--surface-rail) 75%, var(--surface-canvas));
+}
+
+.appearance-comparison-nav-item,
+.appearance-comparison-actions > button {
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  min-height: max(var(--control-height-compact), calc(1lh + 2px));
+  padding-block: var(--spacing-1);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.appearance-comparison-nav-item[aria-current='page'] {
+  background: var(--surface-selected);
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
+  box-shadow: inset 0 -1px var(--accent-default);
+}
+
+.appearance-comparison-content {
+  display: grid;
+  min-width: 0;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3);
+}
+
+.appearance-comparison-content > * { min-width: 0; max-width: 100%; }
+
+.appearance-comparison-assistant {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
+.appearance-comparison-content > .type-reading {
+  padding: var(--spacing-2) var(--spacing-3);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}
+
+.appearance-comparison-code {
+  margin: 0;
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+
+.appearance-comparison-input {
+  min-width: 0;
+  max-width: 100%;
+  min-height: max(var(--control-height-compact), calc(1lh + 2px));
+}
+
+.appearance-comparison-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+}
+
+.appearance-comparison-errors {
+  display: grid;
+  gap: var(--spacing-1);
+  color: var(--status-error-text);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+.appearance-comparison-errors p { margin: 0; }
+
+.appearance-comparison-pair {
+  display: grid;
+  min-width: 0;
+  gap: var(--spacing-1);
+}
+
+.appearance-comparison-pair-scope {
+  min-width: 0;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-sm);
+}
+
+.appearance-comparison-pair-scope > * {
+  margin: 0;
+  padding: var(--spacing-2) var(--spacing-3);
+  border-radius: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.appearance-comparison-scope[data-reduced-motion='reduce'] * {
+  animation: none;
+  transition: none;
+}
+
+@container appearance-comparison (min-width: 640px) {
+  .appearance-comparison-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

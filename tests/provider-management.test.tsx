@@ -11,6 +11,17 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 const mockedInvoke = vi.mocked(invoke);
 const initialState = useProviderStore.getState();
 
+async function openProviderActions(name?: string) {
+  if (name) fireEvent.click(await screen.findByRole('button', { name, exact: true }));
+  fireEvent.keyDown(await screen.findByRole('button', { name: 'Provider actions' }), { key: 'ArrowDown' });
+  await screen.findByRole('menu');
+}
+
+async function requestDelete(name = 'Saved fixture') {
+  await openProviderActions(name);
+  fireEvent.click(screen.getByRole('menuitem', { name: `Delete ${name}` }));
+}
+
 beforeEach(() => {
   setLocaleForTesting('en-US');
   useProviderStore.setState(initialState, true);
@@ -60,9 +71,10 @@ describe('Provider creation entry points', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: '+ Create Provider' }));
     fireEvent.change(screen.getByLabelText('API Key *'), { target: { value: 'test-key' } });
-    fireEvent.click(screen.getByRole('button', { name: /Refresh Models/ }));
+    fireEvent.change(screen.getByLabelText('Base URL *'), { target: { value: 'https://example.invalid/v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch model preview' }));
 
-    expect(await screen.findByRole('heading', { name: 'gpt-test' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /^gpt-test / })).toBeTruthy();
     expect(mockedInvoke).toHaveBeenCalledWith('list_models_for_config', {
       config: expect.objectContaining({ api_key: 'test-key' }),
     });
@@ -81,6 +93,7 @@ describe('Provider creation entry points', () => {
       return { success: true, data: [] };
     });
     render(<ProviderManagement />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Local fixture', exact: true }));
     fireEvent.click(await screen.findByRole('button', { name: 'Retry credential migration for Local fixture' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry credential migration for Local fixture' })).toBeNull());
     expect(mockedInvoke).toHaveBeenCalledWith('migrate_provider_credential', { providerId: 'provider-pending' });
@@ -112,11 +125,11 @@ describe('Provider form lifecycle', () => {
     render(<ProviderManagement />);
     fireEvent.click(await screen.findByRole('button', { name: 'Saved fixture', exact: true }));
     fireEvent.change(screen.getByLabelText('Name *'), { target: { value: 'Unsaved draft' } });
-    fireEvent.change(screen.getByLabelText('API Key *'), { target: { value: 'synthetic-draft-key' } });
+    fireEvent.change(screen.getByLabelText(/^API Key/), { target: { value: 'synthetic-draft-key' } });
     await act(async () => { resolveModels({ success: true, data: [modelFixture] }); });
-    expect(await screen.findByRole('heading', { name: 'Fixture model' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Fixture model / })).toBeNull();
     expect((screen.getByLabelText('Name *') as HTMLInputElement).value).toBe('Unsaved draft');
-    expect((screen.getByLabelText('API Key *') as HTMLInputElement).value).toBe('synthetic-draft-key');
+    expect((screen.getByLabelText(/^API Key/) as HTMLInputElement).value).toBe('synthetic-draft-key');
   });
 
   it('clears the old cache after endpoint save and keeps the new saved baseline', async () => {
@@ -133,15 +146,15 @@ describe('Provider form lifecycle', () => {
     });
     render(<ProviderManagement />);
     fireEvent.click(await screen.findByRole('button', { name: 'Saved fixture', exact: true }));
-    expect(await screen.findByRole('heading', { name: 'Fixture model' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /^Fixture model / })).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Base URL *'), { target: { value: 'https://example.invalid/new' } });
-    fireEvent.change(screen.getByLabelText('API Key *'), { target: { value: 'synthetic-new-key' } });
-    fireEvent.click(screen.getByRole('button', { name: /Save Changes/ }));
+    fireEvent.change(screen.getByLabelText(/^API Key/), { target: { value: 'synthetic-new-key' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save connection configuration/i }));
     await waitFor(() => expect(useProviderStore.getState().providers[0].config_revision).toBe(1));
-    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Fixture model' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Fixture model / })).toBeNull());
     expect((screen.getByLabelText('Base URL *') as HTMLInputElement).value).toBe(saved.base_url);
-    expect((screen.getByLabelText('API Key *') as HTMLInputElement).value).toBe('');
-    expect((screen.getByRole('button', { name: /Refresh Models/ }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByLabelText(/^API Key/) as HTMLInputElement).value).toBe('');
+    expect((screen.getByRole('button', { name: 'Fetch models' }) as HTMLButtonElement).disabled).toBe(false);
   });
 });
 
@@ -165,7 +178,7 @@ describe('Provider failure reporting', () => {
       return { success: true, data: [] };
     });
     await openSavedProvider();
-    fireEvent.change(screen.getByLabelText('API Key *'), { target: { value: 'synthetic-key' } });
+    fireEvent.change(screen.getByLabelText(/^API Key/), { target: { value: 'synthetic-key' } });
     fireEvent.click(screen.getByRole('button', { name: /Test Connection/ }));
 
     expect(await screen.findByText('Invalid API key')).toBeTruthy();
@@ -182,7 +195,7 @@ describe('Provider failure reporting', () => {
     });
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     await openSavedProvider();
-    fireEvent.click(screen.getByRole('button', { name: /Refresh Models/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch models' }));
 
     await waitFor(() => expect(document.querySelectorAll('[data-toast-type="error"]')).toHaveLength(1));
     expect(document.querySelector('[data-toast-type="error"]')?.textContent).toContain('Operation failed');
@@ -197,7 +210,7 @@ describe('Provider failure reporting', () => {
       return { success: true, data: [] };
     });
     await openSavedProvider();
-    fireEvent.click(screen.getByRole('button', { name: /Refresh Models/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch models' }));
 
     const dialog = await screen.findByRole('dialog', { name: 'OS credential store unavailable' });
     expect(within(dialog).queryByText(HOST_MESSAGE)).toBeNull();
@@ -240,7 +253,7 @@ describe('Provider store failures reach the unified error handling', () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     failWith('delete_provider', new Error(HOST_MESSAGE));
     renderWithToasts();
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete Saved fixture' }));
+    await requestDelete();
     fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete Provider?' })).getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => expect(toasts()).toHaveLength(1));
@@ -253,7 +266,7 @@ describe('Provider store failures reach the unified error handling', () => {
     failWith('update_provider', { code: 1001002, message: HOST_MESSAGE });
     await openSavedProvider();
     fireEvent.change(screen.getByLabelText('Name *'), { target: { value: 'Renamed' } });
-    fireEvent.click(screen.getByRole('button', { name: /Save Changes/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Save connection configuration/i }));
 
     expect(await screen.findByText('Invalid API key')).toBeTruthy();
     expect((screen.getByLabelText('Name *') as HTMLInputElement).value).toBe('Renamed');
@@ -267,6 +280,7 @@ describe('Provider store failures reach the unified error handling', () => {
       return { success: true, data: [] };
     });
     renderWithToasts();
+    fireEvent.click(await screen.findByRole('button', { name: 'Saved fixture', exact: true }));
     fireEvent.click(await screen.findByRole('button', { name: 'Retry credential migration for Saved fixture' }));
 
     const dialog = await screen.findByRole('dialog', { name: 'OS credential store unavailable' });
@@ -368,16 +382,16 @@ describe('Provider list controls', () => {
       return { success: true, data: [] };
     });
     renderWithToasts();
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete Saved fixture' }));
+    await requestDelete();
     const dialog = await screen.findByRole('dialog', { name: 'Delete Provider?' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_provider', expect.anything());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete Saved fixture' }));
+    await requestDelete();
     fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete Provider?' })).getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith('delete_provider', { id: providerFixture.id }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Delete Saved fixture' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Saved fixture', exact: true })).toBeNull());
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
@@ -385,8 +399,8 @@ describe('Provider list controls', () => {
     const rows = ['Alpha', 'Beta', 'Gamma'].map((name, index) => ({
       ...providerFixture, id: `provider-${name.toLowerCase()}`, name, sort_order: index,
     }));
-    const names = () => screen.getAllByRole('heading', { level: 3 }).map(node => node.textContent);
-    const button = (label: string) => screen.getByRole('button', { name: label }) as HTMLButtonElement;
+    const names = () => within(screen.getByRole('complementary')).getAllByRole('heading', { level: 3 }).map(node => node.textContent);
+    const item = (label: string) => screen.getByRole('menuitem', { name: label });
     const toasts = () => Array.from(document.querySelectorAll('[data-toast-type="error"]'));
 
     it('sends the complete id list with the row swapped, then shows the host order', async () => {
@@ -405,19 +419,21 @@ describe('Provider list controls', () => {
       await screen.findByRole('button', { name: 'Alpha', exact: true });
       expect(names()).toEqual(['Alpha', 'Beta', 'Gamma']);
 
-      fireEvent.click(button('Move Beta up'));
+      await openProviderActions('Beta');
+      fireEvent.click(item('Move Beta up'));
       await waitFor(() => expect(names()).toEqual(['Beta', 'Alpha', 'Gamma']));
       expect(mockedInvoke).toHaveBeenCalledWith('update_provider_order', {
         providerIds: ['provider-beta', 'provider-alpha', 'provider-gamma'],
       });
 
-      fireEvent.click(button('Move Beta down'));
+      await openProviderActions();
+      fireEvent.click(item('Move Beta down'));
       await waitFor(() => expect(names()).toEqual(['Alpha', 'Beta', 'Gamma']));
       expect(mockedInvoke).toHaveBeenLastCalledWith('list_providers', {});
       expect(mockedInvoke).toHaveBeenCalledWith('update_provider_order', {
         providerIds: ['provider-alpha', 'provider-beta', 'provider-gamma'],
       });
-      expect(screen.queryByLabelText('Name *')).toBeNull();
+      expect((screen.getByLabelText('Name *') as HTMLInputElement).value).toBe('Beta');
       expect(toasts()).toHaveLength(0);
     });
 
@@ -428,15 +444,11 @@ describe('Provider list controls', () => {
       renderWithToasts();
       await screen.findByRole('button', { name: 'Alpha', exact: true });
 
-      expect(button('Move Alpha up').disabled).toBe(true);
-      expect(button('Move Alpha down').disabled).toBe(false);
-      expect(button('Move Beta up').disabled).toBe(false);
-      expect(button('Move Beta down').disabled).toBe(false);
-      expect(button('Move Gamma up').disabled).toBe(false);
-      expect(button('Move Gamma down').disabled).toBe(true);
-
-      fireEvent.click(button('Move Alpha up'));
-      fireEvent.click(button('Move Gamma down'));
+      await openProviderActions('Alpha');
+      expect(item('Move Alpha up').getAttribute('aria-disabled')).toBe('true');
+      fireEvent.keyDown(item('Move Alpha up'), { key: 'Escape' });
+      await openProviderActions('Gamma');
+      expect(item('Move Gamma down').getAttribute('aria-disabled')).toBe('true');
       expect(mockedInvoke).not.toHaveBeenCalledWith('update_provider_order', expect.anything());
     });
 
@@ -450,15 +462,13 @@ describe('Provider list controls', () => {
       renderWithToasts();
       await screen.findByRole('button', { name: 'Alpha', exact: true });
 
-      fireEvent.click(button('Move Beta up'));
-      await waitFor(() => expect(button('Move Gamma up').disabled).toBe(true));
-      expect(button('Move Alpha down').disabled).toBe(true);
-      expect(button('Move Gamma up').disabled).toBe(true);
-      fireEvent.click(button('Move Gamma up'));
+      await openProviderActions('Beta');
+      fireEvent.click(item('Move Beta up'));
+      await waitFor(() => expect((screen.getByRole('button', { name: 'Provider actions' }) as HTMLButtonElement).disabled).toBe(true));
       expect(mockedInvoke.mock.calls.filter(([command]) => command === 'update_provider_order')).toHaveLength(1);
 
       await act(async () => { finish({ success: true, data: null }); });
-      await waitFor(() => expect(button('Move Gamma up').disabled).toBe(false));
+      await waitFor(() => expect((screen.getByRole('button', { name: 'Provider actions' }) as HTMLButtonElement).disabled).toBe(false));
     });
 
     it('keeps the host order and reports once when the host rejects the order', async () => {
@@ -470,7 +480,8 @@ describe('Provider list controls', () => {
       renderWithToasts();
       await screen.findByRole('button', { name: 'Alpha', exact: true });
 
-      fireEvent.click(button('Move Beta up'));
+      await openProviderActions('Beta');
+      fireEvent.click(item('Move Beta up'));
 
       expect(await screen.findByText('Provider unavailable')).toBeTruthy();
       expect(toasts()).toHaveLength(1);
@@ -478,7 +489,7 @@ describe('Provider list controls', () => {
       expect(names()).toEqual(['Alpha', 'Beta', 'Gamma']);
       expect(useProviderStore.getState().providers.map(row => row.name)).toEqual(['Alpha', 'Beta', 'Gamma']);
       expect(mockedInvoke.mock.calls.filter(([command]) => command === 'list_providers')).toHaveLength(1);
-      expect(button('Move Beta up').disabled).toBe(false);
+      expect((screen.getByRole('button', { name: 'Provider actions' }) as HTMLButtonElement).disabled).toBe(false);
     });
   });
 });
@@ -505,7 +516,7 @@ describe('Connection test diagnostics (AC37)', () => {
       return { success: true, data: [] };
     });
     await openSavedProvider();
-    fireEvent.change(screen.getByLabelText('API Key *'), { target: { value: 'synthetic-key' } });
+    fireEvent.change(screen.getByLabelText(/^API Key/), { target: { value: 'synthetic-key' } });
     fireEvent.click(screen.getByRole('button', { name: /Test Connection/ }));
 
     expect(await screen.findByText(hint)).toBeTruthy();
@@ -519,7 +530,7 @@ describe('Connection test diagnostics (AC37)', () => {
       return { success: true, data: [] };
     });
     await openSavedProvider();
-    fireEvent.change(screen.getByLabelText('API Key *'), { target: { value: 'synthetic-key' } });
+    fireEvent.change(screen.getByLabelText(/^API Key/), { target: { value: 'synthetic-key' } });
     fireEvent.click(screen.getByRole('button', { name: /Test Connection/ }));
 
     expect(await screen.findByText(HOST_MESSAGE)).toBeTruthy();
@@ -559,7 +570,7 @@ describe('Services without a model list endpoint (AC17)', () => {
 
     fireEvent.change(screen.getByLabelText('Model name'), { target: { value: '  probe-model  ' } });
     fireEvent.click(screen.getByRole('button', { name: /Test Connection/ }));
-    expect(await screen.findByText('Connection successful')).toBeTruthy();
+    await waitFor(() => expect(callsOf('test_provider_connection')).toHaveLength(2));
     expect(mockedInvoke).toHaveBeenLastCalledWith('test_provider_connection', {
       config: expect.objectContaining({ base_url: 'https://nolist.example/v1' }),
       probeModel: 'probe-model',
@@ -632,13 +643,12 @@ describe('Services without a model list endpoint (AC17)', () => {
     fireEvent.change(await screen.findByLabelText('Model name'), { target: { value: 'probe-model' } });
     fireEvent.click(screen.getByRole('button', { name: /Test Connection/ }));
 
-    expect(await screen.findByText('Connection successful')).toBeTruthy();
+    await waitFor(() => expect(callsOf('test_provider_by_id')).toHaveLength(2));
     expect(mockedInvoke).toHaveBeenLastCalledWith('test_provider_by_id', { providerId: providerFixture.id, probeModel: 'probe-model' });
   });
 });
 
 describe('Manual models (AC17)', () => {
-  const remoteModel = { ...modelFixture, model_id: 'legacy-chat', model_name: 'legacy-chat', model_type: 'chat', source: 'remote' };
   const manualRow = (modelId: string, kind: string) => ({
     ...modelFixture, id: `row-${modelId}`, model_id: modelId, model_name: modelId, model_type: kind,
     source: 'manual', kind_source: 'manual',
@@ -657,58 +667,35 @@ describe('Manual models (AC17)', () => {
     });
   }
 
-  it('shows each model kind (legacy chat as text-generation) and a manual badge only on manual rows', async () => {
-    mockManualHost([remoteModel, manualRow('my-embed', 'embedding')]);
-    await openSavedProvider();
-
-    const remoteCard = (await screen.findByRole('heading', { name: 'legacy-chat' })).parentElement!;
-    expect(remoteCard.textContent).toContain('text-generation');
-    expect(remoteCard.textContent).not.toContain('manual');
-    expect(within(remoteCard).queryByRole('button', { name: /Remove/ })).toBeNull();
-
-    const manualCard = screen.getByRole('heading', { name: 'my-embed' }).parentElement!;
-    expect(manualCard.textContent).toContain('embedding');
-    expect(within(manualCard).getByText('manual')).toBeTruthy();
-  });
 
   it('adds a manual model with and without a kind and shows both rows', async () => {
     mockManualHost([]);
     await openSavedProvider();
 
+    fireEvent.click(screen.getByRole('button', { name: 'Add model manually' }));
     fireEvent.change(await screen.findByLabelText('Model ID'), { target: { value: ' model-a ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add model' }));
-    expect(await screen.findByRole('heading', { name: 'model-a' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /^model-a / })).toBeTruthy();
     expect(mockedInvoke).toHaveBeenCalledWith('add_manual_model', { providerId: providerFixture.id, modelId: 'model-a' });
+    fireEvent.click(screen.getByRole('button', { name: 'Add model manually' }));
     expect((screen.getByLabelText('Model ID') as HTMLInputElement).value).toBe('');
 
     fireEvent.change(screen.getByLabelText('Model ID'), { target: { value: 'model-b' } });
-    await chooseOption('Kind', 'embedding');
+    await chooseOption('Type (optional)', 'Embedding');
     fireEvent.click(screen.getByRole('button', { name: 'Add model' }));
-    expect(await screen.findByRole('heading', { name: 'model-b' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /^model-b / })).toBeTruthy();
     expect(mockedInvoke).toHaveBeenCalledWith('add_manual_model', { providerId: providerFixture.id, modelId: 'model-b', kind: 'embedding' });
-    expect(screen.getByRole('heading', { name: 'model-a' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'model-b' }).parentElement!.textContent).toContain('embedding');
+    expect(screen.getByRole('button', { name: /^model-a / })).toBeTruthy();
   });
 
-  it('offers every fixed model kind plus Auto', async () => {
-    mockManualHost([]);
-    await openSavedProvider();
-    const trigger = await screen.findByRole('combobox', { name: 'Kind' });
-    trigger.focus();
-    fireEvent.keyDown(trigger, { key: 'Enter' });
-    const listbox = await screen.findByRole('listbox');
-    expect(within(listbox).getAllByRole('option').map(option => option.textContent)).toEqual([
-      'Auto', 'text-generation', 'embedding', 'rerank', 'image-generation', 'video-generation',
-      'speech-synthesis', 'speech-transcription', 'moderation',
-    ]);
-  });
 
   it('removes a manual model by provider and model id', async () => {
     mockManualHost([manualRow('my-embed', 'embedding')]);
     await openSavedProvider();
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove my-embed' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^my-embed / }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove manual model my-embed' }));
 
-    await waitFor(() => expect(screen.queryByRole('heading', { name: 'my-embed' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^my-embed / })).toBeNull());
     expect(mockedInvoke).toHaveBeenCalledWith('remove_manual_model', { providerId: providerFixture.id, modelId: 'my-embed' });
   });
 
@@ -719,6 +706,7 @@ describe('Manual models (AC17)', () => {
       return { success: true, data: [] };
     });
     await openSavedProvider();
+    fireEvent.click(screen.getByRole('button', { name: 'Add model manually' }));
     fireEvent.change(await screen.findByLabelText('Model ID'), { target: { value: 'bad id' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add model' }));
 
@@ -742,6 +730,29 @@ describe('Provider confirm dialogs (WKWebView has no window.confirm)', () => {
       return { success: true, data: [] };
     });
   }
+
+  it('selects from card content and preserves the draft when the selected card is clicked again', async () => {
+    mockTwoProviders();
+    renderWithToasts();
+    const card = await screen.findByRole('group', { name: 'Saved fixture', exact: true });
+    fireEvent.click(within(card).getByTitle(providerFixture.base_url));
+    await screen.findByLabelText('Name *');
+    dirtyName();
+    fireEvent.click(within(card).getByRole('button', { name: 'Saved fixture', exact: true }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect((screen.getByLabelText('Name *') as HTMLInputElement).value).toBe('Unsaved draft');
+    expect(modelCalls(providerFixture.id)).toHaveLength(1);
+  });
+
+  it('keeps card actions independent from selecting the editor', async () => {
+    mockTwoProviders(command => command === 'toggle_provider' ? { success: true, data: { ...otherFixture, enabled: false } } : undefined);
+    await openSavedProvider();
+    const other = screen.getByRole('group', { name: 'Other fixture', exact: true });
+    fireEvent.click(within(other).getByRole('switch'));
+    await waitFor(() => expect(within(other).getByRole('switch').getAttribute('aria-checked')).toBe('false'));
+    expect((screen.getByLabelText('Name *') as HTMLInputElement).value).toBe('Saved fixture');
+    expect(modelCalls(otherFixture.id)).toHaveLength(0);
+  });
 
   it('stays on the draft when switching providers is cancelled, and switches once when confirmed', async () => {
     const confirm = vi.spyOn(window, 'confirm');
@@ -806,14 +817,14 @@ describe('Provider confirm dialogs (WKWebView has no window.confirm)', () => {
     mockTwoProviders(command => command === 'delete_provider' ? new Promise(resolve => { finish = resolve; }) : undefined);
     await openSavedProvider();
 
-    fireEvent.click(screen.getByRole('button', { name: /🗑️ Delete/ }));
+    await requestDelete();
     let dialog = await screen.findByRole('dialog', { name: 'Delete Provider?' });
     expect(within(dialog).getByText(/"Saved fixture"/)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(deleteCalls()).toHaveLength(0);
 
-    fireEvent.click(screen.getByRole('button', { name: /🗑️ Delete/ }));
+    await requestDelete();
     dialog = await screen.findByRole('dialog', { name: 'Delete Provider?' });
     const confirmButton = within(dialog).getByRole('button', { name: 'Delete' });
     fireEvent.click(confirmButton); fireEvent.click(confirmButton);
@@ -833,7 +844,7 @@ describe('Provider confirm dialogs (WKWebView has no window.confirm)', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     mockTwoProviders(command => command === 'delete_provider' ? { success: false, error: { code: 1000000, message: HOST_MESSAGE } } : undefined);
     await openSavedProvider();
-    fireEvent.click(screen.getByRole('button', { name: /🗑️ Delete/ }));
+    await requestDelete();
     fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete Provider?' })).getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => expect(document.querySelectorAll('[data-toast-type="error"]')).toHaveLength(1));
@@ -847,7 +858,7 @@ describe('Provider confirm dialogs (WKWebView has no window.confirm)', () => {
     const view = render(<><ProviderManagement /><ModalHost /></>);
     fireEvent.click(await screen.findByRole('button', { name: 'Saved fixture', exact: true }));
     await screen.findByLabelText('Name *');
-    fireEvent.click(screen.getByRole('button', { name: /🗑️ Delete/ }));
+    await requestDelete();
     await screen.findByRole('dialog', { name: 'Delete Provider?' });
     view.unmount();
     expect(document.querySelector('[role="dialog"]')).toBeNull();

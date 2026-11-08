@@ -1,6 +1,7 @@
 import { t, useLocale as usePageLocale } from '../i18n';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Button, Card, Checkbox, Loading, Stack, StatusIcon, cn } from '@dgos/ui';
+import { Button, Checkbox, Loading, Stack, StatusIcon, cn } from '@dgos/ui';
+import { FOCUS_RING } from '@dgos/ui/lib/focus';
 import {
   ModuleApiError,
   grantModulePermission,
@@ -16,6 +17,8 @@ import {
 } from '../modules/moduleApi';
 import { usePageError } from '../pageError';
 import { formatDateTime } from '../i18n';
+import { Package } from 'lucide-react';
+import './module-management.css';
 
 // Failures are shown twice on purpose: inline (`ErrorNotice`, with the host's own message and code, which stays next
 // to the module it belongs to) and through the unified Toast. Module errors are 1004xxx codes with no entry in
@@ -28,8 +31,7 @@ export function toApiError(error: unknown): ModuleApiError {
 }
 
 /** Text link used by both module pages. */
-export const MODULE_LINK_CLASS =
-  'text-accent-default underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus';
+export const MODULE_LINK_CLASS = cn('text-accent-default underline underline-offset-4', FOCUS_RING);
 
 type NoticeTone = 'error' | 'warning' | 'success';
 
@@ -254,7 +256,6 @@ function PermissionAuditList({ log, busy, onLoadOlder }: {
 
 type Pending = { kind: 'enable' | 'uninstall'; moduleId: string } | null;
 
-const BADGE_CLASS = 'rounded-full bg-surface-inset px-2 py-0.5 text-xs text-ink-primary';
 
 export default function ModuleManagement() {
   usePageLocale();
@@ -424,50 +425,74 @@ export default function ModuleManagement() {
   const visibleModules = modules?.filter(module => filter === 'all' || (filter === 'enabled' ? module.enabled : module.runtime.state === 'failed' || module.permissions.some(permission => !permission.granted)));
 
   return (
-    <div className="settings-content settings-sections text-ink-primary">
-      <header className="mb-4">
-        <h1 className="m-0 mb-2 text-lg font-semibold text-ink-primary">{t('module.title')}</h1>
-        <p className="m-0 mb-2 text-sm text-ink-secondary">
-          {t('module.subtitle')}</p>
+    <div className="settings-content module-management">
+      <header className="module-page-heading">
+        <h1>{t('module.title')}</h1>
+        <p>{t('module.subtitle')}</p>
       </header>
 
-      <div role="group" aria-label={t('module.filters')} className="flex flex-wrap gap-2">{['all', 'enabled', 'pending'].map(value => <Button key={value} variant={filter === value ? 'primary' : 'secondary'} aria-pressed={filter === value} onClick={() => setFilter(value)}>{t(`module.filter.${value}`)}</Button>)}</div>
+      <div role="group" aria-label={t('module.filters')} className="module-filters">{['all', 'enabled', 'pending'].map(value => <Button key={value} variant="ghost" aria-pressed={filter === value} onClick={() => setFilter(value)}>{t(`module.filter.${value}`)}</Button>)}</div>
       {loadError !== null && <ErrorNotice error={loadError} />}
       {modules === null && loadError === null && <Loading label={t('module.loading')} />}
       {modules?.length === 0 && <p className="text-sm text-ink-secondary">{t('module.none')}</p>}
       {Boolean(modules?.length) && visibleModules?.length === 0 && <p role="status" className="text-sm text-ink-secondary">{t('module.noMatches')}</p>}
 
-      <Stack gap={4}>
+      <div className="module-list">
         {visibleModules?.map((module) => {
           const notice = notices[module.module_id] ?? {};
           const confirming = pending?.moduleId === module.module_id ? pending.kind : null;
           return (
-            <article key={module.module_id} aria-label={module.name} data-testid={`module-${module.module_id}`}>
-              <Card>
-                <Card.Header>
-                  <Stack direction="horizontal" gap={2} className="flex-wrap items-center">
-                    <h2 className="m-0 mr-2 min-w-0 text-sm font-semibold wrap-anywhere">{module.name}</h2>
-                    <span className={BADGE_CLASS}>{t('module.version')} {module.version}</span>
-                    {module.official && <span className="rounded-full bg-status-info-surface px-2 py-0.5 text-xs text-status-info-text">{t('module.official')}</span>}
-                    <span className={BADGE_CLASS}>{module.enabled ? t('providerForm.enabled') : t('module.disabled')}</span>
-                    <span className={BADGE_CLASS}>{t('detail.runtime')}{module.runtime.state}</span>
-                  </Stack>
-                </Card.Header>
-                <Card.Body>
-                  <p className="m-0 mb-2 text-ink-secondary wrap-anywhere">
-                     {module.module_id} {t('detail.recentCrashes')} {module.recent_crashes}
-                  </p>
+            <article className="module-card" key={module.module_id} aria-label={module.name} data-testid={`module-${module.module_id}`}>
+              <header className="module-card-heading">
+                <span className="module-mark" aria-hidden="true"><Package size={22} /></span>
+                <div className="module-identity">
+                  <div className="module-name-row"><h2>{module.name}</h2>{module.official && <span className="module-official">{t('module.official')}</span>}</div>
+                  <span className="module-id">{module.module_id}</span>
+                </div>
+                <span className="module-version">{t('module.version')} {module.version}</span>
+              </header>
+              <div className="module-status-row">
+                <span className={cn('module-state', module.enabled && 'is-enabled')}><i aria-hidden="true" />{module.enabled ? t('module.enabled') : t('module.disabled')}</span>
+                <span className={cn('module-runtime', `is-${module.runtime.state}`)}>{t('detail.runtime')}{module.runtime.state}</span>
+                {module.recent_crashes > 0 && <span className="module-crash-count">{t('module.recentCrashes')}: {module.recent_crashes}</span>}
+              </div>
+              <div className="module-primary-actions">
+                    {module.enabled ? (
+                      <>
+                        <Button variant="secondary" disabled={busy} onClick={() => runSteps(module, ['disable_module'], t('module.disabledNotice'))}>{t('module.disable')}</Button>
+                        <Button
+                          variant="secondary"
+                          disabled={busy}
+                          onClick={() =>
+                            act(module.module_id, async () => {
+                              await reloadModule(module.module_id);
+                              return t('module.reloaded');
+                            })
+                          }
+                        >
+                          {t('module.reload')}</Button>
+                      </>
+                    ) : (
+                      <Button variant="primary" disabled={busy} onClick={() => setPending({ kind: 'enable', moduleId: module.module_id })}>{t('module.enableButton')}</Button>
+                    )}
+                    <Button variant="secondary" disabled={busy} onClick={() => update(module)}>{t('module.update')}</Button>
+                    {!module.official && (
+                      <Button variant="danger" disabled={busy} onClick={() => setPending({ kind: 'uninstall', moduleId: module.module_id })}>{t('module.uninstall')}</Button>
+                    )}
+              </div>
                   {module.runtime.state === 'failed' && module.recent_crashes > 0 && <NoticeBox tone="error" role="alert">{t('module.moduleCrashed', { id: module.module_id })}</NoticeBox>}
                   {module.recent_crashes >= 3 && <NoticeBox tone="warning" role="alert">{t('module.faulty')}</NoticeBox>}
+              <section className="module-permissions" aria-label={t('module.permissions')}>
+                <h3>{t('module.permissions')} <span>{module.permissions.length}</span></h3>
 
                   {module.permissions.length === 0 ? (
                     <p className="m-0 my-2">{t('module.noPermissions')}</p>
                   ) : (
-                    <ul className="m-0 my-2 list-none p-0">
+                    <ul className="module-permission-list">
                       {module.permissions.map((entry) => (
-                        <li key={entry.permission} className="flex flex-wrap items-center gap-2 py-1">
-                          <code className="min-w-0 font-mono wrap-anywhere">{entry.permission}</code>{' '}
-                          <span>{entry.granted ? t('module.granted') : t('module.notGranted')}</span>{' '}
+                        <li key={entry.permission} className="module-permission-row">
+                          <code>{entry.permission}</code>
+                          <span className={entry.granted ? 'module-permission-granted' : 'module-permission-pending'}>{entry.granted ? t('module.granted') : t('module.notGranted')}</span>
                           {entry.granted ? (
                             <Button
                               variant="secondary"
@@ -501,6 +526,7 @@ export default function ModuleManagement() {
                       ))}
                     </ul>
                   )}
+              </section>
 
                   {notice.error !== undefined && <ErrorNotice error={notice.error} />}
                   {notice.info !== undefined && (
@@ -537,32 +563,10 @@ export default function ModuleManagement() {
                     />
                   )}
 
-                  <Stack direction="horizontal" gap={2} className="my-3 flex-wrap">
-                    {module.enabled ? (
-                      <>
-                        <Button variant="secondary" disabled={busy} onClick={() => runSteps(module, ['disable_module'], t('module.disabledNotice'))}>{t('module.disable')}</Button>
-                        <Button
-                          variant="secondary"
-                          disabled={busy}
-                          onClick={() =>
-                            act(module.module_id, async () => {
-                              await reloadModule(module.module_id);
-                              return t('module.reloaded');
-                            })
-                          }
-                        >
-                          {t('module.reload')}</Button>
-                      </>
-                    ) : (
-                      <Button variant="primary" disabled={busy} onClick={() => setPending({ kind: 'enable', moduleId: module.module_id })}>{t('module.enableButton')}</Button>
-                    )}
-                    <Button variant="secondary" disabled={busy} onClick={() => update(module)}>{t('module.update')}</Button>
-                    {!module.official && (
-                      <Button variant="danger" disabled={busy} onClick={() => setPending({ kind: 'uninstall', moduleId: module.module_id })}>{t('module.uninstall')}</Button>
-                    )}
-                    <Button variant="ghost" onClick={() => toggleCrashLog(module.module_id)}>{t('module.crashLog')}</Button>
-                    <Button variant="ghost" onClick={() => toggleAuditLog(module.module_id)}>{t('module.permissionLogButton')}</Button>
-                  </Stack>
+              <div className="module-log-actions">
+                <Button variant="ghost" aria-expanded={crashLog?.moduleId === module.module_id} onClick={() => toggleCrashLog(module.module_id)}>{t('module.crashLog')}</Button>
+                <Button variant="ghost" aria-expanded={auditLogs[module.module_id] !== undefined} onClick={() => toggleAuditLog(module.module_id)}>{t('module.permissionLogButton')}</Button>
+              </div>
 
                   {confirming === 'enable' && (
                     <EnableConfirm module={module} busy={busy} onConfirm={() => enable(module)} onCancel={() => setPending(null)} />
@@ -585,12 +589,10 @@ export default function ModuleManagement() {
                       onLoadOlder={() => loadAudit(module.module_id, auditLogs[module.module_id].nextBefore)}
                     />
                   )}
-                </Card.Body>
-              </Card>
             </article>
           );
         })}
-      </Stack>
+      </div>
     </div>
   );
 }

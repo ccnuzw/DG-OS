@@ -11,4 +11,12 @@ export default {
   'workbenchNavigation.running': '{count} running',
   'workbenchNavigation.liveCli': '{count} open CLI',
   'workbenchNavigation.activeProcesses': '{count} active host processes',
+  'workbenchNavigation.runtime': 'Conversation runtime',
+  'workbenchNavigation.dgos': 'DG-OS AI',
+  'workbenchNavigation.native': 'Native CLI · Codex / Claude',
+  'workbenchNavigation.capabilities': 'Manage conversation capabilities',
+  'workbenchNavigation.permissions': 'Permissions',
+  'workbenchNavigation.hostPermissions': 'DG-OS executes selected MCP tools only after your approval of each exact call. Manage server connections and credentials in MCP management; no blanket permission is granted here.',
+  'workbenchNavigation.dgosSource': 'DG-OS AI: shared Providers, pinned content Skills and DG-OS MCP. Apply target changes explicitly; management navigation never sends a message.',
+  'workbenchNavigation.nativeSource': 'Native CLI: Provider from DG-OS; Skills, MCP, instructions, Hooks and approvals belong to this CLI. Saving configuration does not prove this session has loaded it; use explicit session observation and supported refresh in management.',
 } as const;

@@ -15,13 +15,12 @@ export type {
   ThemeScope,
 } from './kernel';
 export {
-  FONT_IDS,
   FONT_SIZES,
   resolveTypography,
 } from './typography';
 export type {
-  FontId,
   FontRole,
   LineHeight,
   TypographyPreferences,
 } from './typography';
+export type { FontSelection } from './fonts';

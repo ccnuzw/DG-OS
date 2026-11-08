@@ -11,6 +11,16 @@ import { useSurfaceActive, useSurfaceVisible } from '../../workspace/SurfaceCont
 
 type TerminalFeedback = { owner: string; resize: string | null; input: string | null; resizing: boolean };
 
+function terminalAppearance(element: HTMLElement) {
+  const styles = getComputedStyle(element);
+  const foreground = styles.getPropertyValue('--text-code').trim();
+  return {
+    fontFamily: styles.getPropertyValue('--font-family-code').trim(),
+    fontSize: Number.parseFloat(styles.getPropertyValue('--font-size-code')) || 12,
+    theme: { background: styles.getPropertyValue('--surface-code').trim(), foreground, cursor: foreground },
+  };
+}
+
 export function DevelopmentTerminal({ process, panelVisible = true }: { process: DevelopmentProcess; panelVisible?: boolean }) {
   const { t } = useLocale();
   const surfaceActive = useSurfaceActive();
@@ -44,8 +54,8 @@ export function DevelopmentTerminal({ process, panelVisible = true }: { process:
     let disposed = false;
     const valid = () => !disposed && currentOwner.current === owner && epoch === useDevelopment.getState().epoch && generation === contextGeneration();
     let writes = Promise.resolve();
-    const styles = getComputedStyle(container.current);
-    const instance = new Terminal({ convertEol: false, cursorBlink: true, scrollback: 2000, fontSize: 12, screenReaderMode: true, theme: { background: styles.getPropertyValue('--surface-code').trim(), foreground: styles.getPropertyValue('--text-primary').trim(), cursor: styles.getPropertyValue('--text-primary').trim() } });
+    let appearance = terminalAppearance(container.current);
+    const instance = new Terminal({ convertEol: false, cursorBlink: true, scrollback: 2000, screenReaderMode: true, ...appearance });
     const fit = new FitAddon();
     instance.loadAddon(fit); instance.open(container.current);
     terminal.current = instance; fitter.current = fit; output.current = ''; sized.current = null; resizeFlight.current = null;
@@ -60,7 +70,27 @@ export function DevelopmentTerminal({ process, panelVisible = true }: { process:
         if (valid() && !result.ok) updateFeedback({ input: result.code });
       });
     });
-    return () => { disposed = true; input.dispose(); instance.dispose(); terminal.current = null; fitter.current = null; };
+    const updateAppearance = () => {
+      if (!valid() || !container.current) return;
+      const next = terminalAppearance(container.current);
+      const metricsChanged = next.fontFamily !== appearance.fontFamily || next.fontSize !== appearance.fontSize;
+      const colorsChanged = next.theme.background !== appearance.theme.background || next.theme.foreground !== appearance.theme.foreground;
+      if (next.fontFamily !== appearance.fontFamily) instance.options.fontFamily = next.fontFamily;
+      if (next.fontSize !== appearance.fontSize) instance.options.fontSize = next.fontSize;
+      if (colorsChanged) instance.options.theme = next.theme;
+      appearance = next;
+      if (metricsChanged || colorsChanged) retryResize.current?.();
+    };
+    const fontsLoaded = () => {
+      updateAppearance();
+      // A loaded face changes cell metrics even when its CSS family name is unchanged.
+      if (valid()) retryResize.current?.();
+    };
+    const themeObserver = new MutationObserver(updateAppearance);
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'data-theme', 'data-preset', 'data-density'] });
+    document.fonts?.addEventListener('loadingdone', fontsLoaded);
+    document.documentElement.addEventListener('appearance-font-ready', fontsLoaded);
+    return () => { disposed = true; themeObserver.disconnect(); document.fonts?.removeEventListener('loadingdone', fontsLoaded); document.documentElement.removeEventListener('appearance-font-ready', fontsLoaded); input.dispose(); instance.dispose(); terminal.current = null; fitter.current = null; };
   }, [owner, epoch, generation, process.id, updateFeedback]);
   const running = processActive(process);
   useEffect(() => {

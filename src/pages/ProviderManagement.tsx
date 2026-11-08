@@ -1,15 +1,17 @@
 import { useLocale as usePageLocale } from '../i18n';
 import { useEffect, useRef, useState } from 'react';
+import { useLayoutBudget } from '../ui/layout/useLayoutBudget';
 import { useProviderStore } from '../stores/providerStore';
 import ProviderList from '../components/ProviderList';
 import ProviderForm from '../components/ProviderForm';
 import type { Provider, ProviderConfig, Model } from '../stores/providerStore';
-import { Button, Modal, Stack } from '@dgos/ui';
+import { Button, DropdownMenu, Modal, Stack } from '@dgos/ui';
 import { usePageError } from '../pageError';
 import { useLocale } from '../i18n';
 import { useSurfaceCloseGuard } from '../workspace/SurfaceContext';
 import { confirmDiscard } from '../workspace/closeCoordinator';
 import './settings-content.css';
+import './provider-layout.css';
 
 const EMPTY_MODELS: Model[] = [];
 
@@ -43,6 +45,17 @@ export default function ProviderManagement() {
   const [togglingProviderId, setTogglingProviderId] = useState<string | null>(null);
   const [reordering, setReordering] = useState(false);
   const [migratingProviderId, setMigratingProviderId] = useState<string | null>(null);
+  const { root, narrow } = useLayoutBudget<HTMLDivElement>(element => {
+    const rootRem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 14;
+    const uiFont = parseFloat(getComputedStyle(element).getPropertyValue('--font-size-ui')) || 12;
+    const listWidth = Math.min(260, Math.max(200, rootRem * 220 / 14));
+    const detailWidth = Math.max(rootRem * 420 / 14, uiFont * 30) + rootRem * 40 / 14;
+    return listWidth + detailWidth;
+  });
+  useEffect(() => {
+    if (!narrow || selectedProvider === null && !isCreatingProvider) return;
+    root.current?.querySelector<HTMLElement>('.provider-form input')?.focus();
+  }, [narrow, selectedProvider?.id, isCreatingProvider, root]);
   const selectionGeneration = useRef(0);
   useSurfaceCloseGuard(async () => {
     if (!hasUnsavedChanges) return true;
@@ -132,12 +145,15 @@ export default function ProviderManagement() {
     );
   };
 
-  const handleSelectProvider = (provider: Provider) => discardThen(() => {
-    selectionGeneration.current += 1;
-    setSelectedProvider(provider);
-    setIsCreatingProvider(false);
-    clearError();
-  });
+  const handleSelectProvider = (provider: Provider) => {
+    if (selectedProvider?.id === provider.id) return;
+    discardThen(() => {
+      selectionGeneration.current += 1;
+      setSelectedProvider(provider);
+      setIsCreatingProvider(false);
+      clearError();
+    });
+  };
 
   const handleNewProvider = () => discardThen(() => {
     selectionGeneration.current += 1;
@@ -236,28 +252,23 @@ export default function ProviderManagement() {
     }
   };
 
-  const handleDeleteProvider = async (provider: Provider) => {
-    const success = await deleteProvider(provider.id);
-    if (!success) reportFailure();
-    if (success && selectedProvider?.id === provider.id) {
-      setSelectedProvider(null);
-      setIsCreatingProvider(false);
-      setHasUnsavedChanges(false);
-    }
-  };
 
   const handleMigrateCredential = async (provider: Provider) => {
     if (migratingProviderId) return;
     setMigratingProviderId(provider.id);
     try {
       if (!(await migrateCredential(provider.id))) reportFailure();
+      else {
+        const updated = useProviderStore.getState().providers.find(row => row.id === provider.id);
+        if (updated) setSelectedProvider(current => current?.id === provider.id ? updated : current);
+      }
     } finally {
       setMigratingProviderId(null);
     }
   };
 
   return (
-    <div className="provider-page" data-detail-open={selectedProvider !== null || isCreatingProvider}>
+    <div ref={root} className="provider-page" data-narrow={narrow} data-detail-open={selectedProvider !== null || isCreatingProvider}>
 
       {error && (
         <div
@@ -271,8 +282,36 @@ export default function ProviderManagement() {
         </div>
       )}
 
-      <div className="mx-6 mt-4 flex shrink-0 flex-col gap-3 empty:hidden">
-        {providers.filter(provider => provider.credential_status === 'migration_required').map(provider => (
+
+      <div className="provider-columns">
+        <ProviderList
+          vendors={vendors}
+          providers={providers}
+          selectedProvider={selectedProvider}
+          onSelect={handleSelectProvider}
+          onNewProvider={handleNewProvider}
+          onToggleEnabled={handleToggleEnabled}
+          togglingProviderId={togglingProviderId}
+          reordering={reordering || loading}
+          hasUnsavedChanges={hasUnsavedChanges}
+        />
+
+        <div className="provider-detail">
+          <Button variant="ghost" size="sm" className="provider-back" onClick={() => discardThen(() => { setSelectedProvider(null); setIsCreatingProvider(false); })}>{t('provider.selectTitle')}</Button>
+          {(selectedProvider || isCreatingProvider) && <header className="provider-detail-heading">
+            <h2>{selectedProvider?.name ?? t('providerForm.new')}</h2>
+            {selectedProvider && <DropdownMenu
+              trigger={<Button variant="ghost" size="sm" aria-label={t('provider.actions')} disabled={loading || togglingProviderId !== null || reordering}>•••</Button>}
+              items={[
+                { kind: 'item', id: 'up', label: t('provider.moveUp', { name: selectedProvider.name }), disabled: providers[0]?.id === selectedProvider.id, onSelect: () => { void handleMoveProvider(selectedProvider, -1); } },
+                { kind: 'item', id: 'down', label: t('provider.moveDown', { name: selectedProvider.name }), disabled: providers[providers.length - 1]?.id === selectedProvider.id, onSelect: () => { void handleMoveProvider(selectedProvider, 1); } },
+                { kind: 'separator' },
+                { kind: 'item', id: 'delete', label: t('provider.deleteName', { name: selectedProvider.name }), danger: true, onSelect: () => { void handleDelete(); } },
+              ]}
+            />}
+          </header>}
+      <div className="provider-credential-notices">
+        {providers.filter(provider => provider.id === selectedProvider?.id && provider.credential_status === 'migration_required').map(provider => (
           <section
             className="flex flex-wrap items-center gap-3 rounded-lg border border-status-warning bg-status-warning-surface p-3 text-status-warning-text"
             key={provider.id}
@@ -290,7 +329,7 @@ export default function ProviderManagement() {
             </Button>
           </section>
         ))}
-        {providers.filter(provider => provider.credential_status === 'missing').map(provider => (
+        {providers.filter(provider => provider.id === selectedProvider?.id && provider.credential_status === 'missing').map(provider => (
           <section
             className="flex flex-wrap items-center gap-3 rounded-lg border border-status-warning bg-status-warning-surface p-3 text-status-warning-text"
             key={provider.id}
@@ -298,31 +337,10 @@ export default function ProviderManagement() {
           >
             <p className="m-0 min-w-0 flex-1 basis-80 wrap-anywhere text-sm">
               {provider.name}{t('detail.noCredential')}</p>
-            <Button variant="secondary" onClick={() => handleSelectProvider(provider)}>
-              {t('detail.configureCredential')}{provider.name}
-            </Button>
           </section>
         ))}
       </div>
       {migratingProviderId && <p role="status" className="mx-6 mt-4 mb-0 text-sm text-ink-secondary">{t('detail.waitingVault')}</p>}
-
-      <div className="provider-columns">
-        <ProviderList
-          vendors={vendors}
-          providers={providers}
-          selectedProvider={selectedProvider}
-          onSelect={handleSelectProvider}
-          onNewProvider={handleNewProvider}
-          onToggleEnabled={handleToggleEnabled}
-          togglingProviderId={togglingProviderId}
-          onMoveProvider={handleMoveProvider}
-          reordering={reordering}
-          onDelete={handleDeleteProvider}
-          hasUnsavedChanges={hasUnsavedChanges}
-        />
-
-        <div className="provider-detail">
-          <Button variant="ghost" size="sm" className="provider-back" onClick={() => discardThen(() => { setSelectedProvider(null); setIsCreatingProvider(false); })}>{t('provider.selectTitle')}</Button>
           <Stack gap={4}>
              {modelsLoading && <p role="status" className="m-0 text-sm text-ink-secondary">{t('provider.loadingModels')}</p>}
             {providers.length === 0 && !isCreatingProvider ? (
@@ -344,9 +362,8 @@ export default function ProviderManagement() {
                 provider={selectedProvider}
                 initialModels={selectedProvider && modelsProviderId === selectedProvider.id ? models : EMPTY_MODELS}
                 onSave={handleSave}
-                onDelete={selectedProvider ? handleDelete : undefined}
-                onChange={() => setHasUnsavedChanges(true)}
-                loading={loading}
+                onChange={setHasUnsavedChanges}
+                loading={loading || togglingProviderId !== null || reordering}
                 onModelsRefreshed={async () => {
                   const id = selectedProvider?.id;
                   await fetchProviders();

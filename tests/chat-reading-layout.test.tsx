@@ -128,6 +128,16 @@ describe('chat reading position', () => {
     expect(view.viewport.scrollTop).toBe(0);
   });
 
+  it('releases bottom-follow as soon as the reader scrolls upward', async () => {
+    const view = mountReadingArea();
+    expect(view.viewport.scrollTop).toBe(900);
+
+    view.scroll(870);
+
+    expect(view.viewport.scrollTop).toBe(870);
+    expect(screen.getByRole('button', { name: '回到底部' })).toBeTruthy();
+  });
+
   it('keeps the reader at the same position while streamed text increases the scroll height', async () => {
     const view = mountReadingArea();
     await startGeneration();

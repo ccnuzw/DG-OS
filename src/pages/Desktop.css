@@ -18,7 +18,7 @@
 .desktop-recent-list button > span:first-of-type { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .desktop-recent time, .desktop-status p { color: var(--text-secondary); font-size: var(--font-size-xs); }
 .desktop-status > button { margin-right: var(--spacing-2); }
-.desktop-page button:focus-visible, .desktop-page summary:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.desktop-page button:focus-visible, .desktop-page summary:focus-visible { outline: 1px solid var(--border-focus); outline-offset: -1px; }
 .desktop-overview { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: var(--spacing-4); margin-top: var(--spacing-5); }
 .desktop-overview > section { min-width: 0; padding: var(--spacing-5); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-panel); }
 .desktop-start { display: flex; flex-direction: column; gap: var(--spacing-4); }

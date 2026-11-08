@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { BookOpen, Command, Folder, LayoutGrid, Maximize2, MessageSquare, Minimize2, Plug, Terminal } from 'lucide-react';
 import { Button, Icon, cn } from '@dgos/ui';
 import { useLocale } from '../i18n';
 import type { WorkspaceSurface } from './model';
@@ -36,7 +37,8 @@ export function TabBar({ surfaces, activeSurfaceId, focusedSurfaceId = null, run
         const dirty = surfaceStatuses[surface.id]?.dirty;
         const runningLabel = surfaceStatuses[surface.id]?.runningLabel ?? t('shell.running');
         const title = surface.kind === 'ai' ? t('nav.workbench') : surface.title;
-        return <div key={surface.id} className={cn('workspace-tab', selected && 'is-active')}>
+        const SurfaceIcon = surface.kind === 'ai' ? MessageSquare : surface.kind === 'task' ? Terminal : surface.kind === 'app' ? LayoutGrid : surface.id === '/skills' ? BookOpen : surface.id === '/mcp' ? Plug : Folder;
+        return <div key={surface.id} data-kind={surface.kind} className={cn('workspace-tab', selected && 'is-active')}>
           <button type="button" role="tab" data-workspace-tab={surface.id} aria-selected={selected} tabIndex={(roving ?? activeSurfaceId ?? surfaces[0]?.id) === surface.id ? 0 : -1} title={title} onFocus={() => setRoving(surface.id)} onClick={() => onActivate(surface.id)} onKeyDown={event => {
             if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
             event.preventDefault();
@@ -44,17 +46,17 @@ export function TabBar({ surfaces, activeSurfaceId, focusedSurfaceId = null, run
             const index = buttons.indexOf(event.currentTarget);
             const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
             buttons[next]?.focus(); buttons[next]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-          }} className="workspace-tab-main"><Icon name={surface.kind === 'ai' ? 'file' : surface.kind === 'task' ? 'code' : surface.kind === 'resource' ? 'folder' : 'menu'} size="sm" /><span>{title}</span>{running ? <i className="workspace-running-dot" role="img" aria-label={runningLabel} title={runningLabel} /> : null}{dirty ? <i className="workspace-dirty-dot" role="img" aria-label={t('shell.unsavedTitle')} /> : null}</button>
+          }} className="workspace-tab-main"><SurfaceIcon className="size-3.5" aria-hidden="true" /><span>{title}</span>{running ? <i className="workspace-running-dot" role="img" aria-label={runningLabel} title={runningLabel} /> : null}{dirty ? <i className="workspace-dirty-dot" role="img" aria-label={t('shell.unsavedTitle')} /> : null}</button>
           <button type="button" aria-label={t('shell.closeTab', { title })} onClick={() => onClose(surface.id)} className="workspace-tab-close"><Icon name="close" size="sm" /></button>
         </div>;
       })}
     </div>
     <div className="workspace-tab-actions">
-      {onOpenLauncher ? <Button size="xxs" variant="ghost" iconOnly aria-label={t('shell.openApps')} title={t('shell.openApps')} onClick={onOpenLauncher}><Icon name="menu" size="sm" /></Button> : null}
+      {onOpenLauncher ? <Button size="xxs" variant="ghost" iconOnly className="text-accent-default enabled:hover:bg-surface-selected" aria-label={t('shell.openApps')} title={t('shell.openApps')} onClick={onOpenLauncher}><LayoutGrid className="size-3.5" aria-hidden="true" /></Button> : null}
       {surfaces.length ? <TabListPopover surfaces={surfaces} activeId={activeSurfaceId} onActivate={onActivate} onClose={onClose} label={t('shell.tabList')} /> : null}
-      {onOpenCommands ? <Button size="xxs" variant="ghost" iconOnly aria-label={t('shell.commandTitle')} title={t('shell.commandShortcut')} onClick={onOpenCommands}><Icon name="search" size="sm" /></Button> : null}
-      {onNew ? <Button size="xxs" variant="ghost" iconOnly aria-label={t('shell.newSession')} onClick={onNew}><Icon name="plus" size="sm" /></Button> : null}
-      {onToggleFocus && active ? <Button size="xxs" variant="secondary" aria-label={t('shell.focus')} aria-pressed={focusedSurfaceId === active.id} title={t(focusedSurfaceId === active.id ? 'shell.restore' : 'shell.focus')} onClick={() => onToggleFocus(active.id)}><Icon name="copy" size="sm" /><span className="workspace-focus-label">{t(focusedSurfaceId === active.id ? 'shell.restore' : 'shell.focus')}</span></Button> : null}
+      {onOpenCommands ? <Button size="xxs" variant="ghost" iconOnly className="text-status-success-text enabled:hover:bg-status-success-surface" aria-label={t('shell.commandTitle')} title={t('shell.commandShortcut')} onClick={onOpenCommands}><Command className="size-3.5" aria-hidden="true" /></Button> : null}
+      {onNew ? <Button size="xxs" variant="ghost" iconOnly className="text-accent-default enabled:hover:bg-surface-selected" aria-label={t('shell.newSession')} onClick={onNew}><Icon name="plus" size="sm" /></Button> : null}
+      {onToggleFocus && active ? <Button size="xxs" variant="ghost" iconOnly className="text-accent-default enabled:hover:bg-surface-selected" aria-label={t(focusedSurfaceId === active.id ? 'shell.restore' : 'shell.focus')} aria-pressed={focusedSurfaceId === active.id} title={t(focusedSurfaceId === active.id ? 'shell.restore' : 'shell.focus')} onClick={() => onToggleFocus(active.id)}>{focusedSurfaceId === active.id ? <Minimize2 className="size-3.5" aria-hidden="true" /> : <Maximize2 className="size-3.5" aria-hidden="true" />}</Button> : null}
     </div>
   </div>;
 }

@@ -1,4 +1,4 @@
-import { useRef, useState, type FocusEvent, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { Icon, Select, Tabs } from '@dgos/ui';
 import { ROUTES } from '../appRoutes';
@@ -18,11 +18,14 @@ import { SettingsCategoryScope } from '../workspace/SettingsOverlay';
 type SectionKey = 'providers' | 'modules' | 'appearance' | 'about' | 'lan' | 'account' | 'cli' | 'storage';
 
 const SECTION_ROUTES: ReadonlyArray<{ key: SectionKey; route: string }> = [
-  { key: 'providers', route: ROUTES.settingsProviders }, { key: 'modules', route: ROUTES.modules },
-  { key: 'appearance', route: ROUTES.appearance }, { key: 'about', route: ROUTES.about }, { key: 'lan', route: ROUTES.lan },
+  { key: 'appearance', route: ROUTES.appearance },
+  { key: 'providers', route: ROUTES.settingsProviders },
+  { key: 'modules', route: ROUTES.modules },
+  { key: 'lan', route: ROUTES.lan },
   { key: 'account', route: ROUTES.account },
   { key: 'cli', route: ROUTES.cli },
   { key: 'storage', route: ROUTES.storage },
+  { key: 'about', route: ROUTES.about },
 ];
 
 const KEPT_ALIVE: Record<SectionKey, boolean> = {
@@ -31,25 +34,6 @@ const KEPT_ALIVE: Record<SectionKey, boolean> = {
 
 const PANEL = 'workspace-settings-panel';
 const SECTION_ICONS: Record<SectionKey, string> = { providers: 'globe', modules: 'menu', appearance: 'palette', about: 'file', lan: 'globe', account: 'home', cli: 'code', storage: 'folder' };
-
-const revealFocusedTab = (event: FocusEvent<HTMLDivElement>) => {
-  const target = event.target;
-  const region = target.closest<HTMLElement>('[data-settings-tab-scroller]');
-  if (target.getAttribute('role') !== 'tab' || !region) return;
-  // Native focus scrolling reveals the border box, but the outline extends beyond it.
-  // Adjust only this scrollport after WebKit finishes, leaving the overlay and page stationary.
-  requestAnimationFrame(() => {
-    if (!region.isConnected || document.activeElement !== target || !region.contains(target)) return;
-    const bounds = region.getBoundingClientRect();
-    const field = target.getBoundingClientRect();
-    const style = getComputedStyle(target);
-    const ring = Math.max(4, (parseFloat(style.outlineWidth) || 0) + (parseFloat(style.outlineOffset) || 0));
-    const top = bounds.top + region.clientTop + ring;
-    const bottom = bounds.top + region.clientTop + region.clientHeight - ring;
-    if (field.top < top || field.height > bottom - top) region.scrollTop += field.top - top;
-    else if (field.bottom > bottom) region.scrollTop += field.bottom - bottom;
-  });
-};
 
 // The router has already decoded the splat, so this agrees with the routes it matched. Only `modules` has a deeper
 // level (`modules/:moduleId`); any other path that is not exactly a section shows the overview, as before (D037 parity).
@@ -109,7 +93,7 @@ export default function SettingsShell() {
         </Tabs.Content>
       );
     }
-    return <Tabs.Content key={key} value={key} className={`${PANEL}${key === 'cli' ? ' workspace-settings-panel--cli' : ''}`} data-settings-category={key}>{content}</Tabs.Content>;
+    return <Tabs.Content key={key} value={key} className={`${PANEL}${key === 'cli' || key === 'appearance' ? ' workspace-settings-panel--cli' : ''}`} data-settings-category={key}>{content}</Tabs.Content>;
   };
 
   return (
@@ -117,8 +101,8 @@ export default function SettingsShell() {
       <div ref={categorySelect} className="workspace-settings-select"><Select label={t('settings.aria')} value={active ?? ''} options={sections.map(section => ({ value: section.key, label: section.label }))} onChange={selectFromMenu} /></div>
       <Tabs value={active ?? ''} onValueChange={select} orientation="vertical" activationMode="manual" className="workspace-settings-tabs flex-row gap-0">
         <div className="workspace-settings-navigation" data-settings-tab-scroller="">
-          <Tabs.List aria-label={t('settings.aria')} className="workspace-settings-categories items-stretch border-0" onFocus={revealFocusedTab}>
-            {sections.map(section => <Tabs.Trigger key={section.key} value={section.key} className="workspace-settings-category mb-0 h-auto whitespace-normal border-b-0 px-2 py-2 text-left data-[state=active]:border-transparent data-[state=active]:bg-surface-selected"><Icon name={SECTION_ICONS[section.key]} size="sm" /><span>{section.label}</span></Tabs.Trigger>)}
+          <Tabs.List aria-label={t('settings.aria')} className="workspace-settings-categories items-stretch border-0">
+            {sections.map(section => <Tabs.Trigger key={section.key} value={section.key} data-settings-category={section.key} className="workspace-settings-category mb-0 h-auto whitespace-normal border-b-0 px-2 py-2 text-left data-[state=active]:border-transparent data-[state=active]:bg-surface-selected"><Icon name={SECTION_ICONS[section.key]} size="sm" /><span>{section.label}</span></Tabs.Trigger>)}
           </Tabs.List>
         </div>
         {active === null && <div className={PANEL}><Overview /></div>}

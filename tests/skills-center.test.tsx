@@ -58,6 +58,24 @@ it('AC17 shows a local official library independently of legacy content and filt
   expect(mockedInvoke.mock.calls.filter(([name]) => name === 'fetch_skills_registry')).toHaveLength(1);
 });
 
+it('AC17 keeps category filtering and selection when the interface language changes', async () => {
+  setLocaleForTesting('zh-CN');
+  render(<SkillsManagement />);
+  const filters = await screen.findByRole('group', { name: '分类' });
+  const writing = await within(filters).findByRole('button', { name: '写作与内容' });
+  fireEvent.click(writing);
+  expect(screen.getByText('Summary')).toBeTruthy();
+  expect(screen.queryByText('Old Calculator')).toBeNull();
+  expect(writing.getAttribute('aria-pressed')).toBe('true');
+  await act(async () => { setLocaleForTesting('en-US'); });
+  const translated = within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'Writing & content' });
+  expect(translated.getAttribute('aria-pressed')).toBe('true');
+  expect(screen.queryByText('Old Calculator')).toBeNull();
+  fireEvent.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'old', exact: true }));
+  expect(screen.getByText('Old Calculator')).toBeTruthy();
+  expect(screen.queryByText('Summary')).toBeNull();
+});
+
 it('AC18 previews the SKILL.md, provenance, license and unverified quality without executing text', async () => {
   render(<SkillsManagement />);
   await screen.findByText('Summary');

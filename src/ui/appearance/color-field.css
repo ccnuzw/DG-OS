@@ -1,0 +1,222 @@
+.appearance-color-field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.appearance-color-field-main {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.appearance-color-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-normal);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.appearance-color-trigger {
+  min-width: var(--control-height-compact);
+}
+
+.appearance-color-hex {
+  min-width: 0;
+}
+
+.appearance-color-hex input {
+  min-width: 0;
+}
+
+.appearance-color-swatch {
+  display: block;
+  width: 1.5em;
+  height: 1.5em;
+  flex: none;
+}
+
+.appearance-color-swatch rect {
+  stroke: var(--border-control);
+  stroke-width: 1;
+}
+
+.appearance-color-label-row {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-2);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.appearance-color-label-row > label { flex: 1; }
+.appearance-color-label-row > div { flex: none; }
+.appearance-color-label-row > div > label { font-size: var(--font-size-xs); color: var(--text-secondary); }
+
+@container appearance-scheme (min-width: 30em) {
+  .appearance-color-field-main { grid-template-columns: minmax(0, 1fr) auto minmax(8em, 9em); }
+  .appearance-color-label-row { grid-column: 1; }
+}
+
+.appearance-color-picker {
+  width: min(23em, calc(100vw - var(--spacing-12)), calc(var(--radix-popover-content-available-width) - var(--spacing-6)));
+  max-width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+  overflow-wrap: anywhere;
+}
+
+.appearance-color-palette {
+  min-width: 0;
+}
+
+.appearance-color-palette h3 {
+  margin: 0 0 var(--spacing-2);
+  font-size: inherit;
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-normal);
+  color: var(--text-primary);
+}
+
+.appearance-color-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-1);
+}
+
+.appearance-color-choice {
+  min-height: max(var(--control-height-compact), 2.5em);
+  height: auto;
+  min-width: 2.5em;
+  max-width: 100%;
+  padding: var(--spacing-1);
+  gap: var(--spacing-1);
+  border: 1px solid var(--border-subtle);
+}
+
+.appearance-color-choice[aria-pressed="true"] {
+  border-color: var(--border-control);
+  background: var(--surface-selected);
+}
+
+.appearance-color-check {
+  width: 0.8em;
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
+}
+
+.appearance-color-plane {
+  min-width: 0;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.appearance-color-plane .react-colorful {
+  width: 100%;
+  min-width: 0;
+  height: 13em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+}
+
+.appearance-color-plane .react-colorful__saturation {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-sm);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.appearance-color-plane .react-colorful__saturation-pointer,
+.appearance-color-plane .react-colorful__hue-pointer {
+  position: absolute;
+  box-sizing: border-box;
+  transform: translate(-50%, -50%);
+}
+
+.appearance-color-plane .react-colorful__saturation-pointer {
+  width: 1.4em;
+  height: 1.4em;
+  border: 2px solid var(--surface-popover);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--border-control);
+}
+
+.appearance-color-plane .react-colorful__hue {
+  position: relative;
+  height: 1.25em;
+  flex: none;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-sm);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.appearance-color-plane .react-colorful__hue-pointer {
+  width: 1.2em;
+  height: calc(100% + 4px);
+  border: 2px solid var(--surface-popover);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 1px var(--border-control);
+}
+
+.appearance-color-plane .react-colorful__interactive:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: -3px;
+}
+
+.appearance-color-plane .react-colorful__interactive:focus .react-colorful__pointer {
+  width: 1.4em;
+  height: 1.4em;
+}
+
+
+.appearance-color-plane:disabled {
+  pointer-events: none;
+  opacity: var(--opacity-disabled);
+}
+
+.appearance-color-picker input {
+  min-width: 0;
+}
+
+.appearance-color-hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+}
+
+.appearance-color-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+}
+
+.appearance-color-picker-actions button {
+  max-width: 100%;
+  height: auto;
+  min-height: var(--control-height-compact);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  padding-block: var(--spacing-1);
+}
+@media (max-height: 720px) {
+  .appearance-color-plane .react-colorful { height: min(10em, 20vh); gap: var(--spacing-2); }
+  .appearance-color-picker { gap: var(--spacing-2); }
+}

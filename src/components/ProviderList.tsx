@@ -1,6 +1,5 @@
 import { useLocale as usePageLocale } from '../i18n';
-import { useState } from 'react';
-import { Button, Loading, Modal, Stack, Switch, cn } from '@dgos/ui';
+import { Button, Icon, Loading, Stack, Switch, cn } from '@dgos/ui';
 import { resolveVendorId } from '../stores/providerStore';
 import type { Provider, ProviderVendor } from '../stores/providerStore';
 import { useLocale } from '../i18n';
@@ -13,10 +12,12 @@ interface ProviderListProps {
   onNewProvider: () => void;
   onToggleEnabled: (provider: Provider, enabled: boolean) => Promise<boolean>;
   togglingProviderId: string | null;
-  onMoveProvider: (provider: Provider, direction: -1 | 1) => void | Promise<boolean>;
   reordering: boolean;
-  onDelete: (provider: Provider) => void | Promise<void>;
   hasUnsavedChanges: boolean;
+}
+
+function endpointHost(address: string): string {
+  try { return new URL(address).host; } catch { return address; }
 }
 
 export default function ProviderList({
@@ -27,23 +28,15 @@ export default function ProviderList({
   onNewProvider,
   onToggleEnabled,
   togglingProviderId,
-  onMoveProvider,
   reordering,
-  onDelete,
   hasUnsavedChanges,
 }: ProviderListProps) {
   usePageLocale();
   const { t } = useLocale();
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
-
-  const handleConfirmDelete = async () => {
-    const provider = providers.find((p) => p.id === deleteConfirm);
-    if (provider) await onDelete(provider);
-  };
 
   return (
     <aside className="provider-list">
-      <div className="flex items-center justify-between gap-2">
+      <div className="provider-list-toolbar">
         <div className="min-w-0">
            <h2 className="m-0 text-sm font-medium text-ink-primary">{t('nav.providers')}</h2>
         </div>
@@ -54,8 +47,11 @@ export default function ProviderList({
           {providers.length}
         </span>
       </div>
+      <Button size="sm" variant="secondary" onClick={onNewProvider} className="w-full">
+        + {t('provider.new')}
+      </Button>
 
-      <Stack gap={3}>
+      <Stack gap={2} className="provider-list-cards">
         {providers.length === 0 && (
           <div className="flex flex-col items-center gap-1 rounded-lg border border-dashed border-border-subtle p-6 text-center text-sm text-ink-secondary">
             <span aria-hidden="true" className="text-xl font-semibold text-ink-primary">+</span>
@@ -63,173 +59,73 @@ export default function ProviderList({
              <span>{t('provider.emptyText')}</span>
           </div>
         )}
-        {providers.map((provider, index) => {
-          const moveDisabled = reordering || togglingProviderId !== null;
+        {providers.map((provider) => {
           const selected = selectedProvider?.id === provider.id;
+          const savedVendor = typeof provider.config?.vendor_id === 'string' && provider.config.vendor_id !== '';
+          const vendorId = savedVendor || vendors.length > 0 ? resolveVendorId(provider, vendors) : null;
+          const vendorName = vendorId ? vendors.find((vendor) => vendor.vendor_id === vendorId)?.display_name ?? vendorId : null;
+          const status = !provider.enabled
+            ? t('provider.excluded')
+            : provider.credential_status === 'migration_required'
+              ? t('provider.migrationPending')
+              : provider.credential_status === 'missing'
+                ? t('provider.addCredential')
+                : t('provider.configured');
           return (
             <div
               key={provider.id}
-              className={cn(
-                'provider-list-item',
-                selected && 'is-selected',
-                !provider.enabled && 'text-ink-secondary',
-              )}
-              role="group" aria-label={provider.name}
+              className={cn('provider-list-item', selected && 'is-selected', !provider.enabled && 'is-disabled')}
+              role="group"
+              aria-label={provider.name}
+              onClick={(event) => {
+                if (event.target === event.currentTarget || !(event.target instanceof Element) || !event.target.closest('button, input, [role="switch"]')) onSelect(provider);
+              }}
             >
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <h3 className="m-0 min-w-0 wrap-anywhere text-sm font-medium"><button type="button" className="provider-select" onClick={() => onSelect(provider)}>{provider.name}</button></h3>
-                  {selected && hasUnsavedChanges && (
-                    <span role="img" aria-label={t('detail.unsaved')} title={t('detail.unsaved')} className="text-status-error-text">
-                      ●
-                    </span>
-                  )}
-                </div>
-                <div className="flex shrink-0 items-center">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  title={t('provider.moveUp', { name: provider.name })}
-                  aria-label={t('provider.moveUp', { name: provider.name })}
-                  disabled={index === 0 || moveDisabled}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void onMoveProvider(provider, -1);
-                  }}
-                >
-                  <svg
-                    viewBox="0 0 20 20"
-                    aria-hidden="true"
-                    focusable="false"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="size-4"
-                  >
-                    <path d="m5 12 5-5 5 5" />
-                  </svg>
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  title={t('provider.moveDown', { name: provider.name })}
-                  aria-label={t('provider.moveDown', { name: provider.name })}
-                  disabled={index === providers.length - 1 || moveDisabled}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void onMoveProvider(provider, 1);
-                  }}
-                >
-                  <svg
-                    viewBox="0 0 20 20"
-                    aria-hidden="true"
-                    focusable="false"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="size-4"
-                  >
-                    <path d="m5 8 5 5 5-5" />
-                  </svg>
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  title={t('provider.deleteName', { name: provider.name })}
-                  aria-label={t('provider.deleteName', { name: provider.name })}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDeleteConfirm(provider.id);
-                  }}
-                >
-                  <svg
-                    viewBox="0 0 20 20"
-                    aria-hidden="true"
-                    focusable="false"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="size-4"
-                  >
-                    <path d="M4 6h12M8 6V4h4v2m-6 0 .7 10h6.6L14 6M8.5 9v4m3-4v4" />
-                  </svg>
-                </Button>
-                </div>
-              </div>
+              <button
+                type="button"
+                className="provider-card-select"
+                aria-label={provider.name}
+                aria-pressed={selected}
+                onClick={() => onSelect(provider)}
+              />
 
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex min-w-0 flex-col">
-                  {(() => {
-                    // Before the vendor table has loaded a legacy provider cannot be inferred, so show nothing rather than guess.
-                    const saved = typeof provider.config?.vendor_id === 'string' && provider.config.vendor_id !== '';
-                    if (!saved && vendors.length === 0) return null;
-                    const vendorId = resolveVendorId(provider, vendors);
-                    const vendorName = vendors.find((vendor) => vendor.vendor_id === vendorId)?.display_name ?? vendorId;
-                    return <span className="min-w-0 wrap-anywhere text-sm font-semibold">{vendorName}</span>;
-                  })()}
+              <div className="provider-card-content">
+                <div className="provider-card-heading">
+                  <span className="provider-card-mark" aria-hidden="true">{vendorId === 'openai' ? 'O' : vendorId === 'anthropic' ? 'A' : <Icon name="globe" size="sm" />}</span>
+                  <div className="provider-card-identity">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <h3 className="m-0 min-w-0 wrap-anywhere text-sm font-semibold text-ink-primary">{provider.name}</h3>
+                      {selected && hasUnsavedChanges && (
+                        <span role="img" aria-label={t('detail.unsaved')} title={t('detail.unsaved')} className="shrink-0 text-status-error-text">●</span>
+                      )}
+                    </div>
+                    <span className="provider-card-endpoint" title={provider.base_url}>{vendorId && vendorId !== 'custom' ? vendorName : endpointHost(provider.base_url)}</span>
+                  </div>
                 </div>
-                <span
-                  className={cn(
-                    'shrink-0 rounded-full px-2 py-1 text-xs font-semibold',
-                    provider.enabled ? 'bg-status-success-surface text-status-success-text' : 'bg-surface-inset text-ink-primary',
-                  )}
-                >
-                   {provider.enabled ? t('common.enabled') : t('common.disabled')}
-                </span>
-              </div>
 
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="wrap-anywhere text-xs text-ink-secondary">
-                    {!provider.enabled
-                      ? t('provider.excluded')
-                      : provider.credential_status === 'migration_required'
-                        ? t('provider.migrationPending')
-                        : provider.credential_status === 'missing'
-                          ? t('provider.addCredential')
-                          : t('provider.configured')}
+
+                <div className="provider-card-state">
+                  <span className={cn('provider-card-status', provider.enabled && provider.credential_status === 'stored' && 'is-ready')}>
+                    <span className="provider-card-status-dot" aria-hidden="true" />
+                    <span>{status}</span>
                   </span>
+                  <div className="provider-card-control">
+                    {togglingProviderId === provider.id && <Loading size="sm" aria-label={t('provider.updating', { name: provider.name })} />}
+                    <Switch
+                      aria-label={`${provider.enabled ? t('module.disable') : t('module.enableButton')} ${provider.name}`}
+                      checked={provider.enabled}
+                      disabled={togglingProviderId !== null || reordering}
+                      onChange={(enabled) => void onToggleEnabled(provider, enabled)}
+                    />
+                  </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                  {togglingProviderId === provider.id && <Loading size="sm" aria-label={t('provider.updating', { name: provider.name })} />}
-                  <Switch
-                    aria-label={`${provider.enabled ? t('module.disable') : t('module.enableButton')} ${provider.name}`}
-                    checked={provider.enabled}
-                    disabled={togglingProviderId !== null || reordering}
-                    onChange={(enabled) => void onToggleEnabled(provider, enabled)}
-                  />
-                </div>
+
               </div>
             </div>
           );
         })}
       </Stack>
 
-      <Button size="sm" variant="secondary" onClick={onNewProvider} className="w-full">
-         + {t('provider.new')}
-      </Button>
-
-      <Modal
-        open={deleteConfirm !== null}
-        onOpenChange={(open) => {
-          if (!open) setDeleteConfirm(null);
-        }}
-        title={t('detail.deleteProvider')}
-        description={t('provider.deleteConfirm')}
-        confirmText={t('providerForm.delete')}
-        cancelText={t('module.cancel')}
-        confirmVariant="danger"
-        onConfirm={handleConfirmDelete}
-      />
     </aside>
   );
 }

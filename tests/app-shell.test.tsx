@@ -15,6 +15,7 @@ import { resetLocaleForTesting, setLocaleForTesting } from '../src/i18n/runtime'
 import { useDesktopPreferences } from '../src/workspace/desktopPreferences';
 import type { WorkspaceAppEntry } from '../src/modules/moduleApi';
 import { useChatStore } from '../src/stores/chatStore';
+import { DEFAULTS } from '../src/ui/appearance/model';
 
 const host = vi.hoisted(() => ({
   handler: async (_command: string, _args?: unknown): Promise<unknown> => null,
@@ -103,6 +104,7 @@ describe('navigation', () => {
   });
   it('keeps command destinations and focus labels current across locale and layout changes', async () => {
     host.handler = async command => {
+      if (command === 'get_appearance_preferences') return { success: true, data: { kind: 'ready', snapshot: { ...structuredClone(DEFAULTS), revision: 1 }, repairWarnings: [] } };
       if (command === 'list_mcp_servers' || command === 'list_installed_skills' || command === 'check_skill_updates') return [];
       if (command === 'fetch_skills_registry') return { skills: [], registry_url: 'bundled://official', offline: false, warning: null };
       return null;
@@ -186,6 +188,33 @@ describe('navigation', () => {
     fireEvent.click(screen.getByRole('option', { name: 'Renamed navigator' }));
     expect(screen.getByRole('status', { name: 'path' }).textContent).toBe('/apps/nav-app/documents/doc-1');
     expect(screen.getAllByRole('tab')).toHaveLength(1);
+  });
+
+  it('uses stable outer width and restores saved sidebar intent after automatic collapse', () => {
+    let width = 1149;
+    const callbacks: (() => void)[] = [];
+    const frames: FrameRequestCallback[] = [];
+    document.documentElement.style.fontSize = '14px';
+    document.documentElement.style.setProperty('--font-size-ui', '12px');
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => width);
+    vi.stubGlobal('ResizeObserver', class { constructor(callback: () => void) { callbacks.push(callback); } observe() {} unobserve() {} disconnect() {} });
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+    const settle = () => act(() => { callbacks.forEach(callback => callback()); frames.splice(0).forEach(callback => callback(0)); });
+    const toggle = () => screen.getByRole('button', { name: /收起导航|展开导航/ });
+    try {
+      render(<MemoryRouter initialEntries={['/']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><App /></MemoryRouter>);
+      settle(); expect(toggle().getAttribute('aria-expanded')).toBe('true');
+      width = 1148; settle();
+      expect(toggle().getAttribute('aria-expanded')).toBe('false'); expect(toggle()).toHaveProperty('disabled', true);
+      expect(useDesktopPreferences.getState().values.sidebarCollapsed).toBe(false);
+      settle(); expect(toggle().getAttribute('aria-expanded')).toBe('false');
+      width = 1149; settle(); expect(toggle().getAttribute('aria-expanded')).toBe('true');
+      act(() => useDesktopPreferences.setState({ values: { ...useDesktopPreferences.getState().values, sidebarCollapsed: true } }));
+      width = 1100; settle(); width = 1400; settle();
+      expect(toggle().getAttribute('aria-expanded')).toBe('false'); expect(toggle()).toHaveProperty('disabled', false);
+      expect(useDesktopPreferences.getState().values.sidebarCollapsed).toBe(true);
+    } finally { cleanup(); document.documentElement.removeAttribute('style'); vi.restoreAllMocks(); vi.unstubAllGlobals(); }
   });
 });
 

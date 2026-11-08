@@ -51,6 +51,7 @@ export default {
   "module.official": "官方",
   "module.permissionLog": "权限日志",
   "module.permissionLogButton": "权限日志",
+  "module.permissions": "模块权限",
   "module.recentCrashes": "近期崩溃",
   "module.reload": "重新加载",
   "module.reloaded": "已重新加载。",

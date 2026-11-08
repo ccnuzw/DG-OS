@@ -8,6 +8,7 @@ import type * as ModuleRuntimeHostModule from '../src/modules/moduleRuntimeHost'
 import { hooksControl, readFixture } from './helpers/moduleFixtures';
 import { resetLocaleForTesting, setLocaleForTesting } from '../src/i18n/runtime';
 import { Modal, ModalHost } from '@dgos/ui';
+import { DEFAULTS } from '../src/ui/appearance/model';
 
 const bridge = vi.hoisted(() => ({
   attachCalls: 0,
@@ -33,6 +34,7 @@ vi.mock('@tauri-apps/api/core', () => {
     }
     if (command === 'list_mcp_servers') return [];
     if (command === 'read_workspace_app_catalog') return { success: true, data: { catalogRevision: 'fixture', entries: [{ moduleId: 'dgos.route', displayName: 'Route app', iconResourceId: null, layout: 'document', viewCapability: 'single', enabled: true, permissionState: 'granted', runtimeState: 'ready', crashed: false }] } };
+    if (command === 'get_appearance_preferences') return { success: true, data: { kind: 'ready', snapshot: { ...structuredClone(DEFAULTS), revision: 1 }, repairWarnings: [] } };
     return null;
   }
   return { Channel, invoke };
@@ -131,8 +133,8 @@ describe('SPA navigation', () => {
 
     await screen.findByRole('tablist', { name: '系统设置' });
     expect(pushState).toHaveBeenCalledWith(expect.anything(), '', '/settings');
-    expect(window.location.pathname).toBe('/settings');
-    expect(screen.getByRole('tab', { name: '模块' })).toBeTruthy();
+    expect(window.location.pathname).toBe('/settings/appearance');
+    expect(screen.getByRole('tab', { name: '外观', selected: true })).toBeTruthy();
     expect(Reflect.get(window, '__spaMarker')).toBe('alive');
     Reflect.deleteProperty(window, '__spaMarker');
   });
@@ -348,8 +350,8 @@ describe('Settings route parity with the Rust gate (D037)', () => {
 
       renderApp();
 
-      await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
-      expect(screen.queryByRole('tablist', { name: '系统设置' }) !== null).toBe(expected);
+      await screen.findByRole('navigation', { name: '工作区导航', hidden: true });
+      await waitFor(() => expect(screen.queryByRole('tablist', { name: '系统设置' }) !== null).toBe(expected));
     },
   );
 

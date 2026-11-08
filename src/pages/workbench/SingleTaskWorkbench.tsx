@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { invoke } from '@tauri-apps/api/core';
 import { Link } from 'react-router-dom';
 import { Button, Card, Checkbox, Input, Loading, Select, Stack, StatusIcon, cn } from '@dgos/ui';
+import { FOCUS_RING } from '@dgos/ui/lib/focus';
 import { usePageError } from '../../pageError';
 import { formatDateTime, formatNumber, useLocale } from '../../i18n';
 import type { Provider, Model } from '../../stores/providerStore';
@@ -34,9 +35,8 @@ async function command<T>(name: string, args: Record<string, unknown>) {
 // Radix Select items cannot carry an empty value, so "nothing chosen" travels as this sentinel.
 const NONE = '__none__';
 const PARA = 'm-0 text-sm text-ink-secondary';
-const LINK = 'text-accent-default underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus';
-const FOCUS = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-focus';
-const PRE = cn('m-0 rounded-md bg-surface-inset p-4 text-sm whitespace-pre-wrap wrap-anywhere', FOCUS);
+const LINK = cn('text-accent-default underline', FOCUS_RING);
+const PRE = cn('m-0 rounded-md bg-surface-inset p-4 text-sm whitespace-pre-wrap wrap-anywhere', FOCUS_RING);
 
 function Notice({ tone, children }: { tone: 'error' | 'warning'; children: ReactNode }) {
   usePageLocale();
@@ -337,7 +337,7 @@ export default function SingleTaskWorkbench() {
           <Card className="border-2 border-accent-default">
             <Card.Body>
               <Stack gap={3}>
-                <h3 id="proposal-heading" ref={proposalHeading} tabIndex={-1} className={cn('m-0 text-base font-semibold', FOCUS)}>{t('workbench.reviewTool')}</h3>
+                <h3 id="proposal-heading" ref={proposalHeading} tabIndex={-1} className={cn('m-0 text-base font-semibold', FOCUS_RING)}>{t('workbench.reviewTool')}</h3>
                 <p className="m-0 text-sm wrap-anywhere">{t('workbench.modelRequests')}<strong>{toolTask.proposal.server_name} / {toolTask.proposal.tool_name}</strong>{t('detail.reviewArgs')}</p>
                 <pre tabIndex={0} aria-label={t('workbench.exactToolArgs')} className={cn(PRE, 'font-mono')}>{JSON.stringify(toolTask.proposal.arguments, null, 2)}</pre>
                 <p className={PARA}>{Math.max(0, Math.ceil((toolTask.proposal.expires_at * 1000 - now) / 1000))} {t('detail.remaining')}</p>

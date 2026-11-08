@@ -1,9 +1,60 @@
 import { useEffect, useRef, useState } from 'react';
 import { t, formatNumber, useLocale as usePageLocale } from '../../i18n';
-import { Button, Icon, Input, Loading, Popover, cn } from '@dgos/ui';
+import { Button, ContextMenu, Icon, Input, Loading, Modal, Popover, cn } from '@dgos/ui';
 import { SESSION_CAP, useChatStore, type ChatSession } from '../../stores/chatStore';
 import { useSurfaceActive } from '../../workspace/SurfaceContext';
 import { ChatNotice } from './ChatNotice';
+
+function SessionTab({ session, selected, tabIndex, running, dirty, onFocus, onSelect, onClose }: {
+  session: ChatSession; selected: boolean; tabIndex: number; running: boolean; dirty: boolean;
+  onFocus: () => void; onSelect: () => void; onClose: () => void;
+}) {
+  const rename = useChatStore(state => state.renameSession);
+  const deleteSession = useChatStore(state => state.deleteSession);
+  const [action, setAction] = useState<'rename' | 'delete' | null>(null);
+  const [title, setTitle] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const tab = useRef<HTMLButtonElement>(null);
+  const beginAction = (next: 'rename' | 'delete' | 'close') => {
+    // Wait for the menu to close before Modal captures its return-focus target.
+    requestAnimationFrame(() => {
+      if (!tab.current) return;
+      tab.current.focus({ preventScroll: true });
+      if (next === 'close') { onClose(); return; }
+      setTitle(session.title);
+      setError(null);
+      setAction(next);
+    });
+  };
+  return <>
+    <ContextMenu items={[
+      { kind: 'item', id: 'rename', label: t('chat.rename'), onSelect: () => beginAction('rename') },
+      { kind: 'item', id: 'close', label: t('chat.closeSession'), onSelect: () => beginAction('close') },
+      { kind: 'separator' },
+      { kind: 'item', id: 'delete', label: t('chat.delete'), danger: true, onSelect: () => beginAction('delete') },
+    ]}>
+      <div className={cn('workspace-tab', selected && 'is-active')}>
+        <button ref={tab} type="button" role="tab" id={`chat-session-tab-${session.id}`} aria-controls={selected ? 'chat-session-panel' : undefined} tabIndex={tabIndex} aria-selected={selected} title={session.title} onFocus={onFocus} onClick={onSelect} onKeyDown={event => {
+          if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+          event.preventDefault();
+          const bounds = event.currentTarget.getBoundingClientRect();
+          event.currentTarget.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: bounds.left, clientY: bounds.bottom }));
+        }} className="workspace-tab-main">
+          <span>{session.title}</span>
+          {running ? <i className="workspace-running-dot" role="img" aria-label={t('chat.generating')} /> : null}
+          {dirty ? <i className="workspace-dirty-dot" role="img" aria-label={t('shell.unsavedTitle')} /> : null}
+        </button>
+        <button type="button" aria-label={t('chat.closeTab', { title: session.title })} onClick={onClose} className="workspace-tab-close"><Icon name="close" size="sm" /></button>
+      </div>
+    </ContextMenu>
+    <Modal open={action !== null} onOpenChange={open => { if (!open) { setAction(null); requestAnimationFrame(() => tab.current?.focus({ preventScroll: true })); } }} kind={action === 'rename' ? 'form' : 'confirm'} title={t(action === 'rename' ? 'chat.rename' : 'chat.delete')} icon={action === 'delete' ? 'warning' : undefined} description={action === 'delete' ? t('chat.deleteConfirm') : undefined} confirmText={t(action === 'rename' ? 'chat.saveTitle' : 'chat.delete')} confirmVariant={action === 'delete' ? 'danger' : 'primary'} onConfirm={async () => {
+      const failure = action === 'rename' ? await rename(session.id, title) : await deleteSession(session.id);
+      if (failure) { setError(failure); throw new Error('session_action_failed'); }
+    }}>
+      {action === 'rename' ? <Input aria-label={t('chat.title')} value={title} error={error ?? undefined} autoFocus onChange={event => setTitle(event.target.value)} /> : error ? <ChatNotice tone="error">{error}</ChatNotice> : null}
+    </Modal>
+  </>;
+}
 
 export default function SessionSidebar({ onClose }: { onClose: (session: ChatSession) => void }) {
   usePageLocale();
@@ -55,7 +106,7 @@ export default function SessionSidebar({ onClose }: { onClose: (session: ChatSes
         event.preventDefault();
         const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
         buttons[next]?.focus(); buttons[next]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      }}>{open.map(session => <div key={session.id} className={cn('workspace-tab', session.id === activeId && 'is-active')}><button type="button" role="tab" id={`chat-session-tab-${session.id}`} aria-controls={session.id === activeId ? 'chat-session-panel' : undefined} tabIndex={(roving ?? activeId ?? openIds[0]) === session.id ? 0 : -1} aria-selected={session.id === activeId} title={session.title} onFocus={() => setRoving(session.id)} onClick={() => select(session)} className="workspace-tab-main"><span>{session.title}</span>{generations[session.id] ? <i className="workspace-running-dot" role="img" aria-label={t('chat.generating')} /> : null}{drafts[session.id] || targetDrafts[session.id] ? <i className="workspace-dirty-dot" role="img" aria-label={t('shell.unsavedTitle')} /> : null}</button><button type="button" aria-label={t('chat.closeTab', { title: session.title })} onClick={() => onClose(session)} className="workspace-tab-close"><Icon name="close" size="sm" /></button></div>)}</div>
+      }}>{open.map(session => <SessionTab key={session.id} session={session} selected={session.id === activeId} tabIndex={(roving ?? activeId ?? openIds[0]) === session.id ? 0 : -1} running={!!generations[session.id]} dirty={!!(drafts[session.id] || targetDrafts[session.id])} onFocus={() => setRoving(session.id)} onSelect={() => select(session)} onClose={() => onClose(session)} />)}</div>
       <Button ref={newButton} size="xxs" variant="ghost" iconOnly aria-label={t('chat.newSession')} onClick={() => void createSession()}><Icon name="plus" size="sm" /></Button>
       <Popover align="end" open={overflowOpen} onOpenChange={setOverflowOpen} label={t('chat.innerTabs')} trigger={<Button size="xxs" variant="ghost" iconOnly aria-label={t('chat.openTabs')}><Icon name="menu" size="sm" /></Button>} content={<div className="workspace-tab-list"><p className="workspace-menu-title">{t('chat.innerTabs')}</p>{open.map(row)}</div>} />
       <Popover align="end" open={historyOpen} onOpenChange={setHistoryOpen} label={t('chat.history')} trigger={<Button size="xxs" variant="ghost" iconOnly aria-label={t('chat.history')}><Icon name="chevron-down" size="sm" /></Button>} content={<div className="workspace-session-history"><Input aria-label={t('chat.search')} placeholder={t('chat.searchPlaceholder')} value={query} error={searchError ?? undefined} onChange={event => setQuery(event.target.value)} />

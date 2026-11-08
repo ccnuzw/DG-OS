@@ -74,7 +74,7 @@ class FixtureHost {
   processes: DevelopmentProcess[] = [];
   workspaces: WorkspaceView = { workspaces: [{ id: 'fixture-workspace', owner: project.owner, project_id: project.id, path: project.path, directory_identity: project.directory_identity, kind: 'original', common_dir: null, common_identity: null, created_operation: null, base_commit: null }], selected_workspace_id: 'fixture-workspace', operation: null, operations: [] };
   fingerprint = 'files-current';
-  session: AgentSession = { id: 'fixture-session', engine: 'codex', native_id: 'fixture-native', workspace: project.path, status: 'waiting', events: [], pending: [], error: null, capabilities: null };
+  session: AgentSession = { id: 'fixture-session', generation: 'fixture-generation', engine: 'codex', native_id: 'fixture-native', workspace: project.path, status: 'waiting', events: [], pending: [], error: null, capabilities: null };
   confirmations: CapabilityConfirmation[] = [];
   cleanupFails = false;
   workspaceBusy = false;

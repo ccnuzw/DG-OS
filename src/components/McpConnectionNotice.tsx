@@ -1,5 +1,7 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { cn } from '@dgos/ui';
+import { FOCUS_RING } from '@dgos/ui/lib/focus';
 import { useMcpStore } from '../stores/mcpStore';
 import { t, useLocale } from '../i18n';
 
@@ -25,7 +27,7 @@ export default function McpConnectionNotice() {
      <div className="grid min-w-0 gap-1 wrap-anywhere"><strong>{t('mcp.recoveryStopped')}</strong><span>{t('mcp.recoveryHelp', { name: unavailable.map(server => server.name).join(', ') })}</span></div>
     <Link
       to="/mcp"
-      className="shrink-0 font-bold underline focus-visible:outline-2 focus-visible:outline-border-focus"
+      className={cn('shrink-0 font-bold underline', FOCUS_RING)}
     >{t('mcp.manageConnections')}</Link>
   </aside>;
 }

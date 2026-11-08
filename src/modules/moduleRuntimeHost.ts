@@ -1,3 +1,10 @@
+export interface ModuleMcpResult {
+  is_error: boolean;
+  content: unknown;
+  structured_content: unknown | null;
+  audit_warning: boolean;
+}
+
 // Page side of the real module-loading slice (D042-D046).
 //
 // The Rust host sends load/unload instructions over a Tauri Channel. This class imports the module
@@ -14,6 +21,7 @@ import { createModuleI18n, type HostI18n } from './moduleHostI18n';
 import { useLocale } from '../i18n';
 import { OverlayContainerContext } from '../ui/components/Popover';
 import { useProviderStore } from '../stores/providerStore';
+import type { AiEvent, AiRunInput, AiTerminal, AiProviderEntry, AiSkillEntry, AiToolEntry, AiRunListInput, AiRunPage, AiRunSummary } from '../types/ai';
 
 export type LoadFailureStage = 'import' | 'contract' | 'render' | 'hook' | 'timeout' | 'cancelled';
 
@@ -158,6 +166,7 @@ export interface InstructionChannel {
 export interface ModuleRuntimeHostDeps {
   invoke?: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
   createChannel?: () => InstructionChannel;
+  createAiChannel?: () => { onmessage: (event: AiEvent) => void };
   importModule?: (url: string) => Promise<unknown>;
   createObjectUrl?: (source: string) => string;
   revokeObjectUrl?: (url: string) => void;
@@ -223,6 +232,15 @@ interface ModuleHostApi {
   readonly apiVersion: 1;
   readonly moduleId: string;
   readonly version: string;
+  readonly ai: Readonly<{
+    listProviders: (options?: HostCallOptions) => Promise<AiProviderEntry[]>;
+    listSkills: (options?: HostCallOptions) => Promise<AiSkillEntry[]>;
+    listTools: (options?: HostCallOptions) => Promise<AiToolEntry[]>;
+    run: (input: AiRunInput, onEvent: (event: AiEvent) => void, options?: HostCallOptions) => Promise<AiTerminal>;
+    listRuns: (input?: AiRunListInput, options?: HostCallOptions) => Promise<AiRunPage>;
+    getRun: (runId: string, options?: HostCallOptions) => Promise<AiRunSummary | null>;
+    cancel: (runId: string, options?: HostCallOptions) => Promise<boolean>;
+  }>;
   readonly providers: Readonly<{
     list: (options?: HostCallOptions) => Promise<ModuleProviderEntry[]>;
     subscribe: (listener: () => void) => () => void;
@@ -250,7 +268,7 @@ interface ModuleHostApi {
       toolName: string,
       args: Record<string, unknown>,
       options?: HostCallOptions,
-    ) => Promise<unknown>;
+    ) => Promise<ModuleMcpResult>;
   }>;
   readonly skills: Readonly<{
     prepare: (skillId: string, options?: HostCallOptions) => Promise<unknown>;
@@ -346,6 +364,7 @@ const CANCELLED: Receipt = { kind: 'loadFailed', stage: 'cancelled' };
 export class ModuleRuntimeHost {
   private readonly invoke: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
   private readonly createChannel: () => InstructionChannel;
+  private readonly createAiChannel: () => { onmessage: (event: AiEvent) => void };
   private readonly importModule: (url: string) => Promise<unknown>;
   private readonly createObjectUrl: (source: string) => string;
   private readonly revokeObjectUrl: (url: string) => void;
@@ -372,6 +391,7 @@ export class ModuleRuntimeHost {
   constructor(deps: ModuleRuntimeHostDeps = {}) {
     this.invoke = deps.invoke ?? tauriInvoke;
     this.createChannel = deps.createChannel ?? (() => new Channel<HostInstruction>());
+    this.createAiChannel = deps.createAiChannel ?? (() => new Channel<AiEvent>());
     this.importModule = deps.importModule ?? ((url) => import(/* @vite-ignore */ url));
     this.createObjectUrl =
       deps.createObjectUrl ?? ((source) => URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
@@ -818,6 +838,40 @@ export class ModuleRuntimeHost {
     };
   }
 
+  private async callAi<T>(runtimeId: string, command: string, fields: Record<string, unknown>, options?: HostCallOptions, allowAbortedResult = false): Promise<T> {
+    const route = this.routes.get(runtimeId);
+    const epoch = this.viewEpoch;
+    const attachment = this.attachment;
+    const value = await this.callCapability<T>(runtimeId, command, fields, options);
+    if ((!allowAbortedResult && options?.signal?.aborted) || this.tombstones.has(runtimeId) || this.instances.get(runtimeId)?.crashed || this.routes.get(runtimeId) !== route || this.viewEpoch !== epoch || this.attachment !== attachment) {
+      throw new HostCallError(MODULE_CALL_CANCELLED_CODE, 'Module AI call expired');
+    }
+    return value;
+  }
+  private async runAi(runtimeId: string, input: AiRunInput, onEvent: (event: AiEvent) => void, options?: HostCallOptions): Promise<AiTerminal> {
+    const route = this.routes.get(runtimeId);
+    const epoch = this.viewEpoch;
+    const attachment = this.attachment;
+    const channel = this.createAiChannel();
+    let ended = false;
+    let seq = 0;
+    let runId: string | undefined;
+    channel.onmessage = event => {
+      if (ended || this.tombstones.has(runtimeId) || this.instances.get(runtimeId)?.crashed || this.routes.get(runtimeId) !== route || this.viewEpoch !== epoch || this.attachment !== attachment) return;
+      if (event.seq <= seq || event.request_id !== event.run_id || (runId !== undefined && event.run_id !== runId)) return;
+      if (options?.signal?.aborted && event.kind !== 'terminal') return;
+      runId = event.run_id;
+      seq = event.seq;
+      if (event.kind === 'terminal') ended = true;
+      onEvent(event);
+    };
+    try {
+      return await this.callAi<AiTerminal>(runtimeId, 'module_run_ai', { input, onEvent: channel }, options, true);
+    } finally {
+      ended = true;
+    }
+  }
+
   private async callProvider(
     runtimeId: string,
     providerId: string,
@@ -858,6 +912,15 @@ export class ModuleRuntimeHost {
       apiVersion: 1 as const,
       moduleId,
       version,
+      ai: Object.freeze({
+        listProviders: (options?: HostCallOptions) => this.callAi<AiProviderEntry[]>(runtimeId, 'module_list_ai_providers', {}, options),
+        listSkills: (options?: HostCallOptions) => this.callAi<AiSkillEntry[]>(runtimeId, 'module_list_ai_skills', {}, options),
+        listTools: (options?: HostCallOptions) => this.callAi<AiToolEntry[]>(runtimeId, 'module_list_ai_tools', {}, options),
+        run: (input: AiRunInput, onEvent: (event: AiEvent) => void, options?: HostCallOptions) => this.runAi(runtimeId, input, onEvent, options),
+        listRuns: (input: AiRunListInput = {}, options?: HostCallOptions) => this.callAi<AiRunPage>(runtimeId, 'module_list_ai_runs', { input }, options),
+        getRun: (runId: string, options?: HostCallOptions) => this.callAi<AiRunSummary | null>(runtimeId, 'module_get_ai_run', { runId }, options),
+        cancel: (runId: string, options?: HostCallOptions) => this.callAi<boolean>(runtimeId, 'module_cancel_ai_run', { runId }, options),
+      }),
       providers: Object.freeze({
         list: async (options?: HostCallOptions) => {
           const route = this.routes.get(runtimeId);
@@ -892,12 +955,7 @@ export class ModuleRuntimeHost {
       }),
       mcp: Object.freeze({
         callTool: (serverId: string, toolName: string, args: Record<string, unknown>, options?: HostCallOptions) =>
-          this.callCapability<unknown>(
-            runtimeId,
-            'module_call_mcp_tool',
-            { serverId, toolName, arguments: args },
-            options,
-          ),
+          this.callAi<ModuleMcpResult>(runtimeId, 'module_call_mcp_tool', { serverId, toolName, arguments: args }, options),
       }),
       skills: Object.freeze({
         prepare: (skillId: string, options?: HostCallOptions) =>

@@ -1,4 +1,8 @@
 export default {
+  'capabilities.chooseProvider': 'Choose a provider configuration',
+  'capabilities.providerRequired': 'Select a saved provider configuration before starting.',
+  'capabilities.legacyReadOnly': 'Legacy session history (read-only)',
+  'capabilities.legacyCannotResume': 'This session is read-only. Create a new session with a provider configuration to continue.',
   'capabilities.title': 'Capabilities',
   'capabilities.editHint': 'Choose the engine and pin project capabilities. Saving creates a revision for new sessions; existing sessions retain their actual configuration.',
   'capabilities.unverified': 'Unverified combination: saving or preparing a configuration does not prove that this CLI and provider combination works.',

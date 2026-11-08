@@ -51,6 +51,7 @@ export default {
   "module.official": "Official",
   "module.permissionLog": "Permission log",
   "module.permissionLogButton": "Permission log",
+  "module.permissions": "Module permissions",
   "module.recentCrashes": "Recent crashes",
   "module.reload": "Reload",
   "module.reloaded": "Reloaded.",

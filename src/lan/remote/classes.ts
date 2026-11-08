@@ -1,10 +1,10 @@
-import { FOCUS_RING } from '@dgos/ui/lib/focus';
+import { FOCUS_FIELD, FOCUS_RING } from '@dgos/ui/lib/focus';
 
 // Shared Tailwind class strings of the remote SPA. Control text is text-lg (16px at the default density) so
 // mobile Safari does not zoom the page when an input is focused.
 
 export const CONTROL =
-  `w-full rounded-md border border-edge-control bg-surface-field px-3 text-lg text-ink-primary placeholder:text-ink-tertiary disabled:cursor-not-allowed disabled:opacity-disabled ${FOCUS_RING}`;
+  `w-full rounded-md border border-edge-control focus:border-border-focus bg-surface-field px-3 text-lg text-ink-primary placeholder:text-ink-tertiary disabled:cursor-not-allowed disabled:opacity-disabled ${FOCUS_FIELD}`;
 
 export const SELECT = `${CONTROL} h-11`;
 export const TEXT_INPUT = `${CONTROL} h-11`;

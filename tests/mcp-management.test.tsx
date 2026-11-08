@@ -720,30 +720,75 @@ it('closes the old discard dialog on account change and leaves the new configura
 });
 
 it('retains an editing draft through narrow list navigation and width changes without retargeting the save', async () => {
-  let resize!: (entries: { contentRect: { width: number } }[]) => void;
+  let resize!: () => void;
+  let width = 1200;
+  let frame: FrameRequestCallback | undefined;
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains('mcp-content') ? width : 0;
+  });
   vi.stubGlobal('ResizeObserver', class {
-    constructor(private callback: typeof resize) {}
-    observe(element: Element) { if (element.classList.contains('mcp-content')) resize = this.callback; }
+    constructor(private callback: () => void) { resize = callback; }
+    observe() {}
     unobserve() {}
     disconnect() {}
   });
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frame = callback; return 1; });
+  vi.stubGlobal('cancelAnimationFrame', () => { frame = undefined; });
+  const flush = () => act(() => { const callback = frame; frame = undefined; callback?.(0); });
   try {
     renderWithFeedback();
     fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
     await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
     const input = screen.getByLabelText('Name');
     fireEvent.change(input, { target: { value: 'Alpha draft' } });
-    act(() => resize([{ contentRect: { width: 500 } }]));
+    act(() => { width = 500; resize(); });
+    flush();
     expect(screen.getByLabelText('Name')).toBe(input);
     fireEvent.click(screen.getByRole('button', { name: 'Your servers · Alpha' }));
     fireEvent.change(screen.getByLabelText('Search servers'), { target: { value: 'Beta' } });
     fireEvent.click(screen.getByRole('button', { name: 'Select Beta' }));
     expect(screen.getByLabelText('Name')).toBe(input);
     expect((input as HTMLInputElement).value).toBe('Alpha draft');
-    act(() => resize([{ contentRect: { width: 1100 } }]));
+    act(() => { width = 1100; resize(); });
+    flush();
     expect((screen.getByLabelText('Search servers') as HTMLInputElement).value).toBe('Beta');
     expect(screen.getByRole('button', { name: 'Edit Beta' }).hasAttribute('disabled')).toBe(true);
     fireEvent.submit(screen.getByRole('form', { name: 'Server configuration' }));
     await waitFor(() => expect(mocked).toHaveBeenCalledWith('update_mcp_server', expect.objectContaining({ serverId: 'a', request: expect.objectContaining({ name: 'Alpha draft' }) })));
   } finally { vi.unstubAllGlobals(); }
+});
+
+it('remeasures MCP layout when UI typography changes without a width change', async () => {
+  let measureWidth = 950;
+  let frame: FrameRequestCallback | undefined;
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains('mcp-content') ? measureWidth : 0;
+  });
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(_callback: () => void) {}
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frame = callback; return 1; });
+  vi.stubGlobal('cancelAnimationFrame', () => { frame = undefined; });
+  const flush = () => act(() => { const callback = frame; frame = undefined; callback?.(0); });
+  try {
+    renderWithFeedback();
+    await screen.findByText('Alpha');
+    flush();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Alpha' }));
+    const input = await screen.findByLabelText('Name');
+    fireEvent.change(input, { target: { value: 'Typography draft' } });
+    measureWidth = 950;
+    document.documentElement.style.setProperty('--font-size-ui', '16px');
+    await act(async () => {});
+    flush();
+    expect(screen.getByLabelText('Name')).toBe(input);
+    expect((input as HTMLInputElement).value).toBe('Typography draft');
+    expect(screen.getByRole('button', { name: 'Your servers · Alpha' })).toBeTruthy();
+  } finally {
+    document.documentElement.removeAttribute('style');
+    vi.unstubAllGlobals();
+  }
 });

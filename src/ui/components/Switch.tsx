@@ -28,7 +28,7 @@ export function Switch(props: SwitchProps) {
         onCheckedChange={onChange}
         {...accessibleName(props)}
         className={cn(
-          'inline-flex h-5 w-9 shrink-0 appearance-none items-center rounded-full border border-solid border-edge-control bg-surface-inset p-0 transition-colors motion-reduce:transition-none',
+          'control-hit-target inline-flex h-5 w-9 shrink-0 appearance-none items-center rounded-full border border-solid border-edge-control bg-surface-inset p-0 transition-colors motion-reduce:transition-none',
           'data-[state=checked]:border-accent-default data-[state=checked]:bg-accent-default',
           'disabled:cursor-not-allowed disabled:opacity-disabled',
           FOCUS_RING,

@@ -1,16 +1,12 @@
-/* FR-005: data-density changes rem geometry via the root size; three-domain text sizes remain independent CSS px. */
-html {
-  font-size: 14px;
-}
-html[data-density="75"] {
-  font-size: 10.5px;
-}
-html[data-density="125"] {
-  font-size: 17.5px;
-}
-html[data-density="150"] {
-  font-size: 21px;
-}
-html[data-density="175"] {
-  font-size: 24.5px;
-}
+/* Layout geometry follows the nominal percentage; typography and hairlines use independent CSS px. */
+html { font-size: 14px; }
+html[data-density="60"] { font-size: 8.4px; }
+html[data-density="70"] { font-size: 9.8px; }
+html[data-density="80"] { font-size: 11.2px; }
+html[data-density="90"] { font-size: 12.6px; }
+html[data-density="100"] { font-size: 14px; }
+html[data-density="110"] { font-size: 15.4px; }
+html[data-density="120"] { font-size: 16.8px; }
+html[data-density="130"] { font-size: 18.2px; }
+html[data-density="140"] { font-size: 19.6px; }
+html[data-density="150"] { font-size: 21px; }

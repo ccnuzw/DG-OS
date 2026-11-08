@@ -1,5 +1,6 @@
 export default {
   "assets.title": "附件",
+  "assets.context": "添加上下文",
   "assets.add": "添加文件或图片",
   "assets.loading": "正在读取预览…",
   "assets.error": "附件操作未完成，请检查类型、大小和当前账户归属后重试。",

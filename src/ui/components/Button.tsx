@@ -15,9 +15,9 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        primary: 'bg-accent-default text-accent-on enabled:hover:bg-accent-hover enabled:active:bg-accent-active',
+        primary: 'ui-focus-accent bg-accent-default text-accent-on enabled:hover:bg-accent-hover enabled:active:bg-accent-active',
         secondary: 'border border-edge-control bg-surface-inset text-ink-primary enabled:hover:bg-surface-control-hover',
-        danger: 'bg-status-error text-status-error-on enabled:hover:bg-status-error-text',
+        danger: 'ui-focus-danger bg-status-error text-status-error-on enabled:hover:bg-status-error-text',
         ghost: 'bg-transparent text-ink-primary enabled:hover:bg-surface-hover',
         link: 'bg-transparent text-accent-default underline-offset-4 enabled:hover:underline',
       },

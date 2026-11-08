@@ -2,12 +2,14 @@ import { t, formatNumber, useLocale as usePageLocale } from '../../i18n';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button, Loading, cn } from '@dgos/ui';
 import { generationErrorText, useChatStore, type ChatMessage, type ChatToolProposal, type Generation } from '../../stores/chatStore';
-import { ChatNotice, FOCUS } from './ChatNotice';
+import { ChatNotice } from './ChatNotice';
+import { FOCUS_RING } from '@dgos/ui/lib/focus';
 import { COPY_TEXT, useCopyFeedback } from './clipboard';
 import Markdown from './Markdown';
-import Disclosures from './Disclosures';
 import { AssetPreview } from './Attachments';
 import { useSurfaceActive } from '../../workspace/SurfaceContext';
+
+const BOTTOM_FOLLOW_THRESHOLD = 2;
 
 const LONG_CONTENT_CHARS = 4000;
 const ROLE_LABEL = { user: 'chat.user', assistant: 'chat.assistant' } as const;
@@ -43,7 +45,7 @@ function MessageItem({ message, isLast, canRegenerate, dropped }: { message: Cha
           {message.status === 'failed' ? <Badge tone="error">{t('chat.failed')}</Badge> : null}
           {message.status === 'generating' ? <Badge tone="info">{t('chat.generating')}</Badge> : null}
         </header>
-        <div className={cn(collapsed && 'max-h-96 overflow-y-auto')} tabIndex={collapsed ? 0 : undefined} aria-label={collapsed ? t('chat.longScrollable') : undefined}>
+        <div className={cn(collapsed && 'max-h-96 overflow-y-auto', collapsed && FOCUS_RING)} tabIndex={collapsed ? 0 : undefined} aria-label={collapsed ? t('chat.longScrollable') : undefined}>
           {assistant
             ? (message.content ? <Markdown source={message.content} /> : <p className="m-0 text-sm text-ink-secondary">{t('chat.emptyContent')}</p>)
             : <p className="type-reading m-0 whitespace-pre-wrap wrap-anywhere">{message.content}</p>}
@@ -98,10 +100,10 @@ function ToolProposalCard({ proposal, busy }: { proposal: ChatToolProposal; busy
   return (
     <section aria-labelledby="chat-proposal-heading" className="chat-approval-card">
       <div className="chat-approval-body">
-      <h3 id="chat-proposal-heading" tabIndex={-1} className={cn('m-0 mb-2 text-base font-semibold', FOCUS)}>{t('chat.confirmTool')}</h3>
+      <h3 id="chat-proposal-heading" tabIndex={-1} className={cn('m-0 mb-2 text-base font-semibold', FOCUS_RING)}>{t('chat.confirmTool')}</h3>
       <p className="m-0 mb-2 text-sm wrap-anywhere">
         {t('chat.modelRequests')}<strong>{proposal.server_name} / {proposal.tool_name}</strong>{t('chat.argsHelp')}</p>
-      <pre tabIndex={0} aria-label={t('chat.toolArgs')} className={cn('chat-tool-arguments type-code m-0 mb-2 rounded-md bg-surface-inset p-3 whitespace-pre-wrap wrap-anywhere', FOCUS)}>
+      <pre tabIndex={0} aria-label={t('chat.toolArgs')} className={cn('chat-tool-arguments type-code m-0 mb-2 rounded-md bg-surface-inset p-3 whitespace-pre-wrap wrap-anywhere', FOCUS_RING)}>
         {JSON.stringify(proposal.arguments, null, 2)}
       </pre>
       </div>
@@ -235,7 +237,9 @@ export default function MessageList() {
   const onScroll = () => {
     const element = container.current;
     if (!element || !active || scrollSession.current !== activeId) return;
-    stick.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+    // Keep streaming pinned only while effectively at the bottom. A larger tolerance
+    // makes small upward scrolls look stuck and lets ResizeObserver pull the reader back.
+    stick.current = element.scrollHeight - element.scrollTop - element.clientHeight <= BOTTOM_FOLLOW_THRESHOLD;
     setAwayFromBottom(!stick.current);
     if (activeId) {
       following.current.set(activeId, stick.current);
@@ -279,7 +283,6 @@ export default function MessageList() {
             <Button variant="secondary" onClick={() => void loadLatest()}>{t('chat.latest')}</Button>
           </div>
         ) : null}
-        <Disclosures />
       </div>
     </div>
       {awayFromBottom ? <div className="chat-jump-latest"><Button size="sm" variant="secondary" onClick={backToBottom}>{t('chat.backToBottom')}</Button></div> : null}

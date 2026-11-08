@@ -7,6 +7,7 @@ import { chooseContext } from '../src/stores/developmentSelection';
 import { SurfaceScope } from '../src/workspace/SurfaceContext';
 import { createWorkspaceController } from '../src/workspace/controller';
 
+const originalFontsDescriptor = Object.getOwnPropertyDescriptor(document, 'fonts');
 interface TerminalDouble {
   rows: number; cols: number; options: Record<string, unknown>; chunks: string[]; resets: number; disposed: boolean;
   refreshes: Array<[number, number]>; resizeCalls: Array<[number, number]>; rendered: string; accessible: string; focus: Mock;
@@ -53,7 +54,7 @@ beforeEach(() => {
     observe() { this.connected = true; } disconnect() { this.connected = false; }
   });
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); harness.invoke.mockReset(); harness.instances.length = 0; harness.observers.length = 0; vi.useRealTimers(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); if (originalFontsDescriptor) Object.defineProperty(document, 'fonts', originalFontsDescriptor); else Reflect.deleteProperty(document, 'fonts'); harness.invoke.mockReset(); harness.instances.length = 0; harness.observers.length = 0; vi.useRealTimers(); });
 it('stops hidden measurements and idle retries, maintains covered size, restores without reconnecting or input replay', async () => {
   const view = show(); await advance(); const instance = harness.instances[0];
   instance.data('first\r'); await advance();
@@ -305,4 +306,44 @@ it('reveals a selected terminal once after hidden activation and preserves later
   expect(scroll).toHaveBeenCalledTimes(2); expect(document.activeElement).toBe(outside);
   expect(harness.instances).toHaveLength(1); expect(calls('write_development_terminal')).toHaveLength(0);
   outside.remove();
+});
+
+it('updates the existing terminal from theme variables and remeasures loaded fonts without replaying input or output', async () => {
+  const fonts = new EventTarget();
+  Object.defineProperty(fonts, 'ready', { value: Promise.resolve() });
+  Object.defineProperty(document, 'fonts', { configurable: true, get: () => fonts as FontFaceSet });
+  let appearance = { family: 'System Mono, monospace', size: '12px', background: '#101010', foreground: '#eeeeee' };
+  const computed = window.getComputedStyle.bind(window);
+  vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) => {
+    if (!(element instanceof HTMLElement) || !element.classList.contains('dev-terminal')) return computed(element, pseudo);
+    const variables: Record<string, string> = { '--font-family-code': appearance.family, '--font-size-code': appearance.size, '--surface-code': appearance.background, '--text-code': appearance.foreground };
+    return { getPropertyValue: (name: string) => variables[name] ?? '' } as CSSStyleDeclaration;
+  });
+  const view = show(); await advance(); const instance = harness.instances[0];
+  expect(instance.options).toMatchObject({ fontFamily: appearance.family, fontSize: 12, theme: { background: appearance.background, foreground: appearance.foreground, cursor: appearance.foreground } });
+  instance.data('中文 mixed input\r'); await advance();
+  const chunks = instance.chunks.slice(); const measures = instance.resizeCalls.length;
+  appearance = { family: '"JetBrains Mono", ui-monospace, "PingFang SC", monospace', size: '20px', background: '#202020', foreground: '#fafafa' };
+  harness.cols = 53; harness.rows = 17;
+  await act(async () => { document.documentElement.setAttribute('data-preset', 'typography-test'); }); await advance();
+  expect(instance.options).toMatchObject({ fontFamily: appearance.family, fontSize: 20, theme: { background: appearance.background, foreground: appearance.foreground, cursor: appearance.foreground } });
+  expect(instance.resizeCalls.length).toBeGreaterThan(measures);
+  expect(calls('resize_development_terminal').at(-1)?.[1]).toEqual({ input: { id: 'pty', rows: 17, cols: 53 } });
+  const loadedMeasures = instance.resizeCalls.length;
+  act(() => { fonts.dispatchEvent(new Event('loadingdone')); }); await advance();
+  expect(instance.resizeCalls.length).toBeGreaterThan(loadedMeasures);
+  expect(instance.resizeCalls.at(-1)).toEqual([53, 17]);
+  expect(instance.chunks).toEqual(chunks); expect(instance.resets).toBe(0); expect(instance.focus).not.toHaveBeenCalled();
+  expect(harness.instances).toHaveLength(1); expect(instance.disposed).toBe(false);
+  expect(calls('write_development_terminal').map(([, args]) => args.input.data)).toEqual(['中文 mixed input\r']);
+  expect(calls('start_development_process')).toHaveLength(0); expect(calls('stop_development_process')).toHaveLength(0);
+  await view.update(false); const hiddenMeasures = instance.resizeCalls.length;
+  act(() => { fonts.dispatchEvent(new Event('loadingdone')); }); await advance();
+  expect(instance.resizeCalls).toHaveLength(hiddenMeasures);
+  await view.update(); expect(instance.resizeCalls.length).toBeGreaterThan(hiddenMeasures);
+  await view.update(true, true, process(), false);
+  const disposedMeasures = instance.resizeCalls.length;
+  act(() => { fonts.dispatchEvent(new Event('loadingdone')); }); await advance();
+  expect(instance.resizeCalls).toHaveLength(disposedMeasures);
+  document.documentElement.removeAttribute('data-preset');
 });

@@ -1,5 +1,6 @@
 export default {
   "assets.title": "Attachments",
+  "assets.context": "Add context",
   "assets.add": "Add files or images",
   "assets.loading": "Loading preview…",
   "assets.error": "Attachment unavailable. Check its type, size and account ownership, then try again.",

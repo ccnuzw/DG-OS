@@ -1,15 +1,17 @@
 // @vitest-environment node
 // D061: the artifact gate must fail closed and always release a mounted disk image.
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterAll, describe, expect, it } from 'vitest';
 import {
   NOT_COVERED,
   findBundledModuleDirs,
   findDmgs,
   printNotCovered,
   runArtifactGate,
+  verifyApp,
   verifyDir,
   verifyDmg,
   // @ts-expect-error plain ESM script without type declarations
@@ -20,7 +22,8 @@ type Mount = (dmg: string) => Promise<string>;
 type Unmount = (mountpoint: string) => Promise<void>;
 
 const temps: string[] = [];
-afterEach(() => {
+let expectedRoot: string | undefined;
+afterAll(() => {
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -30,10 +33,42 @@ function temp() {
   return dir;
 }
 
-function makeApp(root: string, name = 'DG-OS.app', withModules = true) {
-  const resources = join(root, 'release', 'bundle', 'macos', name, 'Contents', 'Resources');
-  mkdirSync(resources, { recursive: true });
+function expectedResources() {
+  if (expectedRoot) return expectedRoot;
+  const root = temp();
+  const bridge = join(root, 'tools', 'agent-bridge', 'bin', 'dgos-claude-bridge');
+  mkdirSync(dirname(bridge), { recursive: true });
+  writeFileSync(bridge, 'bridge');
+  chmodSync(bridge, 0o755);
+  mkdirSync(join(root, 'skills'), { recursive: true });
+  writeFileSync(join(root, 'skills', 'catalog.v1.json'), '{}');
+  mkdirSync(join(root, 'dist-lan'), { recursive: true });
+  writeFileSync(join(root, 'dist-lan', 'index.html'), '<html></html>');
+  expectedRoot = root;
+  return root;
+}
+
+function populateResources(app: string, withModules = true) {
+  const expected = expectedResources();
+  const resources = join(app, 'Contents', 'Resources');
+  const executable = join(app, 'Contents', 'MacOS', 'dgos');
+  mkdirSync(dirname(executable), { recursive: true });
+  writeFileSync(executable, 'app');
+  chmodSync(executable, 0o755);
+  const bridge = join(resources, 'agent-bridge', 'dgos-claude-bridge');
+  mkdirSync(dirname(bridge), { recursive: true });
+  cpSync(join(expected, 'tools', 'agent-bridge', 'bin', 'dgos-claude-bridge'), bridge);
+  chmodSync(bridge, 0o755);
+  cpSync(join(expected, 'skills'), join(resources, 'skills'), { recursive: true });
+  cpSync(join(expected, 'dist-lan'), join(resources, 'dist-lan'), { recursive: true });
   if (withModules) mkdirSync(join(resources, 'bundled-modules'), { recursive: true });
+}
+
+function makeApp(root: string, name = 'DG-OS.app', withModules = true) {
+  const app = join(root, 'release', 'bundle', 'macos', name);
+  const resources = join(app, 'Contents', 'Resources');
+  mkdirSync(resources, { recursive: true });
+  populateResources(app, withModules);
   return join(resources, 'bundled-modules');
 }
 
@@ -95,7 +130,7 @@ describe('verifyDir', () => {
 });
 
 describe('runArtifactGate', () => {
-  const noMount = { mount: never as Mount, unmount: never as Unmount, log: quiet };
+  const noMount = { mount: never as Mount, unmount: never as Unmount, log: quiet, expectedResources: expectedResources() };
 
   it('fails when no bundle was produced', async () => {
     const gate = await runArtifactGate({ roots: [temp()], run: never, ...noMount });
@@ -140,7 +175,7 @@ describe('runArtifactGate', () => {
     mkdirSync(join(root, 'release', 'bundle', 'dmg'), { recursive: true });
     writeDmg(join(root, 'release', 'bundle', 'dmg', 'DG-OS.dmg'));
     const mountpoint = temp();
-    mkdirSync(join(mountpoint, 'DG-OS.app', 'Contents', 'Resources', 'bundled-modules'), { recursive: true });
+    populateResources(join(mountpoint, 'DG-OS.app'));
     const run: Run = async (d) => (d.startsWith(mountpoint) ? 1 : 0);
     const detached: string[] = [];
     const gate = await runArtifactGate({
@@ -149,6 +184,7 @@ describe('runArtifactGate', () => {
       mount: async () => mountpoint,
       unmount: async (m) => void detached.push(m),
       log: quiet,
+      expectedResources: expectedResources(),
     });
     expect(gate.ok).toBe(false);
     expect(detached).toEqual([mountpoint]);
@@ -164,7 +200,7 @@ function writeDmg(path: string) {
 describe('verifyDmg', () => {
   function mounted() {
     const mountpoint = temp();
-    mkdirSync(join(mountpoint, 'DG-OS.app', 'Contents', 'Resources', 'bundled-modules'), { recursive: true });
+    populateResources(join(mountpoint, 'DG-OS.app'));
     return mountpoint;
   }
 
@@ -175,6 +211,7 @@ describe('verifyDmg', () => {
       run: async () => 0,
       mount: async () => mountpoint,
       unmount: async (m: string) => void detached.push(m),
+      expectedResources: expectedResources(),
     });
     expect(results.every((r: { ok: boolean }) => r.ok)).toBe(true);
     expect(detached).toEqual([mountpoint]);
@@ -187,6 +224,7 @@ describe('verifyDmg', () => {
       run: async () => 1,
       mount: async () => mountpoint,
       unmount: async (m: string) => void detached.push(m),
+      expectedResources: expectedResources(),
     });
     expect(results.some((r: { ok: boolean }) => !r.ok)).toBe(true);
     expect(detached).toEqual([mountpoint]);
@@ -200,6 +238,7 @@ describe('verifyDmg', () => {
         throw new Error('boom');
       },
       mount: async () => mountpoint,
+      expectedResources: expectedResources(),
       unmount: async (m: string) => void detached.push(m),
     });
     expect(results.some((r: { ok: boolean }) => !r.ok)).toBe(true);
@@ -214,6 +253,7 @@ describe('verifyDmg', () => {
       unmount: async () => {
         throw new Error('busy');
       },
+      expectedResources: expectedResources(),
     });
     expect(results.some((r: { ok: boolean; reason?: string }) => !r.ok && /could not detach/.test(r.reason ?? ''))).toBe(true);
   });
@@ -237,12 +277,34 @@ describe('verifyDmg', () => {
   });
 });
 
+describe('verifyApp', () => {
+  it('accepts current resources and rejects a non-executable bridge', async () => {
+    const root = temp();
+    const modules = makeApp(root);
+    const app = join(root, 'release', 'bundle', 'macos', 'DG-OS.app');
+    const expected = expectedResources();
+    const run: Run = async (dir) => (dir === modules ? 0 : 1);
+    expect((await verifyApp(app, run, expected)).ok).toBe(true);
+    chmodSync(join(app, 'Contents', 'Resources', 'agent-bridge', 'dgos-claude-bridge'), 0o644);
+    expect((await verifyApp(app, run, expected)).reason).toMatch(/non-executable binary/);
+  });
+
+  it('rejects stale bundled assets', async () => {
+    const root = temp();
+    const modules = makeApp(root);
+    const app = join(root, 'release', 'bundle', 'macos', 'DG-OS.app');
+    writeFileSync(join(app, 'Contents', 'Resources', 'dist-lan', 'index.html'), '<html>stale</html>');
+    const run: Run = async (dir) => (dir === modules ? 0 : 1);
+    expect((await verifyApp(app, run, expectedResources())).reason).toMatch(/differs from this checkout/);
+  });
+});
+
 describe('NOT COVERED notice', () => {
   it('lists every uncovered item', () => {
     const lines: string[] = [];
     printNotCovered((line: string) => lines.push(line));
     expect(lines[0]).toBe('NOT COVERED by this gate:');
-    expect(NOT_COVERED).toHaveLength(5);
+    expect(NOT_COVERED).toHaveLength(7);
     for (const item of NOT_COVERED) expect(lines.join('\n')).toContain(item);
     expect(lines.join('\n')).toMatch(/signing and notarization/);
     expect(lines.join('\n')).toMatch(/signed manifest/);

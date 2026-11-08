@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Select } from '@dgos/ui';
+import { Button, Icon, Popover, Select } from '@dgos/ui';
+import { Mic } from 'lucide-react';
 import { useLocale } from '../../i18n';
 import { useChatStore } from '../../stores/chatStore';
 import type { Model, Provider } from '../../stores/providerStore';
@@ -45,7 +46,7 @@ export default function VoiceCapture({ sessionId, disabled, onBusy }: { sessionI
   }, [disabled]);
   useEffect(() => { if (!audio) { setUrl(null); return; } const objectUrl = URL.createObjectURL(audio); setUrl(objectUrl); return () => URL.revokeObjectURL(objectUrl); }, [audio]);
   async function load() {
-    setExpanded(true); setError(null);
+    setError(null);
     const token = ++version.current;
     try {
       const list = await assetCall<Provider[]>('list_providers', {});
@@ -105,19 +106,33 @@ export default function VoiceCapture({ sessionId, disabled, onBusy }: { sessionI
     } catch { if (token === version.current) { setError(t('voice.unknown')); changePhase('ready'); } }
     finally { if (token === version.current) pending.current = null; }
   }
+  function changeOpen(next: boolean) {
+    setExpanded(next);
+    if (next) {
+      if (currentPhase.current === 'idle') void load();
+      return;
+    }
+    if (currentPhase.current === 'permission' || currentPhase.current === 'recording' || currentPhase.current === 'transcribing') {
+      release(); changePhase(audio ? 'ready' : 'idle');
+    }
+  }
   const locked = phase !== 'idle';
-  return <section aria-label={t('voice.title')} className="grid min-w-0 gap-2">
-    <Button size="xs" variant="ghost" disabled={disabled || locked} aria-expanded={expanded} onClick={() => { if (expanded) setExpanded(false); else void load(); }}>{t('voice.title')}</Button>
-    {expanded && <><p className="m-0 text-xs text-ink-secondary">{t('voice.help')}</p>
+  return <Popover label={t('voice.title')} side="top" align="start" open={expanded} onOpenChange={changeOpen} trigger={
+    <Button size="sm" variant="ghost" iconOnly className="chat-composer-icon chat-voice-trigger" data-phase={phase} disabled={disabled} aria-label={t('voice.title')} title={t('voice.title')}><Mic size={16} aria-hidden="true" /></Button>
+  } content={
+    <section aria-label={t('voice.title')} className="chat-voice-menu">
+      <header className="chat-picker-header"><strong>{t('voice.title')}</strong><Button size="xxs" variant="ghost" iconOnly aria-label={t('common.close')} title={t('common.close')} onClick={() => changeOpen(false)}><Icon name="close" size="sm" /></Button></header>
+      <p className="chat-picker-help">{t('voice.help')}</p>
       <Select label={t('voice.provider')} placeholder={t('voice.chooseProvider')} value={providerId} onChange={id => void selectProvider(id)} disabled={disabled || locked} options={providers.map(provider => ({ value: provider.id, label: `${provider.name} · ${new URL(provider.base_url).host}` }))} />
       <Select label={t('voice.model')} placeholder={t('voice.chooseModel')} value={modelId} onChange={setModelId} disabled={disabled || locked} options={models.map(model => ({ value: model.model_id, label: model.model_name }))} />
-      <div className="flex flex-wrap gap-2">{phase === 'idle' && <Button size="sm" disabled={disabled || !providerId || !modelId} onClick={() => void record()}>{t('voice.record')}</Button>}
-      {phase === 'recording' && <Button size="sm" onClick={() => recorder.current?.stop()}>{t('voice.stop')}</Button>}
-      {phase === 'ready' && <Button size="sm" disabled={disabled} onClick={() => void transcribe()}>{t('voice.transcribe')}</Button>}
-      {phase !== 'idle' && <Button size="sm" variant="secondary" onClick={() => { release(); setAudio(null); changePhase('idle'); }}>{t('common.cancel')}</Button>}</div>
-      {phase === 'permission' || phase === 'recording' || phase === 'transcribing' ? <p role="status" className="m-0 text-xs">{t(`voice.${phase}`)}</p> : null}
-      {url && <audio controls src={url} className="max-w-full" />}
-    </>}
-    {error && <p role="alert" className="m-0 text-xs text-status-error-text">{error}</p>}
-  </section>;
+      <div className="chat-voice-actions">{phase === 'idle' && <Button size="sm" disabled={disabled || !providerId || !modelId} onClick={() => void record()}>{t('voice.record')}</Button>}
+        {phase === 'recording' && <Button size="sm" onClick={() => recorder.current?.stop()}>{t('voice.stop')}</Button>}
+        {phase === 'ready' && <Button size="sm" disabled={disabled} onClick={() => void transcribe()}>{t('voice.transcribe')}</Button>}
+        {phase !== 'idle' && <Button size="sm" variant="secondary" onClick={() => { release(); setAudio(null); changePhase('idle'); }}>{t('common.cancel')}</Button>}
+      </div>
+      {phase === 'permission' || phase === 'recording' || phase === 'transcribing' ? <p role="status" className="chat-voice-status">{t(`voice.${phase}`)}</p> : null}
+      {url && <audio controls src={url} aria-label={t('voice.playback')} className="chat-voice-playback" />}
+      {error && <p role="alert" className="chat-media-error">{error}</p>}
+    </section>
+  } />;
 }

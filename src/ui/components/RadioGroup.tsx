@@ -54,7 +54,7 @@ export function RadioGroup(props: RadioGroupProps) {
                 value={option.value}
                 disabled={option.disabled}
                 className={cn(
-                  'flex size-4 shrink-0 appearance-none items-center justify-center rounded-full border border-solid border-edge-control bg-surface-field p-0',
+                  'control-hit-target flex size-4 shrink-0 appearance-none items-center justify-center rounded-full border border-solid border-edge-control bg-surface-field p-0',
                   'data-[state=checked]:border-accent-default',
                   'disabled:cursor-not-allowed disabled:opacity-disabled',
                   FOCUS_RING,

@@ -11,7 +11,7 @@ const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('../src/i18n', () => ({ useLocale: () => ({ t: (key: string) => key }), t: (key: string) => key }));
 afterEach(() => { act(() => Modal.closeAll()); cleanup(); useAgentRunner.getState().reset(); useDevelopment.getState().reset(); invoke.mockReset(); vi.useRealTimers(); });
-const session = (id: string): AgentSession => ({ id, engine: 'codex', native_id: id, workspace: '/tmp/project', status: 'idle', events: [], pending: [], error: null });
+const session = (id: string): AgentSession => ({ id, generation: `generation-${id}`, engine: 'codex', native_id: id, workspace: '/tmp/project', status: 'idle', events: [], pending: [], error: null });
 it('keeps the tab open until a replacement connection settles and closes the replacement runtime', async () => {
   let finishOpen!: (value: AgentSession) => void;
   let closed: string | undefined;
@@ -22,7 +22,7 @@ it('keeps the tab open until a replacement connection settles and closes the rep
     if (command === 'get_agent_session') return { ...session(args!.sessionId), status: closed === args!.sessionId ? 'closed' : 'idle' };
   });
   useAgentRunner.setState({ session: session('old'), selected: 'old' });
-  const opening = useAgentRunner.getState().open({ id: 'new', engine: 'codex', task_id: null, options: { workspace: '/tmp/project', resume_id: null, executable: null, model: null, trust_workspace: true } });
+  const opening = useAgentRunner.getState().open({ intent: 'create', id: 'new', engine: 'codex', task_id: 'task', project_revision: 1, provider: { provider_id: 'provider', model_id: 'model', provider_revision: 0 }, options: { workspace: '/tmp/project', resume_id: null, executable: null, model: null, trust_workspace: true } });
   let settled = false;
   const closing = prepareAgentClose().then(value => { settled = true; return value; });
   await Promise.resolve();
@@ -66,8 +66,6 @@ it('confirms an initial pending Agent connection and keeps its surface until the
     if (command === 'close_agent_session') { closingHost = true; return true; }
     if (command === 'get_agent_session') return closingHost ? terminal.promise : session('first');
     if (command === 'list_agent_sessions') return [];
-    if (command === 'get_development_session_capabilities') return null;
-    if (command === 'list_development_capability_confirmations') return [];
   });
   const controller = createWorkspaceController();
   controller.open({ kind: 'task', id: 'cli-agent', title: 'Agent' });
@@ -75,7 +73,7 @@ it('confirms an initial pending Agent connection and keeps its surface until the
   await waitFor(() => expect(useDevelopment.getState().loaded).toBe(true));
   let opening!: Promise<void>;
   act(() => {
-    opening = useAgentRunner.getState().open({ id: 'first', engine: 'codex', task_id: null, options: { workspace: '/tmp/project', resume_id: null, executable: null, model: null, trust_workspace: true } });
+    opening = useAgentRunner.getState().open({ intent: 'create', id: 'first', engine: 'codex', task_id: 'task', project_revision: 1, provider: { provider_id: 'provider', model_id: 'model', provider_revision: 0 }, options: { workspace: '/tmp/project', resume_id: null, executable: null, model: null, trust_workspace: true } });
   });
   expect(useAgentRunner.getState().session).toBeNull();
   expect(useAgentRunner.getState().live).toEqual({});

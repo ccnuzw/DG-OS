@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { hostCode } from './hostError';
 import type { AgentEvent, Engine } from './agentRunnerStore';
 import type { Outcome } from './developmentStore';
-import type { CapabilitySnapshot } from './developmentCapabilities';
+import type { SessionConfigurationView } from './developmentCapabilities';
 
 // Host APIs for task review. DTOs preserve the host's snake_case fields; failures are normalized so raw host text
 // never reaches the screen. Host execution history is shown separately from native Agent event evidence.
@@ -34,7 +34,7 @@ export interface DevRun {
   id: string; session_id: string | null; task_id: string; engine: Engine | 'host'; source: string; status: RunStatus;
   started_at: number; finished_at: number | null; summary: string; reason: string | null;
   events: (AgentEvent & { run: string | null })[]; fingerprint: string; truncated: boolean;
-  capabilities?: CapabilitySnapshot | null;
+  configuration?: SessionConfigurationView | null;
 }
 
 async function read<T>(command: string, args: { [key: string]: unknown }): Promise<Outcome<T>> {

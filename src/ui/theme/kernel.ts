@@ -5,6 +5,19 @@ export type PresetId = (typeof PRESET_IDS)[number];
 export type ThemeMode = 'light' | 'dark';
 export type ThemeScope = 'interface' | 'reading' | 'code';
 export type SeedColors = Readonly<{ accent: string; background: string; foreground: string }>;
+export type ColorFieldName = keyof SeedColors;
+export type ThemeColorIssueKind = 'hex' | 'textContrast' | 'accentContrast' | 'derivedContrast';
+export interface ThemeColorIssue {
+  scope: ThemeScope;
+  fields: readonly ColorFieldName[];
+  kind: ThemeColorIssueKind;
+}
+export class ThemeColorError extends Error implements ThemeColorIssue {
+  constructor(message: string, public readonly scope: ThemeScope, public readonly fields: readonly ColorFieldName[], public readonly kind: ThemeColorIssueKind) {
+    super(message);
+    this.name = 'ThemeColorError';
+  }
+}
 export type ColorOverrides = Readonly<Partial<SeedColors>>;
 export type ScopedOverrides = Readonly<Partial<Record<ThemeScope, ColorOverrides>>>;
 export type ResolvedTheme = Readonly<Record<string, string>>;
@@ -43,35 +56,64 @@ function solve(from: RGB, toward: RGB, surfaces: readonly RGB[], target: number)
   throw new Error('Theme contrast target cannot be met');
 }
 
-export function resolveTheme(presetId: PresetId, mode: ThemeMode, overrides: ScopedOverrides = {}): ResolvedTheme {
+function evaluateTheme(presetId: PresetId, mode: ThemeMode, overrides: ScopedOverrides, issues?: ThemeColorIssue[]): ResolvedTheme {
   const base = PRESETS[presetId]?.[mode];
   if (!base) throw new Error('Unknown theme preset');
+  const report = (error: ThemeColorError): void => {
+    if (!issues) throw error;
+    issues.push({ scope: error.scope, fields: error.fields, kind: error.kind });
+  };
+  let interfaceInvalid = false;
   for (const [scope, colors] of Object.entries(overrides)) {
     if (!['interface', 'reading', 'code'].includes(scope) || !colors || typeof colors !== 'object' || Array.isArray(colors)) throw new Error('Invalid theme scope');
     for (const [name, value] of Object.entries(colors)) {
       if (!['background', 'foreground', ...(scope === 'interface' ? ['accent'] : [])].includes(name)) throw new Error('Invalid theme color field');
-      rgb(value);
+      if (typeof value !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(value)) {
+        if (scope === 'interface') interfaceInvalid = true;
+        report(new ThemeColorError('Theme colors must be #RRGGBB values', scope as ThemeScope, [name as ColorFieldName], 'hex'));
+      }
     }
   }
   const ui = { ...base, ...overrides.interface };
+  // Reading and code each inherit directly from interface, never from each other.
+  const scopedColors: Record<string, string> = {};
+  for (const scope of ['reading', 'code'] as const) {
+    const colors = { ...ui, ...overrides[scope] };
+    const validPair = [colors.background, colors.foreground].every(value => typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value));
+    if (!validPair) continue;
+    if (contrastRatio(colors.background, colors.foreground) < 4.5) report(new ThemeColorError(`${scope} text contrast must be at least 4.5:1`, scope, ['background', 'foreground'], 'textContrast'));
+    scopedColors[`--surface-${scope}`] = colors.background.toLowerCase();
+    scopedColors[`--text-${scope}`] = colors.foreground.toLowerCase();
+  }
+  if (interfaceInvalid) return Object.freeze({});
   const bg = rgb(ui.background);
   const fg = rgb(ui.foreground);
   const panel = rgb(hex(mix(bg, fg, 0.035)));
   const rail = rgb(hex(mix(bg, fg, 0.055)));
   const inset = rgb(hex(mix(bg, fg, 0.075)));
   const surfaces = [bg, panel, rail, inset];
-  if (!surfaces.every((surface) => ratio(fg, surface) >= 4.5)) throw new Error('Interface text contrast must be at least 4.5:1');
+  const textValid = surfaces.every((surface) => ratio(fg, surface) >= 4.5);
+  if (!textValid) report(new ThemeColorError('Interface text contrast must be at least 4.5:1', 'interface', ['background', 'foreground'], 'textContrast'));
   const accentSeed = rgb(ui.accent);
-  if (!surfaces.every((surface) => ratio(accentSeed, surface) >= 3)) throw new Error('Accent contrast must be at least 3:1');
-  const brand = solve(accentSeed, fg, surfaces, 4.5);
+  const accentValid = surfaces.every((surface) => ratio(accentSeed, surface) >= 3);
+  if (!accentValid) report(new ThemeColorError('Accent contrast must be at least 3:1', 'interface', ['accent', 'background', 'foreground'], 'accentContrast'));
+  if (!textValid || !accentValid) return Object.freeze({});
+  const derive = (from: RGB, toward: RGB, targets: readonly RGB[], target: number, fields: readonly ColorFieldName[]): RGB => {
+    try {
+      return solve(from, toward, targets, target);
+    } catch {
+      throw new ThemeColorError('Theme contrast target cannot be met', 'interface', fields, 'derivedContrast');
+    }
+  };
+  const brand = derive(accentSeed, fg, surfaces, 4.5, ['accent', 'background', 'foreground']);
   const ink = mode === 'dark' ? bg : fg;
   const on = ratio(brand, WHITE) >= ratio(brand, ink) ? WHITE : ink;
-  if (ratio(on, brand) < 4.5) throw new Error('Accent text contrast must be at least 4.5:1');
+  if (ratio(on, brand) < 4.5) throw new ThemeColorError('Accent text contrast must be at least 4.5:1', 'interface', ['accent', 'background', 'foreground'], 'derivedContrast');
   const interactionTarget = mode === 'light' ? fg : WHITE;
-  const hover = solve(rgb(hex(mix(brand, interactionTarget, 0.08))), brand, [on], 4.5);
-  const active = solve(rgb(hex(mix(brand, interactionTarget, 0.16))), brand, [on], 4.5);
-  const control = solve(bg, fg, surfaces, 3);
-  const muted = solve(bg, fg, surfaces, 4.5);
+  const hover = derive(rgb(hex(mix(brand, interactionTarget, 0.08))), brand, [on], 4.5, ['accent', 'background', 'foreground']);
+  const active = derive(rgb(hex(mix(brand, interactionTarget, 0.16))), brand, [on], 4.5, ['accent', 'background', 'foreground']);
+  const control = derive(bg, fg, surfaces, 3, ['background', 'foreground']);
+  const muted = derive(bg, fg, surfaces, 4.5, ['background', 'foreground']);
   const selected = mix(bg, brand, 0.1);
   const result: Record<string, string> = {
     '--color-primary': hex(brand), '--color-primary-hover': hex(hover), '--color-primary-active': hex(active),
@@ -81,12 +123,7 @@ export function resolveTheme(presetId: PresetId, mode: ThemeMode, overrides: Sco
     '--color-border': hex(mix(bg, fg, 0.16)), '--color-border-control': hex(control), '--color-divider': hex(mix(bg, fg, 0.1)),
     '--color-focus-ring': hex(brand),
   };
-  for (const scope of ['reading', 'code'] as const) {
-    const colors = { ...ui, ...overrides[scope] };
-    if (contrastRatio(colors.background, colors.foreground) < 4.5) throw new Error(`${scope} text contrast must be at least 4.5:1`);
-    result[`--surface-${scope}`] = colors.background.toLowerCase();
-    result[`--text-${scope}`] = colors.foreground.toLowerCase();
-  }
+  Object.assign(result, scopedColors);
   // Status colors remain independent of the user's brand and overrides.
   const statusSeeds = presetSeeds.precision[mode];
   const light = mode === 'light';
@@ -98,7 +135,7 @@ export function resolveTheme(presetId: PresetId, mode: ThemeMode, overrides: Sco
   } as const;
   for (const [name, seed] of Object.entries(status)) {
     const surface = rgb(hex(mix(rgb(statusSeeds.background), seed, 0.12)));
-    const text = solve(seed, light ? BLACK : WHITE, [surface, ...surfaces], 4.5);
+    const text = derive(seed, light ? BLACK : WHITE, [surface, ...surfaces], 4.5, ['background', 'foreground']);
     result[`--color-${name}`] = hex(text);
     result[`--color-${name}-text`] = hex(text);
     result[`--color-${name}-bg`] = hex(surface);
@@ -106,6 +143,22 @@ export function resolveTheme(presetId: PresetId, mode: ThemeMode, overrides: Sco
   const error = rgb(result['--color-error']);
   result['--color-on-error'] = ratio(error, WHITE) >= ratio(error, BLACK) ? hex(WHITE) : hex(BLACK);
   return Object.freeze(result);
+}
+
+export function resolveTheme(presetId: PresetId, mode: ThemeMode, overrides: ScopedOverrides = {}): ResolvedTheme {
+  return evaluateTheme(presetId, mode, overrides);
+}
+
+/** Collect the resolver's independent field/scope failures without changing seed values. */
+export function themeColorIssues(presetId: PresetId, mode: ThemeMode, overrides: ScopedOverrides = {}): readonly ThemeColorIssue[] {
+  const issues: ThemeColorIssue[] = [];
+  try {
+    evaluateTheme(presetId, mode, overrides, issues);
+  } catch (error) {
+    if (!(error instanceof ThemeColorError)) throw error;
+    issues.push({ scope: error.scope, fields: error.fields, kind: error.kind });
+  }
+  return issues;
 }
 
 export function isPresetId(value: unknown): value is PresetId {

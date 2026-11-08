@@ -16,7 +16,7 @@ export const WORKSPACE_ROUTES: readonly RouteEntry[] = [
   { path: '/settings', intent: { kind: 'overlay', view: 'settings' } },
 ];
 export function canonicalPath(path: string): string {
-  const legacy: Record<string, string> = { '/providers': '/settings/providers', '/account': '/settings/account', '/settings/skills': '/skills', '/settings/mcp': '/mcp' };
+  const legacy: Record<string, string> = { '/settings': '/settings/appearance', '/providers': '/settings/providers', '/account': '/settings/account', '/settings/skills': '/skills', '/settings/mcp': '/mcp' };
   return legacy[path] ?? path;
 }
 export function intentForPath(pathname: string): WorkspaceIntent | null {

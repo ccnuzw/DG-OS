@@ -393,12 +393,12 @@ describe('module Modal commands', () => {
   });
 });
 
-// ---- provider-console on host.ui ----
+// ---- retained 1.0.0 host.ui contract (recovery artifact, not execution admission) ----
 
 const consoleDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'bundled-modules', 'provider-console', '1.0.0');
 const consoleSource = readFileSync(join(consoleDir, 'entry.js'), 'utf8');
 
-describe('provider-console on host.ui', () => {
+describe('retained provider-console 1.0.0 on host.ui', () => {
   beforeEach(()=>setLocaleForTesting('en-US'));
   const field = (container: HTMLElement, label: string) => within(container).getByLabelText(label) as HTMLInputElement;
   const fill = async (container: HTMLElement, prompt = 'hi') => {

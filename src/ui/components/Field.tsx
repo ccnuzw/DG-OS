@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from 'react';
-import { FOCUS_RING } from '../lib/focus';
+import { FOCUS_FIELD } from '../lib/focus';
 import { hasVisibleLabel } from '../lib/props';
 
 /** Ids shared by a labelled control and its error text. `describedBy` merges a caller's own value with the error. */
@@ -28,13 +28,13 @@ export function Field({
   return (
     <div className="flex w-full flex-col gap-1">
       {hasVisibleLabel(label) ? (
-        <label htmlFor={id} className="text-sm font-medium text-ink-primary">
+        <label htmlFor={id} className="font-sans text-sm font-medium text-ink-primary">
           {label}
         </label>
       ) : null}
       {children}
       {error ? (
-        <p id={errorId} className="text-sm text-status-error-text">
+        <p id={errorId} className="font-sans text-sm text-status-error-text">
           {error}
         </p>
       ) : null}
@@ -54,7 +54,7 @@ export const CONTROL_SURFACE_BASE = [
   'control-text-fit w-full appearance-none rounded-md border border-solid bg-surface-field px-3 text-ink-primary',
   'placeholder:text-ink-secondary',
   'disabled:cursor-not-allowed disabled:opacity-disabled',
-  FOCUS_RING,
+  FOCUS_FIELD,
 ].join(' ');
 
 /** Default UI typography shared by Input and the Select trigger. */
