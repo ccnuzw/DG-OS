@@ -4,11 +4,18 @@ import { formatDateTime, useLocale } from '../../i18n';
 import { useDevelopment } from '../../stores/developmentStore';
 import { contextGeneration, useContextSelection } from '../../stores/developmentSelection';
 import { useSurfaceActive } from '../../workspace/SurfaceContext';
-import { readDevelopmentCommands, readDevelopmentProcess, submitRuntimeOperation, retryRuntimeOperation, runtimeOperationBlocked, openDevelopmentExternal, processActive, useRuntimeDraft, useDevelopmentRuntime, type CommandCatalog, type DevelopmentCommand, type DevelopmentProcess, type StartProcessInput } from '../../stores/developmentRuntime';
+import { readDevelopmentCommands, readDevelopmentProcess, submitRuntimeOperation, retryRuntimeOperation, runtimeOperationBlocked, openDevelopmentExternal, processActive, useRuntimeDraft, useRuntimeProcessView, useDevelopmentRuntime, type CommandCatalog, type DevelopmentCommand, type DevelopmentProcess, type StartProcessInput } from '../../stores/developmentRuntime';
 import { confirmAction, errorText as developmentErrorText } from './shared';
 import { beginResourceRead, failResourceRead, resourceView, type ResourceReadState } from '../../resourceState';
 import { ManualTakeover } from './ManualTakeover';
 const DevelopmentTerminal = lazy(() => import('./DevelopmentTerminal').then(module => ({ default: module.DevelopmentTerminal })));
+
+function RuntimeOutput({ process, disabled }: { process: DevelopmentProcess; disabled: boolean }) {
+  const { t } = useLocale();
+  const { view, setView } = useRuntimeProcessView(process);
+  const output = process.output.slice(view.clearOffset ?? 0);
+  return <div className="dev-review-stack"><div className="dev-review-toolbar"><Button size="xs" variant="secondary" data-testid="dev-output-clear" disabled={disabled} onClick={() => setView({ clearOffset: process.output.length })}>{t('workbenchRuntime.clearDisplay')}</Button><span className="text-xs text-ink-secondary">{t('workbenchRuntime.clearHint')}</span></div><pre className="dev-diff" tabIndex={0} aria-label={t('direct.output')}>{output || t(view.clearOffset ? 'workbenchRuntime.displayCleared' : 'direct.noOutput')}</pre></div>;
+}
 
 export function DevelopmentRuntime({ projectId, taskId, visible = true }: { projectId: string; taskId: string; visible?: boolean }) {
   const { t } = useLocale();
@@ -18,6 +25,10 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
   const surfaceActive = surfaceEligible && visible;
   const epoch = useDevelopment(state => state.epoch);
   const context = useContextSelection();
+  const owner = JSON.stringify([epoch, context.generation, projectId, taskId]);
+  const project = useDevelopment(state => state.projects.find(item => item.id === projectId));
+  const selected = runtime.taskId === taskId && runtime.processes.some(process => process.id === runtime.selected && process.project_id === projectId && process.task_id === taskId && process.source !== 'native_agent') ? runtime.selected : null;
+  const retainedDetail = selected ? runtime.details[JSON.stringify([epoch, projectId, taskId, selected])] ?? null : null;
   const [catalog, setCatalog] = useState<CommandCatalog>({ commands: [], discovered: [] });
   const { draft, setField } = useRuntimeDraft(projectId, taskId);
   const { commandId, name, editorApplication, program, args, cwd, env, kind, verification, port, probePath, timeout } = draft;
@@ -45,13 +56,12 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
   const appliedReceipts = useRef(new Set(runtime.operations.filter(operation => operation.phase === 'succeeded' || operation.phase === 'failed').map(operation => operation.id)));
   const trustErrorId = useId();
   const envErrorId = useId();
-  const [detailSnapshot, setDetail] = useState<DevelopmentProcess | null>(null);
-  const [detailRead, setDetailRead] = useState<ResourceReadState>({ status: 'idle' });
+  const [detailSnapshot, setDetail] = useState<DevelopmentProcess | null>(retainedDetail);
+  const [detailRead, setDetailRead] = useState<ResourceReadState>(retainedDetail ? { status: 'ready', refresh: { status: 'stale' } } : { status: 'idle' });
   const [catalogRead, setCatalogRead] = useState<ResourceReadState>({ status: 'idle' });
-  const detailOwner = useRef('');
+  const detailOwner = useRef(owner);
   const catalogOwner = useRef('');
-  const detailReadOwner = useRef('');
-  const owner = JSON.stringify([epoch, context.generation, projectId, taskId]);
+  const detailReadOwner = useRef(JSON.stringify([owner, selected]));
   currentOwner.current = owner;
   const operations = runtime.operations.filter(operation => operation.epoch === epoch && operation.projectId === projectId && operation.taskId === taskId);
   const detail = detailOwner.current === owner && detailSnapshot?.id === runtime.selected && detailSnapshot.task_id === taskId && detailSnapshot.project_id === projectId ? detailSnapshot : null;
@@ -62,7 +72,6 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
   const catalogReading = useRef<{ refresh: boolean } | null>(null);
   const activity = useRef(surfaceActive);
   activity.current = surfaceActive;
-  const selected = runtime.taskId === taskId ? runtime.selected : null;
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
@@ -138,7 +147,12 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
     detailReading.current = reading;
     return reading;
   }, [selected, projectId, taskId, epoch, context.generation, context.pending]);
-  useEffect(() => { setDetail(null); setDetailRead({ status: 'idle' }); detailReading.current = null; ++detailVersion.current; }, [selected, projectId, taskId, epoch, context.generation]);
+  useEffect(() => {
+    const retained = selected ? useDevelopmentRuntime.getState().details[JSON.stringify([epoch, projectId, taskId, selected])] ?? null : null;
+    detailOwner.current = owner; detailReadOwner.current = JSON.stringify([owner, selected]);
+    setDetail(retained); setDetailRead(retained ? { status: 'ready', refresh: { status: 'stale' } } : { status: 'idle' });
+    detailReading.current = null; ++detailVersion.current;
+  }, [selected, projectId, taskId, epoch, context.generation]);
   useEffect(() => {
     if (!surfaceActive || context.pending) return;
     void refreshDetail();
@@ -221,6 +235,8 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
   const busyOperation = latestOperation?.phase === 'failed' && latestOperation.error === 'workspace_busy' ? latestOperation : null;
   const services = runtime.taskId === taskId ? runtime.processes.filter(process => process.kind === 'service') : [];
   return <section className="dev-review-stack" aria-label={t('direct.title')} data-testid="dev-development-runtime">
+    <dl className="dev-review-stack text-xs" data-testid="dev-runtime-context"><div><dt>{t('workbenchRuntime.project')}</dt><dd className="m-0 break-all"><span>{project?.name ?? projectId}</span>{project?.path ? <span className="block text-ink-secondary">{project.path}</span> : null}</dd></div><div><dt>{t('workbenchRuntime.directory')}</dt><dd className="m-0 break-all">{detail ? detail.cwd || '.' : t('workbenchRuntime.taskDirectory')}</dd></div><div><dt>{t('workbenchRuntime.status')}</dt><dd className="m-0">{detail ? t(`direct.status.${detail.status}`) : t('workbenchRuntime.noProcess')}</dd></div></dl>
+    <p className="m-0 text-xs text-ink-secondary">{t('workbenchRuntime.lifecycle')}</p>
     {operations.length ? <section className="dev-review-stack" aria-label={t('direct.operation.receipts')} data-testid="dev-runtime-receipts">{operations.map(operation => <div key={operation.id} className="dev-review-stack">
       <p role={surfaceActive ? operation.phase === 'failed' || operation.phase === 'unknown' ? 'alert' : 'status' : undefined} className={`dev-feedback dev-feedback-${operation.phase === 'failed' ? 'error' : operation.phase === 'succeeded' ? 'success' : 'info'}`}>{operation.command?.name ?? operation.process?.program ?? t('direct.title')}: {t(`direct.operation.${operation.action}.${operation.phase}`)}</p>
       <details className="dev-technical-details"><summary>{t('agent.details')}</summary><code>{operation.targetId}</code></details>
@@ -271,7 +287,7 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
       {detail ? <article className="dev-run dev-review-stack" data-testid="dev-process-detail"><header className="dev-review-toolbar"><strong className="text-xs">{t(`direct.source.${detail.source}`)}</strong><span role={surfaceActive ? 'status' : undefined} className="text-xs">{t(`direct.status.${detail.status}`)}</span></header><pre className="dev-event-text">{JSON.stringify([detail.program, ...detail.args])}</pre><p className="m-0 break-all text-xs">{t('review.cwd')}: {detail.cwd || '.'}</p><details className="dev-technical-details"><summary>{t('agent.details')}</summary><code>{detail.id}</code><p>{t('direct.started')}: {formatDateTime(detail.started_at * 1000)} · {t('direct.finished')}: {detail.finished_at === null ? t('direct.pending') : formatDateTime(detail.finished_at * 1000)}</p></details><p className="m-0 text-xs">{t('review.exitCode')}: {detail.exit_code ?? t('review.run.unknown')}</p>
       {detail.reason ? <p role="status" className="dev-evidence-warning">{errorText(detail.reason)}</p> : null}
       {detail.truncated ? <p role="status" className="dev-evidence-warning">{t('direct.outputTruncated')}</p> : null}
-      {detail.kind === 'terminal' ? <Suspense fallback={<p role="status" className="text-xs">{t('review.loading')}</p>}><DevelopmentTerminal key={detail.id} process={detail} panelVisible={visible} /></Suspense> : <pre className="dev-diff" tabIndex={0} aria-label={t('direct.output')}>{detail.output || t('direct.noOutput')}</pre>}
+      {detail.kind === 'terminal' && detail.source === 'host_terminal' ? <Suspense fallback={<p role="status" className="text-xs">{t('review.loading')}</p>}><DevelopmentTerminal key={detail.id} process={detail} panelVisible={visible} /></Suspense> : <RuntimeOutput process={detail} disabled={!surfaceActive || context.pending} />}
       <section className="dev-review-stack" aria-label={t('direct.verification')}><strong className="text-xs">{t('direct.verification')}: {t(`direct.verification.${detail.verification_status}`)}</strong><details className="dev-technical-details"><summary>{t('agent.details')}</summary><p>{t('direct.startFingerprint')}: {detail.start_fingerprint || t('direct.pending')}</p><p>{t('direct.currentFingerprint')}: {detail.fingerprint || t('direct.pending')}</p></details><p className="m-0 text-xs text-ink-secondary">{t('direct.observationHint')}</p>{!detail.verification_complete && detail.verification_status !== 'not_requested' ? <p className="dev-evidence-warning">{t('direct.verification.incomplete')}</p> : null}{detail.mutation_observed ? <p className="dev-evidence-warning">{t('direct.verification.changed')}</p> : null}</section>
       <div className="flex flex-wrap gap-2"><Button size="xs" variant="danger" data-testid="dev-process-stop" disabled={context.pending || stopBlocked || !processActive(detail)} onClick={() => void execute('stop')}>{t(operations.some(operation => operation.action === 'stop' && operation.targetId === detail.id && ['pending', 'confirming'].includes(operation.phase)) ? 'direct.stoppingProcess' : 'direct.stop')}</Button>{detail.kind === 'service' ? <Button size="xs" variant="secondary" data-testid="dev-service-preview" disabled={externalAction !== null || detail.status !== 'ready' || !detail.preview_url} onClick={() => void execute('preview')}>{t(externalAction === 'preview' ? 'direct.openingPreview' : 'direct.preview')}</Button> : null}</div>
       </article> : null}

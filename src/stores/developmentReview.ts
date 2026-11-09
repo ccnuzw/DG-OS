@@ -58,7 +58,7 @@ export function readDevelopmentReview(taskId: string): Promise<Outcome<DevReview
   return read<DevReview>('read_development_review', { taskId });
 }
 
-export function readDevelopmentDiff(input: { task_id: string; path: string }): Promise<Outcome<DevDiff>> {
+export function readDevelopmentDiff(input: { task_id: string; path: string; source?: 'task' | 'index' | 'worktree' }): Promise<Outcome<DevDiff>> {
   return read<DevDiff>('read_development_diff', { input });
 }
 

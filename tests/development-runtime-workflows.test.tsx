@@ -114,3 +114,61 @@ it('requires fresh trust when the working directory changes and retains the conf
   fireEvent.click(screen.getByTestId('dev-open-terminal')); await flush();
   expect(calls('start_development_process')[0][1].input).toMatchObject({ kind: 'terminal', cwd: 'packages/app', trust_workspace: true });
 });
+
+it('restores manual selection per project/task, excludes native runs and rejects stale cross-task selection', async () => {
+  const taskA = [process('native'), process('latest'), process('chosen')];
+  taskA[0] = { ...taskA[0], source: 'native_agent', kind: 'terminal' };
+  const taskB = [{ ...process('other-latest'), project_id: 'other-project', task_id: 'other-task' }, { ...process('other-chosen'), project_id: 'other-project', task_id: 'other-task' }];
+  invoke.mockImplementation(async (_command: string, args: { taskId: string }) => args.taskId === 't' ? taskA : taskB);
+  await useDevelopmentRuntime.getState().refresh('t');
+  expect(useDevelopmentRuntime.getState().processes.map(item => item.id)).toEqual(['latest', 'chosen']);
+  useDevelopmentRuntime.getState().select('chosen');
+  await useDevelopmentRuntime.getState().refresh('other-task');
+  expect(useDevelopmentRuntime.getState().selected).toBe('other-latest');
+  useDevelopmentRuntime.getState().select('chosen');
+  expect(useDevelopmentRuntime.getState().selected).toBe('other-latest');
+  useDevelopmentRuntime.getState().select('other-chosen');
+  await useDevelopmentRuntime.getState().refresh('t');
+  expect(useDevelopmentRuntime.getState().selected).toBe('chosen');
+  await useDevelopmentRuntime.getState().refresh('other-task');
+  expect(useDevelopmentRuntime.getState().selected).toBe('other-chosen');
+  useDevelopment.getState().reset();
+  expect(useDevelopmentRuntime.getState().selections).toEqual({});
+  expect(useDevelopmentRuntime.getState().processViews).toEqual({});
+  expect(useDevelopmentRuntime.getState().details).toEqual({});
+});
+
+it('keeps clear display separate from panel collapse, host history and explicit stop through a slow remount', async () => {
+  processes = [process('latest'), process('chosen')];
+  const view = render(<DevelopmentRuntime projectId="p" taskId="t" />); await flush();
+  fireEvent.click(screen.getByTestId('dev-process-history-chosen')); await flush();
+  fireEvent.click(screen.getByTestId('dev-output-clear')); await flush();
+  expect(screen.queryByText('chosen real output')).toBeNull();
+  expect(screen.getByText('workbenchRuntime.displayCleared')).toBeTruthy();
+  expect(processes[1].output).toBe('chosen real output');
+  view.rerender(<DevelopmentRuntime projectId="p" taskId="t" visible={false} />); await flush();
+  view.unmount();
+  const detail = Promise.withResolvers<DevelopmentProcess>();
+  const implementation = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: unknown) => command === 'read_development_process' ? detail.promise : implementation(command, args));
+  render(<DevelopmentRuntime projectId="p" taskId="t" />); await flush();
+  expect(screen.getByTestId('dev-process-history-chosen').getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByText('workbenchRuntime.displayCleared')).toBeTruthy();
+  expect(screen.queryByText('chosen real output')).toBeNull();
+  expect(calls('start_development_process')).toHaveLength(0); expect(calls('stop_development_process')).toHaveLength(0);
+  await act(async () => { detail.resolve({ ...processes[1], output: 'chosen real output\nnew captured output' }); });
+  expect(screen.getByLabelText('direct.output').textContent).toBe('\nnew captured output');
+});
+
+it('shows project and host working directory without treating a native terminal-shaped record as a manual PTY', async () => {
+  useDevelopment.setState({ projects: [{ id: 'p', owner: 'owner', name: 'Local project', path: '/tmp/local-project', directory_identity: 'local-directory', archived: false, created_at: 1, last_opened_at: null }] });
+  processes = [{ ...process('native', 'terminal'), source: 'native_agent' }, { ...process('manual'), cwd: '/tmp/local-project/task-root' }];
+  render(<DevelopmentRuntime projectId="p" taskId="t" />); await flush();
+  const context = screen.getByTestId('dev-runtime-context');
+  expect(within(context).getByText('Local project')).toBeTruthy();
+  expect(within(context).getByText('/tmp/local-project/task-root')).toBeTruthy();
+  expect(within(context).getByText('direct.status.running')).toBeTruthy();
+  expect(screen.queryByTestId('dev-process-history-native')).toBeNull();
+  expect(useDevelopmentRuntime.getState().selected).toBe('manual');
+  expect(calls('start_development_process')).toHaveLength(0);
+});

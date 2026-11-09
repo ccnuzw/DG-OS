@@ -2,21 +2,24 @@ import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { hostCode } from './hostError';
 import type { SessionConfigurationView } from './developmentCapabilities';
+import type { AgentControls } from './agentTurnSettings';
 export type Engine = 'codex' | 'claude';
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export interface Pending { id: string; kind: string; title: string; data: Json }
 export interface AgentEvent { seq: number; kind: string; text: string | null; data: Json; run?: string | null }
-export interface AgentSession { id: string; generation: string; engine: Engine; native_id: string | null; workspace: string; status: string; events: AgentEvent[]; pending: Pending[]; error: string | null; history_truncated?: boolean; active_run?: string | null; configuration?: SessionConfigurationView | null }
+export interface AgentSession { id: string; generation: string; engine: Engine; native_id: string | null; workspace: string; status: string; events: AgentEvent[]; pending: Pending[]; error: string | null; history_truncated?: boolean; active_run?: string | null; configuration?: SessionConfigurationView | null; controls?: AgentControls }
 export type AgentOpenInput = { intent: 'create'; id: string; engine: Engine; task_id: string; project_revision: number; provider: { provider_id: string; model_id: string; provider_revision: number }; options: { workspace: string; resume_id: null; executable: null; model: null; trust_workspace: true } } | { intent: 'resume'; session_id: string; trust_workspace: boolean };
 /** Host runtimes this account started or attached to in the current epoch, keyed by session id, with the last status seen. Closed runtimes are removed. */
 export type LiveSessions = { [id: string]: string };
 
 interface AgentRunnerState {
   session: AgentSession | null; selected: string | null;
+  /** Account-epoch runtime observations only; never persisted or implicitly selected. */
+  snapshots: Record<string, AgentSession>; unread: Record<string, boolean>;
   /** Stable host failure code (see hostError.ts) for the last operation, or null. */
   error: string | null; busy: boolean; acting: boolean; epoch: number; live: LiveSessions;
   open(input: AgentOpenInput): Promise<void>; attach(id: string): Promise<void>;
-  action(command: string, args: { [key: string]: unknown }): Promise<boolean>; detach(): void; reset(): void;
+  action(command: string, args: { [key: string]: unknown }, onFailure?: (code: string) => void): Promise<boolean>; markSeen(id: string): void; detach(): void; reset(): void;
 }
 
 function track(live: LiveSessions, session: AgentSession): LiveSessions {
@@ -27,93 +30,150 @@ function track(live: LiveSessions, session: AgentSession): LiveSessions {
 
 export const useAgentRunner = create<AgentRunnerState>((set, get) => {
   let attempt = 0;
-  let reading = 0;
+  const reads = new Map<string, number>();
+  const timers = new Map<string, number>();
   const actions = new Set<string>();
-  let timer: number | undefined;
-  const poll = async (id: string, ticket: number, epoch: number) => {
-    if (ticket !== attempt || epoch !== get().epoch || get().selected !== id) return;
-    clearTimeout(timer);
-    const read = ++reading;
+  // Unknown admission blocks every new send in that runtime until matching run evidence arrives.
+  const unknownSends = new Set<string>();
+  const current = (id: string) => get().selected === id && get().session?.id === id ? get().session : get().snapshots[id];
+  const isActing = (id: string | null) => id !== null && [...actions].some(key => key.startsWith(`${get().epoch}:${id}:${current(id)?.generation}:`));
+  const invalidate = (id: string) => {
+    const timer = timers.get(id);
+    if (timer !== undefined) window.clearTimeout(timer);
+    timers.delete(id);
+    const read = (reads.get(id) ?? 0) + 1;
+    reads.set(id, read);
+    return read;
+  };
+  const changed = (before: AgentSession | null | undefined, after: AgentSession) => !before
+    || before.generation !== after.generation || before.status !== after.status || before.error !== after.error
+    || before.events.length !== after.events.length || before.events[before.events.length - 1]?.seq !== after.events[after.events.length - 1]?.seq
+    || JSON.stringify(before.pending) !== JSON.stringify(after.pending);
+  const observe = (value: AgentSession) => {
+    const state = get();
+    const previous = current(value.id);
+    const sendPrefix = `${state.epoch}:${value.id}:${value.generation}:`;
+    for (const key of unknownSends) {
+      if (key.startsWith(sendPrefix) && (value.active_run === key.slice(sendPrefix.length) || value.events.some(event => event.run === key.slice(sendPrefix.length)))) unknownSends.delete(key);
+    }
+    // Neither an old read nor an eventual close acknowledgement can resurrect a closed generation.
+    if (previous?.generation === value.generation && previous.status === 'closed' && value.status !== 'closed') return;
+    set({ snapshots: { ...state.snapshots, [value.id]: value }, live: track(state.live, value),
+      unread: changed(previous, value) ? { ...state.unread, [value.id]: true } : state.unread,
+      ...(state.selected === value.id ? { session: value } : {}) });
+  };
+  const schedule = (id: string, epoch: number) => {
+    if (epoch !== get().epoch || !(id in get().live) || timers.has(id)) return;
+    timers.set(id, window.setTimeout(() => { timers.delete(id); void poll(id, epoch); }, 600));
+  };
+  const poll = async (id: string, epoch: number) => {
+    if (epoch !== get().epoch) return;
+    const read = invalidate(id);
     try {
       const value = await invoke<AgentSession>('get_agent_session', { sessionId: id });
-      if (ticket !== attempt || epoch !== get().epoch || read !== reading || get().selected !== id) return;
-      if (get().session?.id === id && get().session?.status === 'closed' && value.status !== 'closed') return;
-      set({ session: value, live: track(get().live, value) });
-    } catch (error) { if (ticket === attempt && epoch === get().epoch && read === reading) set({ error: hostCode(error), session: get().session ? { ...get().session!, pending: [] } : null }); }
-    if (ticket === attempt && epoch === get().epoch && read === reading && get().session?.status !== 'closed') timer = window.setTimeout(() => void poll(id, ticket, epoch), 600);
+      if (epoch !== get().epoch || read !== reads.get(id)) return;
+      observe(value);
+    } catch (error) {
+      if (epoch !== get().epoch || read !== reads.get(id)) return;
+      const previous = current(id);
+      if (previous) {
+        const snapshot = { ...previous, pending: [] };
+        set({ snapshots: { ...get().snapshots, [id]: snapshot }, ...(get().selected === id ? { session: snapshot } : {}) });
+      }
+      if (get().selected === id) set({ error: hostCode(error) });
+    } finally {
+      if (epoch === get().epoch && read === reads.get(id)) schedule(id, epoch);
+    }
   };
   return {
-    session: null, selected: null, error: null, busy: false, acting: false, epoch: 0, live: {},
+    session: null, selected: null, snapshots: {}, unread: {}, error: null, busy: false, acting: false, epoch: 0, live: {},
     async open(input) {
       if (get().busy) return;
       const ticket = ++attempt;
       const epoch = get().epoch;
-      clearTimeout(timer);
-      set({ session: null, selected: input.intent === 'create' ? input.id : input.session_id, busy: true, acting: false, error: null });
+      const id = input.intent === 'create' ? input.id : input.session_id;
+      set({ session: null, selected: id, busy: true, acting: false, error: null });
       try {
         const session = await invoke<AgentSession>('open_agent_session', { input });
-        // A runtime started for a projection that was detached meanwhile still exists, so it stays tracked.
+        // A same-account open still belongs to this account after its surface detaches.
         if (epoch !== get().epoch) return;
-        set({ live: track(get().live, session) });
-        if (ticket !== attempt) return;
-        set({ session, selected: session.id });
-        void poll(session.id, ticket, epoch);
+        invalidate(session.id);
+        observe(session);
+        if (ticket === attempt) set({ session: get().snapshots[session.id], selected: session.id, acting: isActing(session.id) });
+        void poll(session.id, epoch);
       } catch (error) { if (ticket === attempt && epoch === get().epoch) set({ error: hostCode(error) }); }
       finally { if (ticket === attempt && epoch === get().epoch) set({ busy: false }); }
     },
-    // Reads the host snapshot of a session that is still running. It never starts a CLI process.
+    // Attaching is observation only: it never starts or resumes a host runtime.
     async attach(id) {
       const ticket = ++attempt;
       const epoch = get().epoch;
-      clearTimeout(timer);
-      set({ session: null, selected: id, busy: true, acting: false, error: null });
-      await poll(id, ticket, epoch);
-      if (ticket === attempt && epoch === get().epoch) set({ busy: false });
+      const cached = get().snapshots[id];
+      // A cached transcript is useful immediately; approval authority requires this fresh read.
+      set({ session: cached ? { ...cached, pending: [] } : null, selected: id, busy: true, acting: isActing(id), error: null });
+      await poll(id, epoch);
+      if (ticket === attempt && epoch === get().epoch) set({ busy: false, acting: isActing(id) });
     },
-    async action(command, args) {
+    async action(command, args, onFailure) {
       const epoch = get().epoch;
       const ticket = attempt;
       const input = args.input as { session_id?: unknown; generation?: unknown; request_id?: unknown } | undefined;
       const target = input?.session_id ?? args.sessionId;
-      // A callback retained by an old conversation cannot send input or approve requests for the new projection.
-      if (command !== 'close_agent_session' && (typeof target !== 'string' || target !== get().selected || target !== get().session?.id)) return false;
-      if (['send_agent_message', 'respond_agent_request'].includes(command) && (typeof input?.generation !== 'string' || input.generation !== get().session?.generation)) return false;
-      if (command === 'respond_agent_request' && (get().session?.status === 'closed' || !get().session?.pending.some(item => item.id === input?.request_id))) return false;
-      if (command === 'send_agent_message' && (get().acting || get().busy || get().session?.status !== 'idle' || get().session?.pending.length)) return false;
-      const runtime = get().session?.generation;
+      if (typeof target !== 'string') return false;
+      const closing = command === 'close_agent_session';
+      // Retained callbacks cannot send or approve against a different projection or generation.
+      if (!closing && (target !== get().selected || target !== get().session?.id)) return false;
+      const session = current(target);
+      if (['send_agent_message', 'respond_agent_request'].includes(command) && (typeof input?.generation !== 'string' || input.generation !== session?.generation)) return false;
+      if (command === 'respond_agent_request' && (get().busy || session?.status === 'closed' || !session?.pending.some(item => item.id === input?.request_id))) return false;
+      if (command === 'send_agent_message' && (isActing(target) || get().busy || session?.status !== 'idle' || session.pending.length)) return false;
+      const runtime = session?.generation;
       const key = `${epoch}:${target}:${runtime}:${command === 'respond_agent_request' ? `request:${String(input?.request_id)}` : command}`;
+      const sendKey = `${epoch}:${target}:${runtime}:${String(input?.request_id)}`;
       if (actions.has(key)) return false;
+      if (command === 'send_agent_message' && [...unknownSends].some(pending => pending.startsWith(`${epoch}:${target}:${runtime}:`))) { onFailure?.('unknown'); set({ error: 'unknown' }); return false; }
       actions.add(key);
-      ++reading; clearTimeout(timer);
-      set({ error: null, acting: true });
-      if (get().selected) timer = window.setTimeout(() => void poll(get().selected!, ticket, epoch), 600);
+      invalidate(target);
+      if (get().selected === target) set({ error: null, acting: true });
+      schedule(target, epoch);
+      const sameRuntime = () => epoch === get().epoch && runtime === current(target)?.generation;
+      const sameProjection = () => sameRuntime() && ticket === attempt && get().selected === target;
       try {
         const result = await invoke(command, args);
-        if (epoch !== get().epoch) return false;
-        if (command === 'close_agent_session') {
-          if (result !== true) { set({ error: 'unknown' }); return false; }
-          const next = { ...get().live };
-          delete next[String(args.sessionId)];
-          set({ live: next });
+        if (!sameRuntime()) return false;
+        if (closing) {
+          if (result !== true) { if (sameProjection()) set({ error: 'unknown' }); return false; }
+          invalidate(target);
+          if (session) observe({ ...(current(target) ?? session), status: 'closed', pending: [] });
+          else { const live = { ...get().live }; delete live[target]; set({ live }); }
+          return true;
         }
-        if (ticket !== attempt || command !== 'close_agent_session' && runtime !== get().session?.generation) return false;
-        // interrupt/close acknowledgement is not a terminal-state event.
-        if (get().selected) await poll(get().selected!, ticket, epoch);
-        return ticket === attempt && epoch === get().epoch && (command === 'close_agent_session' || runtime === get().session?.generation);
+        // Refresh this runtime even if the user moved away, never the newly selected runtime.
+        await poll(target, epoch);
+        // Sending belongs to its original draft, not to whichever projection is visible at acknowledgement.
+        return command === 'send_agent_message' ? sameRuntime() : sameProjection();
       } catch (error) {
-        if (epoch === get().epoch && ticket === attempt && (command === 'close_agent_session' || runtime === get().session?.generation)) {
-          set({ error: hostCode(error) });
-          if (get().selected) void poll(get().selected!, ticket, epoch);
+        if (sameRuntime()) {
+          const code = hostCode(error);
+          onFailure?.(code);
+          if (command === 'send_agent_message' && code === 'unknown') unknownSends.add(sendKey);
+          if (sameProjection()) set({ error: code });
+          void poll(target, epoch);
         }
         return false;
-      }
-      finally {
+      } finally {
         actions.delete(key);
-        if (epoch === get().epoch) set({ acting: [...actions].some(value => value.startsWith(`${epoch}:${get().selected}:${get().session?.generation}:`)) });
+        if (epoch === get().epoch) set({ acting: isActing(get().selected) });
       }
     },
-    // Stops only the projection and its polling. The host runtime keeps running and stays in `live`.
-    detach() { ++attempt; ++reading; clearTimeout(timer); set({ session: null, selected: null, error: null, busy: false, acting: false }); },
-    reset() { ++attempt; ++reading; actions.clear(); clearTimeout(timer); set({ session: null, selected: null, error: null, busy: false, acting: false, live: {}, epoch: get().epoch + 1 }); },
+    markSeen(id) { if (get().unread[id]) set({ unread: { ...get().unread, [id]: false } }); },
+    // Surface lifetime is independent of runtime subscriptions and account-scoped observations.
+    detach() { ++attempt; set({ session: null, selected: null, error: null, busy: false, acting: false }); },
+    reset() {
+      ++attempt;
+      for (const timer of timers.values()) window.clearTimeout(timer);
+      timers.clear(); reads.clear(); actions.clear(); unknownSends.clear();
+      set({ session: null, selected: null, snapshots: {}, unread: {}, error: null, busy: false, acting: false, live: {}, epoch: get().epoch + 1 });
+    },
   };
 });

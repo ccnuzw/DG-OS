@@ -6,10 +6,10 @@ import '@xterm/xterm/css/xterm.css';
 import { useLocale } from '../../i18n';
 import { useDevelopment } from '../../stores/developmentStore';
 import { contextGeneration, useContextSelection } from '../../stores/developmentSelection';
-import { processActive, resizeDevelopmentTerminal, writeDevelopmentTerminal, type DevelopmentProcess } from '../../stores/developmentRuntime';
+import { processActive, resizeDevelopmentTerminal, writeDevelopmentTerminal, useRuntimeProcessView, type DevelopmentProcess } from '../../stores/developmentRuntime';
 import { useSurfaceActive, useSurfaceVisible } from '../../workspace/SurfaceContext';
 
-type TerminalFeedback = { owner: string; resize: string | null; input: string | null; resizing: boolean };
+type TerminalFeedback = { owner: string; resize: string | null; resizing: boolean };
 
 function terminalAppearance(element: HTMLElement) {
   const styles = getComputedStyle(element);
@@ -29,23 +29,29 @@ export function DevelopmentTerminal({ process, panelVisible = true }: { process:
   const visible = surfaceVisible && panelVisible;
   const epoch = useDevelopment(state => state.epoch);
   const { generation, pending } = useContextSelection();
+  const { view, setView } = useRuntimeProcessView(process);
+  const processView = useRef(view);
+  processView.current = view;
+  const hostTerminal = process.kind === 'terminal' && process.source === 'host_terminal';
   const owner = JSON.stringify([epoch, generation, process.project_id, process.task_id, process.id]);
   const currentOwner = useRef(owner);
   currentOwner.current = owner;
   const [feedback, setFeedback] = useState<TerminalFeedback | null>(null);
   const viewFeedback = feedback?.owner === owner ? feedback : null;
   const updateFeedback = useCallback((change: Partial<Omit<TerminalFeedback, 'owner'>>) => {
-    setFeedback(state => ({ ...(state?.owner === owner ? state : { owner, resize: null, input: null, resizing: false }), ...change }));
+    setFeedback(state => ({ ...(state?.owner === owner ? state : { owner, resize: null, resizing: false }), ...change }));
   }, [owner]);
   const retryResize = useRef<(() => void) | null>(null);
   const interactive = useRef(active);
-  interactive.current = visible && active && !pending;
+  interactive.current = visible && active && !pending && hostTerminal;
   const fitter = useRef<FitAddon | null>(null);
   const sized = useRef<{ rows: number; cols: number } | null>(null);
   const resizeFlight = useRef<Promise<void> | null>(null);
   const container = useRef<HTMLDivElement>(null);
   const terminal = useRef<Terminal | null>(null);
   const output = useRef('');
+  const clearOffset = useRef(view.clearOffset ?? 0);
+  const restoreOutput = useRef<((value: string) => void) | null>(null);
   const current = useRef(process);
   current.current = process;
   useEffect(() => {
@@ -55,19 +61,27 @@ export function DevelopmentTerminal({ process, panelVisible = true }: { process:
     const valid = () => !disposed && currentOwner.current === owner && epoch === useDevelopment.getState().epoch && generation === contextGeneration();
     let writes = Promise.resolve();
     let appearance = terminalAppearance(container.current);
-    const instance = new Terminal({ convertEol: false, cursorBlink: true, scrollback: 2000, screenReaderMode: true, ...appearance });
+    const restored = processView.current;
+    let restoring = 0;
+    const instance = new Terminal({ convertEol: false, cursorBlink: true, scrollback: 2000, screenReaderMode: true, ...(restored.rows && restored.cols ? { rows: restored.rows, cols: restored.cols } : {}), ...appearance });
     const fit = new FitAddon();
     instance.loadAddon(fit); instance.open(container.current);
-    terminal.current = instance; fitter.current = fit; output.current = ''; sized.current = null; resizeFlight.current = null;
-    instance.write(current.current.output); output.current = current.current.output;
+    terminal.current = instance; fitter.current = fit; sized.current = restored.rows && restored.cols ? { rows: restored.rows, cols: restored.cols } : null; resizeFlight.current = null;
+    clearOffset.current = restored.clearOffset ?? 0;
+    output.current = current.current.output.slice(clearOffset.current);
+    // Restoring output may contain terminal queries. Their generated replies are
+    // not new user input and must never be sent back to the existing PTY.
+    const replay = (value: string) => { ++restoring; instance.write(value, () => { --restoring; }); };
+    restoreOutput.current = replay;
+    replay(output.current);
     instance.attachCustomKeyEventHandler(() => interactive.current && !document.hidden);
     const input = instance.onData(data => {
-      if (!valid() || document.hidden || !interactive.current || !processActive(current.current)) return;
+      if (restoring || !valid() || document.hidden || !interactive.current || !processActive(current.current)) return;
       writes = writes.then(async () => {
         if (!valid() || document.hidden || !interactive.current || !processActive(current.current)) return;
         const result = await writeDevelopmentTerminal(process.id, data);
         // An unacknowledged write may already have reached the PTY. Never replay it.
-        if (valid() && !result.ok) updateFeedback({ input: result.code });
+        if (valid() && !result.ok) setView({ inputError: result.code });
       });
     });
     const updateAppearance = () => {
@@ -91,8 +105,8 @@ export function DevelopmentTerminal({ process, panelVisible = true }: { process:
     document.fonts?.addEventListener('loadingdone', fontsLoaded);
     document.documentElement.addEventListener('appearance-font-ready', fontsLoaded);
     return () => { disposed = true; themeObserver.disconnect(); document.fonts?.removeEventListener('loadingdone', fontsLoaded); document.documentElement.removeEventListener('appearance-font-ready', fontsLoaded); input.dispose(); instance.dispose(); terminal.current = null; fitter.current = null; };
-  }, [owner, epoch, generation, process.id, updateFeedback]);
-  const running = processActive(process);
+  }, [owner, epoch, generation, process.id, setView, updateFeedback]);
+  const running = hostTerminal && processActive(process);
   useEffect(() => {
     if (!visible || !active || pending) return;
     let frame = 0;
@@ -168,9 +182,11 @@ export function DevelopmentTerminal({ process, panelVisible = true }: { process:
       window.clearTimeout(retry); retry = 0;
       updateFeedback({ resizing: true });
       const flight = resizeDevelopmentTerminal(process.id, dimensions.rows, dimensions.cols).then(result => {
+        // Acknowledged size belongs to the host process, not this mount/session.
+        // Keep it even after disposal so a remount does not repeat a same-size IPC.
+        if (epoch === useDevelopment.getState().epoch && result.ok) setView({ rows: dimensions.rows, cols: dimensions.cols });
         const sameTerminal = terminal.current === instance && currentOwner.current === owner && epoch === useDevelopment.getState().epoch && generation === contextGeneration();
         if (!sameTerminal) return;
-        // A hidden view still retains the completed size acknowledgement, without scheduling work.
         if (result.ok) sized.current = dimensions;
         else sized.current = null;
         updateFeedback({ resizing: false, resize: result.ok ? null : result.code });
@@ -211,20 +227,29 @@ export function DevelopmentTerminal({ process, panelVisible = true }: { process:
   }, [visible, active, pending, owner]);
   useEffect(() => {
     const instance = terminal.current;
-    if (!instance || output.current === process.output) return;
-    if (process.output.startsWith(output.current)) instance.write(process.output.slice(output.current.length));
-    else { instance.reset(); instance.write(process.output); }
-    output.current = process.output;
-  }, [process.output]);
+    if (!instance) return;
+    const boundary = view.clearOffset ?? 0;
+    const displayed = process.output.slice(boundary);
+    if (clearOffset.current !== boundary) {
+      // Ordered local erase: no PTY input, stop, host-history deletion or replay.
+      instance.write('\x1b[2J\x1b[3J\x1b[H');
+      if (displayed) instance.write(displayed);
+      clearOffset.current = boundary;
+    } else if (output.current === displayed) return;
+    else if (displayed.startsWith(output.current)) instance.write(displayed.slice(output.current.length));
+    else { instance.reset(); restoreOutput.current?.(displayed); }
+    output.current = displayed;
+  }, [process.output, view.clearOffset, owner]);
   return <div className="dev-review-stack">
     <p className="m-0 text-xs text-ink-secondary">{t('direct.terminalHint')}</p>
+    <div className="dev-review-toolbar"><Button size="xs" variant="secondary" data-testid="dev-terminal-clear" disabled={!visible || !active || pending} onClick={() => setView({ clearOffset: process.output.length })}>{t('workbenchRuntime.clearDisplay')}</Button><span className="text-xs text-ink-secondary">{t('workbenchRuntime.clearHint')}</span></div>
     {viewFeedback?.resize ? <div className="dev-review-stack" data-testid="dev-terminal-size-feedback" aria-busy={viewFeedback.resizing}>
       <p role={viewFeedback.resize === 'terminal_starting' ? 'status' : 'alert'} className="m-0 text-xs dev-evidence-warning">{t(viewFeedback.resize === 'terminal_starting' ? 'direct.terminalViewStarting' : 'direct.terminalResizeFailed')}</p>
       <Button size="xs" variant="secondary" disabled={!visible || !active || pending || !running || viewFeedback.resizing} onClick={() => retryResize.current?.()}>{t('direct.terminalRetrySize')}</Button>
     </div> : null}
-    {viewFeedback?.input ? <div className="dev-review-stack" data-testid="dev-terminal-input-feedback">
-      <p role="alert" className="m-0 text-xs dev-evidence-warning">{t(viewFeedback.input === 'terminal_starting' ? 'direct.terminalInputStarting' : 'direct.terminalInputUnconfirmed')}</p>
-      <Button size="xs" variant="secondary" disabled={!visible || !active || pending} onClick={() => updateFeedback({ input: null })}>{t('direct.terminalDismissInputError')}</Button>
+    {view.inputError ? <div className="dev-review-stack" data-testid="dev-terminal-input-feedback">
+      <p role="alert" className="m-0 text-xs dev-evidence-warning">{t(view.inputError === 'terminal_starting' ? 'direct.terminalInputStarting' : 'direct.terminalInputUnconfirmed')}</p>
+      <Button size="xs" variant="secondary" disabled={!visible || !active || pending} onClick={() => setView({ inputError: null })}>{t('direct.terminalDismissInputError')}</Button>
     </div> : null}
     <div ref={container} className="dev-terminal" role="region" aria-label={t('direct.terminal')} data-testid="dev-terminal" />
   </div>;

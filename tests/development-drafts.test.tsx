@@ -42,7 +42,7 @@ it('retains blank and edited task fields through task/project selection and same
 
 it('retains Provider binding drafts across reload, unmount and project changes, then clears them on account reset', async () => {
  invoke.mockImplementation(async (command, args) => command === 'read_development_cli_provider_catalog'
-  ? { project_id: args.projectId, engine: args.engine, providers: [{ id: 'provider', name: 'Provider', enabled: true, config_revision: 2, models: [{ id: 'model', name: 'Model', model_type: 'chat' }] }] }
+  ? { project_id: args.projectId, engine: args.engine, providers: [{ id: 'provider', name: 'Provider', enabled: true, config_revision: 2, availability: { available: true, reason: null }, models: [{ id: 'model', name: 'Model', model_type: 'chat' }] }] }
   : null);
  const source = () => screen.getByRole('combobox', { name: 'capabilities.source' }) as HTMLSelectElement;
  let view = render(<MemoryRouter><ProjectCapabilities projectId="p" /></MemoryRouter>);

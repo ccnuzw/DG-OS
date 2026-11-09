@@ -6,7 +6,7 @@ import { contextGeneration } from '../../stores/developmentSelection';
 import { readDevelopmentGitHistory, previewDevelopmentGitPull, type GitAction, type GitHistoryPage, type GitPullPreview, type GitReview } from '../../stores/developmentDelivery';
 import { confirmAction, errorText } from './shared';
 
-export function GitHistoryPull({ review, busy, blocked, act }: { review: GitReview; busy: boolean; blocked: boolean; act: (action: GitAction) => Promise<void> }) {
+export function GitHistoryPull({ review, busy, blocked, act, refreshKey }: { review: GitReview; busy: boolean; blocked: boolean; act: (action: GitAction) => Promise<void>; refreshKey?: string | number }) {
   const { locale, t } = useLocale();
   const [page, setPage] = useState<GitHistoryPage | null>(null);
   const [remote, setRemote] = useState(''); const [branch, setBranch] = useState('');
@@ -14,7 +14,8 @@ export function GitHistoryPull({ review, busy, blocked, act }: { review: GitRevi
   const [loading, setLoading] = useState(false); const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true); const ticket = useRef(0);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; ++ticket.current; }; }, []);
-  useEffect(() => { ++ticket.current; setPreview(null); setLoading(false); }, [review.review_token, remote, branch]);
+  useEffect(() => { ++ticket.current; setPreview(null); setLoading(false); }, [review.task_id, review.path, review.head, review.review_token, refreshKey, remote, branch]);
+  useEffect(() => { setPage(null); }, [review.task_id, review.path, review.head]);
   function guard() { const n = ++ticket.current, epoch = useDevelopment.getState().epoch, generation = contextGeneration(); return () => mounted.current && n === ticket.current && epoch === useDevelopment.getState().epoch && generation === contextGeneration(); }
   async function history(more: boolean) {
     const valid = guard(); setLoading(true); setError(null);

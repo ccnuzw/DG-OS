@@ -15,6 +15,8 @@ import { SessionConfigurationViewDisplay } from './CapabilitySnapshotView';
 import { DeliveryPanel } from './DeliveryPanel';
 import { TaskReview } from './TaskReview';
 import type { CliProviderRevision, CliProviderSnapshot } from '../../stores/developmentCapabilities';
+import type { ConversationReference } from '../../stores/developmentReferences';
+import { readDevelopmentFile } from '../../stores/developmentReview';
 
 export interface FileTarget { path: string; line?: number; mode: 'file' | 'diff'; nonce: number }
 
@@ -53,7 +55,7 @@ export function SourceLines({ text, label }: { text: string; label: string }) {
   return <div className="dev-source" tabIndex={0} role="region" aria-label={label}><ol>{text.split('\n').map((line, index) => <li key={index}><code>{line || ' '}</code></li>)}</ol></div>;
 }
 
-export function ProjectReview({ projectId, taskId, sessions = [], live = {}, capabilityRevision = 0, workspacePath = '', onHandoff, onWorkspaceChange, view, onViewChange, fileTarget, snapshot, onUseConfiguration, onOpenRuntime }: { projectId: string; taskId: string | null; sessions?: {id:string;engine:'codex'|'claude'}[]; live?: Record<string,string>; capabilityRevision?: number; workspacePath?: string; onHandoff?: (sessionId:string)=>void; onWorkspaceChange?: (path:string)=>void; view?: CodeView; onViewChange?: (view: CodeView)=>void; fileTarget?: FileTarget | null; snapshot?: CliProviderSnapshot | null; onUseConfiguration?: (revision: CliProviderRevision)=>void; onOpenRuntime?: ()=>void }) {
+export function ProjectReview({ projectId, taskId, sessions = [], live = {}, capabilityRevision = 0, workspacePath = '', onHandoff, onWorkspaceChange, view, views = ['files', 'changes', 'review', 'delivery', 'capabilities'], onViewChange, fileTarget, snapshot, onUseConfiguration, onOpenRuntime, onOpenFile }: { projectId: string; taskId: string | null; sessions?: {id:string;engine:'codex'|'claude'}[]; live?: Record<string,string>; capabilityRevision?: number; workspacePath?: string; onHandoff?: (sessionId:string)=>void; onWorkspaceChange?: (path:string)=>void; view?: CodeView; views?: readonly CodeView[]; onViewChange?: (view: CodeView)=>void; fileTarget?: FileTarget | null; snapshot?: CliProviderSnapshot | null; onUseConfiguration?: (revision: CliProviderRevision)=>void; onOpenRuntime?: ()=>void; onOpenFile?: (target: FileTarget) => void }) {
   const { t } = useLocale();
   const [localTab, setTab] = useState<CodeView>('files');
   const tab = view ?? localTab;
@@ -68,18 +70,18 @@ export function ProjectReview({ projectId, taskId, sessions = [], live = {}, cap
   return <section className="dev-review" aria-label={t('review.title')}>
     <Tabs value={tab} activationMode="manual" onValueChange={changeTab}>
       <Tabs.List aria-label={t('review.title')}>
-        {['files', 'changes', 'review', 'delivery', 'capabilities'].map(item => <Tabs.Trigger key={item} value={item} data-testid={`dev-review-tab-${item}`}>{t(item === 'review' ? 'workflow.review' : item === 'capabilities' ? 'capabilities.title' : item === 'delivery' ? 'delivery.title' : `review.${item}`)}</Tabs.Trigger>)}
+        {views.map(item => <Tabs.Trigger key={item} value={item} data-testid={`dev-review-tab-${item}`}>{t(item === 'review' ? 'workflow.review' : item === 'capabilities' ? 'capabilities.title' : item === 'delivery' ? 'delivery.title' : `review.${item}`)}</Tabs.Trigger>)}
       </Tabs.List>
       <Tabs.Content forceMount hidden={tab !== 'files'} value="files">{visited.has('files') ? <Files projectId={projectId} taskId={taskId} target={target?.mode === 'file' ? target : null} /> : null}</Tabs.Content>
       <Tabs.Content forceMount hidden={tab !== 'changes'} value="changes">{visited.has('changes') ? taskId ? <Changes taskId={taskId} target={target?.mode === 'diff' ? target : null} /> : <p className="text-xs text-ink-secondary">{t('dev.noTaskSelected')}</p> : null}</Tabs.Content>
-      <Tabs.Content forceMount hidden={tab !== 'review'} value="review">{visited.has('review') && taskId ? <TaskReview projectId={projectId} taskId={taskId} onOpenDiff={async path => { if (await discardDevelopmentDraft()) { setReviewTarget({ path, mode: 'diff', nonce: Date.now() }); changeTab('changes'); } }} onOpenRuntime={() => onOpenRuntime?.()} onOpenDelivery={() => changeTab('delivery')} /> : null}</Tabs.Content>
+      <Tabs.Content forceMount hidden={tab !== 'review'} value="review">{visited.has('review') && taskId ? <TaskReview projectId={projectId} taskId={taskId} onOpenDiff={async path => { const target: FileTarget = { path, mode: 'diff', nonce: Date.now() }; if (onOpenFile) { onOpenFile(target); return; } if (await discardDevelopmentDraft()) { setReviewTarget(target); changeTab('changes'); } }} onOpenRuntime={() => onOpenRuntime?.()} onOpenDelivery={() => changeTab('delivery')} /> : null}</Tabs.Content>
       <Tabs.Content forceMount hidden={tab !== 'capabilities'} value="capabilities">{visited.has('capabilities') ? <ProjectCapabilities projectId={projectId} snapshot={snapshot} onUseConfiguration={onUseConfiguration} /> : null}</Tabs.Content>
       <Tabs.Content forceMount hidden={tab !== 'delivery'} value="delivery">{visited.has('delivery') ? taskId ? <DeliveryPanel projectId={projectId} taskId={taskId} sessions={sessions} live={live} capabilityRevision={capabilityRevision} workspacePath={workspacePath} onHandoff={onHandoff} onWorkspaceChange={onWorkspaceChange} /> : <p className="text-xs text-ink-secondary">{t('dev.noTaskSelected')}</p> : null}</Tabs.Content>
     </Tabs>
   </section>;
 }
 
-function Files({ projectId, taskId, target }: { projectId: string; taskId: string | null; target?: FileTarget | null }) {
+export function Files({ projectId, taskId, target, onOpenFile, onReference }: { projectId: string; taskId: string | null; target?: FileTarget | null; onOpenFile?: (target: FileTarget) => void; onReference?: (reference: ConversationReference) => void }) {
   const { t } = useLocale();
   const scope = JSON.stringify([projectId, taskId, 'files']);
   const [path, setPath] = useWorkbenchLocation(`${scope}:path`, '');
@@ -88,7 +90,23 @@ function Files({ projectId, taskId, target }: { projectId: string; taskId: strin
   const [selected, setSelected] = useWorkbenchLocation<string | null>(`${scope}:selected`, null);
   useEffect(() => { if (target) { setSelected(target.path); setPath(''); setQuery(''); } }, [target?.nonce]);
   const listing = useRead(useCallback(() => listDevelopmentFiles({ project_id: projectId, task_id: taskId, path, query, include_ignored: ignored }), [projectId, taskId, path, query, ignored]));
-  async function change(action: () => void) { if (await discardDevelopmentDraft()) action(); }
+  const [referenceError, setReferenceError] = useState<string | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  async function attach(path: string, contents: boolean) {
+    const epoch = useDevelopment.getState().epoch, generation = contextGeneration();
+    setReferenceError(null);
+    const result = await readDevelopmentFile({ project_id: projectId, task_id: taskId, path });
+    if (!mounted.current || epoch !== useDevelopment.getState().epoch || generation !== contextGeneration()) return;
+    if (!result.ok) { setReferenceError(result.code); return; }
+    if (result.value.reason || result.value.text === null || !result.value.hash) { setReferenceError(result.value.reason ?? 'file_access_denied'); return; }
+    onReference?.({ project_id: projectId, task_id: taskId, path, kind: contents ? 'file' : 'path', ...(contents ? { expected_hash: result.value.hash } : {}) });
+  }
+  function open(path: string) {
+    if (onOpenFile) { onOpenFile({ path, mode: 'file', nonce: Date.now() }); return; }
+    if (path !== selected) void change(() => setSelected(path));
+  }
+  async function change(action: () => void) { if (onOpenFile || await discardDevelopmentDraft()) action(); }
   function navigate(next: string) { void change(() => { setPath(next); setSelected(null); setQuery(''); }); }
   const segments = path.split('/').filter(Boolean);
   return <div className="dev-review-stack">
@@ -97,14 +115,15 @@ function Files({ projectId, taskId, target }: { projectId: string; taskId: strin
     <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={ignored} onChange={event => { const checked = event.target.checked; void change(() => { setIgnored(checked); setSelected(null); }); }} />{t('review.includeIgnored')}</label>
     <nav className="dev-review-breadcrumb" aria-label={t('review.directory')}><Button size="xs" variant="ghost" onClick={() => navigate('')}>{t('review.root')}</Button>{segments.map((segment, index) => <Button key={index} size="xs" variant="ghost" onClick={() => navigate(segments.slice(0, index + 1).join('/'))}>{segment}</Button>)}</nav>
     <Feedback busy={listing.busy} error={listing.error} />
+    {referenceError ? <p role="alert">{errorText(referenceError)}</p> : null}
     {listing.value ? <><p className="m-0 text-xs text-ink-secondary">{query ? t('review.searchHint') : t('direct.editHint')}</p>
       {listing.value.truncated ? <p role="status" className="dev-evidence-warning">{t('review.filesTruncated')}</p> : null}
-      <div className="dev-file-layout"><nav aria-label={t('review.files')} className="dev-file-list">
+      <div className={onOpenFile ? 'dev-file-browser' : 'dev-file-layout'}><nav aria-label={t('review.files')} className="dev-file-list">
         {!listing.value.entries.length ? <p className="text-xs text-ink-secondary">{t('review.noFiles')}</p> : null}
-        {listing.value.entries.map(entry => <Button key={entry.path} size="xs" variant={selected === entry.path ? 'secondary' : 'ghost'} className="dev-file-entry" data-testid={`dev-file-item-${entry.path}`} aria-pressed={selected === entry.path} disabled={entry.kind === 'symlink' || entry.kind === 'blocked'} onClick={() => entry.kind === 'directory' ? navigate(entry.path) : entry.path !== selected && void change(() => setSelected(entry.path))}>
+        {listing.value.entries.map(entry => <div key={entry.path} className="dev-file-browser-row"><Button size="xs" variant={selected === entry.path ? 'secondary' : 'ghost'} className="dev-file-entry" data-testid={`dev-file-item-${entry.path}`} aria-pressed={selected === entry.path} disabled={entry.kind === 'symlink' || entry.kind === 'blocked'} onClick={() => entry.kind === 'directory' ? navigate(entry.path) : open(entry.path)}>
           <span aria-hidden="true">{entry.kind === 'directory' ? '▸' : '·'}</span><span className="break-all">{query ? entry.path : entry.name}</span><span className="text-ink-secondary">{entry.ignored ? t('review.ignored') : ''}{entry.kind === 'symlink' || entry.kind === 'blocked' ? t(`review.kind.${entry.kind}`) : ''}</span>
-        </Button>)}
-      </nav><div className="min-w-0">{selected ? <FileEditor key={selected} projectId={projectId} taskId={taskId} path={selected} line={target?.path === selected ? target.line : undefined} /> : <p className="text-xs text-ink-secondary">{t('review.selectFile')}</p>}</div></div></> : null}
+        </Button>{onReference && entry.kind === 'file' ? <details className="dev-file-reference-actions"><summary aria-label={t('workbenchFiles.referenceActions', { path: entry.path })}>@</summary><Button size="xs" variant="ghost" onClick={() => void attach(entry.path, true)}>{t('workbenchFiles.referenceFile')}</Button><Button size="xs" variant="ghost" onClick={() => void attach(entry.path, false)}>{t('workbenchFiles.referencePath')}</Button></details> : null}</div>)}
+      </nav>{!onOpenFile ? <div className="min-w-0">{selected ? <FileEditor key={selected} projectId={projectId} taskId={taskId} path={selected} line={target?.path === selected ? target.line : undefined} /> : <p className="text-xs text-ink-secondary">{t('review.selectFile')}</p>}</div> : null}</div></> : null}
   </div>;
 }
 
@@ -129,13 +148,31 @@ function Changes({ taskId, target }: { taskId: string; target?: FileTarget | nul
   </div>;
 }
 
-function ChangeDiff({ taskId, path }: { taskId: string; path: string }) {
+export function ChangeDiff({ taskId, path, projectId, source = 'task', onReference }: { taskId: string; path: string; projectId?: string; source?: 'task' | 'index' | 'worktree'; onReference?: (reference: ConversationReference) => void }) {
   const { t } = useLocale();
-  const diff = useRead<DevDiff>(useCallback(() => readDevelopmentDiff({ task_id: taskId, path }), [taskId, path]));
-  const [mode, setMode] = useWorkbenchLocation(`${taskId}:${path}:diff`, 'unified');
+  const diff = useRead<DevDiff>(useCallback(() => readDevelopmentDiff({ task_id: taskId, path, source }), [taskId, path, source]));
+  const [mode, setMode] = useWorkbenchLocation(`${taskId}:${path}:${source}:diff`, 'unified');
+  const [referenceBusy, setReferenceBusy] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  async function attach() {
+    if (!projectId || !diff.value || diff.value.reason || !diff.value.diff || referenceBusy) return;
+    const epoch = useDevelopment.getState().epoch, generation = contextGeneration();
+    setReferenceBusy(true);
+    try {
+      const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(diff.value.diff));
+      if (!mounted.current || epoch !== useDevelopment.getState().epoch || generation !== contextGeneration()) return;
+      onReference?.({ project_id: projectId, task_id: taskId, path, kind: 'diff', diff_source: source, expected_hash: Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('') });
+    } finally { if (mounted.current) setReferenceBusy(false); }
+  }
   const added = diff.value?.diff.split('\n').filter(line => line.startsWith('+') && !line.startsWith('+++')).length ?? 0;
   const deleted = diff.value?.diff.split('\n').filter(line => line.startsWith('-') && !line.startsWith('---')).length ?? 0;
-  return <article className="dev-review-stack" data-testid="dev-file-diff"><strong className="break-all text-xs">{path}</strong><Feedback busy={diff.busy} error={diff.error} />{diff.value ? <><p className="m-0 text-xs text-ink-secondary">{t('review.diffCounts', { added, deleted })}</p>{diff.value.reason ? <ContentReason reason={diff.value.reason} /> : null}<Tabs value={mode} onValueChange={setMode}><Tabs.List aria-label={t('review.diffView')}>{['unified', 'before', 'after'].map(item => <Tabs.Trigger key={item} value={item}>{t(`review.${item}`)}</Tabs.Trigger>)}</Tabs.List><Tabs.Content value="unified">{diff.value.diff ? <pre className="dev-diff" tabIndex={0} aria-label={t('review.unified')}>{diff.value.diff.split('\n').map((line, index) => <span key={index} className={line.startsWith('+') ? 'dev-diff-added' : line.startsWith('-') ? 'dev-diff-deleted' : line.startsWith('@@') ? 'dev-diff-hunk' : undefined}>{line}{'\n'}</span>)}</pre> : <p className="text-xs text-ink-secondary">{t('review.noDiff')}</p>}</Tabs.Content><Tabs.Content value="before">{diff.value.before !== null ? <SourceLines text={diff.value.before} label={t('review.before')} /> : <ContentReason reason={diff.value.reason} />}</Tabs.Content><Tabs.Content value="after">{diff.value.after !== null ? <SourceLines text={diff.value.after} label={t('review.after')} /> : <ContentReason reason={diff.value.reason} />}</Tabs.Content></Tabs></> : null}</article>;
+  return <article className="dev-review-stack" data-testid="dev-file-diff">
+    <div className="dev-review-toolbar"><strong className="break-all text-xs">{path}</strong><Button size="xs" variant="secondary" disabled={diff.busy} onClick={() => void diff.refresh()}>{t('review.refresh')}</Button>{onReference ? <Button size="xs" variant="secondary" disabled={!diff.value?.diff || Boolean(diff.value.reason) || referenceBusy} onClick={() => void attach()}>{t('workbenchFiles.referenceDiff')}</Button> : null}</div>
+    <p className="text-xs">{t(source === 'task' ? 'workbenchFiles.taskDiff' : source === 'index' ? 'workbenchFiles.indexDiff' : 'workbenchFiles.worktreeDiff')}</p>
+    <Feedback busy={diff.busy} error={diff.error} />
+    {diff.value ? <><p className="m-0 text-xs text-ink-secondary">{t('review.diffCounts', { added, deleted })}</p>{diff.value.reason ? <ContentReason reason={diff.value.reason} /> : null}<Tabs value={mode} onValueChange={setMode}><Tabs.List aria-label={t('review.diffView')}>{['unified', 'before', 'after'].map(item => <Tabs.Trigger key={item} value={item}>{t(`review.${item}`)}</Tabs.Trigger>)}</Tabs.List><Tabs.Content value="unified">{diff.value.diff ? <pre className="dev-diff" tabIndex={0} aria-label={t('review.unified')}>{diff.value.diff.split('\n').map((line, index) => <span key={index} className={line.startsWith('+') ? 'dev-diff-added' : line.startsWith('-') ? 'dev-diff-deleted' : line.startsWith('@@') ? 'dev-diff-hunk' : undefined}>{line}{'\n'}</span>)}</pre> : <p className="text-xs">{t('review.noDiff')}</p>}</Tabs.Content><Tabs.Content value="before">{diff.value.before !== null ? <SourceLines text={diff.value.before} label={t('review.before')} /> : <ContentReason reason={diff.value.reason} />}</Tabs.Content><Tabs.Content value="after">{diff.value.after !== null ? <SourceLines text={diff.value.after} label={t('review.after')} /> : <ContentReason reason={diff.value.reason} />}</Tabs.Content></Tabs></> : null}
+  </article>;
 }
 
 export function Runs({ taskId, targetRunId }: { taskId: string; targetRunId?: string | null }) {
@@ -152,7 +189,7 @@ function Run({ run, stale }: { run: DevRun; stale: boolean }) {
   return <article className="dev-run dev-review-stack" tabIndex={-1} data-run-id={run.id}>
     <header className="dev-review-toolbar"><strong className="text-xs">{t('direct.source.native_agent')} · {run.engine === 'codex' ? 'Codex' : 'Claude'}</strong><span className="text-xs">{t(`review.run.${run.status}`)}</span></header>
     <p className="m-0 text-xs text-ink-secondary">{formatDateTime(run.started_at * 1000)}{run.finished_at !== null ? ` — ${formatDateTime(run.finished_at * 1000)}` : ''}</p>
-    <p className="m-0 break-all text-xs text-ink-secondary">{run.id}</p>
+    <details className="dev-technical-details"><summary>{t('agent.details')}</summary><p className="m-0 break-all text-xs text-ink-secondary">{run.id}</p></details>
     {run.summary ? <p className="m-0 whitespace-pre-wrap text-sm">{run.summary}</p> : null}
     {run.reason ? <p role="status" className="m-0 whitespace-pre-wrap text-xs text-status-error">{run.reason}</p> : null}
     {stale ? <p className="dev-evidence-warning">{t('review.runStale')}</p> : null}

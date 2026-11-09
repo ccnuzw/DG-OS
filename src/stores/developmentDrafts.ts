@@ -4,7 +4,7 @@ import { useDevelopment } from './developmentStore';
 import { confirmAction } from '../components/development/shared';
 import { t } from '../i18n';
 
-type DraftKind = 'task' | 'capabilities' | 'commit' | 'handoff' | 'delivery';
+type DraftKind = 'task' | 'capabilities' | 'commit' | 'handoff' | 'delivery' | 'conversation';
 interface Draft { kind: DraftKind; value: unknown; baseline: unknown }
 interface Drafts { entries: Record<string, Draft>; handoffs: Record<string, string>; clear(): void }
 export const useDevelopmentDrafts = create<Drafts>(set => ({ entries: {}, handoffs: {}, clear: () => set({ entries: {}, handoffs: {} }) }));

@@ -64,3 +64,13 @@ it('cancels folder selection without mutation and reports picker errors without 
   expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'dev.folderPickerFailed');
   expect(screen.queryByRole('dialog')).toBeNull();
 });
+
+it('does not import an old account folder when its native picker returns late', async () => {
+ const pending = Promise.withResolvers<string>(); picker.mockReturnValue(pending.promise);
+ const create = vi.spyOn(useDevelopment.getState(), 'createProject').mockResolvedValue({ ok: false, code: 'unknown' });
+ render(<ProjectPanel />); await action('dev.openFolder');
+ act(() => useDevelopment.getState().reset());
+ await act(async () => pending.resolve('/old-account/project'));
+ expect(create).not.toHaveBeenCalled();
+ expect(useDevelopment.getState().selection.project_id).toBeNull();
+});

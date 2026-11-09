@@ -1,125 +1,131 @@
-/* Saved percentages are preferences; minimum text and geometry tracks may constrain the rendered split. */
-.dev-layout-agent-26 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 74fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 26fr); }
-.dev-layout-agent-27 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 73fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 27fr); }
-.dev-layout-agent-28 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 72fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 28fr); }
-.dev-layout-agent-29 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 71fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 29fr); }
-.dev-layout-agent-30 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 70fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 30fr); }
-.dev-layout-agent-31 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 69fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 31fr); }
-.dev-layout-agent-32 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 68fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 32fr); }
-.dev-layout-agent-33 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 67fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 33fr); }
-.dev-layout-agent-34 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 66fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 34fr); }
-.dev-layout-agent-35 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 65fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 35fr); }
-.dev-layout-agent-36 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 64fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 36fr); }
-.dev-layout-agent-37 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 63fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 37fr); }
-.dev-layout-agent-38 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 62fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 38fr); }
-.dev-layout-agent-39 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 61fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 39fr); }
-.dev-layout-agent-40 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 60fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 40fr); }
-.dev-layout-agent-41 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 59fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 41fr); }
-.dev-layout-agent-42 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 58fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 42fr); }
-.dev-layout-agent-43 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 57fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 43fr); }
-.dev-layout-agent-44 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 56fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 44fr); }
-.dev-layout-agent-45 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 55fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 45fr); }
-.dev-layout-agent-46 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 54fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 46fr); }
-.dev-layout-agent-47 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 53fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 47fr); }
-.dev-layout-agent-48 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 52fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 48fr); }
-.dev-layout-agent-49 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 51fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 49fr); }
-.dev-layout-agent-50 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 50fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 50fr); }
-.dev-layout-agent-51 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 49fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 51fr); }
-.dev-layout-agent-52 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 48fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 52fr); }
-.dev-layout-agent-53 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 47fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 53fr); }
-.dev-layout-agent-54 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 46fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 54fr); }
-.dev-layout-agent-55 .dev-collaboration.dev-agent-open { grid-template-columns: minmax(max(32rem, calc(32 * var(--font-size-ui))), 45fr) .5rem minmax(max(20rem, calc(22 * var(--font-size-ui))), 55fr); }
-.dev-layout-runtime-22 .dev-bottom-runtime { flex-basis: 22%; }
-.dev-layout-runtime-23 .dev-bottom-runtime { flex-basis: 23%; }
-.dev-layout-runtime-24 .dev-bottom-runtime { flex-basis: 24%; }
-.dev-layout-runtime-25 .dev-bottom-runtime { flex-basis: 25%; }
-.dev-layout-runtime-26 .dev-bottom-runtime { flex-basis: 26%; }
-.dev-layout-runtime-27 .dev-bottom-runtime { flex-basis: 27%; }
-.dev-layout-runtime-28 .dev-bottom-runtime { flex-basis: 28%; }
-.dev-layout-runtime-29 .dev-bottom-runtime { flex-basis: 29%; }
-.dev-layout-runtime-30 .dev-bottom-runtime { flex-basis: 30%; }
-.dev-layout-runtime-31 .dev-bottom-runtime { flex-basis: 31%; }
-.dev-layout-runtime-32 .dev-bottom-runtime { flex-basis: 32%; }
-.dev-layout-runtime-33 .dev-bottom-runtime { flex-basis: 33%; }
-.dev-layout-runtime-34 .dev-bottom-runtime { flex-basis: 34%; }
-.dev-layout-runtime-35 .dev-bottom-runtime { flex-basis: 35%; }
-.dev-layout-runtime-36 .dev-bottom-runtime { flex-basis: 36%; }
-.dev-layout-runtime-37 .dev-bottom-runtime { flex-basis: 37%; }
-.dev-layout-runtime-38 .dev-bottom-runtime { flex-basis: 38%; }
-.dev-layout-runtime-39 .dev-bottom-runtime { flex-basis: 39%; }
-.dev-layout-runtime-40 .dev-bottom-runtime { flex-basis: 40%; }
-.dev-layout-runtime-41 .dev-bottom-runtime { flex-basis: 41%; }
-.dev-layout-runtime-42 .dev-bottom-runtime { flex-basis: 42%; }
-.dev-layout-runtime-43 .dev-bottom-runtime { flex-basis: 43%; }
-.dev-layout-runtime-44 .dev-bottom-runtime { flex-basis: 44%; }
-.dev-layout-runtime-45 .dev-bottom-runtime { flex-basis: 45%; }
-.dev-layout-runtime-46 .dev-bottom-runtime { flex-basis: 46%; }
-.dev-layout-runtime-47 .dev-bottom-runtime { flex-basis: 47%; }
-.dev-layout-runtime-48 .dev-bottom-runtime { flex-basis: 48%; }
-.dev-layout-runtime-49 .dev-bottom-runtime { flex-basis: 49%; }
-.dev-layout-runtime-50 .dev-bottom-runtime { flex-basis: 50%; }
-.dev-layout-runtime-51 .dev-bottom-runtime { flex-basis: 51%; }
-.dev-layout-runtime-52 .dev-bottom-runtime { flex-basis: 52%; }
-.dev-layout-runtime-53 .dev-bottom-runtime { flex-basis: 53%; }
-.dev-layout-runtime-54 .dev-bottom-runtime { flex-basis: 54%; }
-.dev-layout-runtime-55 .dev-bottom-runtime { flex-basis: 55%; }
-.dev-layout-runtime-56 .dev-bottom-runtime { flex-basis: 56%; }
-.dev-layout-runtime-57 .dev-bottom-runtime { flex-basis: 57%; }
-.dev-layout-runtime-58 .dev-bottom-runtime { flex-basis: 58%; }
-.dev-layout-runtime-59 .dev-bottom-runtime { flex-basis: 59%; }
-.dev-layout-runtime-60 .dev-bottom-runtime { flex-basis: 60%; }
-.dev-layout-runtime-61 .dev-bottom-runtime { flex-basis: 61%; }
-.dev-layout-runtime-62 .dev-bottom-runtime { flex-basis: 62%; }
-.dev-layout-runtime-63 .dev-bottom-runtime { flex-basis: 63%; }
-.dev-layout-runtime-64 .dev-bottom-runtime { flex-basis: 64%; }
-.dev-layout-runtime-65 .dev-bottom-runtime { flex-basis: 65%; }
-.dev-workspace-body { position: relative; grid-template-columns: max(16rem, calc(16 * var(--font-size-ui))) minmax(0, 1fr); }
-.dev-workspace-header { flex-wrap: wrap; gap: var(--spacing-2); padding: var(--spacing-2) var(--spacing-3); }
-.dev-context-status { display: flex; flex-wrap: wrap; gap: var(--spacing-1) var(--spacing-3); color: var(--text-secondary); font-size: var(--font-size-xs); }
-.dev-context-status > span { overflow-wrap: anywhere; }
+/* The conversation owns the main area; tools share one independently scrolling drawer. */
+.agent-workbench.dev-workspace { min-width: 0; max-width: 100%; }
+.dev-workspace-header { flex-wrap: wrap; gap: var(--spacing-2); min-width: 0; padding: var(--spacing-2) var(--spacing-3); }
+.dev-workspace-context h1 { overflow-wrap: anywhere; }
 .dev-context-details { position: relative; flex-shrink: 0; font-size: var(--font-size-xs); }
 .dev-context-details summary { cursor: pointer; padding: var(--spacing-2); }
 .dev-context-details > .dev-detail { position: absolute; z-index: 5; right: 0; top: 100%; width: min(32rem, 70vw); max-height: 50vh; overflow: auto; background: var(--surface-panel); border: 1px solid var(--border-control); border-radius: var(--radius-md); padding: var(--spacing-3); box-shadow: var(--shadow-md); }
 .dev-context-details p { margin: 0; }
-.dev-launch-overlay { position: fixed; inset: 0; z-index: var(--z-index-modal); background: var(--overlay-scrim); }
-.dev-task-launch-panel { position: fixed; z-index: var(--z-index-modal); top: var(--spacing-4); right: var(--spacing-4); bottom: var(--spacing-4); width: min(40rem, calc(100vw - 2 * var(--spacing-4))); min-height: 0; overflow: auto; overscroll-behavior: contain; scroll-padding: var(--spacing-4); padding: var(--spacing-4); border: 1px solid var(--border-control); border-radius: var(--radius-lg); background: var(--surface-panel); color: var(--text-primary); box-shadow: var(--shadow-lg); font-size: var(--font-size-sm); display: flex; flex-direction: column; gap: var(--spacing-4); }
-.dev-task-launch-panel .dev-review-stack { grid-template-columns: minmax(0, 1fr); }
-.dev-task-launch-panel .dev-review-stack > * { min-width: 0; overflow-wrap: anywhere; }
-.dev-task-launch-panel > button { align-self: end; }
-.dev-task-launch-panel .dev-editor { min-height: 8rem; }
-.dev-collaboration { display: grid; flex: 1; min-height: 0; min-width: 0; grid-template-columns: minmax(0, 1fr); }
-.dev-tools-pane { min-height: 0; overflow: hidden; padding: var(--spacing-2) var(--spacing-3); container-type: inline-size; }
+
+.dev-workspace-body { position: relative; min-width: 0; overflow: hidden; grid-template-columns: 3.5rem minmax(0, 1fr); }
+.dev-workspace-body[data-drawer-open=true] { grid-template-columns: 3.5rem auto minmax(0, 1fr); }
+.dev-tool-rail { display: flex; flex-direction: column; align-items: stretch; gap: var(--spacing-1); min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: var(--spacing-1); border-inline-end: 1px solid var(--border-subtle); background: var(--surface-panel); }
+.dev-tool-rail > button { flex-shrink: 0; width: 100%; min-width: 0; min-height: 2.75rem; height: auto; padding: var(--spacing-2) var(--spacing-1); white-space: normal; overflow-wrap: anywhere; }
+.dev-tool-rail > button[data-active=true] { background: var(--surface-inset); color: var(--text-primary); box-shadow: inset 2px 0 var(--accent-default); }
+.dev-tool-rail > button:focus-visible, .dev-session-tabs > button:focus-visible { outline: 1px solid var(--border-focus); outline-offset: -2px; }
+.dev-navigation { position: relative; display: flex; flex-direction: column; width: 24rem; min-width: 0; min-height: 0; overflow: hidden; padding: 0; border-inline-end: 1px solid var(--border-subtle); background: var(--surface-panel); }
+/* Half-rem resize steps keep geometry declarative under D068's no-inline-style rule. */
+.dev-workspace[data-drawer-width="18"] .dev-navigation { width: 18rem; }
+.dev-workspace[data-drawer-width="18.5"] .dev-navigation { width: 18.5rem; }
+.dev-workspace[data-drawer-width="19"] .dev-navigation { width: 19rem; }
+.dev-workspace[data-drawer-width="19.5"] .dev-navigation { width: 19.5rem; }
+.dev-workspace[data-drawer-width="20"] .dev-navigation { width: 20rem; }
+.dev-workspace[data-drawer-width="20.5"] .dev-navigation { width: 20.5rem; }
+.dev-workspace[data-drawer-width="21"] .dev-navigation { width: 21rem; }
+.dev-workspace[data-drawer-width="21.5"] .dev-navigation { width: 21.5rem; }
+.dev-workspace[data-drawer-width="22"] .dev-navigation { width: 22rem; }
+.dev-workspace[data-drawer-width="22.5"] .dev-navigation { width: 22.5rem; }
+.dev-workspace[data-drawer-width="23"] .dev-navigation { width: 23rem; }
+.dev-workspace[data-drawer-width="23.5"] .dev-navigation { width: 23.5rem; }
+.dev-workspace[data-drawer-width="24"] .dev-navigation { width: 24rem; }
+.dev-workspace[data-drawer-width="24.5"] .dev-navigation { width: 24.5rem; }
+.dev-workspace[data-drawer-width="25"] .dev-navigation { width: 25rem; }
+.dev-workspace[data-drawer-width="25.5"] .dev-navigation { width: 25.5rem; }
+.dev-workspace[data-drawer-width="26"] .dev-navigation { width: 26rem; }
+.dev-workspace[data-drawer-width="26.5"] .dev-navigation { width: 26.5rem; }
+.dev-workspace[data-drawer-width="27"] .dev-navigation { width: 27rem; }
+.dev-workspace[data-drawer-width="27.5"] .dev-navigation { width: 27.5rem; }
+.dev-workspace[data-drawer-width="28"] .dev-navigation { width: 28rem; }
+.dev-workspace[data-drawer-width="28.5"] .dev-navigation { width: 28.5rem; }
+.dev-workspace[data-drawer-width="29"] .dev-navigation { width: 29rem; }
+.dev-workspace[data-drawer-width="29.5"] .dev-navigation { width: 29.5rem; }
+.dev-workspace[data-drawer-width="30"] .dev-navigation { width: 30rem; }
+.dev-workspace[data-drawer-width="30.5"] .dev-navigation { width: 30.5rem; }
+.dev-workspace[data-drawer-width="31"] .dev-navigation { width: 31rem; }
+.dev-workspace[data-drawer-width="31.5"] .dev-navigation { width: 31.5rem; }
+.dev-workspace[data-drawer-width="32"] .dev-navigation { width: 32rem; }
+.dev-workspace[data-drawer-width="32.5"] .dev-navigation { width: 32.5rem; }
+.dev-workspace[data-drawer-width="33"] .dev-navigation { width: 33rem; }
+.dev-workspace[data-drawer-width="33.5"] .dev-navigation { width: 33.5rem; }
+.dev-workspace[data-drawer-width="34"] .dev-navigation { width: 34rem; }
+.dev-workspace[data-drawer-width="34.5"] .dev-navigation { width: 34.5rem; }
+.dev-workspace[data-drawer-width="35"] .dev-navigation { width: 35rem; }
+.dev-workspace[data-drawer-width="35.5"] .dev-navigation { width: 35.5rem; }
+.dev-workspace[data-drawer-width="36"] .dev-navigation { width: 36rem; }
+.dev-workspace[data-drawer-width="36.5"] .dev-navigation { width: 36.5rem; }
+.dev-workspace[data-drawer-width="37"] .dev-navigation { width: 37rem; }
+.dev-workspace[data-drawer-width="37.5"] .dev-navigation { width: 37.5rem; }
+.dev-workspace[data-drawer-width="38"] .dev-navigation { width: 38rem; }
+.dev-workspace[data-drawer-width="38.5"] .dev-navigation { width: 38.5rem; }
+.dev-workspace[data-drawer-width="39"] .dev-navigation { width: 39rem; }
+.dev-workspace[data-drawer-width="39.5"] .dev-navigation { width: 39.5rem; }
+.dev-workspace[data-drawer-width="40"] .dev-navigation { width: 40rem; }
+.dev-workspace[data-drawer-width="40.5"] .dev-navigation { width: 40.5rem; }
+.dev-workspace[data-drawer-width="41"] .dev-navigation { width: 41rem; }
+.dev-workspace[data-drawer-width="41.5"] .dev-navigation { width: 41.5rem; }
+.dev-workspace[data-drawer-width="42"] .dev-navigation { width: 42rem; }
+.dev-drawer-header { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--spacing-2); min-width: 0; padding: var(--spacing-2) var(--spacing-3); padding-inline-end: max(.75rem, var(--spacing-3)); border-bottom: 1px solid var(--border-subtle); }
+.dev-drawer-header h2 { margin: 0; min-width: 0; overflow-wrap: anywhere; font-size: var(--font-size-sm); font-weight: 600; }
+.dev-drawer-content { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; scroll-padding: var(--spacing-3); padding: var(--spacing-3); padding-inline-end: max(.75rem, var(--spacing-3)); }
+.dev-drawer-content > * { min-width: 0; }
+.dev-drawer-content > .dev-panel { flex-shrink: 0; }
+.dev-drawer-content .dev-panel-header { flex-wrap: wrap; }
+.dev-drawer-content .dev-review-toolbar > :first-child { min-width: min(10rem, 100%); }
+.dev-drawer-content .dev-structured-row { flex-wrap: wrap; }
+.dev-drawer-content .dev-command-catalog, .dev-drawer-content .dev-comparison { grid-template-columns: minmax(0, 1fr); }
+.dev-tools-pane { min-height: 0; overflow: visible; padding: 0; container-type: inline-size; }
+.dev-tools-pane > .dev-review, .dev-tools-pane > .dev-review > div { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.dev-tools-pane .dev-review > div { gap: var(--spacing-2); }
+.dev-tools-pane [role=tablist] { flex-shrink: 0; flex-wrap: wrap; }
+.dev-tools-pane [role=tabpanel] { flex: 1; min-width: 0; min-height: 0; padding: var(--spacing-1); }
 @container (min-width: 601px) { .dev-tools-pane .dev-file-layout { grid-template-columns: minmax(7rem, .3fr) minmax(0, 1fr); } }
 @container (max-width: 600px) { .dev-tools-pane .dev-file-layout { grid-template-columns: minmax(0, 1fr); } }
+.dev-panel-resizer { position: absolute; z-index: 2; top: 0; right: 0; bottom: 0; width: .5rem; cursor: col-resize; touch-action: none; background: var(--surface-inset); }
+.dev-panel-resizer:hover { background: var(--accent-default); }
+.dev-panel-resizer:focus-visible, .dev-context-details summary:focus-visible { outline: 1px solid var(--border-focus); outline-offset: -1px; }
+
+.dev-workspace-main { overflow: hidden; }
+.dev-session-tabs { display: flex; flex-direction: column; flex-shrink: 0; min-width: 0; max-width: 100%; border-bottom: 1px solid var(--border-subtle); background: var(--surface-panel); }
+.dev-conversation-tablist { display: flex; min-width: 0; gap: var(--spacing-1); overflow-x: auto; overscroll-behavior-x: contain; padding: var(--spacing-1) var(--spacing-2); }
+.dev-conversation-tab { display: flex; flex-shrink: 0; align-items: center; max-width: min(26rem, 100%); border-bottom: 2px solid transparent; }
+.dev-conversation-tab[data-selected=true] { background: var(--surface-inset); border-bottom-color: var(--accent-default); }
+.dev-conversation-tab [role=tab] { flex: 1; min-width: 0; height: auto; min-height: 3rem; white-space: normal; }
+.dev-tab-name { display: grid; gap: var(--spacing-1); min-width: 0; max-width: 16rem; overflow: hidden; text-align: start; text-overflow: ellipsis; white-space: nowrap; }
+.dev-tab-name small { color: var(--text-secondary); font-size: var(--font-size-xs); font-weight: 400; }
+.dev-tab-rename { display: flex; align-items: end; gap: var(--spacing-2); flex-wrap: wrap; padding: var(--spacing-2); }
+.dev-session-project h3 { margin: var(--spacing-3) 0 var(--spacing-1); color: var(--text-secondary); font-size: var(--font-size-xs); }
+.dev-conversation-pane { flex: 1; min-width: 0; min-height: 0; border: 0; container-type: inline-size; }
+.conversation-handoff { height: 100%; min-height: 0; overflow: auto; }
+.dev-runtime-tabs { display: flex; flex-wrap: wrap; flex-shrink: 0; gap: var(--spacing-2); margin-bottom: var(--spacing-2); }
+.dev-drawer-runtime { min-width: 0; min-height: 0; container-type: inline-size; }
 .dev-runtime-configuration > summary { cursor: pointer; font-size: var(--font-size-xs); padding: var(--spacing-2); }
 .dev-runtime-configuration > summary:focus-visible { outline: 1px solid var(--border-focus); outline-offset: -1px; }
 .dev-runtime-configuration > div { padding-block: var(--spacing-2); }
-.dev-tools-pane .dev-review > div { gap: var(--spacing-2); }
-.dev-tools-pane > .dev-review, .dev-tools-pane > .dev-review > div { display: flex; flex: 1; flex-direction: column; height: 100%; min-height: 0; }
-.dev-tools-pane [role=tabpanel] { flex: 1; min-height: 0; overflow: auto; padding: var(--spacing-1); }
-.dev-tools-pane [role=tablist] { flex-wrap: wrap; flex-shrink: 0; }
-.dev-tools-pane [role=tabpanel][hidden] { display: none; }
-.dev-conversation-pane { border-inline-start: 1px solid var(--border-subtle); container-type: inline-size; }
-.dev-panel-resizer { flex-shrink: 0; background: var(--surface-inset); touch-action: none; }
-.dev-panel-resizer:hover { background: var(--accent-default); }
-.dev-panel-resizer:focus-visible, .dev-context-details summary:focus-visible { outline: 1px solid var(--border-focus); outline-offset: -1px; }
-.dev-panel-resizer-agent { cursor: col-resize; }
-.dev-panel-resizer-runtime { height: .5rem; cursor: row-resize; }
-.dev-runtime-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-2); flex-shrink: 0; border-top: 1px solid var(--border-subtle); background: var(--surface-panel); padding: var(--spacing-1) var(--spacing-2); }
-.dev-bottom-runtime { flex-shrink: 1; min-height: 5rem; max-height: 65%; min-width: 0; overflow: auto; padding: var(--spacing-2) var(--spacing-3); container-type: inline-size; }
-.dev-runtime-tabs { display: flex; flex-wrap: wrap; gap: var(--spacing-2); margin-bottom: var(--spacing-2); }
 .dev-approval-navigation { display: flex; flex-shrink: 0; flex-wrap: wrap; gap: var(--spacing-1); max-height: 5rem; overflow: auto; padding: var(--spacing-1) var(--spacing-2); border-bottom: 1px solid var(--border-subtle); }
-.dev-navigation .dev-nav-list, .dev-navigation .dev-session-list { max-height: 13rem; overflow: auto; scrollbar-gutter: stable; }
 .dev-navigation .dev-nav-item { flex-wrap: wrap; }
 .dev-navigation .dev-nav-item-label { flex-basis: 100%; }
 .dev-navigation .dev-nav-status { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .dev-nav-search { min-width: 0; }
-.dev-workspace[data-compact=true] .dev-workspace-body { grid-template-columns: minmax(0, 1fr); overflow: hidden; }
-.dev-workspace[data-compact=true] .dev-workspace-main { min-height: 0; }
-.dev-workspace[data-compact=true] .dev-navigation { position: absolute; z-index: 4; inset: 0 auto 0 0; width: min(26rem, 90%); max-height: none; border: 1px solid var(--border-control); box-shadow: var(--shadow-md); }
-.dev-workspace[data-compact=true] .dev-collaboration { grid-template-columns: minmax(0, 1fr); }
-.dev-workspace[data-compact=true] .dev-workspace-header { flex-wrap: wrap; }
-.dev-workspace[data-compact=true] .dev-workspace-context { flex: 1; flex-basis: 50%; }
-.dev-workspace[data-compact=true] .dev-conversation-pane { border: 0; }
-.dev-workspace[data-compact=true] .dev-view-switch { margin-inline-start: auto; }
-.dev-workspace[data-compact=true] .dev-bottom-runtime { max-height: 50%; }
+.dev-workspace [hidden] { display: none !important; }
+
+.dev-workspace[data-compact=true] .dev-workspace-body[data-drawer-open] { grid-template-columns: 3.5rem minmax(0, 1fr); }
+.dev-workspace[data-compact=true] .dev-navigation { position: absolute; z-index: 4; inset: 0 auto 0 3.5rem; max-width: calc(100% - 3.5rem); max-height: 100%; border-inline-end: 1px solid var(--border-control); box-shadow: var(--shadow-md); }
+.dev-workspace[data-compact=true] .dev-workspace-context { flex-basis: 50%; }
+.dev-workspace[data-compact=true] .dev-context-details > .dev-detail { position: fixed; inset: auto var(--spacing-3); width: auto; max-height: 50vh; }
+
+.dev-main-view-nav, .dev-main-tool-header { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: var(--spacing-2); padding: var(--spacing-2); border-bottom: 1px solid var(--border-subtle); }
+.dev-main-view-nav > button { min-width: 0; max-width: 100%; overflow-wrap: anywhere; white-space: normal; height: auto; min-height: 2rem; }
+.dev-main-tool-header > strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.dev-main-tool-surface { flex: 1; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--spacing-3); container-type: inline-size; }
+.dev-main-tool-surface .dev-editor { min-height: 22rem; height: 55vh; max-height: 70vh; }
+.dev-main-tool-surface .dev-diff { max-height: none; }
+.dev-workspace-preparation { flex-shrink: 0; display: flex; align-items: center; flex-wrap: wrap; gap: var(--spacing-2); padding: var(--spacing-2); }
+.dev-workspace-preparation p { margin: 0; }
+.dev-file-browser-row { display: flex; align-items: start; min-width: 0; gap: var(--spacing-1); }
+.dev-file-browser-row > button { flex: 1; min-width: 0; }
+.dev-file-reference-actions { font-size: var(--font-size-xs); }
+.dev-file-reference-actions summary { cursor: pointer; min-width: 2rem; min-height: 2rem; padding: var(--spacing-1); }
+.dev-file-reference-actions[open] { flex-basis: 100%; }
+.dev-file-reference-actions summary:focus-visible { outline: 1px solid var(--border-focus); }
+.dev-file-browser-row:has(.dev-file-reference-actions[open]) { flex-wrap: wrap; }
+@container (max-width: 600px) { .dev-main-tool-surface .dev-comparison, .dev-main-tool-surface .dev-command-catalog { grid-template-columns: minmax(0, 1fr); } }

@@ -6,10 +6,9 @@ import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
-import { invoke } from '@tauri-apps/api/core';
 import { ModalHost } from '@dgos/ui';
 import { setLocaleForTesting, t } from '../../src/i18n';
-import { TaskLaunch } from '../../src/components/development/TaskLaunch';
+import { ProjectConversation } from '../../src/pages/workbench/ProjectConversation';
 import { ProjectCapabilities } from '../../src/components/development/ProjectCapabilities';
 import { DevelopmentRuntime } from '../../src/components/development/DevelopmentRuntime';
 import { TaskReview } from '../../src/components/development/TaskReview';
@@ -19,7 +18,7 @@ import { useDevelopmentDrafts } from '../../src/stores/developmentDrafts';
 import { useDevelopmentRuntime, type DevelopmentProcess } from '../../src/stores/developmentRuntime';
 import { useDevelopmentTakeover } from '../../src/stores/developmentTakeover';
 import { useAgentRunner, type AgentSession } from '../../src/stores/agentRunnerStore';
-import type { CapabilityCatalog, CapabilityConfirmation, CapabilityRevision } from '../../src/stores/developmentCapabilities';
+import type { CapabilityConfirmation, CliProviderCatalog, CliProviderRevision } from '../../src/stores/developmentCapabilities';
 import type { WorkspaceView } from '../../src/stores/developmentDelivery';
 import '../../src/index.css';
 import '../../src/components/development/development.css';
@@ -69,8 +68,8 @@ type Scenario = typeof scenarios[number];
 class FixtureHost {
   calls: Call[] = [];
   tasks = [structuredClone(task)];
-  capability: CapabilityRevision = { revision: 4, permission_epoch: 2, configuration: { engine: 'codex', provider: { source: 'native' }, skills: [], mcp: [] }, created_at: 1 };
-  catalog: CapabilityCatalog = { providers: [], skills: [{ id: 'fixture-skill', version: '1', hash: 'skill-hash-1', name: 'Fixture skill', enabled: true }], mcp: [] };
+  capability: CliProviderRevision = { revision: 4, permission_epoch: 2, configuration: { engine: 'codex', provider: { provider_id: 'fixture-provider', model_id: 'fixture-model', provider_revision: 1 } }, created_at: 1 };
+  catalog: CliProviderCatalog = { project_id: project.id, engine: 'codex', providers: [{ id: 'fixture-provider', name: 'Fixture provider', config_revision: 1, enabled: true, availability: { available: true, reason: null }, models: [{ id: 'fixture-model', name: 'Fixture model', model_type: 'text' }] }] };
   processes: DevelopmentProcess[] = [];
   workspaces: WorkspaceView = { workspaces: [{ id: 'fixture-workspace', owner: project.owner, project_id: project.id, path: project.path, directory_identity: project.directory_identity, kind: 'original', common_dir: null, common_identity: null, created_operation: null, base_commit: null }], selected_workspace_id: 'fixture-workspace', operation: null, operations: [] };
   fingerprint = 'files-current';
@@ -89,10 +88,10 @@ class FixtureHost {
   count(command: string) { return this.calls.filter(call => call.command === command).length; }
   async dispatch(command: string, args: Record<string, unknown> = {}): Promise<unknown> {
     switch (command) {
-      case 'read_development_capabilities': return this.capability;
-      case 'read_development_capability_catalog': return this.catalog;
-      case 'save_development_capabilities': {
-        const input = args.input as { expected_revision: number; configuration: CapabilityRevision['configuration'] };
+      case 'read_development_cli_provider': return this.capability;
+      case 'read_development_cli_provider_catalog': return { ...this.catalog, engine: args.engine };
+      case 'save_development_cli_provider': {
+        const input = args.input as { expected_revision: number; configuration: CliProviderRevision['configuration'] };
         if (input.expected_revision !== this.capability.revision) throw 'capability_conflict';
         this.capability = { ...this.capability, revision: this.capability.revision + 1, configuration: input.configuration }; return this.capability;
       }
@@ -167,52 +166,56 @@ export async function runWorkflowRound3Probe() {
         if (scenario === 'capability-roundtrip') {
           function Roundtrip() {
             const [tab, setTab] = useState<'launch' | 'capabilities'>('launch'); const navigate = useNavigate();
-            return <Routes><Route path="/" element={<><nav><button type="button" data-fixture="launch" onClick={() => setTab('launch')}>Return to task draft</button><button type="button" data-fixture="capabilities" onClick={() => setTab('capabilities')}>Project capabilities</button></nav>{tab === 'launch' ? <TaskLaunch onStart={async () => { throw new Error('Roundtrip must not start a session'); }} onContinue={() => {}} onManageProjects={() => setTab('capabilities')} /> : <ProjectCapabilities projectId={project.id} />}</>} /><Route path="/skills" element={<section><h3>Fixture capability catalog management boundary</h3><p>The production Skills link arrived here. Remove the pinned skill to model management invalidation.</p><button type="button" data-fixture="remove-skill" onClick={() => { host.catalog.skills = []; }}>Remove fixture skill from catalog</button><button type="button" data-fixture="return" onClick={() => navigate('/')}>Return to project capabilities</button></section>} /></Routes>;
+            return <Routes><Route path="/" element={<><nav><button type="button" data-fixture="launch" onClick={() => setTab('launch')}>Return to conversation draft</button><button type="button" data-fixture="capabilities" onClick={() => setTab('capabilities')}>Project provider</button></nav>{tab === 'launch' ? <ProjectConversation project={project} taskId={null} onStart={async () => { throw new Error('Roundtrip must not start a session'); }} onInspect={async () => {}} setSessionDraft={() => {}} /> : <ProjectCapabilities projectId={project.id} />}</>} /><Route path="/settings/providers" element={<section><h3>Fixture provider catalog management boundary</h3><p>The production Providers link arrived here. Remove the pinned provider to model management invalidation.</p><button type="button" data-fixture="remove-provider" onClick={() => { host.catalog.providers = []; }}>Remove fixture provider from catalog</button><button type="button" data-fixture="return" onClick={() => navigate('/')}>Return to project provider</button></section>} /></Routes>;
           }
-          await render(<Roundtrip />); await until(() => host.count('read_development_capabilities') > 0, 'initial capabilities');
-          change(field('dev.goal'), 'Retained round3 goal'); await settle(); change(field('dev.requirements'), 'Retained requirements through management'); await settle();
-          required<HTMLButtonElement>('[data-fixture="capabilities"]').click(); await until(() => stage.querySelector('fieldset'), 'capability catalog');
-          const skill = required<HTMLInputElement>('fieldset input[type="checkbox"]', stage); skill.click(); await settle();
-          const skillsLink = required<HTMLAnchorElement>('a[href="/skills"]', stage); skillsLink.click(); await settle();
-          required<HTMLButtonElement>('[data-fixture="remove-skill"]').click(); required<HTMLButtonElement>('[data-fixture="return"]').click(); await until(() => stage.querySelector('fieldset'), 'return from management');
-          check('pinned capability draft survives management navigation', [...stage.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].some(item => item.checked), true);
-          check('removed capability blocks save', button('capabilities.save', stage).disabled, true);
+          await render(<Roundtrip />); await until(() => host.count('read_development_cli_provider') > 0, 'initial provider revision');
+          change(field('agent.prompt'), 'Retained round3 prompt\nRetained requirements through management'); await settle();
+          required<HTMLButtonElement>('[data-fixture="capabilities"]').click(); await until(() => stage.querySelector('fieldset'), 'provider catalog');
+          change(field('capabilities.source', stage), 'fixture-provider'); await settle();
+          const providersLink = required<HTMLAnchorElement>('a[href="/settings/providers"]', stage); providersLink.click(); await settle();
+          required<HTMLButtonElement>('[data-fixture="remove-provider"]').click(); required<HTMLButtonElement>('[data-fixture="return"]').click(); await until(() => stage.querySelector('fieldset'), 'return from management');
+          check('removed provider blocks save', button('capabilities.save', stage).disabled, true);
           check('stale catalog warning remains visible', [...stage.querySelectorAll('[role="alert"]')].some(item => item.textContent === t('capabilities.staleCatalog')), true);
           required<HTMLButtonElement>('[data-fixture="launch"]').click(); await settle();
-          check('task goal survives capability roundtrip', field('dev.goal').value, 'Retained round3 goal');
-          check('requirements survive capability roundtrip', field('dev.requirements').value, 'Retained requirements through management');
-          check('management causes no capability save', host.count('save_development_capabilities'), 0); check('management creates no task', host.count('save_development_task'), 0);
+          check('complete first prompt survives provider roundtrip', field('agent.prompt').value, 'Retained round3 prompt\nRetained requirements through management');
+          check('management causes no provider save', host.count('save_development_cli_provider'), 0); check('management creates no task', host.count('save_development_task'), 0);
+          check('management never opens a session', host.count('open_agent_session'), 0);
         } else if (scenario === 'stale-capabilities') {
-          const start = async (input: unknown) => { try { await invoke('open_agent_session', { input }); return { ok: true as const, value: null }; } catch { return { ok: false as const, code: 'unknown' }; } };
-          await render(<TaskLaunch requestedRevision={4} onStart={start} onContinue={() => {}} onManageProjects={() => {}} />);
-          await until(() => testid('task-launch-directory').textContent === project.path && !required<HTMLButtonElement>('#task-launch-trust', stage).disabled && !required<HTMLButtonElement>('#task-launch-capabilities', stage).disabled, 'resolved directory and capability readiness');
-          check('initial launch reads capability revision once', host.count('read_development_capabilities'), 1);
+          const start: React.ComponentProps<typeof ProjectConversation>['onStart'] = async (input, _projectId, _taskId, dispatch) => {
+            await useAgentRunner.getState().open(input);
+            const runner = useAgentRunner.getState();
+            if (runner.error || !runner.session) return { ok: false, code: runner.error ?? 'unknown' };
+            return dispatch(runner.session);
+          };
+          const conversation = <ProjectConversation project={project} taskId={task.id} onStart={start} onInspect={async () => {}} setSessionDraft={() => {}} />;
+          await render(conversation);
+          await until(() => !testid<HTMLInputElement>('direct-conversation-trust').disabled && testid('composer-model-picker-trigger').textContent?.includes('Fixture model'), 'resolved directory and provider readiness');
+          change(field('agent.prompt'), 'Never replay this first prompt'); await settle();
+          const initialReads = host.count('read_development_cli_provider');
           host.capability = { ...host.capability, revision: 5 };
-          required<HTMLButtonElement>('#task-launch-trust', stage).click();
-          await until(() => !testid<HTMLButtonElement>('task-launch-start').disabled, 'explicit directory trust');
-          testid<HTMLButtonElement>('task-launch-start').click();
-          await until(() => host.count('read_development_capabilities') === 2 && [...stage.querySelectorAll('[role="alert"]')].some(item => item.textContent === t('dev.error.capability_conflict')), 'stale revision rejection');
-          check('stale capability start rereads current revision', host.count('read_development_capabilities'), 2);
-          check('stale capability does not dispatch a session', host.count('open_agent_session'), 0);
-          check('selected stale revision stays visible', stage.textContent?.includes(t('capabilities.projectRevision', { revision: 4 })), true);
-          await remount(<TaskLaunch requestedRevision={5} onStart={start} onContinue={() => {}} onManageProjects={() => {}} />);
-          await until(() => testid('task-launch-directory').textContent === project.path && !required<HTMLButtonElement>('#task-launch-trust', stage).disabled && !required<HTMLButtonElement>('#task-launch-capabilities', stage).disabled, 'remounted current directory and capabilities');
-          check('remount reads current capability revision once', host.count('read_development_capabilities'), 3);
-          required<HTMLButtonElement>('#task-launch-trust', stage).click();
-          await until(() => !testid<HTMLButtonElement>('task-launch-start').disabled, 'remounted directory trust');
-          testid<HTMLButtonElement>('task-launch-start').click();
-          await until(() => host.count('open_agent_session') === 1 && testid<HTMLButtonElement>('task-launch-start').disabled, 'unknown session outcome');
+          testid<HTMLInputElement>('direct-conversation-trust').click();
+          await until(() => !testid<HTMLButtonElement>('direct-conversation-send').disabled, 'explicit directory trust');
+          testid<HTMLButtonElement>('direct-conversation-send').click();
+          await until(() => [...stage.querySelectorAll('[role="alert"]')].some(item => item.textContent === t('dev.error.capability_conflict')), 'stale revision rejection');
+          check('stale provider binding is revalidated', host.count('read_development_cli_provider') > initialReads, true);
+          check('stale provider binding does not dispatch a session', host.count('open_agent_session'), 0);
+          check('stale rejection retains complete prompt', field('agent.prompt').value, 'Never replay this first prompt');
+          await remount(conversation);
+          await until(() => !testid<HTMLInputElement>('direct-conversation-trust').disabled && testid('composer-model-picker-trigger').textContent?.includes('Fixture model'), 'remounted directory and provider');
+          testid<HTMLInputElement>('direct-conversation-trust').click();
+          await until(() => !testid<HTMLButtonElement>('direct-conversation-send').disabled, 'remounted directory trust');
+          testid<HTMLButtonElement>('direct-conversation-send').click();
+          await until(() => host.count('open_agent_session') === 1 && testid<HTMLButtonElement>('direct-conversation-send').disabled && [...stage.querySelectorAll('[role="alert"]')].some(item => item.textContent === t('directConversation.open_unknown')), 'unknown session outcome');
           const originalRequest = host.calls.find(call => call.command === 'open_agent_session');
-          testid<HTMLButtonElement>('task-launch-start').click(); await settle();
-          await remount(<TaskLaunch requestedRevision={5} onStart={start} onContinue={() => {}} onManageProjects={() => {}} />);
-          await until(() => testid('task-launch-directory').textContent === project.path && !required<HTMLButtonElement>('#task-launch-trust', stage).disabled && !required<HTMLButtonElement>('#task-launch-capabilities', stage).disabled, 'unknown launch remount readiness');
-          check('unknown remount only reads capabilities once', host.count('read_development_capabilities'), 5);
-          required<HTMLButtonElement>('#task-launch-trust', stage).click();
-          await until(() => required('#task-launch-trust', stage).getAttribute('aria-checked') === 'true', 'unknown launch explicitly retrusted');
-          check('unknown session remains blocked across remount', testid<HTMLButtonElement>('task-launch-start').disabled, true);
-          testid<HTMLButtonElement>('task-launch-start').click(); await settle();
+          testid<HTMLButtonElement>('direct-conversation-send').click(); await settle();
+          await remount(conversation);
+          await until(() => !testid<HTMLInputElement>('direct-conversation-trust').disabled, 'unknown open remount readiness');
+          testid<HTMLInputElement>('direct-conversation-trust').click(); await settle();
+          check('unknown session remains blocked across remount', testid<HTMLButtonElement>('direct-conversation-send').disabled, true);
+          testid<HTMLButtonElement>('direct-conversation-send').click(); await settle();
           check('unknown session never replays', host.count('open_agent_session'), 1);
           check('unknown session retains original request payload', host.calls.find(call => call.command === 'open_agent_session')?.args, originalRequest?.args);
+          check('unknown open retains first prompt', field('agent.prompt').value, 'Never replay this first prompt');
         } else if (scenario === 'cleanup-failure') {
           host.workspaceBusy = true; host.cleanupFails = true;
           await render(<DevelopmentRuntime projectId={project.id} taskId={task.id} />);

@@ -51,11 +51,21 @@
 .agent-dialogue-user .agent-dialogue-prose > :last-child { margin-bottom: 0; }
 .agent-dialogue-empty { margin-block: var(--spacing-5); color: var(--text-secondary); }
 .agent-dialogue-tool { margin-block: var(--spacing-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); font-size: var(--font-size-xs); }
-.agent-dialogue-tool > summary { padding: var(--spacing-2) var(--spacing-3); overflow-wrap: anywhere; }
+.agent-dialogue-tool > summary { padding: var(--spacing-2) var(--spacing-3); min-height: 2rem; overflow-wrap: anywhere; }
 .agent-dialogue-tool > summary > strong { font-weight: 500; }
 .agent-dialogue-tool > summary > span { margin-inline-start: var(--spacing-2); color: var(--text-secondary); }
 .agent-dialogue-tool > summary > code { display: block; margin-top: var(--spacing-1); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
-.agent-dialogue-tool-body { padding: var(--spacing-3); border-top: 1px solid var(--border-subtle); }
+.agent-dialogue-tool[open] > summary > code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-dialogue-tool[data-operation-state="failed"] > summary > span { color: var(--status-error-text); }
+.agent-dialogue-tool[data-operation-state="processing"] > summary > span,
+.agent-dialogue-tool[data-operation-state="waiting"] > summary > span { color: var(--status-info-text); }
+.agent-dialogue-tool-body { display: flex; flex-direction: column; gap: var(--spacing-2); padding: var(--spacing-3); border-top: 1px solid var(--border-subtle); }
+.agent-dialogue-outcome-note { margin: 0; color: var(--text-secondary); }
+.agent-dialogue-request-identity { display: grid; gap: var(--spacing-1); margin: 0; font-size: var(--font-size-xs); }
+.agent-dialogue-request-identity > div { display: flex; flex-wrap: wrap; gap: var(--spacing-2); }
+.agent-dialogue-request-identity dt { color: var(--text-secondary); }
+.agent-dialogue-request-identity dd { margin: 0; overflow-wrap: anywhere; }
+.agent-dialogue-request-scope { margin: 0; font-size: var(--font-size-xs); color: var(--text-secondary); }
 .agent-dialogue-tool-body pre, .agent-dialogue-native pre { max-height: 24rem; max-width: 100%; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-dialogue-tool-body > :first-child { margin-top: 0; }
 .agent-dialogue-native { margin-block: var(--spacing-2); font-size: var(--font-size-xs); color: var(--text-secondary); }
