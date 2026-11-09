@@ -1,0 +1,25 @@
+.dev-file-create { display: flex; flex-wrap: wrap; align-items: end; gap: var(--spacing-2); }
+.dev-file-create > :first-child { flex: 0 0 100%; min-width: 0; width: 100%; }
+.dev-file-browser .dev-file-list { max-height: min(60vh, 42rem); }
+.dev-file-browser-row { display: flex; align-items: start; min-width: 0; gap: var(--spacing-1); }
+.dev-file-browser-row > button { flex: 1; min-width: 0; }
+.dev-file-entry { justify-content: start; height: auto; min-height: 2rem; white-space: normal; text-align: start; gap: var(--spacing-1); }
+.dev-change-tree-group { border-inline-start: 1px solid var(--border-subtle); padding-inline-start: var(--spacing-2); }
+.dev-file-tree-children { padding-inline-start: 1rem; border-inline-start: 1px solid var(--border-subtle); margin-inline-start: .65rem; }
+.dev-tree-icon { flex: none; color: var(--text-secondary); width: 1rem; text-align: center; }
+.dev-git-change-tree { min-height: 0; overflow: auto; max-height: 45vh; display: grid; gap: var(--spacing-2); }
+.dev-git-change-group > summary { display: flex; align-items: center; gap: var(--spacing-2); font-size: var(--font-size-xs); font-weight: 600; cursor: pointer; padding-block: var(--spacing-2); }
+.dev-git-change-group > summary span { color: var(--text-secondary); font-weight: 400; }
+.dev-git-tree-directory { padding-inline-start: var(--spacing-2); min-width: 0; }
+.dev-git-tree-directory summary { font-size: var(--font-size-xs); padding-block: var(--spacing-1); cursor: pointer; overflow-wrap: anywhere; }
+.dev-git-tree-file { display: flex; align-items: center; gap: var(--spacing-1); min-width: 0; }
+.dev-git-tree-file > button { flex: 1; justify-content: start; min-width: 0; text-align: start; white-space: normal; overflow-wrap: anywhere; }
+.dev-git-tree-file .dev-checkbox { min-width: 0; overflow-wrap: anywhere; }
+.dev-git-status { flex: none; color: var(--text-secondary); font-size: var(--font-size-xs); }
+.dev-git-commit-area { position: sticky; bottom: 0; z-index: 1; order: 10; padding-block: var(--spacing-3); display: grid; gap: var(--spacing-2); background: var(--surface-panel); border-block-start: 1px solid var(--border-subtle); }
+.dev-file-list [role=treeitem] > .dev-file-browser-row > button { width: 100%; }
+.dev-file-list [role=treeitem][aria-selected=true] > .dev-file-browser-row { background: var(--surface-selected); }
+.dev-tree-file-icon { flex: none; width: 1rem; height: 1rem; color: var(--text-secondary); }
+.dev-git-history-list { list-style: none; margin: var(--spacing-2) 0; padding: 0; display: grid; gap: var(--spacing-3); }
+.dev-git-history-list > li { border-inline-start: 1px solid var(--border-subtle); padding-inline-start: var(--spacing-2); }
+@media (max-width: 520px) { .dev-file-create > button { flex: 1; } }

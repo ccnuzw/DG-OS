@@ -33,6 +33,18 @@ pub struct SaveFileInput {
     pub expected_hash: String,
     pub text: String,
 }
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryKind { File, Directory }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateEntryInput {
+    pub project_id: String, #[serde(default)] pub task_id: Option<String>,
+    pub path: String, pub kind: EntryKind, pub trust_directory: bool,
+}
+#[derive(Debug, Serialize)]
+pub struct CreatedEntry { pub path: String, pub kind: EntryKind }
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FileEntry { pub path: String, pub name: String, pub kind: String, pub size: u64, pub ignored: bool }
 #[derive(Serialize)]
@@ -232,6 +244,71 @@ pub(crate) fn save_at(project: &Project, input: SaveFileInput, lease: &tokio_uti
     if result.is_err() { let _ = parent.remove_file(&temp); }
     result
 }
+fn creation_error(error: std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::AlreadyExists { "file_exists".into() } else { io_error(error) }
+}
+/// Pin each existing ancestor without following symlinks. Creation is exactly one
+/// exclusive directory entry, never a recursive mkdir or truncating file open.
+fn creation_parent(root: &Dir, path: &Path) -> Result<Dir, String> {
+    let mut parent = root.try_clone().map_err(io_error)?;
+    for part in path.parent().into_iter().flat_map(Path::components) {
+        #[cfg(unix)] {
+            use cap_std::fs::OpenOptionsExt;
+            let mut options = cap_std::fs::OpenOptions::new();
+            options.read(true).custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
+            parent = Dir::from_std_file(parent.open_with(part.as_os_str(), &options).map_err(io_error)?.into_std());
+        }
+        #[cfg(not(unix))] {
+            if parent.symlink_metadata(part.as_os_str()).map_err(io_error)?.file_type().is_symlink() { return Err("file_access_denied".into()); }
+            parent = parent.open_dir(part.as_os_str()).map_err(io_error)?;
+        }
+    }
+    Ok(parent)
+}
+fn create_at(project: &Project, input: CreateEntryInput, lease: &tokio_util::sync::CancellationToken) -> Result<CreatedEntry, String> {
+    relative(&input.path, false)?;
+    if sensitive(&input.path) { return Err("file_sensitive".into()); }
+    let path = Path::new(&input.path);
+    let root = open_root(project)?;
+    let parent = creation_parent(&root, path)?;
+    let name = path.file_name().ok_or("file_access_denied")?;
+    let live = creation_parent(&open_root(project)?, path)?;
+    #[cfg(unix)] {
+        use cap_std::fs::MetadataExt;
+        let held = parent.dir_metadata().map_err(io_error)?;
+        let current = live.dir_metadata().map_err(io_error)?;
+        if held.dev() != current.dev() || held.ino() != current.ino() { return Err("workspace_changed".into()); }
+    }
+    if lease.is_cancelled() { return Err("session_invalid".into()); }
+    let created = match input.kind {
+        EntryKind::File => {
+            let mut options = cap_std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)] { use cap_std::fs::OpenOptionsExt; options.mode(0o600).custom_flags(libc::O_NOFOLLOW); }
+            let file = parent.open_with(name, &options).map_err(creation_error)?;
+            file.sync_all().map_err(|_| "file_create_unknown")?;
+            file.metadata().map_err(|_| "file_create_unknown")?
+        },
+        EntryKind::Directory => {
+            parent.create_dir(name).map_err(creation_error)?;
+            let metadata = parent.symlink_metadata(name).map_err(|_| "file_create_unknown")?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() { return Err("file_create_unknown".into()); }
+            metadata
+        },
+    };
+    // Once the exclusive operation has happened, any lost observation is unknown.
+    // Do not remove or recreate an entry that an external editor may already use.
+    let current = creation_parent(&open_root(project).map_err(|_| "file_create_unknown")?, path).map_err(|_| "file_create_unknown")?;
+    let observed = current.symlink_metadata(name).map_err(|_| "file_create_unknown")?;
+    if created.is_file() != observed.is_file() || created.is_dir() != observed.is_dir() || observed.file_type().is_symlink() { return Err("file_create_unknown".into()); }
+    #[cfg(unix)] {
+        use cap_std::fs::MetadataExt;
+        if created.dev() != observed.dev() || created.ino() != observed.ino() { return Err("file_create_unknown".into()); }
+    }
+    if lease.is_cancelled() { return Err("file_create_unknown".into()); }
+    Ok(CreatedEntry { path: input.path, kind: input.kind })
+}
+
 impl AgentManager {
     pub(crate) async fn file_project(&self, owner: &str, id: &str) -> Result<Project, String> {
         self.ready().await?;
@@ -290,6 +367,23 @@ impl AgentManager {
         if input.line.is_some_and(|line| line == 0 || line as usize > source.lines().count().max(1)) { return Err("file_access_denied".into()); }
         Ok(FileReference { path, line: input.line })
     }
+    pub async fn create_development_entry(&self, owner: &str, input: CreateEntryInput, lease: tokio_util::sync::CancellationToken) -> Result<CreatedEntry, String> {
+        let _admission = self.inner.admission.lock().await;
+        self.ready().await?;
+        if lease.is_cancelled() { return Err("session_invalid".into()); }
+        if !input.trust_directory { return Err("workspace_untrusted".into()); }
+        relative(&input.path, false)?;
+        if sensitive(&input.path) { return Err("file_sensitive".into()); }
+        let project = self.file_context(owner, &input.project_id, input.task_id.as_deref()).await?;
+        if project.archived { return Err("project_archived".into()); }
+        self.workspace_available(&project.path, None).await?;
+        if let Some(task_id) = input.task_id.as_deref() { self.capture_task_baseline(owner, task_id).await?; }
+        let workspace = project.path.clone();
+        let result = tokio::task::spawn_blocking(move || create_at(&project, input, &lease)).await.map_err(|_| "file_create_unknown".to_owned());
+        self.mark_development_mutation(&workspace).await;
+        result?
+    }
+
     pub async fn save_development_file(&self, owner: &str, input: SaveFileInput, lease: tokio_util::sync::CancellationToken) -> Result<FileView, String> {
         let _admission = self.inner.admission.lock().await;
         self.ready().await?;

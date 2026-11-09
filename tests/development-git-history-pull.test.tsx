@@ -21,6 +21,7 @@ it('reads fixed-anchor history in StrictMode and renders untrusted subject as te
 it('discards a slow preview when the remote selection changes', async () => {
   const deferred = Promise.withResolvers<unknown>(); invoke.mockReturnValue(deferred.promise);
   render(<GitHistoryPull review={review} busy={false} blocked={false} act={vi.fn()} />);
+  fireEvent.click(screen.getByText('delivery.previewPull', { selector: 'summary' }));
   fireEvent.change(screen.getByLabelText('delivery.pullRemote'), { target: { value: 'origin' } });
   fireEvent.change(screen.getByLabelText('delivery.pullBranch'), { target: { value: 'main' } });
   fireEvent.click(screen.getByRole('button', { name: 'delivery.previewPull' }));
@@ -33,6 +34,7 @@ it('invalidates a reviewed pull on native completion without fetching or pulling
  const preview = { review_token: review.review_token, remote: 'origin', branch: 'main', remote_ref: 'refs/heads/main', remote_display: '/local/fixture.git', preview_token: 'preview' };
  invoke.mockResolvedValue(preview); const actGit = vi.fn();
  const view = render(<GitHistoryPull review={review} busy={false} blocked={false} act={actGit} refreshKey={0} />);
+ fireEvent.click(screen.getByText('delivery.previewPull', { selector: 'summary' }));
  fireEvent.change(screen.getByLabelText('delivery.pullRemote'), { target: { value: 'origin' } });
  fireEvent.change(screen.getByLabelText('delivery.pullBranch'), { target: { value: 'main' } });
  fireEvent.click(screen.getByRole('button', { name: 'delivery.previewPull' })); await act(async () => {});
@@ -50,6 +52,7 @@ it('requires explicit pull confirmation and forwards the exact preview token and
  const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(options => { options.onCancel?.(); return { id: 'confirm', close: () => {} }; });
  try {
   render(<GitHistoryPull review={review} busy={false} blocked={false} act={actGit} />);
+  fireEvent.click(screen.getByText('delivery.previewPull', { selector: 'summary' }));
   fireEvent.change(screen.getByLabelText('delivery.pullRemote'), { target: { value: 'origin' } });
   fireEvent.change(screen.getByLabelText('delivery.pullBranch'), { target: { value: 'main' } });
   fireEvent.click(screen.getByRole('button', { name: 'delivery.previewPull' })); await act(async () => {});

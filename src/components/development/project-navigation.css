@@ -1,0 +1,41 @@
+.dev-project-session-tree { display: flex; flex-direction: column; min-width: 0; gap: var(--spacing-2); color: var(--text-primary); }
+.dev-tree-header { display: flex; align-items: center; justify-content: space-between; min-height: 2rem; gap: var(--spacing-2); }
+.dev-tree-header h2 { margin: 0; font-size: var(--font-size-sm); font-weight: 600; }
+.dev-project-add { min-width: 0; }
+.dev-project-add > .dev-feedback { margin-block: var(--spacing-2); }
+.dev-tree-search { min-width: 0; padding-block-end: var(--spacing-1); }
+.dev-tree-search input { width: 100%; font-size: var(--font-size-xs); }
+.dev-tree-list { display: flex; flex-direction: column; gap: var(--spacing-2); min-width: 0; }
+.dev-tree-project { min-width: 0; }
+.dev-tree-project-row { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr) 1.75rem 1.75rem; align-items: center; min-height: 2rem; gap: 0; }
+.dev-tree-project-row.is-current .dev-tree-project-name { color: var(--text-primary); font-weight: 600; }
+.dev-tree-project-row button { min-width: 0; }
+.dev-tree-toggle, .dev-tree-icon-action { width: 100%; padding: 0; color: var(--text-secondary); }
+.dev-tree-project-name { justify-content: start; gap: var(--spacing-2); height: auto; min-height: 2rem; padding-inline: var(--spacing-1); text-align: start; color: var(--text-secondary); }
+.dev-tree-project-name > svg { flex-shrink: 0; }
+.dev-tree-project-name > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-tree-session-list { display: flex; flex-direction: column; min-width: 0; gap: 2px; padding-block: var(--spacing-1); padding-inline-start: 1.5rem; }
+.dev-tree-session { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; align-items: start; justify-content: stretch; width: 100%; height: auto; min-height: 2.875rem; padding: var(--spacing-2); gap: var(--spacing-2); border-radius: var(--radius-md); text-align: start; white-space: normal; font-weight: 400; }
+.dev-tree-session > svg { margin-block-start: 2px; color: var(--text-secondary); }
+.dev-tree-session.is-current { background: var(--surface-selected); color: var(--text-primary); }
+.dev-tree-session.is-current > svg { color: var(--text-primary); }
+.dev-tree-session-main { display: flex; flex-direction: column; align-items: start; min-width: 0; gap: 3px; }
+.dev-tree-session-main > strong, .dev-tree-session-main > small { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-tree-session-main > strong { font-size: var(--font-size-xs); line-height: 1.4; font-weight: 500; }
+.dev-tree-session-main > small { color: var(--text-secondary); font-size: var(--font-size-xs); line-height: 1.4; }
+.dev-tree-session > time { padding-block-start: 1px; font-size: var(--font-size-xs); line-height: 1.4; font-weight: 400; white-space: nowrap; color: var(--text-secondary); }
+.dev-tree-session-status { color: var(--status-info-text); font-size: var(--font-size-xs); line-height: 1.4; }
+.dev-tree-more { justify-content: start; align-self: start; height: auto; min-height: 1.75rem; padding-inline: var(--spacing-2); color: var(--text-secondary); font-size: var(--font-size-xs); }
+.dev-tree-empty { margin: 0; padding: var(--spacing-2); color: var(--text-secondary); font-size: var(--font-size-xs); line-height: 1.5; }
+.dev-tree-history { min-width: 0; margin-block-start: var(--spacing-1); }
+.dev-tree-disclosure { justify-content: start; width: 100%; gap: var(--spacing-2); color: var(--text-secondary); font-size: var(--font-size-xs); }
+.dev-tree-disclosure > span { margin-inline-start: auto; }
+.dev-tree-disclosure[aria-expanded='true'] > svg { transform: rotate(90deg); }
+.dev-project-session-tree [hidden] { display: none !important; }
+.dev-project-session-tree button:focus-visible, .dev-project-session-tree input:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.dev-project-manager { min-width: 0; }
+@media (pointer: coarse) {
+  .dev-tree-project-row { grid-template-columns: 2.75rem minmax(0, 1fr) 2.75rem 2.75rem; }
+  .dev-tree-project-row button, .dev-tree-more, .dev-tree-disclosure { min-height: 2.75rem; }
+  .dev-tree-session-list { padding-inline-start: var(--spacing-2); }
+}

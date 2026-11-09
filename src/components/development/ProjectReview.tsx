@@ -1,7 +1,12 @@
+import { createDevelopmentEntry } from '../../stores/developmentExplorer';
+import { confirmAction } from './shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Input, Tabs } from '@dgos/ui';
+import './workbench-tree.css';
 import { formatDateTime, useLocale } from '../../i18n';
 import { useDevelopment } from '../../stores/developmentStore';
+import { readDevelopmentProjectGit, readDevelopmentProjectDiff } from '../../stores/developmentExplorer';
+import { FileTree } from './FileTree';
 import { contextGeneration } from '../../stores/developmentSelection';
 import { listDevelopmentFiles, readDevelopmentReview, readDevelopmentDiff, listDevelopmentRuns, type DevDiff, type DevRun } from '../../stores/developmentReview';
 import type { Outcome } from '../../stores/developmentStore';
@@ -17,6 +22,7 @@ import { TaskReview } from './TaskReview';
 import type { CliProviderRevision, CliProviderSnapshot } from '../../stores/developmentCapabilities';
 import type { ConversationReference } from '../../stores/developmentReferences';
 import { readDevelopmentFile } from '../../stores/developmentReview';
+import { developmentDraftKey, useDevelopmentDrafts, useScopedDevelopmentDraft } from '../../stores/developmentDrafts';
 
 export interface FileTarget { path: string; line?: number; mode: 'file' | 'diff'; nonce: number }
 
@@ -72,27 +78,82 @@ export function ProjectReview({ projectId, taskId, sessions = [], live = {}, cap
       <Tabs.List aria-label={t('review.title')}>
         {views.map(item => <Tabs.Trigger key={item} value={item} data-testid={`dev-review-tab-${item}`}>{t(item === 'review' ? 'workflow.review' : item === 'capabilities' ? 'capabilities.title' : item === 'delivery' ? 'delivery.title' : `review.${item}`)}</Tabs.Trigger>)}
       </Tabs.List>
-      <Tabs.Content forceMount hidden={tab !== 'files'} value="files">{visited.has('files') ? <Files projectId={projectId} taskId={taskId} target={target?.mode === 'file' ? target : null} /> : null}</Tabs.Content>
-      <Tabs.Content forceMount hidden={tab !== 'changes'} value="changes">{visited.has('changes') ? taskId ? <Changes taskId={taskId} target={target?.mode === 'diff' ? target : null} /> : <p className="text-xs text-ink-secondary">{t('dev.noTaskSelected')}</p> : null}</Tabs.Content>
+      <Tabs.Content forceMount hidden={tab !== 'files'} value="files">{visited.has('files') ? <Files projectId={projectId} taskId={taskId} workspacePath={workspacePath} target={target?.mode === 'file' ? target : null} /> : null}</Tabs.Content>
+      <Tabs.Content forceMount hidden={tab !== 'changes'} value="changes">{visited.has('changes') ? taskId ? <Changes projectId={projectId} taskId={taskId} target={target?.mode === 'diff' ? target : null} /> : <ProjectChanges projectId={projectId} target={target?.mode === 'diff' ? target : null} /> : null}</Tabs.Content>
       <Tabs.Content forceMount hidden={tab !== 'review'} value="review">{visited.has('review') && taskId ? <TaskReview projectId={projectId} taskId={taskId} onOpenDiff={async path => { const target: FileTarget = { path, mode: 'diff', nonce: Date.now() }; if (onOpenFile) { onOpenFile(target); return; } if (await discardDevelopmentDraft()) { setReviewTarget(target); changeTab('changes'); } }} onOpenRuntime={() => onOpenRuntime?.()} onOpenDelivery={() => changeTab('delivery')} /> : null}</Tabs.Content>
       <Tabs.Content forceMount hidden={tab !== 'capabilities'} value="capabilities">{visited.has('capabilities') ? <ProjectCapabilities projectId={projectId} snapshot={snapshot} onUseConfiguration={onUseConfiguration} /> : null}</Tabs.Content>
-      <Tabs.Content forceMount hidden={tab !== 'delivery'} value="delivery">{visited.has('delivery') ? taskId ? <DeliveryPanel projectId={projectId} taskId={taskId} sessions={sessions} live={live} capabilityRevision={capabilityRevision} workspacePath={workspacePath} onHandoff={onHandoff} onWorkspaceChange={onWorkspaceChange} /> : <p className="text-xs text-ink-secondary">{t('dev.noTaskSelected')}</p> : null}</Tabs.Content>
+      <Tabs.Content forceMount hidden={tab !== 'delivery'} value="delivery">{visited.has('delivery') ? <DeliveryPanel projectId={projectId} taskId={taskId} sessions={sessions} live={live} capabilityRevision={capabilityRevision} workspacePath={workspacePath} onHandoff={onHandoff} onWorkspaceChange={onWorkspaceChange} /> : null}</Tabs.Content>
     </Tabs>
   </section>;
 }
+interface FileCreateDraft {
+  name: string;
+  operation: { path: string; kind: 'file' | 'directory'; name: string; status: 'pending' | 'unknown' } | null;
+}
+const emptyFileCreateDraft: FileCreateDraft = { name: '', operation: null };
 
-export function Files({ projectId, taskId, target, onOpenFile, onReference }: { projectId: string; taskId: string | null; target?: FileTarget | null; onOpenFile?: (target: FileTarget) => void; onReference?: (reference: ConversationReference) => void }) {
+
+export function Files({ projectId, taskId, workspacePath = '', target, onOpenFile, onReference }: { projectId: string; taskId: string | null; workspacePath?: string; target?: FileTarget | null; onOpenFile?: (target: FileTarget) => void; onReference?: (reference: ConversationReference) => void }) {
   const { t } = useLocale();
-  const scope = JSON.stringify([projectId, taskId, 'files']);
+  const scope = JSON.stringify([projectId, taskId, workspacePath, 'files']);
   const [path, setPath] = useWorkbenchLocation(`${scope}:path`, '');
   const [query, setQuery] = useWorkbenchLocation(`${scope}:query`, '');
   const [ignored, setIgnored] = useWorkbenchLocation(`${scope}:ignored`, false);
   const [selected, setSelected] = useWorkbenchLocation<string | null>(`${scope}:selected`, null);
   useEffect(() => { if (target) { setSelected(target.path); setPath(''); setQuery(''); } }, [target?.nonce]);
-  const listing = useRead(useCallback(() => listDevelopmentFiles({ project_id: projectId, task_id: taskId, path, query, include_ignored: ignored }), [projectId, taskId, path, query, ignored]));
+  const listing = useRead(useCallback(() => listDevelopmentFiles({ project_id: projectId, task_id: taskId, path: '', query, include_ignored: ignored }), [projectId, taskId, workspacePath, query, ignored]));
+  const [treeRefresh, setTreeRefresh] = useState(0);
+  const [collapseKey, setCollapseKey] = useWorkbenchLocation(`${scope}:collapse`, 0);
+  const epoch = useDevelopment(state => state.epoch);
+  const createDraft = useScopedDevelopmentDraft<FileCreateDraft>('delivery', [projectId, taskId, workspacePath, 'file-create'], emptyFileCreateDraft);
+  const createKey = developmentDraftKey('delivery', projectId, taskId, workspacePath, 'file-create');
+  const { name: newEntry, operation } = createDraft.value;
+  const creating = operation?.status === 'pending';
+  const unknownEntry = operation?.status === 'unknown' ? operation.path : null;
+  const view = useRef({ scope });
+  if (view.current.scope !== scope) view.current = { scope };
+  function latestCreateDraft() { return (useDevelopmentDrafts.getState().entries[createKey]?.value as FileCreateDraft | undefined) ?? emptyFileCreateDraft; }
+  function currentView(identity: typeof view.current, generation: number) {
+    return mounted.current && view.current === identity && epoch === useDevelopment.getState().epoch && generation === contextGeneration();
+  }
+  async function createEntry(kind: 'file' | 'directory') {
+    const entryPath = [path, newEntry.trim()].filter(Boolean).join('/');
+    if (!entryPath || latestCreateDraft().operation) return;
+    const generation = contextGeneration(), identity = view.current;
+    if (!await confirmAction(t('workbenchFiles.createTrust'), t('workbenchFiles.createTrustDetail', { path: entryPath }), t(kind === 'file' ? 'workbenchFiles.newFile' : 'workbenchFiles.newFolder'))) return;
+    if (!currentView(identity, generation) || latestCreateDraft().operation) return;
+    const pending: NonNullable<FileCreateDraft['operation']> = { path: entryPath, kind, name: newEntry, status: 'pending' };
+    createDraft.setValue({ ...latestCreateDraft(), operation: pending });
+    const result = await createDevelopmentEntry({ project_id: projectId, task_id: taskId, path: entryPath, kind, trust_directory: true });
+    if (epoch !== useDevelopment.getState().epoch || latestCreateDraft().operation !== pending) return;
+    const latest = latestCreateDraft();
+    // Settle the original account-scoped record even after its view has gone away.
+    createDraft.setValue({ ...latest, name: result.ok && latest.name === pending.name ? '' : latest.name, operation: !result.ok && (result.code === 'file_create_unknown' || result.code === 'unknown') ? { ...pending, status: 'unknown' } : null });
+    if (!currentView(identity, generation)) return;
+    if (!result.ok) { setReferenceError(result.code); return; }
+    setReferenceError(null); setTreeRefresh(value => value + 1); await listing.refresh();
+    if (kind !== 'file' || !currentView(identity, generation)) return;
+    if (onOpenFile) onOpenFile({ path: result.value.path, mode: 'file', nonce: Date.now() });
+    else if (await discardDevelopmentDraft() && currentView(identity, generation)) setSelected(result.value.path);
+  }
   const [referenceError, setReferenceError] = useState<string | null>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  async function refreshFiles() {
+    const generation = contextGeneration(), identity = view.current;
+    const inspected = latestCreateDraft().operation;
+    if (inspected?.status === 'pending') return;
+    if (inspected?.status === 'unknown') {
+      const parent = inspected.path.split('/').slice(0, -1).join('/');
+      const result = await listDevelopmentFiles({ project_id: projectId, task_id: taskId, path: parent, query: '', include_ignored: true });
+      if (epoch !== useDevelopment.getState().epoch || latestCreateDraft().operation !== inspected) return;
+      if (!result.ok || result.value.truncated) { if (currentView(identity, generation)) setReferenceError(result.ok ? 'scan_limit' : result.code); return; }
+      const latest = latestCreateDraft();
+      createDraft.setValue({ ...latest, name: latest.name === inspected.name && result.value.entries.some(entry => entry.path === inspected.path) ? '' : latest.name, operation: null });
+    }
+    if (!currentView(identity, generation)) return;
+    setReferenceError(null); setTreeRefresh(value => value + 1); await listing.refresh();
+  }
   async function attach(path: string, contents: boolean) {
     const epoch = useDevelopment.getState().epoch, generation = contextGeneration();
     setReferenceError(null);
@@ -111,18 +172,19 @@ export function Files({ projectId, taskId, target, onOpenFile, onReference }: { 
   const segments = path.split('/').filter(Boolean);
   return <div className="dev-review-stack">
     <div className="dev-review-toolbar"><Input type="search" data-testid="dev-file-search" label={t('review.search')} value={query} onChange={event => { const value = event.target.value; void change(() => { setQuery(value); setSelected(null); }); }} />
-      <Button size="xs" variant="secondary" data-testid="dev-review-refresh" disabled={listing.busy} onClick={() => void change(() => { setSelected(null); void listing.refresh(); })}>{t('review.refresh')}</Button></div>
+      <Button size="xs" variant="secondary" data-testid="dev-review-refresh" disabled={listing.busy || creating} onClick={() => void refreshFiles()}>{t('review.refresh')}</Button><Button size="xs" variant="ghost" onClick={() => setCollapseKey(value => value + 1)}>{t('workbenchFiles.collapseAll')}</Button></div>
+    <div className="dev-file-create"><Input label={t('workbenchFiles.newPath')} value={newEntry} onChange={event => createDraft.setValue({ ...latestCreateDraft(), name: event.target.value })} /><Button size="xs" variant="secondary" disabled={creating || Boolean(unknownEntry) || !newEntry.trim()} onClick={() => void createEntry('file')}>{t('workbenchFiles.newFile')}</Button><Button size="xs" variant="secondary" disabled={creating || Boolean(unknownEntry) || !newEntry.trim()} onClick={() => void createEntry('directory')}>{t('workbenchFiles.newFolder')}</Button></div>
     <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={ignored} onChange={event => { const checked = event.target.checked; void change(() => { setIgnored(checked); setSelected(null); }); }} />{t('review.includeIgnored')}</label>
     <nav className="dev-review-breadcrumb" aria-label={t('review.directory')}><Button size="xs" variant="ghost" onClick={() => navigate('')}>{t('review.root')}</Button>{segments.map((segment, index) => <Button key={index} size="xs" variant="ghost" onClick={() => navigate(segments.slice(0, index + 1).join('/'))}>{segment}</Button>)}</nav>
     <Feedback busy={listing.busy} error={listing.error} />
     {referenceError ? <p role="alert">{errorText(referenceError)}</p> : null}
-    {listing.value ? <><p className="m-0 text-xs text-ink-secondary">{query ? t('review.searchHint') : t('direct.editHint')}</p>
+    {operation?.status === 'pending' ? <p role="status">{t('review.loading')} <code>{operation.path}</code></p> : null}
+    {unknownEntry ? <p role="status">{errorText('file_create_unknown')} <code>{unknownEntry}</code></p> : null}
+    {listing.value ? <><p className="m-0 text-xs text-ink-secondary">{query ? t('review.searchHint') : t('workbenchFiles.browseHint')}</p>
       {listing.value.truncated ? <p role="status" className="dev-evidence-warning">{t('review.filesTruncated')}</p> : null}
       <div className={onOpenFile ? 'dev-file-browser' : 'dev-file-layout'}><nav aria-label={t('review.files')} className="dev-file-list">
         {!listing.value.entries.length ? <p className="text-xs text-ink-secondary">{t('review.noFiles')}</p> : null}
-        {listing.value.entries.map(entry => <div key={entry.path} className="dev-file-browser-row"><Button size="xs" variant={selected === entry.path ? 'secondary' : 'ghost'} className="dev-file-entry" data-testid={`dev-file-item-${entry.path}`} aria-pressed={selected === entry.path} disabled={entry.kind === 'symlink' || entry.kind === 'blocked'} onClick={() => entry.kind === 'directory' ? navigate(entry.path) : open(entry.path)}>
-          <span aria-hidden="true">{entry.kind === 'directory' ? '▸' : '·'}</span><span className="break-all">{query ? entry.path : entry.name}</span><span className="text-ink-secondary">{entry.ignored ? t('review.ignored') : ''}{entry.kind === 'symlink' || entry.kind === 'blocked' ? t(`review.kind.${entry.kind}`) : ''}</span>
-        </Button>{onReference && entry.kind === 'file' ? <details className="dev-file-reference-actions"><summary aria-label={t('workbenchFiles.referenceActions', { path: entry.path })}>@</summary><Button size="xs" variant="ghost" onClick={() => void attach(entry.path, true)}>{t('workbenchFiles.referenceFile')}</Button><Button size="xs" variant="ghost" onClick={() => void attach(entry.path, false)}>{t('workbenchFiles.referencePath')}</Button></details> : null}</div>)}
+        <FileTree projectId={projectId} taskId={taskId} scope={scope} entries={listing.value.entries} query={query} ignored={ignored} selected={selected} refreshKey={treeRefresh} collapseKey={collapseKey} onOpen={open} onDirectory={setPath} referenceActions={onReference ? entry => entry.kind === 'file' ? <details className="dev-file-reference-actions"><summary aria-label={t('workbenchFiles.referenceActions', { path: entry.path })}>@</summary><Button size="xs" variant="ghost" onClick={() => void attach(entry.path, true)}>{t('workbenchFiles.referenceFile')}</Button><Button size="xs" variant="ghost" onClick={() => void attach(entry.path, false)}>{t('workbenchFiles.referencePath')}</Button></details> : null : undefined} />
       </nav>{!onOpenFile ? <div className="min-w-0">{selected ? <FileEditor key={selected} projectId={projectId} taskId={taskId} path={selected} line={target?.path === selected ? target.line : undefined} /> : <p className="text-xs text-ink-secondary">{t('review.selectFile')}</p>}</div> : null}</div></> : null}
   </div>;
 }
@@ -133,7 +195,19 @@ function Evidence({ capturedAt, late, truncated, stale }: { capturedAt: number |
   return <div className="dev-review-stack" role="status"><p className="m-0 text-xs text-ink-secondary">{capturedAt === null ? t('review.noBaseline') : t('review.baselineAt', { time: formatDateTime(capturedAt * 1000) })}</p>{late ? <p className="dev-evidence-warning">{t('review.baselineLate')}</p> : null}{truncated ? <p className="dev-evidence-warning">{t('review.reviewTruncated')}</p> : null}{stale ? <p className="dev-evidence-warning">{t('review.stale')}</p> : null}</div>;
 }
 
-function Changes({ taskId, target }: { taskId: string; target?: FileTarget | null }) {
+function ProjectChanges({ projectId, target }: { projectId: string; target?: FileTarget | null }) {
+  const { t } = useLocale();
+  const git = useRead(useCallback(() => readDevelopmentProjectGit(projectId), [projectId]));
+  const [selected, setSelected] = useWorkbenchLocation<string | null>(`${projectId}:project-change`, null);
+  useEffect(() => { if (target) setSelected(target.path); }, [target?.nonce]);
+  return <div className="dev-review-stack"><div className="dev-review-toolbar"><p className="m-0 text-xs text-ink-secondary">{t('workbenchGit.projectScope')}</p><Button size="xs" variant="secondary" disabled={git.busy} onClick={() => { setSelected(null); void git.refresh(); }}>{t('review.refresh')}</Button></div><Feedback busy={git.busy} error={git.error} />
+    {git.value ? <><p className="m-0 break-all text-xs">{git.value.branch ?? t('delivery.detached')} · {git.value.head ?? t('delivery.unknown')}</p>
+      {!git.value.files.length ? <p className="text-xs text-ink-secondary">{t('workbenchGit.noChanges')}</p> : <nav className="dev-change-list" aria-label={t('review.changes')}>{git.value.files.map(file => <div key={file.path} className="dev-change-tree-group"><Button size="xs" variant={selected === file.path ? 'secondary' : 'ghost'} className="dev-change-entry" onClick={() => setSelected(file.path)}><span className="break-all">{file.path}</span><span className="dev-evidence-tags">{file.index !== ' ' ? t('delivery.stagedDiff') : null}{file.worktree !== ' ' ? t('delivery.worktreeDiff') : null}</span></Button></div>)}</nav>}
+      {selected ? <ChangeDiff taskId={null} projectId={projectId} path={selected} source="worktree" /> : null}</> : null}
+  </div>;
+}
+
+function Changes({ projectId, taskId, target }: { projectId: string; taskId: string; target?: FileTarget | null }) {
   const { t } = useLocale();
   const review = useRead(useCallback(() => readDevelopmentReview(taskId), [taskId]));
   const [selected, setSelected] = useWorkbenchLocation<string | null>(`${taskId}:change`, null);
@@ -144,19 +218,20 @@ function Changes({ taskId, target }: { taskId: string; target?: FileTarget | nul
       {!review.value.changes.length ? <p className="text-xs text-ink-secondary">{t('review.noChanges')}</p> : null}
       <nav className="dev-change-list" aria-label={t('review.changes')}>{review.value.changes.map(change => <Button key={`${change.kind}:${change.path}`} size="xs" variant={selected === change.path ? 'secondary' : 'ghost'} className="dev-change-entry" data-testid={`dev-change-item-${change.path}`} aria-pressed={selected === change.path} onClick={() => setSelected(change.path)}>
         <span className="break-all">{change.path}</span><span className="dev-evidence-tags"><span>{t(`review.change.${change.kind}`)}</span>{change.pre_existing && change.kind !== 'pre_existing' ? <span>{t('review.change.pre_existing')}</span> : null}<span>{t(change.origin === 'external' ? 'review.external' : 'review.uncertain')}</span>{!change.previewable ? <span>{t('review.noPreview')}</span> : null}</span>
-      </Button>)}</nav>{selected ? <ChangeDiff key={selected} taskId={taskId} path={selected} /> : null}</> : null}
+      </Button>)}</nav>{selected ? <ChangeDiff key={selected} taskId={taskId} projectId={projectId} path={selected} /> : null}</> : null}
   </div>;
 }
 
-export function ChangeDiff({ taskId, path, projectId, source = 'task', onReference }: { taskId: string; path: string; projectId?: string; source?: 'task' | 'index' | 'worktree'; onReference?: (reference: ConversationReference) => void }) {
+export function ChangeDiff({ taskId, path, projectId, source: requestedSource, onReference }: { taskId: string | null; path: string; projectId: string; source?: 'task' | 'index' | 'worktree'; onReference?: (reference: ConversationReference) => void }) {
+  const source = taskId ? requestedSource ?? 'task' : requestedSource === 'index' ? 'index' : 'worktree';
   const { t } = useLocale();
-  const diff = useRead<DevDiff>(useCallback(() => readDevelopmentDiff({ task_id: taskId, path, source }), [taskId, path, source]));
-  const [mode, setMode] = useWorkbenchLocation(`${taskId}:${path}:${source}:diff`, 'unified');
+  const diff = useRead<DevDiff>(useCallback(() => taskId ? readDevelopmentDiff({ task_id: taskId, path, source }) : readDevelopmentProjectDiff({ project_id: projectId, path, source: source === 'index' ? 'index' : 'worktree' }), [taskId, projectId, path, source]));
+  const [mode, setMode] = useWorkbenchLocation(`${taskId ?? projectId}:${path}:${source}:diff`, 'unified');
   const [referenceBusy, setReferenceBusy] = useState(false);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   async function attach() {
-    if (!projectId || !diff.value || diff.value.reason || !diff.value.diff || referenceBusy) return;
+    if (!diff.value || diff.value.reason || !diff.value.diff || referenceBusy) return;
     const epoch = useDevelopment.getState().epoch, generation = contextGeneration();
     setReferenceBusy(true);
     try {
@@ -171,7 +246,7 @@ export function ChangeDiff({ taskId, path, projectId, source = 'task', onReferen
     <div className="dev-review-toolbar"><strong className="break-all text-xs">{path}</strong><Button size="xs" variant="secondary" disabled={diff.busy} onClick={() => void diff.refresh()}>{t('review.refresh')}</Button>{onReference ? <Button size="xs" variant="secondary" disabled={!diff.value?.diff || Boolean(diff.value.reason) || referenceBusy} onClick={() => void attach()}>{t('workbenchFiles.referenceDiff')}</Button> : null}</div>
     <p className="text-xs">{t(source === 'task' ? 'workbenchFiles.taskDiff' : source === 'index' ? 'workbenchFiles.indexDiff' : 'workbenchFiles.worktreeDiff')}</p>
     <Feedback busy={diff.busy} error={diff.error} />
-    {diff.value ? <><p className="m-0 text-xs text-ink-secondary">{t('review.diffCounts', { added, deleted })}</p>{diff.value.reason ? <ContentReason reason={diff.value.reason} /> : null}<Tabs value={mode} onValueChange={setMode}><Tabs.List aria-label={t('review.diffView')}>{['unified', 'before', 'after'].map(item => <Tabs.Trigger key={item} value={item}>{t(`review.${item}`)}</Tabs.Trigger>)}</Tabs.List><Tabs.Content value="unified">{diff.value.diff ? <pre className="dev-diff" tabIndex={0} aria-label={t('review.unified')}>{diff.value.diff.split('\n').map((line, index) => <span key={index} className={line.startsWith('+') ? 'dev-diff-added' : line.startsWith('-') ? 'dev-diff-deleted' : line.startsWith('@@') ? 'dev-diff-hunk' : undefined}>{line}{'\n'}</span>)}</pre> : <p className="text-xs">{t('review.noDiff')}</p>}</Tabs.Content><Tabs.Content value="before">{diff.value.before !== null ? <SourceLines text={diff.value.before} label={t('review.before')} /> : <ContentReason reason={diff.value.reason} />}</Tabs.Content><Tabs.Content value="after">{diff.value.after !== null ? <SourceLines text={diff.value.after} label={t('review.after')} /> : <ContentReason reason={diff.value.reason} />}</Tabs.Content></Tabs></> : null}
+    {diff.value ? <><p className="m-0 text-xs text-ink-secondary">{t('review.diffCounts', { added, deleted })}</p>{diff.value.reason ? <ContentReason reason={diff.value.reason} /> : null}<Tabs value={mode} onValueChange={setMode}><Tabs.List aria-label={t('review.diffView')}>{['unified', 'before', 'after'].map(item => <Tabs.Trigger key={item} value={item}>{t(`review.${item}`)}</Tabs.Trigger>)}</Tabs.List><Tabs.Content value="unified">{diff.value.diff ? <pre className="dev-diff" tabIndex={0} aria-label={t('review.unified')}>{diff.value.diff.split('\n').map((line, index) => <span key={index} className={line.startsWith('+') ? 'dev-diff-added' : line.startsWith('-') ? 'dev-diff-deleted' : line.startsWith('@@') ? 'dev-diff-hunk' : undefined}>{line}{'\n'}</span>)}</pre> : <p className="text-xs">{t('delivery.emptyDiff')}</p>}</Tabs.Content><Tabs.Content value="before">{diff.value.before !== null ? <SourceLines text={diff.value.before} label={t('review.before')} /> : <p className="text-xs">{t('delivery.emptyDiff')}</p>}</Tabs.Content><Tabs.Content value="after">{diff.value.after !== null ? <SourceLines text={diff.value.after} label={t('review.after')} /> : <p className="text-xs">{t('delivery.emptyDiff')}</p>}</Tabs.Content></Tabs></> : null}
   </article>;
 }
 

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { checkReactVersions } from './react-version.mjs';
 
 // Static contract checks supplement compilation; they do not prove WebView isolation.
-const files = ['native_extensions', 'ai', 'provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'chat_assets', 'agents', 'development_review', 'development_runtime', 'development_takeover', 'development_capabilities', 'development_delivery', 'desktop', 'cli', 'storage', 'modules', 'module_host', 'module_capabilities', 'appearance', 'accounts', 'lan', 'locale'];
+const files = ['native_extensions', 'ai', 'provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'chat_assets', 'agents', 'development_review', 'development_explorer', 'development_runtime', 'development_takeover', 'development_capabilities', 'development_delivery', 'desktop', 'cli', 'storage', 'modules', 'module_host', 'module_capabilities', 'appearance', 'accounts', 'lan', 'locale'];
 // FR-010 / interface contract §14.8: the eight LAN host commands. Exact parameter lists; no user
 // id, caller, session token or access code. Every one enters through the Settings caller with
 // `Capability::LanManage`, which `allows` grants to Settings only.
@@ -343,6 +343,18 @@ for (const file of files) {
         const expected = skillExactParams.get(name);
         assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: parameter list must be exactly ${expected.join(', ')}`);
         assert.match(body, /host::context\(\s*&window,\s*BuiltinCaller::Settings,\s*Capability::SkillsManage\s*\)/, `${name}: Skills Batch B commands use the Settings SkillsManage gate`);
+      }
+      if (file === 'development_explorer') {
+        const expected = name === 'read_development_session_summaries' ? ['app', 'window']
+          : name === 'read_development_project_git' ? ['app', 'window', 'project_id']
+            : ['create_development_entry', 'read_development_project_diff', 'read_development_project_git_history'].includes(name) ? ['app', 'window', 'input'] : null;
+        assert.ok(expected, `${name}: unrecognized explorer command`);
+        const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
+        assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: explorer parameter allow-list`);
+        assert.match(body, /host::context\(\s*&window,\s*BuiltinCaller::Workbench,\s*Capability::TasksRun/, `${name}: explorer host gate`);
+        assert.match(body, /agent_session\(\)/, `${name}: explorer account lease`);
+        assert.match(body, /session\.user_id\(\) != context\.user_id\(\) \|\| lease\.is_cancelled\(\)/, `${name}: explorer owner and lease`);
+        assert.doesNotMatch(body, /save_development_task|execute_development_git|\.send\(/, `${name}: explorer cannot create tasks or run agents/Git writes`);
       }
       if (file === 'development_review') {
         const expected = ['list_development_files', 'read_development_file', 'read_development_diff', 'resolve_development_file_reference'].includes(name) ? ['app', 'window', 'input']

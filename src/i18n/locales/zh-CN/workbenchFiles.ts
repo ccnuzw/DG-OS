@@ -23,4 +23,11 @@ export default {
   'workbenchFiles.prepareHint': '建立后台工作归属以启用保存、Git和终端；不启动 CLI、不发送消息。直接对话仍可照常开始。',
   'workbenchFiles.prepareUnknown': '工作归属创建结果待核实，请在任务抽屉刷新并选择已有记录；不会重复创建。',
   'workbenchFiles.projectWork': '{name} 开发',
+  'workbenchFiles.newPath': '相对此文件夹的路径',
+  'workbenchFiles.newFile': '新建文件',
+  'workbenchFiles.newFolder': '新建文件夹',
+  'workbenchFiles.createTrust': '允许创建项目文件？',
+  'workbenchFiles.createTrustDetail': '将在受信任的项目目录中创建 {path}。不会覆盖已有文件。',
+  'workbenchFiles.collapseAll': '折叠文件夹',
+  'workbenchFiles.browseHint': '浏览文件无需创建任务；需要保存修改时，再准备编辑。',
 } as const;

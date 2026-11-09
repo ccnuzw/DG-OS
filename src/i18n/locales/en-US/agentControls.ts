@@ -2,6 +2,7 @@ export default {
   "agentControls.reasoning": "Reasoning",
   "agentControls.permission": "Permissions",
   "agentControls.context": "Context",
+  "agentControls.settings": "Composer settings",
   "agentControls.more": "More actions",
   "agentControls.references": "References",
   "agentControls.management": "Native capability management",

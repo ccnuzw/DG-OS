@@ -23,4 +23,11 @@ export default {
   'workbenchFiles.prepareHint': 'Create background work ownership for saving, Git and terminals. This does not start a CLI or send a message. Direct conversation remains available.',
   'workbenchFiles.prepareUnknown': 'Work creation is unconfirmed. Refresh and choose an existing task from the drawer; creation will not be replayed.',
   'workbenchFiles.projectWork': '{name} development',
+  'workbenchFiles.newPath': 'Path relative to this folder',
+  'workbenchFiles.newFile': 'New file',
+  'workbenchFiles.newFolder': 'New folder',
+  'workbenchFiles.createTrust': 'Allow project file creation?',
+  'workbenchFiles.createTrustDetail': 'Create {path} inside the trusted project directory. Existing files are never overwritten.',
+  'workbenchFiles.collapseAll': 'Collapse folders',
+  'workbenchFiles.browseHint': 'Browse files without creating a task. Prepare editing when you want to save changes.',
 } as const;

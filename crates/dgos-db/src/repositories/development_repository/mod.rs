@@ -18,7 +18,7 @@ mod tests;
 mod capability_tests;
 
 pub use capabilities::{StoredCapabilityRevision, StoredSessionCapabilities};
-pub use executions::StoredRun;
+pub use executions::{StoredRun, SessionMessageSummary};
 pub use cutover::{CleanupObservation, CleanupReceipt, CleanupTarget, CliProviderConfiguration, CliProviderSnapshot, CliRevocationScope, CutoverContext, CutoverReceipt, HostBootObservation, OpeningBinding, OpeningReceipt, OwnedCutoverView, SessionConfiguration, StoredCliBinding};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, QueryResult, Statement, TransactionTrait, Value};
 use serde::{Deserialize, Serialize};

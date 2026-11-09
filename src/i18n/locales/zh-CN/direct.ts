@@ -1,7 +1,7 @@
 export default {
-  'direct.title': '开发', 'direct.editHint': '编辑已有文本文件，选择任务后可保存修改。',
+  'direct.title': '开发', 'direct.editHint': '浏览已有文本文件；需要保存修改时，再准备编辑。',
   'direct.source': '文件内容', 'direct.save': '保存文件', 'direct.saving': '正在保存…', 'direct.saved': '没有未保存修改', 'direct.unsaved': '有未保存修改',
-  'direct.taskRequired': '请先选择任务，再编辑和保存文件。', 'direct.reload': '重新读取磁盘', 'direct.reloadDiscard': '丢弃草稿并重新读取磁盘',
+  'direct.taskRequired': '当前文件为只读；准备编辑后即可修改并保存。', 'direct.reload': '重新读取磁盘', 'direct.reloadDiscard': '丢弃草稿并重新读取磁盘',
   'direct.conflict': '磁盘文件已变化，草稿已保留。请对比两个版本；需要重新编辑时，明确丢弃草稿并重新读取。',
   'direct.localDraft': '本地草稿', 'direct.diskContent': '当前磁盘内容', 'direct.diskUnavailable': '无法读取磁盘内容，草稿仍然保留。',
   'direct.lifecycle': '切换任务或关闭本页面不会停止宿主进程。请使用“停止进程”结束运行。退出账户或应用会停止所属进程；重新启动不会重放命令。',

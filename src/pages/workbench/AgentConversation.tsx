@@ -139,6 +139,7 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   const viewport = useRef<HTMLDivElement>(null);
+  const composerInput = useRef<HTMLTextAreaElement>(null);
   const root = useRef<HTMLDivElement>(null);
   const requestFocus = useRef<HTMLElement | null>(null);
   const surfaceActive = useSurfaceActive();
@@ -173,6 +174,15 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
   }, [session.id, epoch, visible, surfaceActive]);
   useEffect(() => { setInspect(false); }, [session.id, epoch]);
   useEffect(() => { if (follow.current) latest(); }, [session.events[session.events.length - 1]?.seq, visible, surfaceActive]);
+  useLayoutEffect(() => {
+    const node = composerInput.current;
+    if (!node) return;
+    node.rows = 2;
+    const metrics = getComputedStyle(node);
+    const lineHeight = Number.parseFloat(metrics.lineHeight) || 20;
+    const padding = (Number.parseFloat(metrics.paddingTop) || 0) + (Number.parseFloat(metrics.paddingBottom) || 0);
+    node.rows = Math.max(2, Math.min(10, Math.ceil((node.scrollHeight - padding) / lineHeight)));
+  }, [prompt, visible, surfaceActive]);
   const navigationOwner = useRef({ sessionId: session.id, epoch, devEpoch, generation, mounted: true });
   navigationOwner.current = { sessionId: session.id, epoch, devEpoch, generation, mounted: true };
   useEffect(() => { navigationOwner.current.mounted = true; return () => { navigationOwner.current.mounted = false; }; }, []);
@@ -246,10 +256,9 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
       </div>
       {session.error && !error ? <div role="alert" className="agent-dialogue-error text-status-error"><p>{t('agent.failure')}</p><details className="agent-dialogue-native"><summary>{t('agent.details')}</summary><pre>{session.error}</pre></details></div> : null}
       {pendingSend && !sending && !acting ? <div><p role="alert">{t('directConversation.send_unknown')}</p><Button size="xs" disabled={busy} onClick={() => void recheckSend()}>{t('directConversation.recheck')}</Button></div> : null}
-      <div className="agent-dialogue-composer">{inputReferences.chips}<Input multiline rows={2} id="agent-message" label={t('agent.prompt')} className="type-reading" aria-describedby="agent-send-hint" value={prompt} onChange={event => setDraft(session.id, inputReferences.promptChange(event.target.value, prompt, event.target.selectionStart, (event.nativeEvent as InputEvent).isComposing))} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); if (!event.repeat) void send(); } }} />
-        <AgentComposerControls session={session} projectId={projectId} visible={visible} disabled={busy || sending || acting} referencePicker={inputReferences.picker} references={referenceEvent ? <AgentOutputReferences key={`${session.id}:${referenceEvent.seq}`} event={referenceEvent} toolNames={toolNames} {...referenceActions} /> : undefined} model={visible && surfaceActive && projectId && onNewConversation && emptySession ? <ComposerModelPicker projectId={projectId} value={boundConfiguration} preferred={boundConfiguration} disabled={busy || sending || acting} onChange={configuration => { if (currentOwner()) void onNewConversation(configuration); }} /> : <div className="dev-review-toolbar"><span className="text-xs">{binding ? `${binding.model_id} · ${t(`agent.engine.${session.engine}`)}` : t(`agent.engine.${session.engine}`)}</span>{onContinueModel ? <Button size="xs" variant="ghost" onClick={() => { if (currentOwner()) onContinueModel(); }}>{t('workbenchNavigation.continueModel')}</Button> : null}</div>} />
-        <div className="agent-dialogue-send"><p id="agent-send-hint">{reason || t('agent.sendShortcut')}</p><Button disabled={Boolean(reason)} onClick={() => void send()}>{t('agent.send')}</Button></div>
-      </div>
+      <div className="agent-dialogue-composer"><div className="agent-composer-shell">{inputReferences.chips}<div className="agent-composer-input"><Input multiline rows={2} id="agent-message" ref={composerInput} label={t('agent.prompt')} className="type-reading" aria-describedby="agent-send-hint" value={prompt} onChange={event => setDraft(session.id, inputReferences.promptChange(event.target.value, prompt, event.target.selectionStart, (event.nativeEvent as InputEvent).isComposing))} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); if (!event.repeat) void send(); } }} /></div>
+        <AgentComposerControls session={session} projectId={projectId} visible={visible} disabled={busy || sending || acting} referencePicker={inputReferences.picker} references={referenceEvent ? <AgentOutputReferences key={`${session.id}:${referenceEvent.seq}`} event={referenceEvent} toolNames={toolNames} {...referenceActions} /> : undefined} model={visible && surfaceActive && projectId && onNewConversation && emptySession ? <ComposerModelPicker projectId={projectId} value={boundConfiguration} preferred={boundConfiguration} disabled={busy || sending || acting} onChange={configuration => { if (currentOwner()) void onNewConversation(configuration); }} /> : <div className="dev-review-toolbar"><span className="text-xs">{binding ? `${binding.model_id} · ${t(`agent.engine.${session.engine}`)}` : t(`agent.engine.${session.engine}`)}</span>{onContinueModel ? <Button size="xs" variant="ghost" onClick={() => { if (currentOwner()) onContinueModel(); }}>{t('workbenchNavigation.continueModel')}</Button> : null}</div>} sendHint={reason || t('agent.sendShortcut')} send={<Button disabled={Boolean(reason)} onClick={() => void send()}>{t('agent.send')}</Button>} />
+      </div></div>
     </footer>
   </div>;
 }

@@ -40,6 +40,26 @@ it('retains blank and edited task fields through task/project selection and same
  expect((screen.getByTestId('dev-task-goal') as HTMLTextAreaElement).value).toBe('Reloaded');
 });
 
+it('renames an automatic task without requiring acceptance fields, reverting progress or deselecting its session', async () => {
+ let saved = { ...task, requirements: '', status: 'todo' as 'todo' | 'in_progress' };
+ invoke.mockImplementation(async (command, args) => {
+  if (command === 'save_development_task') { saved = { ...saved, ...args.input }; return saved; }
+  if (command === 'read_development_workspace') return { projects: [project], tasks: [saved], sessions: [], selection: { project_id: 'p', task_id: 't', session_id: null }, operations: [] };
+  return null;
+ });
+ useDevelopment.setState({ loaded: true, projects: [project], tasks: [saved], selection: { project_id: 'p', task_id: 't', session_id: 'active-session' } });
+ render(<TaskPanel project={project} />);
+ fireEvent.click(screen.getByText('dev.taskDetails'));
+ fireEvent.change(screen.getByTestId('dev-task-goal'), { target: { value: 'Renamed conversation work' } });
+ act(() => { saved = { ...saved, status: 'in_progress' }; useDevelopment.setState({ tasks: [saved] }); });
+ expect(screen.getByTestId('dev-task-save')).toHaveProperty('disabled', false);
+ fireEvent.click(screen.getByTestId('dev-task-save'));
+ await waitFor(() => expect(useDevelopment.getState().tasks[0]).toMatchObject({ goal: 'Renamed conversation work', requirements: '', status: 'in_progress' }));
+ expect(Object.values(useDevelopmentDrafts.getState().entries)).toEqual([]);
+ expect(useDevelopment.getState().selection).toEqual({ project_id: 'p', task_id: 't', session_id: 'active-session' });
+ expect(invoke.mock.calls.some(([command]) => command === 'select_development_context')).toBe(false);
+});
+
 it('retains Provider binding drafts across reload, unmount and project changes, then clears them on account reset', async () => {
  invoke.mockImplementation(async (command, args) => command === 'read_development_cli_provider_catalog'
   ? { project_id: args.projectId, engine: args.engine, providers: [{ id: 'provider', name: 'Provider', enabled: true, config_revision: 2, availability: { available: true, reason: null }, models: [{ id: 'model', name: 'Model', model_type: 'chat' }] }] }

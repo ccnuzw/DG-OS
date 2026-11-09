@@ -44,6 +44,8 @@ function install(override: (command: string, args?: { input?: unknown; sessionId
   if (command === 'get_development_session_configuration') return { format: 'provider_bound', read_only: false, snapshot: { binding_id: 'binding1', engine: 'codex', ...providerRevision.configuration.provider, revision: 4, permission_epoch: 2 } };
   if (command === 'read_development_git') return { task_id: 't1', kind: 'directory', branch: null, head: null, conflicts: [] };
   if (command === 'list_development_processes') return [];
+  if (command === 'read_development_session_summaries') return [];
+  if (command === 'read_development_project_git') return { kind: 'directory', branch: null, head: null, files: [], conflicts: [], staged_diff: '', worktree_diff: '' };
   if (command === 'list_development_files') return { entries: [], truncated: false };
   if (command === 'list_development_runs') return [];
   if (command === 'read_development_review') return { task_id: 't1', captured_at: null, baseline_late: false, truncated: false, fingerprint: '', changes: [], runs_stale: false };
@@ -110,6 +112,47 @@ describe('agent sessions', () => {
   fireEvent.click(await screen.findByRole('button', { name: 'agent.deny' }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('respond_agent_request', { input: { session_id: session.id, generation: session.generation, request_id: 'approval', response: { behavior: 'deny' } } }));
  });
+});
+
+it('starts from a taskless project through the task drawer without losing the draft or duplicating admission', async () => {
+ const state = { ...workspace, tasks: [] as typeof workspace.tasks, sessions: [] as { id: string; owner: string; project_id: string; task_id: string; engine: string; native_id: string; workspace: string; model: null; executable: null }[], selection: { project_id: 'p1', task_id: null as string | null, session_id: null as string | null } };
+ let native = { ...session };
+ install((command, args) => {
+  const input = args?.input as Record<string, any>;
+  if (command === 'read_development_workspace') return structuredClone(state);
+  if (command === 'select_development_context') { state.selection = input as typeof state.selection; return null; }
+  if (command === 'save_development_task') { const task = { ...workspace.tasks[0], ...input, id: 'automatic-task' }; state.tasks.push(task); return task; }
+  if (command === 'open_agent_session') {
+   native = { ...session, id: input.id };
+   state.sessions.push({ id: input.id, owner: 'u', project_id: 'p1', task_id: input.task_id, engine: input.engine, native_id: 'native', workspace: '/tmp/project', model: null, executable: null });
+   return native;
+  }
+  if (command === 'get_agent_session') return native;
+  if (command === 'send_agent_message') { native = { ...native, status: 'running' }; return null; }
+  return undefined;
+ });
+ render(<AgentWorkbench />);
+ await waitFor(() => expect(screen.getByTestId('direct-conversation-trust')).toHaveProperty('disabled', false));
+ const tab = useDevelopment.getState().activeTabId;
+ const prompt = screen.getByRole('textbox', { name: 'agent.prompt' });
+ fireEvent.change(prompt, { target: { value: 'Explain this project without a task form' } });
+ fireEvent.click(screen.getByTestId('dev-tool-tasks'));
+ fireEvent.click(screen.getByTestId('dev-task-conversation'));
+ await waitFor(() => expect(document.activeElement).toBe(prompt));
+ expect(prompt).toHaveProperty('value', 'Explain this project without a task form');
+ expect(useDevelopment.getState().activeTabId).toBe(tab);
+ expect(state.tasks).toEqual([]);
+ expect(invoke.mock.calls.some(([name]) => ['save_development_task', 'open_agent_session', 'send_agent_message'].includes(name))).toBe(false);
+ fireEvent.click(screen.getByTestId('direct-conversation-trust'));
+ await waitFor(() => expect(screen.getByTestId('direct-conversation-send')).toHaveProperty('disabled', false));
+ const send = screen.getByTestId('direct-conversation-send');
+ await act(async () => { fireEvent.click(send); fireEvent.click(send); });
+ await waitFor(() => expect(useDevelopment.getState().selection.session_id).toBe(native.id));
+ expect(state.tasks).toEqual([expect.objectContaining({ project_id: 'p1', goal: 'Explain this project without a task form', requirements: '' })]);
+ expect(useDevelopment.getState().activeTabId).toBe(tab);
+ expect(useDevelopment.getState().tabs.find(item => item.id === tab)?.sessionId).toBe(native.id);
+ for (const command of ['save_development_task', 'open_agent_session', 'send_agent_message']) expect(invoke.mock.calls.filter(([name]) => name === command)).toHaveLength(1);
+ expect(invoke.mock.calls.some(([name]) => ['close_agent_session', 'interrupt_agent_session'].includes(name))).toBe(false);
 });
 
 it.each([[true, false], [false, true], [false, false]])('clears the Agent running marker when development is hidden (tab mounted: %s, surface active: %s)', async (tabMounted, active) => {
@@ -329,6 +372,7 @@ it.each(['codex', 'claude'] as const)('preserves the %s runtime and next draft t
  fireEvent.change(prompt, { target: { value: 'Keep next request' } });
  const selection = useDevelopment.getState().selection;
  for (const [label, path] of [['nav.skills', '/skills'], ['nav.mcp', '/mcp']] as const) {
+  fireEvent.click(screen.getByRole('button', { name: 'agentControls.more' }));
   fireEvent.click(within(screen.getByRole('navigation', { name: 'agentControls.management' })).getByRole('link', { name: label }));
   await waitFor(() => expect(screen.getByTestId('management-entry').textContent).toBe(JSON.stringify({ path, runtime: 'native', selection: { target: engine === 'codex' ? 'Codex' : 'Claude', scope: 'ProjectShared', project_id: 'p1' }, sessionId: session.id })));
   fireEvent.click(screen.getByRole('button', { name: 'Return to conversation' }));

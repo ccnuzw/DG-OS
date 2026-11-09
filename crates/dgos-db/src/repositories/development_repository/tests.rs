@@ -163,3 +163,110 @@ async fn workspace_migration_preserves_legacy_receipts_and_recovers_git_intent()
  let db=crate::establish_connection("sqlite::memory:").await.unwrap();let count=Migrator::migrations().iter().position(|m|m.name()=="m20261104_000029_project_capabilities").unwrap()+1;Migrator::up(&db,Some(count as u32)).await.unwrap();let repo=DevelopmentRepository::new(db.clone());
  let op=ProjectOperation{id:id(),owner:"alice".into(),kind:"create".into(),path:"/tmp/old-receipt".into(),status:"pending".into(),project_id:None};repo.start_operation(&op).await.unwrap();Migrator::up(&db,None).await.unwrap();assert_eq!(repo.git_operation("alice",&op.id).await.unwrap().unwrap()["kind"],"create");repo.recover_operations().await.unwrap();assert_eq!(repo.git_operation("alice",&op.id).await.unwrap().unwrap()["status"],"unknown");assert!(fetch(&db,"PRAGMA foreign_key_check",vec![]).await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn session_summary_batch_is_owned_bounded_and_excludes_tool_payloads() {
+    let (db, repo) = setup().await;
+    let empty = session("alice", "/tmp/no-message");
+    repo.save_session(&empty).await.unwrap();
+    let foreign = session("bob", "/tmp/foreign-message");
+    repo.save_session(&foreign).await.unwrap();
+    let p = project("alice", "/tmp/messages"); repo.insert_project(&p).await.unwrap();
+    let t = task(&p); repo.save_task(&t).await.unwrap();
+    let mut s = session("alice", &p.path);
+    s.project_id = Some(p.id.clone()); s.task_id = Some(t.id.clone()); repo.save_session(&s).await.unwrap();
+    let events = serde_json::json!([
+        {"kind":"userMessage","text":"initial question"},
+        {"kind":"agentMessage","text":"答".repeat(2000)},
+        {"kind":"tool_result","text":"never display tool output","data":{"secret":"not returned"}},
+        {"kind":"permission","text":"never display permission input"}
+    ]).to_string();
+    execute(&db, "INSERT INTO development_runs(id,owner,session_id,task_id,project_id,engine,source,status,started_at,finished_at,summary,events,fingerprint,start_fingerprint,truncated,request_fingerprint) VALUES(?,?,?,?,?,'codex','native_agent','completed',10,20,'not a trusted message',?,'a','b',0,'fixture')", vec![v(id()),v("alice"),v(s.id.clone()),v(t.id),v(p.id),v(events)]).await.unwrap();
+    let rows = repo.session_message_summaries("alice").await.unwrap();
+    assert_eq!(rows.len(), 2);
+    let summary = rows.iter().find(|row| row.session_id == s.id).unwrap();
+    assert_eq!(summary.preview.as_deref(), Some("答".repeat(1024).as_str()));
+    assert_eq!(summary.last_activity_at, Some(20));
+    let absent = rows.iter().find(|row| row.session_id == empty.id).unwrap();
+    assert!(absent.preview.is_none() && absent.last_activity_at.is_none());
+    assert!(!rows.iter().any(|row| row.session_id == foreign.id));
+}
+
+#[tokio::test]
+async fn session_summary_uses_complete_messages_or_the_latest_message_stream() {
+    use serde_json::json;
+    let (db, repo) = setup().await;
+    let p = project("alice", "/tmp/message-shapes"); repo.insert_project(&p).await.unwrap();
+    let t = task(&p); repo.save_task(&t).await.unwrap();
+    let cases = vec![
+        ("claude", json!([
+            {"kind":"userMessage","text":"question"},
+            {"kind":"text_delta","text":"partial ","data":{"request_id":"request"}},
+            {"kind":"text_delta","text":"answer","data":{"request_id":"request"}},
+            {"kind":"message","text":null,"data":{"type":"assistant","native_message_id":"message","content":[
+                {"type":"text","text":"Complete "},
+                {"type":"tool_use","name":"Read","input":{"text":"secret input"}},
+                {"type":"thinking","text":"private reasoning"},
+                {"type":"text","text":"answer"}
+            ]}},
+            {"kind":"message","data":{"type":"user","content":[{"type":"tool_result","content":[{"type":"text","text":"secret output"}]}]}},
+            {"kind":"message","data":{"type":"assistant","parent_tool_use_id":"child","content":[{"type":"text","text":"child tool output"}]}},
+            {"kind":"result","text":"not a message"}
+        ]), Some("Complete answer".to_owned())),
+        ("claude", json!([
+            {"kind":"text_delta","text":"old stream"},
+            {"kind":"message","data":{"type":"assistant","content":[{"type":"text","text":"old complete"}]}},
+            {"kind":"message","data":{"type":"user","content":[{"type":"tool_result","content":"secret"}]}},
+            {"kind":"text_delta","text":"Latest "},
+            {"kind":"text_delta","text":" ","data":{"parent_tool_use_id":null}},
+            {"kind":"tool_progress","text":"secret"},
+            {"kind":"text_delta","text":"answer"},
+            {"kind":"text_delta","text":"child output","data":{"parent_tool_use_id":"child"}}
+        ]), Some("Latest  answer".to_owned())),
+        ("codex", json!([
+            {"kind":"item/agentMessage/delta","text":"partial","data":{"itemId":"answer"}},
+            {"kind":"agentMessage","text":"Complete Codex answer","data":{"id":"answer","type":"agentMessage"}},
+            {"kind":"item/agentMessage/delta","text":"late fragment","data":{"itemId":"answer"}}
+        ]), Some("Complete Codex answer".to_owned())),
+        ("codex", json!([
+            {"kind":"agentMessage","text":"Earlier answer","data":{"id":"answer","type":"agentMessage"}},
+            {"kind":"userMessage","text":"later prompt"}
+        ]), Some("later prompt".to_owned())),
+        ("claude", json!([
+            {"kind":"message","data":{"type":"assistant","content":[{"type":"text","text":"Earlier answer"}]}},
+            {"kind":"userMessage","text":"later prompt"}
+        ]), Some("later prompt".to_owned())),
+        ("codex", json!([
+            {"kind":"item/agentMessage/delta","text":"older","data":{"itemId":"old"}},
+            {"kind":"item/agentMessage/delta","text":"new ","data":{"itemId":"new"}},
+            {"kind":"item/commandExecution/outputDelta","text":"secret"},
+            {"kind":"item/agentMessage/delta","text":"message","data":{"itemId":"new"}}
+        ]), Some("new message".to_owned())),
+        ("claude", json!([
+            {"kind":"text_delta","text":"答".repeat(800)},
+            {"kind":"text_delta","text":"文".repeat(800)},
+            {"kind":"text_delta","text":"tail"}
+        ]), Some(format!("{}{}", "答".repeat(800), "文".repeat(224)))),
+        ("claude", json!([
+            {"kind":"message","data":{"type":"assistant","content":[{"type":"text","text":"答".repeat(800)},{"type":"text","text":"文".repeat(800)}]}}
+        ]), Some(format!("{}{}", "答".repeat(800), "文".repeat(224)))),
+        ("claude", json!([
+            {"kind":"message","text":"ignored outer text","data":{"type":"assistant","content":[{"type":"tool_use","text":"secret"}]}},
+            {"kind":"message","data":{"type":"user","content":[{"type":"tool_result","text":"secret"}]}},
+            {"kind":"text_delta","text":"child output","data":{"parent_tool_use_id":"child"}},
+            {"kind":"text_delta","text":" "},
+            {"kind":"permission","text":"secret"}
+        ]), None),
+        ("codex", json!([{"kind":"userMessage","text":"Only prompt"}]), Some("Only prompt".to_owned())),
+    ];
+    for (engine, events, expected) in cases {
+        let mut s = session("alice", &p.path); s.engine = engine.into();
+        s.project_id = Some(p.id.clone()); s.task_id = Some(t.id.clone());
+        repo.save_session(&s).await.unwrap();
+        execute(&db, "INSERT INTO development_runs(id,owner,session_id,task_id,project_id,engine,source,status,started_at,finished_at,summary,events,fingerprint,start_fingerprint,truncated,request_fingerprint) VALUES(?,?,?,?,?,?,'native_agent','completed',10,20,'untrusted summary',?,'a','b',0,'fixture')", vec![v(id()),v("alice"),v(s.id.clone()),v(t.id.clone()),v(p.id.clone()),v(engine),v(events.to_string())]).await.unwrap();
+        let rows = repo.session_message_summaries("alice").await.unwrap();
+        let summary = rows.iter().find(|row| row.session_id == s.id).unwrap();
+        assert_eq!(summary.preview, expected, "{engine}: {events}");
+        assert_eq!(summary.last_activity_at, summary.preview.as_ref().map(|_| 20));
+    }
+}

@@ -75,16 +75,11 @@ function gitReview(overrides: Partial<GitReview> = {}): GitReview {
  return { task_id: 't', kind: 'git', path: '/task-worktree', branch: 'main', head: 'a'.repeat(40), merge_heads: [], files: [{ path: 'code.txt', index: ' ', worktree: 'M' }], index: [], conflicts: [], staged_diff: '', worktree_diff: 'changed', review_token: 'review', baseline_version: '', initial_staged_paths: [], file_versions: {}, ...overrides };
 }
 
-it('uses the same Git engine in compact mode without workspace, handoff or push controls', async () => {
+it('opens the selected Git diff without staging files or performing network operations', async () => {
  const onOpenDiff = vi.fn();
  render(<DeliveryPanel {...props} mode="git" onOpenDiff={onOpenDiff} />); await act(async () => {});
- for (const label of ['delivery.workspaces', 'delivery.handoffs']) expect(screen.queryByRole('region', { name: label })).toBeNull();
- for (const label of ['delivery.create', 'delivery.import', 'delivery.push', 'delivery.switch', 'delivery.merge', 'delivery.prepareHandoff']) expect(screen.queryByRole('button', { name: label })).toBeNull();
- for (const label of ['delivery.stage', 'delivery.unstage', 'delivery.commit', 'delivery.openGitHistory', 'delivery.previewPull']) expect(screen.getByRole('button', { name: label })).toBeTruthy();
- expect(screen.getByText('workbenchGit.workspaceScope')).toBeTruthy();
- expect(screen.getByText('workbenchGit.noTaskBaseline')).toBeTruthy();
  fireEvent.click(screen.getByRole('button', { name: 'code.txt' }));
- expect(onOpenDiff).toHaveBeenCalledWith('code.txt');
+ expect(onOpenDiff).toHaveBeenCalledWith('code.txt', 'worktree');
  expect((screen.getByRole('checkbox', { name: 'code.txt' }) as HTMLInputElement).checked).toBe(false);
  expect(invoke.mock.calls.some(([command]) => command === 'list_development_handoffs' || command === 'execute_development_git' || command === 'preview_development_git_pull' || command === 'read_development_git_history')).toBe(false);
 });
@@ -141,5 +136,32 @@ it('keeps guarded restore confirmation and sends only explicit hashed paths afte
   confirm.mockImplementation(options => { options.onConfirm?.(); return { id: 'confirm', close: () => {} }; });
   fireEvent.click(screen.getByRole('button', { name: 'delivery.discard' })); await act(async () => {});
   expect(invoke.mock.calls.find(([command]) => command === 'execute_development_git')?.[1].input.action).toEqual({ kind: 'discard', baseline_version: 'baseline', files: [{ path: 'code.txt', expected_hash: 'hash' }], confirmed: true });
+ } finally { confirm.mockRestore(); }
+});
+
+it('requires renewed push confirmation when task preparation observes another branch at the same commit', async () => {
+ const original = invoke.getMockImplementation()!;
+ const preparation = Promise.withResolvers<string | null>();
+ const ensureTask = vi.fn(() => preparation.promise);
+ const overview = { kind: 'git', path: '/task-worktree', branch: 'main', head: 'a'.repeat(40), files: [{ path: 'code.txt', index: ' ', worktree: 'M' }], conflicts: [], staged_diff: '', worktree_diff: 'changed' };
+ invoke.mockImplementation(async (command: string, args: any) => {
+  if (command === 'read_development_project_git') return overview;
+  if (command === 'read_development_git') return gitReview({ branch: 'topic', review_token: 'topic-review' });
+  if (command === 'execute_development_git') { receipts = [receipt(args.input.id, 'succeeded', 'git_push')]; return receipts[0]; }
+  return original(command, args);
+ });
+ const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(options => { options.onConfirm?.(); return { id: 'confirm', close: () => {} }; });
+ try {
+  render(<DeliveryPanel {...props} taskId={null} ensureTask={ensureTask} mode="git" />); await act(async () => {});
+  fireEvent.change(screen.getByLabelText('delivery.remote'), { target: { value: 'origin' } });
+  fireEvent.click(screen.getByRole('button', { name: 'delivery.push' })); await act(async () => {});
+  expect(confirm.mock.calls[0][0].content).toContain('origin / main');
+  await act(async () => { preparation.resolve('t'); });
+  expect(invoke.mock.calls.filter(([command]) => command === 'execute_development_git')).toHaveLength(0);
+  fireEvent.click(screen.getByRole('button', { name: 'delivery.push' })); await act(async () => {});
+  expect(confirm.mock.calls[1][0].content).toContain('origin / topic');
+  expect(invoke.mock.calls.filter(([command]) => command === 'execute_development_git')).toHaveLength(1);
+  expect(invoke.mock.calls.find(([command]) => command === 'execute_development_git')?.[1].input.review_token).toBe('topic-review');
+  expect(ensureTask).toHaveBeenCalledTimes(1);
  } finally { confirm.mockRestore(); }
 });

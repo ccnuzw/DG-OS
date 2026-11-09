@@ -13,7 +13,7 @@ export const HOST_CODES: readonly string[] = [
   'process_wait_failed', 'environment_reference_missing', 'terminal_unavailable', 'process_spawn_failed', 'process_platform_unsupported',
   'service_port_in_use', 'service_readiness_timeout', 'service_exited_before_ready', 'cleanup_pending', 'external_open_failed', 'service_not_ready',
   'boot_identity_unavailable',
-  'file_symlink', 'file_save_unknown',
+  'file_symlink', 'file_save_unknown', 'file_exists', 'file_create_unknown',
   'program_unavailable', 'port_conflict',
   'capability_unavailable', 'capability_conflict', 'capability_revoked', 'provider_unavailable', 'provider_incompatible',
   'skill_unavailable', 'mcp_unavailable', 'schema_changed', 'adapter_unavailable', 'cli_version_changed', 'confirmation_expired', 'confirmation_not_found',

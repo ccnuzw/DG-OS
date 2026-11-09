@@ -2,6 +2,7 @@ export default {
   "agentControls.reasoning": "推理强度",
   "agentControls.permission": "权限",
   "agentControls.context": "上下文",
+  "agentControls.settings": "编写器设置",
   "agentControls.more": "更多操作",
   "agentControls.references": "引用",
   "agentControls.management": "原生能力管理",

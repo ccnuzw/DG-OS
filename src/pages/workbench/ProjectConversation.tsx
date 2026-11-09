@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button, Input } from '@dgos/ui';
 import { useLocale } from '../../i18n';
 import { useDevelopment, type Project, type Outcome } from '../../stores/developmentStore';
@@ -53,6 +53,7 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
   const [reload, setReload] = useState(0);
   const [trust, setTrust] = useState<string | null>(null);
   const mounted = useRef(true);
+  const composerInput = useRef<HTMLTextAreaElement>(null);
   const surfaceActive = useSurfaceActive();
   const visibleOwner = useRef(visible && surfaceActive);
   visibleOwner.current = visible && surfaceActive;
@@ -92,6 +93,15 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
     });
     return () => { active = false; };
   }, [project.id, project.path, targetTask, epoch, generation, pending, reload, visible, surfaceActive]);
+  useLayoutEffect(() => {
+    const node = composerInput.current;
+    if (!node) return;
+    node.rows = 2;
+    const metrics = getComputedStyle(node);
+    const lineHeight = Number.parseFloat(metrics.lineHeight) || 20;
+    const padding = (Number.parseFloat(metrics.paddingTop) || 0) + (Number.parseFloat(metrics.paddingBottom) || 0);
+    node.rows = Math.max(2, Math.min(10, Math.ceil((node.scrollHeight - padding) / lineHeight)));
+  }, [value.prompt, visible, surfaceActive]);
 
   async function send() {
     if (!current() || pending || operations.has(key) || value.preparing || !configuration || !directory || trust !== trustKey || project.archived || ['task_unknown', 'open_unknown', 'send_unknown', 'sent'].includes(value.phase)) return;
@@ -211,14 +221,10 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
       {value.error === 'cleanup_pending' ? <CliCleanupRecheck /> : null}
       {['task_unknown', 'open_unknown', 'send_unknown', 'sent'].includes(value.phase) ? <div><p role="alert">{t(`directConversation.${value.phase}`)}</p><Button size="xs" disabled={value.preparing} onClick={() => void reconcile()}>{t('directConversation.recheck')}</Button>
         {value.phase === 'task_unknown' ? tasks.filter(item => item.project_id === project.id && !value.beforeTasks.includes(item.id)).map(item => <Button key={item.id} size="xs" disabled={value.preparing} onClick={() => update({ taskId: item.id, phase: 'draft' })}>{t('directConversation.useTask', { title: item.goal })}</Button>) : null}</div> : null}
-      <div className="agent-dialogue-composer">
-        {inputReferences.chips}
-        <Input multiline rows={3} id="agent-message" label={t('agent.prompt')} className="type-reading" value={value.prompt} onChange={event => update({ prompt: inputReferences.promptChange(event.target.value, value.prompt, event.target.selectionStart, (event.nativeEvent as InputEvent).isComposing), configuration })} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); if (!event.repeat) void send(); } }} />
-        <AgentComposerControls projectId={project.id} engine={configuration?.engine} draftId={draftId} visible={visible} disabled={value.preparing} referencePicker={inputReferences.picker} model={visible && surfaceActive ? <ComposerModelPicker projectId={project.id} value={configuration} preferred={saved.value?.configuration ?? null} disabled={value.preparing || Boolean(value.sessionId && value.phase !== 'draft')} onChange={next => { if (current()) update({ configuration: next, error: null }); }} /> : null} more={<Button size="xs" variant="ghost" disabled={value.preparing} onClick={() => { if (current()) { capabilitiesChanged(); setReload(n => n + 1); } }}>{t('capabilities.reload')}</Button>} />
-        <label className="dev-checkbox"><input type="checkbox" data-testid="direct-conversation-trust" checked={Boolean(trustKey && trust === trustKey)} disabled={!directory || value.preparing} onChange={event => setTrust(event.target.checked ? trustKey : null)} />{t('dev.trustProject')}</label>
-        <p className="text-xs break-all">{directory?.path ?? t('capabilities.loading')} · {t('dev.trustHint')}</p>
-        <div className="agent-dialogue-send"><p>{t('agent.sendShortcut')}</p><Button data-testid="direct-conversation-send" disabled={Boolean(blocked)} onClick={() => void send()}>{t(value.preparing ? 'directConversation.preparing' : 'agent.send')}</Button></div>
-      </div>
+      <div className="agent-dialogue-composer"><div className="agent-composer-shell">{inputReferences.chips}<div className="agent-composer-input"><Input multiline rows={2} id="agent-message" ref={composerInput} label={t('agent.prompt')} className="type-reading" aria-describedby="agent-send-hint" value={value.prompt} onChange={event => update({ prompt: inputReferences.promptChange(event.target.value, value.prompt, event.target.selectionStart, (event.nativeEvent as InputEvent).isComposing), configuration })} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); if (!event.repeat) void send(); } }} /></div>
+        <AgentComposerControls projectId={project.id} engine={configuration?.engine} draftId={draftId} visible={visible} disabled={value.preparing} referencePicker={inputReferences.picker} model={visible && surfaceActive ? <ComposerModelPicker projectId={project.id} value={configuration} preferred={saved.value?.configuration ?? null} disabled={value.preparing || Boolean(value.sessionId && value.phase !== 'draft')} onChange={next => { if (current()) update({ configuration: next, error: null }); }} /> : null} more={<Button size="xs" variant="ghost" disabled={value.preparing} onClick={() => { if (current()) { capabilitiesChanged(); setReload(n => n + 1); } }}>{t('capabilities.reload')}</Button>} sendHint={t('agent.sendShortcut')} send={<Button data-testid="direct-conversation-send" disabled={Boolean(blocked)} onClick={() => void send()}>{t(value.preparing ? 'directConversation.preparing' : 'agent.send')}</Button>} />
+        <label className="dev-checkbox agent-composer-trust"><input type="checkbox" data-testid="direct-conversation-trust" checked={Boolean(trustKey && trust === trustKey)} disabled={!directory || value.preparing} onChange={event => setTrust(event.target.checked ? trustKey : null)} />{t('dev.trustProject')}</label>
+      </div></div>
     </footer>
   </div>;
 }

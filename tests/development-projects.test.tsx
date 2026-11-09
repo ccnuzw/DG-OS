@@ -74,3 +74,26 @@ it('does not import an old account folder when its native picker returns late', 
  expect(create).not.toHaveBeenCalled();
  expect(useDevelopment.getState().selection.project_id).toBeNull();
 });
+
+it('keeps add-only navigation free of project lists, inspection and management forms', () => {
+  useDevelopment.setState({ projects: [{ id: 'p', owner: 'u', name: 'Demo', path: '/projects/Demo', directory_identity: 'd', archived: false, created_at: 1, last_opened_at: null }], selection: { project_id: 'p', task_id: null, session_id: null } });
+  const inspect = vi.spyOn(useDevelopment.getState(), 'inspect');
+  render(<ProjectPanel mode="add-only" />);
+  expect(screen.getByRole('button', { name: 'dev.add' })).toBeTruthy();
+  expect(screen.queryByTestId('dev-project-item-p')).toBeNull();
+  expect(screen.queryByTestId('dev-project-detail')).toBeNull();
+  expect(screen.queryByLabelText('workbenchNavigation.searchProjects')).toBeNull();
+  expect(inspect).not.toHaveBeenCalled();
+});
+
+it('manages the explicit project without selecting it or rendering a second project list', async () => {
+  const project = { id: 'p', owner: 'u', name: 'Demo', path: '/projects/Demo', directory_identity: 'd', archived: false, created_at: 1, last_opened_at: null };
+  useDevelopment.setState({ projects: [project, { ...project, id: 'other', name: 'Other' }], selection: { project_id: 'other', task_id: null, session_id: null } });
+  const inspect = vi.spyOn(useDevelopment.getState(), 'inspect').mockResolvedValue({ ok: true, value: { path_state: 'available', kind: 'directory', repository_root: null, branch: null, changes: [], truncated: false, error: null } });
+  render(<ProjectPanel mode="manage" projectId="p" />);
+  await waitFor(() => expect(inspect).toHaveBeenCalledWith('p'));
+  expect(screen.getByTestId('dev-project-detail').querySelector('details')?.open).toBe(true);
+  expect(screen.getByLabelText('dev.renameField')).toHaveProperty('value', 'Demo');
+  expect(screen.queryByTestId('dev-project-item-p')).toBeNull();
+  expect(useDevelopment.getState().selection.project_id).toBe('other');
+});

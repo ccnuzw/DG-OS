@@ -1,9 +1,26 @@
-.agent-composer-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--spacing-2); min-width: 0; container-type: inline-size; }
-.agent-control-primary, .agent-control-secondary, .agent-control-management, .agent-control-more-links { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-1); min-width: 0; }
-.agent-control-primary { flex: 1 1 auto; }
-.agent-control-secondary { margin-inline-start: auto; }
-.agent-control-model { min-width: 0; max-width: 100%; }
+.agent-composer-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-2);
+  min-width: 0;
+  container-type: inline-size;
+}
+.agent-control-leading,
+.agent-control-trailing,
+.agent-control-more-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-1);
+  min-width: 0;
+}
+.agent-control-leading { flex: 0 0 auto; }
+.agent-control-trailing { flex: 1 1 auto; justify-content: flex-end; }
+.agent-control-model { min-width: 5rem; max-width: min(12rem, 30vw); }
 .agent-control-model > div { min-width: 0; }
+.agent-control-model button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-control-popover { display: flex; flex-direction: column; gap: var(--spacing-2); width: min(22rem, 80vw); max-width: 100%; overflow-wrap: anywhere; }
 .agent-control-popover h3, .agent-control-popover p { margin: 0; }
 .agent-control-popover h3 { font-size: var(--font-size-sm); }
@@ -15,4 +32,16 @@
 .agent-control-intent { flex-basis: 100%; margin: 0; color: var(--text-secondary); font-size: var(--font-size-xs); }
 .agent-control-confirm p { flex-basis: 100%; }
 .agent-control-more-links { gap: var(--spacing-3); }
-@container (max-width: 38rem) { .agent-control-management { display: none; } }
+.agent-control-send { display: flex; align-items: center; gap: var(--spacing-2); margin-inline-start: var(--spacing-1); }
+.agent-control-send-hint { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.agent-control-settings-label, .agent-control-leading button > span { display: none; }
+.agent-control-leading button { padding-inline: var(--spacing-2); }
+@container (max-width: 38rem) {
+  .agent-control-model { max-width: 8rem; }
+  .agent-control-send-hint { display: none; }
+}
+@container (max-width: 27rem) {
+  .agent-composer-controls { align-items: flex-start; }
+  .agent-control-leading, .agent-control-trailing { flex-wrap: wrap; }
+  .agent-control-model { max-width: 7rem; }
+}
