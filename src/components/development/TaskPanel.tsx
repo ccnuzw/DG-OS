@@ -9,7 +9,7 @@ import { useAgentRunner } from '../../stores/agentRunnerStore';
 import { processActive, useDevelopmentRuntime } from '../../stores/developmentRuntime';
 
 // Collapsing task details keeps the mounted editor and its failed-save draft intact.
-export function TaskPanel({ project, onContinue }: { project: Project; onContinue?: (sessionId: string) => void }) {
+export function TaskPanel({ project, onContinue, onConversation }: { project: Project; onContinue?: (sessionId: string) => void; onConversation?: () => void }) {
   const { t } = useLocale();
   const epoch = useDevelopment(state => state.epoch);
   const allTasks = useDevelopment(state => state.tasks);
@@ -68,6 +68,8 @@ export function TaskPanel({ project, onContinue }: { project: Project; onContinu
   return <section className="dev-panel dev-nav-panel" aria-label={t('dev.tasks')} data-testid="dev-task-list">
     <header className="dev-panel-header"><h2 className="m-0 text-sm font-semibold">{t('dev.tasks')}</h2>
       <Button size="xs" variant="secondary" data-testid="dev-task-new" disabled={pending} onClick={() => void choose(null)}>{t('dev.newTask')}</Button></header>
+    <p className="m-0 text-xs text-ink-secondary">{t('dev.tasksOptional')}</p>
+    {onConversation ? <Button size="sm" data-testid="dev-task-conversation" disabled={pending} onClick={onConversation}>{t('dev.goToConversation')}</Button> : null}
     {tasks.length ? <div className="dev-nav-search"><Input type="search" data-testid="dev-task-search" label={t('workbenchNavigation.searchTasks')} placeholder={t('workbenchNavigation.taskSearchHint')} value={search} onChange={event => setSearch(event.target.value)} />{search ? <Button size="xs" variant="ghost" onClick={() => setSearch('')}>{t('patterns.clearSearch')}</Button> : null}</div> : null}
     {query && !matchingIds.size ? <p role="status" className="m-0 text-xs text-ink-secondary">{t('workbenchNavigation.noMatches')}</p> : null}
     {!tasks.length ? <p className="text-sm text-ink-secondary">{t('dev.noTasks')}</p> : null}
@@ -83,37 +85,41 @@ export function TaskPanel({ project, onContinue }: { project: Project; onContinu
     {failure ? <p role="alert" className="m-0 text-xs text-status-error">{errorText(failure)}</p> : null}
     {selected && onContinue ? <nav className="dev-nav-list" aria-label={t('dev.sessions')}>{sessions.filter(session => session.task_id === selected.id && session.project_id === project.id).map(session => <Button key={session.id} size="xs" variant="ghost" onClick={() => onContinue(session.id)}>{t('workbenchFiles.continueSession', { engine: session.engine, name: useDevelopment.getState().sessionNames[session.id] ?? selected.goal })}</Button>)}</nav> : null}
     {selected ? <details key={`${epoch}:${selected.id}`} className="dev-disclosure"><summary className="dev-disclosure-summary">{t('dev.taskDetails')}</summary><div className="dev-disclosure-body"><TaskEditor key={`${epoch}:${project.id}:${selected.id}`} project={project} task={selected} /></div></details>
-      : creating || !tasks.length && !onContinue ? <TaskEditor key={`${epoch}:${project.id}:new`} project={project} task={null} />
-      : <p className="m-0 text-xs text-ink-secondary">{t('dev.noTaskSelected')}</p>}
+      : creating ? <TaskEditor key={`${epoch}:${project.id}:new`} project={project} task={null} />
+      : tasks.length ? <p className="m-0 text-xs text-ink-secondary">{t('dev.noTaskSelected')}</p> : null}
   </section>;
 }
 
 function TaskEditor({ project, task }: { project: Project; task: DevelopmentTask | null }) {
   const { t } = useLocale();
   const epoch = useDevelopment(state => state.epoch);
-  const draft = useScopedDevelopmentDraft('task', [project.id, task?.id ?? 'new'], { goal: task?.goal ?? '', requirements: task?.requirements ?? '', status: task?.status ?? 'todo' as TaskStatus });
+  const draft = useScopedDevelopmentDraft('task', [project.id, task?.id ?? 'new'], { goal: task?.goal ?? '', requirements: task?.requirements ?? '', status: null as TaskStatus | null });
   const { goal, requirements, status } = draft.value;
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   async function save() {
-    if (busy) return;
+    if (busy || !goal.trim()) return;
     const generation = contextGeneration();
     setBusy(true);
-    const result = await useDevelopment.getState().saveTask({ id: task?.id ?? null, project_id: project.id, goal, requirements, status });
+    const result = await useDevelopment.getState().saveTask({ id: task?.id ?? null, project_id: project.id, goal, requirements, status: status ?? task?.status ?? 'todo' });
     if (epoch !== useDevelopment.getState().epoch) return;
     setBusy(false);
     if (!result.ok) { setFailure(result.code); return; }
     setFailure(null);
     draft.clear({ goal, requirements, status });
-    if (generation === contextGeneration()) await chooseContext({ project_id: project.id, task_id: result.value.id, session_id: null });
+    if (!task && generation === contextGeneration()) await chooseContext({ project_id: project.id, task_id: result.value.id, session_id: null });
   }
   return <form className="dev-form" data-testid="dev-task-form" onSubmit={event => { event.preventDefault(); void save(); }}>
     <Input multiline rows={2} data-testid="dev-task-goal" label={t('dev.goal')} value={goal} onChange={event => draft.setValue({ ...draft.value, goal: event.target.value })} />
     <Input multiline rows={3} data-testid="dev-task-requirements" label={t('dev.requirements')} value={requirements} onChange={event => draft.setValue({ ...draft.value, requirements: event.target.value })} />
-    <Select label={t('dev.status')} value={status} onChange={value => draft.setValue({ ...draft.value, status: TASK_STATUSES.find(item => item !== 'completed' && item === value) ?? task?.status ?? 'todo' })} options={TASK_STATUSES.filter(item => item !== 'completed' || task?.status === 'completed').map(item => ({ value: item, label: t(`dev.taskStatus.${item}`) }))} />
-    <p className="m-0 text-xs text-ink-secondary">{t('taskReview.completeInReview')}</p>
+    {task ? <><p className="m-0 text-xs text-ink-secondary">{t('dev.status')}: {t(`dev.taskStatus.${task.status}`)}</p>
+      <details className="dev-disclosure"><summary className="dev-disclosure-summary">{t('dev.adjustTaskStatus')}</summary><div className="dev-disclosure-body">
+        <p className="m-0 text-xs text-ink-secondary">{t('dev.taskStatusAutomatic')}</p>
+        <Select label={t('dev.status')} value={status ?? ''} onChange={value => draft.setValue({ ...draft.value, status: TASK_STATUSES.find(item => item !== 'completed' && item === value) ?? null })} options={[{ value: '', label: t('dev.keepAutomaticStatus') }, ...TASK_STATUSES.filter(item => item !== 'completed').map(item => ({ value: item, label: t(`dev.taskStatus.${item}`) }))]} />
+        <p className="m-0 text-xs text-ink-secondary">{t('taskReview.completeInReview')}</p>
+      </div></details></> : null}
     {failure ? <p role="alert" className="m-0 text-xs text-status-error">{errorText(failure)}</p> : null}
-    <Button type="submit" size="xs" data-testid="dev-task-save" disabled={busy || !goal.trim() || !requirements.trim()}>{busy ? t('dev.busy') : t('dev.saveTask')}</Button>
+    <Button type="submit" size="xs" data-testid="dev-task-save" disabled={busy || !goal.trim()}>{busy ? t('dev.busy') : t('dev.saveTask')}</Button>
     {draft.dirty ? <Button size="xs" variant="secondary" onClick={() => void draft.discard()}>{t('dev.discardDraft')}</Button> : null}
   </form>;
 }

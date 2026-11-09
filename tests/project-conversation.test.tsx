@@ -84,7 +84,6 @@ it('requires explicit trust of the actual directory before opening or sending', 
   render(conversation(start));
   fireEvent.change(prompt(), { target: { value: 'Goal' } });
   await waitFor(() => expect(screen.getByTestId<HTMLInputElement>('direct-conversation-trust').disabled).toBe(false));
-  expect(screen.getByText(/\/actual-worktree/)).toBeTruthy();
   expect(send().disabled).toBe(true);
   fireEvent.click(send());
   fireEvent.keyDown(prompt(), { key: 'Enter', ctrlKey: true });

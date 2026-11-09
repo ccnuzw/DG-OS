@@ -6,4 +6,9 @@ export default {
   'workbenchGit.existingStaged': '任务基线记录的原有暂存路径',
   'workbenchGit.viewChanges': '查看变更',
   'workbenchGit.noChanges': '此工作区没有变更路径。',
+  'workbenchGit.projectScope': '只读查看项目工作区；浏览 Git 历史和差异不会创建任务。',
+  'workbenchGit.enableWrites': '准备 Git 写入',
+  'workbenchGit.staged': '已暂存的更改',
+  'workbenchGit.unstaged': '未暂存的更改',
+  'workbenchGit.repositoryActions': '仓库操作',
 } as const;

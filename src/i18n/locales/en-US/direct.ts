@@ -1,7 +1,7 @@
 export default {
-  'direct.title': 'Develop', 'direct.editHint': 'Edit existing text files. Select a task to save changes.',
+  'direct.title': 'Develop', 'direct.editHint': 'Browse existing text files. Prepare editing when you want to save changes.',
   'direct.source': 'File contents', 'direct.save': 'Save file', 'direct.saving': 'Saving…', 'direct.saved': 'No unsaved changes', 'direct.unsaved': 'Unsaved changes',
-  'direct.taskRequired': 'Select a task before editing and saving files.', 'direct.reload': 'Reload from disk', 'direct.reloadDiscard': 'Discard draft and reload from disk',
+  'direct.taskRequired': 'This file is read-only. Prepare editing to make and save changes.', 'direct.reload': 'Reload from disk', 'direct.reloadDiscard': 'Discard draft and reload from disk',
   'direct.conflict': 'The file changed on disk. Your draft is retained. Compare both versions, then explicitly discard and reload before editing again.',
   'direct.localDraft': 'Your draft', 'direct.diskContent': 'Current disk contents', 'direct.diskUnavailable': 'Disk content could not be read. Your draft is still retained.',
   'direct.lifecycle': 'Switching tasks or closing this page leaves host processes running. Use Stop to end a process. Signing out or quitting the app stops owned processes; restarting never replays commands.',

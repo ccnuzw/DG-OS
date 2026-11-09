@@ -11,7 +11,12 @@ import { guardWorkbenchDrafts, useDevelopmentDrafts } from '../../stores/develop
 import { processActive, useDevelopmentRuntime } from '../../stores/developmentRuntime';
 import { useAgentRunner } from '../../stores/agentRunnerStore';
 
-export function ProjectPanel() {
+export interface ProjectPanelProps {
+  mode?: 'standalone' | 'add-only' | 'manage';
+  projectId?: string | null;
+}
+
+export function ProjectPanel({ mode = 'standalone', projectId = null }: ProjectPanelProps) {
   const { t } = useLocale();
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -59,7 +64,7 @@ export function ProjectPanel() {
   const visible = projects.filter(project => project.id === selectedId || matchingIds.has(project.id));
   const active = visible.filter(project => !project.archived).sort((a, b) => (b.last_opened_at ?? 0) - (a.last_opened_at ?? 0));
   const archived = visible.filter(project => project.archived);
-  const selected = projects.find(project => project.id === selectedId) ?? null;
+  const selected = projects.find(project => project.id === (mode === 'manage' ? projectId : selectedId)) ?? null;
   const unfinished = operations.filter(operation => operation.status !== 'succeeded');
   const completed = operations.filter(operation => operation.status === 'succeeded');
   async function pickParent() {
@@ -111,24 +116,27 @@ export function ProjectPanel() {
     } catch { if (valid()) setProjectFailure('unknown'); }
     finally { projectLock.current = false; setProjectBusy(false); }
   }
-  return <section className="dev-panel dev-nav-panel" aria-label={t('dev.projects')} data-testid="dev-project-list">
-    <header className="dev-panel-header"><h2 className="m-0 text-sm font-semibold">{t('dev.projects')}</h2>
-      <DropdownMenu label={t('dev.add')} trigger={<Button size="xs" variant="secondary" disabled={projectBusy} aria-label={t('dev.add')}><Icon name="plus" />{t('dev.add')}</Button>} items={[
+  return <section className={mode === 'add-only' ? 'dev-project-add' : 'dev-panel dev-project-manager'} aria-label={t(mode === 'add-only' ? 'dev.add' : 'dev.projects')} data-testid={mode === 'add-only' ? 'dev-project-add' : 'dev-project-list'}>
+    <header className="dev-panel-header">
+      {mode === 'add-only' ? null : <h2 className="m-0 text-sm font-semibold">{t(mode === 'manage' ? 'workbenchNavigation.manageProject' : 'dev.projects')}</h2>}
+      <DropdownMenu label={t('dev.add')} trigger={<Button size="xs" variant={mode === 'add-only' ? 'ghost' : 'secondary'} disabled={projectBusy} aria-label={t('dev.add')}><Icon name="plus" />{mode === 'add-only' ? null : t('dev.add')}</Button>} items={[
         { kind: 'item', id: 'open-folder', label: t('dev.openFolder'), icon: 'folder-open', onSelect: () => void importFolder() },
         { kind: 'item', id: 'create-folder', label: t('dev.createFolder'), icon: 'plus', onSelect: () => { setProjectName(''); setParentPath(''); setProjectFailure(null); setPickerFailure(false); setFolderOpen(true); } },
         { kind: 'item', id: 'clone-repository', label: t('dev.cloneRepository'), icon: 'code', onSelect: () => { setProjectName(''); setParentPath(''); setRepository(''); setProjectFailure(null); setPickerFailure(false); setCloneOpen(true); } },
       ]} />
     </header>
-    <Input aria-label={t('workbenchNavigation.searchProjects')} placeholder={t('workbenchNavigation.searchProjects')} value={search} onChange={event => setSearch(event.target.value)} />
+    {mode === 'standalone' ? <Input aria-label={t('workbenchNavigation.searchProjects')} placeholder={t('workbenchNavigation.searchProjects')} value={search} onChange={event => setSearch(event.target.value)} /> : null}
     {!folderOpen && !cloneOpen && pickerFailure ? <p role="alert" className="dev-feedback dev-feedback-error">{t('dev.folderPickerFailed')}</p> : null}
     {!folderOpen && !cloneOpen && projectFailure ? <p role="alert" className="dev-feedback dev-feedback-error">{errorText(projectFailure)}</p> : null}
-    {query && !matchingIds.size ? <p role="status" className="m-0 text-xs text-ink-secondary">{t('workbenchNavigation.noMatches')}</p> : null}
-    {!projects.length ? <p className="text-sm text-ink-secondary">{t('dev.none')}</p> : null}
-    {active.length ? <ProjectGroup label={t('dev.recent')} projects={active} selectedId={selectedId} activity={activity} /> : null}
-    {archived.length ? <details className="dev-disclosure" open={Boolean(query) || archived.some(project => project.id === selectedId)}><summary className="dev-disclosure-summary">{t('dev.archived')} <span className="dev-nav-status">{archived.length}</span></summary><div className="dev-disclosure-body"><ProjectGroup label={t('dev.archived')} projects={archived} selectedId={selectedId} activity={activity} /></div></details> : null}
-    {unfinished.length ? <div className="dev-operations dev-nav-operations"><strong className="text-xs">{t('dev.operations')}</strong><p className="text-xs text-ink-secondary">{t('dev.operationHint')}</p><ul className="m-0 grid list-none gap-1 p-0">{unfinished.map(operation => <li key={operation.id} className="break-all text-xs" data-testid={`dev-operation-${operation.id}`}>{t(`dev.operationStatus.${operation.status}`)} · {operation.path}</li>)}</ul></div> : null}
-    {completed.length ? <details className="dev-disclosure"><summary className="dev-disclosure-summary">{t('dev.operationHistory')} <span className="dev-nav-status">{completed.length}</span></summary><ul className="dev-disclosure-body m-0 grid list-none gap-1 p-0">{completed.map(operation => <li key={operation.id} className="break-all text-xs" data-testid={`dev-operation-${operation.id}`}>{t('dev.operationStatus.succeeded')} · {operation.path}</li>)}</ul></details> : null}
-    {selected ? <ProjectDetail key={`${selected.id}:${selected.name}:${selected.path}`} project={selected} /> : null}
+    {mode === 'standalone' ? <>
+      {query && !matchingIds.size ? <p role="status" className="m-0 text-xs text-ink-secondary">{t('workbenchNavigation.noMatches')}</p> : null}
+      {!projects.length ? <p className="text-sm text-ink-secondary">{t('dev.none')}</p> : null}
+      {active.length ? <ProjectGroup label={t('dev.recent')} projects={active} selectedId={selectedId} activity={activity} /> : null}
+      {archived.length ? <details className="dev-disclosure" open={Boolean(query) || archived.some(project => project.id === selectedId)}><summary className="dev-disclosure-summary">{t('dev.archived')} <span className="dev-nav-status">{archived.length}</span></summary><div className="dev-disclosure-body"><ProjectGroup label={t('dev.archived')} projects={archived} selectedId={selectedId} activity={activity} /></div></details> : null}
+    </> : null}
+    {mode !== 'add-only' && unfinished.length ? <div className="dev-operations dev-nav-operations"><strong className="text-xs">{t('dev.operations')}</strong><p className="text-xs text-ink-secondary">{t('dev.operationHint')}</p><ul className="m-0 grid list-none gap-1 p-0">{unfinished.map(operation => <li key={operation.id} className="break-all text-xs" data-testid={`dev-operation-${operation.id}`}>{t(`dev.operationStatus.${operation.status}`)} · {operation.path}</li>)}</ul></div> : null}
+    {mode !== 'add-only' && completed.length ? <details className="dev-disclosure"><summary className="dev-disclosure-summary">{t('dev.operationHistory')} <span className="dev-nav-status">{completed.length}</span></summary><ul className="dev-disclosure-body m-0 grid list-none gap-1 p-0">{completed.map(operation => <li key={operation.id} className="break-all text-xs" data-testid={`dev-operation-${operation.id}`}>{t('dev.operationStatus.succeeded')} · {operation.path}</li>)}</ul></details> : null}
+    {mode !== 'add-only' && selected ? <ProjectDetail key={`${selected.id}:${selected.name}:${selected.path}`} project={selected} initiallyOpen={mode === 'manage'} /> : null}
     <ProjectDialog open={folderOpen || cloneOpen} onOpenChange={open => { if (!projectLock.current && !open) { setFolderOpen(false); setCloneOpen(false); } }} kind={cloneOpen ? 'clone' : 'create'} name={projectName} onName={setProjectName} parent={parentPath} repository={repository} onRepository={setRepository} busy={projectBusy} failure={projectFailure} pickerFailure={pickerFailure} onPick={pickParent} onSubmit={() => submitProject(cloneOpen ? 'clone' : 'create')} />
   </section>;
 }
@@ -156,7 +164,7 @@ function ProjectGroup({ label, projects, selectedId, activity }: { label: string
 }
 
 
-function ProjectDetail({ project }: { project: Project }) {
+function ProjectDetail({ project, initiallyOpen = false }: { project: Project; initiallyOpen?: boolean }) {
   const { t } = useLocale();
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -164,7 +172,7 @@ function ProjectDetail({ project }: { project: Project }) {
   const [path, setPath] = useState('');
   const [inspection, setInspection] = useState<ProjectInspection | null>(null);
   const [inspectFailure, setInspectFailure] = useState<string | null>(null);
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(initiallyOpen);
   useEffect(() => {
     let current = true;
     setInspection(null); setInspectFailure(null);
