@@ -72,8 +72,6 @@ import en23 from './locales/en-US/workbench';
 import zh23 from './locales/zh-CN/workbench';
 import en24 from './locales/en-US/dev';
 import zh24 from './locales/zh-CN/dev';
-import enTaskLaunch from './locales/en-US/taskLaunch';
-import zhTaskLaunch from './locales/zh-CN/taskLaunch';
 import enTaskReview from './locales/en-US/taskReview';
 import zhTaskReview from './locales/zh-CN/taskReview';
 import enRuntimeWorkflow from './locales/en-US/runtimeWorkflow';
@@ -85,7 +83,25 @@ import zhTakeover from './locales/zh-CN/takeover';
 
 import enNativeExtensions from './locales/en-US/nativeExtensions';
 import zhNativeExtensions from './locales/zh-CN/nativeExtensions';
+import enModelPicker from './locales/en-US/modelPicker';
+import zhModelPicker from './locales/zh-CN/modelPicker';
+import enDirectConversation from './locales/en-US/directConversation';
+import zhDirectConversation from './locales/zh-CN/directConversation';
+import enConversationHandoff from './locales/en-US/conversationHandoff';
+import zhConversationHandoff from './locales/zh-CN/conversationHandoff';
+import enAgentControls from './locales/en-US/agentControls';
+import zhAgentControls from './locales/zh-CN/agentControls';
+import enAgentExecution from './locales/en-US/agentExecution';
+import zhAgentExecution from './locales/zh-CN/agentExecution';
+import enWorkbenchFiles from './locales/en-US/workbenchFiles';
+import zhWorkbenchFiles from './locales/zh-CN/workbenchFiles';
+import enWorkbenchGit from './locales/en-US/workbenchGit';
+import zhWorkbenchGit from './locales/zh-CN/workbenchGit';
+import enWorkbenchRuntime from './locales/en-US/workbenchRuntime';
+import zhWorkbenchRuntime from './locales/zh-CN/workbenchRuntime';
+import enWorkbenchReferences from './locales/en-US/workbenchReferences';
+import zhWorkbenchReferences from './locales/zh-CN/workbenchReferences';
 export const catalogs: Record<'zh-CN' | 'en-US', Record<string, string>> = {
-  'zh-CN': { ...zhNativeExtensions, ...zhWorkflow, ...zhTakeover, ...zhTaskReview, ...zhRuntimeWorkflow, ...zhWorkbenchLayout, ...zhWorkbenchNavigation, ...zhCapabilities, ...zhDirect, ...zhReview, ...zhVoice, ...zhAssets, ...zhStorage, ...zhExecution, ...zhCli, ...zhGeneration, ...zhDelivery, ...zh0, ...zh1, ...zh2, ...zh3, ...zh4, ...zh5, ...zh6, ...zh7, ...zh8, ...zh9, ...zh10, ...zh11, ...zh12, ...zh13, ...zh14, ...zh15, ...zh16, ...zh17, ...zh18, ...zh19, ...zh20, ...zh21, ...zh22, ...zh23, ...zh24, ...zhTaskLaunch },
-  'en-US': { ...enNativeExtensions, ...enWorkflow, ...enTakeover, ...enTaskReview, ...enRuntimeWorkflow, ...enWorkbenchLayout, ...enWorkbenchNavigation, ...enCapabilities, ...enDirect, ...enReview, ...enVoice, ...enAssets, ...enStorage, ...enExecution, ...enCli, ...enGeneration, ...enDelivery, ...en0, ...en1, ...en2, ...en3, ...en4, ...en5, ...en6, ...en7, ...en8, ...en9, ...en10, ...en11, ...en12, ...en13, ...en14, ...en15, ...en16, ...en17, ...en18, ...en19, ...en20, ...en21, ...en22, ...en23, ...en24, ...enTaskLaunch },
+  'zh-CN': { ...zhWorkbenchFiles, ...zhWorkbenchGit, ...zhWorkbenchRuntime, ...zhWorkbenchReferences, ...zhAgentControls, ...zhAgentExecution, ...zhConversationHandoff, ...zhModelPicker, ...zhDirectConversation, ...zhNativeExtensions, ...zhWorkflow, ...zhTakeover, ...zhTaskReview, ...zhRuntimeWorkflow, ...zhWorkbenchLayout, ...zhWorkbenchNavigation, ...zhCapabilities, ...zhDirect, ...zhReview, ...zhVoice, ...zhAssets, ...zhStorage, ...zhExecution, ...zhCli, ...zhGeneration, ...zhDelivery, ...zh0, ...zh1, ...zh2, ...zh3, ...zh4, ...zh5, ...zh6, ...zh7, ...zh8, ...zh9, ...zh10, ...zh11, ...zh12, ...zh13, ...zh14, ...zh15, ...zh16, ...zh17, ...zh18, ...zh19, ...zh20, ...zh21, ...zh22, ...zh23, ...zh24 },
+  'en-US': { ...enWorkbenchFiles, ...enWorkbenchGit, ...enWorkbenchRuntime, ...enWorkbenchReferences, ...enAgentControls, ...enAgentExecution, ...enConversationHandoff, ...enModelPicker, ...enDirectConversation, ...enNativeExtensions, ...enWorkflow, ...enTakeover, ...enTaskReview, ...enRuntimeWorkflow, ...enWorkbenchLayout, ...enWorkbenchNavigation, ...enCapabilities, ...enDirect, ...enReview, ...enVoice, ...enAssets, ...enStorage, ...enExecution, ...enCli, ...enGeneration, ...enDelivery, ...en0, ...en1, ...en2, ...en3, ...en4, ...en5, ...en6, ...en7, ...en8, ...en9, ...en10, ...en11, ...en12, ...en13, ...en14, ...en15, ...en16, ...en17, ...en18, ...en19, ...en20, ...en21, ...en22, ...en23, ...en24 },
 };
