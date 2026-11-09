@@ -100,6 +100,7 @@ async fn settled(app: &AppHandle, sid: &str) -> Journey<Value> {
 }
 
 async fn journey(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>) -> Journey<()> {
+    if std::env::var_os("DGOS_EXPLORER_SMOKE").is_some() { return explorer_file_journey(app, fx, ck, ev).await; }
     let (account, _) = app.state::<Arc<SessionResolver>>().agent_session().map_err(|_| "local account absent")?;
     let owner = account.user_id().to_owned();
     let current = host(app, "get_cli_preferences", json!({})).await?;
@@ -218,3 +219,5 @@ pub(super) async fn run(app: &AppHandle, fx: &Fx, mut ck: Checks, mut ev: Vec<Va
     save(fx, "result", &json!({"passed":ck.passed,"failed":ck.failed,"checks":ev,"native_cli":false,"model_calls":0,"limitations":["Deterministic protocol fixture, not real Codex/Claude/model acceptance","Native synthesized keys, not physical keyboard/OS IME","Separate browser matrix is supplementary, not a WebView replacement"]}));
     app.exit(if ck.failed.is_empty() { 0 } else { 1 });
 }
+
+include!("explorer_file_journey.rs");

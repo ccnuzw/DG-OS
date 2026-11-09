@@ -319,7 +319,7 @@ const previous=localStorage.getItem(A.key);localStorage.removeItem(A.key);return
     let task=selected["task_id"].as_str().ok_or("task A absent")?.to_owned();
     let project=selected["project_id"].as_str().ok_or("project A absent")?.to_owned();
     step(app,fx,ck,ev,"inspect full resolved context details",json!({"path":a}),r#"
-const d=await need('dev-context-details');if(d.tagName==='DETAILS')d.open=true;else d.click();
+const projects=await need('dev-tool-projects');if(projects.getAttribute('aria-expanded')!=='true')projects.click();const d=await need('dev-context-details');if(d.tagName==='DETAILS')d.open=true;else d.click();
 const ready=!!await until(()=>txt(tid('dev-context-details')).includes(A.path));const text=txt(tid('dev-context-details'));if(d.tagName==='DETAILS')d.open=false;
 return {ok:ready,text};
 "#).await?;

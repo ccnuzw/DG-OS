@@ -176,7 +176,7 @@ const a=await need('agent-event-'+A.seq);const r=$$('[data-reference-path]',a).f
 
 async fn attach(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>, sid: &str, native: &Value) -> Journey<()> {
     // Re-enter the saved run while still live. Only a snapshot may be requested.
-    step(app,fx,ck,ev,"leave live session for a blank conversation without a model request",json!({}),r#"const active=$$('[data-testid^="dev-tool-"]').find(e=>e.getAttribute('aria-expanded')==='true');if(document.querySelector('.agent-workbench')?.dataset.compact==='true'&&active)active.click();await click('dev-new-conversation');return {ok:!!await until(()=>tid('dev-project-conversation'))};"#).await?;
+    step(app,fx,ck,ev,"leave live session for a blank conversation without a model request",json!({}),r#"const projects=await need('dev-tool-projects');if(projects.getAttribute('aria-expanded')!=='true')projects.click();const create=document.querySelector('.dev-tree-project-row.is-current [data-testid^="dev-project-new-"]');if(!create||create.disabled)throw Error('new conversation unavailable');create.click();return {ok:!!await until(()=>tid('dev-project-conversation'))};"#).await?;
     navigation(app).await?;
     step(app,fx,ck,ev,"attach saved live run through session history without native reopen",json!({"sid":sid}),r#"
 const p=window.__round3Workflows,index=p.events.length;const row=await need('dev-session-item-'+A.sid);const select=row.querySelector('.dev-session-select');if(!select||select.disabled)throw Error('saved live session select absent');select.click();const projects=await need('dev-tool-projects');if(document.querySelector('.agent-workbench')?.dataset.compact==='true'&&projects.getAttribute('aria-expanded')==='true')projects.click();
