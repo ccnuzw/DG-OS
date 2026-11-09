@@ -1,0 +1,17 @@
+export default {
+  'conversationHandoff.title': 'Continue with another model',
+  'conversationHandoff.cancel': 'Cancel',
+  'conversationHandoff.historyNotice': 'The target starts a separate native CLI history. The source session and its history remain unchanged.',
+  'conversationHandoff.notice': 'Creates a fresh target session with this draft. Nothing is sent until you explicitly send it from that session.',
+  'conversationHandoff.remaining': 'What remains to be done',
+  'conversationHandoff.prepare': 'Prepare continuation draft',
+  'conversationHandoff.summary': 'Review and edit the handoff summary',
+  'conversationHandoff.loadingWorkspace': 'Loading task directory…',
+  'conversationHandoff.permissionsNotice': 'The new native CLI session may request its own permissions. This handoff does not grant permissions on the target model’s behalf.',
+  'conversationHandoff.trust': 'I explicitly trust this exact directory for the new session',
+  'conversationHandoff.create': 'Create target session with draft',
+  'conversationHandoff.chooseDifferent': 'Choose a different model from the source session; the source binding is never changed.',
+  'conversationHandoff.reserved': 'This handoff has a durable reservation or unknown outcome. It will not be retried; refresh the handoff history before taking further action.',
+  'conversationHandoff.recheck': 'Check handoff status',
+  'conversationHandoff.attach': 'Open target session',
+} as const;

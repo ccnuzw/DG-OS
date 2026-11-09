@@ -12,6 +12,7 @@ mod transport;
 mod diagnostics;
 pub mod files;
 pub mod review;
+pub mod references;
 pub mod runtime;
 pub mod workspaces;
 pub mod git;

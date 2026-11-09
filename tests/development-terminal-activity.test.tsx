@@ -13,15 +13,15 @@ interface TerminalDouble {
   refreshes: Array<[number, number]>; resizeCalls: Array<[number, number]>; rendered: string; accessible: string; focus: Mock;
   data: (value: string) => void; key: () => boolean;
 }
-const harness = vi.hoisted(() => ({ invoke: vi.fn(), instances: [] as TerminalDouble[], observers: [] as Array<{ connected: boolean; callback: () => void }>, width: 640, height: 320, cols: 80, rows: 24, fits: 0, metrics: true, measurable: true }));
+const harness = vi.hoisted(() => ({ invoke: vi.fn(), instances: [] as TerminalDouble[], observers: [] as Array<{ connected: boolean; callback: () => void }>, width: 640, height: 320, cols: 80, rows: 24, fits: 0, metrics: true, measurable: true, deferRestore: false, restored: [] as Array<() => void> }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: harness.invoke }));
 vi.mock('../src/i18n', () => ({ useLocale: () => ({ t: (key: string) => key }) }));
 vi.mock('@xterm/xterm', () => ({ Terminal: class {
   rows = 24; cols = 80; options: Record<string, unknown>; chunks: string[] = []; resets = 0; disposed = false;
   refreshes: Array<[number, number]> = []; resizeCalls: Array<[number, number]> = []; rendered = ''; accessible = ''; focus = vi.fn();
   data: (data: string) => void = () => {}; key: () => boolean = () => true;
-  constructor(options: Record<string, unknown>) { this.options = options; harness.instances.push(this); }
-  loadAddon() {} open() {} write(value: string) { this.chunks.push(value); } reset() { this.resets++; }
+  constructor(options: Record<string, unknown>) { this.options = options; this.rows = Number(options.rows ?? 24); this.cols = Number(options.cols ?? 80); harness.instances.push(this); }
+  loadAddon() {} open() {} write(value: string, callback?: () => void) { this.chunks.push(value); if (callback) { if (harness.deferRestore) harness.restored.push(callback); else callback(); } } reset() { this.resets++; }
   resize(cols: number, rows: number) { this.resizeCalls.push([cols, rows]); this.cols = cols; this.rows = rows; if (harness.measurable) harness.metrics = true; }
   refresh(start: number, end: number) { this.refreshes.push([start, end]); this.rendered = this.accessible = this.chunks.join(''); }
   onData(callback: (data: string) => void) { this.data = callback; return { dispose() {} }; }
@@ -45,6 +45,7 @@ beforeEach(() => {
   vi.useFakeTimers(); useDevelopment.getState().reset();
   useDevelopmentRuntime.setState({ taskId: 't', selected: 'pty', processes: [process()], operations: [] });
   harness.width = 640; harness.height = 320; harness.cols = 80; harness.rows = 24; harness.fits = 0; harness.metrics = true; harness.measurable = true;
+  harness.deferRestore = false; harness.restored.length = 0;
   harness.invoke.mockResolvedValue(null);
   vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => harness.width);
@@ -346,4 +347,79 @@ it('updates the existing terminal from theme variables and remeasures loaded fon
   act(() => { fonts.dispatchEvent(new Event('loadingdone')); }); await advance();
   expect(instance.resizeCalls).toHaveLength(disposedMeasures);
   document.documentElement.removeAttribute('data-preset');
+});
+
+it('restores acknowledged size and clear-display position after remount without deleting history or replaying input', async () => {
+  const view = show(); await advance(); const first = harness.instances[0];
+  first.data('once\r'); await advance();
+  fireEvent.click(screen.getByTestId('dev-terminal-clear')); await advance();
+  expect(first.chunks.at(-1)).toBe('\x1b[2J\x1b[3J\x1b[H');
+  expect(useDevelopmentRuntime.getState().processes[0].output).toBe('one\r\n');
+  await view.update(false, false, process('one\r\ntwo\r\n'));
+  await view.update(false, false, process('one\r\ntwo\r\n'), false);
+  await view.update(true, true, process('one\r\ntwo\r\n'));
+  const restored = harness.instances[1];
+  expect(restored.chunks).toEqual(['two\r\n']);
+  expect(restored.options).toMatchObject({ rows: 24, cols: 80 });
+  expect(calls('resize_development_terminal')).toHaveLength(1);
+  expect(calls('write_development_terminal').map(([, args]) => args.input.data)).toEqual(['once\r']);
+  expect(calls('start_development_process')).toHaveLength(0); expect(calls('stop_development_process')).toHaveLength(0);
+  await view.update(true, true, { ...process('other task\r\n'), id: 'other', task_id: 'other-task' });
+  expect(harness.instances[2].chunks).toEqual(['other task\r\n']);
+});
+
+it('suppresses terminal-query responses while replaying a restored snapshot and accepts only fresh input afterwards', async () => {
+  harness.deferRestore = true;
+  show(); await advance(); const instance = harness.instances[0];
+  instance.data('\x1b[1;1R'); await advance();
+  expect(calls('write_development_terminal')).toHaveLength(0);
+  act(() => { harness.restored.splice(0).forEach(ready => ready()); });
+  instance.data('fresh\r'); await advance();
+  expect(calls('write_development_terminal').map(([, args]) => args.input.data)).toEqual(['fresh\r']);
+});
+
+it('keeps an unknown-write warning across remount without replaying it through clear display', async () => {
+  harness.invoke.mockImplementation(async (command: string) => { if (command === 'write_development_terminal') throw 'unknown'; return null; });
+  const view = show(); await advance(); harness.instances[0].data('unconfirmed\r'); await advance();
+  await view.update(true, true, process(), false); await view.update();
+  expect(screen.getByTestId('dev-terminal-input-feedback')).toBeTruthy();
+  fireEvent.click(screen.getByTestId('dev-terminal-clear')); await advance();
+  expect(screen.getByTestId('dev-terminal-input-feedback')).toBeTruthy();
+  expect(calls('write_development_terminal')).toHaveLength(1);
+});
+
+it('treats parent panel collapse independently of surface activity and never makes native output interactive', async () => {
+  const value = process();
+  const view = render(<DevelopmentTerminal process={value} panelVisible={false} />); await advance();
+  const instance = harness.instances[0]; instance.data('collapsed\r'); await advance();
+  expect(calls('resize_development_terminal')).toHaveLength(0); expect(calls('write_development_terminal')).toHaveLength(0);
+  view.rerender(<DevelopmentTerminal process={value} panelVisible />); await advance();
+  expect(harness.instances).toHaveLength(1); expect(calls('resize_development_terminal')).toHaveLength(1);
+  view.rerender(<DevelopmentTerminal process={{ ...value, id: 'native', source: 'native_agent' }} panelVisible />); await advance();
+  harness.instances.at(-1)!.data('native\r'); await advance();
+  expect(calls('resize_development_terminal')).toHaveLength(1); expect(calls('write_development_terminal')).toHaveLength(0);
+  expect(calls('start_development_process')).toHaveLength(0); expect(calls('stop_development_process')).toHaveLength(0);
+});
+
+it.each([[0, 80], [24, 0], [1001, 80], [24, 1001], [1.5, 80], [24, Number.POSITIVE_INFINITY]])('rejects out-of-bound layout %s × %s before xterm or PTY resizing', async (rows, cols) => {
+  harness.rows = rows; harness.cols = cols;
+  show(); await advance();
+  expect(calls('resize_development_terminal')).toHaveLength(0);
+  expect(harness.instances[0].resizeCalls.every(([width, height]) => width === 80 && height === 24)).toBe(true);
+});
+
+it('serializes a resize still in flight across remount and dispatches only the latest valid size afterwards', async () => {
+  const pending = Promise.withResolvers<null>();
+  harness.invoke.mockImplementation((command: string) => command === 'resize_development_terminal' ? pending.promise : Promise.resolve(null));
+  const view = show(); await advance();
+  await view.update(true, true, process(), false);
+  harness.cols = 100;
+  await view.update();
+  expect(calls('resize_development_terminal')).toHaveLength(1);
+  harness.invoke.mockResolvedValue(null);
+  await act(async () => { pending.resolve(null); }); await advance();
+  expect(calls('resize_development_terminal')).toHaveLength(2);
+  expect(calls('resize_development_terminal').at(-1)?.[1].input).toEqual({ id: 'pty', rows: 24, cols: 100 });
+  expect(calls('write_development_terminal')).toHaveLength(0);
+  expect(calls('start_development_process')).toHaveLength(0); expect(calls('stop_development_process')).toHaveLength(0);
 });

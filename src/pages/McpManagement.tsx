@@ -15,7 +15,7 @@ import {
 } from '../stores/mcpStore';
 import './McpManagement.css';
 import NativeManager from '../components/nativeExtensions/NativeManager';
-import { useCapabilityEntry } from '../components/chat/RuntimeNavigation';
+import { CapabilityReturn, useCapabilityEntry } from '../components/chat/RuntimeNavigation';
 
 const emptyConfig = (): CreateMcpServerRequest => ({
   name: '', transport: 'stdio', stdio: { executable: '', args: [] },
@@ -468,6 +468,7 @@ export default function McpManagement() {
           <Button variant="secondary" size="xs" disabled={loading} onClick={() => void fetch()}>{t('mcp.refreshStatus')}</Button></>}
         </div>
       </header>
+      <CapabilityReturn path="/mcp" />
       <div className={nativeMode ? 'flex min-h-0 flex-1 flex-col' : 'hidden'} hidden={!nativeMode}>{nativeOpened.current && <NativeManager kind="mcp" initialSelection={capabilityEntry.nativeSelection} initialSessionId={capabilityEntry.sessionId} />}</div>
       <div className={nativeMode ? 'hidden' : 'contents'} hidden={nativeMode}>
       {error && <div role="alert" className="rounded-lg border border-status-error bg-status-error-surface px-4 py-3 text-sm text-status-error-text wrap-anywhere">{error}</div>}

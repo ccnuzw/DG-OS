@@ -15,7 +15,7 @@ pub enum OpenAgentSessionInput {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SendAgentMessageInput { session_id: String, generation: String, request_id: String, text: String }
+pub struct SendAgentMessageInput { session_id: String, generation: String, request_id: String, text: String, settings: Option<dgos_agents::session::AgentTurnSettings>, #[serde(default)] references: Vec<dgos_agents::references::ConversationReference> }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RespondAgentRequestInput { session_id: String, generation: String, request_id: String, response: Value }
@@ -49,7 +49,7 @@ pub async fn get_agent_session(app: tauri::AppHandle, window: WebviewWindow, ses
 #[tauri::command]
 pub async fn send_agent_message(app: tauri::AppHandle, window: WebviewWindow, input: SendAgentMessageInput) -> Result<(), String> {
     let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
-    app.state::<AgentManager>().send(context.user_id(), &input.session_id, &input.generation, input.request_id, input.text).await
+    app.state::<AgentManager>().send(context.user_id(), &input.session_id, &input.generation, input.request_id, input.text, input.settings, input.references).await
 }
 #[tauri::command]
 pub async fn respond_agent_request(app: tauri::AppHandle, window: WebviewWindow, input: RespondAgentRequestInput) -> Result<(), String> {

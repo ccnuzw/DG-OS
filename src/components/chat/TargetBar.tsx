@@ -2,20 +2,21 @@ import { t, useLocale as usePageLocale } from '../../i18n';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowDown, ArrowUp, Brain, Puzzle } from 'lucide-react';
-import { Button, Checkbox, Icon, Input, Popover, cn } from '@dgos/ui';
+import { Button, Icon, Input, Popover, cn } from '@dgos/ui';
 import type { Model, Provider } from '../../stores/providerStore';
 import type { Skill } from '../../stores/skillsStore';
 import { useChatStore, type ChatSession, type ChatTargetInput } from '../../stores/chatStore';
 import { FOCUS_RING } from '@dgos/ui/lib/focus';
 import { fetchModels, fetchProviders, fetchSkills } from './catalog';
-import { GenerationControls, ReasoningControls } from './GenerationControls';
+import { GenerationControls } from './GenerationControls';
 import { useSurfaceActive } from '../../workspace/SurfaceContext';
 import { useDevelopment } from '../../stores/developmentStore';
+import { skillCategoryLabel } from '../../i18n/skillCategories';
 
 const LINK = cn('chat-picker-manage text-accent-default', FOCUS_RING);
 export const SKILL_SELECT_ID = 'chat-skill-select';
 type Picker = 'skills' | 'settings' | 'model' | 'effort';
-interface TargetSlots { skills: ReactNode; settings: ReactNode; model: ReactNode; effort: ReactNode; context: ReactNode; feedback: ReactNode }
+interface TargetSlots { skills: ReactNode; settings: ReactNode; model: ReactNode; effort: ReactNode; context: ReactNode }
 const snapshot = (session: ChatSession): ChatTargetInput => ({ provider_id: session.provider_id, model_id: session.model_id, skill_ids: session.skills.map(s => s.skill_id), no_skill: session.no_skill_confirmed, generation: session.generation });
 
 export default function TargetBar({ session, skillRequest = 0, children }: { session: ChatSession; skillRequest?: number; children: (slots: TargetSlots) => ReactNode }) {
@@ -41,7 +42,7 @@ export default function TargetBar({ session, skillRequest = 0, children }: { ses
   const [skillCategory, setSkillCategory] = useState<string | null>(null);
   const [modelCatalog, setModelCatalog] = useState<Record<string, Model[]>>({});
   const [modelState, setModelState] = useState<{ provider: string | null; loading: boolean; failed: boolean }>({ provider: null, loading: false, failed: false });
-  const [status, setStatus] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [status, setStatus] = useState<{ tone: 'error'; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const sessionId = useRef(session.id);
@@ -120,14 +121,52 @@ export default function TargetBar({ session, skillRequest = 0, children }: { ses
     if (!error) setSessionTargetDraft(applyingSession, null);
     if (sessionId.current !== applyingSession) return;
     if (!error) setMenu(null);
-    setStatus(error ? { tone: 'error', text: error } : { tone: 'ok', text: t('chat.targetUpdated') });
+    setStatus(error ? { tone: 'error', text: error } : null);
+  };
+  const chooseModel = async (providerId: string, modelId: string) => {
+    if (locked || savingRef.current) return;
+    const applyingSession = session.id;
+    const applyingAccount = account;
+    const savedTarget = { ...snapshot(session), provider_id: providerId, model_id: modelId };
+    savingRef.current = true;
+    setSaving(true);
+    setStatus(null);
+    const error = session.provider_id === providerId && session.model_id === modelId
+      ? null : await updateTarget(applyingSession, savedTarget);
+    savingRef.current = false;
+    setSaving(false);
+    if (useDevelopment.getState().epoch !== applyingAccount || sessionId.current !== applyingSession) return;
+    if (error) { setStatus({ tone: 'error', text: error }); return; }
+    const next = { ...target, provider_id: providerId, model_id: modelId };
+    setTarget(next);
+    setSessionTargetDraft(applyingSession, JSON.stringify(next) === JSON.stringify(savedTarget) ? null : next);
+    setMenu(null);
+  };
+  const saveSkills = async (skillIds: string[]) => {
+    if (locked || savingRef.current) return;
+    const applyingSession = session.id;
+    const applyingAccount = account;
+    const savedTarget = { ...snapshot(session), skill_ids: skillIds, no_skill: false };
+    savingRef.current = true;
+    setSaving(true);
+    setStatus(null);
+    const error = await updateTarget(applyingSession, savedTarget);
+    savingRef.current = false;
+    setSaving(false);
+    if (useDevelopment.getState().epoch !== applyingAccount || sessionId.current !== applyingSession) return;
+    if (error) { setStatus({ tone: 'error', text: error }); setMenu('skills'); return; }
+    const next = { ...target, skill_ids: skillIds, no_skill: false };
+    setTarget(next);
+    setSessionTargetDraft(applyingSession, JSON.stringify(next) === JSON.stringify(savedTarget) ? null : next);
+    setMenu(null);
   };
   const moveSkill = (index: number, offset: number) => {
-    const selected = [...target.skill_ids];
+    const selected = session.skills.map(skill => skill.skill_id);
     [selected[index], selected[index + offset]] = [selected[index + offset], selected[index]];
-    patch({ skill_ids: selected, no_skill: false });
+    void saveSkills(selected);
   };
-  const removeSkill = (id: string) => { if (locked) return; patch({ skill_ids: target.skill_ids.filter(item => item !== id), no_skill: false }); setMenu('skills'); };
+  const removeSkill = (id: string) => { void saveSkills(session.skills.filter(skill => skill.skill_id !== id).map(skill => skill.skill_id)); };
+  const selectedSkillIds = session.skills.map(skill => skill.skill_id);
   const selectedProvider = providers.find(provider => provider.id === target.provider_id);
   const selectedModel = target.provider_id ? modelCatalog[target.provider_id]?.find(model => model.model_id === target.model_id) : undefined;
   const browseModels = browseProvider ? modelCatalog[browseProvider] ?? [] : [];
@@ -138,8 +177,31 @@ export default function TargetBar({ session, skillRequest = 0, children }: { ses
   const activeSkillCategory = skillCategory && skillCategories.includes(skillCategory) ? skillCategory : null;
   const filteredSkills = skills.filter(skill => (!activeSkillCategory || skill.manifest?.category?.trim() === activeSkillCategory) && `${skill.name} ${skill.skill_id} ${skill.description ?? ''}`.toLocaleLowerCase().includes(skillQuery.trim().toLocaleLowerCase()));
   const skillName = (id: string) => skills.find(skill => skill.skill_id === id)?.name ?? id;
-  const effort = target.generation.reasoning?.effort;
-  const effortLabel = t(`generation.${effort === 'low' ? 'low' : effort === 'medium' ? 'effortMedium' : effort === 'high' ? 'high' : 'default'}`);
+  const effort = session.generation.reasoning?.effort;
+  const effortValues = [undefined, 'low', 'medium', 'high'] as const;
+  const effortIndex = Math.max(0, effortValues.findIndex(value => value === effort));
+  const effortNames = [t('chat.reasoningDefault'), t('generation.low'), t('generation.effortMedium'), t('generation.high')];
+  const setEffort = async (index: number) => {
+    if (locked || savingRef.current || !session.provider_id || !session.model_id) return;
+    const applyingSession = session.id;
+    const applyingAccount = account;
+    const reasoning = index === 0 ? null : { effort: effortValues[index], ...(session.generation.reasoning?.budget_tokens !== undefined ? { budget_tokens: session.generation.reasoning.budget_tokens } : {}) };
+    const savedTarget = { ...snapshot(session), generation: { ...session.generation, reasoning } };
+    savingRef.current = true;
+    setSaving(true);
+    setStatus(null);
+    const error = await updateTarget(applyingSession, savedTarget);
+    savingRef.current = false;
+    setSaving(false);
+    if (useDevelopment.getState().epoch !== applyingAccount || sessionId.current !== applyingSession) return;
+    if (error) { setStatus({ tone: 'error', text: error }); return; }
+    const next = { ...target, generation: { ...target.generation, reasoning } };
+    setTarget(next);
+    setSessionTargetDraft(applyingSession, JSON.stringify(next) === JSON.stringify(savedTarget) ? null : next);
+    setMenu(null);
+  };
+  const browsingProvider = providers.find(provider => provider.id === browseProvider);
+  const effortLabel = effortNames[effortIndex];
   const footer = <footer className="chat-picker-footer">
     <span className={cn('chat-picker-description', dirty && 'chat-target-pending')}>{t(dirty ? 'chat.targetDraftHelp' : 'chat.targetHelp')}</span>
     <Button variant="secondary" disabled={locked || !ready || !dirty} loading={saving} onClick={() => void apply()}>{t('chat.applyTarget')}</Button>
@@ -150,37 +212,35 @@ export default function TargetBar({ session, skillRequest = 0, children }: { ses
   const skillsContent = <section className="chat-target-popover chat-skills-popover">
     {header('skills', t('chat.selectSkills'))}
     <Input id={SKILL_SELECT_ID} type="search" label={t('chat.searchSkills')} placeholder={t('chat.searchSkillsPlaceholder')} value={skillQuery} onChange={event => setSkillQuery(event.target.value)} />
-    <nav className="chat-skill-categories" aria-label={t('chat.skillCategories')}><Button variant="ghost" size="xxs" aria-pressed={!activeSkillCategory} onClick={() => setSkillCategory(null)}>{t('chat.allSkillCategories')}</Button>{skillCategories.map(category => <Button key={category} variant="ghost" size="xxs" aria-pressed={activeSkillCategory === category} onClick={() => setSkillCategory(category)}>{category}</Button>)}</nav>
+    <nav className="chat-skill-categories" aria-label={t('chat.skillCategories')}><Button variant="ghost" size="xxs" aria-pressed={!activeSkillCategory} onClick={() => setSkillCategory(null)}>{t('chat.allSkillCategories')}</Button>{skillCategories.map(category => <Button key={category} variant="ghost" size="xxs" aria-pressed={activeSkillCategory === category} onClick={() => setSkillCategory(category)}>{skillCategoryLabel(category)}</Button>)}</nav>
     <div className="chat-picker-results" aria-label={t('chat.selectSkills')} aria-busy={catalogLoading}>
-      {catalogLoading ? <p role="status" className="chat-picker-empty">{t('chat.loadingSkills')}</p> : skillError ? <div role="alert" className="chat-picker-empty">{t('chat.skillsFailed')} {retry}</div> : !skills.length ? <p className="chat-picker-empty">{t('chat.noAvailableSkills')}</p> : !filteredSkills.length ? <p className="chat-picker-empty">{t('chat.noMatchingSkills')}</p> : filteredSkills.map(skill => <Button key={skill.skill_id} variant="ghost" className="chat-skill-option" aria-label={skill.name} aria-pressed={target.skill_ids.includes(skill.skill_id)} disabled={locked} onClick={() => patch({ skill_ids: target.skill_ids.includes(skill.skill_id) ? target.skill_ids.filter(id => id !== skill.skill_id) : [...target.skill_ids, skill.skill_id], no_skill: false })}>
-        <span className="chat-skill-icon"><Puzzle size={16} aria-hidden="true" /></span><span className="chat-picker-option-copy"><strong>{skill.name}</strong><small>{skill.description || t('chat.noDescription')}</small></span><span className="chat-skill-version">{skill.version}</span>{target.skill_ids.includes(skill.skill_id) && <Icon name="check" size="sm" />}
+      {catalogLoading ? <p role="status" className="chat-picker-empty">{t('chat.loadingSkills')}</p> : skillError ? <div role="alert" className="chat-picker-empty">{t('chat.skillsFailed')} {retry}</div> : !skills.length ? <p className="chat-picker-empty">{t('chat.noAvailableSkills')}</p> : !filteredSkills.length ? <p className="chat-picker-empty">{t('chat.noMatchingSkills')}</p> : filteredSkills.map(skill => <Button key={skill.skill_id} variant="ghost" className="chat-skill-option" aria-label={skill.name} aria-pressed={session.skills.some(selected => selected.skill_id === skill.skill_id)} disabled={locked} onClick={() => void saveSkills(session.skills.some(selected => selected.skill_id === skill.skill_id) ? session.skills.filter(selected => selected.skill_id !== skill.skill_id).map(selected => selected.skill_id) : [...session.skills.map(selected => selected.skill_id), skill.skill_id])}>
+        <span className="chat-skill-icon"><Puzzle size={16} aria-hidden="true" /></span><span className="chat-picker-option-copy"><strong>{skill.name}</strong><small>{skill.description || t('chat.noDescription')}</small></span><span className="chat-skill-version">{skill.version}</span>{selectedSkillIds.includes(skill.skill_id) && <Icon name="check" size="sm" />}
       </Button>)}
     </div>
-    {target.skill_ids.length > 0 && <section className="chat-selected-skills" aria-label={t('chat.selectedSkillOrder')}><strong className="chat-picker-caption">{t('chat.selectedSkillOrder')}</strong><ol>{target.skill_ids.map((id, index) => <li key={id} className="chat-selected-skill-row"><span>{skillName(id)}</span><div className="chat-selected-skill-actions"><Button size="xxs" variant="ghost" iconOnly disabled={locked || index === 0} aria-label={`${t('generation.moveUp')} ${skillName(id)}`} onClick={() => moveSkill(index, -1)}><ArrowUp size={14} aria-hidden="true" /></Button><Button size="xxs" variant="ghost" iconOnly disabled={locked || index === target.skill_ids.length - 1} aria-label={`${t('generation.moveDown')} ${skillName(id)}`} onClick={() => moveSkill(index, 1)}><ArrowDown size={14} aria-hidden="true" /></Button><Button size="xxs" variant="ghost" iconOnly disabled={locked} aria-label={t('chat.removeSkill', { name: skillName(id) })} onClick={() => removeSkill(id)}><Icon name="close" size="sm" /></Button></div></li>)}</ol></section>}
-    {!target.skill_ids.length && <Checkbox label={t('chat.explicitNoSkill')} checked={target.no_skill} disabled={locked} onChange={no_skill => patch({ no_skill })} />}
-    {target.skill_ids.length > 1 && <p className="chat-picker-description">{t('generation.combinationNotice')}</p>}
+    {selectedSkillIds.length > 0 && <section className="chat-selected-skills" aria-label={t('chat.selectedSkillOrder')}><strong className="chat-picker-caption">{t('chat.selectedSkillOrder')}</strong><ol>{selectedSkillIds.map((id, index) => <li key={id} className="chat-selected-skill-row"><span>{skillName(id)}</span><div className="chat-selected-skill-actions"><Button size="xxs" variant="ghost" iconOnly disabled={locked || index === 0} aria-label={`${t('generation.moveUp')} ${skillName(id)}`} onClick={() => moveSkill(index, -1)}><ArrowUp size={14} aria-hidden="true" /></Button><Button size="xxs" variant="ghost" iconOnly disabled={locked || index === selectedSkillIds.length - 1} aria-label={`${t('generation.moveDown')} ${skillName(id)}`} onClick={() => moveSkill(index, 1)}><ArrowDown size={14} aria-hidden="true" /></Button><Button size="xxs" variant="ghost" iconOnly disabled={locked} aria-label={t('chat.removeSkill', { name: skillName(id) })} onClick={() => removeSkill(id)}><Icon name="close" size="sm" /></Button></div></li>)}</ol></section>}
+    {selectedSkillIds.length > 1 && <p className="chat-picker-description">{t('generation.combinationNotice')}</p>}
     <Link to="/skills" state={{ capabilityEntry: { runtime: 'dgos' } }} className={LINK}>{t('chat.manageSkills')}</Link>
-    {footer}
+    {status?.tone === 'error' && <p role="alert" className="chat-target-feedback text-status-error-text">{status.text}</p>}
   </section>;
   const modelContent = <section className="chat-target-popover chat-model-popover">
     {header('model', t('chat.selectProviderModel'))}
     <div className="chat-model-picker-body"><nav className="chat-provider-list" aria-label={t('chat.provider')} aria-busy={catalogLoading}>
       {catalogLoading ? <p role="status" className="chat-picker-empty">{t('chat.loadingProviders')}</p> : providerError ? <div role="alert" className="chat-picker-empty">{t('chat.providersFailed')} {retry}</div> : !providers.length ? <p className="chat-picker-empty">{t('chat.noProviderBefore')}<Link to="/settings/providers" className={LINK}>{t('chat.providerPage')}</Link>{t('chat.noProviderAfter')}</p> : providers.map(provider => <Button key={provider.id} variant="ghost" className="chat-provider-option" aria-label={provider.name} aria-pressed={browseProvider === provider.id} disabled={locked} onClick={() => { setBrowseProvider(provider.id); setModelQuery(''); }}><span className="chat-provider-mark" aria-hidden="true">{provider.name.slice(0, 1)}</span><span>{provider.name}</span>{browseProvider === provider.id && <Icon name="chevron-right" size="sm" />}</Button>)}
       <Link to="/settings/providers" className={LINK}><Icon name="settings" size="sm" />{t('chat.manageProviders')}</Link>
-    </nav><section className="chat-model-list" aria-label={t('chat.model')}><Input type="search" label={t('chat.searchModels')} placeholder={t('chat.searchModelsPlaceholder')} value={modelQuery} onChange={event => setModelQuery(event.target.value)} /><p className="chat-picker-caption">{providers.find(provider => provider.id === browseProvider)?.name ?? t('chat.selectProvider')}</p><div className="chat-picker-results" aria-busy={modelsLoading}>
-      {!browseProvider ? <p className="chat-picker-empty">{t('chat.selectProvider')}</p> : modelsLoading ? <p role="status" className="chat-picker-empty">{t('chat.loadingModels')}</p> : modelsFailed ? <div role="alert" className="chat-picker-empty">{t('chat.modelsFailed')} {retry}</div> : !browseModels.length ? <p className="chat-picker-empty">{t('chat.noAvailableModels')}</p> : !filteredModels.length ? <p className="chat-picker-empty">{t('chat.noMatchingModels')}</p> : filteredModels.map(model => <Button key={model.id} variant="ghost" className="chat-model-option" aria-label={model.model_name} aria-pressed={target.provider_id === browseProvider && target.model_id === model.model_id} disabled={locked} onClick={() => patch({ provider_id: browseProvider, model_id: model.model_id })}><span className="chat-picker-option-copy"><strong>{model.model_name}</strong><small>{model.model_id}</small></span>{model.context_window ? <span className="chat-model-context">{t('chat.modelContext', { count: model.context_window })}</span> : null}{target.provider_id === browseProvider && target.model_id === model.model_id && <Icon name="check" size="sm" />}</Button>)}
+    </nav><section className="chat-model-list" aria-label={t('chat.model')}><div className="chat-model-provider-summary"><Icon name="globe" /><div><strong>{browsingProvider?.name ?? t('chat.selectProvider')}</strong><small>{browsingProvider?.provider_type}</small></div></div><Input type="search" aria-label={t('chat.searchModels')} placeholder={t('chat.searchModelsPlaceholder')} value={modelQuery} onChange={event => setModelQuery(event.target.value)} /><div className="chat-picker-results" aria-busy={modelsLoading}>
+      {!browseProvider ? <p className="chat-picker-empty">{t('chat.selectProvider')}</p> : modelsLoading ? <p role="status" className="chat-picker-empty">{t('chat.loadingModels')}</p> : modelsFailed ? <div role="alert" className="chat-picker-empty">{t('chat.modelsFailed')} {retry}</div> : !browseModels.length ? <p className="chat-picker-empty">{t('chat.noAvailableModels')}</p> : !filteredModels.length ? <p className="chat-picker-empty">{t('chat.noMatchingModels')}</p> : filteredModels.map(model => <Button key={model.id} variant="ghost" className="chat-model-option" aria-label={model.model_name} aria-pressed={session.provider_id === browseProvider && session.model_id === model.model_id} disabled={locked} onClick={() => void chooseModel(browseProvider!, model.model_id)}><span className="chat-picker-option-copy"><strong>{model.model_name}</strong></span>{session.provider_id === browseProvider && session.model_id === model.model_id && <Icon name="check" size="sm" />}</Button>)}
     </div></section></div>
-    {footer}
+    {status?.tone === 'error' && <p role="alert" className="chat-target-feedback text-status-error-text">{status.text}</p>}
   </section>;
   const settingsContent = <section className="chat-target-popover chat-settings-popover">{header('settings', t('chat.sessionSettings'))}<GenerationControls value={target.generation} onChange={generation => patch({ generation })} model={selectedModel} disabled={locked} />{footer}</section>;
-  const effortContent = <section className="chat-target-popover chat-effort-popover">{header('effort', t('chat.reasoningSettings'))}<ReasoningControls value={target.generation} onChange={generation => patch({ generation })} disabled={locked} /><p className="chat-picker-description">{t('generation.reasoningCapability', { state: t(`generation.${selectedModel?.capabilities?.reasoning ?? 'unknown'}`) })}</p>{footer}</section>;
+  const effortContent = <section className="chat-target-popover chat-effort-popover">{header('effort', t('chat.reasoningSettings'))}<div className="chat-effort-stops" role="group" aria-label={t('chat.reasoningSettings')}>{effortNames.map((label, index) => <Button key={index} variant="ghost" size="sm" aria-pressed={effortIndex === index} disabled={locked || !session.provider_id || !session.model_id || selectedModel?.capabilities?.reasoning === 'unsupported'} onClick={() => void setEffort(index)}>{label}</Button>)}</div>{status?.tone === 'error' && <p role="alert" className="chat-target-feedback text-status-error-text">{status.text}</p>}</section>;
 
   return children({
-    skills: <Popover label={t('chat.selectSkills')} side="top" align="start" open={menu === 'skills'} onOpenChange={open => openPicker('skills', open)} trigger={<Button aria-label={t('chat.selectSkills')} variant="ghost" size="sm" className="chat-composer-skill-button"><Puzzle size={16} aria-hidden="true" /><span>{t('chat.skills')}</span>{target.skill_ids.length > 0 && <span className="chat-skill-count">{target.skill_ids.length}</span>}</Button>} content={skillsContent} />,
+    skills: <Popover label={t('chat.selectSkills')} side="top" align="start" open={menu === 'skills'} onOpenChange={open => openPicker('skills', open)} trigger={<Button aria-label={t('chat.selectSkills')} title={t('chat.selectSkills')} variant="ghost" size="sm" iconOnly className="chat-composer-skill-button"><Puzzle size={16} aria-hidden="true" />{selectedSkillIds.length > 0 && <span className="chat-skill-count">{selectedSkillIds.length}</span>}</Button>} content={skillsContent} />,
     settings: <Popover label={t('chat.sessionSettings')} side="top" align="start" open={menu === 'settings'} onOpenChange={open => openPicker('settings', open)} trigger={<Button aria-label={t('chat.sessionSettings')} title={t('chat.sessionSettings')} variant="ghost" size="sm" iconOnly className="chat-composer-settings-button"><Icon name="settings" /></Button>} content={settingsContent} />,
-    model: <Popover label={t('chat.selectProviderModel')} side="top" align="end" open={menu === 'model'} onOpenChange={open => openPicker('model', open)} trigger={<Button aria-label={t('chat.target')} title={t('chat.selectProviderModel')} variant="ghost" size="sm" className="chat-composer-model-button"><span className="chat-provider-mini" aria-hidden="true">{selectedProvider?.name.slice(0, 1) ?? <Icon name="globe" size="sm" />}</span><span className="chat-model-button-label"><small>{selectedProvider?.name ?? target.provider_id ?? t('chat.provider')}</small><span>{selectedModel?.model_name ?? target.model_id ?? t('chat.selectModel')}</span></span><Icon name="chevron-down" size="sm" /></Button>} content={modelContent} />,
-    effort: <Popover label={t('chat.reasoningSettings')} side="top" align="end" open={menu === 'effort'} onOpenChange={open => openPicker('effort', open)} trigger={<Button aria-label={t('chat.reasoningEffort', { effort: effortLabel })} title={t('chat.reasoningSettings')} variant="ghost" size="sm" className="chat-composer-effort-button"><Brain size={14} aria-hidden="true" /><span>{effortLabel}</span><Icon name="chevron-down" size="sm" /></Button>} content={effortContent} />,
-    context: <>{target.skill_ids.map(id => <Button key={id} variant="ghost" size="xxs" className="chat-context-chip chat-skill-chip" disabled={locked} aria-label={t('chat.removeSkill', { name: skillName(id) })} onClick={() => removeSkill(id)}><Puzzle size={13} aria-hidden="true" /><span>{skillName(id)}</span><Icon name="close" size="sm" /></Button>)}</>,
-    feedback: <>{dirty && <span role="status" className="chat-target-pending">{t('chat.targetDraftPending')}</span>}{status?.tone === 'error' && !menu && <span role="alert" className="chat-target-feedback text-status-error-text">{status.text}</span>}<span role="status" className={cn('text-status-success-text', status?.tone !== 'ok' && 'sr-only')}>{status?.tone === 'ok' ? status.text : ''}</span></>,
+    model: <Popover label={t('chat.selectProviderModel')} side="top" align="end" open={menu === 'model'} onOpenChange={open => openPicker('model', open)} trigger={<Button aria-label={t('chat.target')} title={`${selectedProvider?.name ?? t('chat.provider')} · ${selectedModel?.model_name ?? target.model_id ?? t('chat.selectModel')}`} variant="ghost" size="sm" className={cn('chat-composer-model-button', (!session.provider_id || !session.model_id) && 'chat-control-required')}><Icon name="globe" size="sm" /><span className="chat-model-button-label">{selectedModel?.model_name ?? target.model_id ?? t('chat.selectModel')}</span></Button>} content={modelContent} />,
+    effort: <Popover label={t('chat.reasoningSettings')} side="top" align="end" open={menu === 'effort'} onOpenChange={open => openPicker('effort', open)} trigger={<Button aria-label={t('chat.reasoningEffort', { effort: effortLabel })} title={t('chat.reasoningSettings')} variant="ghost" size="sm" className="chat-composer-effort-button"><Brain size={16} aria-hidden="true" /><span>{effortLabel}</span></Button>} content={effortContent} />,
+    context: <>{selectedSkillIds.map(id => <Button key={id} variant="ghost" size="xxs" className="chat-context-chip chat-skill-chip" disabled={locked} aria-label={t('chat.removeSkill', { name: skillName(id) })} onClick={() => removeSkill(id)}><Puzzle size={13} aria-hidden="true" /><span>{skillName(id)}</span><Icon name="close" size="sm" /></Button>)}</>,
   });
 }

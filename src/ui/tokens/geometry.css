@@ -13,8 +13,8 @@
   --session-tabbar-height: max(30px, calc(38rem / 14));
 
   /* Navigation rail follows FR-009 final-render baseline. */
-  --sidebar-width: clamp(176px, calc(188rem / 14), 216px);
-  --sidebar-width-collapsed: clamp(48px, calc(54rem / 14), 64px);
+  --sidebar-width: max(clamp(80px, calc(88rem / 14), 112px), calc(var(--font-size-ui) * 4 + 32px));
+  --sidebar-width-collapsed: clamp(56px, calc(56rem / 14), 64px);
 
   --settings-nav-width: clamp(148px, calc(168rem / 14), 184px);
   --provider-list-width: clamp(200px, calc(220rem / 14), 260px);

@@ -1,0 +1,71 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { useDevelopment, type DevelopmentSession } from '../src/stores/developmentStore';
+import { useDevelopmentDrafts } from '../src/stores/developmentDrafts';
+import { invoke } from '@tauri-apps/api/core';
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+const session: DevelopmentSession = { id: 'session', owner: 'user-a', project_id: 'project', task_id: 'task', engine: 'codex', native_id: 'native', workspace: '/fixture', executable: null, model: 'model' };
+function workspace(owner = 'user-a') { return { projects: [{ id: 'project', owner, name: 'Project', path: '/fixture', directory_identity: 'directory', archived: false, created_at: 1, last_opened_at: 1 }], tasks: [], sessions: [{ ...session, owner }], selection: { project_id: 'project', task_id: null, session_id: null }, operations: [] }; }
+afterEach(() => { useDevelopment.getState().reset(); localStorage.clear(); vi.mocked(invoke).mockReset(); });
+it('deduplicates history tabs and preserves a draft tab identity when the first session is admitted', () => {
+  const state = useDevelopment.getState();
+  const draft = state.newTab('project');
+  state.renameTab(draft.id, 'Named draft');
+  state.openTab(session);
+  state.bindTab(draft.id, session);
+  const reopened = state.openTab(session);
+  expect(reopened?.id).toBe(draft.id);
+  expect(useDevelopment.getState().tabs.map(tab => tab.sessionId)).toEqual(['session']);
+  expect(reopened?.title).toBe('Named draft');
+});
+it('restores only account-owned workspace metadata, without invoking runtime or replaying drafts', async () => {
+  vi.mocked(invoke).mockResolvedValue(workspace());
+  await useDevelopment.getState().load();
+  const state = useDevelopment.getState();
+  const tab = state.openTab(session)!;
+  state.renameTab(tab.id, 'Durable name');
+  state.setReading(session.id, { top: 240, follow: false });
+  useDevelopmentDrafts.setState({ entries: { secret: { kind: 'conversation', value: 'unsent text', baseline: '' } } });
+  state.reset();
+  await useDevelopment.getState().load();
+  expect(useDevelopment.getState().selection.session_id).toBe(session.id);
+  expect(useDevelopment.getState().tabs[0].title).toBe('Durable name');
+  expect(useDevelopment.getState().reading.session).toEqual({ top: 240, follow: false });
+  expect(useDevelopmentDrafts.getState().entries).toEqual({});
+  expect(vi.mocked(invoke).mock.calls.every(([command]) => command === 'read_development_workspace')).toBe(true);
+  state.reset(); vi.mocked(invoke).mockResolvedValue(workspace('user-b'));
+  await useDevelopment.getState().load();
+  expect(useDevelopment.getState().tabs).toEqual([]);
+  expect(useDevelopment.getState().sessionNames).toEqual({});
+});
+it('keeps closed tabs closed across restart and keeps names available for explicit history reopening', async () => {
+  vi.mocked(invoke).mockResolvedValue(workspace());
+  await useDevelopment.getState().load();
+  const state = useDevelopment.getState();
+  const tab = state.openTab(session)!;
+  state.renameTab(tab.id, 'History name'); state.closeTab(tab.id); state.reset();
+  await useDevelopment.getState().load();
+  expect(useDevelopment.getState().selection).toEqual({ project_id: null, task_id: null, session_id: null });
+  expect(useDevelopment.getState().tabs).toEqual([]);
+  expect(useDevelopment.getState().openTab(session)?.title).toBe('History name');
+});
+it('drops a workspace load that arrives after an account reset', async () => {
+  const pending = Promise.withResolvers<unknown>();
+  vi.mocked(invoke).mockReturnValue(pending.promise);
+  const loading = useDevelopment.getState().load();
+  useDevelopment.getState().reset(); pending.resolve(workspace());
+  expect(await loading).toBe(false);
+  expect(useDevelopment.getState().tabs).toEqual([]);
+  expect(useDevelopment.getState().workspaceOwner).toBeNull();
+});
+it('retains a removed project tab as unavailable metadata instead of selecting another project', async () => {
+  vi.mocked(invoke).mockResolvedValue(workspace());
+  await useDevelopment.getState().load('alice');
+  useDevelopment.getState().openTab(session);
+  useDevelopment.getState().reset();
+  vi.mocked(invoke).mockResolvedValue({ projects: [], tasks: [], sessions: [], operations: [], selection: { project_id: null, task_id: null, session_id: null } });
+  await useDevelopment.getState().load('alice');
+  expect(useDevelopment.getState().tabs[0].sessionId).toBe('session');
+  expect(useDevelopment.getState().selection.project_id).toBe('project');
+  expect(useDevelopment.getState().projects).toEqual([]);
+  expect(vi.mocked(invoke).mock.calls.every(([command]) => command === 'read_development_workspace')).toBe(true);
+});

@@ -9,7 +9,7 @@ import { useAgentRunner } from '../../stores/agentRunnerStore';
 import { processActive, useDevelopmentRuntime } from '../../stores/developmentRuntime';
 
 // Collapsing task details keeps the mounted editor and its failed-save draft intact.
-export function TaskPanel({ project }: { project: Project }) {
+export function TaskPanel({ project, onContinue }: { project: Project; onContinue?: (sessionId: string) => void }) {
   const { t } = useLocale();
   const epoch = useDevelopment(state => state.epoch);
   const allTasks = useDevelopment(state => state.tasks);
@@ -54,6 +54,11 @@ export function TaskPanel({ project }: { project: Project }) {
   useEffect(() => { setCreating(false); setFailure(null); setSearch(''); }, [project.id]);
   useEffect(() => { if (selectedTaskId) setCreating(false); }, [selectedTaskId]);
   async function choose(taskId: string | null) {
+    if (taskId && onContinue) {
+      const saved = sessions.find(session => session.project_id === project.id && session.task_id === taskId);
+      if (saved) { onContinue(saved.id); return; }
+      if (taskId === selectedTaskId) return;
+    }
     setPending(true);
     const result = await chooseContext({ project_id: project.id, task_id: taskId, session_id: null });
     setPending(false);
@@ -76,8 +81,9 @@ export function TaskPanel({ project }: { project: Project }) {
       </Button>)}
     </nav>
     {failure ? <p role="alert" className="m-0 text-xs text-status-error">{errorText(failure)}</p> : null}
+    {selected && onContinue ? <nav className="dev-nav-list" aria-label={t('dev.sessions')}>{sessions.filter(session => session.task_id === selected.id && session.project_id === project.id).map(session => <Button key={session.id} size="xs" variant="ghost" onClick={() => onContinue(session.id)}>{t('workbenchFiles.continueSession', { engine: session.engine, name: useDevelopment.getState().sessionNames[session.id] ?? selected.goal })}</Button>)}</nav> : null}
     {selected ? <details key={`${epoch}:${selected.id}`} className="dev-disclosure"><summary className="dev-disclosure-summary">{t('dev.taskDetails')}</summary><div className="dev-disclosure-body"><TaskEditor key={`${epoch}:${project.id}:${selected.id}`} project={project} task={selected} /></div></details>
-      : creating || !tasks.length ? <TaskEditor key={`${epoch}:${project.id}:new`} project={project} task={null} />
+      : creating || !tasks.length && !onContinue ? <TaskEditor key={`${epoch}:${project.id}:new`} project={project} task={null} />
       : <p className="m-0 text-xs text-ink-secondary">{t('dev.noTaskSelected')}</p>}
   </section>;
 }

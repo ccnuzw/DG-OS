@@ -2,6 +2,9 @@ use super::*;
 
 pub fn run_agents() {
     let root = std::env::var_os("DGOS_PROJECT_ACCEPTANCE_ROOT").map(PathBuf::from).unwrap_or_else(|| std::env::temp_dir().join(format!("dgos-project-desktop-{}", uuid::Uuid::new_v4())));
+    if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| phase == "phase6-local") {
+        super::phase6_local::isolate(&root);
+    }
     let fx = tauri::async_runtime::block_on(open_fx(&root));
     let (manager, cli_providers, providers, vault) = tauri::async_runtime::block_on(load_agents(&fx));
     let watchdog = if std::env::var_os("DGOS_PROJECT_ACCEPTANCE_ROOT").is_some() { ACCEPTANCE_WATCHDOG } else { DEFAULT_WATCHDOG };
@@ -36,12 +39,12 @@ pub fn run_agents() {
             let resolver = app.state::<Arc<SessionResolver>>().inner().clone();
             let stage4_ui = std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| phase == "stage4-ui");
             let mcp = if stage4_ui { tauri::async_runtime::block_on(super::stage4::install(&handle, app.state::<Fx>().inner())) } else { Arc::new(McpManager::new(db.clone())) };
-            if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| phase.starts_with("stage6-") || matches!(phase.as_str(), "terminal-activity" | "worktree-runtime" | "layout-round2" | "terminal-round3" | "workflows-round3" | "round4-native" | "round4-pending-fixture")) || std::env::var_os("DGOS_AGENT_CLOSE_ONLY").is_some() {
+            if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| phase.starts_with("stage6-") || matches!(phase.as_str(), "phase6-local" | "terminal-activity" | "worktree-runtime" | "layout-round2" | "terminal-round3" | "workflows-round3" | "round4-native" | "round4-pending-fixture")) || std::env::var_os("DGOS_AGENT_CLOSE_ONLY").is_some() {
                 let fx = app.state::<Fx>();
                 let skills = Arc::new(tokio::sync::RwLock::new(dgos_skills::SkillsManager::new(db.clone(), fx.root.join("skills"))));
                 app.manage(skills.clone());
             }
-            if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| matches!(phase.as_str(), "layout-round2" | "terminal-round3" | "terminal-activity" | "workflows-round3" | "round4-native" | "round4-pending-fixture")) {
+            if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| matches!(phase.as_str(), "phase6-local" | "layout-round2" | "terminal-round3" | "terminal-activity" | "workflows-round3" | "round4-native" | "round4-pending-fixture")) {
                 tauri::async_runtime::block_on(super::layout_round2::install(app));
             }
             let accounts = tauri::async_runtime::block_on(async {
@@ -52,7 +55,7 @@ pub fn run_agents() {
             });
             app.manage(accounts);
             let events = app.state::<LoadEvents>().0.subscribe();
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("workbench".into())).inner_size(1440.0,1000.0).visible(true).build()?;
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("workbench".into())).incognito(std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| phase == "phase6-local")).inner_size(1440.0,1000.0).visible(true).build()?;
             tauri::async_runtime::spawn(async move {
                 let loaded = wait_load(events, "main", "/workbench").await;
                 if stage4_ui { super::stage4::run(handle, loaded).await; } else { scenario(handle, loaded).await; }
@@ -60,7 +63,7 @@ pub fn run_agents() {
             Ok(())
         })
         .invoke_handler(|invoke| {
-            if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| matches!(phase.as_str(), "layout-round2" | "terminal-round3" | "terminal-activity" | "workflows-round3" | "round4-native" | "round4-pending-fixture"))
+            if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| matches!(phase.as_str(), "phase6-local" | "layout-round2" | "terminal-round3" | "terminal-activity" | "workflows-round3" | "round4-native" | "round4-pending-fixture"))
                 && matches!(invoke.message.command(), "set_appearance_preferences" | "recover_appearance_preferences" | "read_workspace_app_catalog") {
                 let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![commands::set_appearance_preferences, commands::recover_appearance_preferences, commands::read_workspace_app_catalog];
                 return handler(invoke);
@@ -87,6 +90,7 @@ pub fn run_agents() {
             commands::get_development_session_configuration,
             commands::read_development_workspaces, commands::save_development_workspaces,
             commands::read_development_git, commands::execute_development_git, commands::reconcile_development_git,
+            commands::preview_development_git_pull, commands::read_development_git_history,
             commands::prepare_development_handoff, commands::list_development_handoffs, commands::accept_development_handoff,
             commands::list_agent_sessions, commands::open_agent_session, commands::get_agent_session,
             commands::send_agent_message, commands::respond_agent_request, commands::interrupt_agent_session,

@@ -1,0 +1,13 @@
+export default {
+  'directConversation.title': '开始新对话',
+  'directConversation.hint': '选择模型，输入需求并发送。任务归属会自动建立，无需填写任务表单。',
+  'directConversation.new': '新对话',
+  'directConversation.preparing': '正在准备并发送…',
+  'directConversation.task_unknown': '任务创建结果待核实。不会重复创建；刷新后明确选择刚建立的任务。',
+  'directConversation.open_unknown': '会话启动结果待核实。草稿已保留，不会重复启动或发送。',
+  'directConversation.send_unknown': '消息派发结果待核实。草稿已保留；没有执行回执前不会重发。',
+  'directConversation.sent': '消息已派发，会话选择尚未完成。请查看原会话，不要重发。',
+  'directConversation.recheck': '核实原操作',
+  'directConversation.useTask': '使用已核实任务：{title}',
+  'directConversation.changeNeedsNew': '换模型需新对话',
+} as const;

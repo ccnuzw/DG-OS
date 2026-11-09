@@ -59,27 +59,7 @@ export async function prepareTaskClose(): Promise<boolean> {
 }
 
 export async function prepareAgentClose(): Promise<boolean> {
-  const { epoch } = useAgentRunner.getState();
-  // An in-flight open can replace the selected session. Wait for it to settle before choosing which runtimes to close.
-  if (useAgentRunner.getState().busy) {
-    const ready = await new Promise<boolean>(resolve => {
-      const unsubscribe = useAgentRunner.subscribe(state => {
-        if (state.epoch !== epoch || !state.busy) finish(state.epoch === epoch);
-      });
-      const timer = window.setTimeout(() => finish(false), 10_000);
-      function finish(value: boolean) { clearTimeout(timer); unsubscribe(); resolve(value); }
-    });
-    if (!ready) return false;
-  }
-  const current = useAgentRunner.getState();
-  if (current.epoch !== epoch) return false;
-  // Every runtime this account started or attached to, including projections detached by a project or task switch.
-  const ids = [...new Set([...Object.keys(current.live), ...(current.session && current.session.status !== 'closed' ? [current.session.id] : [])])];
-  if (!ids.length) return true;
-  for (const id of ids) {
-    if (!await useAgentRunner.getState().action('close_agent_session', { sessionId: id })) return false;
-    if (useAgentRunner.getState().epoch !== epoch) return false;
-  }
-  const after = useAgentRunner.getState();
-  return after.epoch === epoch && ids.every(id => !(id in after.live));
+  // Closing the workbench hides its projection; runtime subscriptions outlive the surface.
+  useAgentRunner.getState().detach();
+  return true;
 }

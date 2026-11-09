@@ -123,10 +123,13 @@ impl CliProviders {
 
     pub async fn catalog(&self, owner: &str, project_id: &str, engine: Engine) -> Result<Value, String> {
         self.repository.project(owner, project_id).await?;
+        let cli = crate::cli::probe(match engine { Engine::Codex => crate::cli::CliTool::Codex, Engine::Claude => crate::cli::CliTool::Claude }, None).await;
+        let cli_available = cli.status == "available" && (engine != Engine::Codex || cli.version.as_deref() == Some("codex-cli 0.167.0"));
         let mut providers = Vec::new();
         for provider in self.providers.list_providers(owner).await.map_err(|_| "provider_unavailable")? {
+            let availability = provider_availability(engine, &provider.provider_type, &provider.base_url, provider.config.as_ref(), provider.enabled, cli_available);
             let models = self.providers.list_models(&provider.id, owner).await.map_err(|_| "provider_unavailable")?;
-            providers.push(json!({"id":provider.id,"name":provider.name,"config_revision":provider.config_revision,"enabled":provider.enabled,"models":models.into_iter().filter(|m| matches!(m.model_type.as_str(), "text-generation" | "chat")).map(|m| json!({"id":m.model_id,"name":m.model_name,"model_type":m.model_type})).collect::<Vec<_>>()}));
+            providers.push(json!({"id":provider.id,"name":provider.name,"config_revision":provider.config_revision,"enabled":provider.enabled,"availability":availability,"models":models.into_iter().filter(|m| matches!(m.model_type.as_str(), "text-generation" | "chat")).map(|m| json!({"id":m.model_id,"name":m.model_name,"model_type":m.model_type})).collect::<Vec<_>>()}));
         }
         Ok(json!({"project_id":project_id,"engine":engine,"providers":providers}))
     }
@@ -259,6 +262,39 @@ async fn resolve_provider(owner: &str, providers: &ProviderManager, configuratio
 
 impl CliProviders {
     async fn resolve_provider(&self, owner: &str, configuration: &CliProviderConfiguration) -> Result<(), String> { resolve_provider(owner, &self.providers, configuration).await }
+}
+
+fn provider_availability(engine: Engine, provider_type: &str, base_url: &str, config: Option<&Value>, enabled: bool, cli_available: bool) -> Value {
+    if !enabled { return json!({"available": false, "reason": "provider_unavailable"}); }
+    let Some(candidate) = CliProviderProtocol::candidate_for_provider_type(provider_type) else {
+        return json!({"available": false, "reason": "provider_incompatible"});
+    };
+    if !matches!((engine, candidate), (Engine::Codex, CliProviderProtocol::OpenAiResponses) | (Engine::Claude, CliProviderProtocol::AnthropicMessages)) {
+        return json!({"available": false, "reason": "provider_incompatible"});
+    }
+    match dgos_providers::vendor::validate_provider_config(provider_type, base_url, config) {
+        Ok(normalized) if engine != Engine::Codex || normalized.auth_override.unwrap_or(normalized.profile.auth) == dgos_providers::AuthStyle::Bearer => {
+            if cli_available { json!({"available": true, "reason": null}) } else { json!({"available": false, "reason": "cli_incompatible"}) }
+        }
+        _ => json!({"available": false, "reason": "provider_incompatible"}),
+    }
+}
+
+#[cfg(test)]
+mod availability_tests {
+    use super::*;
+
+    fn reason(value: Value) -> Option<String> { value["reason"].as_str().map(str::to_owned) }
+
+    #[test]
+    fn provider_availability_uses_only_local_engine_policy() {
+        assert_eq!(reason(provider_availability(Engine::Codex, "openai_compatible", "https://api.example/v1", None, true, true)), None);
+        assert_eq!(reason(provider_availability(Engine::Codex, "anthropic", "https://api.example", None, true, true)).as_deref(), Some("provider_incompatible"));
+        assert_eq!(reason(provider_availability(Engine::Codex, "openai_compatible", "https://api.example/v1", Some(&json!({"auth_style":"x-api-key"})), true, true)).as_deref(), Some("provider_incompatible"));
+        assert_eq!(reason(provider_availability(Engine::Claude, "anthropic", "https://api.example", None, true, false)).as_deref(), Some("cli_incompatible"));
+        assert_eq!(reason(provider_availability(Engine::Claude, "anthropic", "https://api.example", None, false, true)).as_deref(), Some("provider_unavailable"));
+        assert_eq!(reason(provider_availability(Engine::Claude, "anthropic", "invalid", None, true, true)).as_deref(), Some("provider_incompatible"));
+    }
 }
 
 fn provider_material(engine: Engine, launch: &CliProviderLaunch) -> Result<(BTreeMap<String,String>, Vec<String>), String> {

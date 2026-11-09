@@ -280,7 +280,6 @@ describe('signed in: nav menu', () => {
     renderApp();
     await appVisible();
     const nav = screen.getByRole('complementary', { name: '主导航' });
-    expect(within(nav).getByText('alice')).toBeTruthy();
     fireEvent.pointerDown(within(nav).getByRole('button', { name: 'alice' }), { button: 0, ctrlKey: false });
     expect(await screen.findByRole('menuitem', { name: '账户' })).toBeTruthy();
 
@@ -297,7 +296,6 @@ describe('signed in: nav menu', () => {
     expect(await within(dialog).findByText('用户名或密码错误')).toBeTruthy();
     expect(reloadApp).not.toHaveBeenCalled();
     expect(screen.getByRole('heading', { name: '桌面总览', hidden: true })).toBeTruthy();
-    expect(within(nav).getByText('alice')).toBeTruthy();
     expect(cancel).not.toHaveBeenCalled();
     expect(useChatStore.getState().sessionDrafts['running-session']).toBe('keep current draft');
 

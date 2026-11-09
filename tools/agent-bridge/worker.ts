@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createInterface } from 'node:readline';
 import { randomUUID, createHash } from 'node:crypto';
 import { projectSupportedCommands } from './native-observation';
+import { applyTurnSettings, projectTurnControls, turnSettingsSchema, validateTurnSettings, type TurnControls } from './turn-controls';
 
 const emit = (method: string, params: unknown) => process.stdout.write(JSON.stringify({ method, params }) + '\n');
 const reply = (id: unknown, result: unknown) => process.stdout.write(JSON.stringify({ id, result }) + '\n');
@@ -18,6 +19,7 @@ let activeProviderEnv: Record<string, string> | undefined;
 let nativeProtocolSupported = false;
 let nativeControlBusy = false;
 let wake: (() => void) | undefined;
+let turnControls: TurnControls | undefined;
 let activeRequestId: string | undefined;
 const projectedMessages = new Set<string>();
 const projectedResults = new Set<string>();
@@ -76,13 +78,15 @@ const settingsSchema = z.object({
 class BridgeFailure extends Error {
   constructor(readonly kind: string) { super(kind); }
 }
-const nativeMessage = z.object({ type: z.string(), subtype: z.string().optional(), session_id: z.string().optional(), user_message_uuid: z.string().optional(), user_message_uuids: z.array(z.string()).optional(), message: z.object({ content: z.unknown() }).optional(), event: z.object({ delta: z.object({ type: z.string(), text: z.string().optional() }).passthrough().optional() }).passthrough().optional(), uuid: z.string().optional(), parent_tool_use_id: z.string().nullable().optional(), is_error: z.boolean().optional(), result: z.string().optional(), total_cost_usd: z.number().optional(), usage: z.unknown().optional(), model: z.string().optional(), tools: z.array(z.unknown()).optional(), tool_name: z.string().optional(), tool_use_id: z.string().optional(), elapsed_time_seconds: z.number().optional() });
+const responseUsage = z.object({ input_tokens: z.number().nonnegative().optional(), output_tokens: z.number().nonnegative().optional(), cache_read_input_tokens: z.number().nonnegative().nullable().optional(), cache_creation_input_tokens: z.number().nonnegative().nullable().optional() });
+const modelLimits = z.record(z.string(), z.object({ contextWindow: z.number().positive().optional().catch(undefined), maxOutputTokens: z.number().positive().optional().catch(undefined) }));
+const nativeMessage = z.object({ type: z.string(), subtype: z.string().optional(), session_id: z.string().optional(), user_message_uuid: z.string().optional(), user_message_uuids: z.array(z.string()).optional(), message: z.object({ content: z.unknown(), id: z.string().optional().catch(undefined), model: z.string().optional().catch(undefined), usage: responseUsage.optional().catch(undefined) }).optional(), event: z.object({ delta: z.object({ type: z.string(), text: z.string().optional() }).passthrough().optional() }).passthrough().optional(), uuid: z.string().optional(), parent_tool_use_id: z.string().nullable().optional(), is_error: z.boolean().optional(), result: z.string().optional(), total_cost_usd: z.number().optional(), usage: z.unknown().optional(), modelUsage: modelLimits.optional().catch(undefined), model: z.string().optional(), tools: z.array(z.unknown()).optional(), tool_name: z.string().optional(), tool_use_id: z.string().optional(), elapsed_time_seconds: z.number().optional() });
 const resultTermination = z.object({ terminal_reason: z.string().optional() });
 const nativeDetails = z.object({ tool_use_result: z.unknown().optional(), error: z.unknown().optional(), errors: z.array(z.string()).optional() });
 const nativeApiError = z.object({ isApiErrorMessage: z.literal(true) });
 const commandSchema = z.discriminatedUnion('method', [
   z.object({ id: z.number(), method: z.literal('open'), params: z.object({ workspace: z.string(), executable: z.string(), resume_id: z.string().nullable(), provider: providerSchema }).strict() }),
-  z.object({ id: z.number(), method: z.literal('send'), params: z.object({ request_id: z.string().uuid(), text: z.string() }) }),
+  z.object({ id: z.number(), method: z.literal('send'), params: z.object({ request_id: z.string().uuid(), text: z.string(), settings: turnSettingsSchema.optional() }).strict() }),
   z.object({ id: z.number(), method: z.literal('respond'), params: z.object({ request_id: z.string(), response: z.object({ behavior: z.enum(['allow', 'deny']), answers: z.record(z.string(), z.string()).optional() }) }) }),
   z.object({ id: z.number(), method: z.literal('native/observe'), params: z.object({ domain: z.enum(['skills', 'mcp']) }).strict() }),
   z.object({ id: z.number(), method: z.literal('native/action'), params: z.object({ action: z.discriminatedUnion('kind', [
@@ -135,6 +139,15 @@ async function verifyProvider(current: Query, provider: z.infer<typeof providerS
     auth_style: provider.auth_style, api_provider: initialized.account.apiProvider,
     flag_settings_applied: true, route_env_verified: true, auth_helper_disabled: true };
 }
+async function observeTurnSettings(input: { effort?: { level: string } }) {
+  if (turnControls && input.effort?.level && activeRequestId) {
+    turnControls.reasoning.current = input.effort.level;
+    turnControls.reasoning.source = 'claude/native_hook_effort';
+    turnControls.reasoning.reason = null;
+    emit('controls', { controls: turnControls, request_id: activeRequestId, session_id: sessionId });
+  }
+  return {};
+}
 function safeNativeDetails(value: unknown) {
   const parsed = nativeDetails.safeParse(value);
   if (!parsed.success) return {};
@@ -179,7 +192,7 @@ function project(value: unknown, history = false) {
       const failed = z.object({ type: z.literal('tool_result'), is_error: z.literal(true), tool_use_id: z.string() }).safeParse(block);
       return failed.success ? { ...failed.data, content: 'engine_failed' } : block;
     }) : content;
-    emit('message', { type: message.type, content: safeContent, parent_tool_use_id: message.parent_tool_use_id, ...details, ...identity });
+    emit('message', { type: message.type, content: safeContent, parent_tool_use_id: message.parent_tool_use_id, model: message.message?.model, usage: message.type === 'assistant' ? message.message?.usage : undefined, native_message_id: message.message?.id, usage_source: message.type === 'assistant' && message.message?.usage ? 'native_response' : undefined, ...details, ...identity });
   } else if (message.type === 'stream_event') {
     const delta = message.event?.delta;
     if (delta?.type === 'text_delta') emit('text_delta', { text: delta.text, parent_tool_use_id: message.parent_tool_use_id, ...identity });
@@ -197,7 +210,7 @@ function project(value: unknown, history = false) {
     running = false;
     activeRequestId = undefined;
     const termination = resultTermination.safeParse(value);
-    emit('result', { subtype: message.subtype, is_error: message.is_error, result: message.is_error ? 'engine_failed' : message.result, total_cost_usd: message.total_cost_usd, usage: message.usage, terminal_reason: termination.success ? termination.data.terminal_reason : undefined, ...safeNativeDetails(value), ...identity });
+    emit('result', { subtype: message.subtype, is_error: message.is_error, result: message.is_error ? 'engine_failed' : message.result, total_cost_usd: message.total_cost_usd, usage: message.usage, model_limits: message.modelUsage, terminal_reason: termination.success ? termination.data.terminal_reason : undefined, ...safeNativeDetails(value), ...identity });
   } else if (message.type === 'system' && message.subtype === 'init') {
     // The requested session identity is pinned before query(); never adopt a fallback session.
     const metadata = initMetadata.safeParse(value);
@@ -240,6 +253,10 @@ async function handle(command: BridgeCommand) {
       settingSources: ['user', 'project', 'local'],
       permissionMode: 'default',
       includePartialMessages: true,
+      hooks: {
+        PreToolUse: [{ hooks: [async input => observeTurnSettings(input)] }],
+        Stop: [{ hooks: [async input => observeTurnSettings(input)] }],
+      },
       model: provider.model,
       // Startup inherits the host's controlled env; this explicit overlay contains
       // no argv settings. The higher flag tier is applied over private stdio below.
@@ -277,9 +294,10 @@ async function handle(command: BridgeCommand) {
     providerEvidence = await verifyProvider(current, provider, providerEnv);
     if (closed) throw new BridgeFailure('closed');
     activeProvider = provider; activeProviderEnv = providerEnv;
+    turnControls = projectTurnControls(await current.supportedModels().catch(() => []), provider.model, nativeProtocolSupported);
     opened = true;
     emit('native/initialized', { commands: z.array(commandMetadata).parse(initialized.commands), status: 'observed_not_executed' });
-    return { session_id: sessionId, provider_evidence: providerEvidence, native_protocol_supported: nativeProtocolSupported };
+    return { session_id: sessionId, provider_evidence: providerEvidence, native_protocol_supported: nativeProtocolSupported, controls: turnControls };
     } catch (error) {
       await close();
       throw error instanceof BridgeFailure ? error : new BridgeFailure('provider_load_failed');
@@ -339,8 +357,10 @@ async function handle(command: BridgeCommand) {
   }
   if (command.method === 'send') {
     const params = command.params;
+    // Match host sparse settings semantics before receipt identity or controls.
+    if (params.settings && Object.keys(params.settings).length === 0) delete params.settings;
     if (typeof params.text !== 'string' || !params.text.trim() || Buffer.byteLength(params.text) > 65536) throw new BridgeFailure('invalid_prompt');
-    const fingerprint = createHash('sha256').update(params.text).digest('hex');
+    const fingerprint = createHash('sha256').update(JSON.stringify([params.text, params.settings ?? null])).digest('hex');
     if (receipts.has(params.request_id)) {
       if (receipts.get(params.request_id) !== fingerprint) throw new BridgeFailure('request_conflict');
       return {};
@@ -348,17 +368,33 @@ async function handle(command: BridgeCommand) {
     if (running || nativeControlBusy) throw new BridgeFailure('busy');
     if (receipts.size >= 1024) throw new BridgeFailure('request_capacity');
     if (!activeProvider || !activeProviderEnv) throw new BridgeFailure('closed');
+    if (params.settings) {
+      if (!turnControls) throw new BridgeFailure('turn_controls_unavailable');
+      try { validateTurnSettings(turnControls, params.settings); }
+      catch (error) { throw new BridgeFailure(error instanceof Error ? error.message : 'invalid_turn_settings'); }
+    }
     // No prompt reaches the SDK until fresh CLI readback accepts the pinned route.
     // Reserve the turn across the asynchronous control round trips.
     running = true;
     try { await verifyProvider(agent, activeProvider, activeProviderEnv); }
     catch { await close(); throw new BridgeFailure('provider_verification_failed'); }
+    try {
+      if (params.settings && turnControls) await applyTurnSettings(agent, turnControls, params.settings);
+    } catch {
+      if (turnControls) {
+        turnControls.reasoning.current = null; turnControls.reasoning.reason = 'result_unknown';
+        turnControls.permission.current = null; turnControls.permission.reason = 'result_unknown';
+        emit('controls', { controls: turnControls, session_id: sessionId });
+      }
+      await close(); throw new BridgeFailure('turn_configuration_failed');
+    }
     if (closed) throw new BridgeFailure('closed');
     receipts.set(params.request_id, fingerprint);
     activeRequestId = params.request_id;
     // commandSchema has already validated the host request ID as a UUID.
     queue.push({ type: 'user', message: { role: 'user', content: params.text }, parent_tool_use_id: null, session_id: sessionId, uuid: params.request_id as SDKUserMessage['uuid'], origin: { kind: 'human' } });
-    wake?.(); return {};
+    if (turnControls) emit('controls', { controls: turnControls, request_id: activeRequestId, session_id: sessionId });
+    wake?.(); return { controls: turnControls };
   }
   if (command.method === 'respond') {
     const params = command.params;

@@ -276,6 +276,8 @@ struct TargetInput {
     provider_id: String,
     model_id: String,
     skill_id: Option<String>,
+    // Retained for older clients; omitted/false permits an empty skill selection.
+    #[serde(default)]
     no_skill: bool,
 }
 

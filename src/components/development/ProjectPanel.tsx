@@ -3,7 +3,7 @@ import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog';
 import { basename, join } from '@tauri-apps/api/path';
 import { Button, DropdownMenu, Icon, Input, Modal } from '@dgos/ui';
 import { useLocale } from '../../i18n';
-import { chooseContext } from '../../stores/developmentSelection';
+import { chooseContext, contextGeneration } from '../../stores/developmentSelection';
 import { useDevelopment, type Project, type ProjectInspection } from '../../stores/developmentStore';
 import { confirmAction, errorText } from './shared';
 import { discardDevelopmentDraft } from '../../stores/developmentEditor';
@@ -13,6 +13,12 @@ import { useAgentRunner } from '../../stores/agentRunnerStore';
 
 export function ProjectPanel() {
   const { t } = useLocale();
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  function operationOwner() {
+    const epoch = useDevelopment.getState().epoch, generation = contextGeneration();
+    return () => mounted.current && epoch === useDevelopment.getState().epoch && generation === contextGeneration();
+  }
   const projects = useDevelopment(state => state.projects);
   const operations = useDevelopment(state => state.operations);
   const selectedId = useDevelopment(state => state.selection.project_id);
@@ -57,45 +63,52 @@ export function ProjectPanel() {
   const unfinished = operations.filter(operation => operation.status !== 'succeeded');
   const completed = operations.filter(operation => operation.status === 'succeeded');
   async function pickParent() {
+    const valid = operationOwner();
     setPickerFailure(false);
     try {
       const selected = await openDirectoryDialog({ directory: true, multiple: false, title: t('dev.chooseParent') });
-      if (typeof selected === 'string') setParentPath(selected);
-    } catch { setPickerFailure(true); }
+      if (valid() && typeof selected === 'string') setParentPath(selected);
+    } catch { if (valid()) setPickerFailure(true); }
   }
   async function submitProject(kind: 'create' | 'clone') {
     const name = projectName.trim() || (kind === 'clone' ? repositoryName(repository) : '');
     if (projectLock.current || !validFolderName(name) || !parentPath || (kind === 'clone' && !repository.trim())) return;
+    const valid = operationOwner();
     projectLock.current = true;
     setProjectBusy(true); setProjectFailure(null);
     try {
       const path = await join(parentPath, name);
+      if (!valid()) return;
       const result = await useDevelopment.getState().createProject({ kind, name, path, source: kind === 'clone' ? repository.trim() : null });
+      if (!valid()) return;
       if (!result.ok) { setProjectFailure(result.code); return; }
       setFolderOpen(false); setCloneOpen(false);
       const selected = await chooseContext({ project_id: result.value.id, task_id: null, session_id: null });
       if (!selected.ok) setProjectFailure(selected.code);
-    } catch { setProjectFailure('unknown'); }
+    } catch { if (valid()) setProjectFailure('unknown'); }
     finally { projectLock.current = false; setProjectBusy(false); }
   }
   async function importFolder() {
     if (projectLock.current) return;
+    const valid = operationOwner();
     projectLock.current = true;
     setProjectBusy(true); setPickerFailure(false); setProjectFailure(null);
     let selected: string | string[] | null;
     try {
       selected = await openDirectoryDialog({ directory: true, multiple: false, title: t('dev.chooseProjectFolder') });
     } catch {
-      setPickerFailure(true); projectLock.current = false; setProjectBusy(false); return;
+      if (valid()) setPickerFailure(true); projectLock.current = false; setProjectBusy(false); return;
     }
     try {
-      if (typeof selected !== 'string') return;
+      if (!valid() || typeof selected !== 'string') return;
       const name = await basename(selected);
+      if (!valid()) return;
       const result = await useDevelopment.getState().createProject({ kind: 'import', name, path: selected, source: null });
+      if (!valid()) return;
       if (!result.ok) { setProjectFailure(result.code); return; }
       const chosen = await chooseContext({ project_id: result.value.id, task_id: null, session_id: null });
       if (!chosen.ok) setProjectFailure(chosen.code);
-    } catch { setProjectFailure('unknown'); }
+    } catch { if (valid()) setProjectFailure('unknown'); }
     finally { projectLock.current = false; setProjectBusy(false); }
   }
   return <section className="dev-panel dev-nav-panel" aria-label={t('dev.projects')} data-testid="dev-project-list">

@@ -29,7 +29,7 @@ export function useLayoutBudget<T extends HTMLElement>(minimum: (root: HTMLEleme
     // Density and UI typography can change the budget without resizing this container.
     const appearance = new MutationObserver(schedule);
     for (let ancestor: HTMLElement | null = element; ancestor; ancestor = ancestor.parentElement) {
-      appearance.observe(ancestor, { attributes: true, attributeFilter: ['style', 'data-density', 'class'] });
+      appearance.observe(ancestor, { attributes: true, attributeFilter: ['style', 'data-density', 'data-drawer-width', 'class'] });
     }
     const fonts = document.fonts;
     fonts?.addEventListener('loadingdone', schedule);

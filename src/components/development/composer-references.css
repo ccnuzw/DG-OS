@@ -1,0 +1,21 @@
+.composer-reference-chips { display: flex; flex-wrap: wrap; gap: var(--spacing-2); list-style: none; margin: 0; padding: 0; min-width: 0; }
+.composer-reference-chip { display: flex; align-items: center; gap: var(--spacing-1); max-width: 100%; min-width: 0; padding-inline-start: var(--spacing-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); font-size: var(--font-size-xs); }
+.composer-reference-label { min-width: 0; overflow-wrap: anywhere; }
+.composer-reference-kind { flex-shrink: 0; color: var(--text-secondary); }
+.composer-reference-chip[data-reference-kind="path"] { border-style: dashed; }
+.composer-reference-chip > button { flex-shrink: 0; min-width: 28px; min-height: 28px; }
+.composer-reference-picker { display: flex; flex-direction: column; gap: var(--spacing-2); width: min(28rem, 80vw); min-width: 0; overflow-wrap: anywhere; }
+.composer-reference-picker h3, .composer-reference-picker p { margin: 0; }
+.composer-reference-picker h3 { font-size: var(--font-size-sm); }
+.composer-reference-picker p { font-size: var(--font-size-xs); }
+.composer-reference-picker p:not([role="alert"]) { color: var(--text-secondary); }
+.composer-reference-modes { display: flex; flex-wrap: wrap; gap: var(--spacing-3); padding: 0; border: 0; min-width: 0; font-size: var(--font-size-xs); }
+.composer-reference-modes legend { margin-block-end: var(--spacing-1); }
+.composer-reference-modes label { display: flex; align-items: center; gap: var(--spacing-1); min-height: 32px; }
+.composer-reference-location { display: flex; align-items: center; gap: var(--spacing-2); font-size: var(--font-size-xs); }
+.composer-reference-files { display: flex; flex-direction: column; gap: var(--spacing-1); list-style: none; padding: 0; margin: 0; max-height: 18rem; overflow: auto; }
+.composer-reference-files li { display: flex; align-items: center; min-width: 0; }
+.composer-reference-files li > button:first-child { flex: 1; justify-content: flex-start; text-align: start; min-width: 0; min-height: 32px; height: auto; white-space: normal; }
+.composer-reference-files button span { overflow-wrap: anywhere; }
+.composer-reference-files svg { flex-shrink: 0; }
+@media (pointer: coarse) { .composer-reference-chip > button, .composer-reference-files li > button, .composer-reference-modes label { min-height: 44px; } }

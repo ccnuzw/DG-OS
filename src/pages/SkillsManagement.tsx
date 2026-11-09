@@ -11,16 +11,9 @@ import './SkillsManagement.css';
 import { useSurfaceCloseGuard, useSurfaceStatus } from '../workspace/SurfaceContext';
 import { confirmDiscard } from '../workspace/closeCoordinator';
 import NativeManager from '../components/nativeExtensions/NativeManager';
-import { useCapabilityEntry } from '../components/chat/RuntimeNavigation';
+import { CapabilityReturn, useCapabilityEntry } from '../components/chat/RuntimeNavigation';
 
-const categoryLabel = (category: string) => ({
-  writing: t('skills.category.writing'),
-  visual: t('skills.category.visual'),
-  'video-audio': t('skills.category.video-audio'),
-  'documents-office': t('skills.category.documents-office'),
-  'data-research': t('skills.category.data-research'),
-  'development-automation': t('skills.category.development-automation'),
-}[category] ?? category);
+import { skillCategoryLabel as categoryLabel } from '../i18n/skillCategories';
 
 
 const SkillsManagement: React.FC = () => {
@@ -272,6 +265,7 @@ const SkillsManagement: React.FC = () => {
         <div className="min-w-0"><h1 className="m-0 text-lg font-semibold leading-tight">{t('skills.title')}</h1><p className="m-0 mt-1 max-w-prose break-words text-sm text-ink-secondary">{t('skills.subtitle')}</p></div>
         <div className="flex max-w-full flex-wrap items-center gap-2"><Button variant="secondary" size="xs" onClick={() => setNativeMode(true)}>{t('nativeExtensions.manageNative')}</Button><span className="text-xs text-ink-secondary" role="status">{registryOffline || registryError ? t('skills.unavailable') : t('skills.officialLocal')}</span>{(registryOffline || registryError) && <Button variant="secondary" size="xs" onClick={() => { void handleRetry(); }} disabled={loading}>{loading ? t('skills.retrying') : t('skills.retryConnection')}</Button>}</div>
       </header>
+      <CapabilityReturn path="/skills" />
       <div className={nativeMode ? 'flex min-h-0 flex-1 flex-col' : 'hidden'} hidden={!nativeMode}><Button variant="secondary" size="xs" className="self-start" onClick={() => setNativeMode(false)}>{t('nativeExtensions.backToDgos')}</Button>{nativeOpened.current && <NativeManager kind="skills" initialSelection={capabilityEntry.nativeSelection} initialSessionId={capabilityEntry.sessionId} />}</div>
       <div className={nativeMode ? 'hidden' : 'contents'} hidden={nativeMode}>
       <div className="min-h-0 flex-1 overflow-y-auto"><div className="skills-content mx-auto flex w-full max-w-350 flex-col gap-3 px-5 py-4">

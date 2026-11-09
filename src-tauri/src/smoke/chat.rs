@@ -304,6 +304,10 @@ const kd = (el, key) => { el.dispatchEvent(new KeyboardEvent('keydown', { key, b
 const setVal = (el, v) => { const p = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(p, 'value').set.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); };
 const labelOf = (el) => { if (el.labels && el.labels[0]) return txt(el.labels[0]); const by = el.getAttribute('aria-labelledby'); if (by) return txt(document.getElementById(by)); return el.getAttribute('aria-label') || ''; };
 const combo = (label) => $$('[role=combobox]').find((e) => labelOf(e) === label);
+const openHistory = async () => {
+  if (!$('input[aria-label="搜索会话"]')) { const trigger = btn('会话历史'); if (trigger) trigger.click(); }
+  return await until(() => $('input[aria-label="搜索会话"]'));
+};
 const STREAM = 'article[aria-label="助手消息（生成中）"]';
 const DONE_A = 'article[aria-label="助手消息"]';
 const USER_A = 'article[aria-label="用户消息"]';
@@ -351,16 +355,6 @@ const newSession = async (model) => {
   const modelOption = await until(() => $$('.chat-model-option').find(x => x.getAttribute('aria-label') === model));
   if (!modelOption) throw new Error('model missing: ' + model);
   modelOption.click();
-  kd($('[role=dialog]'), 'Escape');
-  const skills = btn('选择 Skills');
-  if (!skills) throw new Error('Skills picker missing');
-  skills.click();
-  const noSkill = await until(() => [...document.querySelectorAll('[role="checkbox"]')].find(el => document.querySelector(`label[for="${el.id}"]`)?.textContent?.includes('明确不使用技能')));
-  if (!noSkill) throw new Error('no-skill checkbox missing');
-  if (noSkill.getAttribute('aria-checked') !== 'true') noSkill.click();
-  const ap = await until(() => { const b = btn('应用目标'); return b && !b.disabled && b; });
-  if (!ap) throw new Error('apply button never enabled');
-  ap.click();
   if (!(await until(() => !$('.chat-target-popover') && txt($('.chat-model-button-label')).includes(model)))) throw new Error('target was not applied: ' + txt($('button[aria-label="会话目标"]')));
   return true;
 };
@@ -373,7 +367,7 @@ const send = async (text) => {
   b.click();
 };
 const lastDone = () => $$(DONE_A).pop();
-const mdText = (a) => txt($('.leading-relaxed', a));
+const mdText = (a) => txt($('.chat-markdown', a));
 const idle = () => !$(STREAM) && !!btn('发送');
 "##;
 
@@ -786,13 +780,13 @@ async fn block_markdown(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
         app,
         r##"
         const a = lastDone();
-        const md = $('.leading-relaxed', a);
+        const md = $('.chat-markdown', a);
         const text = txt(md);
         const own = (needle) => $$('span', a).find((s) => txt(s).startsWith(needle) && !s.querySelector('span'));
         const click = own('click me');
         const out = {
           pwn: window.__pwn || 0,
-          imgs: $$('img', a).length, scripts: $$('script', a).length, frames: $$('iframe,object,embed,svg', a).length,
+          imgs: $$('img', a).length, scripts: $$('script', a).length, frames: $$('iframe,object,embed', a).length,
           jsLinks: $$('[href^="javascript"], [src^="javascript"]', a).length,
           clickMeIsText: !!click && !click.closest('a,button'),
           rawHtmlAsText: text.includes('<script>') && text.includes('<img'),
@@ -1076,7 +1070,7 @@ async fn block_reload(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
     );
     let after = js(
         app,
-        "const item = await until(() => $$('section[aria-label=\"会话列表\"] li button').find((b) => txt(b).includes('T5 reload mid stream')), 8000); \
+        "await openHistory(); const item = await until(() => $('[aria-label=\"会话列表\"] li button') && $$('[aria-label=\"会话列表\"] li button').find((b) => txt(b).includes('T5 reload mid stream')), 8000); \
          if (!item) throw new Error('session missing after reload'); item.click(); \
          const ok = await until(() => { const a = lastDone(); return a && txt(a).includes('已中断') && a; }, 10000); \
          const a = lastDone(); \
@@ -1156,8 +1150,8 @@ async fn block_lists(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
     let up = &fx.up;
     let listed = js(
         app,
-        "const ok = await until(() => $$('section[aria-label=\"会话列表\"] li').length >= 3, 8000); \
-         return { ok, titles: $$('section[aria-label=\"会话列表\"] li').map((li) => txt(li)) };",
+        "await openHistory(); const ok = await until(() => $$('[aria-label=\"会话列表\"] li').length >= 3, 8000); \
+         return { ok, titles: $$('[aria-label=\"会话列表\"] li').map((li) => txt(li)) };",
     )
     .await;
     let titles = listed["titles"].to_string();
@@ -1177,8 +1171,8 @@ async fn block_lists(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
         js(
             app,
             &format!(
-                "const input = $('input[aria-label=\"搜索会话\"]'); setVal(input, {query:?}); \
-                 await wait(900); const sec = await until(() => $('section[aria-label=\"搜索结果\"]'), 4000); await wait(400); \
+                "await openHistory(); const input = $('input[aria-label=\"搜索会话\"]'); setVal(input, {query:?}); \
+                 await wait(900); const sec = await until(() => $('[aria-label=\"搜索结果\"]'), 4000); await wait(400); \
                  return {{ hits: sec ? $$('li', sec).map((li) => txt(li)) : null }};"
             ),
         )
@@ -1216,7 +1210,7 @@ async fn block_lists(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
     "##;
     let open = js(
         app,
-        "const item = $$('section[aria-label=\"会话列表\"] li button').find((b) => txt(b).includes('Bulk paging session')); item.click(); \
+        "await openHistory(); const item = await until(() => $$('[aria-label=\"会话列表\"] li button').find((b) => txt(b).includes('Bulk paging session'))); if (!item) throw new Error('bulk session unavailable'); item.click(); \
          await until(() => $$('ol[aria-label=\"消息\"] > li').length >= 50, 8000); \
          return { count: $$('ol[aria-label=\"消息\"] > li').length };",
     )
@@ -1267,7 +1261,7 @@ async fn block_lists(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
     );
     checks.check(
         "[8] the oldest message (seq 1) is reachable and the 'load older' button disappears at the start of the session",
-        firsts.last().is_some_and(|f| f.contains("bulk message 1复制")) && observed.last().is_some_and(|v| v["older"] == false),
+        firsts.last().is_some_and(|f| f.ends_with("bulk message 1")) && observed.last().is_some_and(|v| v["older"] == false),
         format!("firsts={firsts:?} last_older={:?}", observed.last().map(|v| v["older"].clone())),
     );
     let latest = js(
@@ -1348,7 +1342,7 @@ async fn block_lists(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
         "const tab = $('.workspace-session-tabs [role=tab][aria-selected=true]'); tab.dispatchEvent(new MouseEvent('contextmenu', {bubbles:true,clientX:100,clientY:100})); \
          const del = await until(() => $$('[role=menuitem]').find(e => txt(e)==='删除会话')); if (!del) throw new Error('no delete menu item'); del.click(); \
          const dialog = await until(() => $('[data-modal-kind][role=dialog]')); const confirm = dialog && btn('删除会话', dialog); if (!confirm) throw new Error('no confirm'); confirm.click(); \
-         const ok = await until(() => !$$('section[aria-label=\"会话列表\"] li').some((li) => txt(li).includes('T8 regen base')) && txt(document.body).includes('开始一次对话'), 8000); \
+         const ok = await until(() => txt(document.body).includes('开始一次对话') && !$$('[role=tab]').some(t=>t.title.includes('T8 regen base')), 8000); \
          return { ok: !!ok };",
     )
     .await;
@@ -1389,12 +1383,14 @@ async fn block_mcp(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
     }
     let pick = r##"
         const pickTool = async () => {
-          if (!$$('[role=checkbox]').length) { const t = btnHas('MCP 工具'); t.click(); }
+          const trigger = () => $$('button').find(b => (b.getAttribute('aria-label') || '').startsWith('MCP 工具'));
+          if (!$$('[role=checkbox]').length) { const t = trigger(); if (!t) throw new Error('tool picker missing'); t.click(); }
           const c = await until(() => $$('[role=checkbox]').find((x) => labelOf(x).includes('fixture-server / echo')), 8000);
-          if (!c) throw new Error('fixture tool not listed: ' + $$('section[aria-label="MCP 工具"]').map(txt).join('|'));
+          if (!c) throw new Error('fixture tool not listed');
           if (c.getAttribute('aria-checked') !== 'true') c.click();
           await until(() => c.getAttribute('aria-checked') === 'true');
-          return txt(btnHas('MCP 工具'));
+          const picked = trigger().getAttribute('aria-label'); kd(c, 'Escape'); await until(() => !c.isConnected);
+          return picked;
         };
     "##;
     // Approve once.
@@ -1509,9 +1505,9 @@ async fn block_mcp(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
     let parked = js(
         app,
         &format!(
-            "{pick} window.__spy.events = []; await pickTool(); await send('T9 expire it'); const p = await until(() => $(PROPOSAL), 12000); \
+            "{pick} window.__spy.events = []; window.__expiryClicks = []; window.__expiryClickListener = e => window.__expiryClicks.push({{label: e.target.closest('button')?.getAttribute('aria-label') || txt(e.target), trusted: e.isTrusted}}); document.addEventListener('click', window.__expiryClickListener, true); await pickTool(); await send('T9 expire it'); const p = await until(() => $(PROPOSAL), 12000); \
              const ev = window.__spy.events; const prop = ev.find((e) => e.m.kind === 'tool_proposal'); const started = ev.find((e) => e.m.kind === 'started'); \
-             return {{ proposal: !!p, proposalId: prop && prop.m.proposal.id, taskId: started && started.m.task_id }};"
+             return {{ proposal: !!p, proposalId: prop && prop.m.proposal.id, taskId: started && started.m.task_id, events: ev }};"
         ),
     )
     .await;
@@ -1536,14 +1532,15 @@ async fn block_mcp(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
         }
     }
     let erow = expired_rows.first().cloned().unwrap_or(Value::Null);
+    let interactions = js(app, "document.removeEventListener('click', window.__expiryClickListener, true); const clicks = window.__expiryClicks; delete window.__expiryClickListener; delete window.__expiryClicks; return clicks;").await;
     checks.check(
         "[9] expired proposal (120 s window waited out): host ends the turn, UI is idle, no follow-up Provider call, argument text not stored",
         parked["proposal"] == true
-            && erow["status"] != "generating"
-            && erow["status"] != Value::Null
+            && erow["status"] == "failed"
+            && erow["err"] == "confirmation_expired"
             && up.bodies() == before + 1
             && !erow["content"].as_str().unwrap_or("").contains(MARKER_EXPIRE),
-        format!("{parked} row={erow} approve_disabled_text_seen={seen_expired_text}"),
+        format!("{parked} row={erow} approve_disabled_text_seen={seen_expired_text} bodies_before={before} bodies_after={} clicks={interactions}", up.bodies()),
     );
     let stale = js(
         app,
@@ -1612,12 +1609,13 @@ async fn block_workspace_task(app: &AppHandle, checks: &mut Checks, fx: &Fixture
     "#).await;
     checks.check("[10] task starts through production runner and IPC", started == true, started.to_string());
     let kept = js(app, r#"
-        const link = name => $$('a').find(a=>txt(a)===name);
+        const link = name => $$('a').find(a=>a.getAttribute('aria-label')===name || txt(a)===name);
         link('桌面总览').click(); await until(()=>location.pathname==='/');
         link('设置').click(); await until(()=>$('[data-settings-shell]'));
         const preserved = window.__taskInput.isConnected && window.__taskInput.value==='P3 keep this task input';
         btn('关闭设置').click(); await until(()=>!$('[data-settings-shell]'));
-        link('单任务').click(); await until(()=>location.pathname==='/tasks/single');
+        btn('命令面板').click(); const input=await until(()=>$('input[aria-label="搜索命令、工作面或应用"]')); setVal(input,'单任务');
+        const task=await until(()=>$$('[role=option]').find(e=>txt(e).includes('单任务'))); if(!task) throw new Error('single task command missing'); task.click(); await until(()=>location.pathname==='/tasks/single');
         return {preserved, same:window.__taskInput===$$('textarea').find(el=>labelOf(el)==='任务输入'), running:!!btn('取消任务'), cancelled:window.__spy.calls.includes('cancel_workbench_task')};
     "#).await;
     checks.check("[10] desktop and settings preserve task, input and DOM without cancelling", kept["preserved"]==true && kept["same"]==true && kept["running"]==true && kept["cancelled"]==false, kept.to_string());
@@ -1696,8 +1694,9 @@ while IFS= read -r line; do
 case "$line" in
 *'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}';;
 *'"method":"config/read"'*) printf '%s\n' '{"id":2,"result":{"config":{"model_provider":"dgos_project","model_providers":{"dgos_project":{"base_url":"FIXTURE_BASE_URL","wire_api":"responses","env_key":"DGOS_PROVIDER_KEY","requires_openai_auth":false}}}}}';;
+*'"method":"model/list"'*) printf '%s\n' '{"id":4,"result":{"data":[],"nextCursor":null}}';;
 *'"method":"thread/start"'*) printf '{"id":3,"result":{"cwd":"%s","model":"chat-model","modelProvider":"dgos_project","thread":{"id":"account-thread","turns":[]}}}\n' "$PWD";;
-*'"method":"turn/start"'*) printf '%s\n' '{"id":4,"result":{"turn":{"id":"account-turn"}}}' '{"method":"turn/started","params":{"threadId":"account-thread","turn":{"id":"account-turn"}}}' '{"id":"account-approval","method":"item/commandExecution/requestApproval","params":{"threadId":"account-thread","turnId":"account-turn","itemId":"account-item","command":"echo allowed","availableDecisions":["accept","decline"]}}';;
+*'"method":"turn/start"'*) printf '%s\n' '{"id":5,"result":{"turn":{"id":"account-turn"}}}' '{"method":"turn/started","params":{"threadId":"account-thread","turn":{"id":"account-turn"}}}' '{"id":"account-approval","method":"item/commandExecution/requestApproval","params":{"threadId":"account-thread","turnId":"account-turn","itemId":"account-item","command":"echo allowed","availableDecisions":["accept","decline"]}}';;
 esac
 done
 "##.replace("FIXTURE_BASE_URL", &app.state::<ProviderManager>().list_providers(LOCAL_USER).await.unwrap()[0].base_url)).unwrap();
@@ -2081,7 +2080,8 @@ async fn scenario(app: AppHandle, root_ready: bool) {
         reloaded,
         "reload failed",
     );
-    let shell = js(&app, "const ok = await until(() => $('h1') && txt($('h1')) === 'AI 工作台' && $('nav[aria-label=\"会话\"]'), 10000); return { ok: !!ok, boundary: !!$('[data-error-kind]') };").await;
+    let shell = js(&app, "const ok = await until(() => $('.chat-surface') && $('[role=tablist][aria-label=\"AI 会话标签\"]') && $('button[aria-label=\"新建会话\"]'), 10000); return { ok: !!ok, boundary: !!$('[data-error-kind]') };" )
+        .await;
     checks.check(
         "the real /workbench chat page renders (h1, session sidebar, no error boundary)",
         shell["ok"] == true && shell["boundary"] == false,

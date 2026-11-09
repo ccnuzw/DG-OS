@@ -21,6 +21,7 @@ pub(super) async fn scenario(app:AppHandle,loaded:bool){
  }
  if !ui_sign_in(&app,&mut ck,&mut ev,ALICE).await {finish(&app,&fx,ck,ev,"login").await;return;}
  record(&mut ck,&mut ev,"navigate production project workbench",goto(&app,"main","/tasks/agent").await,"navigation");
+ if phase == "phase6-local" { super::phase6_local::run(&app, &fx, ck, ev).await; return; }
  if phase == "layout-round2" { super::layout_round2::run(&app, &fx, ck, ev).await; return; }
  if phase == "terminal-round3" { super::round3_terminal::run(&app, &fx, ck, ev).await; return; }
  if phase == "workflows-round3" { super::round3_workflows::run(&app, &fx, ck, ev).await; return; }

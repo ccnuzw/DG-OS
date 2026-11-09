@@ -16,6 +16,9 @@
 //! Set `DGOS_TERMINAL_TYPOGRAPHY_ONLY=1` with `terminal-activity` for live installed-font/size
 //! changes, native PTY identity/stty and rendered Latin/CJK evidence. Retains terminal-typography.json/png.
 //! Requires a foreground macOS desktop and Screen Recording permission; no model provider or CLI run.
+//! `phase6-local` is the safe deterministic App/WKWebView/IPC mode: a fresh temporary
+//! root, isolated HOME/config roots, memory vault and protocol-only executable peers.
+//! It never runs a real CLI/model or reads the user's native CLI configuration.
 //! `worktree-runtime` verifies actual task-worktree npm/Cargo execution, captures macOS editor
 //! open events with a temporary local application, and checks real IPC owner/lease rejection.
 //! The real CLIs, AccountService, SessionResolver, HostSessionPort and AgentManager run
@@ -504,3 +507,5 @@ mod round3_terminal;
 mod round3_workflows;
 #[path = "agents_round4.rs"]
 mod round4;
+#[path = "agents_phase6_local.rs"]
+mod phase6_local;

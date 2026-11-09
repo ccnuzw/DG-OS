@@ -2,7 +2,7 @@ import { t, useLocale as usePageLocale } from '../../i18n';
 import { useEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Checkbox, Input, Loading, Popover, cn } from '@dgos/ui';
-import { ArrowUp, Square, Wrench } from 'lucide-react';
+import { ArrowUp, Check, ShieldCheck, Square } from 'lucide-react';
 import { MAX_MESSAGE_BYTES, MAX_TOOLS, useChatStore, utf8Bytes } from '../../stores/chatStore';
 import { ChatNotice } from './ChatNotice';
 import { FOCUS_RING } from '@dgos/ui/lib/focus';
@@ -13,7 +13,6 @@ import Attachments from './Attachments';
 import VoiceCapture from './VoiceCapture';
 import './conversation.css';
 import { useSurfaceActive } from '../../workspace/SurfaceContext';
-import { CapabilityLinks } from './RuntimeNavigation';
 
 const LINK = cn('text-accent-default underline', FOCUS_RING);
 
@@ -60,11 +59,12 @@ function ToolPicker({ tools, selected, disabled, onLoaded, onChange }: ToolPicke
   };
 
   return (
-    <Popover label={t('chat.tools')} side="top" align="start" open={open} onOpenChange={next => { setOpen(next); if (next) load(); else version.current++; }} trigger={
-      <Button size="xs" variant="ghost" iconOnly disabled={disabled} aria-label={t('chat.toolPicker', { count: selected.length, limit: MAX_TOOLS })} title={t('chat.tools')} className={cn('chat-composer-icon', selected.length > 0 && 'chat-composer-selected')}><Wrench className="size-4" aria-hidden="true" />{selected.length > 0 ? <span className="chat-control-count">{selected.length}</span> : null}</Button>
+    <Popover label={t('chat.permissionsTitle')} side="top" align="end" open={open} onOpenChange={next => { setOpen(next); if (next) load(); else version.current++; }} trigger={
+      <Button size="sm" variant="ghost" disabled={disabled} aria-label={t('chat.toolPicker', { count: selected.length, limit: MAX_TOOLS })} title={t('chat.permissionsTitle')} className={cn('chat-composer-permission-button', selected.length > 0 && 'chat-composer-selected')}><ShieldCheck className="size-4" aria-hidden="true" /><span>{t('chat.confirmEach')}</span>{selected.length > 0 ? <span className="chat-skill-count">{selected.length}</span> : null}</Button>
     } content={
         <div className="chat-tool-menu flex flex-col gap-2 text-sm">
-          <header className="chat-picker-heading"><strong>{t('chat.tools')}</strong></header>
+          <header className="chat-picker-heading"><strong>{t('chat.permissionsTitle')}</strong></header>
+          <div className="chat-permission-current"><ShieldCheck size={20} aria-hidden="true" /><div><strong>{t('chat.confirmEach')}</strong><p>{t('workbenchNavigation.hostPermissions')}</p></div><Check size={16} aria-hidden="true" /></div>
           <Input label={t('chat.searchTools')} value={query} onChange={event => setQuery(event.target.value)} />
           <p className="m-0 text-xs text-ink-secondary">{t('chat.toolContext')}</p>
           <p className="m-0 text-xs text-ink-secondary">{t('chat.toolsHelp')}</p>
@@ -121,11 +121,9 @@ export default function Composer() {
 
   const generating = generation !== null;
   const hasTarget = !!session?.provider_id && !!session?.model_id;
-  // A session without a pinned skill and without an explicit "no skill" is refused by the host (1006013).
-  const skillDecided = !!session && (session.skills.length > 0 || session.no_skill_confirmed);
   const bytes = utf8Bytes(draft);
   const tooLong = bytes > MAX_MESSAGE_BYTES;
-  const canSend = !!session && !stale && !generating && !assetBusy && !voiceBusy && hasTarget && skillDecided && (draft.trim().length > 0 || !!assets?.length) && !tooLong;
+  const canSend = !!session && !stale && !generating && !assetBusy && !voiceBusy && hasTarget && (draft.trim().length > 0 || !!assets?.length) && !tooLong;
 
   useEffect(() => {
     if (lastSent.seq === seenSent.current) return;
@@ -180,8 +178,6 @@ export default function Composer() {
     <form ref={form} aria-label={t('chat.sendForm')} className="chat-composer" onSubmit={event => { event.preventDefault(); submit(); }}>
       <div className="chat-composer-body" onFocusCapture={revealComposerControl}>
       <div className="chat-composer-context">{target.context}{media.attachments}</div>
-      <CapabilityLinks />
-      {target.feedback}
       {actionError ? <ChatNotice tone="error">{actionError}</ChatNotice> : null}
       {actionCode === 1006013 && !generating ? (
         <div className="flex flex-wrap items-center gap-2">
@@ -194,19 +190,11 @@ export default function Composer() {
           {generating ? t('chat.stopFirst') : t('chat.toolsCleared')}
         </p>
       ) : null}
-      {session && !hasTarget && !stale ? <p className="m-0 text-xs text-ink-secondary">{t('chat.chooseTarget')}</p> : null}
-      {session && !stale && !skillDecided ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <p id="chat-skill-hint" className="m-0 text-xs text-status-warning-text">
-            {t('chat.chooseSkillHelp')}</p>
-          <Button size="sm" variant="secondary" onClick={() => setSkillRequest(value => value + 1)}>{t('chat.chooseSkill')}</Button>
-        </div>
-      ) : null}
       {stale ? <p className="m-0 text-xs text-status-error-text">{t('chat.staleSend')}</p> : null}
       <Input
         ref={input}
         multiline
-        rows={3}
+        rows={2}
         aria-label={t('chat.input')}
         aria-describedby="chat-input-hint"
         placeholder={t('chat.inputPlaceholder')}
@@ -219,23 +207,23 @@ export default function Composer() {
         onCompositionStart={() => { composing.current = true; }}
         onCompositionEnd={() => { composing.current = false; }}
       />
-      <p id="chat-input-hint" className={cn('chat-composer-counter m-0 text-xs', tooLong ? 'text-status-error-text' : 'text-ink-secondary')}>
+      <p id="chat-input-hint" className={cn('chat-composer-counter m-0 text-xs', bytes < MAX_MESSAGE_BYTES * 0.9 && 'sr-only', tooLong ? 'text-status-error-text' : 'text-ink-secondary')}>
         {formatNumber(bytes)} / {formatNumber(MAX_MESSAGE_BYTES)} {t('chat.byteUnit')}
       </p>
       </div>
       <div className="chat-composer-footer">
         <div className="chat-composer-toolbar" role="group" aria-label={t('chat.composerTools')}>
-          {media.contextTrigger}{media.attachmentTrigger}
+          {media.attachmentTrigger}{target.settings}{media.contextTrigger}
           {sessionId ? <VoiceCapture key={`voice:${sessionId}`} sessionId={sessionId} disabled={stale || generating || assetBusy} onBusy={setVoiceBusy} /> : null}
-          <ToolPicker key={pickerKey} tools={tools} selected={selectedTools} disabled={generating || !session || stale}
-            onLoaded={setTools} onChange={keys => { if (sessionId) setSessionTools(sessionId, keys); }} />
-          {target.skills}{target.settings}
+          {target.skills}
         </div>
         <div className="chat-composer-primary" role="group" aria-label={t('chat.composerModel')}>
+          <ToolPicker key={pickerKey} tools={tools} selected={selectedTools} disabled={generating || !session || stale}
+            onLoaded={setTools} onChange={keys => { if (sessionId) setSessionTools(sessionId, keys); }} />
           {target.model}{target.effort}
           {generating
-            ? <Button variant="danger" size="sm" iconOnly aria-label={t('chat.stop')} title={t('chat.stop')} loading={generation?.stopping} onClick={() => void stop()}><Square className="size-4" aria-hidden="true" /></Button>
-            : <Button type="submit" size="sm" iconOnly aria-label={t('chat.send')} title={t('chat.send')} disabled={!canSend}><ArrowUp className="size-4" aria-hidden="true" /></Button>}
+            ? <Button variant="danger" size="sm" iconOnly className="chat-composer-send" aria-label={t('chat.stop')} title={t('chat.stop')} loading={generation?.stopping} onClick={() => void stop()}><Square className="size-4" aria-hidden="true" /></Button>
+            : <Button type="submit" size="sm" iconOnly className="chat-composer-send" aria-label={t('chat.send')} title={!hasTarget ? t('chat.selectProviderModel') : t('chat.send')} disabled={!canSend}><ArrowUp className="size-4" aria-hidden="true" /></Button>}
         </div>
       </div>
     </form>

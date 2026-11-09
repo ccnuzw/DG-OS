@@ -1,8 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AgentWorkbench from '../src/pages/workbench/AgentWorkbench';
-import { Request } from '../src/pages/workbench/AgentConversation';
-import { useAgentRunner } from '../src/stores/agentRunnerStore';
+import { AgentConversation, EventContent, Request } from '../src/pages/workbench/AgentConversation';
+import { useAgentRunner, type AgentSession } from '../src/stores/agentRunnerStore';
 import { useDevelopment } from '../src/stores/developmentStore';
 import { chooseContext } from '../src/stores/developmentSelection';
 import { useDevelopmentRuntime, type DevelopmentProcess } from '../src/stores/developmentRuntime';
@@ -16,7 +16,7 @@ import { useCapabilityEntry } from '../src/components/chat/RuntimeNavigation';
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('../src/i18n', () => ({ useLocale: () => ({ t: (key: string) => key }), t: (key: string) => key, formatDateTime: String }));
-beforeEach(() => { vi.spyOn(crypto, 'randomUUID').mockReturnValue('00000000-0000-4000-8000-000000000001'); });
+beforeEach(() => { let id = 0; vi.spyOn(crypto, 'randomUUID').mockImplementation(() => `00000000-0000-4000-8000-${String(++id).padStart(12, '0')}`); });
 afterEach(() => { cleanup(); localStorage.clear(); useAgentRunner.getState().reset(); useDevelopment.getState().reset(); useDevelopmentDrafts.getState().clear(); invoke.mockReset(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 const workspace = {
@@ -29,46 +29,46 @@ const session = { id: '00000000-0000-4000-8000-000000000001', generation: 'runti
 const providerRevision: CliProviderRevision = { revision: 4, permission_epoch: 2, configuration: { engine: 'codex', provider: { provider_id: 'provider1', model_id: 'model1', provider_revision: 3 } }, created_at: 1 };
 
 // `override` returns a value for the commands a test cares about; undefined falls back to the defaults below.
-function install(override: (command: string, args?: { input?: unknown }) => unknown = () => undefined) {
- invoke.mockImplementation(async (command: string, args?: { input?: unknown }) => {
+function install(override: (command: string, args?: { input?: unknown; sessionId?: string }) => unknown = () => undefined) {
+ let selected = workspace.selection;
+ invoke.mockImplementation(async (command: string, args?: { input?: unknown; sessionId?: string }) => {
   const result = override(command, args);
   if (result !== undefined) return result;
-  if (command === 'read_development_workspace') return workspace;
-  if (command === 'read_development_workspaces') return { workspaces: [{ id: 'w1', path: '/tmp/project', directory_identity: 'd', kind: 'original' }], selected_workspace_id: 'w1', operation: null };
+  if (command === 'read_development_workspace') return { ...workspace, sessions: Object.values(useAgentRunner.getState().snapshots).map(view => ({ id: view.id, owner: 'u', project_id: 'p1', task_id: 't1', engine: view.engine, native_id: view.native_id, workspace: view.workspace, model: null, executable: null })), selection: selected };
+  if (command === 'select_development_context') { selected = args!.input as typeof selected; return null; }
+  if (command === 'read_development_workspaces') return { workspaces: [{ id: 'w1', path: '/tmp/project', directory_identity: 'd', kind: 'original' }], selected_workspace_id: 'w1', operation: null, operations: [] };
   if (command === 'inspect_development_project') return inspection;
-  if (command === 'open_agent_session' || command === 'get_agent_session') return session;
+  if (command === 'open_agent_session' || command === 'get_agent_session') return { ...session, id: args?.sessionId ?? session.id };
   if (command === 'read_development_cli_provider') return providerRevision;
-  if (command === 'read_development_cli_provider_catalog') return { project_id: 'p1', engine: 'codex', providers: [{ id: 'provider1', name: 'Provider One', enabled: true, config_revision: 3, models: [{ id: 'model1', name: 'Model One', model_type: 'chat' }] }] };
+  if (command === 'read_development_cli_provider_catalog') return { project_id: 'p1', engine: 'codex', providers: [{ id: 'provider1', name: 'Provider One', enabled: true, config_revision: 3, availability: { available: true, reason: null }, models: [{ id: 'model1', name: 'Model One', model_type: 'chat' }] }] };
   if (command === 'get_development_session_configuration') return { format: 'provider_bound', read_only: false, snapshot: { binding_id: 'binding1', engine: 'codex', ...providerRevision.configuration.provider, revision: 4, permission_epoch: 2 } };
-  if (command === 'read_development_git') return { kind: 'directory', branch: null, head: null };
+  if (command === 'read_development_git') return { task_id: 't1', kind: 'directory', branch: null, head: null, conflicts: [] };
   if (command === 'list_development_processes') return [];
   if (command === 'list_development_files') return { entries: [], truncated: false };
+  if (command === 'list_development_runs') return [];
+  if (command === 'read_development_review') return { task_id: 't1', captured_at: null, baseline_late: false, truncated: false, fingerprint: '', changes: [], runs_stale: false };
   if (command === 'read_development_commands') return { commands: [], discovered: [] };
   return undefined;
  });
 }
-// Exercise the production launch dialog: explicit directory trust and saved Provider revision.
+// Existing-session scenarios start through the production runner; first-send admission
+// and orchestration are exercised separately below and in project-conversation coverage.
 async function start(state = 'idle') {
  await act(async () => {});
- fireEvent.click(screen.getByTestId('dev-start-task'));
- await act(async () => {});
- const launch = screen.getByTestId('dev-task-launch');
- const trust = within(launch).getByRole('checkbox', { name: 'dev.trustProject' });
- fireEvent.click(trust);
- const revision = within(launch).getByRole('combobox', { name: 'capabilities.newSessionSource' });
- fireEvent.keyDown(revision, { key: 'ArrowDown' });
- fireEvent.click(screen.getByRole('option', { name: 'capabilities.projectRevision' }));
- const submit = screen.getByTestId('task-launch-start');
- expect(submit).toHaveProperty('disabled', false);
- await act(async () => { fireEvent.click(submit); });
- expect(invoke).toHaveBeenCalledWith('open_agent_session', { input: expect.objectContaining({ intent: 'create', id: session.id, task_id: 't1', project_revision: 4, provider: providerRevision.configuration.provider, options: expect.objectContaining({ trust_workspace: true }) }) });
+ await act(async () => {
+  const configuration = await invoke('read_development_cli_provider', { projectId: 'p1' }) as CliProviderRevision;
+  await useAgentRunner.getState().open({ intent: 'create', id: session.id, engine: configuration.configuration.engine, task_id: 't1', project_revision: configuration.revision, provider: configuration.configuration.provider, options: { workspace: '/tmp/project', resume_id: null, executable: null, model: null, trust_workspace: true } });
+  await useDevelopment.getState().load();
+  await chooseContext({ project_id: 'p1', task_id: 't1', session_id: session.id });
+ });
  expect(useAgentRunner.getState().session?.status).toBe(state);
  expect(screen.getByRole('textbox', { name: 'agent.prompt' })).toBeTruthy();
 }
 describe('agent sessions', () => {
  it('requires workspace trust before creating a runtime', async () => {
   install(); render(<AgentWorkbench />);
-  const button = await screen.findByTestId('dev-session-new-codex') as HTMLButtonElement;
+  const button = await screen.findByTestId('direct-conversation-send') as HTMLButtonElement;
+  fireEvent.change(screen.getByLabelText('agent.prompt'), { target: { value: 'First request requires explicit trust' } });
   expect(button.disabled).toBe(true);
   expect(invoke.mock.calls.some(([name]) => name === 'open_agent_session')).toBe(false);
  });
@@ -82,12 +82,12 @@ describe('agent sessions', () => {
    return undefined;
   });
   render(<AgentWorkbench />);
-  await waitFor(() => expect(screen.getByTestId('dev-session-cwd').textContent).toContain('/tmp/project'));
+  await waitFor(() => expect(screen.getByTestId('dev-context-details').textContent).toContain('/tmp/project'));
   changed = true;
   await act(async () => { await chooseContext({ project_id: 'p1', task_id: 't2', session_id: null }); });
   await act(async () => { resolveWorkspace({ workspaces: [{ id: 'w2', path: '/tmp/task-worktree', kind: 'managed' }], selected_workspace_id: 'w2', operation: null }); });
-  await waitFor(() => expect(screen.getByTestId('dev-session-cwd').textContent).toContain('/tmp/task-worktree'));
-  expect((screen.getByTestId('dev-trust') as HTMLInputElement).checked).toBe(false);
+  await waitFor(() => expect(screen.getByTestId('dev-context-details').textContent).toContain('/tmp/task-worktree'));
+  expect((screen.getByTestId('direct-conversation-trust') as HTMLInputElement).checked).toBe(false);
  });
  it('keeps the host session alive when its page unmounts', async () => {
   install(); const view = render(<AgentWorkbench />); await start(); view.unmount();
@@ -121,7 +121,7 @@ it.each([[true, false], [false, true], [false, false]])('clears the Agent runnin
  const tree = (surfaceActive: boolean) => <SurfaceScope id="cli-agent" active={surfaceActive} controller={controller}><AgentWorkbench /></SurfaceScope>;
  const view = render(tree(true));
  await act(async () => {});
- await act(async () => { fireEvent.click(screen.getByTestId('dev-toggle-runtime')); });
+ await act(async () => { fireEvent.click(screen.getByTestId('dev-tool-tasks')); });
  expect(screen.getByTestId('dev-development-runtime')).toBeTruthy();
  expect(controller.getSurfaceStatuses()['cli-agent']?.running).toBe(true);
  const reads = (command: string) => invoke.mock.calls.filter(([name]) => name === command).length;
@@ -130,8 +130,8 @@ it.each([[true, false], [false, true], [false, false]])('clears the Agent runnin
  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
  expect(reads('list_development_processes') - visibleHistory).toBe(2);
  if (!tabMounted) {
-  await act(async () => { fireEvent.click(screen.getByTestId('dev-toggle-runtime')); });
-  expect(screen.getByTestId('dev-development-runtime').closest('#dev-panel-runtime')?.hasAttribute('hidden')).toBe(true);
+  await act(async () => { fireEvent.click(screen.getByTestId('dev-tool-tasks')); });
+  expect(document.getElementById('dev-navigation')?.hasAttribute('hidden')).toBe(true);
  }
  view.rerender(tree(active));
  await act(async () => {});
@@ -155,14 +155,14 @@ it('tracks a successful host start acknowledged after leaving the development ta
  const controller = createWorkspaceController();
  render(<SurfaceScope id="cli-agent" active controller={controller}><AgentWorkbench /></SurfaceScope>);
  await act(async () => {});
- await act(async () => { fireEvent.click(screen.getByTestId('dev-toggle-runtime')); });
+ await act(async () => { fireEvent.click(screen.getByTestId('dev-tool-tasks')); });
  fireEvent.change(screen.getByTestId('dev-process-program'), { target: { value: 'echo' } });
  fireEvent.click(screen.getByTestId('dev-process-trust'));
  fireEvent.click(screen.getByTestId('dev-process-start'));
  expect(invoke.mock.calls.filter(([name]) => name === 'start_development_process')).toHaveLength(1);
  const submittedId = invoke.mock.calls.find(([name]) => name === 'start_development_process')![1].input.id;
- await act(async () => { fireEvent.click(screen.getByTestId('dev-toggle-runtime')); });
- expect(screen.getByTestId('dev-development-runtime').closest('#dev-panel-runtime')?.hasAttribute('hidden')).toBe(true);
+ await act(async () => { fireEvent.click(screen.getByTestId('dev-tool-tasks')); });
+ expect(document.getElementById('dev-navigation')?.hasAttribute('hidden')).toBe(true);
  current = { id: submittedId, project_id: 'p1', task_id: 't1', kind: 'command', source: 'host', status: 'running', output: '', truncated: false, exit_code: null, reason: null, started_at: 1, finished_at: null, program: 'echo', args: [], cwd: '.', fingerprint: '', start_fingerprint: '', verification_status: 'not_requested', verification_complete: false, mutation_observed: false, preview_url: null };
  await act(async () => { started.resolve(current!); });
  expect(controller.getSurfaceStatuses()['cli-agent']?.running).toBe(true);
@@ -181,8 +181,8 @@ it('keeps the hidden running marker qualified through read failure and unknown c
  const controller = createWorkspaceController();
  const tree = (active: boolean) => <SurfaceScope id="cli-agent" active={active} controller={controller}><AgentWorkbench /></SurfaceScope>;
  const view = render(tree(true)); await act(async () => {});
- await act(async () => { fireEvent.click(screen.getByTestId('dev-toggle-runtime')); });
- await act(async () => { fireEvent.click(screen.getByTestId('dev-toggle-runtime')); });
+ await act(async () => { fireEvent.click(screen.getByTestId('dev-tool-tasks')); });
+ await act(async () => { fireEvent.click(screen.getByTestId('dev-tool-tasks')); });
  view.rerender(tree(false)); failed = true;
  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
  expect(controller.getSurfaceStatuses()['cli-agent']).toMatchObject({ running: true, runningLabel: 'direct.marker.lastKnown' });
@@ -229,11 +229,9 @@ it('counts only native requests and rejects expired or closed-session approval c
  let pending = [native];
  install(command => command === 'open_agent_session' || command === 'get_agent_session' ? { ...session, status: 'waiting', pending } : undefined);
  render(<AgentWorkbench />); await start('waiting');
- expect(screen.getByTestId('dev-toggle-agent').textContent).toContain('(1)');
  const staleButton = within(screen.getByRole('region', { name: 'agent.approval' })).getByRole('button', { name: 'agent.allow' });
  pending = [];
  await act(async () => { await useAgentRunner.getState().attach(session.id); });
- expect(screen.getByTestId('dev-toggle-agent').textContent).not.toContain('(1)');
  expect(screen.queryByRole('region', { name: 'agent.approval' })).toBeNull();
  fireEvent.click(staleButton);
  expect(await useAgentRunner.getState().action('respond_agent_request', { input: { session_id: session.id, generation: session.generation, request_id: native.id, response: { decision: 'accept' } } })).toBe(false);
@@ -243,7 +241,7 @@ it('counts only native requests and rejects expired or closed-session approval c
  expect(invoke.mock.calls.some(([command]) => command === 'respond_agent_request')).toBe(false);
 });
 
-it('requires explicit task and session navigation and never approves the previous session request', async () => {
+it('continues the task session without starting another runtime and rejects the previous session approval', async () => {
  const first = { ...session, status: 'waiting', pending: [{ id: 'first-native', kind: 'item/commandExecution/requestApproval', title: 'First request', data: { availableDecisions: ['accept', 'decline'] } }] };
  const other = { ...session, id: 'other', status: 'waiting', pending: [{ id: 'other-native', kind: 'item/commandExecution/requestApproval', title: 'Other request', data: { availableDecisions: ['accept', 'decline'] } }] };
  const saved = { id: 'other', owner: 'u', engine: 'codex', native_id: 'other-native', workspace: '/tmp/project', executable: null, model: null, project_id: 'p1', task_id: 't2' };
@@ -251,10 +249,11 @@ it('requires explicit task and session navigation and never approves the previou
  useAgentRunner.setState({ live: { other: 'waiting' } });
  render(<AgentWorkbench />); await start('waiting');
  const staleButton = screen.getByRole('button', { name: 'agent.allow' });
+ await act(async () => { fireEvent.click(screen.getByTestId('dev-tool-tasks')); });
  await act(async () => { fireEvent.click(screen.getByTestId('dev-task-item-t2')); });
- expect(screen.queryByRole('region', { name: 'agent.approval' })).toBeNull();
+ expect(screen.getByRole('region', { name: 'agent.approval' }).textContent).toContain('Other request');
  expect(invoke.mock.calls.some(([command]) => command === 'respond_agent_request')).toBe(false);
- await act(async () => { fireEvent.click(within(screen.getByTestId('dev-session-item-other')).getByRole('button')); });
+ expect(invoke.mock.calls.filter(([command]) => command === 'open_agent_session')).toHaveLength(1);
  expect(useDevelopment.getState().selection.task_id).toBe('t2');
  expect(useAgentRunner.getState().selected).toBe('other');
  fireEvent.click(staleButton);
@@ -264,7 +263,7 @@ it('requires explicit task and session navigation and never approves the previou
  expect(invoke).toHaveBeenCalledWith('respond_agent_request', { input: { session_id: 'other', generation: session.generation, request_id: 'other-native', response: { decision: 'accept' } } });
 });
 
-it('retains the real conversation and draft across budget transitions without persisting automatic geometry', async () => {
+it('keeps the conversation, draft and reading position while drawers switch, resize and overlay', async () => {
  let width = 1400;
  const callbacks: ResizeObserverCallback[] = [];
  const frames: FrameRequestCallback[] = [];
@@ -275,46 +274,30 @@ it('retains the real conversation and draft across budget transitions without pe
  const settle = () => act(() => { callbacks.forEach(callback => callback([], {} as ResizeObserver)); frames.splice(0).forEach(callback => callback(0)); });
  try {
   install(); render(<AgentWorkbench />); await start(); settle();
-  expect(screen.getByTestId('dev-panel-code').hidden).toBe(true);
-  fireEvent.click(screen.getByRole('button', { name: 'dev.projectTools' }));
-  fireEvent.click(screen.getByTestId('dev-toggle-agent')); // Keep conversation selected when the window narrows.
-  fireEvent.click(screen.getByTestId('dev-toggle-agent'));
-  fireEvent.keyDown(screen.getByTestId('dev-agent-resizer'), { key: 'ArrowLeft' });
-  const saved = localStorage.getItem('dgos.development.layout.v2');
   const prompt = screen.getByLabelText('agent.prompt');
-  fireEvent.change(prompt, { target: { value: 'Keep this actual draft' } }); prompt.focus();
-  width = 700; settle();
-  expect(screen.getByTestId('dev-panel-code').hidden).toBe(true);
-  expect(screen.getByTestId('dev-panel-agent').hidden).toBe(false);
+  const transcript = screen.getByRole('region', { name: 'agent.messages' });
+  fireEvent.change(prompt, { target: { value: 'Keep this actual draft' } });
+  transcript.scrollTop = 120; fireEvent.scroll(transcript);
+  fireEvent.click(screen.getByTestId('dev-tool-files'));
+  fireEvent.keyDown(screen.getByTestId('dev-drawer-resizer'), { key: 'ArrowRight' });
+  fireEvent.click(screen.getByTestId('dev-tool-tasks'));
+  fireEvent.click(screen.getByTestId('dev-tool-projects'));
+  fireEvent.click(screen.getByTestId('dev-tool-projects'));
+  expect(document.getElementById('dev-navigation')?.hasAttribute('hidden')).toBe(true);
   expect(screen.getByLabelText('agent.prompt')).toBe(prompt);
-  expect(document.activeElement).toBe(prompt);
-  expect(localStorage.getItem('dgos.development.layout.v2')).toBe(saved);
-  width = 1400; settle();
-  expect(screen.getByTestId('dev-panel-code').hidden).toBe(false);
-  expect(screen.getByLabelText('agent.prompt')).toHaveProperty('value', 'Keep this actual draft');
-  expect(screen.getByTestId('dev-agent-resizer').getAttribute('aria-valuenow')).toBe('40');
-  expect(localStorage.getItem('dgos.development.layout.v2')).toBe(saved);
-  fireEvent.click(screen.getByRole('button', { name: 'dev.projectTools' }));
-  fireEvent.click(screen.getByRole('button', { name: 'dev.projectTools' }));
-  prompt.focus();
-  const codeSaved = localStorage.getItem('dgos.development.layout.v2');
-  width = 700; settle();
-  expect(screen.getByTestId('dev-panel-agent').hidden).toBe(true);
-  expect(document.activeElement).toBe(screen.getByTestId('dev-toggle-agent'));
-  expect(localStorage.getItem('dgos.development.layout.v2')).toBe(codeSaved);
-  fireEvent.click(screen.getByTestId('dev-toggle-agent')); settle();
+  expect(prompt).toHaveProperty('value', 'Keep this actual draft');
+  expect(screen.getByRole('region', { name: 'agent.messages' })).toBe(transcript);
+  expect(transcript.scrollTop).toBe(120);
+  width = 500; settle();
+  fireEvent.click(screen.getByTestId('dev-tool-files')); settle();
+  fireEvent.keyDown(document.getElementById('dev-navigation')!, { key: 'Escape' }); settle();
+  expect(document.activeElement).toBe(screen.getByTestId('dev-tool-files'));
   expect(screen.getByLabelText('agent.prompt')).toBe(prompt);
   expect(prompt).toHaveProperty('value', 'Keep this actual draft');
   width = 1400; settle();
-  screen.getByTestId('dev-review-tab-files').focus();
-  width = 700; settle();
-  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'dev.projectTools' }));
-  width = 1400; settle();
-  screen.getByTestId('dev-trust').focus();
-  width = 700; settle();
-  expect(document.activeElement).toBe(screen.getByTestId('dev-toggle-navigation'));
+  expect(screen.getByRole('region', { name: 'agent.messages' })).toBe(transcript);
   expect(invoke.mock.calls.filter(([name]) => name === 'open_agent_session')).toHaveLength(1);
-  expect(invoke.mock.calls.some(([name]) => name === 'close_agent_session' || name === 'interrupt_agent_session')).toBe(false);
+  expect(invoke.mock.calls.some(([name]) => ['close_agent_session', 'interrupt_agent_session', 'send_agent_message'].includes(name))).toBe(false);
  } finally { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); }
 });
 
@@ -324,7 +307,7 @@ it.each(['codex', 'claude'] as const)('preserves the %s runtime and next draft t
  let persistedSelection: typeof workspace.selection | { project_id: string; task_id: string; session_id: string } = workspace.selection;
  install((command, args) => {
   if (command === 'select_development_context') { persistedSelection = args!.input as typeof persistedSelection; return null; }
-  if (command === 'read_development_workspace') return { ...workspace, selection: persistedSelection };
+  if (command === 'read_development_workspace') return { ...workspace, sessions: Object.values(useAgentRunner.getState().snapshots).map(view => ({ id: view.id, owner: 'u', project_id: 'p1', task_id: 't1', engine: view.engine, native_id: view.native_id, workspace: view.workspace, model: null, executable: null })), selection: persistedSelection };
   return command === 'read_development_cli_provider' ? { ...providerRevision, configuration: { ...providerRevision.configuration, engine } } : command === 'open_agent_session' || command === 'get_agent_session' ? native : command === 'send_agent_message' ? response.promise : undefined;
  });
  function Shell() {
@@ -344,21 +327,20 @@ it.each(['codex', 'claude'] as const)('preserves the %s runtime and next draft t
  fireEvent.change(prompt, { target: { value: 'One explicit request' } });
  fireEvent.click(screen.getByRole('button', { name: 'agent.send' }));
  fireEvent.change(prompt, { target: { value: 'Keep next request' } });
- const original = useAgentRunner.getState().session;
  const selection = useDevelopment.getState().selection;
  for (const [label, path] of [['nav.skills', '/skills'], ['nav.mcp', '/mcp']] as const) {
-  fireEvent.click(within(screen.getByRole('navigation', { name: 'workbenchNavigation.capabilities' })).getByRole('link', { name: label }));
+  fireEvent.click(within(screen.getByRole('navigation', { name: 'agentControls.management' })).getByRole('link', { name: label }));
   await waitFor(() => expect(screen.getByTestId('management-entry').textContent).toBe(JSON.stringify({ path, runtime: 'native', selection: { target: engine === 'codex' ? 'Codex' : 'Claude', scope: 'ProjectShared', project_id: 'p1' }, sessionId: session.id })));
   fireEvent.click(screen.getByRole('button', { name: 'Return to conversation' }));
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'agent.prompt' })).toBe(prompt));
  }
- fireEvent.click(within(screen.getByRole('navigation', { name: 'workbenchNavigation.capabilities' })).getByRole('link', { name: 'capabilities.provider' }));
+ fireEvent.click(screen.getByRole('button', { name: 'agentControls.more' }));
+ fireEvent.click(within(screen.getByRole('dialog', { name: 'agentControls.more' })).getByRole('link', { name: 'capabilities.provider' }));
  await waitFor(() => expect(screen.getByTestId('management-entry').textContent).toContain('/settings/providers'));
  fireEvent.click(screen.getByRole('button', { name: 'Return to conversation' }));
  await waitFor(() => expect(screen.getByRole('textbox', { name: 'agent.prompt' })).toBe(prompt));
  await act(async () => response.resolve(null));
  expect(prompt.value).toBe('Keep next request');
- expect(useAgentRunner.getState().session).toBe(original);
  expect(useDevelopment.getState().selection).toEqual(selection);
  expect(invoke.mock.calls.filter(([name]) => name === 'open_agent_session')).toHaveLength(1);
  expect(invoke.mock.calls.filter(([name]) => name === 'send_agent_message')).toHaveLength(1);
@@ -440,12 +422,15 @@ it('dispatches one new session for repeated clicks before the open acknowledgeme
  const opened = Promise.withResolvers<unknown>();
  install(command => command === 'open_agent_session' ? opened.promise : undefined);
  render(<AgentWorkbench />);
- await waitFor(() => expect(screen.getByTestId('dev-session-cwd').textContent).toContain('/tmp/project'));
- fireEvent.click(screen.getByTestId('dev-trust'));
- const create = screen.getByTestId('dev-session-new-codex');
+ await waitFor(() => expect(screen.getByTestId('direct-conversation-trust')).toHaveProperty('disabled', false));
+ fireEvent.change(screen.getByLabelText('agent.prompt'), { target: { value: 'Send exactly once' } });
+ fireEvent.click(screen.getByTestId('direct-conversation-trust'));
+ const create = screen.getByTestId('direct-conversation-send');
  await act(async () => { fireEvent.click(create); fireEvent.click(create); });
  expect(invoke.mock.calls.filter(([command]) => command === 'open_agent_session')).toHaveLength(1);
- await act(async () => opened.resolve(session));
+ const openedId = invoke.mock.calls.find(([command]) => command === 'open_agent_session')![1].input.id;
+ await act(async () => opened.resolve({ ...session, id: openedId }));
+ expect(invoke.mock.calls.filter(([command]) => command === 'send_agent_message')).toHaveLength(1);
 });
 
 it.each(['accept', 'decline', 'cancel'])('returns the native MCP elicitation %s action without a Codex decision', async action => {
@@ -502,10 +487,61 @@ it('keeps permission expansion scoped and cannot approve an unknown replacement 
  const response = Promise.withResolvers<unknown>();
  invoke.mockImplementation(async command => command === 'respond_agent_request' ? response.promise : waiting);
  fireEvent.click(screen.getByRole('button', { name: 'agent.allowTurn' }));
- fireEvent.click(screen.getByRole('button', { name: 'agent.allowSession' }));
+ expect(screen.queryByRole('button', { name: 'agent.allowSession' })).toBeNull();
  expect(invoke.mock.calls.filter(([command]) => command === 'respond_agent_request')).toEqual([['respond_agent_request', { input: { session_id: session.id, generation: session.generation, request_id: native.id, response: { permissions, scope: 'turn' } } }]]);
  await act(async () => { useAgentRunner.setState({ session: { ...waiting, status: 'unknown', generation: 'replacement' } }); response.resolve(null); });
  expect(screen.queryByRole('button', { name: 'agent.allowTurn' })).toBeNull();
  expect(screen.queryByRole('button', { name: 'agent.allowSession' })).toBeNull();
  expect(useAgentRunner.getState().session?.generation).toBe('replacement');
+});
+
+it('never offers session or permanent approval decisions', async () => {
+ const submit = vi.fn(async () => true);
+ render(<Request engine="codex" sessionId="session" generation="generation" pending={{ id: 'specific-request', kind: 'item/commandExecution/requestApproval', title: 'native', data: { command: 'echo reviewed', availableDecisions: ['acceptForSession', { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['echo'] } }, 'decline'] } }} submit={submit} />);
+ expect(screen.getByText('specific-request')).toBeTruthy();
+ expect(screen.getByText('generation', { exact: true })).toBeTruthy();
+ expect(screen.queryByRole('button', { name: 'agent.allowSession' })).toBeNull();
+ expect(screen.queryByRole('button', { name: 'agent.allow', exact: true })).toBeNull();
+ fireEvent.click(screen.getByRole('button', { name: 'agent.deny' }));
+ await waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith({ decision: 'decline' }));
+});
+
+it('does not treat a future terminal reason as success or failure', () => {
+ render(<EventContent event={{ seq: 1, run: 'run', kind: 'result', text: null, data: { run_status: 'unknown', is_error: true, terminal_reason: 'future_reason' } }} />);
+ expect(screen.getByText('agentExecution.unknown')).toBeTruthy();
+ expect(screen.queryByText('agentExecution.replyCompleted')).toBeNull();
+ expect(screen.queryByText('agentExecution.failed')).toBeNull();
+});
+
+it.each(['completed', 'cancelled', 'failed', 'unknown'])('keeps unfinished operations separate from the %s reply outcome', status => {
+ const native: AgentSession = { ...session, engine: 'codex', configuration: null, events: [
+  { seq: 1, run: 'run', kind: 'item/started', text: null, data: { id: 'command', type: 'commandExecution', command: 'echo incomplete' } },
+  { seq: 2, run: 'run', kind: 'turn/completed', text: null, data: { run_status: status } },
+ ] };
+ useAgentRunner.setState({ session: native, selected: native.id });
+ render(<AgentConversation session={native} drafts={{}} setDraft={vi.fn()} busy={false} error={false} />);
+ expect(within(screen.getByTestId('agent-event-1')).getByText(status === 'cancelled' ? 'agentExecution.stopped' : 'agentExecution.unknown')).toBeTruthy();
+ expect(within(screen.getByTestId('agent-event-2')).getByText(`agentExecution.${status === 'completed' ? 'replyCompleted' : status === 'cancelled' ? 'stopped' : status}`)).toBeTruthy();
+ expect(screen.getByTestId('agent-event-1').querySelector('details')?.open).toBe(false);
+});
+
+it('labels command success only as operation completion and reveals output explicitly', async () => {
+ render(<EventContent event={{ seq: 1, run: 'run', kind: 'commandExecution', text: null, data: { type: 'commandExecution', command: 'echo native-output', exitCode: 0, aggregatedOutput: 'native output body' } }} />);
+ expect(screen.getByText('agentExecution.toolCompleted')).toBeTruthy();
+ expect(screen.queryByText('agentExecution.replyCompleted')).toBeNull();
+ expect(screen.queryByText('native output body')).toBeNull();
+ fireEvent.click(screen.getByText('direct.command'));
+ await screen.findByText('native output body');
+});
+
+it('keeps a reply unread while the conversation is hidden behind runtime tools', async () => {
+ install(); render(<AgentWorkbench />); await start();
+ fireEvent.click(screen.getByRole('button', { name: 'workbenchFiles.runtime' }));
+ await act(async () => {
+  const updated = { ...useAgentRunner.getState().session!, events: [{ seq: 1, kind: 'agentMessage', text: 'background reply', data: null }] };
+  useAgentRunner.setState({ session: updated, snapshots: { [session.id]: updated }, unread: { [session.id]: true } });
+ });
+ expect(useAgentRunner.getState().unread[session.id]).toBe(true);
+ fireEvent.click(screen.getByRole('button', { name: 'workbenchFiles.conversation' }));
+ await waitFor(() => expect(useAgentRunner.getState().unread[session.id]).toBe(false));
 });

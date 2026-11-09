@@ -1,0 +1,17 @@
+export default {
+  'conversationHandoff.title': '使用其他模型继续',
+  'conversationHandoff.cancel': '取消',
+  'conversationHandoff.historyNotice': '目标会话将拥有独立的原生 CLI 历史记录；源会话及其历史记录保持不变。',
+  'conversationHandoff.notice': '使用此草稿创建全新的目标会话。只有你在该会话中明确发送时才会发送内容。',
+  'conversationHandoff.remaining': '待完成事项',
+  'conversationHandoff.prepare': '准备继续任务的草稿',
+  'conversationHandoff.summary': '检查并编辑交接摘要',
+  'conversationHandoff.loadingWorkspace': '正在读取任务目录…',
+  'conversationHandoff.permissionsNotice': '新的原生 CLI 会话可能会请求自己的权限。本次交接不会代替目标模型授予权限。',
+  'conversationHandoff.trust': '我明确允许新会话使用此目录',
+  'conversationHandoff.create': '使用草稿创建目标会话',
+  'conversationHandoff.chooseDifferent': '请选择与源会话不同的模型；源会话绑定不会被修改。',
+  'conversationHandoff.reserved': '此交接已有持久预留或结果未知，不会重试；请先刷新交接历史再进行其他操作。',
+  'conversationHandoff.recheck': '检查交接状态',
+  'conversationHandoff.attach': '打开目标会话',
+} as const;

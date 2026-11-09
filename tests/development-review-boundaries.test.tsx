@@ -49,7 +49,7 @@ it('drops an old account capability catalog instead of offering its providers', 
  });
  render(<MemoryRouter><ProjectCapabilities projectId="p" /></MemoryRouter>);
  await act(async () => { useDevelopment.getState().reset(); });
- await act(async () => { catalog.resolve({ project_id: 'p', engine: 'codex', providers: [{ id: 'private-provider', name: 'PRIVATE_OLD_PROVIDER', config_revision: 1, enabled: true, models: [{ id: 'm', name: 'm', model_type: 'chat' }] }] }); });
+ await act(async () => { catalog.resolve({ project_id: 'p', engine: 'codex', providers: [{ id: 'private-provider', name: 'PRIVATE_OLD_PROVIDER', config_revision: 1, enabled: true, availability: { available: true, reason: null }, models: [{ id: 'm', name: 'm', model_type: 'chat' }] }] }); });
  expect(document.body.textContent).not.toContain('PRIVATE_OLD_PROVIDER');
 });
 
@@ -128,7 +128,7 @@ it('removes a consumed native request after revocation without restoring approva
 it('keeps a first Claude choice unbound until an explicit Provider selection and saves that engine', async () => {
  invoke.mockImplementation(async (command: string, args: { engine?: string; input?: { configuration: unknown } }) => {
   if (command === 'read_development_cli_provider') return null;
-  if (command === 'read_development_cli_provider_catalog') return { project_id: 'p', engine: args.engine, providers: [{ id: 'messages-provider', name: 'Messages Provider', enabled: true, config_revision: 7, models: [{ id: 'claude-model', name: 'Claude model', model_type: 'chat' }] }] };
+  if (command === 'read_development_cli_provider_catalog') return { project_id: 'p', engine: args.engine, providers: [{ id: 'messages-provider', name: 'Messages Provider', enabled: true, config_revision: 7, availability: { available: true, reason: null }, models: [{ id: 'claude-model', name: 'Claude model', model_type: 'chat' }] }] };
   if (command === 'save_development_cli_provider') return { revision: 1, permission_epoch: 0, configuration: args.input?.configuration, created_at: 1 };
   return null;
  });

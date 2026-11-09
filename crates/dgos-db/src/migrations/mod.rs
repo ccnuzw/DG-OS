@@ -40,6 +40,7 @@ mod m20261104_000030_task_workspaces;
 mod m20261107_000031_ai_runs;
 mod m20261107_000032_cli_provider_cutover;
 mod m20261107_000033_git_pull;
+mod m20261109_000034_task_requirements;
 
 pub struct Migrator;
 
@@ -87,6 +88,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261107_000031_ai_runs::Migration),
             Box::new(m20261107_000032_cli_provider_cutover::Migration),
             Box::new(m20261107_000033_git_pull::Migration),
+            Box::new(m20261109_000034_task_requirements::Migration),
         ]
     }
 }

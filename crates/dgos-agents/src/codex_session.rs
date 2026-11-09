@@ -177,6 +177,9 @@ impl CodexSession {
                     view.status = if view.active_run.is_some() { "running" } else { "idle" }.into();
                 }
             }
+            "thread/tokenUsage/updated" if Self::matches_thread(view, &params) => {
+                view.push(method, None, params);
+            }
             "host/closed" => {
                 view.status = if view.status == "closed" {
                     "closed"
@@ -184,6 +187,7 @@ impl CodexSession {
                     "unknown"
                 }
                 .into();
+                if let Some(controls) = &mut view.controls { controls.uncertain(); }
                 view.pending.clear();
                 turn.id = None;
                 turn.starting = false;
@@ -209,11 +213,17 @@ impl CodexSession {
             params.get("turnId").or_else(|| params.pointer("/turn/id")).and_then(Value::as_str) == Some(id)
         })
     }
-    pub async fn send(&self, request_id: String, text: String) -> Result<(), String> {
+    pub async fn send(&self, request_id: String, text: String, settings: Option<crate::session::AgentTurnSettings>) -> Result<(), String> {
+        let settings = settings.filter(|settings| !settings.is_empty());
         if text.trim().is_empty() || text.len() > 65536 {
             return Err("invalid_prompt".into());
         }
-        let fingerprint: [u8; 32] = Sha256::digest(text.as_bytes()).into();
+        let mut hash = Sha256::new();
+        // Prompt bytes may contain the delimiter and settings JSON verbatim.
+        hash.update((text.len() as u64).to_le_bytes());
+        hash.update(text.as_bytes());
+        if let Some(settings) = &settings { hash.update([0]); hash.update(serde_json::to_vec(settings).map_err(|_| "invalid_turn_settings")?); }
+        let fingerprint: [u8; 32] = hash.finalize().into();
         let mut receipts = self.receipts.lock().await;
         if let Some(old) = receipts.get(&request_id) {
             return if old.0 == fingerprint {
@@ -227,10 +237,11 @@ impl CodexSession {
         if receipts.len() >= 1024 {
             return Err("request_capacity".into());
         }
-        let native = {
+        let (native, overrides) = {
             let mut view = self.view.lock().await;
             if view.status != "idle" || !self.wire.native_available() { return Err("busy".into()); }
             let native = view.native_id.clone().ok_or("closed")?;
+            let overrides = turn_overrides(view.controls.as_ref(), settings.as_ref())?;
             let mut turn = self.turn.lock().await;
             turn.id = None;
             turn.starting = true;
@@ -242,17 +253,13 @@ impl CodexSession {
             view.active_run = Some(request_id.clone());
             view.error = None;
             view.push("userMessage", Some(text.clone()), Value::Null);
-            native
+            (native, overrides)
         };
         receipts.insert(request_id.clone(), (fingerprint, None));
         drop(receipts);
-        let result = self
-            .wire
-            .request(
-                "turn/start",
-                json!({"threadId":native,"input":[{"type":"text","text":text}]}),
-            )
-            .await
+        let mut params = json!({"threadId":native,"input":[{"type":"text","text":text}]});
+        if let Some(overrides) = overrides { params.as_object_mut().unwrap().extend(overrides); }
+        let result = self.wire.request("turn/start", params).await
             .and_then(|reply| reply.pointer("/turn/id").and_then(Value::as_str).filter(|id| !id.is_empty()).map(str::to_owned).ok_or_else(|| "invalid_output".into()));
         let mut view = self.view.lock().await;
         let mut turn = self.turn.lock().await;
@@ -263,6 +270,18 @@ impl CodexSession {
         match &result {
             Ok(id) => {
                 turn.id = Some(id.clone());
+                if let (Some(controls), Some(settings)) = (&mut view.controls, &settings) {
+                    if let Some(effort) = &settings.reasoning_effort {
+                        controls.reasoning.current = effort.clone().or_else(|| controls.default_effort.clone());
+                        controls.reasoning.source = "codex/turn_start".into();
+                        controls.reasoning.reason = None;
+                    }
+                    if let Some(permission) = settings.permission_mode {
+                        controls.permission.current = Some(permission);
+                        controls.permission.source = "codex/turn_start".into();
+                        controls.permission.reason = None;
+                    }
+                }
                 for event in std::mem::take(&mut turn.deferred) {
                     if let Some(reply) = Self::apply_event(&mut view, &mut turn, event) { replies.push(reply); }
                 }
@@ -273,6 +292,7 @@ impl CodexSession {
                 turn.user_echo_pending = false;
                 view.status = "unknown".into();
                 view.error = Some(error.clone());
+                if let Some(controls) = &mut view.controls { controls.uncertain(); }
                 view.pending.clear();
                 view.push("error", Some(error.clone()), json!({"run_status":"unknown","native_status":"send_failed"}));
                 view.active_run = None;
@@ -293,6 +313,8 @@ impl CodexSession {
         let standalone = pending.kind == "mcpServer/elicitation/request" && pending.data.get("turnId").is_none_or(Value::is_null);
         if !Self::matches_thread(&view, &pending.data) || (!standalone && !Self::matches_turn(&view, &turn, &pending.data)) { return Err("request_expired".into()); }
         if !Self::valid_response(pending, &response) { return Err("invalid_response".into()); }
+        if view.controls.as_ref().and_then(|controls| controls.permission.current) == Some(crate::session::PermissionMode::ReadOnly)
+            && !read_only_response(pending, &response) { return Err("invalid_response".into()); }
         let (native_id, request) = turn.requests.iter_mut().find(|(_, request)| request.public_id == request_id && !request.answered).ok_or("request_expired")?;
         let id: Value = serde_json::from_str(native_id).map_err(|_| "invalid_response")?;
         // Reserve before dispatch: an uncertain write must never authorize a replacement action.
@@ -449,10 +471,22 @@ impl CodexSession {
             if id.is_empty() || options.resume_id.as_deref().is_some_and(|expected| expected != id) { return Err("invalid_output".into()); }
             let cwd = result.get("cwd").and_then(Value::as_str).ok_or("provider_binding_unconfirmed")?;
             if tokio::fs::canonicalize(cwd).await.map_err(|_| "provider_binding_unconfirmed")? != tokio::fs::canonicalize(&options.workspace).await.map_err(|_| "provider_binding_unconfirmed")? { return Err("provider_binding_unconfirmed".into()); }
+            // Model metadata is control-only: never start a prompt to discover capabilities.
+            let mut model = None;
+            let mut cursor = Value::Null;
+            for _ in 0..8 {
+                let listed = session.wire.startup_request("handshake_models", "model/list", json!({"limit":100,"includeHidden":true,"cursor":cursor})).await;
+                let Ok(listed) = listed else { break; };
+                model = listed["data"].as_array().and_then(|rows| rows.iter().find(|row| row["model"].as_str() == Some(launch.model.as_str()))).cloned();
+                if model.is_some() { break; }
+                cursor = listed.get("nextCursor").cloned().unwrap_or(Value::Null);
+                if cursor.is_null() { break; }
+            }
             {
                 let mut view = session.view.lock().await;
                 if view.status != "starting" || !session.wire.native_available() { return Err("result_unknown".into()); }
                 view.native_id = Some(id.into());
+                view.controls = Some(codex_controls(&result, model.as_ref()));
             }
             session.restore_history(id, &result).await;
             // Hydration can await multiple replies. Reconfirm the exact lease
@@ -524,6 +558,63 @@ impl CodexSession {
     }
 }
 
+fn codex_controls(result: &Value, model: Option<&Value>) -> crate::session::SessionControls {
+    use crate::session::{PermissionMode, SessionControl, SessionControls};
+    let options: Vec<String> = model.and_then(|row| row["supportedReasoningEfforts"].as_array()).into_iter().flatten()
+        .filter_map(|option| option["reasoningEffort"].as_str())
+        .filter(|value| !value.is_empty() && value.len() <= 128 && !value.chars().any(char::is_control))
+        .map(str::to_owned).collect();
+    let default_effort = model.and_then(|row| row["defaultReasoningEffort"].as_str()).filter(|value| options.iter().any(|option| option == value)).map(str::to_owned);
+    let permission_available = result["approvalPolicy"] == "on-request" && result.pointer("/sandbox/type").and_then(Value::as_str) == Some("workspaceWrite")
+        && result.get("approvalsReviewer").is_none_or(|value| value == "user");
+    SessionControls {
+        reasoning: SessionControl {
+            available: !options.is_empty() && default_effort.is_some(), options,
+            current: result["reasoningEffort"].as_str().map(str::to_owned), source: "codex/model_list+thread".into(),
+            reason: default_effort.is_none().then(|| "bound_model_metadata_unavailable".into()),
+        },
+        permission: SessionControl {
+            available: permission_available,
+            options: if permission_available { vec![PermissionMode::Default, PermissionMode::ReadOnly] } else { vec![] },
+            current: permission_available.then_some(PermissionMode::Default), source: "codex/thread".into(),
+            reason: (!permission_available).then(|| "native_policy_unavailable".into()),
+        },
+        default_effort,
+        default_sandbox: permission_available.then(|| result["sandbox"].clone()),
+    }
+}
+
+fn turn_overrides(controls: Option<&crate::session::SessionControls>, settings: Option<&crate::session::AgentTurnSettings>) -> Result<Option<serde_json::Map<String, Value>>, String> {
+    use crate::session::PermissionMode;
+    let Some(settings) = settings.filter(|settings| !settings.is_empty()) else { return Ok(None); };
+    let controls = controls.ok_or("turn_controls_unavailable")?;
+    controls.validate(settings)?;
+    let mut params = serde_json::Map::new();
+    if let Some(effort) = &settings.reasoning_effort {
+        // Native null preserves sticky effort. Resolve UI default from the exact model row instead.
+        let effort = effort.as_ref().or(controls.default_effort.as_ref()).ok_or("unsupported_reasoning_effort")?;
+        params.insert("effort".into(), json!(effort));
+    }
+    if let Some(permission) = settings.permission_mode {
+        params.insert("approvalPolicy".into(), json!(if permission == PermissionMode::ReadOnly { "never" } else { "on-request" }));
+        params.insert("approvalsReviewer".into(), json!("user"));
+        params.insert("sandboxPolicy".into(), match permission {
+            PermissionMode::Default => controls.default_sandbox.clone().ok_or("unsupported_permission_mode")?,
+            PermissionMode::ReadOnly => json!({"type":"readOnly","networkAccess":false}),
+            PermissionMode::AcceptEdits => return Err("unsupported_permission_mode".into()),
+        });
+    }
+    Ok(Some(params))
+}
+
+fn read_only_response(pending: &PendingRequest, response: &Value) -> bool {
+    match pending.kind.as_str() {
+        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => matches!(response["decision"].as_str(), Some("decline" | "cancel")),
+        "item/permissions/requestApproval" => response["scope"] == "turn" && response["permissions"].as_object().is_some_and(|permissions| permissions.is_empty()),
+        _ => true,
+    }
+}
+
 
 fn native_error(_: &Value) -> String { "engine_failed".into() }
 
@@ -559,6 +650,58 @@ mod tests {
         view.status = "running".into();
         view.active_run = Some("second-run".into());
         (view, TurnState { id: Some("second-turn".into()), ..Default::default() })
+    }
+
+    #[test]
+    fn turn_settings_preserve_defaults_and_never_broaden_permissions() {
+        use crate::session::{AgentTurnSettings, PermissionMode};
+        let original = json!({"approvalPolicy":"on-request","approvalsReviewer":"user","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["/fixture"]},"reasoningEffort":"medium"});
+        let model = json!({"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"}]});
+        let controls = codex_controls(&original, Some(&model));
+        assert!(turn_overrides(Some(&controls), None).unwrap().is_none());
+        let empty = AgentTurnSettings { reasoning_effort: None, permission_mode: None };
+        assert!(turn_overrides(None, Some(&empty)).unwrap().is_none());
+        let permission_only = turn_overrides(Some(&controls), Some(&AgentTurnSettings { reasoning_effort: None, permission_mode: Some(PermissionMode::ReadOnly) })).unwrap().unwrap();
+        assert!(!permission_only.contains_key("effort"));
+        let settings = AgentTurnSettings { reasoning_effort: Some(None), permission_mode: Some(PermissionMode::Default) };
+        let params = turn_overrides(Some(&controls), Some(&settings)).unwrap().unwrap();
+        assert_eq!(params["effort"], "medium");
+        assert_eq!(params["sandboxPolicy"], original["sandbox"]);
+        assert_eq!(params["approvalPolicy"], "on-request");
+        for settings in [
+            AgentTurnSettings { reasoning_effort: Some(Some("xhigh".into())), permission_mode: Some(PermissionMode::Default) },
+            AgentTurnSettings { reasoning_effort: None, permission_mode: Some(PermissionMode::AcceptEdits) },
+        ] { assert!(turn_overrides(Some(&controls), Some(&settings)).is_err()); }
+        let unavailable = codex_controls(&original, None);
+        assert!(!unavailable.reasoning.available);
+        assert!(turn_overrides(Some(&unavailable), Some(&AgentTurnSettings { reasoning_effort: Some(Some("low".into())), permission_mode: None })).is_err());
+        let unsafe_policy = codex_controls(&json!({"approvalPolicy":"never","sandbox":{"type":"dangerFullAccess"}}), Some(&model));
+        assert!(!unsafe_policy.permission.available);
+        let effort_only = turn_overrides(Some(&unsafe_policy), Some(&AgentTurnSettings { reasoning_effort: Some(Some("low".into())), permission_mode: None })).unwrap().unwrap();
+        assert!(!effort_only.contains_key("approvalPolicy"));
+        assert!(!effort_only.contains_key("sandboxPolicy"));
+    }
+
+    #[test]
+    fn read_only_turn_cannot_accept_a_native_sandbox_escape() {
+        for kind in ["item/commandExecution/requestApproval", "item/fileChange/requestApproval"] {
+            let pending = PendingRequest { id: "approval".into(), kind: kind.into(), title: kind.into(), data: Value::Null };
+            for decision in ["accept", "acceptForSession"] { assert!(!read_only_response(&pending, &json!({"decision":decision}))); }
+            for decision in ["decline", "cancel"] { assert!(read_only_response(&pending, &json!({"decision":decision}))); }
+        }
+        let pending = PendingRequest { id: "permissions".into(), kind: "item/permissions/requestApproval".into(), title: "permissions".into(), data: Value::Null };
+        assert!(!read_only_response(&pending, &json!({"scope":"turn","permissions":{"fileSystem":{"write":["/"]}}})));
+        assert!(read_only_response(&pending, &json!({"scope":"turn","permissions":{}})));
+    }
+
+    #[test]
+    fn latest_native_token_usage_is_retained_without_replacing_last_with_total() {
+        let (mut view, mut turn) = running();
+        let params = json!({"threadId":"thread","turnId":"second-turn","tokenUsage":{"last":{"inputTokens":100,"outputTokens":20},"total":{"inputTokens":90000,"outputTokens":5000},"modelContextWindow":200000}});
+        CodexSession::apply_event(&mut view, &mut turn, json!({"method":"thread/tokenUsage/updated","params":params}));
+        assert_eq!(view.events.last().unwrap().data, params);
+        CodexSession::apply_event(&mut view, &mut turn, json!({"method":"thread/tokenUsage/updated","params":{"threadId":"foreign","tokenUsage":{}}}));
+        assert_eq!(view.events.len(), 1);
     }
 
     #[test]

@@ -23,7 +23,19 @@ interface RuntimeDraft {
   port: string; probePath: string; timeout: string;
 }
 const emptyDraft: RuntimeDraft = { dirty: false, commandId: null, name: '', editorApplication: '', program: '', args: [], cwd: '', env: [], kind: 'command', verification: false, port: '', probePath: '/', timeout: '10000' };
-// Only user configuration survives panel disposal; trust is intentionally view-local.
+interface RuntimeProcessView { rows?: number; cols?: number; clearOffset?: number; inputError?: string | null }
+const emptyProcessView: RuntimeProcessView = {};
+export function useRuntimeProcessView(process: DevelopmentProcess) {
+  const epoch = useDevelopment(state => state.epoch);
+  const key = JSON.stringify([epoch, process.project_id, process.task_id, process.id]);
+  const view = useDevelopmentRuntime(state => state.processViews[key] ?? emptyProcessView);
+  const setView = useCallback((change: Partial<RuntimeProcessView>) => {
+    if (epoch !== useDevelopment.getState().epoch) return;
+    useDevelopmentRuntime.setState(state => ({ processViews: { ...state.processViews, [key]: { ...state.processViews[key], ...change } } }));
+  }, [epoch, key]);
+  return { view, setView };
+}
+// User configuration survives panel disposal; trust is intentionally view-local.
 export function useRuntimeDraft(projectId: string, taskId: string) {
   const key = JSON.stringify([useDevelopment(state => state.epoch), projectId, taskId]);
   const draft = useDevelopmentRuntime(state => state.drafts[key] ?? emptyDraft);
@@ -55,6 +67,7 @@ export const startDevelopmentProcess = (input: StartProcessInput) => runtimeCall
 // Outstanding reads only: shared across internal panel remounts, never a second snapshot cache.
 const detailReads = new Map<string, Promise<Outcome<DevelopmentProcess>>>();
 let observation = 0;
+const detailObservations = new Map<string, number>();
 export function readDevelopmentProcess(id: string): Promise<Outcome<DevelopmentProcess>> {
   const key = JSON.stringify([useDevelopment.getState().epoch, contextGeneration(), id]);
   const existing = detailReads.get(key);
@@ -63,7 +76,15 @@ export function readDevelopmentProcess(id: string): Promise<Outcome<DevelopmentP
   const generation = contextGeneration();
   const started = ++observation;
   const reading = runtimeCall<DevelopmentProcess>('read_development_process', { id }).then(result => {
-    if (result.ok && result.value.id === id && epoch === useDevelopment.getState().epoch && generation === contextGeneration()) reconcileProcesses([result.value], started);
+    if (result.ok && result.value.id === id && epoch === useDevelopment.getState().epoch && generation === contextGeneration()) {
+      const process = result.value;
+      const key = JSON.stringify([epoch, process.project_id, process.task_id, process.id]);
+      if (started >= (detailObservations.get(key) ?? 0)) {
+        detailObservations.set(key, started);
+        useDevelopmentRuntime.setState(state => ({ details: { ...state.details, [key]: process } }));
+      }
+      reconcileProcesses([process], started);
+    }
     return result;
   }).finally(() => {
     if (detailReads.get(key) === reading) detailReads.delete(key);
@@ -73,7 +94,18 @@ export function readDevelopmentProcess(id: string): Promise<Outcome<DevelopmentP
 }
 export const stopDevelopmentProcess = (id: string) => runtimeCall<DevelopmentProcess>('stop_development_process', { id });
 export const writeDevelopmentTerminal = (id: string, data: string) => runtimeCall<null>('write_development_terminal', { input: { id, data } });
-export const resizeDevelopmentTerminal = (id: string, rows: number, cols: number) => runtimeCall<null>('resize_development_terminal', { input: { id, rows, cols } });
+const terminalResizes = new Map<string, { rows: number; cols: number; reading: Promise<Outcome<null>> }>();
+export function resizeDevelopmentTerminal(id: string, rows: number, cols: number): Promise<Outcome<null>> {
+  if (!Number.isInteger(rows) || !Number.isInteger(cols) || rows < 1 || cols < 1 || rows > 1000 || cols > 1000) return Promise.resolve({ ok: false, code: 'invalid_request' });
+  const epoch = useDevelopment.getState().epoch;
+  const generation = contextGeneration();
+  const key = JSON.stringify([epoch, generation, id]);
+  const existing = terminalResizes.get(key);
+  if (existing) return existing.rows === rows && existing.cols === cols ? existing.reading : existing.reading.then((): Outcome<null> | Promise<Outcome<null>> => epoch === useDevelopment.getState().epoch && generation === contextGeneration() ? resizeDevelopmentTerminal(id, rows, cols) : { ok: false, code: 'unknown' });
+  const reading = runtimeCall<null>('resize_development_terminal', { input: { id, rows, cols } }).finally(() => { if (terminalResizes.get(key)?.reading === reading) terminalResizes.delete(key); });
+  terminalResizes.set(key, { rows, cols, reading });
+  return reading;
+}
 export const openDevelopmentExternal = (projectId: string, taskId: string, target: 'preview' | 'editor', processId: string | null = null, editor: string | null = null) => runtimeCall<null>('open_development_external', { input: { project_id: projectId, task_id: taskId, process_id: processId, target, editor } });
 // A timestamp alone cannot establish cleanup or an outcome after host recovery.
 export function processActive(process: DevelopmentProcess): boolean { return !(process.finished_at !== null && ['exited', 'failed', 'cancelled'].includes(process.status)); }
@@ -114,7 +146,11 @@ async function acceptProcess(operation: RuntimeOperation, process: DevelopmentPr
   const current = useDevelopmentRuntime.getState();
   if (current.taskId !== operation.taskId) return;
   const selectStarted = acknowledged && operation.action === 'start' && operation.selectionRevision === selectionRevision && operation.generation === contextGeneration();
-  useDevelopmentRuntime.setState({ processes: [process, ...current.processes.filter(item => item.id !== process.id)], selected: selectStarted ? process.id : current.selected ?? process.id });
+  const selected = selectStarted ? process.id : current.selected ?? process.id;
+  const key = JSON.stringify([operation.epoch, operation.projectId, operation.taskId]);
+  const detailKey = JSON.stringify([operation.epoch, operation.projectId, operation.taskId, process.id]);
+  detailObservations.set(detailKey, observation);
+  useDevelopmentRuntime.setState({ processes: [process, ...current.processes.filter(item => item.id !== process.id)], selected, selections: { ...current.selections, [key]: selected }, details: { ...current.details, [detailKey]: process } });
   await refreshOperation(operation.id);
 }
 async function refreshOperation(id: string) {
@@ -181,13 +217,13 @@ export async function submitRuntimeOperation(input: RuntimeOperationInput): Prom
   return useDevelopmentRuntime.getState().operations.find(item => item.id === operation.id) ?? null;
 }
 
-interface RuntimeState { taskId: string | null; processes: DevelopmentProcess[]; selected: string | null; operations: RuntimeOperation[]; drafts: Record<string, RuntimeDraft>; read: ResourceReadState; refresh(taskId: string, afterMutation?: boolean): Promise<void>; select(id: string): void; reset(): void }
+interface RuntimeState { taskId: string | null; processes: DevelopmentProcess[]; selected: string | null; selections: Record<string, string>; details: Record<string, DevelopmentProcess>; processViews: Record<string, RuntimeProcessView>; operations: RuntimeOperation[]; drafts: Record<string, RuntimeDraft>; read: ResourceReadState; refresh(taskId: string, afterMutation?: boolean): Promise<void>; select(id: string): void; reset(): void }
 let request = 0;
 let selectionRevision = 0;
 const historyReads = new Map<string, Promise<Outcome<DevelopmentProcess[]>>>();
 const historyObservations = new WeakMap<Promise<Outcome<DevelopmentProcess[]>>, number>();
 export const useDevelopmentRuntime = create<RuntimeState>((set, get) => ({
-  taskId: null, processes: [], selected: null, operations: [], drafts: {}, read: { status: 'idle' },
+  taskId: null, processes: [], selected: null, selections: {}, details: {}, processViews: {}, operations: [], drafts: {}, read: { status: 'idle' },
   async refresh(taskId, afterMutation = false) {
     const epoch = useDevelopment.getState().epoch;
     const generation = contextGeneration();
@@ -211,13 +247,22 @@ export const useDevelopmentRuntime = create<RuntimeState>((set, get) => ({
     const result = await reading;
     if (ticket !== request || get().taskId !== taskId || epoch !== useDevelopment.getState().epoch || generation !== contextGeneration()) return;
     if (result.ok) {
-      const processes = result.value.filter(item => item.task_id === taskId);
+      const processes = result.value.filter(item => item.task_id === taskId && item.source !== 'native_agent');
       reconcileProcesses(processes, historyObservations.get(reading) ?? 0);
-      set({ processes, read: { status: 'ready', refresh: { status: 'current' } }, selected: processes.some(item => item.id === get().selected) ? get().selected : processes[0]?.id ?? null });
+      const scope = processes[0] ? JSON.stringify([epoch, processes[0].project_id, taskId]) : null;
+      const remembered = scope ? get().selections[scope] : null;
+      const selected = processes.some(item => item.id === get().selected) ? get().selected : processes.some(item => item.id === remembered) ? remembered! : processes[0]?.id ?? null;
+      set({ processes, read: { status: 'ready', refresh: { status: 'current' } }, selected, ...(scope && selected ? { selections: { ...get().selections, [scope]: selected } } : {}) });
     }
     else set({ read: failResourceRead(get().read, result.code) });
   },
-  select(selected) { ++selectionRevision; set({ selected }); },
-  reset() { ++request; ++selectionRevision; set({ taskId: null, processes: [], selected: null, read: { status: 'idle' } }); },
+  select(selected) {
+    const process = get().processes.find(item => item.id === selected && item.task_id === get().taskId && item.source !== 'native_agent');
+    if (!process) return;
+    ++selectionRevision;
+    const key = JSON.stringify([useDevelopment.getState().epoch, process.project_id, process.task_id]);
+    set({ selected, selections: { ...get().selections, [key]: selected } });
+  },
+  reset() { ++request; ++selectionRevision; detailObservations.clear(); set({ taskId: null, processes: [], selected: null, selections: {}, details: {}, processViews: {}, read: { status: 'idle' } }); },
 }));
 useDevelopment.subscribe((state, previous) => { if (state.epoch !== previous.epoch) { useDevelopmentRuntime.getState().reset(); useDevelopmentRuntime.setState({ operations: [], drafts: {} }); } });

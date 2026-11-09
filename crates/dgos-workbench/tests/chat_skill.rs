@@ -1,5 +1,5 @@
-//! FR-006 stage 5 (AC21): a session pins one skill version (or an explicit "no skill"), every
-//! send revalidates it, and a failure blocks instead of dropping or swapping the skill (D075).
+//! FR-006 stage 5 (AC21): sessions may omit skills; selected versions are pinned, every
+//! send revalidates them, and a failure blocks instead of dropping or swapping a skill (D075).
 //! Uses the bundled skill catalog and a mocked Provider; not evidence about real Providers.
 
 use dgos_db::{
@@ -19,7 +19,7 @@ use dgos_skills::SkillsManager;
 use dgos_types::{Model, ProviderConfig};
 use dgos_workbench::{
     ChatError, ChatEvent, ChatManager, ChatSink, ChatTargetInput, CreateChatSessionInput,
-    SendChatInput, UpdateChatSessionTargetInput,
+    RegenerateChatInput, SendChatInput, UpdateChatSessionTargetInput,
 };
 use serde_json::Value;
 use std::{
@@ -287,8 +287,23 @@ async fn a_disabled_tampered_or_changed_skill_blocks_the_send_until_the_user_cho
     );
     std::fs::write(&skill_file, original).unwrap();
 
+    let pinned = fx.chat.list_sessions(ALICE, Default::default()).await.unwrap()
+        .items.remove(0).skills.remove(0);
     fx.db
-        .execute_unprepared("UPDATE chat_sessions SET skill_refs = json_set(skill_refs, '$[0].content_hash', 'not-the-pinned-hash')")
+        .execute_unprepared("UPDATE chat_sessions SET skill_refs = json_set(skill_refs, '$[0].version_id', 'missing-version')")
+        .await
+        .unwrap();
+    assert_eq!(
+        turn(&fx, &s, "x").await.err(),
+        Some(ChatError::SkillUnavailable),
+        "a missing pinned version is never accepted silently"
+    );
+    fx.db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE chat_sessions SET skill_refs = json_set(skill_refs, '$[0].version_id', ?, '$[0].content_hash', 'not-the-pinned-hash')",
+            [pinned.version_id.into()],
+        ))
         .await
         .unwrap();
     assert_eq!(
@@ -339,7 +354,7 @@ async fn a_disabled_tampered_or_changed_skill_blocks_the_send_until_the_user_cho
             ALICE,
             UpdateChatSessionTargetInput { session_id: s.clone(),
             provider_id: Some(fx.provider_id.clone()),
-            model_id: Some("chat".into()), skill_ids: vec![], generation: Default::default(), no_skill: true, },
+            model_id: Some("chat".into()), skill_ids: vec![], generation: Default::default(), no_skill: false, },
         )
         .await
         .unwrap();
@@ -363,19 +378,54 @@ async fn a_disabled_tampered_or_changed_skill_blocks_the_send_until_the_user_cho
 }
 
 #[tokio::test]
-async fn a_session_must_choose_a_skill_or_no_skill_before_the_first_send() {
-    let fx = fx().await;
-    let undecided = session(&fx, None, false).await;
-    assert_eq!(
-        turn(&fx, &undecided, "x").await.err(),
-        Some(ChatError::SkillUnavailable)
-    );
-    assert!(fx.seen.lock().unwrap().is_empty());
-    let none = session(&fx, None, true).await;
+async fn empty_skills_send_without_confirmation_in_new_and_reopened_sessions() {
+    let mut fx = fx().await;
+    let chosen: ChatTargetInput = serde_json::from_value(serde_json::json!({
+        "provider_id": fx.provider_id,
+        "model_id": "chat"
+    })).unwrap();
+    assert!(chosen.skill_ids.is_empty() && !chosen.no_skill);
+    let created = fx.chat.create_session(
+        &fx.providers, &fx.skills, ALICE,
+        CreateChatSessionInput { target: Some(chosen) },
+    ).await.unwrap();
+    assert!(created.skills.is_empty() && !created.no_skill_confirmed);
     assert!(matches!(
-        turn(&fx, &none, "x").await.unwrap(),
+        turn(&fx, &created.id, "default empty selection").await.unwrap(),
         ChatEvent::Done { .. }
     ));
+
+    // The pre-existing false value must work after reopening, without a migration or target edit.
+    let legacy = session(&fx, None, false).await;
+    fx.chat = ChatManager::new(fx.db.clone(), dgos_db::MaintenanceGate::new());
+    let saved = fx.chat.list_sessions(ALICE, Default::default()).await.unwrap().items
+        .into_iter().find(|s| s.id == legacy).unwrap();
+    assert!(saved.skills.is_empty() && !saved.no_skill_confirmed);
+    let ChatEvent::Done { message } = turn(&fx, &legacy, "legacy empty selection").await.unwrap() else {
+        panic!("empty-skill legacy send did not complete");
+    };
+    let regenerated = fx.chat.regenerate(
+        &fx.providers, &fx.skills, ALICE, "main",
+        RegenerateChatInput {
+            message_id: message.id,
+            client_request_id: uuid::Uuid::new_v4().to_string(),
+            accept_destination: None,
+        },
+    ).await.unwrap();
+    let sink = Collect::default();
+    fx.chat.run_generation(&fx.providers, regenerated.job.unwrap(), &sink).await;
+    assert!(matches!(sink.0.lock().unwrap().last(), Some(ChatEvent::Done { .. })));
+    let none = session(&fx, None, true).await;
+    assert!(matches!(
+        turn(&fx, &none, "legacy explicit flag").await.unwrap(),
+        ChatEvent::Done { .. }
+    ));
+    assert_eq!(fx.seen.lock().unwrap().len(), 4);
+    assert!(fx.seen.lock().unwrap().iter().all(|body| {
+        body["messages"].as_array().unwrap().iter().all(|m| {
+            !m["content"].as_str().unwrap_or_default().starts_with("Selected skill guidance")
+        })
+    }));
     assert_eq!(
         count(&fx.db, "SELECT COUNT(*) FROM workbench_task_skills").await,
         0,

@@ -188,6 +188,7 @@ pub struct ChatTargetInput {
     pub skill_ids: Vec<String>,
     #[serde(default)]
     pub generation: dgos_types::GenerationParameters,
+    /// Compatibility metadata for older clients; empty skills need no confirmation.
     #[serde(default)]
     pub no_skill: bool,
 }
@@ -1711,7 +1712,6 @@ async fn resolve_skills(
     session: &ChatSession,
     provenance: &ExecutionProvenance,
 ) -> Result<Vec<PreparedSkill>> {
-    if session.skills.is_empty() && !session.no_skill_confirmed { return Err(ChatError::SkillUnavailable); }
     let mut prepared = Vec::with_capacity(session.skills.len());
     for pin in &session.skills {
         let content = skills.prepare_content_skill_with_provenance(&pin.skill_id, user, Some(provenance)).await.map_err(|_| ChatError::SkillUnavailable)?;

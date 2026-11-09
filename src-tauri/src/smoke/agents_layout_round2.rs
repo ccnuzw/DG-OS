@@ -120,9 +120,9 @@ async fn process(app: &AppHandle, id: &str, needle: &str) -> Journey<Value> {
 }
 
 async fn runtime(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>) -> Journey<()> {
-    step(app,fx,ck,ev,"open independent bottom runtime",json!({}),r#"
-const t=await need('dev-toggle-runtime');if(t.getAttribute('aria-expanded')==='false')t.click();
-return {ok:!!await until(()=>tid('dev-development-runtime')&&tid('dev-panel-code'))};
+    step(app,fx,ck,ev,"open task drawer host runtime",json!({}),r#"
+const t=await need('dev-tool-tasks');if(t.getAttribute('aria-expanded')==='false')t.click();await click('dev-runtime-processes');
+return {ok:!!await until(()=>visible(tid('dev-development-runtime'))&&visible(tid('dev-panel-runtime')))};
 "#).await?;
     Ok(())
 }

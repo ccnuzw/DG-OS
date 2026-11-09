@@ -1,6 +1,6 @@
 //! Real dual-engine production App/WKWebView workflow acceptance; no fixture CLI or provider.
 //! Build: npm run agents:build && npm run build
-//! Run with a NEW absolute root (both native CLIs must already be authenticated):
+//! Run with a NEW absolute root (authenticated native CLIs and available provider/model routes required):
 //! DGOS_PROJECT_ACCEPTANCE_ROOT=/private/tmp/dgos-workflows-round3-<unique> 
 //! DGOS_PROJECT_ACCEPTANCE_PHASE=workflows-round3 cargo test -p dgos --features webview-smoke 
 //! --test webview_smoke_agents -- --nocapture
@@ -12,6 +12,7 @@ type Journey<T> = Result<T, String>;
 const SOURCE: &str = "module.exports = { value: 1, manual: false };\n";
 const MANUAL: &str = "module.exports = { value: 2, manual: true };\n";
 const TAKEOVER: &str = "关闭相关智能体会话后手工操作";
+const WORKFLOW_PROMPT: &str = "Use native file tools now: change only workflow.cjs so module.exports is { value: 2, manual: false }. For Claude use Edit or Write (not Bash redirection); for Codex use apply_patch. Execute exactly node -e 'process.exit(7)' ONCE as its own native command tool invocation. Do not append echo, ||, ;, pipes, wrappers or anything that changes its exit status: the command tool must observe exit 7 as a failure. This intentional failure is expected and must not be retried. Then execute exactly node verify.cjs ONCE as a separate command tool invocation. Do not edit verify.cjs, package.json or README.md, install anything or perform Git writes. Report the two exit codes briefly.";
 
 fn save(fx: &Fx, name: &str, data: &Value) {
     fs::write(fx.root.join(format!("workflows-round3-{name}.json")), serde_json::to_vec_pretty(data).expect("workflow JSON")).expect("workflow evidence");
@@ -80,7 +81,7 @@ fn prepare(path: &Path) {
 }
 
 async fn navigation(app: &AppHandle) -> Journey<()> {
-    let result=dom(app,json!({}),r#"const t=await need('dev-toggle-navigation');if(t.getAttribute('aria-expanded')==='false')t.click();return {ok:!!await until(()=>tid('dev-project-create-open'))};"#).await;
+    let result=dom(app,json!({}),r#"const t=await need('dev-tool-projects');if(t.getAttribute('aria-expanded')==='false')t.click();return {ok:!!await until(()=>visible(tid('dev-project-list')))};"#).await;
     if ui_ok(&result) { Ok(()) } else { Err(result.to_string()) }
 }
 
@@ -93,29 +94,29 @@ window.fetch=function(url,options,...rest){const command=String(url).split('/').
     Ok(())
 }
 
-pub(super) async fn launch(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>, engine: &str, path: &Path) -> Journey<(String,String,String)> {
+pub(super) async fn launch(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>, engine: &str, path: &Path, prompt: &str) -> Journey<(String,String,String)> {
     navigation(app).await?;
     let imported=ui_import_project(app,ck,ev,&format!("Round3 {engine}"),path).await;
     require(fx,ck,ev,"import actual workflow directory through project form",imported,path.display())?;
     let before=workspace(app).await?;
     let before_ids=ids(&host(app,"list_agent_sessions",json!({})).await?.as_array().cloned().ok_or("session list absent")?);
     let project=before["selection"]["project_id"].as_str().ok_or("selected project absent")?.to_owned();
-    step(app,fx,ck,ev,"start new task and chosen native engine through TaskLaunch",json!({"engine":engine,"goal":format!("Round3 real {engine} workflow")}),r#"
-await click('dev-start-task');await need('dev-task-launch');const goal=document.getElementById('task-launch-goal');const requirements=document.getElementById('task-launch-requirements');if(!goal||!requirements)throw Error('new launch fields absent');setInput(goal,A.goal);setInput(requirements,'Change workflow.cjs only; preserve verify.cjs and Git index.');
-const c=document.getElementById('task-launch-engine');if(!c)throw Error('launch engine absent');c.click();const option=await until(()=>$$('[role=option]').find(e=>txt(e)===(A.engine==='codex'?'Codex':'Claude')));if(!option)throw Error('engine option absent');option.click();
-const trust=await until(()=>{const e=document.getElementById('task-launch-trust');return e&&!e.disabled&&e;});if(!trust)throw Error('launch trust absent');const box=trust.matches('input,[role=checkbox]')?trust:trust.querySelector('input,[role=checkbox]');if(!box)throw Error('trust checkbox absent');if(!isChecked(box))box.click();
-const b=await until(()=>{const b=tid('task-launch-start');return b&&!b.disabled&&b});if(!b)throw Error('TaskLaunch start disabled');b.click();return {ok:!!await until(()=>document.getElementById('agent-message'))};
+    step(app,fx,ck,ev,"choose configured model route and trust first conversation send",json!({"engine":engine,"prompt":prompt}),r#"
+const projects=await need('dev-tool-projects');if(document.querySelector('.agent-workbench')?.dataset.compact==='true'&&projects.getAttribute('aria-expanded')==='true')projects.click();await need('dev-project-conversation');await click('composer-model-picker-trigger');const dialog=await need('composer-model-picker-dialog');const name=A.engine==='codex'?'Codex':'Claude';
+const model=await until(()=>$$('.composer-model-picker-model',dialog).find(row=>$$('.composer-model-picker-route-summary > span',row).some(route=>txt(route)===name)&&!row.querySelector('.composer-model-picker-option')?.disabled));if(!model)throw Error('Prerequisite missing: configure an enabled provider/model with an available '+name+' route in Settings before this smoke; native CLI authentication alone is insufficient');model.querySelector('.composer-model-picker-option').click();
+const choice=await until(()=>!tid('composer-model-picker-dialog')||$$('.composer-model-picker-routes button',model).find(b=>txt(b)===name&&!b.disabled));if(!choice)throw Error('chosen model route absent');if(choice!==true)choice.click();if(!await until(()=>!tid('composer-model-picker-dialog')))throw Error('model picker did not commit');
+const trust=await until(()=>{const e=tid('direct-conversation-trust');return e&&!e.disabled&&e});if(!trust)throw Error('direct conversation trust absent');if(!trust.checked)trust.click();const composer=document.getElementById('agent-message');if(!composer)throw Error('first conversation composer absent');setInput(composer,A.prompt);const send=await until(()=>{const b=tid('direct-conversation-send');return b&&!b.disabled&&b});if(!send)throw Error('first conversation send disabled');send.click();return {ok:true};
 "#).await?;
     let deadline=tokio::time::Instant::now()+Duration::from_secs(30);
     let after=loop {
         let after=workspace(app).await?;
         if rows(&after,"sessions")?.iter().any(|r|!before_ids.iter().any(|id|r["id"]==id.as_str())) { break after; }
-        if tokio::time::Instant::now()>=deadline { return Err(format!("TaskLaunch host session timeout: {after}")); }
+        if tokio::time::Instant::now()>=deadline { return Err(format!("first conversation send host session timeout: {after}")); }
         tokio::time::sleep(Duration::from_millis(100)).await;
     };
     let tasks:Vec<_>=rows(&after,"tasks")?.iter().filter(|r|!rows(&before,"tasks").unwrap().iter().any(|old|old["id"]==r["id"])).collect();
     let sessions:Vec<_>=rows(&after,"sessions")?.iter().filter(|r|!before_ids.iter().any(|id|r["id"]==id.as_str())).collect();
-    require(fx,ck,ev,"one TaskLaunch submission persists exactly one task and one engine session",tasks.len()==1&&sessions.len()==1&&sessions[0]["engine"]==engine&&sessions[0]["task_id"]==tasks[0]["id"]&&sessions[0]["project_id"]==project&&sessions[0]["workspace"]==path.to_string_lossy().as_ref(),after.to_string())?;
+    require(fx,ck,ev,"one first conversation send persists exactly one task and one engine session",tasks.len()==1&&sessions.len()==1&&sessions[0]["engine"]==engine&&sessions[0]["task_id"]==tasks[0]["id"]&&sessions[0]["project_id"]==project&&sessions[0]["workspace"]==path.to_string_lossy().as_ref(),after.to_string())?;
     let task=tasks[0]["id"].as_str().ok_or("task id absent")?.to_owned();
     let sid=sessions[0]["id"].as_str().ok_or("session id absent")?.to_owned();
     save(fx,&format!("{engine}-launch"),&json!({"before":before,"after":after,"host_process_id":std::process::id()}));
@@ -141,10 +142,9 @@ fn command_receipt(data: &Value) -> Option<Value> {
     }
 }
 
-async fn references(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>, engine: &str, sid: &str, task: &str, path: &Path) -> Journey<Value> {
-    let tests=fs::read(path.join("verify.cjs")).map_err(|e|e.to_string())?;
-    let prompt="Use native file tools now: change only workflow.cjs so module.exports is { value: 2, manual: false }. For Claude use Edit or Write (not Bash redirection); for Codex use apply_patch. Execute exactly node -e 'process.exit(7)' ONCE as its own native command tool invocation. Do not append echo, ||, ;, pipes, wrappers or anything that changes its exit status: the command tool must observe exit 7 as a failure. This intentional failure is expected and must not be retried. Then execute exactly node verify.cjs ONCE as a separate command tool invocation. Do not edit verify.cjs, package.json or README.md, install anything or perform Git writes. Report the two exit codes briefly.";
-    let view=stage2::exercise_turn(app,ck,ev,sid,prompt).await;
+async fn references(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>, engine: &str, sid: &str, task: &str, path: &Path, tests: &[u8]) -> Journey<Value> {
+    // launch already sent the original workflow prompt; observe that turn, never send again.
+    let view=stage2::settle(app,sid,true,0).await?;
     save(fx,&format!("{engine}-native-events"),&json!({"session.id":sid,"session":view}));
     require(fx,ck,ev,"single real model turn finishes idle and preserves verification program",view["status"]=="idle"&&fs::read(path.join("verify.cjs")).map_err(|e|e.to_string())?==tests,view.to_string())?;
     let events=rows(&view,"events")?;
@@ -176,15 +176,15 @@ const a=await need('agent-event-'+A.seq);const r=$$('[data-reference-path]',a).f
 
 async fn attach(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>, sid: &str, native: &Value) -> Journey<()> {
     // Re-enter the saved run while still live. Only a snapshot may be requested.
-    step(app,fx,ck,ev,"attach saved live run through TaskLaunch without native reopen",json!({"sid":sid}),r#"
-await click('dev-start-task');await need('dev-task-launch');const p=window.__round3Workflows;const index=p.events.length;await click('task-launch-continue-'+A.sid);
-if(!await until(()=>document.getElementById('agent-message')&&!document.getElementById('agent-message').disabled))throw Error('attached composer absent');
+    step(app,fx,ck,ev,"leave live session for a blank conversation without a model request",json!({}),r#"const active=$$('[data-testid^="dev-tool-"]').find(e=>e.getAttribute('aria-expanded')==='true');if(document.querySelector('.agent-workbench')?.dataset.compact==='true'&&active)active.click();await click('dev-new-conversation');return {ok:!!await until(()=>tid('dev-project-conversation'))};"#).await?;
+    navigation(app).await?;
+    step(app,fx,ck,ev,"attach saved live run through session history without native reopen",json!({"sid":sid}),r#"
+const p=window.__round3Workflows,index=p.events.length;const row=await need('dev-session-item-'+A.sid);const select=row.querySelector('.dev-session-select');if(!select||select.disabled)throw Error('saved live session select absent');select.click();const projects=await need('dev-tool-projects');if(document.querySelector('.agent-workbench')?.dataset.compact==='true'&&projects.getAttribute('aria-expanded')==='true')projects.click();
+if(!await until(()=>document.getElementById('agent-message')&&!document.querySelector('[data-testid="dev-project-conversation"]')&&!document.getElementById('agent-message').disabled))throw Error('attached composer absent');
 await new Promise(r=>setTimeout(r,600));const events=p.events.slice(index);return {ok:events.some(e=>e.command==='get_agent_session'&&e.args.sessionId===A.sid)&&!events.some(e=>['open_agent_session','send_agent_message'].includes(e.command)),events};
 "#).await?;
     let live=session(app,sid).await?;
     require(fx,ck,ev,"live attach retains host native identity and event history",live["native_id"]==native["native_id"]&&live["events"]==native["events"]&&live["status"]=="idle",live.to_string())?;
-    // onContinue leaves the launch drawer open in current production integration.
-    step(app,fx,ck,ev,"dismiss launch drawer without closing attached Agent",json!({}),r#"const b=await need('dev-start-task');if(b.getAttribute('aria-expanded')==='true')b.click();return {ok:true};"#).await?;
     Ok(())
 }
 
@@ -223,7 +223,7 @@ if(tid('dev-file-editor')?.value!==A.text)throw Error('draft lost during takeove
 pub(super) async fn verify(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>, engine: &str, project: &str, task: &str, path: &Path) -> Journey<Value> {
     let before=host(app,"list_development_processes",json!({"taskId":task})).await?;
     step(app,fx,ck,ev,"explicitly configure and run real host verification after save",json!({}),r#"
-const t=await need('dev-toggle-runtime');if(t.getAttribute('aria-expanded')==='false')t.click();await click('dev-runtime-processes');
+const t=await need('dev-tool-tasks');if(t.getAttribute('aria-expanded')==='false')t.click();await click('dev-runtime-processes');
 const configuration=await need('dev-runtime-configuration');configuration.open=true;const pause=()=>new Promise(r=>setTimeout(r,80));
 const kind=await need('dev-process-kind');kind.value='command';kind.dispatchEvent(new Event('change',{bubbles:true}));await pause();await fill('dev-process-program','node');await fill('dev-process-cwd','');
 const s=await need('dev-development-runtime');while($$('button[aria-label^="移除参数"]',s).length){$$('button[aria-label^="移除参数"]',s)[0].click();await pause();}
@@ -249,9 +249,10 @@ const trust=await need('dev-process-trust');if(!trust.checked)trust.click();awai
 
 async fn resume(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>, sid: &str, original: &Value) -> Journey<()> {
     let before=workspace(app).await?;
+    navigation(app).await?;
     step(app,fx,ck,ev,"return to saved Agent using explicit native resume after manual takeover",json!({"sid":sid}),r#"
-await click('dev-start-task');await need('dev-task-launch');const trust=await until(()=>{const e=document.getElementById('task-launch-trust');return e&&!e.disabled&&e;});if(!trust)throw Error('resume trust absent');const box=trust.matches('input,[role=checkbox]')?trust:trust.querySelector('input,[role=checkbox]');if(!box)throw Error('resume trust absent');if(!isChecked(box))box.click();
-const p=window.__round3Workflows;const index=p.events.length;const b=await until(()=>{const b=tid('task-launch-continue-'+A.sid);return b&&!b.disabled&&b});if(!b)throw Error('saved resume disabled');b.click();
+const row=await need('dev-session-item-'+A.sid);const select=row.querySelector('.dev-session-select');if(!select||select.disabled)throw Error('saved session select absent');select.click();const projects=await need('dev-tool-projects');if(document.querySelector('.agent-workbench')?.dataset.compact==='true'&&projects.getAttribute('aria-expanded')==='true')projects.click();
+const entry=await need('dev-resume-entry'),trust=entry.querySelector('input[type=checkbox]');if(!trust)throw Error('resume trust absent');if(!trust.checked)trust.click();const p=window.__round3Workflows,index=p.events.length;const b=await until(()=>{const b=entry.querySelector('button');return b&&!b.disabled&&b});if(!b)throw Error('saved resume disabled');b.click();
 const opened=await until(()=>p.events.slice(index).filter(e=>e.command==='open_agent_session').length===1);if(!opened)throw Error('explicit native resume absent');
 if(!await until(()=>document.getElementById('agent-message')&&!document.getElementById('agent-message').disabled))throw Error('resumed composer absent');const events=p.events.slice(index);return {ok:events.filter(e=>e.command==='open_agent_session').length===1&&!events.some(e=>e.command==='send_agent_message'),events};
 "#).await?;
@@ -264,7 +265,6 @@ if(!await until(()=>document.getElementById('agent-message')&&!document.getEleme
     };
     let after=workspace(app).await?;
     require(fx,ck,ev,"native resume preserves saved session task and native thread IDs without creating another task",original["native_id"].is_string()&&resumed["native_id"]==original["native_id"]&&resumed["workspace"]==original["workspace"]&&rows(&after,"sessions")?.len()==rows(&before,"sessions")?.len()&&rows(&after,"tasks")?.len()==rows(&before,"tasks")?.len()&&after["selection"]["session_id"]==sid,json!({"before":before,"after":after,"resumed":resumed}).to_string())?;
-    step(app,fx,ck,ev,"dismiss launch after native resume",json!({}),r#"const b=await need('dev-start-task');if(b.getAttribute('aria-expanded')==='true')b.click();return {ok:true};"#).await?;
     // No additional model request is needed to demonstrate native resume.
     let closed=ui_close_run(app,ck,ev).await;
     require(fx,ck,ev,"close resumed Agent through production control",closed,sid)?;
@@ -275,7 +275,7 @@ if(!await until(()=>document.getElementById('agent-message')&&!document.getEleme
 
 pub(super) async fn review(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>, engine: &str, task: &str, process: &Value) -> Journey<()> {
     step(app,fx,ck,ev,"review actual task result and current passing host verification",json!({}),r#"
-const tab=await need('dev-review-tab-review');tab.focus();tab.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));const v=await until(()=>tid('dev-task-review-verification')?.dataset.verification==='observed_stable');const s=await need('dev-task-review');return {ok:!!v&&txt(s).includes('workflow.cjs'),text:txt(s)};
+const tool=await need('dev-tool-tasks');if(tool.getAttribute('aria-expanded')==='false')tool.click();const tab=await need('dev-review-tab-review');tab.focus();tab.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));const v=await until(()=>tid('dev-task-review-verification')?.dataset.verification==='observed_stable');const s=await need('dev-task-review');return {ok:!!v&&txt(s).includes('workflow.cjs'),text:txt(s)};
 "#).await?;
     let current=host(app,"read_development_review",json!({"taskId":task})).await?;
     require(fx,ck,ev,"review host fingerprint still matches independently executed saved-file verification",process["fingerprint"]==current["fingerprint"]&&current["changes"].as_array().is_some_and(|rs|rs.iter().any(|r|r["path"]=="workflow.cjs")),current.to_string())?;
@@ -291,8 +291,9 @@ const c=await need('dev-task-review-confirm');if(!c.checked)c.click();const b=aw
 
 async fn per_engine(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>, engine: &str) -> Journey<()> {
     let path=fx.root.join(format!("workflows-round3-{engine}"));prepare(&path);
-    let (project,task,sid)=launch(app,fx,ck,ev,engine,&path).await?;
-    let native=references(app,fx,ck,ev,engine,&sid,&task,&path).await?;
+    let tests=fs::read(path.join("verify.cjs")).map_err(|e|e.to_string())?;
+    let (project,task,sid)=launch(app,fx,ck,ev,engine,&path,WORKFLOW_PROMPT).await?;
+    let native=references(app,fx,ck,ev,engine,&sid,&task,&path,&tests).await?;
     attach(app,fx,ck,ev,&sid,&native).await?;
     let event=rows(&native,"events")?.iter().find(|e|file_event(e,engine)).ok_or("native file event lost")?;
     step(app,fx,ck,ev,"reopen native source after saved live attach",json!({"seq":event["seq"]}),r#"
@@ -314,7 +315,7 @@ return {ok:opens.length===2&&sends.length===1&&saves.length===2&&starts.length==
 }
 
 pub(super) async fn run(app: &AppHandle, fx: &Fx, mut ck: Checks, mut ev: Vec<Value>) {
-    save(fx,"commands",&json!({"build":["npm run agents:build","npm run build"],"run":format!("DGOS_PROJECT_ACCEPTANCE_ROOT='{}' DGOS_PROJECT_ACCEPTANCE_PHASE=workflows-round3 cargo test -p dgos --features webview-smoke --test webview_smoke_agents -- --nocapture",fx.root.display()),"prerequisites":["Fresh root for each run","Authenticated native Codex and Claude CLIs","macOS Screen Recording permission for target-window screenshots"],"model_requests":2,"implicit_retries":0}));
+    save(fx,"commands",&json!({"build":["npm run agents:build","npm run build"],"run":format!("DGOS_PROJECT_ACCEPTANCE_ROOT='{}' DGOS_PROJECT_ACCEPTANCE_PHASE=workflows-round3 cargo test -p dgos --features webview-smoke --test webview_smoke_agents -- --nocapture",fx.root.display()),"prerequisites":["Fresh root for each run","Authenticated native Codex and Claude CLIs","Enabled provider/model catalog with an available route for each engine; CLI authentication alone is insufficient","macOS Screen Recording permission for target-window screenshots"],"model_requests":2,"implicit_retries":0}));
     let mut completed=Vec::new();
     let started=observe(app,fx,&mut ck,&mut ev).await;
     if let Err(error)=started { record(&mut ck,&mut ev,"workflow transport observation installed",false,error); }

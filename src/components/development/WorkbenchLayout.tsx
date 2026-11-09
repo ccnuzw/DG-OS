@@ -3,23 +3,25 @@ import { useLayoutBudget } from '../../ui/layout/useLayoutBudget';
 import { workbenchMinimumWidth } from '../../ui/layout/layoutBudgets';
 
 export type CodeView = 'files' | 'changes' | 'capabilities' | 'delivery' | 'review';
-interface Layout { navigation: boolean; agent: boolean; tools: boolean; runtime: boolean; agentWidth: number; runtimeHeight: number; codeView: CodeView; compactView: 'code' | 'agent'; runtimeView: 'processes' | 'runs' }
-const KEY = 'dgos.development.layout.v2';
-const defaults: Layout = { navigation: true, agent: true, tools: false, runtime: false, agentWidth: 38, runtimeHeight: 40, codeView: 'files', compactView: 'agent', runtimeView: 'processes' };
-const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+interface Layout {
+  drawer: 'projects' | 'files' | 'git' | 'tasks' | null;
+  drawerWidth: number;
+  codeView: CodeView;
+  runtimeView: 'processes' | 'runs';
+}
+const KEY = 'dgos.development.layout.v3';
+const MIN_DRAWER_WIDTH = 18;
+const MAX_DRAWER_WIDTH = 42;
+const defaults: Layout = { drawer: 'projects', drawerWidth: 24, codeView: 'files', runtimeView: 'processes' };
+const clamp = (value: number) => Math.max(MIN_DRAWER_WIDTH, Math.min(MAX_DRAWER_WIDTH, Math.round(value * 2) / 2));
 function restore(): Layout {
   try {
     const value = JSON.parse(localStorage.getItem(KEY) ?? 'null');
     if (!value || typeof value !== 'object') return defaults;
     return {
-      navigation: typeof value.navigation === 'boolean' ? value.navigation : defaults.navigation,
-      agent: typeof value.agent === 'boolean' ? value.agent : defaults.agent,
-      tools: typeof value.tools === 'boolean' ? value.tools : defaults.tools,
-      runtime: typeof value.runtime === 'boolean' ? value.runtime : defaults.runtime,
-      agentWidth: Number.isFinite(value.agentWidth) ? clamp(Math.round(value.agentWidth), 26, 55) : defaults.agentWidth,
-      runtimeHeight: Number.isFinite(value.runtimeHeight) ? clamp(Math.round(value.runtimeHeight), 22, 65) : defaults.runtimeHeight,
+      drawer: value.drawer === null || ['projects', 'files', 'git', 'tasks'].includes(value.drawer) ? value.drawer : defaults.drawer,
+      drawerWidth: Number.isFinite(value.drawerWidth) ? clamp(value.drawerWidth) : defaults.drawerWidth,
       codeView: ['files', 'changes', 'capabilities', 'delivery', 'review'].includes(value.codeView) ? value.codeView : defaults.codeView,
-      compactView: value.compactView === 'code' ? 'code' : 'agent',
       runtimeView: value.runtimeView === 'runs' ? 'runs' : 'processes',
     };
   } catch { return defaults; }
@@ -31,29 +33,30 @@ export function useWorkbenchLayout() {
   useEffect(() => {
     try { localStorage.setItem(KEY, JSON.stringify(layout)); } catch { /* In-memory layout remains usable. */ }
   }, [layout]);
-  return { root, layout, setLayout, compact };
+  return { root, compact, layout, setLayout };
 }
 
-export function PanelResizer({ axis, value, onChange, label, testId, controls }: { axis: 'agent' | 'runtime'; value: number; onChange(value: number): void; label: string; testId: string; controls: string }) {
-  const min = axis === 'agent' ? 26 : 22, max = axis === 'agent' ? 55 : 65;
-  const drag = useRef<{ pointer: number; start: number; value: number; extent: number } | null>(null);
+export function PanelResizer({ value, onChange, label, testId, controls }: { value: number; onChange(value: number): void; label: string; testId: string; controls: string }) {
+  const drag = useRef<{ pointer: number; start: number; value: number; rem: number } | null>(null);
   function move(event: PointerEvent<HTMLDivElement>) {
     const current = drag.current;
     if (!current || current.pointer !== event.pointerId) return;
-    const position = axis === 'agent' ? event.clientX : event.clientY;
-    onChange(clamp(Math.round(current.value - (position - current.start) / current.extent * 100), min, max));
+    onChange(clamp(current.value + (event.clientX - current.start) / current.rem));
   }
-  return <div className={`dev-panel-resizer dev-panel-resizer-${axis}`} role="separator" tabIndex={0} aria-label={label} aria-controls={controls} aria-orientation={axis === 'agent' ? 'vertical' : 'horizontal'} aria-valuemin={min} aria-valuemax={max} aria-valuenow={value} aria-valuetext={`${value}%`} data-testid={testId}
+  return <div className="dev-panel-resizer" role="separator" tabIndex={0} aria-label={label} aria-controls={controls} aria-orientation="vertical" aria-valuemin={MIN_DRAWER_WIDTH} aria-valuemax={MAX_DRAWER_WIDTH} aria-valuenow={value} aria-valuetext={`${value}rem`} data-testid={testId}
     onPointerDown={event => {
       if (event.button !== 0) return;
-      const container = event.currentTarget.parentElement;
-      if (!container) return;
+      const rem = Number.parseFloat(getComputedStyle(event.currentTarget.ownerDocument.documentElement).fontSize) || 16;
       event.preventDefault(); event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId);
-      drag.current = { pointer: event.pointerId, start: axis === 'agent' ? event.clientX : event.clientY, value, extent: Math.max(1, axis === 'agent' ? container.clientWidth : container.clientHeight) };
-    }} onPointerMove={move} onPointerUp={event => { if (drag.current?.pointer === event.pointerId) { drag.current = null; event.currentTarget.releasePointerCapture(event.pointerId); } }} onPointerCancel={() => { drag.current = null; }} onLostPointerCapture={() => { drag.current = null; }}
+      drag.current = { pointer: event.pointerId, start: event.clientX, value, rem };
+    }} onPointerMove={move} onPointerUp={event => {
+      if (drag.current?.pointer !== event.pointerId) return;
+      drag.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    }} onPointerCancel={() => { drag.current = null; }} onLostPointerCapture={() => { drag.current = null; }}
     onKeyDown={event => {
-      const decrease = axis === 'agent' ? 'ArrowRight' : 'ArrowDown', increase = axis === 'agent' ? 'ArrowLeft' : 'ArrowUp';
-      if (![decrease, increase, 'Home', 'End'].includes(event.key)) return;
-      event.preventDefault(); onChange(event.key === 'Home' ? min : event.key === 'End' ? max : clamp(value + (event.key === increase ? 2 : -2), min, max));
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      onChange(event.key === 'Home' ? MIN_DRAWER_WIDTH : event.key === 'End' ? MAX_DRAWER_WIDTH : clamp(value + (event.key === 'ArrowRight' ? 1 : -1)));
     }} />;
 }

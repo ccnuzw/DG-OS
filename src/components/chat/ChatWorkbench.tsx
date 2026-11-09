@@ -8,7 +8,6 @@ import MessageList from './MessageList';
 import SessionSidebar from './SessionSidebar';
 import { waitForChatTerminal } from '../../workspace/closeCoordinator';
 import { useSurfaceStatus } from '../../workspace/SurfaceContext';
-import { RuntimeNavigation } from './RuntimeNavigation';
 
 
 function DestinationDialog() {
@@ -49,7 +48,6 @@ export default function ChatWorkbench() {
   useEffect(() => { void loadSessions(); }, [loadSessions]);
   const requestClose = (target: ChatSession) => { if (generations[target.id]) setCloseTarget(target); else closeSession(target.id); };
   return <div className="chat-workbench">
-    <RuntimeNavigation runtime="dgos" />
     <SessionSidebar onClose={requestClose} />
     <section id="chat-session-panel" role={session ? 'tabpanel' : undefined} aria-labelledby={session ? `chat-session-tab-${session.id}` : undefined} aria-label={session ? undefined : t('chat.chat')} className="chat-surface">
       {session ? <>{stale ? <div className="chat-feedback chat-reading-column" tabIndex={0}><ChatNotice tone="error">{t('chat.stale')}</ChatNotice></div> : null}<MessageList />{notice ? <div className="chat-feedback chat-reading-column" tabIndex={0}><ChatNotice tone={notice.tone} onDismiss={dismissNotice}>{notice.text}</ChatNotice></div> : null}<Composer key={session.id} /></> : <div className="chat-start chat-reading-column"><h2 className="m-0 text-lg font-semibold">{t('chat.start')}</h2><p className="m-0 text-sm text-ink-secondary">{t('chat.startHelp')}</p><Button onClick={() => void createSession()}>{t('chat.newSession')}</Button></div>}

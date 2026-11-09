@@ -10,6 +10,7 @@ import { MockChannel } from './helpers/mockChannel';
 import { useWorkspaceTabs } from '../src/workspace/useWorkspaceTabs';
 import { SurfaceScope } from '../src/workspace/SurfaceContext';
 import { useCapabilityEntry } from '../src/components/chat/RuntimeNavigation';
+import { setLocaleForTesting } from '../src/i18n';
 
 // FR-006 chat front end (AC01-AC29 subset that needs the DOM). Contract: V1-接口契约 §10.1, V1-错误码 §3.6.
 // Synthetic data only. The host is a table of command handlers; Channels are the controllable MockChannel.
@@ -227,19 +228,21 @@ describe('sessions', () => {
     handlers.list_chat_sessions = () => ok({ items: [session({ id: 'sA', title: '会话 A' }), session({ id: 'sB', title: '会话 B', provider_id: 'p2', model_id: 'modelB', skills: [{ skill_id: 'writing', version_id: 'writing@1', content_hash: 'hash' }] })], next_cursor: null });
     handlers.list_providers = () => ok([{ id: 'p1', name: '服务 A', enabled: true, credential_status: 'stored' }, { id: 'p2', name: '服务 B', enabled: true, credential_status: 'stored' }]);
     handlers.list_models = ({ providerId }) => ok([{ id: 'm', model_id: providerId === 'p2' ? 'modelB' : 'chat1', provider_id: providerId, model_name: providerId === 'p2' ? '模型 B' : 'Chat', model_type: 'chat' }]);
+    handlers.update_chat_session_target = ({ input }) => ok(session({ id: input.session_id, title: '会话 A', provider_id: input.provider_id, model_id: input.model_id }));
     renderPage();
     await screen.findByRole('tab', { name: '会话 A' });
     typeDraft('draft A');
     await choose('Provider', '服务 B');
     await choose('模型', '模型 B');
-    fireEvent.keyDown(screen.getByRole('dialog', { name: '选择 Provider 和模型' }), { key: 'Escape' });
-    fireEvent.click(screen.getByRole('button', { name: '选择 Skills' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: '明确不使用技能' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: '会话设置' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '自定义指导' }), { target: { value: 'draft guidance A' } });
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     fireEvent.click(screen.getByRole('button', { name: '会话历史' }));
     fireEvent.click(await screen.findByRole('button', { name: '会话 B' }));
     await screen.findByRole('textbox', { name: '消息输入' });
     typeDraft('draft B');
-    expect(useChatStore.getState().sessionTargetDrafts.sA).toEqual({ provider_id: 'p2', model_id: 'modelB', skill_ids: [], no_skill: false, generation: {} });
+    expect(useChatStore.getState().sessionTargetDrafts.sA).toEqual({ provider_id: 'p2', model_id: 'modelB', skill_ids: [], no_skill: true, generation: { instruction: 'draft guidance A' } });
     expect(useChatStore.getState().sessionTargetDrafts.sB).toBeUndefined();
     fireEvent.click(screen.getByRole('tab', { name: /会话 A/ }));
     expect(draftBox().value).toBe('draft A');
@@ -309,53 +312,131 @@ describe('sessions', () => {
 });
 
 describe('separate capability pickers', () => {
-  it('preserves model, ordered skills and parameters across pickers until explicitly applied', async () => {
-    handlers.list_installed_skills = () => ['summary', 'writing'].map(id => ({ skill_id: id, name: id, version: '1', enabled: true, call_type: 'content', manifest: { category: 'Content skills' } }));
+  it('saves model and ordered skill choices immediately while leaving generation settings explicit', async () => {
+    handlers.list_installed_skills = () => ['summary', 'writing'].map(id => ({ skill_id: id, name: id, version: '1', enabled: true, call_type: 'content', manifest: { category: 'writing' } }));
     handlers.list_models = () => ok([{ id: 'm1', model_id: 'chat1', model_name: '对话模型', model_type: 'chat' }, { id: 'm2', model_id: 'chat2', model_name: '第二模型', model_type: 'chat' }]);
     handlers.update_chat_session_target = ({ input }) => ok(session({ provider_id: input.provider_id, model_id: input.model_id, skills: input.skill_ids.map((id: string) => ({ skill_id: id, version_id: `${id}@1`, content_hash: 'fixture' })), no_skill_confirmed: input.no_skill, generation: input.generation }));
     await openSession();
     await choose('模型', '第二模型');
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: '会话目标' })));
     fireEvent.click(screen.getByRole('button', { name: '选择 Skills' }));
     fireEvent.click(await within(screen.getByRole('dialog')).findByRole('button', { name: 'summary', exact: true }));
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'writing', exact: true }));
-    fireEvent.click(screen.getByRole('button', { name: '上移 writing' }));
-    fireEvent.change(screen.getByRole('searchbox', { name: '搜索会话技能' }), { target: { value: 'missing' } });
-    expect(useChatStore.getState().sessionTargetDrafts.s1?.skill_ids).toEqual(['writing', 'summary']);
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: '选择 Skills' }));
+    fireEvent.click(await within(screen.getByRole('dialog')).findByRole('button', { name: 'writing', exact: true }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: '选择 Skills' }));
+    fireEvent.click(await screen.findByRole('button', { name: '上移 writing' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(useChatStore.getState().activeSession?.skills.map(skill => skill.skill_id)).toEqual(['writing', 'summary']);
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: '选择 Skills' })));
     fireEvent.click(screen.getByRole('button', { name: '会话设置' }));
     fireEvent.change(screen.getByRole('textbox', { name: '自定义指导' }), { target: { value: 'Preserve sources' } });
-    expect(calls('update_chat_session_target')).toHaveLength(0);
-    expect(useChatStore.getState().activeSession?.model_id).toBe('chat1');
+    expect(calls('update_chat_session_target')).toHaveLength(4);
+    expect(useChatStore.getState().activeSession?.model_id).toBe('chat2');
     fireEvent.click(screen.getByRole('button', { name: '应用目标' }));
-    await waitFor(() => expect(useChatStore.getState().activeSession?.model_id).toBe('chat2'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(useChatStore.getState().activeSession?.skills.map(skill => skill.skill_id)).toEqual(['writing', 'summary']);
     expect(useChatStore.getState().activeSession?.generation.instruction).toBe('Preserve sources');
   });
+  it('keeps the current model and draft on save failure, then closes only after a successful retry', async () => {
+    handlers.list_models = () => ok([{ id: 'm2', model_id: 'chat2', model_name: '第二模型', model_type: 'chat' }]);
+    const pending = Promise.withResolvers<unknown>();
+    handlers.update_chat_session_target = () => pending.promise;
+    await openSession();
+    typeDraft('保留消息草稿');
+    act(() => useChatStore.getState().setSessionTargetDraft('s1', { provider_id: 'p1', model_id: 'chat1', skill_ids: [], no_skill: true, generation: { instruction: 'Unapplied guidance' } }));
+    await choose('模型', '第二模型');
+    expect(screen.getByRole('dialog', { name: '选择 Provider 和模型' })).toBeTruthy();
+    expect(useChatStore.getState().activeSession?.model_id).toBe('chat1');
+    await act(async () => pending.resolve(fail(1006015)));
+    await screen.findByRole('alert');
+    expect(draftBox().value).toBe('保留消息草稿');
+    expect(useChatStore.getState().activeSession?.model_id).toBe('chat1');
+    handlers.update_chat_session_target = ({ input }) => ok(session({ model_id: input.model_id, generation: input.generation }));
+    await choose('模型', '第二模型');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(useChatStore.getState().activeSession?.model_id).toBe('chat2');
+    expect(useChatStore.getState().activeSession?.generation).toEqual({});
+    expect(useChatStore.getState().sessionTargetDrafts.s1?.generation.instruction).toBe('Unapplied guidance');
+    expect(useChatStore.getState().sessionTargetDrafts.s1?.model_id).toBe('chat2');
+    expect(draftBox().value).toBe('保留消息草稿');
+  });
+  it('preserves settings after a rejected save and allows a successful retry', async () => {
+    handlers.update_chat_session_target = () => fail(1006015);
+    await openSession();
+    fireEvent.click(screen.getByRole('button', { name: '会话设置' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '自定义指导' }), { target: { value: 'Needs retry' } });
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '应用目标' }));
+    await within(screen.getByRole('dialog')).findByRole('alert');
+    expect((screen.getByRole('textbox', { name: '自定义指导' }) as HTMLTextAreaElement).value).toBe('Needs retry');
+    expect(useChatStore.getState().activeSession?.generation.instruction).toBeUndefined();
+    handlers.update_chat_session_target = ({ input }) => ok(session({ generation: input.generation }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '应用目标' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(useChatStore.getState().activeSession?.generation.instruction).toBe('Needs retry');
+  });
+  it('saves reasoning immediately without applying other drafts, and retains the picker on failure', async () => {
+    const initial = { temperature: 0.4, reasoning: { effort: 'low', budget_tokens: 2048 } };
+    handlers.list_chat_sessions = () => ok({ items: [session({ generation: initial })], next_cursor: null });
+    handlers.update_chat_session_target = () => fail(1006015);
+    await openSession();
+    typeDraft('保留消息');
+    act(() => useChatStore.getState().setSessionTargetDraft('s1', { provider_id: 'p1', model_id: 'chat1', skill_ids: [], no_skill: true, generation: { ...initial, instruction: 'Unapplied guidance' } }));
+    fireEvent.click(screen.getByRole('button', { name: '推理强度：低' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: '推理强度' })).getByRole('button', { name: '高', exact: true }));
+    await screen.findByRole('alert');
+    expect(useChatStore.getState().activeSession?.generation).toEqual(initial);
+    handlers.update_chat_session_target = ({ input }) => ok(session({ generation: input.generation }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '高', exact: true }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(useChatStore.getState().activeSession?.generation).toEqual({ temperature: 0.4, reasoning: { effort: 'high', budget_tokens: 2048 } });
+    expect(useChatStore.getState().sessionTargetDrafts.s1?.generation.instruction).toBe('Unapplied guidance');
+    expect(draftBox().value).toBe('保留消息');
+    fireEvent.click(screen.getByRole('button', { name: '推理强度：高' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '默认', exact: true }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(useChatStore.getState().activeSession?.generation.reasoning).toBeNull();
+  });
+  it('localizes skill categories while preserving filters and saves only skills after a failed attempt', async () => {
+    handlers.list_installed_skills = () => [
+      { skill_id: 'summary', name: '摘要', version: '1', enabled: true, call_type: 'content', manifest: { category: 'writing' } },
+      { skill_id: 'research', name: '研究', version: '1', enabled: true, call_type: 'content', manifest: { category: 'data-research' } },
+    ];
+    handlers.update_chat_session_target = () => fail(1006013);
+    await openSession();
+    act(() => useChatStore.getState().setSessionTargetDraft('s1', { provider_id: 'p1', model_id: 'chat1', skill_ids: [], no_skill: true, generation: { instruction: 'Keep this draft' } }));
+    fireEvent.click(screen.getByRole('button', { name: '选择 Skills' }));
+    fireEvent.click(await screen.findByRole('button', { name: '写作与内容', exact: true }));
+    expect(screen.queryByRole('button', { name: '研究', exact: true })).toBeNull();
+    act(() => setLocaleForTesting('en-US'));
+    expect(screen.getByRole('button', { name: 'Writing & content', exact: true }).getAttribute('aria-pressed')).toBe('true');
+    act(() => setLocaleForTesting('zh-CN'));
+    fireEvent.click(screen.getByRole('button', { name: '摘要', exact: true }));
+    await screen.findByRole('alert');
+    expect(useChatStore.getState().activeSession?.skills).toEqual([]);
+    handlers.update_chat_session_target = ({ input }) => ok(session({ skills: input.skill_ids.map((id: string) => ({ skill_id: id, version_id: `${id}@1`, content_hash: 'fixture' })), generation: input.generation, no_skill_confirmed: false }));
+    fireEvent.click(screen.getByRole('button', { name: '摘要', exact: true }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(useChatStore.getState().activeSession?.skills.map(skill => skill.skill_id)).toEqual(['summary']);
+    expect(useChatStore.getState().activeSession?.generation).toEqual({});
+    expect(useChatStore.getState().sessionTargetDrafts.s1?.generation.instruction).toBe('Keep this draft');
+    fireEvent.click(screen.getByRole('button', { name: '移除技能 摘要' }));
+    await waitFor(() => expect(useChatStore.getState().activeSession?.skills).toEqual([]));
+  });
 });
 
-describe('undecided skill', () => {
-  const undecided = () => session({ no_skill_confirmed: false });
-
-  it('blocks sending until a skill or an explicit no-skill is applied, then sends', async () => {
-    handlers.list_chat_sessions = () => ok({ items: [undecided()], next_cursor: null });
-    handlers.update_chat_session_target = () => ok(session());
+describe('optional skills', () => {
+  it('sends without a skill even when an old session has no no-skill confirmation', async () => {
+    handlers.list_chat_sessions = () => ok({ items: [session({ no_skill_confirmed: false })], next_cursor: null });
     await openSession();
-    typeDraft('需要先决定技能');
-    expect(sendButton().disabled).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: '去选择技能' }));
-    await waitFor(() => expect(document.activeElement?.id).toBe('chat-skill-select'));
-
-    fireEvent.click(screen.getByRole('checkbox', { name: '明确不使用技能' }));
-    fireEvent.click(screen.getByRole('button', { name: '应用目标' }));
-    await waitFor(() => expect(sendButton().disabled).toBe(false));
-    expect(screen.getByText(/目标已更新/).closest('[role="status"]')).not.toBeNull();
-    expect(screen.queryByRole('dialog', { name: '选择 Skills' })).toBeNull();
+    typeDraft('普通对话');
+    expect(sendButton().disabled).toBe(false);
     deferSend();
     fireEvent.click(sendButton());
-    expect((await sentArgs()).input.content).toBe('需要先决定技能');
+    expect((await sentArgs()).input.content).toBe('普通对话');
+    expect(calls('update_chat_session_target')).toEqual([]);
   });
 
   it('1006013 on a pinned skill that became unavailable offers re-choosing the skill', async () => {
@@ -364,7 +445,7 @@ describe('undecided skill', () => {
     await openSession();
     typeDraft('技能被禁用后发送');
     fireEvent.click(sendButton());
-    expect((await screen.findByRole('alert')).textContent).toContain('会话固定的技能不可用，请重新选择技能或明确选择无技能。');
+    await screen.findByRole('alert');
     expect(screen.getByText('会话固定的技能现在不可用。')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '重新选择技能' }));
     await waitFor(() => expect(document.activeElement?.id).toBe('chat-skill-select'));
@@ -548,7 +629,7 @@ describe('destination_changed (1006012)', () => {
     handlers.regenerate_chat_message = () => (++attempt === 1
       ? fail(1006012, { fingerprint: 'fp-r', host: 'api.new.example.invalid' })
       : ok({ task_id: 't3', user_message_id: 'm1', assistant_message_id: 'a3', dropped_turns: 0, replayed: false }));
-    fireEvent.click(await screen.findByRole('button', { name: '重新生成' }));
+    fireEvent.click(within(await screen.findByRole('article', { name: '助手消息' })).getByRole('button', { name: '重新生成' }));
     fireEvent.click(within(await screen.findByRole('dialog', { name: 'Provider 目标已变化' })).getByRole('button', { name: '确认并发送' }));
     await waitFor(() => expect(calls('regenerate_chat_message')).toHaveLength(2));
     expect(calls('regenerate_chat_message')[1].input).toEqual({
@@ -572,7 +653,6 @@ describe('error mapping', () => {
     [1006009, '还没有可用的 Provider，请先到 Provider 页面完成配置。'],
     [1006010, '已有生成正在进行，请先停止当前生成。'],
     [1006011, '请求标识冲突，请重新发送。'],
-    [1006013, '会话固定的技能不可用，请重新选择技能或明确选择无技能。'],
     [1006015, '请先为会话选择 Provider 和模型。'],
     [1006017, '工具确认已失效、已过期或与当前提案不符，请重新发送并重新选择工具。'],
   ])('send rejected with %i shows fixed Chinese text, keeps the draft and never the host message', async (code, text) => {
@@ -620,6 +700,19 @@ describe('error mapping', () => {
     expect(within(article).getByText('请求超时。')).toBeTruthy();
     expect(within(article).getByText('结果未知，上游可能已计费。')).toBeTruthy();
     expect(screen.getByText('请求超时。结果未知，上游可能已计费。')).toBeTruthy();
+  });
+});
+describe('message timestamps', () => {
+  it('uses each message creation time rather than its update time', async () => {
+    handlers.list_chat_messages = () => ok({ items: [
+      message(1, 'user', '问题', { created_at: 1794182400, updated_at: 1794186000 }),
+      message(2, 'assistant', '回答', { created_at: 1794182460, updated_at: 1794186060 }),
+    ], next_before_seq: null });
+    await openSession();
+    const user = await screen.findByRole('article', { name: '用户消息' });
+    const assistant = await screen.findByRole('article', { name: '助手消息' });
+    expect(user.querySelector('time')?.dateTime).toBe(new Date(1794182400 * 1000).toISOString());
+    expect(assistant.querySelector('time')?.dateTime).toBe(new Date(1794182460 * 1000).toISOString());
   });
 });
 
@@ -688,13 +781,15 @@ describe('regenerate', () => {
     next_before_seq: null,
   });
 
-  it('is offered only on the last assistant message', async () => {
+  it('offers regeneration only on the last reply and its paired user message', async () => {
     handlers.list_chat_messages = history;
     await openSession();
     const [first, last] = await screen.findAllByRole('article', { name: '助手消息' });
     expect(within(first).queryByRole('button', { name: '重新生成' })).toBeNull();
     expect(within(last).getByRole('button', { name: '重新生成' })).toBeTruthy();
-    expect(screen.getAllByRole('button', { name: '重新生成' })).toHaveLength(1);
+    const [firstUser, lastUser] = screen.getAllByRole('article', { name: '用户消息' });
+    expect(within(firstUser).queryByRole('button', { name: '重新生成' })).toBeNull();
+    expect(within(lastUser).getByRole('button', { name: '重新生成' })).toBeTruthy();
   });
 
   it('is not offered when the last message is the user message', async () => {
@@ -704,12 +799,13 @@ describe('regenerate', () => {
     expect(screen.queryByRole('button', { name: '重新生成' })).toBeNull();
   });
 
-  it('sends { input: { message_id, client_request_id }, onEvent } and swaps the reply for the new snapshot', async () => {
+  it.each(['用户消息', '助手消息'])('regenerates the corresponding reply from %s and retains the user input', async role => {
     handlers.list_chat_messages = history;
     await openSession();
     const { promise, resolve } = Promise.withResolvers<unknown>();
     handlers.regenerate_chat_message = () => promise;
-    fireEvent.click(await screen.findByRole('button', { name: '重新生成' }));
+    const articles = await screen.findAllByRole('article', { name: role });
+    fireEvent.click(within(articles[articles.length - 1]).getByRole('button', { name: '重新生成' }));
     await waitFor(() => expect(calls('regenerate_chat_message')).toHaveLength(1));
     const args = calls('regenerate_chat_message')[0];
     expect(args).toEqual({ input: { message_id: 'm4', client_request_id: expect.stringMatching(UUID) }, onEvent: expect.any(MockChannel) });
@@ -722,7 +818,7 @@ describe('regenerate', () => {
     await screen.findByText('新的答二');
     expect(screen.queryByText('答二')).toBeNull();
     expect(screen.getAllByRole('article', { name: '助手消息' })).toHaveLength(2);
-    expect(screen.getAllByRole('button', { name: '重新生成' })).toHaveLength(1);
+    expect(screen.getAllByRole('article', { name: '用户消息' }).map(article => article.querySelector('.chat-message-content')?.textContent)).toEqual(['问一', '问二']);
   });
 
   it('a discarded regeneration restores the kept reply and says so', async () => {
@@ -730,7 +826,8 @@ describe('regenerate', () => {
     await openSession();
     const { promise, resolve } = Promise.withResolvers<unknown>();
     handlers.regenerate_chat_message = () => promise;
-    fireEvent.click(await screen.findByRole('button', { name: '重新生成' }));
+    const replies = await screen.findAllByRole('article', { name: '助手消息' });
+    fireEvent.click(within(replies[replies.length - 1]).getByRole('button', { name: '重新生成' }));
     await waitFor(() => expect(calls('regenerate_chat_message')).toHaveLength(1));
     const args = calls('regenerate_chat_message')[0];
     await act(async () => { resolve(ok({ task_id: args.input.client_request_id, user_message_id: 'm3', assistant_message_id: 'a5', dropped_turns: 0, replayed: false })); });
@@ -1156,13 +1253,19 @@ it('returns from capability management to the same DG-OS session with message an
  const original = useChatStore.getState().activeSession;
  act(() => useChatStore.getState().setSessionTargetDraft('s1', { provider_id: 'p1', model_id: 'unapplied', skill_ids: [], no_skill: true, generation: {} }));
  const draftTarget = useChatStore.getState().sessionTargetDrafts.s1;
- for (const [label, path] of [['技能中心', '/skills'], ['MCP 管理', '/mcp']] as const) {
-  fireEvent.click(within(screen.getByRole('navigation', { name: '管理会话能力' })).getByRole('link', { name: label, exact: true }));
+ for (const [trigger, path] of [['选择 Skills', '/skills'], [/MCP 工具/, '/mcp']] as const) {
+  fireEvent.click(screen.getByRole('button', { name: trigger }));
+  fireEvent.click(within(await screen.findByRole('dialog')).getAllByRole('link').find(link => link.getAttribute('href') === path)!);
   await waitFor(() => expect(screen.getByTestId('capability-path').textContent).toBe(`${path}:dgos`));
   fireEvent.click(screen.getByRole('button', { name: 'Return to conversation' }));
   await waitFor(() => expect(draftBox()).toBe(prompt));
+  if (screen.queryByRole('dialog')) {
+   fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  }
  }
- fireEvent.click(within(screen.getByRole('navigation', { name: '管理会话能力' })).getAllByRole('link').find(link => link.getAttribute('href') === '/settings/providers')!);
+ fireEvent.click(screen.getByRole('button', { name: '会话目标' }));
+ fireEvent.click(within(await screen.findByRole('dialog')).getAllByRole('link').find(link => link.getAttribute('href') === '/settings/providers')!);
  await waitFor(() => expect(screen.getByTestId('capability-path').textContent).toContain('/settings/providers'));
  handlers.list_providers = () => ok([{ id: 'p1', name: '管理后服务', enabled: true, credential_status: 'stored' }]);
  handlers.list_models = () => ok([{ id: 'after-management', model_id: 'after-management', provider_id: 'p1', model_name: '管理后模型', model_type: 'chat' }]);
@@ -1172,8 +1275,6 @@ it('returns from capability management to the same DG-OS session with message an
  expect(prompt.value).toBe('保留管理往返草稿');
  expect(useChatStore.getState().activeSession).toBe(original);
  expect(useChatStore.getState().sessionTargetDrafts.s1).toBe(draftTarget);
- await waitFor(() => expect(screen.getByRole('button', { name: '会话目标' }).textContent).toContain('管理后服务'));
- fireEvent.click(screen.getByRole('button', { name: '会话目标' }));
  expect(await screen.findByRole('button', { name: '管理后模型' })).toBeTruthy();
  fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());

@@ -1,0 +1,18 @@
+.agent-composer-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--spacing-2); min-width: 0; container-type: inline-size; }
+.agent-control-primary, .agent-control-secondary, .agent-control-management, .agent-control-more-links { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-1); min-width: 0; }
+.agent-control-primary { flex: 1 1 auto; }
+.agent-control-secondary { margin-inline-start: auto; }
+.agent-control-model { min-width: 0; max-width: 100%; }
+.agent-control-model > div { min-width: 0; }
+.agent-control-popover { display: flex; flex-direction: column; gap: var(--spacing-2); width: min(22rem, 80vw); max-width: 100%; overflow-wrap: anywhere; }
+.agent-control-popover h3, .agent-control-popover p { margin: 0; }
+.agent-control-popover h3 { font-size: var(--font-size-sm); }
+.agent-control-popover p, .agent-control-popover dl, .agent-control-popover details { font-size: var(--font-size-xs); }
+.agent-control-popover dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--spacing-2); margin: 0; }
+.agent-control-popover dd { margin: 0; }
+.agent-control-options { display: flex; flex-wrap: wrap; gap: var(--spacing-1); }
+.agent-control-confirm { display: flex; flex-wrap: wrap; gap: var(--spacing-2); padding: var(--spacing-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.agent-control-intent { flex-basis: 100%; margin: 0; color: var(--text-secondary); font-size: var(--font-size-xs); }
+.agent-control-confirm p { flex-basis: 100%; }
+.agent-control-more-links { gap: var(--spacing-3); }
+@container (max-width: 38rem) { .agent-control-management { display: none; } }

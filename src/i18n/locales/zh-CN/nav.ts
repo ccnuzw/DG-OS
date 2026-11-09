@@ -1,6 +1,8 @@
 export default {
   "nav.agent": "Agent",
   "nav.home": "桌面总览",
+  "nav.homeShort": "桌面",
+  "nav.mcpShort": "MCP",
   "nav.mcp": "MCP 管理",
   "nav.modules": "应用",
   "nav.providers": "Provider",

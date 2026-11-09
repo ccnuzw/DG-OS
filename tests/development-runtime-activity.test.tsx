@@ -122,6 +122,8 @@ it('keeps a stop acknowledgement when an older detail finishes afterwards', asyn
   await act(async () => { old.resolve(process('run', 'running', 'stale running output')); });
   expect(screen.getByText('stopped output')).toBeTruthy();
   expect(screen.queryByText('stale running output')).toBeNull();
+  const key = JSON.stringify([useDevelopment.getState().epoch, 'p', 't', 'run']);
+  expect(useDevelopmentRuntime.getState().details[key].output).toBe('stopped output');
 });
 
 it('never confirms empty history before a successful read and offers retry after first failure', async () => {

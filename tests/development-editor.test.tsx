@@ -119,3 +119,28 @@ it('saves the current draft once after composition ends and ignores repeating sa
   await waitFor(() => expect(useDevelopmentEditor.getState().saving).toBe(false));
   expect(invoke.mock.calls.filter(([command]) => command === 'save_development_file')).toEqual([['save_development_file', { input: { project_id: 'p', task_id: 't', path: 'a.ts', expected_hash: 'initial-hash', text: '中文 draft' } }]]);
 });
+
+it('references saved selected lines and refuses an unsaved selection', async () => {
+  invoke.mockResolvedValue({ path: 'a.ts', text: 'first\nsecond\nthird', hash: 'disk-version', size: 18, reason: null });
+  const reference = vi.fn();
+  render(<FileEditor projectId="p" taskId="t" path="a.ts" onReference={reference} />);
+  const editor = await screen.findByTestId('dev-file-editor') as HTMLTextAreaElement;
+  editor.setSelectionRange(6, 13); fireEvent.select(editor);
+  fireEvent.click(screen.getByRole('button', { name: 'workbenchFiles.referenceSelection' }));
+  expect(reference).toHaveBeenCalledWith({ project_id: 'p', task_id: 't', path: 'a.ts', kind: 'selection', expected_hash: 'disk-version', start_line: 2, end_line: 2 });
+  fireEvent.change(editor, { target: { value: 'unsaved\nsecond\nthird' } });
+  editor.setSelectionRange(0, 7); fireEvent.select(editor);
+  expect(screen.getByRole('button', { name: 'workbenchFiles.referenceSelection' })).toHaveProperty('disabled', true);
+  expect(screen.getByRole('button', { name: 'workbenchFiles.referenceFile' })).toHaveProperty('disabled', true);
+});
+
+it('reports an expired line and never exposes the previous project file during a read', async () => {
+  invoke.mockResolvedValue({ path: 'a.ts', text: 'first\nsecond', hash: 'disk-version', size: 12, reason: null });
+  const view = render(<FileEditor projectId="p" taskId="t" path="a.ts" line={99} />);
+  await screen.findByText('workbenchFiles.invalidLine');
+  const next = Promise.withResolvers<unknown>(); invoke.mockReturnValue(next.promise);
+  view.rerender(<FileEditor projectId="other" taskId="other-task" path="a.ts" />);
+  expect(screen.queryByTestId('dev-file-editor')).toBeNull();
+  await act(async () => next.resolve({ path: 'a.ts', text: 'different project', hash: 'other-version', size: 17, reason: null }));
+  expect((screen.getByTestId('dev-file-editor') as HTMLTextAreaElement).value).toBe('different project');
+});
