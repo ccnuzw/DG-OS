@@ -30,6 +30,9 @@ pub struct StoredRun {
     pub runtime: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionMessageSummary { pub session_id: String, pub preview: Option<String>, pub last_activity_at: Option<i64> }
+
 impl DevelopmentRepository {
     /// Atomically stores a Provider-bound native run and its immutable binding snapshot.
     pub async fn begin_cli_run(&self, run: &StoredRun, snapshot: &super::CliProviderSnapshot) -> Result<(), String> {
@@ -143,6 +146,102 @@ impl DevelopmentRepository {
     pub async fn runs(&self, owner: &str, task_id: &str) -> Result<Vec<StoredRun>, String> {
         let rows=fetch(&self.db,"SELECT * FROM development_runs WHERE owner=? AND task_id=? ORDER BY started_at DESC,id DESC LIMIT 50",vec![v(owner),v(task_id)]).await?;
         rows.iter().map(stored_run).collect()
+    }
+
+    /// One owner-scoped batch projection; only message text leaves SQLite (1024 characters).
+    pub async fn session_message_summaries(&self, owner: &str) -> Result<Vec<SessionMessageSummary>, String> {
+        let rows = fetch(&self.db, r#"
+            WITH events AS (
+                SELECT r.id AS run_id, r.session_id, r.started_at,
+                    coalesce(r.finished_at, r.started_at) AS activity,
+                    CAST(e.key AS INTEGER) AS event_index,
+                    json_extract(e.value, '$.kind') AS kind,
+                    json_extract(e.value, '$.data') AS data,
+                    CASE WHEN json_type(e.value, '$.text')='text'
+                        THEN json_extract(e.value, '$.text') END AS text
+                FROM development_runs r JOIN json_each(r.events) e
+                WHERE r.owner=? AND r.source='native_agent' AND r.engine IN ('codex','claude')
+            ), message_text AS (
+                -- Claude persists message.data.content, not top-level event.text.
+                SELECT *, CASE
+                    WHEN kind IN ('agentMessage','userMessage') THEN text
+                    WHEN kind='message' AND json_extract(data, '$.type') IN ('assistant','user')
+                        AND json_extract(data, '$.parent_tool_use_id') IS NULL THEN (
+                        SELECT group_concat(CASE WHEN coalesce(preceding_length, 0)<1024
+                            THEN substr(block_text, 1, 1024-coalesce(preceding_length, 0)) ELSE '' END, '')
+                        FROM (
+                            SELECT json_extract(b.value, '$.text') AS block_text,
+                                sum(length(json_extract(b.value, '$.text'))) OVER (
+                                    ORDER BY CAST(b.key AS INTEGER)
+                                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                                ) AS preceding_length
+                            FROM json_each(CASE WHEN json_type(data, '$.content')='array'
+                                THEN json_extract(data, '$.content') ELSE '[]' END) b
+                            WHERE json_extract(b.value, '$.type')='text'
+                                AND json_type(b.value, '$.text')='text'
+                            ORDER BY CAST(b.key AS INTEGER)
+                        )
+                    ) END AS complete_text
+                FROM events
+            ), marked AS (
+                -- Claude deltas have no native message ID; complete root messages delimit them.
+                SELECT *, max(CASE WHEN kind IN ('userMessage','agentMessage')
+                    OR (kind='message' AND json_extract(data, '$.parent_tool_use_id') IS NULL)
+                    THEN event_index END) OVER (
+                        PARTITION BY run_id ORDER BY event_index ROWS UNBOUNDED PRECEDING
+                    ) AS message_boundary
+                FROM message_text
+            ), fragments AS (
+                SELECT *, CASE WHEN kind='item/agentMessage/delta'
+                    THEN json_extract(data, '$.itemId') END AS item_id,
+                    sum(length(text)) OVER (
+                        PARTITION BY run_id, kind,
+                            CASE WHEN kind='item/agentMessage/delta' THEN json_extract(data, '$.itemId') END,
+                            CASE WHEN kind='text_delta' THEN message_boundary END
+                        ORDER BY event_index ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                    ) AS preceding_length
+                FROM marked
+                WHERE kind IN ('text_delta','item/agentMessage/delta') AND text IS NOT NULL
+                    AND json_extract(data, '$.parent_tool_use_id') IS NULL
+            ), streamed AS (
+                SELECT *, group_concat(CASE WHEN coalesce(preceding_length, 0)<1024
+                    THEN substr(text, 1, 1024-coalesce(preceding_length, 0)) ELSE '' END, '') OVER (
+                        PARTITION BY run_id, kind, item_id,
+                            CASE WHEN kind='text_delta' THEN message_boundary END
+                        ORDER BY event_index ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                    ) AS stream_text,
+                    row_number() OVER (
+                        PARTITION BY run_id, kind, item_id,
+                            CASE WHEN kind='text_delta' THEN message_boundary END
+                        ORDER BY event_index DESC
+                    ) AS fragment_position
+                FROM fragments
+            ), messages AS (
+                SELECT run_id, session_id, started_at, activity, event_index,
+                    substr(complete_text, 1, 1024) AS preview
+                FROM marked WHERE trim(complete_text)<>''
+                UNION ALL
+                SELECT f.run_id, f.session_id, f.started_at, f.activity, f.event_index, f.stream_text
+                FROM streamed f WHERE f.fragment_position=1 AND trim(f.stream_text)<>''
+                    -- Codex can deliver a late delta after the complete item; prefer that item.
+                    AND NOT EXISTS (
+                        SELECT 1 FROM marked m WHERE m.run_id=f.run_id AND m.kind='agentMessage'
+                            AND json_extract(m.data, '$.id')=f.item_id AND trim(m.complete_text)<>''
+                    )
+            ), ranked AS (
+                SELECT *, row_number() OVER (PARTITION BY session_id
+                    ORDER BY started_at DESC, run_id DESC, event_index DESC) AS position
+                FROM messages
+            )
+            SELECT s.id AS session_id, m.preview, m.activity AS last_activity_at
+            FROM development_agent_sessions s LEFT JOIN ranked m ON m.session_id=s.id AND m.position=1
+            WHERE s.owner=? ORDER BY s.id
+        "#, vec![v(owner), v(owner)]).await?;
+        rows.iter().map(|row| Ok(SessionMessageSummary {
+            session_id: row.try_get("", "session_id").map_err(db)?,
+            preview: row.try_get("", "preview").map_err(db)?,
+            last_activity_at: row.try_get("", "last_activity_at").map_err(db)?,
+        })).collect()
     }
 
     pub async fn recover_runs(&self) -> Result<(), String> {

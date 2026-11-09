@@ -2,6 +2,13 @@
 use super::*;
 use crate::review::{DiffInput, DiffSource, FileDiff};
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectDiffInput { pub project_id: String, pub path: String, pub source: ProjectDiffSource }
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectDiffSource { Index, Worktree }
+
 async fn blob(path: &Path, entry: Option<&GitIndexEntry>, stop: &CancellationToken) -> Result<Option<String>, String> {
     let Some(entry) = entry else { return Ok(None); };
     if !matches!(entry.mode.as_str(), "100644" | "100755") || entry.stage != 0 { return Err("git_special_entry".into()); }
@@ -35,6 +42,18 @@ impl AgentManager {
         files::relative(&input.path, false)?;
         if files::sensitive(&input.path) { return Err("file_sensitive".into()); }
         let project = self.task_project(owner, &input.task_id).await?;
+        self.git_file_diff_at(project, input.path, input.source).await
+    }
+    pub async fn read_development_project_diff(&self, owner: &str, input: ProjectDiffInput) -> Result<FileDiff, String> {
+        let _admission = self.inner.admission.lock().await;
+        let project = self.file_project(owner, &input.project_id).await?;
+        let source = match input.source { ProjectDiffSource::Index => DiffSource::Index, ProjectDiffSource::Worktree => DiffSource::Worktree };
+        self.git_file_diff_at(project, input.path, source).await
+    }
+    async fn git_file_diff_at(&self, project: Project, selected: String, source: DiffSource) -> Result<FileDiff, String> {
+        files::relative(&selected, false)?;
+        if files::sensitive(&selected) { return Err("file_sensitive".into()); }
+        let input = DiffInput { task_id: String::new(), path: selected, source };
         let path = Path::new(&project.path);
         let lease = CancellationToken::new();
         let stop = &self.inner.stop;

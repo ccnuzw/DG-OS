@@ -12,6 +12,8 @@ mod development_runtime;
 pub use development_runtime::*;
 mod development_review;
 pub use development_review::*;
+mod development_explorer;
+pub use development_explorer::*;
 mod chat_assets;
 pub use chat_assets::*;
 mod storage;

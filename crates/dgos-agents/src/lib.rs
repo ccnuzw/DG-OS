@@ -11,6 +11,7 @@ pub mod session;
 mod transport;
 mod diagnostics;
 pub mod files;
+pub mod explorer;
 pub mod review;
 pub mod references;
 pub mod runtime;
