@@ -18,7 +18,7 @@ interface UpdateCheck {
   ticket?: string | null;
 }
 interface Detection extends Probe { update: UpdateCheck | null }
-interface Snapshot { revision: number; paths: Paths; detections: Partial<Record<Tool, Detection>> }
+interface Snapshot { revision: number; paths: Paths; detections: Partial<Record<Tool, Detection>>; codex_protocol_reference: { version: string } }
 type UpdateStatus = 'updated' | 'failed' | 'unknown' | 'stale' | 'busy';
 type Action = 'load' | 'save' | 'folder' | 'update';
 type Phase = 'probe' | 'check';
@@ -214,6 +214,7 @@ export default function CliSettings() {
                   <Input aria-label={t(`cli.tool.${tool}`)} error={tool === 'node' && nodeError ? t('cli.node-folder-error') : probeErrors[tool] ? t('cli.probe-error') : probe && probe.status !== 'available' ? t(`cli.${probe.status}`) : undefined} disabled={!saved} readOnly placeholder={t('cli.path')} className="type-code" value={probe?.path ?? saved?.paths[tool] ?? ''} />
                   {tool === 'node' ? <Button variant="secondary" iconOnly title={t('cli.node-folder')} aria-label={t('cli.node-folder')} disabled={!saved || action !== null || !!phase} onClick={() => void chooseNode()}><FolderOpen size={16} aria-hidden="true" /></Button> : canUpdate ? <Button variant="secondary" iconOnly title={t('cli.update-tool', { tool: t(`cli.tool.${tool}`) })} aria-label={t('cli.update-tool', { tool: t(`cli.tool.${tool}`) })} disabled={!saved || action !== null || !!phase} onClick={() => void requestUpdate(tool)}><ArrowUpCircle size={16} aria-hidden="true" /></Button> : null}
                 </div>
+                {tool === 'codex' && saved?.codex_protocol_reference ? <p className="cli-tool-feedback">{t('cli.protocol-reference', { version: saved.codex_protocol_reference.version })}</p> : null}
                 {message ? <p className="cli-tool-feedback" aria-live="polite">{message}</p> : null}
               </section>;
             })}

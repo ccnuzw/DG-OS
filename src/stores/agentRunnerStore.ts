@@ -7,7 +7,9 @@ export type Engine = 'codex' | 'claude';
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export interface Pending { id: string; kind: string; title: string; data: Json }
 export interface AgentEvent { seq: number; kind: string; text: string | null; data: Json; run?: string | null }
-export interface AgentSession { id: string; generation: string; engine: Engine; native_id: string | null; workspace: string; status: string; events: AgentEvent[]; pending: Pending[]; error: string | null; history_truncated?: boolean; active_run?: string | null; configuration?: SessionConfigurationView | null; controls?: AgentControls }
+export interface AgentSkillInput { name: string; path: string }
+interface EventSync { reset: boolean; after_seq: number; first_seq: number }
+export interface AgentSession { id: string; generation: string; engine: Engine; native_id: string | null; workspace: string; status: string; events: AgentEvent[]; pending: Pending[]; error: string | null; history_truncated?: boolean; active_run?: string | null; configuration?: SessionConfigurationView | null; controls?: AgentControls; cli_version?: string | null; event_sync?: EventSync }
 export type AgentOpenInput = { intent: 'create'; id: string; engine: Engine; task_id: string; project_revision: number; provider: { provider_id: string; model_id: string; provider_revision: number }; options: { workspace: string; resume_id: null; executable: null; model: null; trust_workspace: true } } | { intent: 'resume'; session_id: string; trust_workspace: boolean };
 /** Host runtimes this account started or attached to in the current epoch, keyed by session id, with the last status seen. Closed runtimes are removed. */
 export type LiveSessions = { [id: string]: string };
@@ -26,6 +28,18 @@ function track(live: LiveSessions, session: AgentSession): LiveSessions {
   const next = { ...live };
   if (session.status === 'closed') delete next[session.id]; else next[session.id] = session.status;
   return next;
+}
+
+function mergeEvents(previous: AgentSession | null | undefined, incoming: AgentSession): AgentSession | null {
+  const sync = incoming.event_sync;
+  if (!sync || sync.reset) return incoming;
+  if (!previous || previous.id !== incoming.id || previous.generation !== incoming.generation
+    || (previous.events[previous.events.length - 1]?.seq ?? 0) !== sync.after_seq
+    || !Number.isSafeInteger(sync.first_seq) || sync.first_seq < 0 || sync.first_seq > sync.after_seq + 1
+    || incoming.events.some((event, index) => event.seq !== sync.after_seq + index + 1)) return null;
+  const retained = sync.first_seq > (previous.events[0]?.seq ?? 0)
+    ? previous.events.filter(event => event.seq >= sync.first_seq) : previous.events;
+  return { ...incoming, events: incoming.events.length ? [...retained, ...incoming.events] : retained };
 }
 
 export const useAgentRunner = create<AgentRunnerState>((set, get) => {
@@ -64,15 +78,26 @@ export const useAgentRunner = create<AgentRunnerState>((set, get) => {
   };
   const schedule = (id: string, epoch: number) => {
     if (epoch !== get().epoch || !(id in get().live) || timers.has(id)) return;
-    timers.set(id, window.setTimeout(() => { timers.delete(id); void poll(id, epoch); }, 600));
+    const delay = ['starting', 'running'].includes(current(id)?.status ?? '') ? 150 : 600;
+    timers.set(id, window.setTimeout(() => { timers.delete(id); void poll(id, epoch); }, delay));
   };
   const poll = async (id: string, epoch: number) => {
     if (epoch !== get().epoch) return;
     const read = invalidate(id);
     try {
-      const value = await invoke<AgentSession>('get_agent_session', { sessionId: id });
+      const previous = current(id);
+      const cursor = previous ? { generation: previous.generation, after_seq: previous.events[previous.events.length - 1]?.seq ?? 0 } : undefined;
+      let value = await invoke<AgentSession>('get_agent_session', { sessionId: id, ...(cursor ? { cursor } : {}) });
       if (epoch !== get().epoch || read !== reads.get(id)) return;
-      observe(value);
+      let merged = value.id === id ? mergeEvents(current(id), value) : null;
+      if (!merged) {
+        // Read-only recovery: a missing event window never replays a user action.
+        value = await invoke<AgentSession>('get_agent_session', { sessionId: id });
+        if (epoch !== get().epoch || read !== reads.get(id)) return;
+        merged = value.id === id ? mergeEvents(null, value) : null;
+      }
+      if (!merged) throw new Error('Invalid session snapshot');
+      observe(merged);
     } catch (error) {
       if (epoch !== get().epoch || read !== reads.get(id)) return;
       const previous = current(id);

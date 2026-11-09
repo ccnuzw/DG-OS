@@ -56,4 +56,9 @@ export default {
   'capabilities.arguments': '调用参数',
   'capabilities.catalogProvider': '{name}（{type}，修订 {revision}）',
   'capabilities.snapshotProvider': '{source}：{provider} / {model}（修订 {revision}）',
+  'capabilities.workspace': '会话工作目录',
+  'capabilities.notRecorded': '未记录',
+  'capabilities.configurationEvidence': '配置：此会话绑定已记录的 DG-OS Provider/模型修订，当前项目编辑不会改变该绑定。',
+  'capabilities.nativeSkillsSource': 'Skills 来源：CLI 原生发现，包含其用户、项目与插件配置。',
+  'capabilities.discoveryEvidence': '发现：在 Skills / MCP 管理中读取确切的原生活动会话。已配置或已发现不代表已执行、正文已使用或工具已获准调用。',
 } as const;

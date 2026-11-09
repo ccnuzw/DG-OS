@@ -11,6 +11,7 @@ import { useSurfaceActive } from '../../workspace/SurfaceContext';
 import { WorkspaceLink } from '../chat/RuntimeNavigation';
 import { agentContextUsage } from './agentContextUsage';
 import './agent-composer-controls.css';
+import { AgentSkillPicker } from './AgentSkillPicker';
 
 type Panel = 'reasoning' | 'permission' | 'context' | 'more' | 'references';
 export function AgentComposerControls({ session, projectId, engine = session?.engine, draftId, model, references, referencePicker, more, send, sendHint, disabled = false, visible = true }: { session?: AgentSession; projectId: string | null; engine?: Engine; draftId?: string; model: ReactNode; references?: ReactNode; referencePicker?: ReactNode; more?: ReactNode; send?: ReactNode; sendHint?: ReactNode; disabled?: boolean; visible?: boolean }) {
@@ -64,6 +65,7 @@ export function AgentComposerControls({ session, projectId, engine = session?.en
   return <div className="agent-composer-controls" data-testid="agent-composer-controls">
     <div className="agent-control-leading">
       {referencePicker}
+      <AgentSkillPicker projectId={projectId} session={session} engine={engine} disabled={disabled} active={active && !pending} />
       {references ? popup('references', <><Paperclip size={14} aria-hidden="true" /><span>{t('agentControls.references')}</span></>, <><h3>{t('agentControls.references')}</h3>{references}</>) : null}
       {popup('more', <><Settings2 size={15} aria-hidden="true" /><span className="agent-control-settings-label">{t('agentControls.settings')}</span></>, <>
         <nav className="agent-control-more-links" aria-label={t('agentControls.management')}>{management}<WorkspaceLink to="/settings/providers">{t('capabilities.provider')}</WorkspaceLink><WorkspaceLink to="/settings/cli">{t('agent.engine')}</WorkspaceLink></nav>

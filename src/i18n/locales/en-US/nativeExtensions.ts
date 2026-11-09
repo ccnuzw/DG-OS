@@ -102,4 +102,12 @@ export default {
   'nativeExtensions.linkStatus.within_authorized_root': 'Target verified within the authorized root',
   'nativeExtensions.linkStatus.outside_authorized_root': 'Target outside the authorized root; contents were not read',
   'nativeExtensions.linkStatus.unresolved': 'Target could not be verified; contents were not read',
+  'nativeExtensions.discoveryStage': 'Discovery is read from this exact native session. Configuration files and execution results are separate evidence.',
+  'nativeExtensions.verifiedProtocol': 'Verified protocol baseline: {version} (not a report of the current executable version).',
+  'nativeExtensions.guidance.missing_mcp_login_cancel_and_logout_contract': 'MCP login can return an authorization URL and later completion, but this protocol has no MCP-specific login cancellation or logout request. DG-OS does not start an authentication flow it cannot safely cancel and track.',
+  'nativeExtensions.guidance.missing_session_interaction_cancel_contract': 'The native interface has no verified session-scoped authentication interaction and cancellation contract.',
+  'nativeExtensions.guidance.missing_session_scoped_mcp_control_contract': 'Reconnect and live enable/disable are unsupported: the verified protocol has no per-session/server request. Its unscoped configuration reload and empty result do not prove that this server reconnected or changed state.',
+  'nativeExtensions.nativeMcpNextStep': 'Inspect with the native command above. To recover a connection or activate configuration changes, explicitly close and reopen the affected session, then read its state. File writes alone are not activation; do not retry an unknown action.',
+  'nativeExtensions.mcpObservedViaCodex': 'Source: Codex mcpServerStatus/list for this thread. The protocol does not report per-server configuration provenance; missing source remains unknown.',
+  'nativeExtensions.mcpObservedViaClaude': 'Source: this Claude session’s native MCP status. This is discovery, not a tool-call execution result.',
 } as const;

@@ -12,7 +12,7 @@ import { addConversationReference, captureConversationReferences, clearConversat
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('../src/i18n', () => ({ useLocale: () => ({ t: (key: string) => key }), t: (key: string) => key }));
-afterEach(() => { cleanup(); useDevelopment.getState().reset(); useAgentRunner.getState().reset(); useDevelopmentDrafts.getState().clear(); invoke.mockReset(); });
+afterEach(() => { cleanup(); useDevelopment.getState().reset(); useAgentRunner.getState().reset(); useDevelopmentDrafts.getState().clear(); localStorage.clear(); invoke.mockReset(); });
 
 const project = { id: 'p', owner: 'u', name: 'Project', path: '/project', directory_identity: 'd', archived: false, created_at: 1, last_opened_at: null };
 const task = { id: 't', owner: 'u', project_id: 'p', goal: 'Goal', requirements: '', status: 'todo' as const, created_at: 1 };
@@ -35,7 +35,7 @@ function host(existingTask = false) {
     openGate: null as Promise<void> | null,
     session: null as AgentSession | null,
   };
-  useDevelopment.setState({ projects: [project], tasks: existingTask ? [task] : [], selection: { ...selection, task_id: existingTask ? task.id : null } });
+  useDevelopment.setState({ workspaceOwner: project.owner, loaded: true, projects: [project], tasks: existingTask ? [task] : [], selection: { ...selection, task_id: existingTask ? task.id : null } });
   invoke.mockImplementation(async (command, args) => {
     switch (command) {
       case 'read_development_cli_provider': return state.capability;
@@ -116,8 +116,8 @@ it('admits one task, session and first prompt despite double click and preserves
   await waitFor(() => expect(prompt().value).toBe(''));
 });
 
-it('retains the prompt and task identity after a definite failed start, requiring an explicit fresh session attempt after remount', async () => {
-  const { state, start } = host(); state.openError = 'cli_incompatible';
+it.each(['cli_incompatible', 'cli_handshake_failed', 'cli_handshake_timeout'])('retains the prompt and task identity after a definite failed start (%s), requiring an explicit fresh session attempt after remount', async failure => {
+  const { state, start } = host(); state.openError = failure;
   const view = render(conversation(start));
   await prepare(); fireEvent.click(send());
   await waitFor(() => expect(send().disabled).toBe(false));
