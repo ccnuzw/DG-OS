@@ -351,7 +351,7 @@ const newSession = async (model) => {
   const modelOption = await until(() => $$('.chat-model-option').find(x => x.getAttribute('aria-label') === model));
   if (!modelOption) throw new Error('model missing: ' + model);
   modelOption.click();
-  kd($('[role=dialog]'), 'Escape');
+  if (!(await until(() => !$('.chat-target-popover') && txt($('.chat-model-button-label')).includes(model)))) throw new Error('target was not applied: ' + txt($('button[aria-label="会话目标"]')));
   return true;
 };
 const send = async (text) => {
