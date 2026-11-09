@@ -16,6 +16,7 @@ import { useDesktopPreferences } from '../src/workspace/desktopPreferences';
 import type { WorkspaceAppEntry } from '../src/modules/moduleApi';
 import { useChatStore } from '../src/stores/chatStore';
 import { DEFAULTS } from '../src/ui/appearance/model';
+import { shellMinimumWidth } from '../src/ui/layout/layoutBudgets';
 
 const host = vi.hoisted(() => ({
   handler: async (_command: string, _args?: unknown): Promise<unknown> => null,
@@ -191,11 +192,12 @@ describe('navigation', () => {
   });
 
   it('uses stable outer width and restores saved sidebar intent after automatic collapse', () => {
-    let width = 1149;
+    let width = 1440;
     const callbacks: (() => void)[] = [];
     const frames: FrameRequestCallback[] = [];
     document.documentElement.style.fontSize = '14px';
     document.documentElement.style.setProperty('--font-size-ui', '12px');
+    const boundary = shellMinimumWidth(document.body);
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => width);
     vi.stubGlobal('ResizeObserver', class { constructor(callback: () => void) { callbacks.push(callback); } observe() {} unobserve() {} disconnect() {} });
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
@@ -205,13 +207,13 @@ describe('navigation', () => {
     try {
       render(<MemoryRouter initialEntries={['/']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><App /></MemoryRouter>);
       settle(); expect(toggle().getAttribute('aria-expanded')).toBe('true');
-      width = 1148; settle();
+      width = boundary - 1; settle();
       expect(toggle().getAttribute('aria-expanded')).toBe('false'); expect(toggle()).toHaveProperty('disabled', true);
       expect(useDesktopPreferences.getState().values.sidebarCollapsed).toBe(false);
       settle(); expect(toggle().getAttribute('aria-expanded')).toBe('false');
-      width = 1149; settle(); expect(toggle().getAttribute('aria-expanded')).toBe('true');
+      width = boundary; settle(); expect(toggle().getAttribute('aria-expanded')).toBe('true');
       act(() => useDesktopPreferences.setState({ values: { ...useDesktopPreferences.getState().values, sidebarCollapsed: true } }));
-      width = 1100; settle(); width = 1400; settle();
+      width = 800; settle(); width = 1440; settle();
       expect(toggle().getAttribute('aria-expanded')).toBe('false'); expect(toggle()).toHaveProperty('disabled', false);
       expect(useDesktopPreferences.getState().values.sidebarCollapsed).toBe(true);
     } finally { cleanup(); document.documentElement.removeAttribute('style'); vi.restoreAllMocks(); vi.unstubAllGlobals(); }

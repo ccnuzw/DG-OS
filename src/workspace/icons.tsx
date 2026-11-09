@@ -72,7 +72,7 @@ export function FocusGlyph({ className }: GlyphProps) {
 export function CollapseGlyph({ className }: GlyphProps) {
   return (
     <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" className={className} {...stroke}>
-      <path d="M3 4h18v16H3zM9 4v16m5-12-3 4 3 4" />
+      <path d="m13 7-5 5 5 5m5-10-5 5 5 5" />
     </svg>
   );
 }

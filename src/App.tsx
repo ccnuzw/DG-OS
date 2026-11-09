@@ -115,8 +115,8 @@ function App() {
     <ModuleHostBootstrap />
     <AppShell navEntries={builtin.primary} navGroups={builtin.groups} pinnedEntries={apps.pinnedEntries}
       collapsed={userCollapsed || narrow} autoCollapsed={narrow} onToggleCollapsed={() => desktop.patch({ sidebarCollapsed: !userCollapsed })}
-      onOpenLauncher={openLauncher} onPinModule={dropPin} onUnpinModule={unpin} onMovePin={movePin} onDragModule={moduleId => controller.dispatch(moduleId ? { type: 'launcher/drag-start', moduleId } : { type: 'launcher/drag-end' })}
-      draggingModuleId={state.launcher.dragModuleId} railHidden={focused || fullBleed} railFooter={<AccountMenu collapsed={userCollapsed || narrow} />} settingsEntry={builtin.settings}
+      onOpenLauncher={openLauncher} launcherOpen={state.launcher.open} onPinModule={dropPin} onUnpinModule={unpin} onMovePin={movePin} onDragModule={moduleId => controller.dispatch(moduleId ? { type: 'launcher/drag-start', moduleId } : { type: 'launcher/drag-end' })}
+      draggingModuleId={state.launcher.dragModuleId} railHidden={focused || fullBleed} railFooter={<AccountMenu collapsed />} settingsEntry={builtin.settings}
       tabs={{ ...tabs, focusedSurfaceId: state.focusedSurfaceId, surfaceStatuses: statuses, runningModuleIds: entries.filter(entry => appUsable(entry)).map(entry => entry.moduleId), onToggleFocus: toggleFocus, onOpenLauncher: openLauncher, onOpenCommands: () => setToolsOpen(true) }}>
       <McpConnectionNotice />
       {desktop.error ? <div role="alert" className="flex flex-wrap items-center gap-2 p-2"><span>{t(desktop.error === 'conflict' ? 'home.preferencesConflict' : 'home.preferencesFailed')}</span><Button variant="secondary" disabled={desktop.busy} onClick={() => void desktop.load()}>{t('home.reloadPreferences')}</Button></div> : null}

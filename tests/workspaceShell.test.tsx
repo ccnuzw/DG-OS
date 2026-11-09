@@ -197,6 +197,19 @@ describe('AppShell (AC15, AC17)', () => {
     expect(screen.getByRole('tab', { name: /AI 会话/ })).toBeTruthy();
   });
 
+  it('distinguishes the open launcher from the background route and restores selection', () => {
+    const { rerender } = render(<AppShell {...baseProps} onOpenLauncher={() => {}} />, { wrapper: Router });
+    const ai = screen.getByRole('link', { name: 'AI 会话' });
+    expect(ai.classList.contains('is-active')).toBe(true);
+    rerender(<AppShell {...baseProps} onOpenLauncher={() => {}} launcherOpen />);
+    expect(ai.getAttribute('aria-current')).not.toBe('page');
+    expect(ai.classList.contains('is-active')).toBe(false);
+    expect(screen.getByRole('button', { name: '应用' }).getAttribute('aria-expanded')).toBe('true');
+    rerender(<AppShell {...baseProps} onOpenLauncher={() => {}} />);
+    expect(ai.getAttribute('aria-current')).toBe('page');
+    expect(ai.classList.contains('is-active')).toBe(true);
+  });
+
 });
 
 describe('workspace route projection (D120, D124)', () => {

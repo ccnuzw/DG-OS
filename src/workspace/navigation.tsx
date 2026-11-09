@@ -25,12 +25,12 @@ export interface AppNavigation {
 // Presentation data only: URL interpretation and surface state stay in routes/tabs/controller.
 export function buildBuiltinNavigation(t: Translate, go: (path: string) => void): BuiltinNavigation {
   const primary: Destination[] = [
-    { id: 'desktop', label: t('nav.home'), to: ROUTES.home, end: true, icon: <DesktopGlyph className="size-4" />, run: () => go(ROUTES.home) },
-    { id: 'ai', label: t('nav.workbench'), to: ROUTES.workbench, tone: 'ai', icon: <ChatGlyph className="size-4" />, run: () => go(ROUTES.workbench) },
+    { id: 'desktop', label: t('nav.home'), shortLabel: t('nav.homeShort'), to: ROUTES.home, end: true, icon: <DesktopGlyph className="size-4" />, run: () => go(ROUTES.home) },
+    { id: 'ai', label: t('nav.workbench'), to: ROUTES.workbench, icon: <ChatGlyph className="size-4" />, run: () => go(ROUTES.workbench) },
   ];
   const resources: Destination[] = [
-    { id: 'skills', label: t('nav.skills'), to: ROUTES.skills, tone: 'resource', icon: <SkillGlyph className="size-4" />, run: () => go(ROUTES.skills) },
-    { id: 'mcp', label: t('nav.mcp'), to: ROUTES.mcp, tone: 'tool', icon: <Icon name="globe" />, run: () => go(ROUTES.mcp) },
+    { id: 'skills', label: t('nav.skills'), to: ROUTES.skills, icon: <SkillGlyph className="size-4" />, run: () => go(ROUTES.skills) },
+    { id: 'mcp', label: t('nav.mcp'), shortLabel: t('nav.mcpShort'), to: ROUTES.mcp, icon: <Icon name="globe" />, run: () => go(ROUTES.mcp) },
   ];
   const settings: Destination = { id: 'settings', label: t('nav.settings'), to: ROUTES.settings, icon: <SettingsGlyph className="size-4" />, run: () => go(ROUTES.settings) };
   const workspaceActions: NavigationAction[] = [
@@ -44,7 +44,7 @@ export function buildBuiltinNavigation(t: Translate, go: (path: string) => void)
 export function buildAppNavigation(entries: WorkspaceAppEntry[], pinnedIds: string[], openApp: (entry: WorkspaceAppEntry) => void): AppNavigation {
   const pinnedEntries: NavEntry[] = pinnedIds.flatMap(id => {
     const entry = entries.find(value => value.moduleId === id);
-    return entry ? [{ id, label: entry.displayName, to: appPath(id), tone: 'app' as const, icon: <Icon name={entry.layout === 'full-bleed' ? 'palette' : 'code'} />, run: () => openApp(entry) }] : [];
+    return entry ? [{ id, label: entry.displayName, to: appPath(id), icon: <Icon name={entry.layout === 'full-bleed' ? 'palette' : 'code'} />, run: () => openApp(entry) }] : [];
   });
   const actions: NavigationAction[] = entries.map(entry => ({
     id: `app:${entry.moduleId}`, label: entry.displayName, group: 'apps', icon: <Icon name="code" />,
