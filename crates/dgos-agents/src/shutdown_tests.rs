@@ -79,7 +79,7 @@ async fn shutdown_rejects_an_inflight_send_and_reaps_its_process() {
     manager.open_session("alice", Engine::Codex, id.clone(), crate::test_support::create(&manager, "alice", &development_task, fixture.options()).await, Some(development_task), CancellationToken::new()).await.unwrap();
     let generation = manager.snapshot("alice", &id).await.unwrap().generation;
     let worker = manager.clone(); let task_id = id.clone();
-    let send = tokio::spawn(async move { worker.send("alice", &task_id, &generation, uuid::Uuid::new_v4().to_string(), "task".into(), None, vec![]).await });
+    let send = tokio::spawn(async move { worker.send("alice", &task_id, &generation, uuid::Uuid::new_v4().to_string(), "task".into(), None, vec![], vec![]).await });
     let pid = entered(&fixture.0).await;
     assert!(manager.shutdown().await);
     assert_ne!(unsafe { libc::kill(pid, 0) }, 0);
@@ -99,7 +99,7 @@ async fn codex_handshake_diagnostics_cover_success_rejection_and_lease_cancellat
     assert!(manager.close_session("alice", &id).await.unwrap());
     std::fs::write(fixture.0.join("reject-open"), "").unwrap();
     let error = manager.resume_session("alice", &id, true, CancellationToken::new()).with_subscriber(subscriber.clone()).await.err().unwrap();
-    assert_eq!(error, "engine_rejected");
+    assert_eq!(error, "cli_handshake_failed");
     let rejected_pid: i32 = std::fs::read_to_string(fixture.0.join("pid")).unwrap().parse().unwrap();
     assert_ne!(unsafe { libc::kill(rejected_pid, 0) }, 0, "failed handshake returned before reaping");
     std::fs::remove_file(fixture.0.join("reject-open")).unwrap();
@@ -111,11 +111,10 @@ async fn codex_handshake_diagnostics_cover_success_rejection_and_lease_cancellat
     let pid = entered(&fixture.0).await;
     lease.cancel();
     let error = tokio::time::timeout(Duration::from_secs(4), opening).await.unwrap().unwrap().err().unwrap();
-    assert!(matches!(error.as_str(), "connection_lost" | "closed"));
+    assert_eq!(error, "cancelled");
     assert_ne!(unsafe { libc::kill(pid, 0) }, 0, "cancelled handshake returned before reaping");
     let text = log.text();
     assert!(text.contains("stage=\"handshake_initialize\"") && text.contains("stage=\"handshake_thread\""), "{text}");
-    assert!(text.contains("error_class=\"engine_rejected\""), "{text}");
     assert!(text.contains("outcome=\"cancelled\"") && text.contains("stage=\"cleanup\"") && text.contains("stage=\"exit_wait\""), "{text}");
     assert!(!text.contains("credential-SENTINEL") && !text.contains(&fixture.0.to_string_lossy().to_string()), "{text}");
     eprint!("{text}");
@@ -160,7 +159,7 @@ async fn active_provider_disable_and_reenable_never_resurrects_and_shutdown_drai
     let enabled = providers.toggle_provider("fixture-alice", true, "alice").await.unwrap();
     assert!(!disabled.enabled && enabled.enabled);
     assert_eq!(enabled.config_revision, disabled.config_revision + 1);
-    assert!(manager.send("alice", &id, &generation, uuid::Uuid::new_v4().to_string(), "must never run".into(), None, vec![]).await.is_err());
+    assert!(manager.send("alice", &id, &generation, uuid::Uuid::new_v4().to_string(), "must never run".into(), None, vec![], vec![]).await.is_err());
     assert!(manager.shutdown().await);
     let binding = manager.inner.repository.read_cli_session_configuration("alice", &id).await.unwrap().binding.unwrap();
     assert_eq!(binding.state, "revoked");

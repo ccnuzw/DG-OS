@@ -53,11 +53,12 @@ impl AgentManager {
         Ok(records)
     }
 
-    pub async fn send(&self, owner: &str, id: &str, generation: &str, request_id: String, text: String, settings: Option<crate::session::AgentTurnSettings>, references: Vec<crate::references::ConversationReference>) -> Result<(), String> {
+    pub async fn send(&self, owner: &str, id: &str, generation: &str, request_id: String, text: String, settings: Option<crate::session::AgentTurnSettings>, references: Vec<crate::references::ConversationReference>, skills: Vec<crate::session::AgentSkillInput>) -> Result<(), String> {
         uuid::Uuid::parse_str(&request_id).map_err(|_| "invalid_request_id")?;
         if (text.trim().is_empty() && references.is_empty()) || text.len()>65536 { return Err("invalid_prompt".into()); }
         if references.len() > crate::references::REFERENCE_COUNT_LIMIT { return Err("reference_limit".into()); }
         for reference in &references { crate::references::validate(reference)?; }
+        crate::session::validate_skill_inputs(&skills)?;
         let settings = settings.filter(|settings| !settings.is_empty());
         let mut request_hash = Sha256::new();
         // Frame the prompt: literal NUL/JSON text must not alias structured intent.
@@ -71,8 +72,12 @@ impl AgentManager {
             request_hash.update(b"\0DG-OS references\0");
             request_hash.update(serde_json::to_vec(&references).map_err(|_| "invalid_reference")?);
         }
+        if !skills.is_empty() {
+            request_hash.update(b"\0DG-OS skills\0");
+            request_hash.update(serde_json::to_vec(&skills).map_err(|_| "agent_skill_invalid")?);
+        }
         let request_fingerprint = format!("{:x}", request_hash.finalize());
-        let admission=self.inner.admission.lock().await;
+        let mut admission=self.inner.admission.lock().await;
         self.ready().await?;
         let record=self.list(owner).await.into_iter().find(|r|r.id==id).ok_or("session_not_found")?;
         if let Some(old)=self.inner.repository.run(owner,&request_id).await? {
@@ -97,6 +102,38 @@ impl AgentManager {
         if let Some(settings) = &settings {
             view.controls.as_ref().ok_or("turn_controls_unavailable")?.validate(settings)?;
         }
+        if !skills.is_empty() {
+            let Backend::Codex(session) = &backend else { return Err("agent_skills_unsupported".into()); };
+            // Native observations may take tens of seconds. Keep the session control
+            // lock, but let unrelated sessions proceed through manager admission.
+            let (lease, provider_lease) = self.session_cancellation(id).await?;
+            drop(admission);
+            let observed = tokio::select! {
+                biased;
+                _ = lease.cancelled() => return Err("session_closed".into()),
+                _ = provider_lease.cancelled() => return Err("provider_revision_changed".into()),
+                result = session.observe_native(crate::native_session::SessionDomain::Skills) => result.map_err(|_| "agent_skills_unavailable"),
+            }?;
+            admission = tokio::select! {
+                biased;
+                _ = lease.cancelled() => return Err("session_closed".into()),
+                _ = provider_lease.cancelled() => return Err("provider_revision_changed".into()),
+                guard = self.inner.admission.lock() => guard,
+            };
+            self.ready().await?;
+            let current = self.list(owner).await.into_iter().find(|r| r.id == id).ok_or("session_not_found")?;
+            if current.workspace != record.workspace || current.project_id.as_deref() != Some(project_id.as_str()) || current.task_id.as_deref() != Some(task_id.as_str()) { return Err("file_access_denied".into()); }
+            let project = self.task_project(owner, &task_id).await?;
+            if project.archived { return Err("project_archived".into()); }
+            crate::projects::validate_directory(&project).await?;
+            if project.id != project_id || project.path != current.workspace { return Err("file_access_denied".into()); }
+            let (_, current_backend) = self.owned(owner, id).await?;
+            self.require_generation(id, generation).await?;
+            self.native_result_known(id).await?;
+            self.validate_handoff_target(owner,id).await?;
+            if current_backend.snapshot().await.status != "idle" { return Err("busy".into()); }
+            crate::session::validate_discovered_skills(&skills, &observed)?;
+        }
         let text = self.resolve_conversation_references(owner, &record, text, references).await?;
         self.capture_task_baseline(owner,&task_id).await?;
         // Baseline is immutable; the start marker must describe this send, not the first round.
@@ -112,7 +149,7 @@ impl AgentManager {
         { let mut watchers=self.inner.watchers.lock().await; watchers.retain(|h|!h.is_finished()); watchers.push(handle); }
         // No manager admission is held while waiting for a native CLI acknowledgement.
         drop(admission);
-        let result=match backend { Backend::Codex(s)=>s.send(request_id,text,settings).await,Backend::Claude(s)=>s.send(request_id,text,settings).await };
+        let result=match backend { Backend::Codex(s)=>s.send(request_id,text,settings,skills).await,Backend::Claude(s)=>s.send(request_id,text,settings).await };
         let _=result_tx.send(result.clone());
         result
     }

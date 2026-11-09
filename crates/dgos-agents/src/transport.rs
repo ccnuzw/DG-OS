@@ -67,7 +67,7 @@ impl Transport {
         let spawn = diagnostic.phase("spawn", None);
         let mut child = match command.spawn() {
             Ok(child) => child,
-            Err(_) => { spawn.finish(Some("spawn_failed")); return Err("spawn_failed".into()); }
+            Err(_) => { spawn.finish(Some("cli_start_failed")); return Err("cli_start_failed".into()); }
         };
         spawn.finish(None);
         let pid = child.id();
@@ -123,7 +123,7 @@ impl Transport {
                             if let Some(id) = value.get("id").and_then(Value::as_u64) {
                                 if let Some(reply) = pending.lock().await.remove(&id) {
                                     let result = if value.get("error").is_some() {
-                                        Err("engine_rejected".into())
+                                        Err(if value.pointer("/error/code").and_then(Value::as_i64) == Some(-32601) { "method_unsupported" } else { "engine_rejected" }.into())
                                     } else {
                                         Ok(value.get("result").cloned().unwrap_or(Value::Null))
                                     };
@@ -195,7 +195,11 @@ impl Transport {
     }
     pub(crate) async fn startup_request(&self, stage: &'static str, method: &str, params: Value) -> Result<Value, String> {
         let phase = self.diagnostic.phase(stage, self.pid);
-        let result = self.request(method, params).await;
+        let result = self.request_with_errors(method, params, "cli_handshake_timeout", "cli_handshake_failed").await.map_err(|error| {
+            if self.stop.is_cancelled() { "cancelled".into() }
+            else if error == "cli_handshake_timeout" { error }
+            else { "cli_handshake_failed".into() }
+        });
         if self.stop.is_cancelled() {
             self.diagnostic.record(stage, self.pid, "cancelled", "cancelled");
         }
@@ -204,7 +208,11 @@ impl Transport {
     }
     pub(crate) async fn startup_write(&self, value: Value) -> Result<(), String> {
         let phase = self.diagnostic.phase("handshake_initialized", self.pid);
-        let result = self.write(value).await;
+        let result = self.write(value).await.map_err(|error| {
+            if self.stop.is_cancelled() { "cancelled".to_owned() }
+            else if error == "result_unknown" { "cli_handshake_timeout".into() }
+            else { "cli_handshake_failed".into() }
+        });
         phase.finish(result.as_ref().err().map(String::as_str));
         result
     }
@@ -213,6 +221,9 @@ impl Transport {
         phase.finish(error);
     }
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
+        self.request_with_errors(method, params, "result_unknown", "result_unknown").await
+    }
+    async fn request_with_errors(&self, method: &str, params: Value, timeout_error: &'static str, lost_error: &'static str) -> Result<Value, String> {
         if self.stop.is_cancelled() || self.finished.is_cancelled() {
             return Err("closed".into());
         }
@@ -232,7 +243,7 @@ impl Transport {
             outcome => {
                 self.diagnostic.record("request_wait", self.pid, "failed", if outcome.is_err() { "timeout" } else { "connection_lost" });
                 self.pending.lock().await.remove(&id);
-                Err("result_unknown".into())
+                Err(if outcome.is_err() { timeout_error } else { lost_error }.into())
             }
         }
     }

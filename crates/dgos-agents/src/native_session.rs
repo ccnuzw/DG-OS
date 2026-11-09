@@ -32,6 +32,21 @@ pub struct NativeSessionCapabilities {
     pub reload_plugins: bool, pub reconnect_mcp: bool, pub toggle_mcp: bool,
     pub native_login: bool, pub native_logout: bool,
     pub native_auth_guidance: Option<NativeAuthGuidance>,
+    pub mcp_control_guidance: Option<NativeMcpControlGuidance>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NativeMcpControlGuidance {
+    pub verified_version: String, pub reason: String, pub inspect_argv: Vec<String>,
+}
+impl NativeMcpControlGuidance {
+    pub(crate) fn codex() -> Self {
+        // 0.167.0 sessionless experimental schema: config/mcpServer/reload has
+        // null params and an empty response. It is not a per-thread/server
+        // reconnect or toggle contract and cannot certify runtime activation.
+        Self { verified_version: crate::cli::codex_protocol_reference().version.into(),
+            reason: "missing_session_scoped_mcp_control_contract".into(),
+            inspect_argv: ["codex", "mcp", "get", "<NAME>"].map(str::to_owned).into() }
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NativeAuthGuidance {
@@ -40,8 +55,11 @@ pub struct NativeAuthGuidance {
 }
 impl NativeAuthGuidance {
     pub(crate) fn installed(engine: crate::Engine) -> Self {
-        let (command, version) = match engine { crate::Engine::Codex => ("codex", "0.167.0"), crate::Engine::Claude => ("claude", "2.1.319") };
-        Self { verified_version: version.into(), reason: "missing_session_interaction_cancel_contract".into(),
+        let (command, version, reason) = match engine {
+            crate::Engine::Codex => ("codex", crate::cli::codex_protocol_reference().version, "missing_mcp_login_cancel_and_logout_contract"),
+            crate::Engine::Claude => ("claude", "2.1.319", "missing_session_interaction_cancel_contract"),
+        };
+        Self { verified_version: version.into(), reason: reason.into(),
             login_argv: [command, "mcp", "login", "<NAME>"].map(str::to_owned).into(),
             logout_argv: [command, "mcp", "logout", "<NAME>"].map(str::to_owned).into() }
     }

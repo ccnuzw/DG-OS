@@ -7,6 +7,14 @@ use tokio::{io::AsyncReadExt, process::{Child, Command}};
 const OUTPUT_LIMIT: usize = 4096;
 const TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Reference version used to document and test the App Server adapter, not a startup requirement.
+#[derive(Debug, Serialize)]
+pub struct CodexProtocolReference { pub version: &'static str }
+pub fn codex_protocol_reference() -> &'static CodexProtocolReference {
+    static REFERENCE: CodexProtocolReference = CodexProtocolReference { version: "0.167.0" };
+    &REFERENCE
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CliTool { Codex, Claude, Gemini, Node }
@@ -31,11 +39,28 @@ fn is_semver(text: &str) -> bool {
 }
 
 #[derive(Debug, Serialize)]
-pub struct CliProbe { pub tool: CliTool, pub status: &'static str, pub path: Option<String>, pub version: Option<String>, pub executable: bool, pub managed: bool }
+pub struct CliProbe {
+    pub tool: CliTool, pub status: &'static str, pub path: Option<String>, pub version: Option<String>,
+    pub executable: bool, pub managed: bool,
+}
+impl CliProbe {
+    /// Version discovery only qualifies the executable for a startup attempt; the App Server handshake validates protocol compatibility.
+    pub fn startup_error(&self) -> Option<&'static str> {
+        match self.status {
+            "available" => None,
+            "not_installed" => Some("cli_not_installed"),
+            "not_executable" => Some("cli_not_executable"),
+            "timeout" => Some("cli_probe_timeout"),
+            "start_failed" => Some("cli_start_failed"),
+            _ => Some("cli_probe_failed"),
+        }
+    }
+}
 
 fn finish(tool: CliTool, path: Option<String>, status: &'static str, version: Option<String>) -> CliProbe {
     CliProbe { tool, status, path, version, executable: status == "available", managed: false }
 }
+
 
 // Version wrappers may spawn descendants that retain stdout. Kill the dedicated
 // group on every exit, including a dropped probe future on account cancellation.
@@ -246,12 +271,16 @@ mod tests {
         let root = std::env::temp_dir().join(format!("dgos-cli-probe-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&root).unwrap();
         let path = root.join("tool with spaces;literal");
-        for (body, expected) in [
-            ("[ \"$#\" = 1 ] && [ \"$1\" = --version ] || exit 2\nprintf '%s\\n' 'codex-cli 0.0.0'", "available"),
-            ("printf '%s\\n' 42", "protocol_unsupported"),
-            ("exit 7", "execution_failed"),
-            ("i=0; while [ $i -lt 4100 ]; do printf x; i=$((i+1)); done", "output_limit"),
-            ("exec sleep 10", "timeout"),
+        for (body, expected, expected_version, startup_error) in [
+            ("[ \"$#\" = 1 ] && [ \"$1\" = --version ] || exit 2\nprintf '%s\\n' 'codex-cli 0.0.0'", "available", Some("codex-cli 0.0.0"), None),
+            ("printf '%s\\n' 'codex-cli 0.166.0'", "available", Some("codex-cli 0.166.0"), None),
+            ("printf '%s\\n' 'codex-cli 0.167.0'", "available", Some("codex-cli 0.167.0"), None),
+            ("printf '%s\\n' 'codex-cli 0.168.0'", "available", Some("codex-cli 0.168.0"), None),
+            ("printf '%s\\n' 'codex-cli 0.167.0-preview'", "protocol_unsupported", None, Some("cli_probe_failed")),
+            ("printf '%s\\n' 42", "protocol_unsupported", None, Some("cli_probe_failed")),
+            ("exit 7", "execution_failed", None, Some("cli_probe_failed")),
+            ("i=0; while [ $i -lt 4100 ]; do printf x; i=$((i+1)); done", "output_limit", None, Some("cli_probe_failed")),
+            ("exec sleep 10", "timeout", None, Some("cli_probe_timeout")),
         ] {
             std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -259,7 +288,8 @@ mod tests {
             assert_eq!(result.status, expected);
             assert!(!result.managed);
             assert_eq!(result.executable, expected == "available");
-            if expected == "available" { assert_eq!(result.version.as_deref(), Some("codex-cli 0.0.0")); }
+            assert_eq!(result.startup_error(), startup_error);
+            assert_eq!(result.version.as_deref(), expected_version);
         }
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         assert_eq!(super::probe(CliTool::Codex, path.to_str()).await.status, "not_executable");
