@@ -233,7 +233,7 @@ export default function TargetBar({ session, skillRequest = 0, children }: { ses
     </div></section></div>
     {status?.tone === 'error' && <p role="alert" className="chat-target-feedback text-status-error-text">{status.text}</p>}
   </section>;
-  const settingsContent = <section className="chat-target-popover chat-settings-popover">{header('settings', t('chat.sessionSettings'))}<GenerationControls value={target.generation} onChange={generation => patch({ generation })} model={selectedModel} disabled={locked} />{status?.tone === 'error' && <p role="alert" className="chat-target-feedback text-status-error-text">{status.text}</p>}{footer}</section>;
+  const settingsContent = <section className="chat-target-popover chat-settings-popover">{header('settings', t('chat.sessionSettings'))}<GenerationControls value={target.generation} onChange={generation => patch({ generation })} model={selectedModel} disabled={locked} />{footer}</section>;
   const effortContent = <section className="chat-target-popover chat-effort-popover">{header('effort', t('chat.reasoningSettings'))}<div className="chat-effort-stops" role="group" aria-label={t('chat.reasoningSettings')}>{effortNames.map((label, index) => <Button key={index} variant="ghost" size="sm" aria-pressed={effortIndex === index} disabled={locked || !session.provider_id || !session.model_id || selectedModel?.capabilities?.reasoning === 'unsupported'} onClick={() => void setEffort(index)}>{label}</Button>)}</div>{status?.tone === 'error' && <p role="alert" className="chat-target-feedback text-status-error-text">{status.text}</p>}</section>;
 
   return children({

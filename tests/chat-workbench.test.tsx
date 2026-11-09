@@ -364,7 +364,7 @@ describe('separate capability pickers', () => {
     expect(draftBox().value).toBe('保留消息草稿');
   });
   it('preserves settings after a rejected save and allows a successful retry', async () => {
-    handlers.list_chat_sessions = () => ok({ items: [session()], next_cursor: null });
+    handlers.update_chat_session_target = () => fail(1006015);
     await openSession();
     fireEvent.click(screen.getByRole('button', { name: '会话设置' }));
     fireEvent.change(screen.getByRole('textbox', { name: '自定义指导' }), { target: { value: 'Needs retry' } });
