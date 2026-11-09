@@ -37,15 +37,15 @@ impl AgentManager {
         let review=self.read_development_review(owner,&task.id).await?;
         let runs=self.list_development_runs(owner,&task.id).await?;
         let source_run=runs.iter().find(|r|r.session_id.as_deref()==Some(source.id.as_str()));
-        let mut summary=format!("Task goal\n{}\n\nAcceptance requirements\n{}\n\nContext transfer\n{} → {}. New native session; source session {}. No historical permissions or approvals are transferred.\n\nWork observed\n",task.goal,task.requirements,engine_name(source.engine),engine_name(input.target_engine),source.id);
+        let mut summary=format!("Task goal\n{}\n\nAcceptance requirements\n{}\n\nContext transfer\n{} → {}. New native session. No historical permissions, approvals or runtime identities are transferred.\n\nWork observed\n",task.goal,task.requirements,engine_name(source.engine),engine_name(input.target_engine));
         for run in runs.iter().take(8) {
-            summary.push_str(&format!("- {} {} {}: {}\n",run.id,run.engine,run.status,truncate(&run.summary,1024)));
+            summary.push_str(&format!("- {} {}: {}\n",run.engine,run.status,truncate(&run.summary,1024)));
         }
         summary.push_str("\nCurrent file changes (authorship unconfirmed)\n");
         for change in review.changes.iter().take(100){summary.push_str(&format!("- {} {} (origin={}, pre-existing={})\n",change.kind,change.path,change.origin,change.pre_existing));}
         summary.push_str(&format!("\nReview incomplete: {}; fingerprint: {}\n\nVerification observed by host\n",review.truncated,review.fingerprint));
         let processes=self.list_development_processes(owner,&task.id).await?;
-        for process in processes.iter().filter(|p|p.verification_status!="not_requested").take(20){summary.push_str(&format!("- run={} program={} args={:?} cwd={} exit={:?} evidence={} fingerprint={}\n",process.id,process.program,process.args,process.cwd,process.exit_code,process.verification_status,process.fingerprint));}
+        for process in processes.iter().filter(|p|p.verification_status!="not_requested").take(20){summary.push_str(&format!("- program={} args={:?} cwd={} exit={:?} evidence={} fingerprint={}\n",process.program,process.args,process.cwd,process.exit_code,process.verification_status,process.fingerprint));}
         if !processes.iter().any(|p|p.verification_status!="not_requested"){summary.push_str("No independent host verification recorded; native summaries are not proof of passing tests.\n");}
         summary.push_str(&format!("\nRemaining questions and requested continuation\n{}\n",input.remaining));
         let summary=crate::executions::sanitize_text(&summary);

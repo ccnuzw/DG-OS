@@ -43,7 +43,7 @@ pub struct FileView { pub path: String, pub text: Option<String>, pub reason: Op
 pub fn relative(path: &str, empty: bool) -> Result<(), String> {
     if (!empty && path.is_empty()) || path.len() > 4096 || path.contains(['\0', '\\']) || Path::new(path).is_absolute() { return Err("file_access_denied".into()); }
     for c in Path::new(path).components() {
-        match c { Component::Normal(s) if s != ".git" => {}, _ => return Err("file_access_denied".into()) }
+        match c { Component::Normal(s) if !s.to_string_lossy().eq_ignore_ascii_case(".git") => {}, _ => return Err("file_access_denied".into()) }
     }
     Ok(())
 }
@@ -72,6 +72,15 @@ pub(crate) fn sensitive(path: &str) -> bool {
         let name = c.as_os_str().to_string_lossy().to_lowercase();
         name == ".env" || name.starts_with(".env.") || matches!(name.as_str(), ".ssh" | ".aws" | ".npmrc" | ".netrc" | "credentials" | "credentials.json" | "auth.json" | "secrets.json" | "secrets.yaml" | "id_rsa" | "id_ed25519") || name.ends_with(".pem") || name.ends_with(".key")
     })
+}
+/// Validate a path-only attachment without loading any file body.
+pub(crate) fn validate_reference_path(root: &Dir, path: &str) -> Result<(), String> {
+    relative(path, false)?;
+    if sensitive(path) { return Err("file_sensitive".into()); }
+    no_links(root, path)?;
+    let metadata = root.symlink_metadata(path).map_err(io_error)?;
+    if !metadata.is_file() && !metadata.is_dir() { return Err("file_access_denied".into()); }
+    Ok(())
 }
 pub(crate) fn read_at(root: &Dir, path: &str) -> Result<FileView, String> {
     relative(path, false)?;
@@ -272,7 +281,7 @@ impl AgentManager {
                 view.text.ok_or("file_access_denied")?
             },
             "diff" => {
-                let diff = self.read_development_diff(owner, crate::review::DiffInput { task_id: input.task_id, path: path.clone() }).await?;
+                let diff = self.read_development_diff(owner, crate::review::DiffInput { task_id: input.task_id, path: path.clone(), source: crate::review::DiffSource::Task }).await?;
                 if let Some(reason) = diff.reason { return Err(reason); }
                 diff.after.or(diff.before).ok_or("file_not_found")?
             },

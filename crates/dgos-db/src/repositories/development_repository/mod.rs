@@ -205,7 +205,7 @@ pub(crate) fn check_project_fields(name: &str, path: &str, identity: &str) -> Re
 }
 
 pub(crate) fn check_task_fields(goal: &str, requirements: &str, status: &str) -> Result<(), String> {
-    if !(1..=8192).contains(&goal.len()) || !(1..=16384).contains(&requirements.len()) || !TASK_STATUSES.contains(&status) {
+    if !(1..=8192).contains(&goal.len()) || requirements.len() > 16384 || !TASK_STATUSES.contains(&status) {
         return Err("invalid_task".into());
     }
     Ok(())

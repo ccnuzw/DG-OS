@@ -10,6 +10,7 @@ use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 mod operations;
 mod reconcile;
+mod file_diff;
 #[cfg(test)]
 mod tests;
 

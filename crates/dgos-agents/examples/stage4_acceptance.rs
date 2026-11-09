@@ -156,7 +156,7 @@ async fn run() -> Result<()> {
             }
             if !resume {
                 let opening_run = Uuid::new_v4().to_string();
-                agents.send(OWNER, &saved.session, &opened.generation, opening_run.clone(), "Acknowledge this new project session. Do not call tools. A separate next user turn will request the capability acceptance procedure.".into()).await?;
+                agents.send(OWNER, &saved.session, &opened.generation, opening_run.clone(), "Acknowledge this new project session. Do not call tools. A separate next user turn will request the capability acceptance procedure.".into(), None, vec![]).await?;
                 let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
                 let opening = loop {
                     let runs = agents.list_development_runs(OWNER, &saved.task).await?;
@@ -186,7 +186,7 @@ async fn run() -> Result<()> {
                 let run_id = Uuid::new_v4().to_string();
                 let challenge = Uuid::new_v4().to_string();
                 let prompt = format!("Use the native Skill mechanism for {} in this round. Then read the complete native SKILL.md and references/proof.txt using native file-read tools. Discover and use only the configured native MCP server stage4 tool stage4_receipt with challenge {challenge:?} and the resource read from the Skill reference. Complete the CLI's native approval flow; if native approval is unavailable, classify blocked/unsupported and fail. Write the exact returned receipt to round-{round}.txt. A Skill listing is not evidence of use. Preserve other files and never substitute HTTP, shell, DG-OS host MCP, or fabricated output.", saved.skill);
-                agents.send(OWNER, &saved.session, &opened.generation, run_id.clone(), prompt).await?;
+                agents.send(OWNER, &saved.session, &opened.generation, run_id.clone(), prompt, None, vec![]).await?;
                 let context = RoundContext { agents: &agents, root: &root, secrets: &keys };
                 let result = drive_round(&context, saved, round, &run_id, &challenge).await;
                 saved.native_id = agents.snapshot(OWNER, &saved.session).await?.view.native_id;

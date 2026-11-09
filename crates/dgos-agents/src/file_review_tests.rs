@@ -52,10 +52,10 @@ async fn baseline_is_immutable_and_external_edits_and_deletions_are_reviewable()
     assert_eq!(manager.capture_task_baseline("alice", &task.id).await.unwrap(), original);
     let review = manager.read_development_review("alice", &task.id).await.unwrap();
     assert!(review.changes.iter().any(|c| c.path == "one.rs" && c.origin == "external" && c.kind == "modified"));
-    let diff = manager.read_development_diff("alice", DiffInput { task_id: task.id.clone(), path: "one.rs".into() }).await.unwrap();
+    let diff = manager.read_development_diff("alice", DiffInput { task_id: task.id.clone(), path: "one.rs".into(), source: crate::review::DiffSource::Task }).await.unwrap();
     assert!(diff.diff.contains("-old line") && diff.diff.contains("+external line"));
     std::fs::remove_file(path.join("one.rs")).unwrap();
-    let diff = manager.read_development_diff("alice", DiffInput { task_id: task.id.clone(), path: "one.rs".into() }).await.unwrap();
+    let diff = manager.read_development_diff("alice", DiffInput { task_id: task.id.clone(), path: "one.rs".into(), source: crate::review::DiffSource::Task }).await.unwrap();
     assert_eq!(diff.before.as_deref(), Some("old line\n")); assert!(diff.after.is_none());
     assert!(manager.read_development_review("bob", &task.id).await.is_err());
     let restarted = crate::test_support::manager(&root).await;
@@ -94,7 +94,7 @@ async fn save_checks_read_version_account_and_preserves_external_content() {
     let input = |hash: &str, text: &str| SaveFileInput { project_id: project.id.clone(), task_id: task.id.clone(), path: "nested/source.txt".into(), expected_hash: hash.into(), text: text.into() };
     let saved = manager.save_development_file("alice", input(read.hash.as_deref().unwrap(), "user edit\n"), CancellationToken::new()).await.unwrap();
     assert_eq!(std::fs::read_to_string(path.join("nested/source.txt")).unwrap(), "user edit\n");
-    assert_eq!(manager.read_development_diff("alice", DiffInput { task_id: task.id.clone(), path: "nested/source.txt".into() }).await.unwrap().before.as_deref(), Some("original\n"));
+    assert_eq!(manager.read_development_diff("alice", DiffInput { task_id: task.id.clone(), path: "nested/source.txt".into(), source: crate::review::DiffSource::Task }).await.unwrap().before.as_deref(), Some("original\n"));
     std::fs::write(path.join("nested/source.txt"), "external edit\n").unwrap();
     assert_eq!(manager.save_development_file("alice", input(saved.hash.as_deref().unwrap(), "stale draft\n"), CancellationToken::new()).await.unwrap_err(), "file_changed");
     assert_eq!(std::fs::read_to_string(path.join("nested/source.txt")).unwrap(), "external edit\n");

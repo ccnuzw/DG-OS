@@ -18,6 +18,7 @@ CONFIG_REPLY
  if [ -f reject-open ]; then printf '%s\n' '{"id":1,"error":{"code":-1,"message":"credential-SENTINEL"}}'; continue; fi
  if [ -f block-open ]; then touch entered; while :; do sleep 1; done; fi
  printf '%s\n' '{"id":1,"result":{}}';;
+*'"method":"model/list"'*) printf '%s\n' '{"id":4,"result":{"data":[],"nextCursor":null}}';;
 *'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":3,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"saved-thread","turns":[]}}}\n' "$PWD";;
 *'"method":"turn/start"'*) touch entered; while :; do sleep 1; done;;
 esac
@@ -78,7 +79,7 @@ async fn shutdown_rejects_an_inflight_send_and_reaps_its_process() {
     manager.open_session("alice", Engine::Codex, id.clone(), crate::test_support::create(&manager, "alice", &development_task, fixture.options()).await, Some(development_task), CancellationToken::new()).await.unwrap();
     let generation = manager.snapshot("alice", &id).await.unwrap().generation;
     let worker = manager.clone(); let task_id = id.clone();
-    let send = tokio::spawn(async move { worker.send("alice", &task_id, &generation, uuid::Uuid::new_v4().to_string(), "task".into()).await });
+    let send = tokio::spawn(async move { worker.send("alice", &task_id, &generation, uuid::Uuid::new_v4().to_string(), "task".into(), None, vec![]).await });
     let pid = entered(&fixture.0).await;
     assert!(manager.shutdown().await);
     assert_ne!(unsafe { libc::kill(pid, 0) }, 0);
@@ -159,7 +160,7 @@ async fn active_provider_disable_and_reenable_never_resurrects_and_shutdown_drai
     let enabled = providers.toggle_provider("fixture-alice", true, "alice").await.unwrap();
     assert!(!disabled.enabled && enabled.enabled);
     assert_eq!(enabled.config_revision, disabled.config_revision + 1);
-    assert!(manager.send("alice", &id, &generation, uuid::Uuid::new_v4().to_string(), "must never run".into()).await.is_err());
+    assert!(manager.send("alice", &id, &generation, uuid::Uuid::new_v4().to_string(), "must never run".into(), None, vec![]).await.is_err());
     assert!(manager.shutdown().await);
     let binding = manager.inner.repository.read_cli_session_configuration("alice", &id).await.unwrap().binding.unwrap();
     assert_eq!(binding.state, "revoked");
@@ -246,6 +247,7 @@ while IFS= read -r line; do
 case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}';;
+*'"method":"model/list"'*) printf '%s\n' '{"id":4,"result":{"data":[],"nextCursor":null}}';;
 *'"method":"thread/start"'*) printf '{"id":3,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"saved-thread","turns":[]}}}\n' "$PWD";;
 esac
 done
@@ -298,6 +300,9 @@ CONFIG_REPLY
 *'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}';;
 *'"method":"thread/start"'*)
  printf '{"id":3,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"saved-thread","turns":[]}}}\n' "$PWD"
+ ;;
+*'"method":"model/list"'*)
+ printf '%s\n' '{"id":4,"result":{"data":[],"nextCursor":null}}'
  while [ ! -f "$PWD/exit" ]; do sleep 0.01; done
  exit 0;;
 esac

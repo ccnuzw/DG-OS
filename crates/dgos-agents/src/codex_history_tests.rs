@@ -163,6 +163,7 @@ rpc=${line#*\"id\":}; rpc=${rpc%%,*}
 case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$rpc";;
+*'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$rpc";;
 *'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"history-thread","turns":[]}}}\n' "$rpc" "$PWD";;
 *'"method":"thread/resume"'*)
  printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"history-thread","turns":[]},"initialTurnsPage":{"data":[{"id":"t3","itemsView":"full","items":[{"id":"d","type":"agentMessage","text":"same"},{"id":"e","type":"agentMessage","text":"same"}]}],"nextCursor":"more-turns","backwardsCursor":"newer-turns"},"turnsBackwardsCursor":"older-turns","itemsBackwardsCursor":"older-items"}}\n' "$rpc" "$PWD";;
@@ -225,7 +226,7 @@ done
         assert_eq!(current.generation, restored.generation);
         assert_eq!(ids(&current.view), ["a","b","c","d","e"]);
         assert_eq!(current.view.status, "idle");
-        assert_eq!(f.manager.send("alice",&f.id,&old,uuid::Uuid::new_v4().to_string(),"never replay".into()).await.unwrap_err(),"stale_generation");
+        assert_eq!(f.manager.send("alice",&f.id,&old,uuid::Uuid::new_v4().to_string(),"never replay".into(),None,vec![]).await.unwrap_err(),"stale_generation");
         let protocol = f.protocol();
         assert!(!protocol.iter().any(|request|request["method"] == "turn/start"));
         let resume = protocol.iter().find(|request|request["method"] == "thread/resume").unwrap();
@@ -319,7 +320,7 @@ done
     async fn permissions_adapter_duplicate_answer_never_writes_twice() {
         let f = Fixture::new().await;
         let view = f.manager.snapshot("alice",&f.id).await.unwrap();
-        f.manager.send("alice",&f.id,&view.generation,uuid::Uuid::new_v4().to_string(),"request permissions".into()).await.unwrap();
+        f.manager.send("alice", &f.id, &view.generation, uuid::Uuid::new_v4().to_string(), "request permissions".into(), None, vec![]).await.unwrap();
         let pending = tokio::time::timeout(std::time::Duration::from_secs(3),async {
             loop {
                 if let Some(pending) = f.manager.snapshot("alice",&f.id).await.unwrap().view.pending.first().cloned() { break pending; }

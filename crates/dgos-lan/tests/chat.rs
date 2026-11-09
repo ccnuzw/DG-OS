@@ -164,6 +164,33 @@ async fn the_remote_sees_only_chats_of_this_pairing() {
 }
 
 #[tokio::test]
+async fn empty_skill_targets_send_with_either_legacy_confirmation_value() {
+    let env = env().await;
+    let cookie = env.paired(PEER).await;
+    for no_skill in [false, true] {
+        let created = env
+            .post(
+                "/api/v1/lan/chat/sessions",
+                json!({"target": {"provider_id": env.provider_id, "model_id": "chat-model", "skill_id": null, "no_skill": no_skill}}),
+            )
+            .cookie(&cookie)
+            .send()
+            .await;
+        assert_eq!(created.status, 201, "{}", created.text);
+        assert_eq!(created.body["no_skill_confirmed"], no_skill);
+        assert_eq!(created.body["skills"], json!([]));
+        let chat = created.body["id"].as_str().unwrap();
+        env.up.script(reply("without skills"));
+        let ack = send(&env, &cookie, chat, "hello", &uuid()).await;
+        assert_eq!(ack.status, 202, "{}", ack.text);
+        let messages = env.settled(&cookie, chat).await;
+        assert_eq!(messages[1]["status"], "completed");
+        assert_eq!(messages[1]["content"], "without skills");
+    }
+    assert_eq!(env.up.hits(), 2);
+}
+
+#[tokio::test]
 async fn targets_are_fixed_and_no_mutation_or_tool_fields_are_accepted() {
     let env = env().await;
     let cookie = env.paired(PEER).await;
@@ -180,16 +207,6 @@ async fn targets_are_fixed_and_no_mutation_or_tool_fields_are_accepted() {
             .await;
         assert_eq!((reply.status, reply.text.as_str()), (400, ""));
     }
-    // Neither a skill nor "no skill": the target must be chosen at creation.
-    let undecided = env
-        .post(
-            "/api/v1/lan/chat/sessions",
-            json!({"target": {"provider_id": env.provider_id, "model_id": "chat-model", "skill_id": null, "no_skill": false}}),
-        )
-        .cookie(&cookie)
-        .send()
-        .await;
-    assert_eq!((undecided.status, undecided.code()), (409, Some(1006013)));
     let unknown_model = env
         .post(
             "/api/v1/lan/chat/sessions",

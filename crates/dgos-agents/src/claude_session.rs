@@ -98,6 +98,11 @@ impl ClaudeSession {
                         view.push_run(method, None, params, run);
                     }
                     "history" => { view.history_truncated |= params["truncated"] == true; }
+                    "controls" => {
+                        if params.get("session_id").and_then(Value::as_str) != view.native_id.as_deref()
+                            || params.get("request_id").and_then(Value::as_str).is_some_and(|id| view.active_run.as_deref() != Some(id)) { continue; }
+                        if let Ok(controls) = serde_json::from_value::<crate::session::SessionControls>(params["controls"].clone()) { view.controls = Some(controls); }
+                    }
                     "native/initialized" => view.push(method, None, params),
                     "text_delta" => {
                         let run = event_run(&view, &params);
@@ -117,6 +122,7 @@ impl ClaudeSession {
                         if view.status != "closed" {
                             view.status = "unknown".into();
                         }
+                        if let Some(controls) = &mut view.controls { controls.uncertain(); }
                         view.pending.clear();
                     }
                     _ => {}
@@ -152,6 +158,7 @@ impl ClaudeSession {
                     .and_then(Value::as_str)
                     .map(str::to_owned);
                 view.status = "idle".into();
+                view.controls = result.get("controls").cloned().and_then(|controls| serde_json::from_value(controls).ok());
             }
             Err(error) => {
                 return Err(session.wire.startup_failure(error).await);
@@ -159,26 +166,30 @@ impl ClaudeSession {
         }
         Ok(session)
     }
-    pub async fn send(&self, request_id: String, text: String) -> Result<(), String> {
+    pub async fn send(&self, request_id: String, text: String, settings: Option<crate::session::AgentTurnSettings>) -> Result<(), String> {
+        let settings = settings.filter(|settings| !settings.is_empty());
         {
             let mut view = self.view.lock().await;
             if view.status != "idle" {
                 return Err("busy".into());
+            }
+            if let Some(settings) = &settings {
+                view.controls.as_ref().ok_or("turn_controls_unavailable")?.validate(settings)?;
             }
             view.status = "running".into();
             view.active_run = Some(request_id.clone());
             view.error = None;
             view.push("userMessage", Some(text.clone()), json!({"uuid":request_id,"request_id":request_id}));
         }
-        if let Err(error) = self
-            .wire
-            .request("send", json!({"request_id":request_id,"text":text}))
-            .await
+        let mut params = json!({"request_id":request_id,"text":text});
+        if let Some(settings) = settings { params["settings"] = serde_json::to_value(settings).map_err(|_| "invalid_turn_settings")?; }
+        if let Err(error) = self.wire.request("send", params).await
         {
             let mut view = self.view.lock().await;
             if view.active_run.as_deref() == Some(request_id.as_str()) {
                 view.status = "unknown".into();
                 view.error = Some(error.clone());
+                if let Some(controls) = &mut view.controls { controls.uncertain(); }
                 view.push("failure", Some(error.clone()), json!({"run_status":"unknown","native_status":"send_failed"}));
                 view.active_run = None;
             }
@@ -455,6 +466,52 @@ done
         assert!(!unsupported.native_login);
         assert_eq!(session.native_action(&NativeSessionAction::ReloadSkills {}).await.unwrap_err(), "native_extension_Unsupported");
         session.native_protocol_supported.store(true, std::sync::atomic::Ordering::Release);
+        assert!(session.wire.close().await);
+        manager.inner.providers.cleanup("alice", &id, &launch.binding, true, false).await.unwrap();
+        assert!(manager.shutdown().await);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn resolved_host_references_reach_claude_as_text_without_settings_overrides() {
+        use super::*;
+        use crate::references::{ConversationReference, ReferenceKind};
+        let root = std::env::temp_dir().join(format!("dgos-claude-references-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("code")).unwrap();
+        std::fs::write(root.join("code/source.txt"), "host-owned reference bytes\n").unwrap();
+        let manager = crate::test_support::manager(&root).await;
+        let task_id = crate::test_support::task(&manager, &root.join("code")).await;
+        let project = manager.task_project("alice", &task_id).await.unwrap();
+        let options = SessionOptions { workspace: project.path.clone(), executable: None, resume_id: None, model: None, trust_workspace: true };
+        let create = crate::test_support::create(&manager, "alice", &task_id, options.clone()).await;
+        let id = uuid::Uuid::new_v4().to_string();
+        let lease = tokio_util::sync::CancellationToken::new();
+        let launch = manager.inner.providers.prepare("alice", &id, &task_id, &project, crate::Engine::Codex, &options, create.project_revision, create.provider, &lease).await.unwrap();
+        let record = crate::SessionRecord { id: id.clone(), owner: "alice".into(), engine: crate::Engine::Claude, native_id: None, workspace: project.path.clone(), executable: None, model: None, project_id: Some(project.id.clone()), task_id: Some(task_id.clone()) };
+        let file = manager.read_development_file("alice", crate::files::ReadFileInput { project_id: project.id.clone(), task_id: Some(task_id.clone()), path: "source.txt".into() }).await.unwrap();
+        let reference = ConversationReference { project_id: project.id, task_id: Some(task_id), path: "source.txt".into(), kind: ReferenceKind::File, diff_source: None, expected_hash: file.hash, start_line: None, end_line: None };
+        let resolved = manager.resolve_conversation_references("alice", &record, "Review this file".into(), vec![reference]).await.unwrap();
+        let executable = root.join("bridge");
+        crate::test_support::prepare_shell_fixture(&executable, r#"
+while IFS= read -r line; do
+printf '%s\n' "$line" >> protocol
+request=${line#*\"id\":}; request=${request%%,*}
+case "$line" in
+*'"method":"send"'*) printf '{"id":%s,"result":{}}\n' "$request";;
+esac
+done
+"#).await;
+        let mut command = Command::new(executable); command.current_dir(&root);
+        let (wire, _events) = Transport::spawn(command, launch.lease.cancellation_token(), ProcessDiagnostic::new("agent_start", "claude"), launch.lease.clone()).unwrap();
+        let mut view = SessionView::new(project.path); view.status = "idle".into();
+        let session = ClaudeSession { wire, view: Arc::new(Mutex::new(view)), native_protocol_supported: Arc::new(std::sync::atomic::AtomicBool::new(true)) };
+        session.send(uuid::Uuid::new_v4().to_string(), resolved.clone(), None).await.unwrap();
+        let protocol: serde_json::Value = serde_json::from_str(std::fs::read_to_string(root.join("protocol")).unwrap().lines().next().unwrap()).unwrap();
+        assert_eq!(protocol["method"], "send");
+        assert_eq!(protocol["params"]["text"], resolved);
+        assert!(protocol["params"].get("settings").is_none());
+        assert!(protocol["params"]["text"].as_str().unwrap().ends_with("host-owned reference bytes\n"));
         assert!(session.wire.close().await);
         manager.inner.providers.cleanup("alice", &id, &launch.binding, true, false).await.unwrap();
         assert!(manager.shutdown().await);

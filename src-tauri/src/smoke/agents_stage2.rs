@@ -29,7 +29,7 @@ fn prepare(path: &Path, engine: &str) {
 }
 fn index_content(path: &Path) -> Vec<u8> { Command::new("git").arg("-C").arg(path).args(["show", ":README.md"]).output().unwrap().stdout }
 async fn state(app: &AppHandle, sid: &str) -> Value { value(&ipc(app,"main","get_agent_session",json!({"sessionId":sid})).await) }
-async fn settle(app: &AppHandle, sid: &str, allow: bool, from_seq: u64) -> Result<Value,String> {
+pub(super) async fn settle(app: &AppHandle, sid: &str, allow: bool, from_seq: u64) -> Result<Value,String> {
     let deadline = tokio::time::Instant::now()+Duration::from_secs(300);
     let mut seen_running = false;
     loop {

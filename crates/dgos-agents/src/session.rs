@@ -18,6 +18,64 @@ pub struct SessionOptions {
     pub model: Option<String>,
     pub trust_workspace: bool,
 }
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionMode { Default, ReadOnly, AcceptEdits }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AgentTurnSettings {
+    #[serde(default, deserialize_with = "nullable_effort", skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<Option<String>>,
+    #[serde(default, deserialize_with = "optional_permission", skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<PermissionMode>,
+}
+impl AgentTurnSettings {
+    pub(crate) fn is_empty(&self) -> bool { self.reasoning_effort.is_none() && self.permission_mode.is_none() }
+}
+fn nullable_effort<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(deserializer).map(Some)
+}
+fn optional_permission<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<PermissionMode>, D::Error> {
+    PermissionMode::deserialize(deserializer).map(Some)
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionControl<T> {
+    pub available: bool,
+    pub options: Vec<T>,
+    pub current: Option<T>,
+    pub source: String,
+    pub reason: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionControls {
+    pub reasoning: SessionControl<String>,
+    pub permission: SessionControl<PermissionMode>,
+    #[serde(skip)]
+    pub(crate) default_effort: Option<String>,
+    #[serde(skip)]
+    pub(crate) default_sandbox: Option<Value>,
+}
+impl SessionControls {
+    pub fn validate(&self, settings: &AgentTurnSettings) -> Result<(), String> {
+        if let Some(effort) = &settings.reasoning_effort {
+            if !self.reasoning.available || effort.as_ref().is_some_and(|value| !self.reasoning.options.contains(value)) {
+                return Err("unsupported_reasoning_effort".into());
+            }
+        }
+        if let Some(permission) = settings.permission_mode {
+            if !self.permission.available || !self.permission.options.contains(&permission) {
+                return Err("unsupported_permission_mode".into());
+            }
+        }
+        Ok(())
+    }
+    pub fn uncertain(&mut self) {
+        self.reasoning.current = None;
+        self.reasoning.reason = Some("result_unknown".into());
+        self.permission.current = None;
+        self.permission.reason = Some("result_unknown".into());
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionEvent {
     pub seq: u64,
@@ -44,6 +102,8 @@ pub struct SessionView {
     pub error: Option<String>,
     #[serde(default)]
     pub history_truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controls: Option<SessionControls>,
     #[serde(skip)]
     retained_bytes: usize,
     #[serde(skip)]
@@ -59,6 +119,7 @@ impl SessionView {
             pending: vec![],
             error: None,
             history_truncated: false,
+            controls: None,
             retained_bytes: 0,
             active_run: None,
         }
@@ -199,5 +260,21 @@ mod pending_tests {
         assert_eq!(view.pending.len(), 1);
         assert_eq!(view.pending[0].title, "updated");
         assert_eq!(view.status, "waiting");
+    }
+    #[test]
+    fn turn_settings_distinguish_omitted_from_explicit_default() {
+        let empty: AgentTurnSettings = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(empty.is_empty());
+        assert_eq!(serde_json::to_value(empty).unwrap(), serde_json::json!({}));
+        let reset: AgentTurnSettings = serde_json::from_value(serde_json::json!({"reasoning_effort":null})).unwrap();
+        assert_eq!(reset.reasoning_effort, Some(None));
+        assert_eq!(reset.permission_mode, None);
+        assert_eq!(serde_json::to_value(reset).unwrap(), serde_json::json!({"reasoning_effort":null}));
+        let permission: AgentTurnSettings = serde_json::from_value(serde_json::json!({"permission_mode":"accept_edits"})).unwrap();
+        assert_eq!(permission.reasoning_effort, None);
+        assert_eq!(permission.permission_mode, Some(PermissionMode::AcceptEdits));
+        for invalid in [serde_json::json!({"permission_mode":null}), serde_json::json!({"permission_mode":"bypassPermissions"}), serde_json::json!({"reasoning_effort":2}), serde_json::json!({"always_allow":true})] {
+            assert!(serde_json::from_value::<AgentTurnSettings>(invalid).is_err());
+        }
     }
 }

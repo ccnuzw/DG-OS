@@ -428,7 +428,7 @@ impl Env {
     }
 
     pub fn target(&self) -> Value {
-        json!({"target": {"provider_id": self.provider_id, "model_id": "chat-model", "skill_id": null, "no_skill": true}})
+        json!({"target": {"provider_id": self.provider_id, "model_id": "chat-model"}})
     }
 
     pub async fn chat(&self, cookie: &str) -> String {

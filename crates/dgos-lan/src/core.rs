@@ -977,18 +977,12 @@ impl LanCore {
         guard: &SessionGuard,
         target: ChatTargetInput,
     ) -> Result<ChatSession, RemoteError> {
-        // The target is fixed at creation (D099 item 10): Provider, model and
-        // either a skill or an explicit "no skill".
+        // The target is fixed at creation (D099 item 10); skills are optional.
         if target.provider_id.is_none() || target.model_id.is_none() {
             return Err(ChatError::ProviderNotSelected.into());
         }
-        if !target.skill_ids.is_empty() == target.no_skill {
-            return Err(if target.no_skill {
-                ChatError::InvalidMessageContent
-            } else {
-                ChatError::SkillUnavailable
-            }
-            .into());
+        if !target.skill_ids.is_empty() && target.no_skill {
+            return Err(ChatError::InvalidMessageContent.into());
         }
         let session = &guard.session;
         // Reserve a slot before the await so concurrent creates cannot pass 100.

@@ -14,6 +14,7 @@ request=${line#*\"id\":}; request=${request%%,*}
 case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}';;
+*'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
 *'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"fixture-thread","turns":[]}}}\n' "$request" "$PWD";;
 *'"method":"skills/list"'*)
  if [ -f disconnect ]; then exit 0; fi
@@ -112,7 +113,7 @@ async fn unknown_native_result_blocks_new_controls_and_turns_but_allows_read_and
     assert_eq!(fixture.inspect(&handle, &request).await.unwrap().unwrap().state, NativeActionState::Unknown);
     assert!(fixture.inspect(&handle, &uuid::Uuid::new_v4().to_string()).await.unwrap().is_none());
     assert_eq!(fixture.action(&handle, &uuid::Uuid::new_v4().to_string()).await.unwrap_err(), "result_unknown");
-    assert_eq!(fixture.manager.send("alice", &fixture.id, &handle.generation, uuid::Uuid::new_v4().to_string(), "must not dispatch".into()).await.unwrap_err(), "result_unknown");
+    assert_eq!(fixture.manager.send("alice", &fixture.id, &handle.generation, uuid::Uuid::new_v4().to_string(), "must not dispatch".into(), None, vec![]).await.unwrap_err(), "result_unknown");
     assert_eq!(std::fs::read(fixture.root.join("reloads")).unwrap(), b"x");
     assert!(fixture.manager.observe_native_session("alice", &fixture.id, &handle.generation, SessionDomain::Mcp, &fixture.lease).await.is_ok());
     assert!(fixture.manager.close_session("alice", &fixture.id).await.unwrap());
@@ -134,7 +135,7 @@ async fn cancelled_control_never_replays_or_blocks_admission_and_late_results_ar
         }) => { entered.expect("fixture never entered native control"); },
     }
     assert_eq!(fixture.manager.close_session("alice", &fixture.id).await.unwrap_err(), "session_busy");
-    assert_eq!(fixture.manager.send("alice", &fixture.id, &handle.generation, uuid::Uuid::new_v4().to_string(), "must not dispatch".into()).await.unwrap_err(), "session_busy");
+    assert_eq!(fixture.manager.send("alice", &fixture.id, &handle.generation, uuid::Uuid::new_v4().to_string(), "must not dispatch".into(), None, vec![]).await.unwrap_err(), "session_busy");
     assert_eq!(fixture.manager.native_session_action("alice", &fixture.id, &handle.generation, &request, NativeSessionAction::ReloadSkills {}, &fixture.lease).await.unwrap().state, NativeActionState::Unknown);
     assert_eq!(fixture.inspect(&handle, &request).await.unwrap().unwrap().state, NativeActionState::Unknown);
     let other = CancellationToken::new();

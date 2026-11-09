@@ -13,10 +13,11 @@ while IFS= read -r line; do
 case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}';;
+*'"method":"model/list"'*) printf '%s\n' '{"id":4,"result":{"data":[],"nextCursor":null}}';;
 *'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":3,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"thread-test","turns":[]}}}\n' "$PWD";;
-*'"method":"turn/start"'*) printf '%s\n' '{"id":4,"result":{"turn":{"id":"turn-test"}}}' '{"method":"turn/started","params":{"threadId":"thread-test","turn":{"id":"turn-test"}}}' '{"id":"approve","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-test","turnId":"turn-test","itemId":"command","command":"echo allowed","availableDecisions":["accept","decline"]}}';;
+*'"method":"turn/start"'*) printf '%s\n' '{"id":5,"result":{"turn":{"id":"turn-test"}}}' '{"method":"turn/started","params":{"threadId":"thread-test","turn":{"id":"turn-test"}}}' '{"id":"approve","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-test","turnId":"turn-test","itemId":"command","command":"echo allowed","availableDecisions":["accept","decline"]}}';;
 *'"decision":"decline"'*) printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-test","turn":{"id":"turn-test","status":"completed"}}}';;
-*'"method":"turn/interrupt"'*) printf '%s\n' '{"id":5,"result":{}}' '{"method":"turn/completed","params":{"threadId":"thread-test","turn":{"id":"turn-test","status":"interrupted"}}}';;
+*'"method":"turn/interrupt"'*) printf '%s\n' '{"id":6,"result":{}}' '{"method":"turn/completed","params":{"threadId":"thread-test","turn":{"id":"turn-test","status":"interrupted"}}}';;
 esac
 done
 "##.replace("CONFIG_REPLY", crate::test_support::CODEX_CONFIG_REPLY)).await;
@@ -51,16 +52,14 @@ done
         assert!(matches!(manager.open_session("bob", Engine::Codex, uuid::Uuid::new_v4().to_string(), crate::test_support::create(&manager, "bob", &bob_task.id, options.clone()).await, Some(bob_task.id.clone()), CancellationToken::new()).await, Err(e) if e == "workspace_busy"));
         assert!(manager.open_session("bob", Engine::Codex, id.clone(), crate::test_support::create(&manager, "bob", &bob_task.id, options.clone()).await, None, CancellationToken::new()).await.is_err());
         let request = uuid::Uuid::new_v4().to_string();
-        manager
-            .send("alice", &id, &generation, request.clone(), "task".into())
+        manager.send("alice", &id, &generation, request.clone(), "task".into(), None, vec![])
             .await
             .unwrap();
-        manager
-            .send("alice", &id, &generation, request.clone(), "task".into())
+        manager.send("alice", &id, &generation, request.clone(), "task".into(), None, vec![])
             .await
             .unwrap();
         assert!(manager
-            .send("alice", &id, &generation, request, "different".into())
+            .send("alice", &id, &generation, request, "different".into(), None, vec![])
             .await
             .is_err());
         let pending = tokio::time::timeout(std::time::Duration::from_secs(3), async {
@@ -114,18 +113,11 @@ done
         let current_generation = reloaded.snapshot("alice", &id).await.unwrap().generation;
         assert_ne!(old_generation, current_generation);
         let stale_request = uuid::Uuid::new_v4().to_string();
-        assert_eq!(reloaded.send("alice", &id, &old_generation, stale_request.clone(), "must not send".into()).await.unwrap_err(), "stale_generation");
+        assert_eq!(reloaded.send("alice", &id, &old_generation, stale_request.clone(), "must not send".into(), None, vec![]).await.unwrap_err(), "stale_generation");
         assert!(reloaded.inner.repository.run("alice", &stale_request).await.unwrap().is_none());
         assert_eq!(reloaded.respond("alice", &id, &old_generation, "old-request".into(), json!({"decision":"accept"})).await.unwrap_err(), "stale_generation");
         let generation = reloaded.snapshot("alice", &id).await.unwrap().generation;
-        reloaded
-            .send(
-                "alice",
-                &id,
-                &generation,
-                uuid::Uuid::new_v4().to_string(),
-                "interrupt me".into(),
-            )
+        reloaded.send("alice", &id, &generation, uuid::Uuid::new_v4().to_string(), "interrupt me".into(), None, vec![])
             .await
             .unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(3), async {
@@ -175,6 +167,7 @@ request=${line#*\"id\":}; request=${request%%,*}
 case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
+*'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
 *'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"rounds-thread","turns":[]}}}\n' "$request" "$PWD";;
 *'"method":"thread/resume"'*)
  round=2
@@ -201,7 +194,7 @@ done
         let generation = manager.snapshot("alice", &id).await.unwrap().generation;
         for _ in 0..2 {
             let request = uuid::Uuid::new_v4().to_string();
-            manager.send("alice", &id, &generation, request.clone(), "same prompt".into()).await.unwrap();
+            manager.send("alice", &id, &generation, request.clone(), "same prompt".into(), None, vec![]).await.unwrap();
             let view = tokio::time::timeout(std::time::Duration::from_secs(3), async {
                 loop {
                     let view = manager.snapshot("alice", &id).await.unwrap().view;
@@ -229,7 +222,7 @@ done
         assert_eq!(history.native_id.as_deref(), Some("rounds-thread"));
         assert_eq!(history.events.iter().filter(|event| event.kind == "userMessage").count(), 2);
         assert_eq!(history.events.iter().filter(|event| event.kind == "agentMessage").count(), 2);
-        restored.send("alice", &id, &generation, uuid::Uuid::new_v4().to_string(), "same prompt".into()).await.unwrap();
+        restored.send("alice", &id, &generation, uuid::Uuid::new_v4().to_string(), "same prompt".into(), None, vec![]).await.unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(3), async {
             loop {
                 let view = restored.snapshot("alice", &id).await.unwrap().view;
@@ -241,6 +234,53 @@ done
             }
         }).await.unwrap();
         assert!(restored.shutdown().await);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn explicit_turn_settings_reach_codex_without_retry_or_permission_bypass() {
+        use crate::session::{AgentTurnSettings, PermissionMode};
+        let root = std::env::temp_dir().join(format!("dgos-turn-controls-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let executable = root.join("codex");
+        crate::test_support::codex_fixture(&executable, &r##"
+while IFS= read -r line; do
+printf '%s\n' "$line" >> protocol
+request=${line#*\"id\":}; request=${request%%,*}
+case "$line" in
+CONFIG_REPLY
+*'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
+*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","approvalPolicy":"on-request","approvalsReviewer":"user","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":[]},"reasoningEffort":"medium","thread":{"id":"controls-thread","turns":[]}}}\n' "$request" "$PWD";;
+*'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[{"model":"other-model","defaultReasoningEffort":"max","supportedReasoningEfforts":[{"reasoningEffort":"max"}]},{"model":"fixture-model","defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"}]}],"nextCursor":null}}\n' "$request";;
+*'"method":"turn/start"'*) printf '{"id":%s,"result":{"turn":{"id":"controls-turn"}}}\n' "$request"; printf '%s\n' '{"method":"turn/completed","params":{"threadId":"controls-thread","turn":{"id":"controls-turn","status":"completed"}}}';;
+esac
+done
+"##.replace("CONFIG_REPLY", crate::test_support::CODEX_CONFIG_REPLY)).await;
+        let manager = crate::test_support::manager(&root).await;
+        let task = crate::test_support::task(&manager, &root).await;
+        let options = SessionOptions { workspace: root.to_string_lossy().into_owned(), resume_id: None, executable: Some(executable.to_string_lossy().into_owned()), model: None, trust_workspace: true };
+        let id = uuid::Uuid::new_v4().to_string();
+        let opened = manager.open_session("alice", Engine::Codex, id.clone(), crate::test_support::create(&manager, "alice", &task, options).await, Some(task), CancellationToken::new()).await.unwrap();
+        assert_eq!(opened.view.controls.as_ref().unwrap().reasoning.options, ["low", "medium"]);
+        let invalid = uuid::Uuid::new_v4().to_string();
+        assert_eq!(manager.send("alice", &id, &opened.generation, invalid.clone(), "never dispatch".into(), Some(AgentTurnSettings { reasoning_effort: Some(Some("max".into())), permission_mode: Some(PermissionMode::ReadOnly) }), vec![]).await.unwrap_err(), "unsupported_reasoning_effort");
+        assert!(manager.inner.repository.run("alice", &invalid).await.unwrap().is_none());
+        let request = uuid::Uuid::new_v4().to_string();
+        let settings = AgentTurnSettings { reasoning_effort: Some(Some("low".into())), permission_mode: Some(PermissionMode::ReadOnly) };
+        let literal_settings = format!("once\0{}", serde_json::to_string(&settings).unwrap());
+        manager.send("alice", &id, &opened.generation, request.clone(), "once".into(), Some(settings.clone()), vec![]).await.unwrap();
+        manager.send("alice", &id, &opened.generation, request.clone(), "once".into(), Some(settings), vec![]).await.unwrap();
+        assert_eq!(manager.send("alice", &id, &opened.generation, request.clone(), literal_settings.clone(), None, vec![]).await.unwrap_err(), "request_conflict");
+        let (_, crate::manager::Backend::Codex(backend)) = manager.owned("alice", &id).await.unwrap() else { panic!("expected Codex backend"); };
+        assert_eq!(backend.send(request.clone(), literal_settings, None).await.unwrap_err(), "request_conflict");
+        assert_eq!(manager.send("alice", &id, &opened.generation, request, "once".into(), Some(AgentTurnSettings { reasoning_effort: Some(None), permission_mode: Some(PermissionMode::Default) }), vec![]).await.unwrap_err(), "request_conflict");
+        let protocol: Vec<serde_json::Value> = std::fs::read_to_string(root.join("protocol")).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        let sends: Vec<_> = protocol.iter().filter(|value| value["method"] == "turn/start").collect();
+        assert_eq!(sends.len(), 1);
+        assert_eq!(sends[0]["params"]["effort"], "low");
+        assert_eq!(sends[0]["params"]["approvalPolicy"], "never");
+        assert_eq!(sends[0]["params"]["approvalsReviewer"], "user");
+        assert_eq!(sends[0]["params"]["sandboxPolicy"], json!({"type":"readOnly","networkAccess":false}));
+        assert!(manager.shutdown().await);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

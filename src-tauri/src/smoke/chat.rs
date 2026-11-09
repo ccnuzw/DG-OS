@@ -352,16 +352,6 @@ const newSession = async (model) => {
   if (!modelOption) throw new Error('model missing: ' + model);
   modelOption.click();
   kd($('[role=dialog]'), 'Escape');
-  const skills = btn('选择 Skills');
-  if (!skills) throw new Error('Skills picker missing');
-  skills.click();
-  const noSkill = await until(() => [...document.querySelectorAll('[role="checkbox"]')].find(el => document.querySelector(`label[for="${el.id}"]`)?.textContent?.includes('明确不使用技能')));
-  if (!noSkill) throw new Error('no-skill checkbox missing');
-  if (noSkill.getAttribute('aria-checked') !== 'true') noSkill.click();
-  const ap = await until(() => { const b = btn('应用目标'); return b && !b.disabled && b; });
-  if (!ap) throw new Error('apply button never enabled');
-  ap.click();
-  if (!(await until(() => !$('.chat-target-popover') && txt($('.chat-model-button-label')).includes(model)))) throw new Error('target was not applied: ' + txt($('button[aria-label="会话目标"]')));
   return true;
 };
 const send = async (text) => {
@@ -1696,8 +1686,9 @@ while IFS= read -r line; do
 case "$line" in
 *'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}';;
 *'"method":"config/read"'*) printf '%s\n' '{"id":2,"result":{"config":{"model_provider":"dgos_project","model_providers":{"dgos_project":{"base_url":"FIXTURE_BASE_URL","wire_api":"responses","env_key":"DGOS_PROVIDER_KEY","requires_openai_auth":false}}}}}';;
+*'"method":"model/list"'*) printf '%s\n' '{"id":4,"result":{"data":[],"nextCursor":null}}';;
 *'"method":"thread/start"'*) printf '{"id":3,"result":{"cwd":"%s","model":"chat-model","modelProvider":"dgos_project","thread":{"id":"account-thread","turns":[]}}}\n' "$PWD";;
-*'"method":"turn/start"'*) printf '%s\n' '{"id":4,"result":{"turn":{"id":"account-turn"}}}' '{"method":"turn/started","params":{"threadId":"account-thread","turn":{"id":"account-turn"}}}' '{"id":"account-approval","method":"item/commandExecution/requestApproval","params":{"threadId":"account-thread","turnId":"account-turn","itemId":"account-item","command":"echo allowed","availableDecisions":["accept","decline"]}}';;
+*'"method":"turn/start"'*) printf '%s\n' '{"id":5,"result":{"turn":{"id":"account-turn"}}}' '{"method":"turn/started","params":{"threadId":"account-thread","turn":{"id":"account-turn"}}}' '{"id":"account-approval","method":"item/commandExecution/requestApproval","params":{"threadId":"account-thread","turnId":"account-turn","itemId":"account-item","command":"echo allowed","availableDecisions":["accept","decline"]}}';;
 esac
 done
 "##.replace("FIXTURE_BASE_URL", &app.state::<ProviderManager>().list_providers(LOCAL_USER).await.unwrap()[0].base_url)).unwrap();

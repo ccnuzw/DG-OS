@@ -10,7 +10,10 @@ const TEXT_BUDGET: usize = 8 * 1024 * 1024;
 struct Baseline { captured_at: i64, baseline_late: bool, truncated: bool, files: BTreeMap<String, FileView>, initial_changes: Vec<String>, fingerprint: String }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DiffInput { pub task_id: String, pub path: String }
+pub struct DiffInput { pub task_id: String, pub path: String, #[serde(default)] pub source: DiffSource }
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffSource { #[default] Task, Index, Worktree }
 #[derive(Serialize)]
 pub struct ReviewChange { pub path: String, pub kind: String, pub pre_existing: bool, pub origin: String, pub previewable: bool }
 #[derive(Serialize)]
@@ -148,6 +151,7 @@ impl AgentManager {
     }
     pub async fn read_development_diff(&self, owner: &str, input: DiffInput) -> Result<FileDiff, String> {
         files::relative(&input.path, false)?;
+        if input.source != DiffSource::Task { return self.read_git_file_diff(owner, input).await; }
         let project = self.task_project(owner, &input.task_id).await?;
         let path = input.path.clone();
         let after = tokio::task::spawn_blocking(move || {
@@ -161,7 +165,7 @@ impl AgentManager {
         let before = baseline.files.get(&input.path);
         let after = after.as_ref();
         if before.is_none() && after.is_none() { return Err("file_not_found".into()); }
-        let reason = before.and_then(|f| f.reason.clone()).or_else(|| after.and_then(|f| f.reason.clone()));
+        let reason = before.and_then(|f| f.reason.clone()).or_else(|| after.and_then(|f| f.reason.clone())).or_else(|| (baseline.truncated && before.is_none()).then(|| "scan_limit".into()));
         let old = before.and_then(|f| f.text.clone()); let new = after.and_then(|f| f.text.clone());
         let diff = if reason.is_none() { similar::TextDiff::from_lines(old.as_deref().unwrap_or(""), new.as_deref().unwrap_or("")).unified_diff().context_radius(3).header(&format!("baseline/{}", input.path), &format!("current/{}", input.path)).to_string() } else { String::new() };
         Ok(FileDiff { path: input.path, before: old, after: new, diff, reason })

@@ -53,6 +53,9 @@ async fn handoff_links_latest_source_run_and_keeps_recent_context_after_restart(
     manager.inner.repository.record_cli_cleanup("alice", &source, &binding.binding_id, binding.host_instance_id.as_deref().unwrap(), &dgos_db::development_repository::CleanupObservation { binding_id: binding.binding_id.clone(), state: "closed".into(), proof: "no_execution".into(), reason: None }).await.unwrap();
     let handoff = prepare(&manager, &task, &source).await;
     assert_eq!(handoff.source_run_id.as_deref(), Some(latest.as_str()));
+    assert!(!handoff.summary.contains(&source));
+    assert!(!handoff.summary.contains(&latest));
+    assert!(!handoff.summary.contains("source-native-history"));
     assert!(handoff.summary.contains("round-9-observation"));
     assert!(handoff.summary.contains("round-2-observation"));
     assert!(!handoff.summary.contains("round-0-observation"));
