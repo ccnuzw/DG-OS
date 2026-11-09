@@ -20,6 +20,12 @@ impl Backend {
             Self::Claude(s) => s.snapshot().await,
         }
     }
+    async fn snapshot_since(&self, after: Option<u64>) -> (SessionView, EventSync) {
+        match self {
+            Self::Codex(s) => s.snapshot_since(after).await,
+            Self::Claude(s) => s.snapshot_since(after).await,
+        }
+    }
     async fn close(&self) -> bool {
         match self {
             Self::Codex(s) => s.close().await,
@@ -65,6 +71,8 @@ pub struct OwnedSessionView {
     pub engine: Engine,
     pub generation: String,
     pub configuration: crate::capabilities::SessionConfigurationView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_sync: Option<EventSync>,
     #[serde(flatten)]
     pub view: SessionView,
 }
@@ -368,7 +376,7 @@ impl AgentManager {
         self.hold_bound(owner.into(), id.clone(), backend.clone(), permit, launch.binding.clone(), slot);
         let generation = Uuid::new_v4();
         self.inner.active.lock().await.insert(id.clone(), Active { backend, lease, generation, provider_lease, binding: launch.binding.clone(), native_receipts: Arc::default(), control: Arc::default(), native_uncertain: Arc::default(), slot });
-        Ok(OwnedSessionView { id, engine, generation: generation.to_string(), view, configuration: crate::capabilities::SessionConfigurationView::ProviderBound { snapshot: launch.snapshot, read_only: false } })
+        Ok(OwnedSessionView { id, engine, generation: generation.to_string(), view, event_sync: None, configuration: crate::capabilities::SessionConfigurationView::ProviderBound { snapshot: launch.snapshot, read_only: false } })
     }
     pub(crate) async fn workspace_available(&self, workspace: &str, except: Option<&str>) -> Result<(), String> {
         let records = self.inner.records.lock().await.clone();
@@ -422,13 +430,17 @@ impl AgentManager {
         Ok((engine, entry.backend.clone()))
     }
     pub async fn snapshot(&self, owner: &str, id: &str) -> Result<OwnedSessionView, String> {
+        self.snapshot_since(owner, id, None).await
+    }
+    pub async fn snapshot_since(&self, owner: &str, id: &str, cursor: Option<SessionCursor>) -> Result<OwnedSessionView, String> {
         let (engine, _) = self.owned_backend(owner, id).await?;
         let (backend, generation) = {
             let active = self.inner.active.lock().await;
             let entry = active.get(id).ok_or("session_closed")?;
             (entry.backend.clone(), entry.generation)
         };
-        let view = backend.snapshot().await;
+        let after = cursor.filter(|cursor| cursor.generation == generation.to_string()).map(|cursor| cursor.after_seq);
+        let (view, event_sync) = backend.snapshot_since(after).await;
         let configuration = self.inner.providers.read_session(owner, id).await?;
         self.owned_backend(owner, id).await?;
         self.require_generation(id, &generation.to_string()).await?;
@@ -438,6 +450,7 @@ impl AgentManager {
             generation: generation.to_string(),
             view,
             configuration,
+            event_sync: Some(event_sync),
         })
     }
     pub(crate) async fn require_generation(&self, id: &str, generation: &str) -> Result<(), String> {
@@ -603,6 +616,11 @@ impl AgentManager {
     pub(crate) async fn session_control(&self, id: &str) -> Result<Arc<Mutex<()>>, String> {
         self.inner.active.lock().await.get(id).map(|entry| entry.control.clone()).ok_or_else(|| "session_closed".into())
     }
+    pub(crate) async fn session_cancellation(&self, id: &str) -> Result<(CancellationToken, CancellationToken), String> {
+        let active = self.inner.active.lock().await;
+        let entry = active.get(id).ok_or("session_closed")?;
+        Ok((entry.lease.clone(), entry.provider_lease.cancellation_token()))
+    }
     pub(crate) async fn native_result_known(&self, id: &str) -> Result<(), String> {
         let active = self.inner.active.lock().await;
         let entry = active.get(id).ok_or("session_closed")?;
@@ -652,7 +670,7 @@ impl AgentManager {
         if !match domain { crate::native_session::SessionDomain::Skills => capabilities.observe_skills, crate::native_session::SessionDomain::Mcp => capabilities.observe_mcp } { return Err("native_extension_Unsupported".into()); }
         drop(_admission);
         let read = async { match &backend { Backend::Codex(s) => s.observe_native(domain).await, Backend::Claude(s) => s.observe_native(domain).await } };
-        let projection = tokio::select! { biased; _ = lease.cancelled() => return Err("session_invalid".into()), result = read => result.map_err(|_| "native_extension_Unavailable".to_owned()) }?;
+        let projection = tokio::select! { biased; _ = lease.cancelled() => return Err("session_invalid".into()), result = read => result.map_err(|error| if error == "native_extension_Unsupported" { error } else { "native_extension_Unavailable".to_owned() }) }?;
         let _admission = self.admit_native_extensions(lease).await?;
         self.native_owned(owner, id, Some(generation), lease).await?;
         Ok(crate::native_session::NativeSessionObservation { session_id: id.into(), generation: generation.into(), engine: record.engine,
@@ -708,6 +726,13 @@ impl AgentManager {
         let state = tokio::select! { biased; _ = lease.cancelled() => return Err("session_invalid".into()), result = execute => result };
         let _admission = self.admit_native_extensions(lease).await?;
         self.native_owned(owner, id, Some(generation), lease).await?;
+        // Codex's explicit method-not-found proves this reload never executed.
+        // Other write errors remain unknown and cannot be replayed.
+        if matches!((&backend, &action), (Backend::Codex(_), Action::ReloadSkills {})) && state.as_ref().is_err_and(|error| error == "native_extension_Unsupported") {
+            receipts.lock().await.remove(request_id);
+            self.inner.active.lock().await.get(id).ok_or("session_closed")?.native_uncertain.store(false, std::sync::atomic::Ordering::Release);
+            return Err("native_extension_Unsupported".into());
+        }
         // Even a native rejection can occur after partial effects. Never replay it.
         receipt.state = state.unwrap_or(NativeActionState::Unknown);
         receipts.lock().await.insert(request_id.into(), (action, receipt.clone()));

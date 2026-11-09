@@ -21,8 +21,9 @@ import { agentTurnSettings } from '../../stores/agentTurnSettings';
 import { captureConversationReferences, clearConversationReferences, type CapturedConversationReference } from '../../stores/developmentReferences';
 import { useComposerReferences } from '../../components/development/ComposerReferences';
 import { developmentDraftKey, useDevelopmentDrafts } from '../../stores/developmentDrafts';
+import { acknowledgeAgentSkills, captureAgentSkills, type CapturedAgentSkill } from '../../stores/agentSkills';
 
-type PendingConversationSend = { requestId: string; generation: string; text: string; references: CapturedConversationReference[] };
+type PendingConversationSend = { requestId: string; generation: string; text: string; references: CapturedConversationReference[]; skills: CapturedAgentSkill[] };
 function object(value: Json | undefined): { [key: string]: Json } { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
 function text(value: Json | undefined) { return typeof value === 'string' ? value : ''; }
 function blocks(event: Event): Json[] { const content = object(event.data).content; return Array.isArray(content) ? content : []; }
@@ -204,6 +205,7 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
     if (epoch !== useAgentRunner.getState().epoch || devEpoch !== useDevelopment.getState().epoch) return;
     setDraft(session.id, '', capture.text);
     if (projectId) clearConversationReferences(projectId, session.id, capture.references);
+    acknowledgeAgentSkills(projectId, { id: session.id, generation: capture.generation }, capture.skills ?? []);
     clearPendingSend(capture.requestId);
   }
   async function recheckSend() {
@@ -222,15 +224,16 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
     const id = session.id;
     const sentPrompt = prompt;
     const captured = projectId ? captureConversationReferences(projectId, id) : [];
+    const skills = captureAgentSkills(projectId, session);
     if (!sentPrompt.trim() && !captured.length) return;
     const proposedSettings = agentTurnSettings(session);
     const settings = proposedSettings ? { ...proposedSettings } : undefined;
-    const capture: PendingConversationSend = { requestId: crypto.randomUUID(), generation: session.generation, text: sentPrompt, references: captured };
+    const capture: PendingConversationSend = { requestId: crypto.randomUUID(), generation: session.generation, text: sentPrompt, references: captured, skills };
     sendingRef.current = true; setSending(true);
     useDevelopmentDrafts.setState(state => ({ entries: { ...state.entries, [pendingSendKey]: { kind: 'conversation', value: capture, baseline: null } } }));
     try {
       let failure: string | undefined;
-      const sent = await action('send_agent_message', { input: { session_id: id, generation: capture.generation, request_id: capture.requestId, text: sentPrompt, ...(settings ? { settings } : {}), ...(captured.length ? { references: captured.map(item => item.reference) } : {}) } }, code => { failure = code; });
+      const sent = await action('send_agent_message', { input: { session_id: id, generation: capture.generation, request_id: capture.requestId, text: sentPrompt, ...(settings ? { settings } : {}), ...(captured.length ? { references: captured.map(item => item.reference) } : {}), ...(skills.length ? { skills: skills.map(item => item.skill) } : {}) } }, code => { failure = code; });
       if (sent) acknowledgeSend(capture);
       else if (failure && failure !== 'unknown') clearPendingSend(capture.requestId);
     } finally { sendingRef.current = false; if (navigationOwner.current.mounted) setSending(false); }
@@ -241,7 +244,7 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
       <div className="agent-dialogue-actions"><Button size="xs" variant="secondary" disabled={busy || acting || !session.active_run || !['running', 'waiting'].includes(session.status)} onClick={() => { const current = useAgentRunner.getState().session; if (currentOwner() && current && current.active_run === session.active_run && ['running', 'waiting'].includes(current.status)) void action('interrupt_agent_session', { sessionId: session.id }); }}>{t('agent.interrupt')}</Button><Button size="xs" variant="secondary" disabled={busy || session.status === 'closed'} onClick={() => { if (currentOwner()) void action('close_agent_session', { sessionId: session.id }); }}>{t('agent.close')}</Button></div>
     </header>
     <div className="agent-dialogue-transcript" ref={viewport} role="region" tabIndex={0} aria-label={t('agent.messages')} onScroll={event => { if (!visibleOwner.current) return; const node = event.currentTarget; const bottom = node.scrollHeight - node.scrollTop - node.clientHeight < 64; follow.current = bottom; setAtBottom(bottom); if (devEpoch === useDevelopment.getState().epoch) useDevelopment.getState().setReading(session.id, { top: node.scrollTop, follow: bottom }); }}>
-      <details className="agent-dialogue-capabilities"><summary>{t('capabilities.actual')}</summary><SessionCapabilitySnapshot key={session.id} sessionId={session.id} snapshot={session.configuration} /></details>
+      <details className="agent-dialogue-capabilities"><summary>{t('capabilities.actual')}</summary><SessionCapabilitySnapshot key={session.id} sessionId={session.id} snapshot={session.configuration} runtime={session} /></details>
       <div className="agent-dialogue-messages">
         {session.history_truncated ? <p className="text-sm text-ink-secondary">{t('agent.truncated')}</p> : null}
         {rows.map(({ event, suppressText }) => <EventContent key={`${session.id}:${event.seq}`} event={event} suppressText={suppressText} toolResults={toolResults} toolNames={toolNames} runState={runStates.get(event.run ?? '')} {...referenceActions} />)}

@@ -16,6 +16,7 @@ import { acknowledgeConversationReferences, captureConversationReferences, type 
 import { useComposerReferences } from '../../components/development/ComposerReferences';
 import { agentTurnSettings } from '../../stores/agentTurnSettings';
 import { useSurfaceActive } from '../../workspace/SurfaceContext';
+import { acknowledgeAgentSkills, captureAgentSkills, type CapturedAgentSkill } from '../../stores/agentSkills';
 
 // Only UI intent and reconciliation identities live here. Tasks, bindings, runs and sessions
 // remain owned by their existing host repositories and AgentManager.
@@ -27,12 +28,14 @@ export interface ConversationDraft {
   requestId: string | null;
   submitted: string | null;
   submittedReferences: CapturedConversationReference[];
+  submittedSkills: CapturedAgentSkill[];
+  submittedGeneration: string | null;
   beforeTasks: string[];
   phase: 'draft' | 'task_unknown' | 'open_unknown' | 'ready' | 'send_unknown' | 'sent';
   preparing: boolean;
   error: string | null;
 }
-export const emptyConversationDraft: ConversationDraft = { prompt: '', configuration: null, taskId: null, sessionId: null, requestId: null, submitted: null, submittedReferences: [], beforeTasks: [], phase: 'draft', preparing: false, error: null };
+export const emptyConversationDraft: ConversationDraft = { prompt: '', configuration: null, taskId: null, sessionId: null, requestId: null, submitted: null, submittedReferences: [], submittedSkills: [], submittedGeneration: null, beforeTasks: [], phase: 'draft', preparing: false, error: null };
 const operations = new Set<string>();
 export const sameConfiguration = (a: CliProviderConfiguration | null, b: CliProviderConfiguration | null) => Boolean(a && b && a.engine === b.engine && a.provider.provider_id === b.provider.provider_id && a.provider.model_id === b.provider.model_id && a.provider.provider_revision === b.provider.provider_revision);
 type Open = (input: AgentOpenInput, projectId: string, taskId: string, dispatch: (session: AgentSession) => Promise<Outcome<null>>) => Promise<Outcome<null>>;
@@ -48,6 +51,8 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
   const key = developmentDraftKey('conversation', ...scope);
   const value = draft.value;
   const configuration = value.configuration;
+  const liveSession = useAgentRunner(state => state.session);
+  const readySession = value.phase === 'ready' && liveSession?.id === value.sessionId ? liveSession : undefined;
   const [directory, setDirectory] = useState<StoredWorkspace | null>(null);
   const [directoryError, setDirectoryError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
@@ -145,20 +150,22 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
       const dispatch = async (session: AgentSession): Promise<Outcome<null>> => {
         if (!current()) return { ok: false, code: 'cancelled' };
         if (session.id !== id || session.status !== 'idle') { update({ phase: 'ready', error: 'session_busy' }); return { ok: false, code: 'session_busy' }; }
-        update({ phase: 'send_unknown' });
+        const skills = captureAgentSkills(project.id, session);
+        update({ phase: 'send_unknown', submittedSkills: skills, submittedGeneration: session.generation });
         const settings = agentTurnSettings(session);
         let failure: string | undefined;
-        const sent = await useAgentRunner.getState().action('send_agent_message', { input: { session_id: id, generation: session.generation, request_id: requestId, text, ...(settings ? { settings: { ...settings } } : {}), ...(captured.length ? { references: captured.map(item => item.reference) } : {}) } }, code => { failure = code; });
+        const sent = await useAgentRunner.getState().action('send_agent_message', { input: { session_id: id, generation: session.generation, request_id: requestId, text, ...(settings ? { settings: { ...settings } } : {}), ...(captured.length ? { references: captured.map(item => item.reference) } : {}), ...(skills.length ? { skills: skills.map(item => item.skill) } : {}) } }, code => { failure = code; });
         if (epoch !== useDevelopment.getState().epoch) return { ok: false, code: 'cancelled' };
         if (!sent) {
           const code = failure ?? 'unknown';
           // These are host reference preflight failures, before any run receipt or native dispatch.
-          const rejected = ['invalid_reference', 'reference_limit', 'file_sensitive', 'file_access_denied', 'file_not_found', 'file_too_large', 'file_binary', 'file_changed', 'file_symlink', 'scan_limit'].includes(code);
+          const rejected = ['invalid_reference', 'reference_limit', 'file_sensitive', 'file_access_denied', 'file_not_found', 'file_too_large', 'file_binary', 'file_changed', 'file_symlink', 'scan_limit', 'agent_skill_invalid', 'agent_skill_limit', 'agent_skills_unsupported', 'agent_skills_unavailable', 'agent_skill_unavailable'].includes(code);
           update({ error: code, ...(rejected ? { phase: 'ready' as const } : {}) });
           return { ok: false, code };
         }
         const remaining = readDraft().prompt === text ? '' : readDraft().prompt;
         acknowledgeConversationReferences(project.id, referenceOwnerId, id, captured);
+        acknowledgeAgentSkills(project.id, session, skills);
         update({ phase: 'sent', prompt: remaining, error: null });
         setSessionDraft(id, remaining);
         return { ok: true, value: null };
@@ -174,7 +181,7 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
         if (epoch !== useDevelopment.getState().epoch) return;
         if (opened.ok) clearCommitted(id);
         else if (readDraft().phase === 'open_unknown') {
-          const rejected = ['provider_incompatible', 'provider_required', 'provider_revision_changed', 'credential_unavailable', 'cli_incompatible', 'workspace_untrusted', 'workspace_changed', 'invalid_workspace', 'project_archived', 'project_not_found', 'task_not_found', 'capability_conflict', 'capability_revoked'].includes(opened.code);
+          const rejected = ['provider_incompatible', 'provider_required', 'provider_revision_changed', 'credential_unavailable', 'cli_incompatible', 'cli_not_installed', 'cli_not_executable', 'cli_probe_timeout', 'cli_probe_failed', 'cli_start_failed', 'cli_handshake_failed', 'cli_handshake_timeout', 'workspace_untrusted', 'workspace_changed', 'invalid_workspace', 'project_archived', 'project_not_found', 'task_not_found', 'capability_conflict', 'capability_revoked'].includes(opened.code);
           update({ phase: rejected ? 'draft' : 'open_unknown', sessionId: rejected ? null : id, error: opened.code });
         } else update({ error: opened.code });
       }
@@ -200,6 +207,7 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
         if (!runner.session.events.some(event => event.run === value.requestId) && runner.session.active_run !== value.requestId) { update({ error: 'unknown' }); return; }
         const remaining = readDraft().prompt === value.submitted ? '' : readDraft().prompt;
         acknowledgeConversationReferences(project.id, referenceOwnerId, value.sessionId, value.submittedReferences ?? []);
+        if (value.submittedGeneration) acknowledgeAgentSkills(project.id, { id: value.sessionId, generation: value.submittedGeneration }, value.submittedSkills ?? []);
         update({ phase: 'sent', prompt: remaining });
         setSessionDraft(value.sessionId, remaining);
         await onInspect(value.sessionId);
@@ -222,7 +230,7 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
       {['task_unknown', 'open_unknown', 'send_unknown', 'sent'].includes(value.phase) ? <div><p role="alert">{t(`directConversation.${value.phase}`)}</p><Button size="xs" disabled={value.preparing} onClick={() => void reconcile()}>{t('directConversation.recheck')}</Button>
         {value.phase === 'task_unknown' ? tasks.filter(item => item.project_id === project.id && !value.beforeTasks.includes(item.id)).map(item => <Button key={item.id} size="xs" disabled={value.preparing} onClick={() => update({ taskId: item.id, phase: 'draft' })}>{t('directConversation.useTask', { title: item.goal })}</Button>) : null}</div> : null}
       <div className="agent-dialogue-composer"><div className="agent-composer-shell">{inputReferences.chips}<div className="agent-composer-input"><Input multiline rows={2} id="agent-message" ref={composerInput} label={t('agent.prompt')} className="type-reading" aria-describedby="agent-send-hint" value={value.prompt} onChange={event => update({ prompt: inputReferences.promptChange(event.target.value, value.prompt, event.target.selectionStart, (event.nativeEvent as InputEvent).isComposing), configuration })} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); if (!event.repeat) void send(); } }} /></div>
-        <AgentComposerControls projectId={project.id} engine={configuration?.engine} draftId={draftId} visible={visible} disabled={value.preparing} referencePicker={inputReferences.picker} model={visible && surfaceActive ? <ComposerModelPicker projectId={project.id} value={configuration} preferred={saved.value?.configuration ?? null} disabled={value.preparing || Boolean(value.sessionId && value.phase !== 'draft')} onChange={next => { if (current()) update({ configuration: next, error: null }); }} /> : null} more={<Button size="xs" variant="ghost" disabled={value.preparing} onClick={() => { if (current()) { capabilitiesChanged(); setReload(n => n + 1); } }}>{t('capabilities.reload')}</Button>} sendHint={t('agent.sendShortcut')} send={<Button data-testid="direct-conversation-send" disabled={Boolean(blocked)} onClick={() => void send()}>{t(value.preparing ? 'directConversation.preparing' : 'agent.send')}</Button>} />
+        <AgentComposerControls session={readySession} projectId={project.id} engine={configuration?.engine} draftId={draftId} visible={visible} disabled={value.preparing} referencePicker={inputReferences.picker} model={visible && surfaceActive ? <ComposerModelPicker projectId={project.id} value={configuration} preferred={saved.value?.configuration ?? null} disabled={value.preparing || Boolean(value.sessionId && value.phase !== 'draft')} onChange={next => { if (current()) update({ configuration: next, error: null }); }} /> : null} more={<Button size="xs" variant="ghost" disabled={value.preparing} onClick={() => { if (current()) { capabilitiesChanged(); setReload(n => n + 1); } }}>{t('capabilities.reload')}</Button>} sendHint={t('agent.sendShortcut')} send={<Button data-testid="direct-conversation-send" disabled={Boolean(blocked)} onClick={() => void send()}>{t(value.preparing ? 'directConversation.preparing' : 'agent.send')}</Button>} />
         <label className="dev-checkbox agent-composer-trust"><input type="checkbox" data-testid="direct-conversation-trust" checked={Boolean(trustKey && trust === trustKey)} disabled={!directory || value.preparing} onChange={event => setTrust(event.target.checked ? trustKey : null)} />{t('dev.trustProject')}</label>
       </div></div>
     </footer>

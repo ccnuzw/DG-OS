@@ -43,7 +43,7 @@ pub struct CodexSession {
     view: Arc<Mutex<SessionView>>,
     receipts: Arc<Mutex<HashMap<String, SendReceipt>>>,
     turn: Arc<Mutex<TurnState>>,
-    native_protocol_supported: bool,
+    unsupported_observations: Arc<std::sync::atomic::AtomicU8>,
 }
 impl CodexSession {
     async fn event(&self, event: Value) {
@@ -213,16 +213,18 @@ impl CodexSession {
             params.get("turnId").or_else(|| params.pointer("/turn/id")).and_then(Value::as_str) == Some(id)
         })
     }
-    pub async fn send(&self, request_id: String, text: String, settings: Option<crate::session::AgentTurnSettings>) -> Result<(), String> {
+    pub async fn send(&self, request_id: String, text: String, settings: Option<crate::session::AgentTurnSettings>, skills: Vec<crate::session::AgentSkillInput>) -> Result<(), String> {
         let settings = settings.filter(|settings| !settings.is_empty());
         if text.trim().is_empty() || text.len() > 65536 {
             return Err("invalid_prompt".into());
         }
+        crate::session::validate_skill_inputs(&skills)?;
         let mut hash = Sha256::new();
         // Prompt bytes may contain the delimiter and settings JSON verbatim.
         hash.update((text.len() as u64).to_le_bytes());
         hash.update(text.as_bytes());
         if let Some(settings) = &settings { hash.update([0]); hash.update(serde_json::to_vec(settings).map_err(|_| "invalid_turn_settings")?); }
+        if !skills.is_empty() { hash.update(b"\0DG-OS skills\0"); hash.update(serde_json::to_vec(&skills).map_err(|_| "agent_skill_invalid")?); }
         let fingerprint: [u8; 32] = hash.finalize().into();
         let mut receipts = self.receipts.lock().await;
         if let Some(old) = receipts.get(&request_id) {
@@ -252,12 +254,15 @@ impl CodexSession {
             view.status = "running".into();
             view.active_run = Some(request_id.clone());
             view.error = None;
-            view.push("userMessage", Some(text.clone()), Value::Null);
+            view.push("userMessage", Some(text.clone()), if skills.is_empty() { Value::Null } else { json!({"skills":skills}) });
             (native, overrides)
         };
         receipts.insert(request_id.clone(), (fingerprint, None));
         drop(receipts);
-        let mut params = json!({"threadId":native,"input":[{"type":"text","text":text}]});
+        let mut input = Vec::with_capacity(1 + skills.len());
+        input.push(json!({"type":"text","text":text}));
+        input.extend(skills.iter().map(|skill| json!({"type":"skill","name":skill.name,"path":skill.path})));
+        let mut params = json!({"threadId":native,"input":input});
         if let Some(overrides) = overrides { params.as_object_mut().unwrap().extend(overrides); }
         let result = self.wire.request("turn/start", params).await
             .and_then(|reply| reply.pointer("/turn/id").and_then(Value::as_str).filter(|id| !id.is_empty()).map(str::to_owned).ok_or_else(|| "invalid_output".into()));
@@ -370,19 +375,43 @@ impl CodexSession {
     pub async fn snapshot(&self) -> SessionView {
         self.view.lock().await.clone()
     }
+    pub(crate) async fn snapshot_since(&self, after: Option<u64>) -> (SessionView, crate::session::EventSync) {
+        self.view.lock().await.snapshot_since(after)
+    }
     pub(crate) fn native_available(&self) -> bool { self.wire.native_available() }
     pub(crate) fn native_capabilities(&self) -> crate::native_session::NativeSessionCapabilities {
-        if !self.native_protocol_supported || !self.native_available() { return crate::native_session::NativeSessionCapabilities { native_auth_guidance: Some(crate::native_session::NativeAuthGuidance::installed(crate::Engine::Codex)), ..Default::default() }; }
-        crate::native_session::NativeSessionCapabilities { observe_skills: true, observe_mcp: true, reload_skills: true, native_auth_guidance: Some(crate::native_session::NativeAuthGuidance::installed(crate::Engine::Codex)), ..Default::default() }
+        let mut capabilities = crate::native_session::NativeSessionCapabilities {
+            native_auth_guidance: Some(crate::native_session::NativeAuthGuidance::installed(crate::Engine::Codex)),
+            mcp_control_guidance: Some(crate::native_session::NativeMcpControlGuidance::codex()),
+            ..Default::default()
+        };
+        if self.native_available() {
+            let unsupported = self.unsupported_observations.load(std::sync::atomic::Ordering::Acquire);
+            capabilities.observe_skills = unsupported & 1 == 0;
+            capabilities.observe_mcp = unsupported & 2 == 0;
+            capabilities.reload_skills = capabilities.observe_skills;
+        }
+        capabilities
+    }
+    async fn observe_request(&self, method: &str, params: Value, capability: u8) -> Result<Value, String> {
+        if self.unsupported_observations.load(std::sync::atomic::Ordering::Acquire) & capability != 0 {
+            return Err("native_extension_Unsupported".into());
+        }
+        self.wire.request(method, params).await.map_err(|error| {
+            if error == "method_unsupported" {
+                self.unsupported_observations.fetch_or(capability, std::sync::atomic::Ordering::AcqRel);
+                "native_extension_Unsupported".into()
+            } else { error }
+        })
     }
     pub(crate) async fn observe_native(&self, domain: crate::native_session::SessionDomain) -> Result<crate::native_session::Projection, String> {
         use crate::native_session::{self as native, SessionDomain};
-        if !self.native_protocol_supported || !self.native_available() { return Err("native_extension_Unsupported".into()); }
+        if !self.native_available() { return Err("native_extension_Unsupported".into()); }
         let view = self.snapshot().await;
         let mut out = native::Projection::default();
         match domain {
             SessionDomain::Skills => {
-                let result = self.wire.request("skills/list", json!({"cwds":[view.workspace],"forceReload":false})).await?;
+                let result = self.observe_request("skills/list", json!({"cwds":[view.workspace],"forceReload":false}), 1).await?;
                 let entries = result["data"].as_array().ok_or("native_extension_InvalidFormat")?;
                 for entry in entries.iter().take(16) {
                     native::skills(entry["skills"].as_array().ok_or("native_extension_InvalidFormat")?, true, &mut out);
@@ -395,7 +424,7 @@ impl CodexSession {
                 let mut cursor = Value::Null;
                 let mut cursors = std::collections::HashSet::new();
                 for _ in 0..4 {
-                    let result = self.wire.request("mcpServerStatus/list", json!({"threadId":thread,"detail":"toolsAndAuthOnly","limit":64,"cursor":cursor})).await?;
+                    let result = self.observe_request("mcpServerStatus/list", json!({"threadId":thread,"detail":"toolsAndAuthOnly","limit":64,"cursor":cursor}), 2).await?;
                     native::mcp(result["data"].as_array().ok_or("native_extension_InvalidFormat")?, true, &mut out);
                     if result.get("nextCursor").is_some_and(Value::is_null) { return Ok(out); }
                     let Some(next) = result["nextCursor"].as_str() else { out.incomplete = true; return Ok(out); };
@@ -408,10 +437,10 @@ impl CodexSession {
         Ok(out)
     }
     pub(crate) async fn native_action(&self, action: &crate::native_session::NativeSessionAction) -> Result<crate::native_session::NativeActionState, String> {
-        if !self.native_protocol_supported || !self.native_available() { return Err("native_extension_Unsupported".into()); }
+        if !self.native_available() { return Err("native_extension_Unsupported".into()); }
         if !matches!(action, crate::native_session::NativeSessionAction::ReloadSkills {}) { return Err("native_extension_Unsupported".into()); }
         let workspace = self.snapshot().await.workspace;
-        let result = self.wire.request("skills/list", json!({"cwds":[workspace],"forceReload":true})).await?;
+        let result = self.observe_request("skills/list", json!({"cwds":[workspace],"forceReload":true}), 1).await?;
         let entries = result["data"].as_array().ok_or("result_unknown")?;
         if entries.len() != 1 || entries.iter().any(|entry| !entry["skills"].is_array() || entry["errors"].as_array().is_none_or(|errors| !errors.is_empty())) { return Err("result_unknown".into()); }
         Ok(crate::native_session::NativeActionState::Applied)
@@ -427,8 +456,8 @@ impl CodexSession {
     pub(crate) async fn open_provider(options: SessionOptions, providers: &dgos_providers::ProviderManager, launch: &crate::capabilities::ProviderLaunch) -> Result<Self, crate::transport::StartupError> {
         let diagnostic = ProcessDiagnostic::new("agent_start", "codex");
         let probe = crate::cli::probe(crate::cli::CliTool::Codex, options.executable.as_deref()).await;
-        let executable = probe.path.filter(|_| probe.status == "available").ok_or("cli_incompatible")?;
-        if probe.version.as_deref() != Some("codex-cli 0.167.0") { return Err("cli_incompatible".into()); }
+        if let Some(error) = probe.startup_error() { return Err(error.into()); }
+        let executable = probe.path.as_deref().ok_or("cli_not_installed")?;
         if launch.env.get("DGOS_PROVIDER_KEY").is_none_or(|key| key.is_empty()) { return Err("provider_incompatible".into()); }
         let mut command = Command::new(executable);
         command.args(["app-server", "--stdio"]).current_dir(&options.workspace);
@@ -437,14 +466,18 @@ impl CodexSession {
         for value in &launch.codex_overrides { command.arg("-c").arg(value); }
         let process_lease = launch.lease.clone();
         let (wire, mut events) = providers.with_cli_spawn(&launch.lease, &launch.launch, |_| {
-            Transport::spawn(command, process_lease.cancellation_token(), diagnostic, process_lease.clone()).map_err(|_| dgos_types::DgosError::ProviderRequestRejected)
-        }).await.map_err(|_| "provider_revision_changed")?;
+            Ok(Transport::spawn(command, process_lease.cancellation_token(), diagnostic, process_lease.clone()))
+        }).await.map_err(|_| "provider_revision_changed")??;
         let session = Self {
             wire,
-            view: Arc::new(Mutex::new(SessionView::new(options.workspace.clone()))),
+            view: Arc::new(Mutex::new({
+                let mut view = SessionView::new(options.workspace.clone());
+                view.cli_version = probe.version.clone();
+                view
+            })),
             receipts: Arc::default(),
             turn: Arc::new(Mutex::new(TurnState { opening: true, ..Default::default() })),
-            native_protocol_supported: probe.version.as_deref() == Some("codex-cli 0.167.0"),
+            unsupported_observations: Arc::default(),
         };
         let reader = session.clone();
         tokio::spawn(async move {

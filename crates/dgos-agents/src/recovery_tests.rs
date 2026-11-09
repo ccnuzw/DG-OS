@@ -78,7 +78,7 @@ async fn native_crash_and_missing_history_preserve_task_code_receipt_and_expire_
     f.open().await;
     let generation = f.manager.snapshot("alice", &f.id).await.unwrap().generation;
     let request = uuid::Uuid::new_v4().to_string();
-    let _ = f.manager.send("alice", &f.id, &generation, request.clone(), "make one change".into(), None, vec![]).await;
+    let _ = f.manager.send("alice", &f.id, &generation, request.clone(), "make one change".into(), None, vec![], vec![]).await;
     let run = f.terminal(&request).await;
     assert_eq!(run.status, "unknown");
     assert!(run.finished_at.is_some());
@@ -99,19 +99,19 @@ async fn native_crash_and_missing_history_preserve_task_code_receipt_and_expire_
     // D136 checks binding authority before consulting native pending requests.
     // The crash cleanup has closed this binding; an old approval cannot revive it.
     assert_eq!(f.manager.respond("alice", &f.id, &generation, "\"old-approval\"".into(), json!({"decision":"accept"})).await.unwrap_err(), "capability_revoked");
-    assert_eq!(f.manager.send("alice", &f.id, &generation, request.clone(), "make one change".into(), None, vec![]).await.unwrap_err(), "result_unknown");
+    assert_eq!(f.manager.send("alice", &f.id, &generation, request.clone(), "make one change".into(), None, vec![], vec![]).await.unwrap_err(), "result_unknown");
     assert_eq!(std::fs::read_to_string(f.root.join("code/invocations")).unwrap(), "once\n");
     assert!(!f.root.join("code/unauthorized").exists());
     assert!(f.manager.shutdown().await);
     std::fs::write(f.root.join("code/missing-history"), "").unwrap();
     let restarted = crate::test_support::manager(&f.root).await;
-    assert!(matches!(restarted.resume_session("alice", &f.id, true, CancellationToken::new()).await, Err(error) if error == "engine_rejected"));
+    assert!(matches!(restarted.resume_session("alice", &f.id, true, CancellationToken::new()).await, Err(error) if error == "cli_handshake_failed"));
     assert_ne!(unsafe { libc::kill(f.pid(), 0) }, 0, "failed resume must reap its owned child");
     assert_eq!(std::fs::read_to_string(f.root.join("code/opens")).unwrap(), "start\nresume\n");
     assert_eq!(restarted.list("alice").await[0].native_id.as_deref(), Some("saved-thread"));
     assert_eq!(restarted.inner.repository.task("alice", &f.task).await.unwrap().status, "blocked");
     assert_eq!(restarted.list_development_runs("alice", &f.task).await.unwrap()[0].status, "unknown");
-    assert_eq!(restarted.send("alice", &f.id, &generation, request, "make one change".into(), None, vec![]).await.unwrap_err(), "result_unknown");
+    assert_eq!(restarted.send("alice", &f.id, &generation, request, "make one change".into(), None, vec![], vec![]).await.unwrap_err(), "result_unknown");
     assert_eq!(std::fs::read_to_string(f.root.join("code/source.txt")).unwrap(), "edited by native fixture\n");
     assert_eq!(std::fs::read_to_string(f.root.join("code/invocations")).unwrap(), "once\n");
     assert!(restarted.shutdown().await);
@@ -125,13 +125,13 @@ async fn sqlite_run_admission_failure_sends_nothing_and_keeps_task_and_code() {
     let db = f.db().await;
     db.execute_unprepared("CREATE TRIGGER deny_run BEFORE INSERT ON development_runs BEGIN SELECT RAISE(ABORT,'injected'); END").await.unwrap();
     let request = uuid::Uuid::new_v4().to_string();
-    assert_eq!(f.manager.send("alice", &f.id, &generation, request.clone(), "make one change".into(), None, vec![]).await.unwrap_err(), "storage_failed");
+    assert_eq!(f.manager.send("alice", &f.id, &generation, request.clone(), "make one change".into(), None, vec![], vec![]).await.unwrap_err(), "storage_failed");
     assert!(f.manager.inner.repository.run("alice", &request).await.unwrap().is_none());
     assert_eq!(f.manager.inner.repository.task("alice", &f.task).await.unwrap().status, "todo");
     assert!(!f.root.join("code/invocations").exists());
     assert_eq!(std::fs::read_to_string(f.root.join("code/source.txt")).unwrap(), "user code\n");
     db.execute_unprepared("DROP TRIGGER deny_run").await.unwrap();
-    f.manager.send("alice", &f.id, &generation, request.clone(), "make one change".into(), None, vec![]).await.unwrap();
+    f.manager.send("alice", &f.id, &generation, request.clone(), "make one change".into(), None, vec![], vec![]).await.unwrap();
     let pending = f.waiting().await;
     f.manager.respond("alice", &f.id, &generation, pending.id, json!({"decision":"decline"})).await.unwrap();
     assert_eq!(f.terminal(&request).await.status, "completed");
@@ -147,7 +147,7 @@ async fn sqlite_terminal_write_failure_recovers_unknown_without_replay_or_old_ap
     let db = f.db().await;
     db.execute_unprepared("CREATE TRIGGER deny_terminal BEFORE UPDATE ON development_runs WHEN NEW.status NOT IN ('running','waiting') BEGIN SELECT RAISE(ABORT,'injected'); END").await.unwrap();
     let request = uuid::Uuid::new_v4().to_string();
-    f.manager.send("alice", &f.id, &generation, request.clone(), "make one change".into(), None, vec![]).await.unwrap();
+    f.manager.send("alice", &f.id, &generation, request.clone(), "make one change".into(), None, vec![], vec![]).await.unwrap();
     let pending = f.waiting().await;
     // Let the host checkpoint the observed output before failing the terminal transaction.
     tokio::time::timeout(Duration::from_secs(4), async {
@@ -172,7 +172,7 @@ async fn sqlite_terminal_write_failure_recovers_unknown_without_replay_or_old_ap
     assert_eq!(run.reason.as_deref(), Some("interrupted_by_restart"));
     assert!(run.events.iter().any(|event| event.text.as_deref() == Some("observed before fault")));
     assert_eq!(restarted.inner.repository.task("alice", &f.task).await.unwrap().status, "blocked");
-    assert_eq!(restarted.send("alice", &f.id, &generation, request.clone(), "make one change".into(), None, vec![]).await.unwrap_err(), "result_unknown");
+    assert_eq!(restarted.send("alice", &f.id, &generation, request.clone(), "make one change".into(), None, vec![], vec![]).await.unwrap_err(), "result_unknown");
     restarted.resume_session("alice", &f.id, true, CancellationToken::new()).await.unwrap();
     let generation = restarted.snapshot("alice", &f.id).await.unwrap().generation;
     assert!(restarted.snapshot("alice", &f.id).await.unwrap().view.pending.is_empty());

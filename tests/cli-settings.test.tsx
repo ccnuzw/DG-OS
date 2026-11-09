@@ -17,7 +17,7 @@ type Tool = typeof tools[number];
 interface Probe { status: string; path: string | null; version: string | null }
 interface Offer { status: string; current_version: string | null; latest_version: string | null; method: string | null }
 interface Detection extends Probe { update: Offer | null }
-interface Snapshot { revision: number; paths: Record<Tool, string | null>; detections: Partial<Record<Tool, Detection>> }
+interface Snapshot { revision: number; paths: Record<Tool, string | null>; detections: Partial<Record<Tool, Detection>>; codex_protocol_reference: { version: string } }
 const ok = (data: unknown) => ({ success: true, data: structuredClone(data) });
 let database: Snapshot;
 let check: Offer;
@@ -56,7 +56,7 @@ async function host(command: string, args?: unknown): Promise<unknown> {
   }
 }
 beforeEach(() => {
-  database = { revision: 2, paths: { codex: '/old/codex', claude: null, gemini: null, node: null }, detections: {} };
+  database = { revision: 2, paths: { codex: '/old/codex', claude: null, gemini: null, node: null }, detections: {}, codex_protocol_reference: { version: '0.167.0' } };
   local = {
     codex: { status: 'available', path: '/detected/codex', version: 'codex-cli 1.0.0' },
     claude: { status: 'not_installed', path: null, version: null },
@@ -79,6 +79,27 @@ async function detect() {
   await waitFor(() => expect(screen.getByRole('button', { name: '自动检测' }).hasAttribute('disabled')).toBe(false));
 }
 
+it.each(['zh-CN', 'en-US'] as const)('shows protocol reference without rejecting older or newer stable Codex versions in %s', async locale => {
+  persist('codex', { status: 'available', path: '/detected/codex', version: 'codex-cli 0.166.0' });
+  setLocaleForTesting(locale);
+  const view = render(<CliSettings />);
+  const input = await screen.findByRole('textbox', { name: 'Codex' });
+  expect(input.getAttribute('aria-invalid')).toBeNull();
+  expect(screen.getByText('codex-cli 0.166.0')).toBeTruthy();
+  expect(document.querySelector('.cli-tool-codex')?.textContent).toContain('0.167.0');
+  expect(call.mock.calls.every(([command]) => command === 'get_cli_preferences')).toBe(true);
+  local.codex = { status: 'available', path: '/detected/codex', version: 'codex-cli 0.168.0' };
+  check.status = 'up_to_date';
+  fireEvent.click(screen.getByRole('button', { name: locale === 'zh-CN' ? '自动检测' : 'Detect automatically' }));
+  await waitFor(() => expect(input.getAttribute('aria-invalid')).toBeNull());
+  expect(screen.getByText('codex-cli 0.168.0')).toBeTruthy();
+  expect(call.mock.calls.some(([command]) => command === 'update_cli' || command === 'open_agent_session')).toBe(false);
+  view.unmount(); call.mockClear();
+  render(<CliSettings />);
+  await screen.findByText('codex-cli 0.168.0');
+  expect(screen.getByRole('textbox', { name: 'Codex' }).getAttribute('aria-invalid')).toBeNull();
+  expect(call.mock.calls.every(([command]) => command === 'get_cli_preferences')).toBe(true);
+});
 it('hydrates persisted versions and upgrade hints without probing on entry or reload', async () => {
   persist('codex', local.codex); database.detections.codex!.update = check;
   const view = await mount();
@@ -175,7 +196,6 @@ it.each(['zh-CN', 'en-US'] as const)('shows no up-to-date notification or upgrad
   render(<CliSettings />);
   expect(await screen.findByText('codex-cli 1.0.0')).toBeTruthy();
   expect(screen.queryByRole('button', { name: /^(更新 Codex|Update Codex)$/ })).toBeNull();
-  expect(document.querySelector('.cli-tool-codex .cli-tool-feedback')).toBeNull();
 });
 
 it('isolates probe failures to their row without exposing host errors or losing other detected tools', async () => {
@@ -283,7 +303,6 @@ it('silently removes a cached upgrade offer when explicit revalidation finds it 
   fireEvent.click(screen.getByRole('button', { name: '更新 Codex' }));
   await waitFor(() => expect(screen.queryByRole('button', { name: '更新 Codex' })).toBeNull());
   expect(confirm).not.toHaveBeenCalled();
-  expect(document.querySelector('.cli-tool-codex .cli-tool-feedback')).toBeNull();
 });
 
 it.each(['unknown', 'stale', 'failed', 'busy', 'transport-error'])('does not replay an update after %s', async status => {

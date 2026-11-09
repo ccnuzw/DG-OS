@@ -102,4 +102,12 @@ export default {
   'nativeExtensions.linkStatus.within_authorized_root': '已核实目标位于授权根目录内',
   'nativeExtensions.linkStatus.outside_authorized_root': '目标在授权根目录外，未读取内容',
   'nativeExtensions.linkStatus.unresolved': '无法核实目标，未读取内容',
+  'nativeExtensions.discoveryStage': '发现结果取自此确切的原生会话；配置文件与执行结果是不同层次的证据。',
+  'nativeExtensions.verifiedProtocol': '已验证协议基线：{version}（不是当前可执行文件的版本报告）。',
+  'nativeExtensions.guidance.missing_mcp_login_cancel_and_logout_contract': 'MCP 登录可返回授权地址并稍后通知完成，但此协议没有 MCP 专属的登录取消或登出请求。DG-OS 不发起无法安全取消并跟踪结果的认证流程。',
+  'nativeExtensions.guidance.missing_session_interaction_cancel_contract': '原生接口缺少已验证的会话级认证交互与取消契约。',
+  'nativeExtensions.guidance.missing_session_scoped_mcp_control_contract': '不支持重连与即时启停：已验证协议没有指定会话/Server 的对应请求；其不限定会话的配置重载及空结果不能证明此 Server 已重连或改变状态。',
+  'nativeExtensions.nativeMcpNextStep': '可用上方原生命令检查配置。如需恢复连接或加载配置变更，请明确关闭并重新打开受影响会话，再读取状态。文件写入不等于生效；结果未知时不要重试操作。',
+  'nativeExtensions.mcpObservedViaCodex': '来源：针对此线程的 Codex mcpServerStatus/list。协议不报告单个 Server 的配置来源，缺失来源仍为未知。',
+  'nativeExtensions.mcpObservedViaClaude': '来源：此 Claude 会话的原生 MCP 状态。这是发现结果，不是工具调用执行结果。',
 } as const;

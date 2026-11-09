@@ -347,7 +347,7 @@ for (const file of files) {
       if (file === 'development_explorer') {
         const expected = name === 'read_development_session_summaries' ? ['app', 'window']
           : name === 'read_development_project_git' ? ['app', 'window', 'project_id']
-            : ['create_development_entry', 'read_development_project_diff', 'read_development_project_git_history'].includes(name) ? ['app', 'window', 'input'] : null;
+            : ['create_development_entry', 'inspect_development_entry', 'mutate_development_entry', 'open_development_entry_directory', 'read_development_project_diff', 'read_development_project_git_history'].includes(name) ? ['app', 'window', 'input'] : null;
         assert.ok(expected, `${name}: unrecognized explorer command`);
         const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
         assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: explorer parameter allow-list`);
@@ -355,6 +355,11 @@ for (const file of files) {
         assert.match(body, /agent_session\(\)/, `${name}: explorer account lease`);
         assert.match(body, /session\.user_id\(\) != context\.user_id\(\) \|\| lease\.is_cancelled\(\)/, `${name}: explorer owner and lease`);
         assert.doesNotMatch(body, /save_development_task|execute_development_git|\.send\(/, `${name}: explorer cannot create tasks or run agents/Git writes`);
+        if (name === 'open_development_entry_directory') {
+          assert.match(body, /admit_development_entry_directory\(context\.user_id\(\), input, &lease\)\.await\?/, `${name}: owned task directory admission`);
+          assert.match(body, /admission\.validate\(&lease\)\?/, `${name}: directory and lease recheck`);
+          assert.match(body, /open_path\(&admission\.path, None::<&str>\)/, `${name}: opener receives only host-derived directory`);
+        }
       }
       if (file === 'development_review') {
         const expected = ['list_development_files', 'read_development_file', 'read_development_diff', 'resolve_development_file_reference'].includes(name) ? ['app', 'window', 'input']
@@ -381,7 +386,7 @@ for (const file of files) {
       if (file === 'development_runtime') {
         const expected = ['save_development_file','save_development_commands','start_development_process'].includes(name) || ['write_development_terminal','resize_development_terminal'].includes(name) ? ['app','window','input']
           : ['read_development_commands','read_development_process','list_development_processes','stop_development_process'].includes(name) ? ['app','window', ['read_development_commands', 'list_development_processes'].includes(name) ? 'task_id' : 'id']
-            : name === 'open_development_external' ? ['app','window','input'] : null;
+            : ['open_development_external', 'open_development_project_external'].includes(name) ? ['app','window','input'] : null;
         assert.ok(expected, `${name}: unrecognized development runtime command`);
         const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
         assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: runtime parameter allow-list`);
@@ -393,6 +398,13 @@ for (const file of files) {
         const callerAt = body.search(/caller\(\s*&app,\s*&window\)/);
         assert.ok(callerAt >= 0 && callerAt < body.indexOf('state::<AgentManager>'), `${name}: runtime caller gate must precede manager access`);
         assert.match(body, /lease(?:\.clone\(\))?/, `${name}: runtime lease must be retained`);
+        if (name === 'open_development_project_external') {
+          assert.match(source, /#\[serde\(deny_unknown_fields\)\]\s*pub struct OpenDevelopmentProjectExternalInput\s*\{\s*project_id: String,\s*target: ProjectExternalTarget\s*\}/, `${name}: renderer supplies only project ID and a typed target`);
+          assert.match(source, /enum ProjectExternalTarget\s*\{\s*Terminal,\s*Reveal\s*\}/, `${name}: external target allow-list`);
+          assert.match(body, /admit_native_project\(&owner,\s*&input\.project_id,\s*&lease\)\.await\?/, `${name}: owned project directory identity and archive admission`);
+          assert.match(body, /reveal_item_in_dir\(&admission\.project\.path\)/, `${name}: reveal uses host-derived project root`);
+          assert.doesNotMatch(body, /input\.(?:path|program|editor|owner|user_id)/, `${name}: no renderer path or executable`);
+        }
       }
       if (file === 'development_capabilities') {
         const expected = ['read_development_cli_provider','revoke_development_cli_provider'].includes(name) ? ['app','window','project_id']
@@ -421,9 +433,10 @@ for (const file of files) {
           ? ['app', 'window', 'input']
           : ['list_agent_sessions', 'read_development_workspace'].includes(name)
             ? ['app', 'window']
-            : ['get_agent_session', 'interrupt_agent_session', 'close_agent_session'].includes(name)
-              ? ['app', 'window', 'session_id']
-              : name === 'inspect_development_project' ? ['app', 'window', 'project_id'] : null;
+            : name === 'get_agent_session' ? ['app', 'window', 'session_id', 'cursor']
+              : ['interrupt_agent_session', 'close_agent_session'].includes(name)
+                ? ['app', 'window', 'session_id']
+                : name === 'inspect_development_project' ? ['app', 'window', 'project_id'] : null;
         assert.ok(expected, `${name}: unrecognized Agent command`);
         const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
         assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: parameter allow-list changed`);

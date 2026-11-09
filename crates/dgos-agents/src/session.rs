@@ -21,6 +21,27 @@ pub struct SessionOptions {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionMode { Default, ReadOnly, AcceptEdits }
+pub const AGENT_SKILL_LIMIT: usize = 8;
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AgentSkillInput { pub name: String, pub path: String }
+pub(crate) fn validate_skill_inputs(skills: &[AgentSkillInput]) -> Result<(), String> {
+    if skills.len() > AGENT_SKILL_LIMIT { return Err("agent_skill_limit".into()); }
+    for (index, skill) in skills.iter().enumerate() {
+        if crate::native_session::safe_name(&skill.name).is_none() || skill.path.is_empty() || skill.path.len() > 2048 || skill.path.chars().any(char::is_control)
+            || skills[..index].iter().any(|old| old == skill) { return Err("agent_skill_invalid".into()); }
+    }
+    Ok(())
+}
+pub(crate) fn validate_discovered_skills(skills: &[AgentSkillInput], observed: &crate::native_session::Projection) -> Result<(), String> {
+    if observed.incomplete { return Err("agent_skills_unavailable".into()); }
+    for skill in skills {
+        let mut matches = observed.skills.iter().filter(|item| item.name == skill.name && item.path.as_deref() == Some(skill.path.as_str()));
+        let item = matches.next().ok_or("agent_skill_unavailable")?;
+        if matches.next().is_some() || item.enabled != Some(true) || item.classification != crate::native_session::NativeSkillClassification::Skill { return Err("agent_skill_unavailable".into()); }
+    }
+    Ok(())
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AgentTurnSettings {
@@ -92,6 +113,18 @@ pub struct PendingRequest {
     pub title: String,
     pub data: Value,
 }
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionCursor {
+    pub generation: String,
+    pub after_seq: u64,
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct EventSync {
+    pub reset: bool,
+    pub after_seq: u64,
+    pub first_seq: u64,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionView {
     pub native_id: Option<String>,
@@ -104,6 +137,8 @@ pub struct SessionView {
     pub history_truncated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub controls: Option<SessionControls>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli_version: Option<String>,
     #[serde(skip)]
     retained_bytes: usize,
     #[serde(skip)]
@@ -120,9 +155,34 @@ impl SessionView {
             error: None,
             history_truncated: false,
             controls: None,
+            cli_version: None,
             retained_bytes: 0,
             active_run: None,
         }
+    }
+    /// Live histories are append-only after initialization. Reset whenever the
+    /// client's cursor no longer covers the retained window; approvals and state
+    /// are always current, even when there are no new transcript events.
+    pub(crate) fn snapshot_since(&self, after: Option<u64>) -> (Self, EventSync) {
+        let first = self.events.first().map_or(0, |event| event.seq);
+        let last = self.events.last().map_or(0, |event| event.seq);
+        let append = after.is_some_and(|seq| seq <= last && seq.saturating_add(1) >= first);
+        let after_seq = after.filter(|_| append).unwrap_or(0);
+        let start = if append { self.events.partition_point(|event| event.seq <= after_seq) } else { 0 };
+        let view = Self {
+            native_id: self.native_id.clone(),
+            workspace: self.workspace.clone(),
+            status: self.status.clone(),
+            events: self.events[start..].to_vec(),
+            pending: self.pending.clone(),
+            error: self.error.clone(),
+            history_truncated: self.history_truncated,
+            controls: self.controls.clone(),
+            cli_version: self.cli_version.clone(),
+            retained_bytes: 0,
+            active_run: self.active_run.clone(),
+        };
+        (view, EventSync { reset: !append, after_seq, first_seq: first })
     }
     pub fn request(&mut self, pending: PendingRequest) {
         if let Some(existing) = self.pending.iter_mut().find(|p| p.id == pending.id) {
@@ -276,5 +336,36 @@ mod pending_tests {
         for invalid in [serde_json::json!({"permission_mode":null}), serde_json::json!({"permission_mode":"bypassPermissions"}), serde_json::json!({"reasoning_effort":2}), serde_json::json!({"always_allow":true})] {
             assert!(serde_json::from_value::<AgentTurnSettings>(invalid).is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod synchronization_tests {
+    use super::*;
+
+    #[test]
+    fn delta_keeps_current_approval_state_and_resets_outside_retained_window() {
+        let mut view = SessionView::new("/tmp/project".into());
+        for index in 0..2002 { view.push("output", Some(index.to_string()), Value::Null); }
+        view.request(PendingRequest { id: "approval".into(), kind: "command".into(), title: "Approve".into(), data: Value::Null });
+        let (delta, sync) = view.snapshot_since(Some(2001));
+        assert!(!sync.reset);
+        assert_eq!(sync.first_seq, 3);
+        assert_eq!(delta.events.iter().map(|event| event.seq).collect::<Vec<_>>(), vec![2002]);
+        assert_eq!(delta.pending[0].id, "approval");
+        assert_eq!(delta.status, "waiting");
+        let (unchanged, sync) = view.snapshot_since(Some(2002));
+        assert!(!sync.reset);
+        assert!(unchanged.events.is_empty());
+        assert_eq!(unchanged.pending[0].id, "approval");
+        for cursor in [None, Some(0), Some(1), Some(2003), Some(u64::MAX)] {
+            let (full, sync) = view.snapshot_since(cursor);
+            assert!(sync.reset);
+            assert_eq!(full.events.first().unwrap().seq, 3);
+            assert_eq!(full.events.last().unwrap().seq, 2002);
+        }
+        let (delta, sync) = view.snapshot_since(Some(2));
+        assert!(!sync.reset);
+        assert_eq!(delta.events.first().unwrap().seq, 3);
     }
 }

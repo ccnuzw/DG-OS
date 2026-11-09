@@ -44,6 +44,7 @@ done
             .await
             .unwrap();
         let generation = manager.snapshot("alice", &id).await.unwrap().generation;
+        assert_eq!(manager.snapshot("alice", &id).await.unwrap().view.cli_version.as_deref(), Some("codex-cli 0.167.0"));
         assert!(manager.snapshot("bob", &id).await.is_err());
         let project_id = manager.development_workspace("alice").await.unwrap().projects[0].id.clone();
         assert!(matches!(manager.update_project("alice", crate::projects::UpdateProjectInput { project_id: project_id.clone(), action: "unlink".into(), value: None }, lease.clone()).await, Err(e) if e == "project_busy"));
@@ -52,14 +53,14 @@ done
         assert!(matches!(manager.open_session("bob", Engine::Codex, uuid::Uuid::new_v4().to_string(), crate::test_support::create(&manager, "bob", &bob_task.id, options.clone()).await, Some(bob_task.id.clone()), CancellationToken::new()).await, Err(e) if e == "workspace_busy"));
         assert!(manager.open_session("bob", Engine::Codex, id.clone(), crate::test_support::create(&manager, "bob", &bob_task.id, options.clone()).await, None, CancellationToken::new()).await.is_err());
         let request = uuid::Uuid::new_v4().to_string();
-        manager.send("alice", &id, &generation, request.clone(), "task".into(), None, vec![])
+        manager.send("alice", &id, &generation, request.clone(), "task".into(), None, vec![], vec![])
             .await
             .unwrap();
-        manager.send("alice", &id, &generation, request.clone(), "task".into(), None, vec![])
+        manager.send("alice", &id, &generation, request.clone(), "task".into(), None, vec![], vec![])
             .await
             .unwrap();
         assert!(manager
-            .send("alice", &id, &generation, request, "different".into(), None, vec![])
+            .send("alice", &id, &generation, request, "different".into(), None, vec![], vec![])
             .await
             .is_err());
         let pending = tokio::time::timeout(std::time::Duration::from_secs(3), async {
@@ -113,11 +114,11 @@ done
         let current_generation = reloaded.snapshot("alice", &id).await.unwrap().generation;
         assert_ne!(old_generation, current_generation);
         let stale_request = uuid::Uuid::new_v4().to_string();
-        assert_eq!(reloaded.send("alice", &id, &old_generation, stale_request.clone(), "must not send".into(), None, vec![]).await.unwrap_err(), "stale_generation");
+        assert_eq!(reloaded.send("alice", &id, &old_generation, stale_request.clone(), "must not send".into(), None, vec![], vec![]).await.unwrap_err(), "stale_generation");
         assert!(reloaded.inner.repository.run("alice", &stale_request).await.unwrap().is_none());
         assert_eq!(reloaded.respond("alice", &id, &old_generation, "old-request".into(), json!({"decision":"accept"})).await.unwrap_err(), "stale_generation");
         let generation = reloaded.snapshot("alice", &id).await.unwrap().generation;
-        reloaded.send("alice", &id, &generation, uuid::Uuid::new_v4().to_string(), "interrupt me".into(), None, vec![])
+        reloaded.send("alice", &id, &generation, uuid::Uuid::new_v4().to_string(), "interrupt me".into(), None, vec![], vec![])
             .await
             .unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(3), async {
@@ -194,7 +195,7 @@ done
         let generation = manager.snapshot("alice", &id).await.unwrap().generation;
         for _ in 0..2 {
             let request = uuid::Uuid::new_v4().to_string();
-            manager.send("alice", &id, &generation, request.clone(), "same prompt".into(), None, vec![]).await.unwrap();
+            manager.send("alice", &id, &generation, request.clone(), "same prompt".into(), None, vec![], vec![]).await.unwrap();
             let view = tokio::time::timeout(std::time::Duration::from_secs(3), async {
                 loop {
                     let view = manager.snapshot("alice", &id).await.unwrap().view;
@@ -222,7 +223,7 @@ done
         assert_eq!(history.native_id.as_deref(), Some("rounds-thread"));
         assert_eq!(history.events.iter().filter(|event| event.kind == "userMessage").count(), 2);
         assert_eq!(history.events.iter().filter(|event| event.kind == "agentMessage").count(), 2);
-        restored.send("alice", &id, &generation, uuid::Uuid::new_v4().to_string(), "same prompt".into(), None, vec![]).await.unwrap();
+        restored.send("alice", &id, &generation, uuid::Uuid::new_v4().to_string(), "same prompt".into(), None, vec![], vec![]).await.unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(3), async {
             loop {
                 let view = restored.snapshot("alice", &id).await.unwrap().view;
@@ -262,17 +263,17 @@ done
         let opened = manager.open_session("alice", Engine::Codex, id.clone(), crate::test_support::create(&manager, "alice", &task, options).await, Some(task), CancellationToken::new()).await.unwrap();
         assert_eq!(opened.view.controls.as_ref().unwrap().reasoning.options, ["low", "medium"]);
         let invalid = uuid::Uuid::new_v4().to_string();
-        assert_eq!(manager.send("alice", &id, &opened.generation, invalid.clone(), "never dispatch".into(), Some(AgentTurnSettings { reasoning_effort: Some(Some("max".into())), permission_mode: Some(PermissionMode::ReadOnly) }), vec![]).await.unwrap_err(), "unsupported_reasoning_effort");
+        assert_eq!(manager.send("alice", &id, &opened.generation, invalid.clone(), "never dispatch".into(), Some(AgentTurnSettings { reasoning_effort: Some(Some("max".into())), permission_mode: Some(PermissionMode::ReadOnly) }), vec![], vec![]).await.unwrap_err(), "unsupported_reasoning_effort");
         assert!(manager.inner.repository.run("alice", &invalid).await.unwrap().is_none());
         let request = uuid::Uuid::new_v4().to_string();
         let settings = AgentTurnSettings { reasoning_effort: Some(Some("low".into())), permission_mode: Some(PermissionMode::ReadOnly) };
         let literal_settings = format!("once\0{}", serde_json::to_string(&settings).unwrap());
-        manager.send("alice", &id, &opened.generation, request.clone(), "once".into(), Some(settings.clone()), vec![]).await.unwrap();
-        manager.send("alice", &id, &opened.generation, request.clone(), "once".into(), Some(settings), vec![]).await.unwrap();
-        assert_eq!(manager.send("alice", &id, &opened.generation, request.clone(), literal_settings.clone(), None, vec![]).await.unwrap_err(), "request_conflict");
+        manager.send("alice", &id, &opened.generation, request.clone(), "once".into(), Some(settings.clone()), vec![], vec![]).await.unwrap();
+        manager.send("alice", &id, &opened.generation, request.clone(), "once".into(), Some(settings), vec![], vec![]).await.unwrap();
+        assert_eq!(manager.send("alice", &id, &opened.generation, request.clone(), literal_settings.clone(), None, vec![], vec![]).await.unwrap_err(), "request_conflict");
         let (_, crate::manager::Backend::Codex(backend)) = manager.owned("alice", &id).await.unwrap() else { panic!("expected Codex backend"); };
-        assert_eq!(backend.send(request.clone(), literal_settings, None).await.unwrap_err(), "request_conflict");
-        assert_eq!(manager.send("alice", &id, &opened.generation, request, "once".into(), Some(AgentTurnSettings { reasoning_effort: Some(None), permission_mode: Some(PermissionMode::Default) }), vec![]).await.unwrap_err(), "request_conflict");
+        assert_eq!(backend.send(request.clone(), literal_settings, None, vec![]).await.unwrap_err(), "request_conflict");
+        assert_eq!(manager.send("alice", &id, &opened.generation, request, "once".into(), Some(AgentTurnSettings { reasoning_effort: Some(None), permission_mode: Some(PermissionMode::Default) }), vec![], vec![]).await.unwrap_err(), "request_conflict");
         let protocol: Vec<serde_json::Value> = std::fs::read_to_string(root.join("protocol")).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
         let sends: Vec<_> = protocol.iter().filter(|value| value["method"] == "turn/start").collect();
         assert_eq!(sends.len(), 1);
@@ -282,5 +283,72 @@ done
         assert_eq!(sends[0]["params"]["sandboxPolicy"], json!({"type":"readOnly","networkAccess":false}));
         assert!(manager.shutdown().await);
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn startup_diagnostics_preserve_preflight_spawn_handshake_and_binding_boundaries() {
+        use std::os::unix::fs::PermissionsExt;
+        for (mode, expected, spawned) in [
+            ("missing", "cli_not_installed", false),
+            ("not_executable", "cli_not_executable", false),
+            ("older", "handshake_success", true),
+            ("newer", "handshake_success", true),
+            ("invalid_version", "cli_probe_failed", false),
+            ("spawn_failure", "cli_start_failed", false),
+            ("handshake_rejected", "cli_handshake_failed", true),
+            ("handshake_disconnected", "cli_handshake_failed", true),
+            ("provider_binding", "provider_binding_unconfirmed", true),
+        ] {
+            let root = std::env::temp_dir().join(format!("dgos-startup-diagnostic-{mode}-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&root).unwrap();
+            let executable = root.join("codex");
+            let version = match mode { "older" => "codex-cli 0.166.0", "newer" => "codex-cli 0.168.0", "invalid_version" => "sensitive-version-output", _ => "codex-cli 0.167.0" };
+            let version_effect = if mode == "spawn_failure" { "chmod 600 \"$0\"" } else { ":" };
+            let initialize = match mode {
+                "handshake_rejected" => "printf '%s\\n' '{\"id\":1,\"error\":{\"message\":\"sensitive-handshake-output\"}}'",
+                "handshake_disconnected" => "exit 0",
+                _ => "printf '%s\\n' '{\"id\":1,\"result\":{}}'",
+            };
+            let workspace = root.to_string_lossy().into_owned();
+            let thread_cwd = if matches!(mode, "older" | "newer") { workspace.as_str() } else { "/dgos-missing-workspace" };
+            crate::test_support::prepare_shell_fixture(&executable, &format!(r##"
+if [ "${{1-}}" = --version ]; then printf '%s\n' '{version}'; {version_effect}; exit 0; fi
+printf x >> started
+while IFS= read -r line; do
+printf '%s\n' "$line" >> protocol
+case "$line" in
+{config}
+*'"method":"initialize"'*) {initialize};;
+*'"method":"thread/start"'*) printf '%s\n' '{{"id":3,"result":{{"cwd":"{thread_cwd}","model":"fixture-model","modelProvider":"dgos_project","thread":{{"id":"diagnostic-thread","turns":[]}}}}}}';;
+*'"method":"model/list"'*) printf '%s\n' '{{"id":4,"result":{{"data":[{{"model":"fixture-model"}}],"nextCursor":null}}}}';;
+esac
+done
+"##, config = crate::test_support::CODEX_CONFIG_REPLY)).await;
+            if mode == "missing" { std::fs::remove_file(&executable).unwrap(); }
+            if mode == "not_executable" { std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o600)).unwrap(); }
+            let manager = crate::test_support::manager(&root).await;
+            let task = crate::test_support::task(&manager, &root).await;
+            let options = SessionOptions { workspace, executable: Some(executable.to_string_lossy().into_owned()), resume_id: None, model: None, trust_workspace: true };
+            let id = uuid::Uuid::new_v4().to_string();
+            let create = crate::test_support::create(&manager, "alice", &task, options).await;
+            let opened = manager.open_session("alice", Engine::Codex, id.clone(), create, Some(task.clone()), CancellationToken::new()).await;
+            assert_eq!(root.join("started").exists(), spawned, "{mode}");
+            if expected == "handshake_success" {
+                assert!(opened.is_ok(), "{mode}: {:?}", opened.as_ref().err());
+                let session = manager.snapshot("alice", &id).await.unwrap();
+                assert_eq!(session.view.cli_version.as_deref(), Some(version), "{mode}");
+                assert_eq!(session.view.status, "idle", "{mode}");
+            } else {
+                assert_eq!(opened.err().as_deref(), Some(expected), "{mode}");
+                assert!(manager.snapshot("alice", &id).await.is_err());
+            }
+            if spawned {
+                assert_eq!(std::fs::read(&root.join("started")).unwrap(), b"x", "startup was replayed: {mode}");
+                let protocol = std::fs::read_to_string(root.join("protocol")).unwrap();
+                assert!(!protocol.contains("turn/start"), "a prompt was sent during startup: {mode}");
+            }
+            assert!(manager.list_development_runs("alice", &task).await.unwrap().is_empty());
+            assert!(manager.shutdown().await);
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 }

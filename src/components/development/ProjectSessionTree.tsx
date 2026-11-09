@@ -1,11 +1,11 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button, Input } from '@dgos/ui';
-import { ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, MessageSquare, Plus } from 'lucide-react';
+import { ChevronRight, Folder, FolderOpen, MessageSquare, Pin, Plus } from 'lucide-react';
 import { formatDateTime, useLocale } from '../../i18n';
 import { useAgentRunner } from '../../stores/agentRunnerStore';
 import { useDevelopment, type ConversationTab, type DevelopmentSession, type Project } from '../../stores/developmentStore';
 import { readDevelopmentSessionSummaries, type SessionSummary } from '../../stores/developmentExplorer';
-import { ProjectPanel } from './ProjectPanel';
+import { ProjectActions } from './ProjectActions';
 import './project-navigation.css';
 
 export interface ProjectSessionTreeProps {
@@ -14,16 +14,17 @@ export interface ProjectSessionTreeProps {
   onNewConversation: (projectId: string) => void;
   onSelectProject: (projectId: string) => void;
   onSelectDraft: (tab: ConversationTab) => void;
-  onManageProject: (projectId: string) => void;
+  onRefreshProject: (projectId: string) => Promise<void>;
+  onProjectFiles: (projectId: string) => Promise<void>;
 }
 
 const PAGE_SIZE = 5;
 const UNCLASSIFIED = '__unclassified__';
 
-/** Navigation is read-only: selection is delegated, expansion never changes context. */
-export function ProjectSessionTree({ busy, onSelect, onNewConversation, onSelectProject, onSelectDraft, onManageProject }: ProjectSessionTreeProps) {
+/** Selection is delegated; folding and archived-history disclosure never change context. */
+export function ProjectSessionTree({ busy, onSelect, onNewConversation, onSelectProject, onSelectDraft, onRefreshProject, onProjectFiles }: ProjectSessionTreeProps) {
   const { t, locale } = useLocale();
-  const { projects, tasks, sessions, selection, sessionNames, tabs, activeTabId, epoch, workspaceOwner } = useDevelopment();
+  const { projects, tasks, sessions, selection, sessionNames, tabs, activeTabId, epoch, workspaceOwner, pinnedProjectIds, archivedSessionIds } = useDevelopment();
   const snapshots = useAgentRunner(state => state.snapshots);
   const live = useAgentRunner(state => state.live);
   const unread = useAgentRunner(state => state.unread);
@@ -31,22 +32,50 @@ export function ProjectSessionTree({ busy, onSelect, onNewConversation, onSelect
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [shown, setShown] = useState<Record<string, number>>({});
   const [archivedOpen, setArchivedOpen] = useState(false);
+  const [archivedConversationsOpen, setArchivedConversationsOpen] = useState<Record<string, boolean>>({});
   const [unclassifiedOpen, setUnclassifiedOpen] = useState(false);
   const [metadata, setMetadata] = useState<{ epoch: number; owner: string | null; rows: SessionSummary[]; failed: boolean } | null>(null);
+  const scheduleSummaryRead = useRef<(() => void) | null>(null);
   const treeId = useId();
   const normalized = query.trim().toLocaleLowerCase();
 
   useEffect(() => {
     let current = true;
-    // Coalesce runtime message updates into one caller-scoped read, never one read per row.
-    const timer = window.setTimeout(() => {
-      void readDevelopmentSessionSummaries().then(result => {
-        const state = useDevelopment.getState();
-        if (!current || state.epoch !== epoch || state.workspaceOwner !== workspaceOwner) return;
-        setMetadata({ epoch, owner: workspaceOwner, rows: result.ok ? result.value : [], failed: !result.ok });
-      });
-    }, 200);
-    return () => { current = false; window.clearTimeout(timer); };
+    let timer: number | null = null;
+    let sequence = 0;
+    let applied = 0;
+    // Keep the first scheduled batch instead of restarting it on every runtime snapshot.
+    const schedule = () => {
+      if (timer !== null || document.hidden) return;
+      timer = window.setTimeout(() => {
+        timer = null;
+        const read = ++sequence;
+        void readDevelopmentSessionSummaries().then(result => {
+          const state = useDevelopment.getState();
+          if (!current || read <= applied || document.hidden || state.epoch !== epoch || state.workspaceOwner !== workspaceOwner) return;
+          applied = read;
+          setMetadata({ epoch, owner: workspaceOwner, rows: result.ok ? result.value : [], failed: !result.ok });
+        });
+      }, 200);
+    };
+    const visibility = () => {
+      applied = ++sequence;
+      if (timer !== null) window.clearTimeout(timer);
+      timer = null;
+      if (!document.hidden) schedule();
+    };
+    scheduleSummaryRead.current = schedule;
+    document.addEventListener('visibilitychange', visibility);
+    return () => {
+      current = false;
+      if (timer !== null) window.clearTimeout(timer);
+      scheduleSummaryRead.current = null;
+      document.removeEventListener('visibilitychange', visibility);
+    };
+  }, [epoch, workspaceOwner]);
+
+  useEffect(() => {
+    scheduleSummaryRead.current?.();
   }, [epoch, workspaceOwner, sessions, snapshots]);
 
   const summaries = useMemo(() => new Map<string, SessionSummary>(metadata?.epoch === epoch && metadata.owner === workspaceOwner ? metadata.rows.map(row => [row.session_id, row]) : []), [metadata, epoch, workspaceOwner]);
@@ -78,7 +107,7 @@ export function ProjectSessionTree({ busy, onSelect, onNewConversation, onSelect
     return result;
   }, [tabs]);
   const visibleProjects = projects.filter(project => !normalized || project.id === selection.project_id || matchingProjectIds.has(project.id) || (grouped.get(project.id) ?? []).some(sessionMatches) || (draftTabs.get(project.id) ?? []).some(tab => includes(tab.title, t('workbenchNavigation.unsentDraft'))));
-  const activeProjects = visibleProjects.filter(project => !project.archived).sort((a, b) => (b.last_opened_at ?? b.created_at) - (a.last_opened_at ?? a.created_at));
+  const activeProjects = visibleProjects.filter(project => !project.archived).sort((a, b) => Number(pinnedProjectIds.includes(b.id)) - Number(pinnedProjectIds.includes(a.id)) || (b.last_opened_at ?? b.created_at) - (a.last_opened_at ?? a.created_at));
   const archivedProjects = visibleProjects.filter(project => project.archived);
   const unclassified = grouped.get(UNCLASSIFIED) ?? [];
   const visibleUnclassified = unclassified.filter(session => !normalized || session.id === selection.session_id || sessionMatches(session));
@@ -116,19 +145,25 @@ export function ProjectSessionTree({ busy, onSelect, onNewConversation, onSelect
   function renderProject(project: Project) {
     const open = Boolean(normalized) || (expanded[project.id] ?? project.id === selection.project_id);
     const rowsId = `${treeId}-${project.id}`;
+    const rows = grouped.get(project.id) ?? [];
+    const archived = rows.filter(session => archivedSessionIds.includes(session.id) && session.id !== selection.session_id && !tabs.some(tab => tab.sessionId === session.id) && (!live[session.id] || live[session.id] === 'closed'));
+    const archivedIds = new Set(archived.map(session => session.id));
+    const historyOpen = Boolean(normalized) || Boolean(archivedConversationsOpen[project.id]);
     return <section key={project.id} className="dev-tree-project" data-project-id={project.id}>
       <header className={`dev-tree-project-row${selection.project_id === project.id ? ' is-current' : ''}`}>
-        <Button size="xs" variant="ghost" className="dev-tree-toggle" aria-label={`${t(open ? 'workbenchNavigation.collapseProject' : 'workbenchNavigation.expandProject')}: ${project.name}`} aria-expanded={open} aria-controls={rowsId} onClick={() => setExpanded(value => ({ ...value, [project.id]: !open }))}>{open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}</Button>
-        <Button size="xs" variant="ghost" className="dev-tree-project-name" data-testid={`dev-project-item-${project.id}`} disabled={busy} aria-pressed={selection.project_id === project.id} onClick={() => onSelectProject(project.id)}>{open ? <FolderOpen size={16} aria-hidden="true" /> : <Folder size={16} aria-hidden="true" />}<span title={project.path}>{project.name}</span></Button>
-        <Button size="xs" variant="ghost" className="dev-tree-icon-action" aria-label={`${t('dev.newSession')}: ${project.name}`} title={t('dev.newSession')} disabled={busy || project.archived} onClick={() => onNewConversation(project.id)}><Plus size={15} aria-hidden="true" /></Button>
-        <Button size="xs" variant="ghost" className="dev-tree-icon-action" aria-label={`${t('workbenchNavigation.manageProject')}: ${project.name}`} title={t('workbenchNavigation.manageProject')} disabled={busy} onClick={() => onManageProject(project.id)}><Ellipsis size={15} aria-hidden="true" /></Button>
+        <Button size="xs" variant="ghost" className="dev-tree-toggle" aria-label={`${t(open ? 'workbenchNavigation.collapseProject' : 'workbenchNavigation.expandProject')}: ${project.name}`} aria-expanded={open} aria-controls={rowsId} onClick={() => setExpanded(value => ({ ...value, [project.id]: !open }))}>{open ? <FolderOpen size={16} aria-hidden="true" /> : <Folder size={16} aria-hidden="true" />}</Button>
+        <Button size="xs" variant="ghost" className="dev-tree-project-name" data-testid={`dev-project-item-${project.id}`} disabled={busy} aria-pressed={selection.project_id === project.id} onClick={() => onSelectProject(project.id)}><span title={project.path}>{project.name}</span>{pinnedProjectIds.includes(project.id) ? <Pin size={12} aria-label={t('workbenchNavigation.pinned')} /> : null}</Button>
+        <Button size="xs" variant="ghost" className="dev-tree-icon-action" data-testid={`dev-project-new-${project.id}`} aria-label={`${t('dev.newSession')}: ${project.name}`} title={t('dev.newSession')} disabled={busy || project.archived} onClick={() => onNewConversation(project.id)}><Plus size={15} aria-hidden="true" /></Button>
+        <ProjectActions project={project} disabled={busy} onRefresh={onRefreshProject} onFiles={onProjectFiles} />
       </header>
-      <div id={rowsId} hidden={!open}>{open ? renderSessions(project.id, grouped.get(project.id) ?? [], draftTabs.get(project.id) ?? [], Boolean(normalized) && matchingProjectIds.has(project.id)) : null}</div>
+      <div id={rowsId} hidden={!open}>{open ? <>
+        {renderSessions(project.id, rows.filter(session => !archivedIds.has(session.id)), draftTabs.get(project.id) ?? [], Boolean(normalized) && matchingProjectIds.has(project.id))}
+        {archived.length ? <section className="dev-tree-history"><Button size="xs" variant="ghost" className="dev-tree-disclosure" aria-expanded={historyOpen} aria-controls={`${rowsId}-history`} onClick={() => setArchivedConversationsOpen(value => ({ ...value, [project.id]: !historyOpen }))}><ChevronRight size={14} aria-hidden="true" />{t('workbenchNavigation.archivedConversations')}<span>{archived.length}</span></Button><div id={`${rowsId}-history`} hidden={!historyOpen}>{renderSessions(`${project.id}-archive`, archived, [], Boolean(normalized) && matchingProjectIds.has(project.id))}<Button size="xs" variant="ghost" disabled={busy} onClick={() => useDevelopment.getState().restoreSessions(archived.map(session => session.id))}>{t('workbenchNavigation.restoreConversations')}</Button></div></section> : null}
+      </> : null}</div>
     </section>;
   }
 
   return <section className="dev-project-session-tree" data-testid="dev-project-session-tree" aria-label={t('workbenchNavigation.projectsAndSessions')}>
-    <header className="dev-tree-header"><h2>{t('dev.projects')}</h2><ProjectPanel mode="add-only" /></header>
     <div className="dev-tree-search"><Input type="search" data-testid="dev-unified-search" aria-label={t('workbenchNavigation.searchProjectsAndSessions')} placeholder={t('workbenchNavigation.searchProjectsAndSessions')} value={query} onChange={event => setQuery(event.target.value)} /></div>
     {metadata?.epoch === epoch && metadata.owner === workspaceOwner && metadata.failed ? <p className="dev-tree-empty" role="status">{t('workbenchNavigation.metadataUnavailable')}</p> : null}
     {!visibleProjects.length && !visibleUnclassified.length ? <p className="dev-tree-empty">{t(normalized ? 'workbenchNavigation.noMatches' : 'dev.none')}</p> : null}

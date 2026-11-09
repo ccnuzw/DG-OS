@@ -43,6 +43,7 @@ case "$line" in
 *'"method":"config/read"'*) printf '{"id":%s,"result":{"config":{"model_provider":"dgos_project","model_providers":{"dgos_project":{"base_url":"http://127.0.0.1:9/v1","wire_api":"responses","env_key":"DGOS_PROVIDER_KEY","requires_openai_auth":false}}}}}\n' "$request";;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
 *'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"references-smoke","turns":[]}}}\n' "$request" "$PWD";;
+*'"method":"skills/list"'*) printf '{"id":%s,"result":{"data":[{"cwd":"%s","skills":[{"name":"smoke-skill","path":"%s/.agents/skills/smoke-skill/SKILL.md","enabled":true,"scope":"repo"}],"errors":[]}]}}\n' "$request" "$PWD" "$PWD";;
 *'"method":"turn/start"'*) printf '{"id":%s,"result":{"turn":{"id":"smoke-turn"}}}\n' "$request"; printf '%s\n' '{"method":"turn/completed","params":{"threadId":"references-smoke","turn":{"id":"smoke-turn","status":"completed"}}}';;
 esac
 done
@@ -171,18 +172,34 @@ async fn main() -> Result<(), String> {
         let stopped_terminal = manager.stop_development_process("fixture", &sleeper.id).await?;
         require(stopped_terminal.status == "cancelled" && stopped_terminal.finished_at.is_some(), "terminal_stop_unconfirmed")?;
         let executable = root.join("codex-fixture"); fixture(&executable).await?;
+        let skill_path = root.join("code/.agents/skills/smoke-skill/SKILL.md");
+        std::fs::create_dir_all(skill_path.parent().unwrap()).map_err(io)?;
+        std::fs::write(&skill_path, "---\nname: smoke-skill\ndescription: local protocol input proof\n---\nRead only the supplied reference.\n").map_err(io)?;
+        let skill = dgos_agents::session::AgentSkillInput { name: "smoke-skill".into(), path: skill_path.to_string_lossy().into_owned() };
         let id = uuid::Uuid::new_v4().to_string();
         let opened = manager.open_session("fixture", Engine::Codex, id.clone(), SessionCreate { options: SessionOptions { workspace: project.path, resume_id: None, executable: Some(executable.to_string_lossy().into()), model: None, trust_workspace: true }, project_revision: revision.revision, provider }, Some(task.id.clone()), CancellationToken::new()).await?;
         let reference = ConversationReference { project_id: project.id, task_id: Some(task.id.clone()), path: "source.txt".into(), kind: ReferenceKind::File, diff_source: None, expected_hash: saved.hash, start_line: None, end_line: None };
         let request = uuid::Uuid::new_v4().to_string();
-        manager.send("fixture", &id, &opened.generation, request.clone(), "Review attached host content".into(), None, vec![reference.clone()]).await?;
+        manager.send("fixture", &id, &opened.generation, request.clone(), "Review attached host content".into(), None, vec![reference.clone()], vec![skill.clone()]).await?;
         std::fs::remove_file(root.join("code/source.txt")).map_err(io)?;
-        manager.send("fixture", &id, &opened.generation, request.clone(), "Review attached host content".into(), None, vec![reference]).await?;
+        std::fs::remove_file(&skill_path).map_err(io)?;
+        manager.send("fixture", &id, &opened.generation, request.clone(), "Review attached host content".into(), None, vec![reference], vec![skill.clone()]).await?;
         tokio::time::timeout(std::time::Duration::from_secs(5), async { loop { if manager.list_development_runs("fixture", &task.id).await?.iter().any(|run| run.id == request && run.status == "completed") { return Ok::<_, String>(()); } tokio::time::sleep(std::time::Duration::from_millis(20)).await; } }).await.map_err(|_| "run_timeout")??;
         let protocol: Vec<serde_json::Value> = std::fs::read_to_string(root.join("code/protocol.jsonl")).map_err(io)?.lines().map(serde_json::from_str).collect::<Result<_, _>>().map_err(io)?;
         let sends: Vec<_> = protocol.iter().filter(|event| event["method"] == "turn/start").collect();
         require(sends.len() == 1, "duplicate_dispatch")?;
         require(sends[0]["params"]["input"][0]["text"].as_str().is_some_and(|text| text.contains("host-read content follows") && text.ends_with("saved through host\n")), "resolved_content_not_serialized")?;
+        require(sends[0]["params"]["input"].as_array().is_some_and(|items| items.iter().any(|item| item["type"] == "skill" && item["name"] == skill.name && item["path"] == skill.path)), "structured_skill_not_dispatched")?;
+        let full = manager.snapshot("fixture", &id).await?;
+        let last = full.view.events.last().ok_or("missing_terminal_event")?.seq;
+        let delta = manager.snapshot_since("fixture", &id, Some(dgos_agents::session::SessionCursor { generation: opened.generation.clone(), after_seq: last - 1 })).await?;
+        require(delta.event_sync.as_ref().is_some_and(|sync| !sync.reset) && delta.view.events.len() == 1 && delta.view.events[0].seq == last, "incremental_terminal_missing")?;
+        let unchanged = manager.snapshot_since("fixture", &id, Some(dgos_agents::session::SessionCursor { generation: opened.generation.clone(), after_seq: last })).await?;
+        require(unchanged.view.events.is_empty() && unchanged.view.status == "idle", "unchanged_snapshot_repeats_history")?;
+        let restored = manager.snapshot_since("fixture", &id, Some(dgos_agents::session::SessionCursor { generation: uuid::Uuid::new_v4().to_string(), after_seq: last })).await?;
+        require(restored.event_sync.as_ref().is_some_and(|sync| sync.reset) && restored.view.events.len() == full.view.events.len(), "generation_reset_missing")?;
+        require(manager.snapshot_since("other-owner", &id, None).await.is_err(), "incremental_snapshot_owner_leak")?;
+        println!("structured_skill=true incremental_terminal=true unchanged_history_omitted=true generation_reset=true owner_isolated=true");
         let evidence = serde_json::json!({"kind":"local_file_git_terminal_protocol_smoke","passed":true,"model_calls":0,"network_calls":0,"native_cli":false,"root":root,"request_id":request,"dispatch_count":sends.len(),"git_staged_unstaged_committed_history":true,"file_save_and_external_conflict":true,"pty_resize_input_output_stop":true,"local_bare_remote_pull":{"trust_rejected":true,"changed_remote_rejected":true,"dirty_user_work_preserved":true,"divergence_rejected":true,"explicit_fast_forward":pulled,"uuid_replay":true},"protocol_turn":sends[0]});
         let evidence_path = root.with_extension("json");
         std::fs::write(&evidence_path, serde_json::to_vec_pretty(&evidence).map_err(io)?).map_err(io)?;

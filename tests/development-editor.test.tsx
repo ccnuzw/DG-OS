@@ -18,7 +18,7 @@ function installFiles() {
     return Promise.resolve(null);
   });
 }
-it('cancelling file, search and context changes keeps the draft while code views coexist', async () => {
+it('keeps the dirty editor through filtering and cancelled file or context changes', async () => {
   installFiles(); confirmDiscard.mockResolvedValue(false);
   render(<ProjectReview projectId="p" taskId="t" />);
   fireEvent.click(await screen.findByTestId('dev-file-item-a.ts'));
@@ -26,13 +26,13 @@ it('cancelling file, search and context changes keeps the draft while code views
   fireEvent.click(screen.getByTestId('dev-file-item-b.ts'));
   await waitFor(() => expect(confirmDiscard).toHaveBeenCalledTimes(1));
   fireEvent.change(screen.getByTestId('dev-file-search'), { target: { value: 'b' } });
-  await waitFor(() => expect(confirmDiscard).toHaveBeenCalledTimes(2));
+  await act(async () => {});
   fireEvent.keyDown(screen.getByTestId('dev-review-tab-changes'), { key: 'Enter' });
-  expect(confirmDiscard).toHaveBeenCalledTimes(2);
+  expect(confirmDiscard).toHaveBeenCalledTimes(1);
   fireEvent.keyDown(screen.getByTestId('dev-review-tab-files'), { key: 'Enter' });
   await act(async () => { expect((await chooseContext({ project_id: 'other', task_id: null, session_id: null })).ok).toBe(false); });
   expect((screen.getByTestId('dev-file-editor') as HTMLTextAreaElement).value).toBe('unsaved draft');
-  expect((screen.getByTestId('dev-file-search') as HTMLInputElement).value).toBe('');
+  expect((screen.getByTestId('dev-file-search') as HTMLInputElement).value).toBe('b');
   expect(invoke.mock.calls.some(([command]) => command === 'select_development_context')).toBe(false);
 });
 it('keeps the same file editor and draft mounted while reviewing changes', async () => {

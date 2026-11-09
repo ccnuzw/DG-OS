@@ -56,4 +56,9 @@ export default {
   'capabilities.arguments': 'Call arguments',
   'capabilities.catalogProvider': '{name} ({type}, revision {revision})',
   'capabilities.snapshotProvider': '{source}: {provider} / {model} (revision {revision})',
+  'capabilities.workspace': 'Session workspace',
+  'capabilities.notRecorded': 'Not recorded',
+  'capabilities.configurationEvidence': 'Configuration: this session is bound to the recorded DG-OS provider/model revision. Current project edits do not change that binding.',
+  'capabilities.nativeSkillsSource': 'Skills source: native CLI discovery, including its user, project and plugin configuration.',
+  'capabilities.discoveryEvidence': 'Discovery: read the exact active native session in Skills / MCP management. Configured or discovered items do not prove execution, content use, or permission to call a tool.',
 } as const;

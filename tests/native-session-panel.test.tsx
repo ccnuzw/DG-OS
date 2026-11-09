@@ -4,6 +4,7 @@ import NativeSessionPanel from '../src/components/nativeExtensions/NativeSession
 import { useDevelopment } from '../src/stores/developmentStore';
 import { useAgentRunner } from '../src/stores/agentRunnerStore';
 import type { NativeObservedSkill } from '../src/types/nativeExtensions';
+import { CapabilitySnapshotView } from '../src/components/development/CapabilitySnapshotView';
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('../src/i18n', () => ({ t: (key: string) => key, useLocale: () => ({ locale: 'en-US', t: (key: string) => key }) }));
@@ -56,6 +57,20 @@ describe('native session authority boundaries', () => {
     expect(requests).toHaveLength(2);
     expect(requests[0]).not.toBe(requests[1]);
     expect(invoke.mock.calls.some(([command]) => command === 'inspect_native_session_request')).toBe(false);
+  });
+  it('disables a missing Codex skills method without retaining an unknown mutation', async () => {
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'list_native_sessions') return [handle];
+      if (command === 'native_session_action') throw 'native_extension_Unsupported';
+      throw 'unexpected command';
+    });
+    render(<NativeSessionPanel target="Codex" domain="skills" />);
+    await act(async () => {}); await selectSession();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.reloadSkills' })); });
+    expect(screen.queryByRole('button', { name: 'nativeExtensions.verify' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'nativeExtensions.observeSession' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByRole('button', { name: 'nativeExtensions.reloadSkills' })).toBeNull();
+    expect(invoke.mock.calls.filter(([command]) => command === 'native_session_action')).toHaveLength(1);
   });
   it.each(['result_unknown', 'native_extension_Unavailable', 'provider_revision_changed', 'unrecognized-private-error'])('retains uncertainty rather than retrying an unproven failure (%s)', async failure => {
     invoke.mockImplementation(async (command: string) => {
@@ -185,17 +200,65 @@ it('distinguishes explicit Claude builtins from unknown command origins and expo
   expect(invoke.mock.calls.map(([command]) => command)).toEqual(['list_native_sessions', 'observe_native_session']);
 });
 
-it.each(['managed', 'plugin', 'sdk', null, 'user', 'project', 'local', 'incomplete', 'duplicate'] as const)('offers MCP controls only for a complete unambiguous independently admitted native source (%s)', async source => {
+it.each(['managed', 'plugin', 'sdk', null, 'user', 'project', 'local', 'incomplete', 'duplicate', 'unknown-status'] as const)('offers MCP controls only for a complete unambiguous independently admitted native source (%s)', async source => {
   const current = { ...handle, engine: 'claude', capabilities: { ...caps, observe_mcp: true, reconnect_mcp: true, toggle_mcp: true } };
-  const server = { name: 'server', status: 'connected', auth_status: null, source: source === 'incomplete' || source === 'duplicate' ? 'user' : source, scope: null, tools: ['echo'], schema_observed: false };
+  const server = { name: 'server', status: source === 'unknown-status' ? 'unknown' : 'connected', auth_status: null, source: source === 'incomplete' || source === 'duplicate' || source === 'unknown-status' ? 'user' : source, scope: null, tools: ['echo'], schema_observed: false };
   invoke.mockImplementation(async (command: string) => command === 'list_native_sessions' ? [current] : { ...current, domain: 'mcp', observed_at: 1, skills: [], mcp_servers: source === 'duplicate' ? [server, server] : [server], incomplete: source === 'incomplete' });
   render(<NativeSessionPanel target="Claude" domain="mcp" initialProjectId="project-a" initialSessionId={handle.session_id} />);
   await act(async () => {});
   fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.observeSession' }));
-  await screen.findAllByText(/server · connected/);
+  await screen.findAllByText(new RegExp(`server · ${server.status}`));
   const allowed = source === 'user' || source === 'project' || source === 'local';
   expect(screen.queryByRole('button', { name: 'nativeExtensions.reconnect' }) !== null).toBe(allowed);
   expect(screen.queryByRole('button', { name: 'nativeExtensions.enable' }) !== null).toBe(allowed);
   expect(screen.queryByRole('button', { name: 'nativeExtensions.disable' }) !== null).toBe(allowed);
   expect(invoke.mock.calls.some(([command]) => command === 'native_session_action')).toBe(false);
+});
+
+it('shows supported observation and precise Codex MCP exclusions without offering a mutation', async () => {
+  const current = { ...handle, capabilities: { ...caps, observe_mcp: true, reconnect_mcp: false, toggle_mcp: false, native_login: false, native_logout: false,
+    native_auth_guidance: { verified_version: '0.167.0', reason: 'missing_mcp_login_cancel_and_logout_contract', login_argv: ['codex', 'mcp', 'login', '<NAME>'], logout_argv: ['codex', 'mcp', 'logout', '<NAME>'] },
+    mcp_control_guidance: { verified_version: '0.167.0', reason: 'missing_session_scoped_mcp_control_contract', inspect_argv: ['codex', 'mcp', 'get', '<NAME>'] } } };
+  invoke.mockImplementation(async (command: string) => command === 'list_native_sessions' ? [current] : { ...current, domain: 'mcp', observed_at: 1, skills: [], mcp_servers: [{ name: 'fixture', status: 'connected', auth_status: 'oAuth', source: null, scope: null, tools: ['echo'], schema_observed: false }], incomplete: false });
+  render(<NativeSessionPanel target="Codex" domain="mcp" initialProjectId="project-a" initialSessionId={handle.session_id} />);
+  await act(async () => {});
+  expect(screen.getByText('nativeExtensions.guidance.missing_mcp_login_cancel_and_logout_contract')).toBeTruthy();
+  expect(screen.getByText('nativeExtensions.guidance.missing_session_scoped_mcp_control_contract')).toBeTruthy();
+  expect(screen.getByText('codex mcp login <NAME>')).toBeTruthy();
+  expect(screen.getByText('codex mcp logout <NAME>')).toBeTruthy();
+  expect(screen.getByText('codex mcp get <NAME>')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.observeSession' }));
+  await screen.findByText('nativeExtensions.mcpObservedViaCodex');
+  for (const name of ['reconnect', 'enable', 'disable']) expect(screen.queryByRole('button', { name: `nativeExtensions.${name}` })).toBeNull();
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual(['list_native_sessions', 'observe_native_session']);
+});
+
+it.each(['generation-replaced', 'unknown'] as const)('blocks a formerly selected generation when runtime becomes %s', async reason => {
+  invoke.mockImplementation(async (command: string) => command === 'list_native_sessions' ? [handle] : { ...handle, domain: 'skills', observed_at: 1, skills: [observedSkill], mcp_servers: [], incomplete: false });
+  render(<NativeSessionPanel target="Codex" domain="skills" initialProjectId="project-a" initialSessionId={handle.session_id} />);
+  await act(async () => {});
+  fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.observeSession' }));
+  await screen.findByText('observed-skill', { exact: true });
+  act(() => useAgentRunner.setState({ session: { id: handle.session_id, generation: reason === 'generation-replaced' ? 'generation-b' : handle.generation, engine: 'codex', native_id: null, workspace: '/tmp/project-a', status: reason === 'unknown' ? 'unknown' : 'ready', events: [], pending: [], error: null } }));
+  expect(screen.queryAllByText(/observed-skill/)).toHaveLength(0);
+  expect(screen.queryByRole('button', { name: 'nativeExtensions.reloadSkills' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'nativeExtensions.observeSession' }).hasAttribute('disabled')).toBe(true);
+  expect(invoke.mock.calls.some(([command]) => command === 'native_session_action')).toBe(false);
+});
+
+it('separates pinned provider configuration, actual runtime context, and native discovery from execution evidence', () => {
+  const snapshot = { binding_id: 'binding', engine: 'codex' as const, provider_id: 'pinned-provider', model_id: 'pinned-model', provider_revision: 3, revision: 2, permission_epoch: 1 };
+  const view = render(<CapabilitySnapshotView snapshot={snapshot} runtime={{ workspace: '/actual/session-workspace', cli_version: 'codex-cli 0.167.0' }} />);
+  expect(screen.getByText('pinned-provider / pinned-model')).toBeTruthy();
+  expect(screen.getByText('/actual/session-workspace')).toBeTruthy();
+  expect(screen.getByText('codex-cli 0.167.0')).toBeTruthy();
+  expect(screen.getByText('capabilities.catalogSource')).toBeTruthy();
+  expect(screen.getByText('capabilities.configurationEvidence')).toBeTruthy();
+  expect(screen.getByText('capabilities.nativeSkillsSource')).toBeTruthy();
+  expect(screen.getByText('capabilities.nativeMcpSource')).toBeTruthy();
+  expect(screen.getByText('capabilities.discoveryEvidence')).toBeTruthy();
+  view.rerender(<CapabilitySnapshotView snapshot={snapshot} />);
+  expect(screen.queryByText('/actual/session-workspace')).toBeNull();
+  expect(screen.queryByText('codex-cli 0.167.0')).toBeNull();
+  expect(screen.getAllByText('capabilities.notRecorded')).toHaveLength(2);
 });

@@ -192,3 +192,42 @@ it('blocks fresh send identities until the original unknown send has matching ad
  expect(await useAgentRunner.getState().action('send_agent_message', { input: { ...input, request_id: 'next', text: 'next turn' } })).toBe(true);
  expect(invoke.mock.calls.filter(([command]) => command === 'send_agent_message')).toHaveLength(2);
 });
+
+it('appends each event once, drops evicted history and refreshes approvals without transcript output', async () => {
+  const event = (seq: number) => ({ seq, kind: 'output', text: `message-${seq}`, data: null });
+  const pending = { id: 'native-request', kind: 'approval', title: 'Approve command', data: null };
+  invoke.mockResolvedValueOnce(session('one', { events: [event(1), event(2)] }))
+    .mockResolvedValueOnce(session('one', { events: [event(3)], event_sync: { reset: false, after_seq: 2, first_seq: 2 } }))
+    .mockResolvedValueOnce(session('one', { events: [], status: 'waiting', pending: [pending], event_sync: { reset: false, after_seq: 3, first_seq: 2 } }));
+  await useAgentRunner.getState().attach('one');
+  await vi.advanceTimersByTimeAsync(600);
+  expect(useAgentRunner.getState().session?.events.map(row => row.seq)).toEqual([2, 3]);
+  await vi.advanceTimersByTimeAsync(600);
+  expect(useAgentRunner.getState().session?.events.map(row => row.text)).toEqual(['message-2', 'message-3']);
+  expect(useAgentRunner.getState().session?.pending).toEqual([pending]);
+  expect(invoke.mock.calls[2][1]).toEqual({ sessionId: 'one', cursor: { generation: 'generation-one', after_seq: 3 } });
+});
+
+it('recovers an event gap through a read-only full snapshot rather than displaying partial history', async () => {
+  const event = (seq: number) => ({ seq, kind: 'output', text: `message-${seq}`, data: null });
+  invoke.mockResolvedValueOnce(session('one', { events: [event(1)] }))
+    .mockResolvedValueOnce(session('one', { events: [event(3)], event_sync: { reset: false, after_seq: 1, first_seq: 1 } }))
+    .mockResolvedValueOnce(session('one', { events: [event(1), event(2), event(3)], event_sync: { reset: true, after_seq: 0, first_seq: 1 } }));
+  await useAgentRunner.getState().attach('one');
+  await vi.advanceTimersByTimeAsync(600);
+  expect(useAgentRunner.getState().session?.events.map(row => row.seq)).toEqual([1, 2, 3]);
+  expect(invoke.mock.calls.at(-1)).toEqual(['get_agent_session', { sessionId: 'one' }]);
+  expect(invoke.mock.calls.every(([command]) => command === 'get_agent_session')).toBe(true);
+});
+
+it('replaces a restored generation without retaining old messages or approvals', async () => {
+  const old = { seq: 1, kind: 'output', text: 'old runtime', data: null };
+  const fresh = { seq: 1, kind: 'output', text: 'restored history', data: null };
+  invoke.mockResolvedValueOnce(session('one', { events: [old], pending: [{ id: 'old', kind: 'approval', title: 'Old', data: null }] }))
+    .mockResolvedValueOnce(session('one', { generation: 'restored', events: [fresh], event_sync: { reset: true, after_seq: 0, first_seq: 1 } }));
+  await useAgentRunner.getState().attach('one');
+  await vi.advanceTimersByTimeAsync(600);
+  expect(useAgentRunner.getState().session?.generation).toBe('restored');
+  expect(useAgentRunner.getState().session?.events).toEqual([fresh]);
+  expect(useAgentRunner.getState().session?.pending).toEqual([]);
+});

@@ -123,3 +123,127 @@ pub async fn open_development_external(app: tauri::AppHandle, window: WebviewWin
     if lease.is_cancelled() { return Err("session_invalid".into()); }
     Ok(())
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProjectExternalTarget { Terminal, Reveal }
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenDevelopmentProjectExternalInput { project_id: String, target: ProjectExternalTarget }
+
+#[tauri::command]
+pub async fn open_development_project_external(app: tauri::AppHandle, window: WebviewWindow, input: OpenDevelopmentProjectExternalInput) -> Result<(), String> {
+    let (owner, lease) = caller(&app, &window)?;
+    let manager = app.state::<AgentManager>();
+    // Keep admission until dispatch completes so archive, relocation and removal cannot race it.
+    let admission = manager.admit_native_project(&owner, &input.project_id, &lease).await?;
+    if lease.is_cancelled() { return Err("session_invalid".into()); }
+    let result = match input.target {
+        ProjectExternalTarget::Terminal => open_project_terminal(std::path::Path::new(&admission.project.path), &lease).await,
+        ProjectExternalTarget::Reveal => app.opener().reveal_item_in_dir(&admission.project.path).map_err(|_| "external_open_failed".into()),
+    };
+    if lease.is_cancelled() { return Err("session_invalid".into()); }
+    result
+}
+
+fn project_terminal_command(root: &std::path::Path) -> Result<tokio::process::Command, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = tokio::process::Command::new("/usr/bin/open");
+        command.args(["-a", "/System/Applications/Utilities/Terminal.app", "--"]).arg(root);
+        Ok(command)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Use the desktop helper directly: never search project cwd/PATH or interpolate a shell.
+        let mut command = tokio::process::Command::new("/usr/bin/gnome-terminal");
+        command.arg("--working-directory").arg(root);
+        Ok(command)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let system_root = std::env::var_os("SystemRoot").ok_or("terminal_unavailable")?;
+        let executable = std::path::PathBuf::from(system_root).join("System32").join("WindowsPowerShell").join("v1.0").join("powershell.exe");
+        if !executable.is_absolute() { return Err("terminal_unavailable".into()); }
+        let mut command = tokio::process::Command::new(executable);
+        // No profile scripts or command text; cwd also supports UNC project roots.
+        command.args(["-NoLogo", "-NoProfile", "-NoExit"]).current_dir(root).creation_flags(0x00000010); // CREATE_NEW_CONSOLE
+        Ok(command)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    { let _ = root; Err("terminal_unsupported".into()) }
+}
+
+async fn open_project_terminal(root: &std::path::Path, lease: &CancellationToken) -> Result<(), String> {
+    if lease.is_cancelled() { return Err("session_invalid".into()); }
+    let mut command = project_terminal_command(root)?;
+    #[cfg(not(target_os = "windows"))]
+    command.kill_on_drop(true).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    let mut child = command.spawn().map_err(|error| if error.kind() == std::io::ErrorKind::NotFound { "terminal_unavailable" } else { "external_open_failed" })?;
+    // Windows starts the interactive console itself, not a short-lived launcher.
+    #[cfg(target_os = "windows")]
+    { let _ = child; Ok(()) }
+    #[cfg(not(target_os = "windows"))]
+    {
+        tokio::select! {
+            biased;
+            _ = lease.cancelled() => Err("session_invalid".into()),
+            result = tokio::time::timeout(std::time::Duration::from_secs(10), child.wait()) => match result {
+                Ok(Ok(status)) if status.success() => Ok(()),
+                Ok(_) => Err("external_open_failed".into()),
+                Err(_) => Err("external_open_timeout".into()),
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod project_external_tests {
+    use super::*;
+
+    #[test]
+    fn project_external_input_rejects_renderer_paths_programs_and_unknown_targets() {
+        for extra in ["path", "program", "owner", "lease", "editor", "task_id"] {
+            let mut input = serde_json::json!({"project_id":"project", "target":"terminal"});
+            input[extra] = serde_json::json!("untrusted");
+            assert!(serde_json::from_value::<OpenDevelopmentProjectExternalInput>(input).is_err());
+        }
+        for target in ["editor", "preview", "/bin/sh", "Terminal", ""] {
+            assert!(serde_json::from_value::<OpenDevelopmentProjectExternalInput>(serde_json::json!({"project_id":"project", "target":target})).is_err());
+        }
+        for target in ["terminal", "reveal"] {
+            assert!(serde_json::from_value::<OpenDevelopmentProjectExternalInput>(serde_json::json!({"project_id":"project", "target":target})).is_ok());
+        }
+    }
+
+    #[test]
+    fn project_terminal_passes_metacharacters_as_one_directory_argument() {
+        let root = std::path::Path::new("/tmp/project 'quoted' $(touch forbidden); &\n-next");
+        let command = project_terminal_command(root).unwrap();
+        let command = command.as_std();
+        let args: Vec<_> = command.get_args().collect();
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(command.get_program(), "/usr/bin/open");
+            assert_eq!(args, [std::ffi::OsStr::new("-a"), std::ffi::OsStr::new("/System/Applications/Utilities/Terminal.app"), std::ffi::OsStr::new("--"), root.as_os_str()]);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(command.get_program(), "/usr/bin/gnome-terminal");
+            assert_eq!(args, [std::ffi::OsStr::new("--working-directory"), root.as_os_str()]);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            assert!(std::path::Path::new(command.get_program()).is_absolute());
+            assert_eq!(args, [std::ffi::OsStr::new("-NoLogo"), std::ffi::OsStr::new("-NoProfile"), std::ffi::OsStr::new("-NoExit")]);
+            assert_eq!(command.get_current_dir(), Some(root));
+        }
+    }
+
+    #[tokio::test]
+    async fn project_terminal_rejects_revoked_lease_before_spawning() {
+        let lease = CancellationToken::new(); lease.cancel();
+        assert_eq!(open_project_terminal(std::path::Path::new("/missing"), &lease).await.unwrap_err(), "session_invalid");
+    }
+}

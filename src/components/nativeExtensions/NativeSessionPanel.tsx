@@ -9,7 +9,7 @@ import type { NativeObservedSkill } from '../../types/nativeExtensions';
 import { hostCode } from '../../stores/hostError';
 
 type Domain = 'skills' | 'mcp';
-interface Capabilities { observe_skills: boolean; observe_mcp: boolean; reload_skills: boolean; reload_plugins: boolean; reconnect_mcp: boolean; toggle_mcp: boolean; native_login: boolean; native_logout: boolean; native_auth_guidance: null | { verified_version: string; reason: string; login_argv: string[]; logout_argv: string[] } }
+interface Capabilities { observe_skills: boolean; observe_mcp: boolean; reload_skills: boolean; reload_plugins: boolean; reconnect_mcp: boolean; toggle_mcp: boolean; native_login: boolean; native_logout: boolean; native_auth_guidance: null | { verified_version: string; reason: string; login_argv: string[]; logout_argv: string[] }; mcp_control_guidance?: null | { verified_version: string; reason: string; inspect_argv: string[] } }
 interface Handle { session_id: string; generation: string; project_id: string; engine: 'codex' | 'claude'; capabilities: Capabilities }
 interface Observation { session_id: string; generation: string; engine: Handle['engine']; domain: Domain; observed_at: number; capabilities: Capabilities; skills: NativeObservedSkill[]; mcp_servers: { name: string; status: string; auth_status: string | null; source: string | null; scope: string | null; tools: string[]; schema_observed: false }[]; incomplete: boolean }
 type Action = { kind: 'reload_skills' } | { kind: 'reload_plugins'; hold_on_cache_impact: boolean } | { kind: 'reconnect_mcp'; server_name: string } | { kind: 'toggle_mcp'; server_name: string; enabled: boolean };
@@ -51,7 +51,7 @@ export default function NativeSessionPanel({ target, domain, initialProjectId, i
   const handle = handlesContext === contextKey ? handles.find(item => item.session_id === selected) : undefined;
   const handleKey = handle ? JSON.stringify([epoch, handle.session_id, handle.generation]) : '';
   const blocked = uncertain.has(handleKey);
-  const unavailable = runnerSession?.id === selected && (runnerSession.status === 'closed' || runnerSession.status === 'unknown' || runnerSession.status === 'starting');
+  const unavailable = runnerSession?.id === selected && (runnerSession.generation !== handle?.generation || runnerSession.status === 'closed' || runnerSession.status === 'unknown' || runnerSession.status === 'starting');
   const visibleObservation = !unavailable && observationContext === contextKey && observation?.session_id === handle?.session_id && observation?.generation === handle?.generation ? observation : null;
   useEffect(() => {
     if (!unavailable) return;
@@ -102,12 +102,15 @@ export default function NativeSessionPanel({ target, domain, initialProjectId, i
       if (receipt.state !== 'unknown' && useDevelopment.getState().epoch === epoch && uncertain.get(handleKey) === pending) { uncertain.delete(handleKey); notify(); }
       if (seq === generation.current) setMessage(t(`nativeExtensions.action.${receipt.state}`));
     } catch (error) {
-      // This admission refusal is returned before a receipt or native dispatch.
-      // A missing/malformed response is not evidence that the action did not run.
-      if (error === 'session_busy' && useDevelopment.getState().epoch === epoch && uncertain.get(handleKey) === pending) { uncertain.delete(handleKey); notify(); }
+      // Busy admission and a missing Codex method both prove no mutation ran.
+      // Other failures retain the original request until its outcome is known.
+      const unsupportedSkills = handle.engine === 'codex' && action.kind === 'reload_skills' && error === 'native_extension_Unsupported';
+      const refused = error === 'session_busy' || unsupportedSkills;
+      if (refused && useDevelopment.getState().epoch === epoch && uncertain.get(handleKey) === pending) { uncertain.delete(handleKey); notify(); }
       if (seq === generation.current) {
+        if (unsupportedSkills) setHandles(values => values.map(value => value.session_id === handle.session_id && value.generation === handle.generation ? { ...value, capabilities: { ...value.capabilities, observe_skills: false, reload_skills: false } } : value));
         const code = hostCode(error);
-        setMessage(error === 'session_busy' ? t('nativeExtensions.error.session_busy') : code === 'unknown' ? t('nativeExtensions.action.unknown') : `${t(`nativeExtensions.error.${nativeError(error)}`)} ${t('nativeExtensions.action.unknown')}`);
+        setMessage(refused ? t(`nativeExtensions.error.${nativeError(error)}`) : code === 'unknown' ? t('nativeExtensions.action.unknown') : `${t(`nativeExtensions.error.${nativeError(error)}`)} ${t('nativeExtensions.action.unknown')}`);
       }
     }
     finally { if (seq === generation.current) { inFlight.current = false; setBusy(false); } }
@@ -127,7 +130,7 @@ export default function NativeSessionPanel({ target, domain, initialProjectId, i
   };
   const select = (id: string) => { requested.current.session = undefined; generation.current++; setSelected(id); setObservation(null); setMessage(''); setBusy(false); inFlight.current = false; };
   const caps = unavailable ? undefined : handle?.capabilities;
-  const mcpControlAllowed = (item: Observation['mcp_servers'][number]) => !visibleObservation?.incomplete && ['user', 'project', 'local'].includes(item.source ?? '') && visibleObservation?.mcp_servers.filter(server => server.name === item.name).length === 1;
+  const mcpControlAllowed = (item: Observation['mcp_servers'][number]) => item.status !== 'unknown' && !visibleObservation?.incomplete && ['user', 'project', 'local'].includes(item.source ?? '') && visibleObservation?.mcp_servers.filter(server => server.name === item.name).length === 1;
   return <section className="flex min-w-0 flex-col gap-3 border-t border-border-subtle pt-3" aria-label={t('nativeExtensions.sessions')}>
     <h3 className="m-0 text-base">{t('nativeExtensions.sessions')}</h3>
     <div className="flex flex-wrap gap-3">
@@ -139,7 +142,27 @@ export default function NativeSessionPanel({ target, domain, initialProjectId, i
     {!handles.length && <p className="m-0 text-sm text-ink-secondary">{t('nativeExtensions.noSessions')}</p>}
     {(message || blocked || unavailable) && <p role="status" className="m-0 text-sm">{unavailable ? t('nativeExtensions.sessionUnobservable') : message || t('nativeExtensions.action.unknown')}</p>}
     {blocked && <div className="flex flex-wrap gap-2 text-sm"><span className="break-all">{t('nativeExtensions.operationId')}: {uncertain.get(handleKey)?.request_id}</span><Button variant="secondary" disabled={busy || unavailable} onClick={() => void inspect()}>{t('nativeExtensions.verify')}</Button></div>}
-    {handle && <div className="text-sm text-ink-secondary"><p className="m-0">{t('nativeExtensions.authUnsupported')}</p>{caps?.native_auth_guidance && <><p className="m-0">{caps.native_auth_guidance.verified_version}</p><code className="block break-all">{caps.native_auth_guidance.login_argv.join(' ')}</code><code className="block break-all">{caps.native_auth_guidance.logout_argv.join(' ')}</code></>}</div>}
+    {handle && !unavailable && <div className="flex min-w-0 flex-col gap-1 text-sm text-ink-secondary">
+      <p className="m-0">{t('nativeExtensions.discoveryStage')}</p>
+      {runnerSession?.id === handle.session_id && runnerSession.generation === handle.generation && <dl className="m-0 grid min-w-0 gap-1">
+        <div className="break-all"><dt className="inline">{t('capabilities.cli')}: </dt><dd className="m-0 inline">{runnerSession.cli_version || t('nativeExtensions.unknown')}</dd></div>
+        <div className="break-all"><dt className="inline">{t('capabilities.workspace')}: </dt><dd className="m-0 inline">{runnerSession.workspace}</dd></div>
+      </dl>}
+      {domain === 'mcp' && <>
+        <p className="m-0">{t('nativeExtensions.authUnsupported')}</p>
+        {caps?.native_auth_guidance && <>
+          <p className="m-0">{t('nativeExtensions.verifiedProtocol', { version: caps.native_auth_guidance.verified_version })}</p>
+          <p className="m-0">{t(`nativeExtensions.guidance.${caps.native_auth_guidance.reason}`)}</p>
+          <code className="block break-all">{caps.native_auth_guidance.login_argv.join(' ')}</code>
+          <code className="block break-all">{caps.native_auth_guidance.logout_argv.join(' ')}</code>
+        </>}
+        {caps?.mcp_control_guidance && <>
+          <p className="m-0">{t(`nativeExtensions.guidance.${caps.mcp_control_guidance.reason}`)}</p>
+          <code className="block break-all">{caps.mcp_control_guidance.inspect_argv.join(' ')}</code>
+          <p className="m-0">{t('nativeExtensions.nativeMcpNextStep')}</p>
+        </>}
+      </>}
+    </div>}
     {domain === 'skills' && <div className="flex flex-wrap gap-2">
       {caps?.reload_skills && <Button disabled={busy || blocked} onClick={() => void act({ kind: 'reload_skills' })}>{t('nativeExtensions.reloadSkills')}</Button>}
       {caps?.reload_plugins && <Button variant="secondary" disabled={busy || blocked} onClick={() => void act({ kind: 'reload_plugins', hold_on_cache_impact: true })}>{t('nativeExtensions.reloadPlugins')}</Button>}
@@ -149,6 +172,7 @@ export default function NativeSessionPanel({ target, domain, initialProjectId, i
       <time dateTime={new Date(visibleObservation.observed_at).toISOString()}>{new Date(visibleObservation.observed_at).toLocaleString()}</time>
       {visibleObservation.incomplete && <p>{t('nativeExtensions.incomplete')}</p>}
       {domain === 'skills' && <><p className="m-0">{t(visibleObservation.engine === 'codex' ? 'nativeExtensions.observedViaCodex' : 'nativeExtensions.observedViaClaude')}</p><p className="m-0 text-ink-secondary">{t('nativeExtensions.observedReadOnly')}</p></>}
+      {domain === 'mcp' && <p className="m-0 text-ink-secondary">{t(visibleObservation.engine === 'codex' ? 'nativeExtensions.mcpObservedViaCodex' : 'nativeExtensions.mcpObservedViaClaude')}</p>}
       {domain === 'skills' ? visibleObservation.skills.map((item, index) => <div className="flex min-w-0 flex-col gap-1 border-t border-border-subtle pt-2" key={`${item.name}:${index}`}>
         <p className="m-0 break-all">{item.name}</p>
         <dl className="m-0 grid min-w-0 gap-1">
@@ -161,7 +185,7 @@ export default function NativeSessionPanel({ target, domain, initialProjectId, i
         </dl>
       </div>) : visibleObservation.mcp_servers.map((item, index) => <div key={`${item.name}:${index}`} className="flex min-w-0 flex-wrap items-center gap-2 border-t border-border-subtle pt-2">
         <span className="break-all">{item.name} · {item.status} · {item.auth_status ?? t('nativeExtensions.unknown')}</span>
-        {item.source && <span className="break-all">{item.source}</span>}
+        <span className="break-all">{t('nativeExtensions.observedSource')}: {item.source ?? t('nativeExtensions.unknown')}</span>
         {item.scope && <span>{item.scope}</span>}
         {caps?.reconnect_mcp && mcpControlAllowed(item) && <Button size="xs" disabled={busy || blocked} onClick={() => void act({ kind: 'reconnect_mcp', server_name: item.name })}>{t('nativeExtensions.reconnect')}</Button>}
         {caps?.toggle_mcp && mcpControlAllowed(item) && <><Button size="xs" disabled={busy || blocked} onClick={() => void act({ kind: 'toggle_mcp', server_name: item.name, enabled: true })}>{t('nativeExtensions.enable')}</Button><Button size="xs" variant="secondary" disabled={busy || blocked} onClick={() => void act({ kind: 'toggle_mcp', server_name: item.name, enabled: false })}>{t('nativeExtensions.disable')}</Button></>}

@@ -201,3 +201,22 @@ async fn project_admission_permit_serializes_archive_updates() {
     manager.shutdown().await;
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn project_external_admission_rejects_revocation_while_waiting() {
+    let root = root();
+    let path = root.join("project"); std::fs::create_dir(&path).unwrap();
+    let manager = admission_manager(&root).await;
+    let project = manager.create_project("alice", import(&path), CancellationToken::new()).await.unwrap();
+    let admission = manager.admit_native_project("alice", &project.id, &CancellationToken::new()).await.unwrap();
+    let lease = CancellationToken::new();
+    let pending = manager.admit_native_project("alice", &project.id, &lease);
+    tokio::pin!(pending);
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(20), &mut pending).await.is_err());
+    lease.cancel();
+    assert!(matches!(pending.await, Err(error) if error == "session_invalid"));
+    drop(admission);
+    assert!(matches!(manager.admit_native_project("alice", &project.id, &lease).await, Err(error) if error == "session_invalid"));
+    manager.shutdown().await;
+    std::fs::remove_dir_all(root).unwrap();
+}

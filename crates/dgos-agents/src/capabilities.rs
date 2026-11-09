@@ -124,14 +124,17 @@ impl CliProviders {
     pub async fn catalog(&self, owner: &str, project_id: &str, engine: Engine) -> Result<Value, String> {
         self.repository.project(owner, project_id).await?;
         let cli = crate::cli::probe(match engine { Engine::Codex => crate::cli::CliTool::Codex, Engine::Claude => crate::cli::CliTool::Claude }, None).await;
-        let cli_available = cli.status == "available" && (engine != Engine::Codex || cli.version.as_deref() == Some("codex-cli 0.167.0"));
+        let cli_available = cli.startup_error().is_none();
         let mut providers = Vec::new();
         for provider in self.providers.list_providers(owner).await.map_err(|_| "provider_unavailable")? {
-            let availability = provider_availability(engine, &provider.provider_type, &provider.base_url, provider.config.as_ref(), provider.enabled, cli_available);
+            let mut availability = provider_availability(engine, &provider.provider_type, &provider.base_url, provider.config.as_ref(), provider.enabled, cli_available);
+            if engine == Engine::Codex && availability["reason"] == "cli_incompatible" {
+                availability["reason"] = json!(cli.startup_error());
+            }
             let models = self.providers.list_models(&provider.id, owner).await.map_err(|_| "provider_unavailable")?;
             providers.push(json!({"id":provider.id,"name":provider.name,"config_revision":provider.config_revision,"enabled":provider.enabled,"availability":availability,"models":models.into_iter().filter(|m| matches!(m.model_type.as_str(), "text-generation" | "chat")).map(|m| json!({"id":m.model_id,"name":m.model_name,"model_type":m.model_type})).collect::<Vec<_>>()}));
         }
-        Ok(json!({"project_id":project_id,"engine":engine,"providers":providers}))
+        Ok(json!({"project_id":project_id,"engine":engine,"providers":providers,"cli":cli}))
     }
 
     pub async fn revoke(&self, owner: &str, project_id: &str) -> Result<i64, String> {

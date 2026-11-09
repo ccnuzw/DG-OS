@@ -1,11 +1,14 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Modal } from '@dgos/ui';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { Files, ChangeDiff } from '../src/components/development/ProjectReview';
+import { ChangeDiff } from '../src/components/development/ProjectReview';
+import { Files } from '../src/components/development/ProjectFiles';
 import { DeliveryPanel } from '../src/components/development/DeliveryPanel';
 import { useDevelopment } from '../src/stores/developmentStore';
 import { useDevelopmentDrafts } from '../src/stores/developmentDrafts';
-const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
+import { useDevelopmentEditor } from '../src/stores/developmentEditor';
+const { invoke, confirmDiscard } = vi.hoisted(() => ({ invoke: vi.fn(), confirmDiscard: vi.fn() }));
+vi.mock('../src/workspace/closeCoordinator', () => ({ confirmDiscard }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('../src/i18n', () => ({ useLocale: () => ({ locale: 'en-US', t: (key: string) => key }), t: (key: string) => key, formatDateTime: String }));
 const project = { id: 'p', owner: 'alice', name: 'Project', path: '/project', directory_identity: 'root', archived: false, created_at: 1, last_opened_at: null };
@@ -14,6 +17,7 @@ const review = { ...overview, task_id: 't', review_token: 'task-authority', base
 const workspace = { workspaces: [{ id: 'root', path: '/project', kind: 'original' }], selected_workspace_id: null, operations: [], operation: null };
 beforeEach(() => {
   localStorage.clear(); useDevelopment.getState().reset(); useDevelopment.setState({ projects: [project] });
+  confirmDiscard.mockReset(); confirmDiscard.mockResolvedValue(true);
   invoke.mockImplementation(async (command: string) => {
     if (command === 'read_development_project_git') return overview;
     if (command === 'read_development_git') return review;
@@ -89,11 +93,12 @@ it('expands directories lazily, retains filter ancestors and creates entries onl
   fireEvent.change(screen.getByTestId('dev-file-search'), { target: { value: 'app' } });
   await screen.findByTestId('dev-file-item-src/app.ts'); expect(screen.getByTestId('dev-file-item-src')).toBeTruthy();
   const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(options => { options.onCancel?.(); return { id: 'confirm', close: () => {} }; });
-  fireEvent.change(screen.getByLabelText('workbenchFiles.newPath'), { target: { value: 'new-folder' } });
-  fireEvent.click(screen.getByRole('button', { name: 'workbenchFiles.newFolder' })); await act(async () => {});
+  fireEvent.click(screen.getByRole('button', { name: 'workbenchFiles.newFolder' }));
+  fireEvent.change(screen.getByLabelText('workbenchFiles.entryName'), { target: { value: 'new-folder' } });
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'workbenchFiles.create' })); await act(async () => {});
   expect(invoke.mock.calls.some(([command]) => command === 'create_development_entry')).toBe(false);
   confirm.mockImplementation(options => { options.onConfirm?.(); return { id: 'confirm', close: () => {} }; });
-  fireEvent.click(screen.getByRole('button', { name: 'workbenchFiles.newFolder' })); await act(async () => {});
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'workbenchFiles.create' })); await act(async () => {});
   expect(invoke).toHaveBeenCalledWith('create_development_entry', { input: { project_id: 'p', task_id: null, path: 'src/new-folder', kind: 'directory', trust_directory: true } });
 });
 it('refuses task preparation that resolves to a different workspace', async () => {
@@ -105,115 +110,107 @@ it('refuses task preparation that resolves to a different workspace', async () =
   expect(invoke.mock.calls.some(([command]) => command === 'execute_development_git')).toBe(false);
 });
 
-it('does not replay an unknown entry creation and retains the entered name for inspection', async () => {
-  const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation(async (command: string, args: unknown) => { if (command === 'create_development_entry') throw 'file_create_unknown'; return original(command, args); });
-  vi.spyOn(Modal, 'confirm').mockImplementation(options => { options.onConfirm?.(); return { id: 'confirm', close: () => {} }; });
-  render(<Files projectId="p" taskId={null} onOpenFile={vi.fn()} />); await screen.findByText('review.noFiles');
-  fireEvent.change(screen.getByLabelText('workbenchFiles.newPath'), { target: { value: 'new.txt' } });
-  fireEvent.click(screen.getByRole('button', { name: 'workbenchFiles.newFile' })); await screen.findByRole('alert');
-  expect(screen.getByRole('button', { name: 'workbenchFiles.newFile' })).toHaveProperty('disabled', true);
+async function createFile(name: string) {
   fireEvent.click(screen.getByRole('button', { name: 'workbenchFiles.newFile' }));
-  expect(invoke.mock.calls.filter(([command]) => command === 'create_development_entry')).toHaveLength(1);
-  fireEvent.click(screen.getByTestId('dev-review-refresh')); await act(async () => {});
-  expect(invoke.mock.calls.filter(([command]) => command === 'create_development_entry')).toHaveLength(1);
-  expect(screen.getByLabelText('workbenchFiles.newPath')).toHaveProperty('value', 'new.txt');
-  expect(screen.getByRole('button', { name: 'workbenchFiles.newFile' })).toHaveProperty('disabled', false);
-});
-
-it('retains a pending create across switches and inspects a late unknown result without replay', async () => {
-  const { promise: pendingCreate, reject: rejectCreate } = Promise.withResolvers<never>();
-  let inspection: 'truncated' | 'failed' | 'complete' = 'truncated';
-  invoke.mockImplementation(async (command: string, args: { input: { path: string; query: string; include_ignored: boolean } }) => {
-    if (command === 'create_development_entry') return pendingCreate;
-    if (command === 'list_development_files') {
-      if (args.input.path === 'src' && args.input.include_ignored) {
-        if (inspection === 'failed') throw 'file_access_denied';
-        return { entries: [{ path: 'src/new.txt', name: 'new.txt', kind: 'file', ignored: true, size: 0 }], truncated: inspection === 'truncated' };
-      }
-      return { entries: args.input.path ? [] : [{ path: 'src', name: 'src', kind: 'directory', ignored: false, size: 0 }], truncated: false };
-    }
-    return null;
+  fireEvent.change(screen.getByLabelText('workbenchFiles.entryName'), { target: { value: name } });
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'workbenchFiles.create' }));
+  await act(async () => {});
+}
+it('retains pending creation across unmount and requires a successful read-only inspection after an unknown result', async () => {
+  const pending = Promise.withResolvers<never>();
+  let inspectionFails = true;
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: unknown) => {
+    if (command === 'create_development_entry') return pending.promise;
+    if (command === 'inspect_development_entry') { if (inspectionFails) throw 'file_access_denied'; throw 'file_not_found'; }
+    return original(command, args);
   });
   vi.spyOn(Modal, 'confirm').mockImplementation(options => { options.onConfirm?.(); return { id: 'confirm', close: () => {} }; });
   const onOpen = vi.fn();
-  const { rerender } = render(<Files key="original" projectId="p" taskId={null} workspacePath="/project" onOpenFile={onOpen} />);
-  fireEvent.click(await screen.findByTestId('dev-file-item-src'));
-  fireEvent.change(screen.getByLabelText('workbenchFiles.newPath'), { target: { value: 'new.txt' } });
-  fireEvent.click(screen.getByRole('button', { name: 'workbenchFiles.newFile' }));
-  await waitFor(() => expect(invoke).toHaveBeenCalledWith('create_development_entry', { input: { project_id: 'p', task_id: null, path: 'src/new.txt', kind: 'file', trust_directory: true } }));
-  rerender(<Files key="other" projectId="p" taskId="other" workspacePath="/other" onOpenFile={onOpen} />);
-  await screen.findByTestId('dev-file-item-src');
-  expect(screen.getByLabelText('workbenchFiles.newPath')).toHaveProperty('value', '');
-  rerender(<Files key="original" projectId="p" taskId={null} workspacePath="/project" onOpenFile={onOpen} />);
-  await screen.findByTestId('dev-file-item-src');
-  expect(screen.getByLabelText('workbenchFiles.newPath')).toHaveProperty('value', 'new.txt');
-  expect(screen.getByRole('button', { name: 'workbenchFiles.newFile' })).toHaveProperty('disabled', true);
+  const first = render(<Files projectId="p" taskId={null} onOpenFile={onOpen} />);
+  await screen.findByText('review.noFiles'); await createFile('new.txt');
+  first.unmount();
+  const second = render(<Files projectId="p" taskId={null} onOpenFile={onOpen} />);
+  await screen.findByText('review.noFiles');
   expect(screen.getByTestId('dev-review-refresh')).toHaveProperty('disabled', true);
-  rerender(<Files key="other" projectId="p" taskId="other" workspacePath="/other" onOpenFile={onOpen} />);
-  await act(async () => { rejectCreate('file_create_unknown'); });
-  expect(screen.queryByText('dev.error.file_create_unknown')).toBeNull();
-  rerender(<Files key="original" projectId="p" taskId={null} workspacePath="/project" onOpenFile={onOpen} />);
-  await screen.findByText('src/new.txt');
-  await screen.findByTestId('dev-file-item-src');
-  expect(screen.getByRole('button', { name: 'workbenchFiles.newFile' })).toHaveProperty('disabled', true);
-  fireEvent.change(screen.getByTestId('dev-file-search'), { target: { value: 'filtered' } });
-  await act(async () => {});
-  fireEvent.click(screen.getByTestId('dev-review-refresh')); await act(async () => {});
-  expect(invoke).toHaveBeenCalledWith('list_development_files', { input: { project_id: 'p', task_id: null, path: 'src', query: '', include_ignored: true } });
-  expect(screen.getByRole('button', { name: 'workbenchFiles.newFile' })).toHaveProperty('disabled', true);
-  inspection = 'failed';
+  await act(async () => { pending.reject('file_create_unknown'); });
   fireEvent.click(screen.getByTestId('dev-review-refresh')); await act(async () => {});
   expect(screen.getByRole('button', { name: 'workbenchFiles.newFile' })).toHaveProperty('disabled', true);
-  inspection = 'complete';
+  inspectionFails = false;
   fireEvent.click(screen.getByTestId('dev-review-refresh')); await act(async () => {});
-  expect(screen.queryByText('src/new.txt')).toBeNull();
-  expect(screen.getByLabelText('workbenchFiles.newPath')).toHaveProperty('value', '');
-  fireEvent.change(screen.getByLabelText('workbenchFiles.newPath'), { target: { value: 'next.txt' } });
   expect(screen.getByRole('button', { name: 'workbenchFiles.newFile' })).toHaveProperty('disabled', false);
   expect(invoke.mock.calls.filter(([command]) => command === 'create_development_entry')).toHaveLength(1);
   expect(onOpen).not.toHaveBeenCalled();
+  second.unmount();
 });
 
-it('settles a late successful create without navigating a changed Files scope', async () => {
-  const { promise: pendingCreate, resolve: resolveCreate } = Promise.withResolvers<{ path: string; kind: 'file' }>();
+it('settles a late create without navigating a changed Files scope or restoring another account draft', async () => {
+  const pending = Promise.withResolvers<{ path: string; kind: 'file' }>();
   const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation(async (command: string, args: unknown) => command === 'create_development_entry' ? pendingCreate : original(command, args));
+  invoke.mockImplementation(async (command: string, args: unknown) => command === 'create_development_entry' ? pending.promise : original(command, args));
   vi.spyOn(Modal, 'confirm').mockImplementation(options => { options.onConfirm?.(); return { id: 'confirm', close: () => {} }; });
   const onOpen = vi.fn();
   const { rerender } = render(<Files projectId="p" taskId={null} onOpenFile={onOpen} />);
-  await screen.findByText('review.noFiles');
-  fireEvent.change(screen.getByLabelText('workbenchFiles.newPath'), { target: { value: 'new.txt' } });
-  fireEvent.click(screen.getByRole('button', { name: 'workbenchFiles.newFile' }));
-  await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === 'create_development_entry')).toBe(true));
+  await screen.findByText('review.noFiles'); await createFile('new.txt');
   rerender(<Files projectId="p" taskId="other" onOpenFile={onOpen} />);
-  await act(async () => { resolveCreate({ path: 'new.txt', kind: 'file' }); });
+  await act(async () => { pending.resolve({ path: 'new.txt', kind: 'file' }); });
   expect(onOpen).not.toHaveBeenCalled();
-  rerender(<Files projectId="p" taskId={null} onOpenFile={onOpen} />);
-  await screen.findByText('review.noFiles');
-  expect(screen.getByLabelText('workbenchFiles.newPath')).toHaveProperty('value', '');
-  fireEvent.change(screen.getByLabelText('workbenchFiles.newPath'), { target: { value: 'next.txt' } });
-  expect(screen.getByRole('button', { name: 'workbenchFiles.newFile' })).toHaveProperty('disabled', false);
-  expect(invoke.mock.calls.filter(([command]) => command === 'create_development_entry')).toHaveLength(1);
+  expect(Object.values(useDevelopmentDrafts.getState().entries).every(entry => !entry.value || typeof entry.value !== 'object' || !('operation' in entry.value) || !entry.value.operation)).toBe(true);
+  act(() => { useDevelopment.getState().reset(); });
+  expect(useDevelopmentDrafts.getState().entries).toEqual({});
 });
 
-it('does not restore a late unknown create into a new account epoch', async () => {
-  const { promise: pendingCreate, reject: rejectCreate } = Promise.withResolvers<never>();
+const fileEntry = { path: 'app.ts', name: 'app.ts', kind: 'file', ignored: false, size: 1 };
+function fileCommands(command: string, args: { input: { path: string } }) {
+  if (command === 'list_development_files') return Promise.resolve({ entries: [fileEntry], truncated: false });
+  if (command === 'inspect_development_entry') return Promise.resolve({ path: args.input.path, kind: 'file', version: 'original-version' });
+  if (command === 'read_development_file') return Promise.resolve({ path: args.input.path, hash: 'hash', text: 'saved', reason: null, size: 5 });
+  return Promise.resolve(null);
+}
+it('preserves a dirty editor on failed rename and only remaps it after successful mutation', async () => {
+  invoke.mockImplementation(fileCommands);
+  useDevelopment.setState(state => ({ ...state, selection: { project_id: 'p', task_id: 't', session_id: null } }));
+  useDevelopmentEditor.setState({ projectId: 'p', taskId: 't', path: 'app.ts', file: { path: 'app.ts', text: 'saved', hash: 'hash', reason: null, size: 5 }, draft: 'unsaved', busy: false, saving: false });
+  const onMutation = vi.fn();
+  render(<Files projectId="p" taskId="t" onOpenFile={vi.fn()} onMutation={onMutation} />);
+  const row = await screen.findByTestId('dev-file-item-app.ts');
+  fireEvent.keyDown(row, { key: 'F2' });
+  fireEvent.change(await screen.findByLabelText('workbenchFiles.entryName'), { target: { value: 'renamed.ts' } });
   const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation(async (command: string, args: unknown) => command === 'create_development_entry' ? pendingCreate : original(command, args));
-  vi.spyOn(Modal, 'confirm').mockImplementation(options => { options.onConfirm?.(); return { id: 'confirm', close: () => {} }; });
-  const onOpen = vi.fn();
-  const { unmount } = render(<Files projectId="p" taskId={null} onOpenFile={onOpen} />);
-  await screen.findByText('review.noFiles');
-  fireEvent.change(screen.getByLabelText('workbenchFiles.newPath'), { target: { value: 'new.txt' } });
-  fireEvent.click(screen.getByRole('button', { name: 'workbenchFiles.newFile' }));
-  await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === 'create_development_entry')).toBe(true));
-  unmount();
-  act(() => { useDevelopment.getState().reset(); useDevelopment.setState({ projects: [project] }); });
-  await act(async () => { rejectCreate('file_create_unknown'); });
-  render(<Files projectId="p" taskId={null} onOpenFile={onOpen} />);
-  await screen.findByText('review.noFiles');
-  expect(useDevelopmentDrafts.getState().entries).toEqual({});
-  expect(screen.getByLabelText('workbenchFiles.newPath')).toHaveProperty('value', '');
-  expect(onOpen).not.toHaveBeenCalled();
+  invoke.mockImplementation((command: string, args: unknown) => command === 'mutate_development_entry' ? Promise.reject('file_exists') : original(command, args));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'workbenchFiles.rename' })); await act(async () => {});
+  expect(useDevelopmentEditor.getState().draft).toBe('unsaved');
+  expect(useDevelopmentEditor.getState().path).toBe('app.ts');
+  expect(onMutation).not.toHaveBeenCalled();
+  invoke.mockImplementation((command: string, args: unknown) => command === 'mutate_development_entry' ? Promise.resolve({ path: 'renamed.ts', kind: 'file' }) : original(command, args));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'workbenchFiles.rename' })); await act(async () => {});
+  expect(onMutation).toHaveBeenCalledWith({ action: 'rename', path: 'app.ts', destination: 'renamed.ts' });
+  expect(useDevelopmentEditor.getState().path).toBeNull();
+  expect(invoke).toHaveBeenCalledWith('mutate_development_entry', { input: { project_id: 'p', task_id: 't', path: 'app.ts', expected_version: 'original-version', action: 'rename', destination: 'renamed.ts', trust_directory: true } });
+});
+
+it('captures copy versions and pastes in place under a new name without intercepting input shortcuts', async () => {
+  invoke.mockImplementation(fileCommands);
+  render(<Files projectId="p" taskId={null} workspacePath="/project" onOpenFile={vi.fn()} />);
+  const row = await screen.findByTestId('dev-file-item-app.ts');
+  fireEvent.keyDown(screen.getByTestId('dev-file-search'), { key: 'c', ctrlKey: true });
+  expect(invoke.mock.calls.some(([command]) => command === 'inspect_development_entry')).toBe(false);
+  fireEvent.keyDown(row, { key: 'c', ctrlKey: true }); await act(async () => {});
+  fireEvent.keyDown(row, { key: 'v', ctrlKey: true });
+  expect(await screen.findByLabelText('workbenchFiles.entryName')).toHaveProperty('value', 'app copy.ts');
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: unknown) => command === 'mutate_development_entry' ? Promise.resolve({ path: 'app copy.ts', kind: 'file' }) : original(command, args));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'workbenchFiles.paste' })); await act(async () => {});
+  expect(invoke).toHaveBeenCalledWith('mutate_development_entry', { input: { project_id: 'p', task_id: null, path: 'app.ts', expected_version: 'original-version', action: 'copy', destination: 'app copy.ts', trust_directory: true } });
+});
+
+it('drops a copy inspection completed after a scope switch', async () => {
+  const inspected = Promise.withResolvers<unknown>();
+  invoke.mockImplementation((command: string, args: { input: { path: string } }) => command === 'inspect_development_entry' ? inspected.promise : fileCommands(command, args));
+  const { rerender } = render(<Files projectId="p" taskId={null} workspacePath="/project" onOpenFile={vi.fn()} />);
+  fireEvent.keyDown(await screen.findByTestId('dev-file-item-app.ts'), { key: 'c', ctrlKey: true });
+  rerender(<Files projectId="p" taskId="other" workspacePath="/other" onOpenFile={vi.fn()} />);
+  await act(async () => { inspected.resolve({ path: 'app.ts', kind: 'file', version: 'old' }); });
+  fireEvent.keyDown(await screen.findByTestId('dev-file-item-app.ts'), { key: 'v', ctrlKey: true });
+  expect(screen.queryByRole('dialog')).toBeNull();
 });

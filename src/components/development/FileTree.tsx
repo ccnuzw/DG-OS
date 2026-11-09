@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Button } from '@dgos/ui';
+import { useEffect, useRef, useState } from 'react';
+import { Button, ContextMenu, DropdownMenu, type MenuItem } from '@dgos/ui';
+import { ChevronDown, ChevronRight, Ellipsis, File, FileCode2, FileJson2, FileText, Folder, GitBranch } from 'lucide-react';
 import { useLocale } from '../../i18n';
 import { listDevelopmentFiles, type DevFileEntry } from '../../stores/developmentReview';
 import { useDevelopment } from '../../stores/developmentStore';
@@ -10,7 +11,8 @@ import { errorText } from './shared';
 interface Props {
   projectId: string; taskId: string | null; scope: string; entries: DevFileEntry[]; query: string; ignored: boolean;
   selected: string | null; refreshKey: number; collapseKey: number; onOpen: (path: string) => void; onDirectory: (path: string) => void;
-  referenceActions?: (entry: DevFileEntry) => ReactNode;
+  onSelect: (path: string) => void;
+  menuItems: (entry: DevFileEntry) => MenuItem[];
 }
 export function FileTree(props: Props) {
   const { t } = useLocale();
@@ -58,10 +60,17 @@ function FileNode({ entry, ...props }: Props & { entry: DevFileEntry }) {
     }
     displayed = [...descendants.values()];
   }
+  const FileIcon = isDirectory ? Folder : /\.(json|ya?ml)$/.test(entry.name) ? FileJson2 : /^\.git/.test(entry.name) ? GitBranch : /\.md$/.test(entry.name) ? FileText : /\.(tsx?|jsx?|rs|go|py|css|html)$/.test(entry.name) ? FileCode2 : File;
   return <div role="treeitem" aria-expanded={isDirectory ? open : undefined} aria-selected={props.selected === entry.path}>
-    <div className="dev-file-browser-row"><Button size="xs" variant={props.selected === entry.path ? 'secondary' : 'ghost'} className="dev-file-entry" data-testid={`dev-file-item-${entry.path}`} disabled={entry.kind === 'symlink' || entry.kind === 'blocked'} onClick={() => { if (isDirectory) { setExpanded(!expanded); props.onDirectory(entry.path); } else props.onOpen(entry.path); }}>
-      <span aria-hidden="true" className="dev-tree-icon">{isDirectory ? open ? '▾' : '▸' : null}</span><svg aria-hidden="true" className="dev-tree-file-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2">{isDirectory ? <path d="M1.5 4h5l1.5 1.5h6.5v8h-13z M1.5 4V2.5h5L8 4" /> : <path d="M3 1.5h6l4 4v9H3z M9 1.5v4h4" />}</svg><span>{entry.name}</span><span className="text-ink-secondary">{entry.ignored ? t('review.ignored') : ''}{entry.kind === 'symlink' || entry.kind === 'blocked' ? t(`review.kind.${entry.kind}`) : ''}</span>
-    </Button>{props.referenceActions?.(entry)}</div>
+    <ContextMenu items={props.menuItems(entry)} onOpenChange={open => { if (open) props.onSelect(entry.path); }}><div className="dev-file-browser-row" data-file-path={entry.path} data-file-kind={entry.kind} onFocus={() => props.onSelect(entry.path)}>
+      <Button size="xs" variant="ghost" className="dev-file-entry" data-testid={`dev-file-item-${entry.path}`} disabled={entry.kind === 'symlink' || entry.kind === 'blocked'} onKeyDown={event => {
+        if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') { event.preventDefault(); const bounds = event.currentTarget.getBoundingClientRect(); event.currentTarget.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: bounds.left, clientY: bounds.bottom })); }
+        if (isDirectory && ['ArrowLeft', 'ArrowRight'].includes(event.key)) { event.preventDefault(); setExpanded(event.key === 'ArrowRight'); }
+        if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const tree = event.currentTarget.closest('[role=tree]'); const rows = [...(tree?.querySelectorAll<HTMLButtonElement>('.dev-file-entry:not(:disabled)') ?? [])]; const index = rows.indexOf(event.currentTarget); rows[event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1 : Math.max(0, Math.min(rows.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)))]?.focus(); }
+      }} onClick={() => { if (isDirectory) { setExpanded(!expanded); props.onDirectory(entry.path); } else props.onOpen(entry.path); }}>
+        <span aria-hidden="true" className="dev-tree-icon">{isDirectory ? open ? <ChevronDown size={12} /> : <ChevronRight size={12} /> : null}</span><FileIcon aria-hidden="true" size={16} className={`dev-tree-file-icon${FileIcon === FileJson2 ? ' dev-tree-file-config' : FileIcon === FileText ? ' dev-tree-file-document' : FileIcon === GitBranch ? ' dev-tree-file-git' : ''}`} /><span className="dev-file-entry-name" title={entry.path}>{entry.name}</span>{entry.kind === 'symlink' || entry.kind === 'blocked' ? <span className="text-ink-secondary">{t(`review.kind.${entry.kind}`)}</span> : null}
+      </Button><DropdownMenu label={t('workbenchFiles.actions', { path: entry.path })} trigger={<Button size="xs" variant="ghost" className="dev-file-more" aria-label={t('workbenchFiles.actions', { path: entry.path })}><Ellipsis size={14} aria-hidden="true" /></Button>} items={props.menuItems(entry)} />
+    </div></ContextMenu>
     {isDirectory && open ? <div role="group" className="dev-file-tree-children">{loading ? <p role="status" className="text-xs">{t('review.loading')}</p> : null}{error ? <p role="alert" className="text-xs">{errorText(error)}</p> : null}{truncated ? <p role="status" className="text-xs">{t('review.filesTruncated')}</p> : null}{sortEntries(displayed).map(child => <FileNode key={child.path} entry={child} {...props} />)}</div> : null}
   </div>;
 }

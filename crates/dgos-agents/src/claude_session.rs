@@ -33,8 +33,8 @@ impl ClaudeSession {
         command.envs(&launch.env);
         let process_lease = launch.lease.clone();
         let (wire, mut events) = providers.with_cli_spawn(&launch.lease, &launch.launch, |_| {
-            Transport::spawn(command, process_lease.cancellation_token(), diagnostic, process_lease.clone()).map_err(|_| dgos_types::DgosError::ProviderRequestRejected)
-        }).await.map_err(|_| "provider_revision_changed")?;
+            Ok(Transport::spawn(command, process_lease.cancellation_token(), diagnostic, process_lease.clone()))
+        }).await.map_err(|_| "provider_revision_changed")??;
         let session = Self {
             wire,
             view: Arc::new(Mutex::new(SessionView::new(options.workspace.clone()))),
@@ -225,6 +225,9 @@ impl ClaudeSession {
     }
     pub async fn snapshot(&self) -> SessionView {
         self.view.lock().await.clone()
+    }
+    pub(crate) async fn snapshot_since(&self, after: Option<u64>) -> (SessionView, crate::session::EventSync) {
+        self.view.lock().await.snapshot_since(after)
     }
     pub(crate) fn native_available(&self) -> bool { self.wire.native_available() }
     pub(crate) fn native_capabilities(&self) -> crate::native_session::NativeSessionCapabilities {

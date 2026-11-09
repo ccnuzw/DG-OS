@@ -23,6 +23,18 @@ export function readDevelopmentSessionSummaries(): Promise<Outcome<SessionSummar
 export function createDevelopmentEntry(input: CreateEntryInput): Promise<Outcome<CreatedEntry>> {
   return call('create_development_entry', { input });
 }
+export interface EntryInput { project_id: string; task_id: string | null; path: string }
+export interface InspectedEntry extends CreatedEntry { version: string }
+export interface MutateEntryInput extends EntryInput { expected_version: string; action: 'copy' | 'rename' | 'delete'; destination: string | null; trust_directory: true }
+export function inspectDevelopmentEntry(input: EntryInput): Promise<Outcome<InspectedEntry>> {
+  return call('inspect_development_entry', { input });
+}
+export function mutateDevelopmentEntry(input: MutateEntryInput): Promise<Outcome<CreatedEntry>> {
+  return call('mutate_development_entry', { input });
+}
+export function openDevelopmentEntryDirectory(input: EntryInput): Promise<Outcome<void>> {
+  return call('open_development_entry_directory', { input });
+}
 export function readDevelopmentProjectGit(projectId: string): Promise<Outcome<ProjectGitOverview>> {
   return call('read_development_project_git', { projectId });
 }

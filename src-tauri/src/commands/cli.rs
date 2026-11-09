@@ -10,10 +10,18 @@ fn failure(error: String) -> DgosError {
 fn detection(probe: &CliProbe) -> CliDetection {
     CliDetection { status: probe.status.into(), path: probe.path.clone(), version: probe.version.clone(), update: None }
 }
+#[derive(serde::Serialize)]
+pub struct CliPreferencesView {
+    #[serde(flatten)]
+    pub snapshot: CliSnapshot,
+    pub codex_protocol_reference: &'static dgos_agents::cli::CodexProtocolReference,
+}
 #[tauri::command]
-pub async fn get_cli_preferences(app: tauri::AppHandle, window: WebviewWindow) -> CommandResponse<CliSnapshot> {
+pub async fn get_cli_preferences(app: tauri::AppHandle, window: WebviewWindow) -> CommandResponse<CliPreferencesView> {
     let session = match host::workspace_catalog_session(&window) { Ok(s) => s, Err(e) => return CommandResponse::from(Err(e)) };
-    CommandResponse::from(app.state::<CliRepository>().get(session.user_id()).await.map_err(failure))
+    CommandResponse::from(app.state::<CliRepository>().get(session.user_id()).await.map(|snapshot| {
+        CliPreferencesView { snapshot, codex_protocol_reference: dgos_agents::cli::codex_protocol_reference() }
+    }).map_err(failure))
 }
 #[tauri::command]
 pub async fn set_cli_preferences(app: tauri::AppHandle, window: WebviewWindow, paths: CliPaths, expected_revision: u64) -> CommandResponse<CliSave> {
