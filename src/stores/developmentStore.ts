@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
-import type { Engine } from './agentRunnerStore';
+import { useAgentRunner, type Engine } from './agentRunnerStore';
 import { hostCode } from './hostError';
 
 export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'review' | 'completed' | 'cancelled';
@@ -20,8 +20,11 @@ interface Workspace { projects: Project[]; tasks: DevelopmentTask[]; sessions: D
 
 export interface ConversationTab { id: string; projectId: string; taskId: string | null; sessionId: string | null; title: string }
 export interface ReadingPosition { top: number; follow: boolean }
-interface ConversationWorkspace { tabs: ConversationTab[]; activeTabId: string | null; sessionNames: Record<string, string>; reading: Record<string, ReadingPosition> }
-const emptyConversations = (): ConversationWorkspace => ({ tabs: [], activeTabId: null, sessionNames: {}, reading: {} });
+interface ConversationWorkspace { tabs: ConversationTab[]; activeTabId: string | null; sessionNames: Record<string, string>; reading: Record<string, ReadingPosition>; pinnedProjectIds: string[]; archivedSessionIds: string[] }
+const emptyConversations = (): ConversationWorkspace => ({ tabs: [], activeTabId: null, sessionNames: {}, reading: {}, pinnedProjectIds: [], archivedSessionIds: [] });
+function stringIds(value: unknown): string[] {
+  return Array.isArray(value) ? [...new Set(value.filter((id): id is string => typeof id === 'string' && id.trim().length > 0))] : [];
+}
 function workspaceKey(owner: string) { return `dgos.development.conversations:${owner}`; }
 function restoreConversations(owner: string): ConversationWorkspace | null {
   try {
@@ -34,7 +37,7 @@ function restoreConversations(owner: string): ConversationWorkspace | null {
     });
     const sessionNames = Object.fromEntries(Object.entries(value.sessionNames ?? {}).filter(([, name]) => typeof name === 'string')) as Record<string, string>;
     const reading = Object.fromEntries(Object.entries(value.reading ?? {}).filter(([, position]) => position && typeof position === 'object' && 'top' in position && Number.isFinite(position.top) && Number(position.top) >= 0 && 'follow' in position && typeof position.follow === 'boolean')) as Record<string, ReadingPosition>;
-    return { tabs, activeTabId: ids.has(value.activeTabId) ? value.activeTabId : tabs[0]?.id ?? null, sessionNames, reading };
+    return { tabs, activeTabId: ids.has(value.activeTabId) ? value.activeTabId : tabs[0]?.id ?? null, sessionNames, reading, pinnedProjectIds: stringIds(value.pinnedProjectIds), archivedSessionIds: stringIds(value.archivedSessionIds) };
   } catch { return null; }
 }
 
@@ -50,6 +53,9 @@ interface DevelopmentState extends Workspace, ConversationWorkspace {
   closeTab(id: string): void;
   renameTab(id: string, title: string): void;
   setReading(id: string, position: ReadingPosition): void;
+  setProjectPinned(projectId: string, pinned: boolean): void;
+  archiveSessions(sessionIds: string[]): void;
+  restoreSessions(sessionIds: string[]): void;
   load(accountName?: string): Promise<boolean>;
   createProject(input: CreateProjectInput): Promise<Outcome<Project>>;
   updateProject(projectId: string, action: ProjectAction, value: string | null): Promise<Outcome<null>>;
@@ -119,6 +125,29 @@ export const useDevelopment = create<DevelopmentState>((set, get) => {
       set({ tabs: get().tabs.map(item => item.id === id ? { ...item, title: title.trim() } : item), sessionNames: tab.sessionId ? { ...get().sessionNames, [tab.sessionId]: title.trim() } : get().sessionNames });
     },
     setReading(id, position) { set({ reading: { ...get().reading, [id]: position } }); },
+    setProjectPinned(projectId, pinned) {
+      const state = get();
+      if (!stringIds([projectId]).length || pinned && !state.projects.some(project => project.id === projectId)) return;
+      const pinnedProjectIds = pinned ? [...new Set([...state.pinnedProjectIds, projectId])] : state.pinnedProjectIds.filter(id => id !== projectId);
+      set({ pinnedProjectIds });
+    },
+    archiveSessions(sessionIds) {
+      const state = get();
+      const runner = useAgentRunner.getState();
+      const open = new Set(state.tabs.map(tab => tab.sessionId));
+      const existing = new Set(state.sessions.map(session => session.id));
+      const eligible = stringIds(sessionIds).filter(id => {
+        const snapshot = runner.session?.id === id ? runner.session : runner.snapshots[id];
+        return existing.has(id) && id !== state.selection.session_id && !open.has(id)
+          && !(runner.live[id] && runner.live[id] !== 'closed')
+          && !['starting', 'running'].includes(snapshot?.status ?? '');
+      });
+      if (eligible.length) set({ archivedSessionIds: [...new Set([...state.archivedSessionIds, ...eligible])] });
+    },
+    restoreSessions(sessionIds) {
+      const restored = new Set(stringIds(sessionIds));
+      if (restored.size) set({ archivedSessionIds: get().archivedSessionIds.filter(id => !restored.has(id)) });
+    },
     async load(accountName) {
       const epoch = get().epoch;
       const seq = ++loadSeq;
@@ -130,13 +159,14 @@ export const useDevelopment = create<DevelopmentState>((set, get) => {
       // A selection committed while this load was in flight is newer than the value the load read.
       let selection = get().loaded || selectionSeq !== selectionAtStart ? get().selection : data.selection;
       const owner = accountName ? `account:${accountName}` : get().workspaceOwner ?? data.projects[0]?.owner ?? data.sessions[0]?.owner ?? data.tasks[0]?.owner ?? null;
-      const restored = owner && get().workspaceOwner !== owner ? restoreConversations(owner) : null;
+      const ownerChanged = get().workspaceOwner !== owner;
+      const restored = owner && ownerChanged ? restoreConversations(owner) : null;
       if (restored) {
         const tab = restored.tabs.find(item => item.id === restored.activeTabId);
         selection = tab ? { project_id: tab.projectId, task_id: tab.taskId, session_id: tab.sessionId } : emptySelection;
         ++selectionSeq;
       }
-      set({ ...(restored ?? {}), workspaceOwner: owner, loaded: true, projects: data.projects, tasks: data.tasks, sessions: data.sessions, selection, operations: data.operations });
+      set({ ...(ownerChanged ? restored ?? emptyConversations() : {}), workspaceOwner: owner, loaded: true, projects: data.projects, tasks: data.tasks, sessions: data.sessions, selection, operations: data.operations });
       return true;
     },
     async createProject(input) {
@@ -179,9 +209,9 @@ export const useDevelopment = create<DevelopmentState>((set, get) => {
   };
 });
 
-// Only UI identities, names and reading positions are durable. Never restore runtime approval or trust.
+// Only presentation metadata is durable. Never restore runtime approval or trust.
 useDevelopment.subscribe((state, previous) => {
-  if (!state.workspaceOwner || state.epoch !== previous.epoch || state.tabs === previous.tabs && state.activeTabId === previous.activeTabId && state.sessionNames === previous.sessionNames && state.reading === previous.reading) return;
-  try { localStorage.setItem(workspaceKey(state.workspaceOwner), JSON.stringify({ tabs: state.tabs, activeTabId: state.activeTabId, sessionNames: state.sessionNames, reading: state.reading })); }
+  if (!state.workspaceOwner || state.epoch !== previous.epoch || state.tabs === previous.tabs && state.activeTabId === previous.activeTabId && state.sessionNames === previous.sessionNames && state.reading === previous.reading && state.pinnedProjectIds === previous.pinnedProjectIds && state.archivedSessionIds === previous.archivedSessionIds) return;
+  try { localStorage.setItem(workspaceKey(state.workspaceOwner), JSON.stringify({ tabs: state.tabs, activeTabId: state.activeTabId, sessionNames: state.sessionNames, reading: state.reading, pinnedProjectIds: state.pinnedProjectIds, archivedSessionIds: state.archivedSessionIds })); }
   catch { /* Storage may be unavailable; in-memory working state remains intact. */ }
 });

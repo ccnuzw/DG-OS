@@ -22,14 +22,6 @@ export function WorkspaceLink(props: LinkProps) {
   return routed ? <Link {...props} className={className} onClick={event => { props.onClick?.(event); if (!event.defaultPrevented && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) returnFocus.current = event.currentTarget; }} /> : <a href={typeof props.to === 'string' ? props.to : props.to.pathname} className={className}>{props.children}</a>;
 }
 
-export function RuntimeNavigation({ runtime }: { runtime: 'dgos' | 'native' }) {
-  const { t } = useLocale();
-  return <nav className="flex flex-wrap items-center gap-3 p-2" aria-label={t('workbenchNavigation.runtime')}>
-    <WorkspaceLink to="/workbench" aria-current={runtime === 'dgos' ? 'page' : undefined}>{t('workbenchNavigation.dgos')}</WorkspaceLink>
-    <WorkspaceLink to="/tasks/agent" aria-current={runtime === 'native' ? 'page' : undefined}>{t('workbenchNavigation.native')}</WorkspaceLink>
-  </nav>;
-}
-
 // Navigation context only; the host still validates every target and project. Reading it
 // does not select/resume a runtime or execute a management operation.
 export function useCapabilityEntry(path: '/skills' | '/mcp') {

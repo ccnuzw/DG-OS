@@ -5,6 +5,7 @@ import { readDevelopmentFile, type DevFileView } from './developmentReview';
 import { hostCode } from './hostError';
 import { confirmDiscard } from '../workspace/closeCoordinator';
 import { t } from '../i18n';
+import { useDevelopmentDrafts } from './developmentDrafts';
 
 interface EditorState {
   projectId: string | null; taskId: string | null; path: string | null;
@@ -17,6 +18,7 @@ let revision = 0;
 export const useDevelopmentEditor = create<EditorState>((set, get) => ({
   projectId: null, taskId: null, path: null, file: null, draft: '', disk: null, busy: false, saving: false, error: null,
   async open(projectId, taskId, path) {
+    if (developmentEditorMutationAffects(projectId, taskId, path)) return;
     const ticket = ++revision;
     const epoch = useDevelopment.getState().epoch;
     set({ projectId, taskId, path, file: null, draft: '', disk: null, busy: true, saving: false, error: null });
@@ -27,7 +29,7 @@ export const useDevelopmentEditor = create<EditorState>((set, get) => ({
   edit(draft) { set({ draft }); },
   async save() {
     const { projectId, taskId, path, file, draft, saving } = get();
-    if (!projectId || !taskId || !path || !file?.hash || file.text === null || saving || get().error === 'file_changed') return;
+    if (!projectId || !taskId || !path || !file?.hash || file.text === null || saving || get().error === 'file_changed' || developmentEditorMutationAffects(projectId, taskId, path)) return;
     const ticket = revision;
     const epoch = useDevelopment.getState().epoch;
     set({ saving: true, error: null });
@@ -58,7 +60,22 @@ export function hasDevelopmentDraft(): boolean {
   const { file, draft } = useDevelopmentEditor.getState();
   return file?.text !== null && file !== null && draft !== file.text;
 }
-export async function guardDevelopmentDraft(): Promise<boolean> {
+export function developmentEditorMutationAffects(projectId: string, taskId: string | null, path: string): boolean {
+  const epoch = useDevelopment.getState().epoch;
+  return Object.entries(useDevelopmentDrafts.getState().entries).some(([key, draft]) => {
+    let identity: unknown[];
+    try { identity = JSON.parse(key); } catch { return false; }
+    if (identity[0] !== epoch || identity[1] !== 'delivery' || identity[2] !== projectId || identity[3] !== taskId) return false;
+    const value = draft.value;
+    if (!value || typeof value !== 'object' || !('operation' in value) || !value.operation || typeof value.operation !== 'object') return false;
+    const operation = value.operation;
+    if (!('path' in operation) || typeof operation.path !== 'string' || !('status' in operation) || !['pending', 'unknown'].includes(String(operation.status)) || !('action' in operation) || !['rename', 'delete'].includes(String(operation.action))) return false;
+    return path === operation.path || path.startsWith(`${operation.path}/`);
+  });
+}
+export async function guardDevelopmentDraft(allowMutation = false): Promise<boolean> {
+  const current = useDevelopmentEditor.getState();
+  if (!allowMutation && current.projectId && current.path && developmentEditorMutationAffects(current.projectId, current.taskId, current.path)) return false;
   if (!hasDevelopmentDraft()) return true;
   const { draft, file } = useDevelopmentEditor.getState();
   return await confirmDiscard({ title: t('dev.discardDraft'), content: t('dev.discardDraft.file', { path: file?.path ?? '' }), confirmText: t('dev.discardDraft') }) && useDevelopmentEditor.getState().draft === draft && useDevelopmentEditor.getState().file === file;

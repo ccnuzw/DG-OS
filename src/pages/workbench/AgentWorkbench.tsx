@@ -14,7 +14,8 @@ import { ProjectSessionTree } from '../../components/development/ProjectSessionT
 import { ProjectPanel } from '../../components/development/ProjectPanel';
 import { ProjectCapabilities } from '../../components/development/ProjectCapabilities';
 import { readDevelopmentProjectGit } from '../../stores/developmentExplorer';
-import { ProjectReview, Files as ProjectFiles, ChangeDiff, Runs, type FileTarget } from '../../components/development/ProjectReview';
+import { ProjectReview, ChangeDiff, Runs } from '../../components/development/ProjectReview';
+import { Files as ProjectFiles, filePathAffected, type FileMutation, type FileTarget } from '../../components/development/ProjectFiles';
 import { AgentConversation, AgentSessionHistory } from './AgentConversation';
 import { useDevelopmentEditor, hasDevelopmentDraft, discardDevelopmentDraft } from '../../stores/developmentEditor';
 import { useDevelopmentRuntime, processActive } from '../../stores/developmentRuntime';
@@ -29,7 +30,6 @@ import '../../components/development/workbench-layout.css';
 import { ProjectConversation, emptyConversationDraft, type ConversationDraft } from './ProjectConversation';
 import { CliCleanupRecheck } from '../../components/development/CliCleanupRecheck';
 import { resolveDevelopmentFileReference, type AgentOutputReference } from '../../components/development/eventOutputReferences';
-import { RuntimeNavigation } from '../../components/chat/RuntimeNavigation';
 import { ConversationTabs } from '../../components/development/ConversationTabs';
 import { ConversationHandoff } from '../../components/development/ConversationHandoff';
 import { useAccount } from '../../accounts/AccountContext';
@@ -66,7 +66,7 @@ export default function AgentWorkbench() {
   function setMainView(view: 'conversation' | 'file' | 'runtime') { setMainPosition({ owner: viewOwner, view }); }
   const [ownedFileTarget, setOwnedFileTarget] = useState<{ owner: string; target: FileTarget } | null>(null);
   const fileTarget = ownedFileTarget?.owner === viewOwner ? ownedFileTarget.target : null;
-  function setFileTarget(target: FileTarget | null) { setOwnedFileTarget(target ? { owner: viewOwner, target } : null); }
+  function setFileTarget(target: FileTarget | null | ((current: FileTarget | null) => FileTarget | null)) { const current = ownedFileTarget?.owner === viewOwner ? ownedFileTarget.target : null; const value = typeof target === 'function' ? target(current) : target; setOwnedFileTarget(value ? { owner: viewOwner, target: value } : null); }
   const [diffSource, setDiffSource] = useState<'task' | 'index' | 'worktree'>('task');
   const [runTarget, setRunTarget] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -134,6 +134,13 @@ export default function AgentWorkbench() {
     if (epoch !== useDevelopment.getState().epoch || generation !== contextGeneration()) return;
     setOwnedFileTarget({ owner, target }); setDiffSource(source); setMainPosition({ owner, view: 'file' });
     if (compact) setDrawerOpen(false);
+  }
+  function fileMutated(mutation: FileMutation) {
+    setFileTarget(current => {
+      if (!current || !filePathAffected(current.path, mutation.path)) return current;
+      if (mutation.action === 'delete') { window.requestAnimationFrame(() => revealAgent()); return null; }
+      return { ...current, path: `${mutation.destination}${current.path.slice(mutation.path.length)}`, nonce: Date.now() };
+    });
   }
   function addReference(reference: ConversationReference) {
     if (!activeTab || !project || context.pending || reference.project_id !== project.id || reference.task_id !== (task?.id ?? null)) return;
@@ -207,6 +214,22 @@ export default function AgentWorkbench() {
     const epoch = development.epoch;
     const result = await chooseContext({ project_id: projectId, task_id: null, session_id: null });
     if (result.ok && epoch === useDevelopment.getState().epoch) revealAgent();
+  }
+  async function refreshProject(projectId: string) {
+    const epoch = development.epoch;
+    const inspected = await useDevelopment.getState().inspect(projectId);
+    if (epoch !== useDevelopment.getState().epoch) return;
+    if (!inspected.ok) throw inspected.code;
+    if (inspected.value.path_state !== 'available') throw 'workspace_changed';
+    if (!await useDevelopment.getState().load()) throw useDevelopment.getState().error ?? 'unknown';
+    if (epoch === useDevelopment.getState().epoch && useDevelopment.getState().selection.project_id === projectId) setWorkspaceRefresh(value => value + 1);
+  }
+  async function openProjectFiles(projectId: string) {
+    const epoch = development.epoch;
+    await selectProject(projectId);
+    if (epoch !== useDevelopment.getState().epoch || useDevelopment.getState().selection.project_id !== projectId) return;
+    openDrawer('files');
+    setLayout(value => ({ ...value, codeView: 'files' }));
   }
   async function chooseTabContext(tab: ConversationTab | undefined): Promise<Outcome<null>> {
     const selection = { project_id: tab?.projectId ?? null, task_id: tab?.taskId ?? null, session_id: tab?.sessionId ?? null };
@@ -463,18 +486,6 @@ export default function AgentWorkbench() {
   const nativeRefreshKey = `${current?.id ?? ''}:${current?.events.reduce((seq, event) => event.kind === 'result' || event.kind === 'turn/completed' ? event.seq : seq, 0) ?? 0}`;
   return <section ref={root} className="agent-workbench dev-workspace" data-compact={compact} data-drawer-width={layout.drawerWidth}>
     <span className="sr-only" role="status" data-testid="agent-session-announcement">{surfaceActive && current ? `${t(`agent.engine.${current.engine}`)}: ${t(`agent.state.${current.status}`)}. ${t('dev.pendingApprovals', { count: current.pending.length })}` : ''}</span>
-    <header className="dev-workspace-header" inert={compact && navigationOpen}>
-      <RuntimeNavigation runtime="native" />
-      <div className="dev-workspace-context"><h1>{project?.name ?? t('dev.title')}</h1></div>
-      <details className="dev-context-details" data-testid="dev-context-details"><summary>{t('layout.contextDetails')}</summary><div className="dev-detail">
-        <p>{t('review.cwd')}: {taskWorkspace?.path ?? t('layout.directoryUnresolved')}</p>
-        <p>{t('dev.selected')}: {project?.id ?? '—'}</p><p>{t('dev.tasks')}: {task?.id ?? '—'}</p><p>{t('dev.sessions')}: {current?.id ?? selectedSaved?.id ?? '—'}</p><p>{t('layout.head')}: {taskWorkspace?.head ?? '—'}</p>
-        <p>{taskWorkspace?.branch ?? t('dev.kindLabel.directory')} / {taskWorkspace?.kind ?? t('layout.directoryUnresolved')}</p>
-        {workspaceError ? <p className="text-status-error-text">{t('layout.contextFailed')}: {errorText(workspaceError)}</p> : null}
-        <Button size="xs" variant="secondary" onClick={() => setWorkspaceRefresh(value => value + 1)}>{t('dev.inspect')}</Button>
-      </div></details>
-      <Button size="sm" variant="secondary" data-testid="dev-new-conversation" disabled={!project || context.pending} onClick={() => void newConversation()}>{t('directConversation.new')}</Button>
-    </header>
     {failureCode ? <p role="alert" className="dev-workspace-error text-sm text-status-error">{errorText(failureCode)}</p> : null}
     {failureCode === 'cleanup_pending' ? <CliCleanupRecheck /> : null}
     <div className="dev-workspace-body" data-drawer-open={navigationOpen}>
@@ -484,22 +495,30 @@ export default function AgentWorkbench() {
       <aside ref={navigation} id="dev-navigation" className="dev-navigation" aria-label={t(drawerTitle)} hidden={!navigationOpen} onKeyDown={event => {
         if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); closeNavigation(); }
       }}>
-        <header className="dev-drawer-header"><h2>{t(drawerTitle)}</h2><Button size="xs" variant="ghost" aria-label={t('common.close')} onClick={closeNavigation}><X size={16} aria-hidden="true" /></Button></header>
+        <header className="dev-drawer-header"><h2>{t(drawerTitle)}</h2><div hidden={layout.drawer !== 'projects'}><ProjectPanel mode="add-only" /></div>{layout.drawer !== 'projects' && layout.drawer !== 'files' ? <Button size="xs" variant="ghost" aria-label={t('common.close')} onClick={closeNavigation}><X size={16} aria-hidden="true" /></Button> : null}</header>
         <div className="dev-drawer-content">
           <div hidden={layout.drawer !== 'projects'}>
-            <ProjectSessionTree busy={context.pending} onSelect={selectSession} onNewConversation={id => void newConversation(undefined, id)} onSelectProject={id => void selectProject(id)} onSelectDraft={tab => void selectTab(tab)} onManageProject={projectId => setManager({ projectId, section: 'project' })} />
+            <ProjectSessionTree busy={context.pending} onSelect={selectSession} onNewConversation={id => void newConversation(undefined, id)} onSelectProject={id => void selectProject(id)} onSelectDraft={tab => void selectTab(tab)} onRefreshProject={refreshProject} onProjectFiles={openProjectFiles} />
+            <details className="dev-context-details" data-testid="dev-context-details"><summary>{t('layout.contextDetails')}</summary><div className="dev-detail">
+              <p>{t('review.cwd')}: {taskWorkspace?.path ?? t('layout.directoryUnresolved')}</p>
+              <p>{t('dev.selected')}: {project?.id ?? '—'}</p><p>{t('dev.tasks')}: {task?.id ?? '—'}</p><p>{t('dev.sessions')}: {current?.id ?? selectedSaved?.id ?? '—'}</p><p>{t('layout.head')}: {taskWorkspace?.head ?? '—'}</p>
+              <p>{taskWorkspace?.branch ?? t('dev.kindLabel.directory')} / {taskWorkspace?.kind ?? t('layout.directoryUnresolved')}</p>
+              {workspaceError ? <p className="text-status-error-text">{t('layout.contextFailed')}: {errorText(workspaceError)}</p> : null}
+              <Button size="xs" variant="secondary" onClick={() => setWorkspaceRefresh(value => value + 1)}>{t('dev.inspect')}</Button>
+              <Button size="xs" variant="ghost" onClick={manageProjects}>{t('workbenchNavigation.manageProject')}</Button>
+            </div></details>
           </div>
           <div hidden={layout.drawer !== 'tasks'}>{project ? <TaskPanel project={project} onConversation={() => { closeNavigation(); revealAgent(); }} onContinue={id => { const saved = development.sessions.find(session => session.id === id); if (saved) void selectSession(saved); }} /> : <p>{t('dev.none')}</p>}
             {task ? <details className="dev-task-brief" data-testid="dev-task-summary"><summary>{t('dev.taskFor', { goal: task.goal })}<span>{t(`dev.taskStatus.${task.status}`)}</span></summary><p>{task.requirements}</p></details> : null}
             <UnclassifiedPanel sessions={unclassified} taskId={task?.id ?? null} busy={context.pending || busy || runner.busy} onClassify={saved => void classify(saved)} />
           </div>
           <div hidden={layout.drawer !== 'files'}>
-            {project ? <div className="dev-explorer-location"><FolderOpen size={14} aria-hidden="true" /><span title={taskWorkspace?.path}>{project.name}</span>{taskWorkspace?.branch ? <><GitBranch size={14} aria-hidden="true" /><span>{taskWorkspace.branch}</span></> : null}</div> : null}
+            {project ? <div className="dev-explorer-location"><span title={taskWorkspace?.path}>{project.name}</span>{taskWorkspace?.branch ? <><GitBranch size={14} aria-hidden="true" /><span>{taskWorkspace.branch}</span></> : null}</div> : null}
             <div className="dev-explorer-tabs" role="group" aria-label={t('workbenchNavigation.filesAndGit')}>
-              <Button size="xs" variant={layout.codeView !== 'changes' ? 'secondary' : 'ghost'} aria-pressed={layout.codeView !== 'changes'} onClick={() => showCode('files')}>{t('workbenchNavigation.files')}</Button>
-              <Button size="xs" variant={layout.codeView === 'changes' ? 'secondary' : 'ghost'} aria-pressed={layout.codeView === 'changes'} onClick={() => showCode('changes')}>{t('workbenchNavigation.git')}</Button>
+              <Button size="xs" variant={layout.codeView !== 'changes' ? 'secondary' : 'ghost'} aria-pressed={layout.codeView !== 'changes'} onClick={() => showCode('files')}><Files size={16} aria-hidden="true" />{t('workbenchNavigation.files')}</Button>
+              <Button size="xs" variant={layout.codeView === 'changes' ? 'secondary' : 'ghost'} aria-pressed={layout.codeView === 'changes'} onClick={() => showCode('changes')}><GitBranch size={16} aria-hidden="true" />{t('workbenchNavigation.git')}</Button>
             </div>
-            <div hidden={layout.codeView === 'changes'}>{project && !context.pending ? <ProjectFiles key={`${development.epoch}:${context.generation}:${project.id}:${task?.id ?? ''}:${taskWorkspace?.path ?? project.path}`} projectId={project.id} taskId={task?.id ?? null} workspacePath={taskWorkspace?.path ?? project.path} target={fileTarget} onOpenFile={target => void openFile(target)} onReference={activeTab ? addReference : undefined} /> : <p>{t('dev.none')}</p>}</div>
+            <div hidden={layout.codeView === 'changes'}>{project && !context.pending ? <ProjectFiles key={`${development.epoch}:${context.generation}:${project.id}:${task?.id ?? ''}:${taskWorkspace?.path ?? project.path}`} projectId={project.id} taskId={task?.id ?? null} workspacePath={taskWorkspace?.path ?? project.path} target={fileTarget} onOpenFile={target => void openFile(target)} onReference={activeTab ? addReference : undefined} onMutation={fileMutated} /> : <p>{t('dev.none')}</p>}</div>
             <div hidden={layout.codeView !== 'changes'}>{project && !context.pending ? <DeliveryPanel key={`${development.epoch}:${project.id}:${task?.id ?? ''}`} mode="git" projectId={project.id} taskId={task?.id ?? null} ensureTask={ensureWorkspaceTask} sessions={sessions} live={runner.live} capabilityRevision={projectCapabilities.value?.revision ?? 0} workspacePath={taskWorkspace?.path ?? ''} refreshKey={nativeRefreshKey} onOpenDiff={(path, source = 'worktree') => void openFile({ path, mode: 'diff', nonce: Date.now() }, source)} /> : <p>{t('dev.none')}</p>}</div>
           </div>
           <div id="dev-panel-code" data-testid="dev-panel-code" className="dev-tools-pane" hidden={layout.drawer !== 'tasks'}>

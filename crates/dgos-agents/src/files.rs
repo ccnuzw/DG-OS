@@ -45,6 +45,9 @@ pub struct CreateEntryInput {
 #[derive(Debug, Serialize)]
 pub struct CreatedEntry { pub path: String, pub kind: EntryKind }
 
+mod mutations;
+pub use mutations::{InspectEntryInput, InspectedEntry, MutateEntryInput, MutationAction, EntryDirectoryAdmission};
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FileEntry { pub path: String, pub name: String, pub kind: String, pub size: u64, pub ignored: bool }
 #[derive(Serialize)]
@@ -366,6 +369,39 @@ impl AgentManager {
         };
         if input.line.is_some_and(|line| line == 0 || line as usize > source.lines().count().max(1)) { return Err("file_access_denied".into()); }
         Ok(FileReference { path, line: input.line })
+    }
+    pub async fn inspect_development_entry(&self, owner: &str, input: InspectEntryInput, lease: tokio_util::sync::CancellationToken) -> Result<InspectedEntry, String> {
+        let _admission = self.admit_native_extensions(&lease).await?;
+        let project = self.file_context(owner, &input.project_id, input.task_id.as_deref()).await?;
+        if project.archived { return Err("project_archived".into()); }
+        let result = tokio::task::spawn_blocking(move || mutations::inspect_at(&project, &input.path, &lease)).await.map_err(|_| "file_access_denied".to_owned())?;
+        result
+    }
+    pub async fn mutate_development_entry(&self, owner: &str, input: MutateEntryInput, lease: tokio_util::sync::CancellationToken) -> Result<CreatedEntry, String> {
+        let admission = self.admit_native_extensions(&lease).await?;
+        if !input.trust_directory { return Err("workspace_untrusted".into()); }
+        mutations::validate_input(&input)?;
+        let project = self.file_context(owner, &input.project_id, input.task_id.as_deref()).await?;
+        if project.archived { return Err("project_archived".into()); }
+        self.workspace_available(&project.path, None).await?;
+        self.host_workspace_available(&project.path).await?;
+        if let Some(task) = input.task_id.as_deref() { self.capture_task_baseline(owner, task).await?; }
+        let manager = self.clone();
+        let workspace = project.path.clone();
+        // This detached worker retains admission through both filesystem work
+        // and invalidation, even when the awaiting IPC future is dropped.
+        tokio::spawn(async move {
+            let _admission = admission;
+            let result = tokio::task::spawn_blocking(move || mutations::mutate_at(&project, input, &lease)).await.map_err(|_| "file_mutation_unknown".to_owned());
+            manager.mark_development_mutation(&workspace).await;
+            result?
+        }).await.map_err(|_| "file_mutation_unknown".to_owned())?
+    }
+    pub async fn admit_development_entry_directory(&self, owner: &str, input: InspectEntryInput, lease: &tokio_util::sync::CancellationToken) -> Result<EntryDirectoryAdmission, String> {
+        let admission = self.admit_native_extensions(lease).await?;
+        let project = self.file_context(owner, &input.project_id, input.task_id.as_deref()).await?;
+        if project.archived { return Err("project_archived".into()); }
+        mutations::directory_admission(project, input.path, admission, lease)
     }
     pub async fn create_development_entry(&self, owner: &str, input: CreateEntryInput, lease: tokio_util::sync::CancellationToken) -> Result<CreatedEntry, String> {
         let _admission = self.inner.admission.lock().await;

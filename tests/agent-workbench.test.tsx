@@ -529,7 +529,7 @@ it('keeps permission expansion scoped and cannot approve an unknown replacement 
  expect(screen.queryByRole('button', { name: 'agent.allow', exact: true })).toBeNull();
  expect(screen.getByText('/tmp/reviewed-directory/input', { exact: true })).toBeTruthy();
  const response = Promise.withResolvers<unknown>();
- invoke.mockImplementation(async command => command === 'respond_agent_request' ? response.promise : waiting);
+ install(command => command === 'respond_agent_request' ? response.promise : command === 'get_agent_session' || command === 'open_agent_session' ? waiting : undefined);
  fireEvent.click(screen.getByRole('button', { name: 'agent.allowTurn' }));
  expect(screen.queryByRole('button', { name: 'agent.allowSession' })).toBeNull();
  expect(invoke.mock.calls.filter(([command]) => command === 'respond_agent_request')).toEqual([['respond_agent_request', { input: { session_id: session.id, generation: session.generation, request_id: native.id, response: { permissions, scope: 'turn' } } }]]);

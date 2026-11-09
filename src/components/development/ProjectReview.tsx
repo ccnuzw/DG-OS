@@ -1,30 +1,24 @@
-import { createDevelopmentEntry } from '../../stores/developmentExplorer';
-import { confirmAction } from './shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Input, Tabs } from '@dgos/ui';
+import { Button, Tabs } from '@dgos/ui';
 import './workbench-tree.css';
 import { formatDateTime, useLocale } from '../../i18n';
 import { useDevelopment } from '../../stores/developmentStore';
 import { readDevelopmentProjectGit, readDevelopmentProjectDiff } from '../../stores/developmentExplorer';
-import { FileTree } from './FileTree';
 import { contextGeneration } from '../../stores/developmentSelection';
-import { listDevelopmentFiles, readDevelopmentReview, readDevelopmentDiff, listDevelopmentRuns, type DevDiff, type DevRun } from '../../stores/developmentReview';
+import { readDevelopmentReview, readDevelopmentDiff, listDevelopmentRuns, type DevDiff, type DevRun } from '../../stores/developmentReview';
 import type { Outcome } from '../../stores/developmentStore';
 import { errorText } from './shared';
-import { useWorkbenchLocation } from './workbenchLocations';
 import type { CodeView } from './WorkbenchLayout';
 import { discardDevelopmentDraft } from '../../stores/developmentEditor';
-import { FileEditor } from './FileEditor';
 import { ProjectCapabilities } from './ProjectCapabilities';
 import { SessionConfigurationViewDisplay } from './CapabilitySnapshotView';
 import { DeliveryPanel } from './DeliveryPanel';
 import { TaskReview } from './TaskReview';
 import type { CliProviderRevision, CliProviderSnapshot } from '../../stores/developmentCapabilities';
 import type { ConversationReference } from '../../stores/developmentReferences';
-import { readDevelopmentFile } from '../../stores/developmentReview';
-import { developmentDraftKey, useDevelopmentDrafts, useScopedDevelopmentDraft } from '../../stores/developmentDrafts';
 
-export interface FileTarget { path: string; line?: number; mode: 'file' | 'diff'; nonce: number }
+import { Files, type FileTarget } from './ProjectFiles';
+import { useWorkbenchLocation } from './workbenchLocations';
 
 // Each resource has an independent request generation. Unmount, account reset and context intent all invalidate it.
 function useRead<T>(load: () => Promise<Outcome<T>>) {
@@ -85,108 +79,6 @@ export function ProjectReview({ projectId, taskId, sessions = [], live = {}, cap
       <Tabs.Content forceMount hidden={tab !== 'delivery'} value="delivery">{visited.has('delivery') ? <DeliveryPanel projectId={projectId} taskId={taskId} sessions={sessions} live={live} capabilityRevision={capabilityRevision} workspacePath={workspacePath} onHandoff={onHandoff} onWorkspaceChange={onWorkspaceChange} /> : null}</Tabs.Content>
     </Tabs>
   </section>;
-}
-interface FileCreateDraft {
-  name: string;
-  operation: { path: string; kind: 'file' | 'directory'; name: string; status: 'pending' | 'unknown' } | null;
-}
-const emptyFileCreateDraft: FileCreateDraft = { name: '', operation: null };
-
-
-export function Files({ projectId, taskId, workspacePath = '', target, onOpenFile, onReference }: { projectId: string; taskId: string | null; workspacePath?: string; target?: FileTarget | null; onOpenFile?: (target: FileTarget) => void; onReference?: (reference: ConversationReference) => void }) {
-  const { t } = useLocale();
-  const scope = JSON.stringify([projectId, taskId, workspacePath, 'files']);
-  const [path, setPath] = useWorkbenchLocation(`${scope}:path`, '');
-  const [query, setQuery] = useWorkbenchLocation(`${scope}:query`, '');
-  const [ignored, setIgnored] = useWorkbenchLocation(`${scope}:ignored`, false);
-  const [selected, setSelected] = useWorkbenchLocation<string | null>(`${scope}:selected`, null);
-  useEffect(() => { if (target) { setSelected(target.path); setPath(''); setQuery(''); } }, [target?.nonce]);
-  const listing = useRead(useCallback(() => listDevelopmentFiles({ project_id: projectId, task_id: taskId, path: '', query, include_ignored: ignored }), [projectId, taskId, workspacePath, query, ignored]));
-  const [treeRefresh, setTreeRefresh] = useState(0);
-  const [collapseKey, setCollapseKey] = useWorkbenchLocation(`${scope}:collapse`, 0);
-  const epoch = useDevelopment(state => state.epoch);
-  const createDraft = useScopedDevelopmentDraft<FileCreateDraft>('delivery', [projectId, taskId, workspacePath, 'file-create'], emptyFileCreateDraft);
-  const createKey = developmentDraftKey('delivery', projectId, taskId, workspacePath, 'file-create');
-  const { name: newEntry, operation } = createDraft.value;
-  const creating = operation?.status === 'pending';
-  const unknownEntry = operation?.status === 'unknown' ? operation.path : null;
-  const view = useRef({ scope });
-  if (view.current.scope !== scope) view.current = { scope };
-  function latestCreateDraft() { return (useDevelopmentDrafts.getState().entries[createKey]?.value as FileCreateDraft | undefined) ?? emptyFileCreateDraft; }
-  function currentView(identity: typeof view.current, generation: number) {
-    return mounted.current && view.current === identity && epoch === useDevelopment.getState().epoch && generation === contextGeneration();
-  }
-  async function createEntry(kind: 'file' | 'directory') {
-    const entryPath = [path, newEntry.trim()].filter(Boolean).join('/');
-    if (!entryPath || latestCreateDraft().operation) return;
-    const generation = contextGeneration(), identity = view.current;
-    if (!await confirmAction(t('workbenchFiles.createTrust'), t('workbenchFiles.createTrustDetail', { path: entryPath }), t(kind === 'file' ? 'workbenchFiles.newFile' : 'workbenchFiles.newFolder'))) return;
-    if (!currentView(identity, generation) || latestCreateDraft().operation) return;
-    const pending: NonNullable<FileCreateDraft['operation']> = { path: entryPath, kind, name: newEntry, status: 'pending' };
-    createDraft.setValue({ ...latestCreateDraft(), operation: pending });
-    const result = await createDevelopmentEntry({ project_id: projectId, task_id: taskId, path: entryPath, kind, trust_directory: true });
-    if (epoch !== useDevelopment.getState().epoch || latestCreateDraft().operation !== pending) return;
-    const latest = latestCreateDraft();
-    // Settle the original account-scoped record even after its view has gone away.
-    createDraft.setValue({ ...latest, name: result.ok && latest.name === pending.name ? '' : latest.name, operation: !result.ok && (result.code === 'file_create_unknown' || result.code === 'unknown') ? { ...pending, status: 'unknown' } : null });
-    if (!currentView(identity, generation)) return;
-    if (!result.ok) { setReferenceError(result.code); return; }
-    setReferenceError(null); setTreeRefresh(value => value + 1); await listing.refresh();
-    if (kind !== 'file' || !currentView(identity, generation)) return;
-    if (onOpenFile) onOpenFile({ path: result.value.path, mode: 'file', nonce: Date.now() });
-    else if (await discardDevelopmentDraft() && currentView(identity, generation)) setSelected(result.value.path);
-  }
-  const [referenceError, setReferenceError] = useState<string | null>(null);
-  const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  async function refreshFiles() {
-    const generation = contextGeneration(), identity = view.current;
-    const inspected = latestCreateDraft().operation;
-    if (inspected?.status === 'pending') return;
-    if (inspected?.status === 'unknown') {
-      const parent = inspected.path.split('/').slice(0, -1).join('/');
-      const result = await listDevelopmentFiles({ project_id: projectId, task_id: taskId, path: parent, query: '', include_ignored: true });
-      if (epoch !== useDevelopment.getState().epoch || latestCreateDraft().operation !== inspected) return;
-      if (!result.ok || result.value.truncated) { if (currentView(identity, generation)) setReferenceError(result.ok ? 'scan_limit' : result.code); return; }
-      const latest = latestCreateDraft();
-      createDraft.setValue({ ...latest, name: latest.name === inspected.name && result.value.entries.some(entry => entry.path === inspected.path) ? '' : latest.name, operation: null });
-    }
-    if (!currentView(identity, generation)) return;
-    setReferenceError(null); setTreeRefresh(value => value + 1); await listing.refresh();
-  }
-  async function attach(path: string, contents: boolean) {
-    const epoch = useDevelopment.getState().epoch, generation = contextGeneration();
-    setReferenceError(null);
-    const result = await readDevelopmentFile({ project_id: projectId, task_id: taskId, path });
-    if (!mounted.current || epoch !== useDevelopment.getState().epoch || generation !== contextGeneration()) return;
-    if (!result.ok) { setReferenceError(result.code); return; }
-    if (result.value.reason || result.value.text === null || !result.value.hash) { setReferenceError(result.value.reason ?? 'file_access_denied'); return; }
-    onReference?.({ project_id: projectId, task_id: taskId, path, kind: contents ? 'file' : 'path', ...(contents ? { expected_hash: result.value.hash } : {}) });
-  }
-  function open(path: string) {
-    if (onOpenFile) { onOpenFile({ path, mode: 'file', nonce: Date.now() }); return; }
-    if (path !== selected) void change(() => setSelected(path));
-  }
-  async function change(action: () => void) { if (onOpenFile || await discardDevelopmentDraft()) action(); }
-  function navigate(next: string) { void change(() => { setPath(next); setSelected(null); setQuery(''); }); }
-  const segments = path.split('/').filter(Boolean);
-  return <div className="dev-review-stack">
-    <div className="dev-review-toolbar"><Input type="search" data-testid="dev-file-search" label={t('review.search')} value={query} onChange={event => { const value = event.target.value; void change(() => { setQuery(value); setSelected(null); }); }} />
-      <Button size="xs" variant="secondary" data-testid="dev-review-refresh" disabled={listing.busy || creating} onClick={() => void refreshFiles()}>{t('review.refresh')}</Button><Button size="xs" variant="ghost" onClick={() => setCollapseKey(value => value + 1)}>{t('workbenchFiles.collapseAll')}</Button></div>
-    <div className="dev-file-create"><Input label={t('workbenchFiles.newPath')} value={newEntry} onChange={event => createDraft.setValue({ ...latestCreateDraft(), name: event.target.value })} /><Button size="xs" variant="secondary" disabled={creating || Boolean(unknownEntry) || !newEntry.trim()} onClick={() => void createEntry('file')}>{t('workbenchFiles.newFile')}</Button><Button size="xs" variant="secondary" disabled={creating || Boolean(unknownEntry) || !newEntry.trim()} onClick={() => void createEntry('directory')}>{t('workbenchFiles.newFolder')}</Button></div>
-    <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={ignored} onChange={event => { const checked = event.target.checked; void change(() => { setIgnored(checked); setSelected(null); }); }} />{t('review.includeIgnored')}</label>
-    <nav className="dev-review-breadcrumb" aria-label={t('review.directory')}><Button size="xs" variant="ghost" onClick={() => navigate('')}>{t('review.root')}</Button>{segments.map((segment, index) => <Button key={index} size="xs" variant="ghost" onClick={() => navigate(segments.slice(0, index + 1).join('/'))}>{segment}</Button>)}</nav>
-    <Feedback busy={listing.busy} error={listing.error} />
-    {referenceError ? <p role="alert">{errorText(referenceError)}</p> : null}
-    {operation?.status === 'pending' ? <p role="status">{t('review.loading')} <code>{operation.path}</code></p> : null}
-    {unknownEntry ? <p role="status">{errorText('file_create_unknown')} <code>{unknownEntry}</code></p> : null}
-    {listing.value ? <><p className="m-0 text-xs text-ink-secondary">{query ? t('review.searchHint') : t('workbenchFiles.browseHint')}</p>
-      {listing.value.truncated ? <p role="status" className="dev-evidence-warning">{t('review.filesTruncated')}</p> : null}
-      <div className={onOpenFile ? 'dev-file-browser' : 'dev-file-layout'}><nav aria-label={t('review.files')} className="dev-file-list">
-        {!listing.value.entries.length ? <p className="text-xs text-ink-secondary">{t('review.noFiles')}</p> : null}
-        <FileTree projectId={projectId} taskId={taskId} scope={scope} entries={listing.value.entries} query={query} ignored={ignored} selected={selected} refreshKey={treeRefresh} collapseKey={collapseKey} onOpen={open} onDirectory={setPath} referenceActions={onReference ? entry => entry.kind === 'file' ? <details className="dev-file-reference-actions"><summary aria-label={t('workbenchFiles.referenceActions', { path: entry.path })}>@</summary><Button size="xs" variant="ghost" onClick={() => void attach(entry.path, true)}>{t('workbenchFiles.referenceFile')}</Button><Button size="xs" variant="ghost" onClick={() => void attach(entry.path, false)}>{t('workbenchFiles.referencePath')}</Button></details> : null : undefined} />
-      </nav>{!onOpenFile ? <div className="min-w-0">{selected ? <FileEditor key={selected} projectId={projectId} taskId={taskId} path={selected} line={target?.path === selected ? target.line : undefined} /> : <p className="text-xs text-ink-secondary">{t('review.selectFile')}</p>}</div> : null}</div></> : null}
-  </div>;
 }
 
 

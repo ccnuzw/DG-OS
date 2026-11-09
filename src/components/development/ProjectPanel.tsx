@@ -5,9 +5,9 @@ import { Button, DropdownMenu, Icon, Input, Modal } from '@dgos/ui';
 import { useLocale } from '../../i18n';
 import { chooseContext, contextGeneration } from '../../stores/developmentSelection';
 import { useDevelopment, type Project, type ProjectInspection } from '../../stores/developmentStore';
-import { confirmAction, errorText } from './shared';
+import { errorText } from './shared';
 import { discardDevelopmentDraft } from '../../stores/developmentEditor';
-import { guardWorkbenchDrafts, useDevelopmentDrafts } from '../../stores/developmentDrafts';
+import { removeDevelopmentProject } from './removeProject';
 import { processActive, useDevelopmentRuntime } from '../../stores/developmentRuntime';
 import { useAgentRunner } from '../../stores/agentRunnerStore';
 
@@ -182,25 +182,19 @@ function ProjectDetail({ project, initiallyOpen = false }: { project: Project; i
     });
     return () => { current = false; };
   }, [project.id]);
-  async function run(action: 'rename' | 'archive' | 'restore' | 'unlink' | 'relocate', value: string | null) {
-    if (['archive', 'unlink', 'relocate'].includes(action) && !await discardDevelopmentDraft()) return false;
-    const epoch = useDevelopment.getState().epoch;
-    if (action === 'unlink' && !await guardWorkbenchDrafts(project.id)) return false;
-    if (epoch !== useDevelopment.getState().epoch) return false;
+  async function run(action: 'rename' | 'archive' | 'restore' | 'relocate', value: string | null) {
+    if (['archive', 'relocate'].includes(action) && !await discardDevelopmentDraft()) return false;
     setBusy(true);
     const result = await useDevelopment.getState().updateProject(project.id, action, value);
-    if (result.ok && action === 'unlink' && epoch === useDevelopment.getState().epoch) useDevelopmentDrafts.setState(state => ({
-      entries: Object.fromEntries(Object.entries(state.entries).filter(([key]) => JSON.parse(key)[2] !== project.id)),
-      handoffs: Object.fromEntries(Object.entries(state.handoffs).filter(([key]) => JSON.parse(key)[2] !== project.id)),
-    }));
-    if (result.ok && action === 'unlink' && epoch === useDevelopment.getState().epoch) useDevelopmentRuntime.setState(state => ({ drafts: Object.fromEntries(Object.entries(state.drafts).filter(([key]) => JSON.parse(key)[1] !== project.id)) }));
     setBusy(false);
     setFailure(result.ok ? null : result.code);
     return result.ok;
   }
   async function unlink() {
-    if (!await confirmAction(t('dev.unlink'), t('dev.unlinkConfirm'), t('dev.unlink'))) return;
-    await run('unlink', null);
+    setBusy(true);
+    const result = await removeDevelopmentProject(project.id);
+    setBusy(false);
+    setFailure(result.ok || result.code === 'cancelled' ? null : result.code);
   }
   const relocateNeeded = inspection !== null && inspection.path_state !== 'available';
   return <article className="dev-nav-detail" data-testid="dev-project-detail">

@@ -1,10 +1,8 @@
 /* The conversation owns the main area; tools share one independently scrolling drawer. */
 .agent-workbench.dev-workspace { min-width: 0; max-width: 100%; }
-.dev-workspace-header { flex-wrap: wrap; gap: var(--spacing-2); min-width: 0; padding: var(--spacing-2) var(--spacing-3); }
-.dev-workspace-context h1 { overflow-wrap: anywhere; }
-.dev-context-details { position: relative; flex-shrink: 0; font-size: var(--font-size-xs); }
+.dev-context-details { min-width: 0; margin-top: var(--spacing-3); border-top: 1px solid var(--border-subtle); font-size: var(--font-size-xs); }
 .dev-context-details summary { cursor: pointer; padding: var(--spacing-2); }
-.dev-context-details > .dev-detail { position: absolute; z-index: 5; right: 0; top: 100%; width: min(32rem, 70vw); max-height: 50vh; overflow: auto; background: var(--surface-panel); border: 1px solid var(--border-control); border-radius: var(--radius-md); padding: var(--spacing-3); box-shadow: var(--shadow-md); }
+.dev-context-details > .dev-detail { min-width: 0; padding: var(--spacing-2); overflow-wrap: anywhere; }
 .dev-context-details p { margin: 0; }
 
 .dev-workspace-body { position: relative; min-width: 0; overflow: hidden; grid-template-columns: 3.5rem minmax(0, 1fr); }
@@ -110,8 +108,6 @@
 
 .dev-workspace[data-compact=true] .dev-workspace-body[data-drawer-open] { grid-template-columns: 3.5rem minmax(0, 1fr); }
 .dev-workspace[data-compact=true] .dev-navigation { position: absolute; z-index: 4; inset: 0 auto 0 3.5rem; max-width: calc(100% - 3.5rem); max-height: 100%; border-inline-end: 1px solid var(--border-control); box-shadow: var(--shadow-md); }
-.dev-workspace[data-compact=true] .dev-workspace-context { flex-basis: 50%; }
-.dev-workspace[data-compact=true] .dev-context-details > .dev-detail { position: fixed; inset: auto var(--spacing-3); width: auto; max-height: 50vh; }
 
 .dev-main-view-nav, .dev-main-tool-header { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: var(--spacing-2); padding: var(--spacing-2); border-bottom: 1px solid var(--border-subtle); }
 .dev-main-view-nav > button { min-width: 0; max-width: 100%; overflow-wrap: anywhere; white-space: normal; height: auto; min-height: 2rem; }
@@ -121,13 +117,6 @@
 .dev-main-tool-surface .dev-diff { max-height: none; }
 .dev-workspace-preparation { flex-shrink: 0; display: flex; align-items: center; flex-wrap: wrap; gap: var(--spacing-2); padding: var(--spacing-2); }
 .dev-workspace-preparation p { margin: 0; }
-.dev-file-browser-row { display: flex; align-items: start; min-width: 0; gap: var(--spacing-1); }
-.dev-file-browser-row > button { flex: 1; min-width: 0; }
-.dev-file-reference-actions { font-size: var(--font-size-xs); }
-.dev-file-reference-actions summary { cursor: pointer; min-width: 2rem; min-height: 2rem; padding: var(--spacing-1); }
-.dev-file-reference-actions[open] { flex-basis: 100%; }
-.dev-file-reference-actions summary:focus-visible { outline: 1px solid var(--border-focus); }
-.dev-file-browser-row:has(.dev-file-reference-actions[open]) { flex-wrap: wrap; }
 .dev-explorer-tabs { display: flex; gap: var(--spacing-1); padding-bottom: var(--spacing-2); border-bottom: 1px solid var(--border-subtle); margin-bottom: var(--spacing-2); }
 .dev-explorer-location { display: flex; align-items: center; gap: var(--spacing-2); min-width: 0; color: var(--text-secondary); font-size: var(--font-size-xs); padding: var(--spacing-2) 0; }
 .dev-explorer-location > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

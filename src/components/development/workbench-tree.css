@@ -1,12 +1,9 @@
-.dev-file-create { display: flex; flex-wrap: wrap; align-items: end; gap: var(--spacing-2); }
-.dev-file-create > :first-child { flex: 0 0 100%; min-width: 0; width: 100%; }
-.dev-file-browser .dev-file-list { max-height: min(60vh, 42rem); }
-.dev-file-browser-row { display: flex; align-items: start; min-width: 0; gap: var(--spacing-1); }
-.dev-file-browser-row > button { flex: 1; min-width: 0; }
-.dev-file-entry { justify-content: start; height: auto; min-height: 2rem; white-space: normal; text-align: start; gap: var(--spacing-1); }
+.dev-file-browser-row { display: flex; align-items: center; min-width: 0; gap: 0; border-radius: var(--radius-sm); }
+.dev-file-browser-row > .dev-file-entry { flex: 1; min-width: 0; }
+.dev-file-entry { justify-content: start; height: 1.9rem; min-height: 1.9rem; width: 100%; white-space: nowrap; text-align: start; gap: .45rem; padding: .25rem .35rem; font-size: var(--font-size-sm); }
 .dev-change-tree-group { border-inline-start: 1px solid var(--border-subtle); padding-inline-start: var(--spacing-2); }
-.dev-file-tree-children { padding-inline-start: 1rem; border-inline-start: 1px solid var(--border-subtle); margin-inline-start: .65rem; }
-.dev-tree-icon { flex: none; color: var(--text-secondary); width: 1rem; text-align: center; }
+.dev-file-tree-children { padding-inline-start: .9rem; }
+.dev-tree-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; color: var(--text-secondary); width: .75rem; }
 .dev-git-change-tree { min-height: 0; overflow: auto; max-height: 45vh; display: grid; gap: var(--spacing-2); }
 .dev-git-change-group > summary { display: flex; align-items: center; gap: var(--spacing-2); font-size: var(--font-size-xs); font-weight: 600; cursor: pointer; padding-block: var(--spacing-2); }
 .dev-git-change-group > summary span { color: var(--text-secondary); font-weight: 400; }
@@ -17,9 +14,23 @@
 .dev-git-tree-file .dev-checkbox { min-width: 0; overflow-wrap: anywhere; }
 .dev-git-status { flex: none; color: var(--text-secondary); font-size: var(--font-size-xs); }
 .dev-git-commit-area { position: sticky; bottom: 0; z-index: 1; order: 10; padding-block: var(--spacing-3); display: grid; gap: var(--spacing-2); background: var(--surface-panel); border-block-start: 1px solid var(--border-subtle); }
-.dev-file-list [role=treeitem] > .dev-file-browser-row > button { width: 100%; }
-.dev-file-list [role=treeitem][aria-selected=true] > .dev-file-browser-row { background: var(--surface-selected); }
+.dev-file-entry-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-file-list [role=treeitem][aria-selected=true] > div > .dev-file-browser-row { background: var(--surface-selected); }
 .dev-tree-file-icon { flex: none; width: 1rem; height: 1rem; color: var(--text-secondary); }
+.dev-tree-file-config { color: var(--status-warning-text); }
+.dev-tree-file-document { color: var(--accent-default); }
+.dev-tree-file-git { color: var(--status-error-text); }
+.dev-file-browser-row > .dev-file-more { flex: none; width: 1.5rem; height: 1.5rem; min-height: 1.5rem; padding: .2rem; opacity: 0; }
+.dev-file-browser-row:hover > .dev-file-more, .dev-file-browser-row:focus-within > .dev-file-more { opacity: 1; }
+.dev-file-explorer { gap: .4rem; }
+.dev-explorer-toolbar { display: flex; align-items: center; gap: .15rem; min-width: 0; padding-block: .3rem .5rem; }
+.dev-explorer-toolbar > button { flex: none; width: 1.7rem; min-height: 1.9rem; padding: .2rem; color: var(--text-secondary); }
+.dev-explorer-search { display: flex; align-items: center; flex: 1; min-width: 0; gap: .35rem; height: 2rem; margin-inline-end: .25rem; padding-inline: .55rem; border: 1px solid var(--border-control); border-radius: var(--radius-md); background: var(--surface-inset); color: var(--text-secondary); }
+.dev-explorer-search:focus-within { outline: 1px solid var(--border-focus); outline-offset: 1px; }
+.dev-explorer-search > svg { flex: none; }
+.dev-explorer-search input { width: 100%; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; color: var(--text-primary); font: inherit; font-size: var(--font-size-xs); }
+.dev-explorer-search input::placeholder { color: var(--text-secondary); }
+.dev-explorer-feedback { margin: 0; padding: .3rem; font-size: var(--font-size-xs); overflow-wrap: anywhere; }
 .dev-git-history-list { list-style: none; margin: var(--spacing-2) 0; padding: 0; display: grid; gap: var(--spacing-3); }
 .dev-git-history-list > li { border-inline-start: 1px solid var(--border-subtle); padding-inline-start: var(--spacing-2); }
-@media (max-width: 520px) { .dev-file-create > button { flex: 1; } }
+@media (pointer: coarse) { .dev-file-browser-row > .dev-file-more { opacity: 1; min-width: 2.25rem; min-height: 2.25rem; } .dev-file-entry { min-height: 2.25rem; } .dev-explorer-toolbar > button { min-height: 2.25rem; } }

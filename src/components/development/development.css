@@ -52,10 +52,6 @@
 .dev-terminal:focus-within { border-color: var(--border-focus); }
 @container (max-width: 600px) { .dev-comparison, .dev-command-catalog { grid-template-columns: minmax(0, 1fr); } .dev-structured-row { flex-wrap: wrap; } }
 .agent-workbench.dev-workspace { display: flex; flex-direction: column; gap: 0; overflow: hidden; padding: 0; }
-.dev-workspace-header { display: flex; align-items: center; flex-shrink: 0; border-bottom: 1px solid var(--border-subtle); background: var(--surface-panel); }
-.dev-workspace-context { flex: 1; min-width: 0; }
-.dev-workspace-context h1 { margin: 0; font-size: var(--font-size-base); font-weight: 600; }
-.dev-workspace-context p { margin: var(--spacing-1) 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); color: var(--text-secondary); }
 .dev-workspace-error { margin: 0; padding: var(--spacing-2) var(--spacing-4); border-bottom: 1px solid var(--border-subtle); }
 .dev-workspace-body { flex: 1; display: grid; min-height: 0; }
 .dev-workspace-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
