@@ -555,8 +555,8 @@ components:
         target:
           type: object
           additionalProperties: false
-          required: [provider_id, model_id, skill_id, no_skill]
-          description: skill_id 与 no_skill 互斥
+          required: [provider_id, model_id]
+          description: 技能默认不选择；skill_id省略或null允许发送。非空skill_id与no_skill=true互斥，所选技能不可用仍拒绝。
           properties:
             provider_id:
               type: string
@@ -566,6 +566,8 @@ components:
               type: [string, 'null']
             no_skill:
               type: boolean
+              default: false
+              description: 旧客户端兼容字段；省略、false或true均允许空技能，不作为发送或重新生成的许可门槛。
 
     LanSendInput:
       type: object
@@ -612,6 +614,7 @@ components:
           type: [string, 'null']
         no_skill_confirmed:
           type: boolean
+          description: 旧客户端兼容元数据；空技能会话的false与true均允许发送及重新生成，旧行无需迁移。
         created_at:
           type: integer
         updated_at:
