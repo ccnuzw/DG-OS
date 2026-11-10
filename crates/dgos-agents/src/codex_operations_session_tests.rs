@@ -72,7 +72,9 @@ CONFIG_REPLY
  printf '{"method":"turn/completed","params":{"threadId":"root","turn":{"id":"%s","status":"completed","items":[]}}}\n' "$native"
  sleep 0.05
  case "$line" in
- *'"method":"thread/compact/start"'*) printf '{"id":%s,"result":{}}\n' "$rpc";;
+ *'"method":"thread/compact/start"'*)
+  if [ -f misleading-compact-ack ]; then printf '{"id":%s,"result":{"turn":{"id":"not-the-native-compact-turn"}}}\n' "$rpc";
+  else printf '{"id":%s,"result":{}}\n' "$rpc"; fi;;
  *) printf '{"id":%s,"result":{"reviewThreadId":"root","turn":{"id":"%s"}}}\n' "$rpc" "$native";;
  esac;;
 *) case "$line" in *'"id":'*) printf '{"id":%s,"error":{"code":-32601,"message":"absent"}}\n' "$rpc";; esac;;
@@ -116,6 +118,7 @@ async fn native_observation_discovers_nested_children_and_rejects_forged_control
 #[tokio::test]
 async fn run_operations_bind_pre_ack_output_and_terminal_to_the_supplied_run() {
     let f = Fixture::new().await;
+    std::fs::write(f.root.join("misleading-compact-ack"), "yes").unwrap();
     for action in [CodexAction::Review { target: ReviewTarget::UncommittedChanges }, CodexAction::QueueStart { submission_id: Some("a".into()) }, CodexAction::Compact {}] {
         let run = uuid::Uuid::new_v4().to_string();
         f.session.execute_operation(action, run.clone()).await.unwrap();
@@ -167,6 +170,25 @@ async fn fork_preserves_source_and_revert_refreshes_rich_history_with_cursor_res
     assert_eq!(fork["params"]["threadId"], "root");
     f.finish().await;
 }
+#[tokio::test]
+async fn compact_dispatch_requires_current_native_evidence_and_refusals_take_precedence() {
+    let f = Fixture::new().await;
+    for version in [None, Some("codex-cli 0.166.0"), Some("codex-cli 0.168.0")] {
+        f.session.view.lock().await.cli_version = version.map(str::to_owned);
+        assert!(!f.session.compact_supported().await);
+        assert_eq!(f.session.execute_operation(CodexAction::Compact {}, "not-dispatched".into()).await.unwrap_err(), "codex_operation_unsupported");
+    }
+    assert!(!f.requests().iter().any(|request| request["method"] == "thread/compact/start"));
+    assert_eq!(f.session.snapshot().await.status, "idle");
+    f.session.turn.lock().await.operations.compact_confirmed = true;
+    assert!(f.session.compact_supported().await);
+    f.session.turn.lock().await.operations.unsupported.insert("compact".into());
+    assert!(!f.session.compact_supported().await);
+    assert_eq!(f.session.execute_operation(CodexAction::Compact {}, "refused".into()).await.unwrap_err(), "codex_operation_unsupported");
+    assert!(!f.requests().iter().any(|request| request["method"] == "thread/compact/start"));
+    f.finish().await;
+}
+
 #[test]
 fn compact_without_started_event_expires_as_unknown_not_success_or_forever_running() {
     let mut view = crate::session::SessionView::new("/fixture".into());

@@ -19,7 +19,7 @@ impl AgentManager {
     }
 
     /// Recovered slots have no owned backend to await. Only a later durable
-    /// stopped/not-required receipt can release them; unknown stays occupied.
+    /// stopped/not-required receipt can release them; unknown cleanup stays occupied.
     /// Caller holds admission, or shutdown has already stopped admission.
     pub(super) async fn reconcile_inactive_slots(&self) {
         let slots: Vec<_> = self.inner.slots.lock().await.iter().map(|(id, slot)| (id.clone(), *slot)).collect();

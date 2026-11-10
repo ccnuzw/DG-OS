@@ -232,6 +232,8 @@ impl ClaudeSession {
             }
             let pending = view.pending.iter().find(|pending| pending.id == request_id).ok_or("request_expired")?;
             if !valid_permission_response(&pending.data, &response) { return Err("invalid_response".into()); }
+            let planning = view.controls.as_ref().and_then(|controls| controls.collaboration.as_ref()).and_then(|control| control.current.as_deref()).is_some_and(|mode| matches!(mode, "plan" | "deep"));
+            if planning && response["behavior"] == "allow" && !matches!(pending.title.as_str(), "AskUserQuestion" | "ExitPlanMode") { return Err("invalid_response".into()); }
             // Reserve before IO. A lost acknowledgement never makes approval safe to repeat.
             view.pending.retain(|pending| pending.id != request_id);
         }
@@ -251,6 +253,13 @@ impl ClaudeSession {
         if view.active_run.as_deref() != Some(run_id) || !matches!(view.status.as_str(), "running" | "waiting") { return Err("not_running".into()); }
         drop(view);
         self.wire.request("interrupt", json!({"request_id":run_id})).await.map(|_| ())
+    }
+    pub(crate) async fn compact_supported(&self) -> bool {
+        self.native_available() && self.wire.request("compression/observe", json!({})).await.ok().is_some_and(|result| result["supported"] == true)
+    }
+    pub(crate) async fn compact(&self, request_id: String) -> Result<(), String> {
+        if !self.compact_supported().await { return Err("codex_operation_unsupported".into()); }
+        self.send(request_id, "/compact".into(), None).await
     }
     pub async fn snapshot(&self) -> SessionView {
         self.view.lock().await.clone()
@@ -561,6 +570,63 @@ done
         session.native_capability_bits.store(127, std::sync::atomic::Ordering::Release);
         assert!(session.wire.close().await);
         manager.inner.providers.cleanup("alice", &id, &launch.binding, true, false).await.unwrap();
+        assert!(manager.shutdown().await);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn compact_requires_native_support_and_acceptance_never_invents_completion() {
+        use super::*;
+        let root = std::env::temp_dir().join(format!("dgos-claude-compact-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let manager = crate::test_support::manager(&root).await;
+        let task_id = crate::test_support::task(&manager, &root).await;
+        let project = manager.task_project("alice", &task_id).await.unwrap();
+        let executable = root.join("bridge");
+        crate::test_support::prepare_shell_fixture(&executable, r#"
+while IFS= read -r line; do
+printf '%s\n' "$line" >> protocol
+request=${line#*\"id\":}; request=${request%%,*}
+case "$line" in
+*'"method":"compression/observe"'*)
+ if [ "$COMPACT_FIXTURE_MODE" = unsupported ]; then printf '{"id":%s,"result":{"supported":false}}\n' "$request";
+ else printf '{"id":%s,"result":{"supported":true}}\n' "$request"; fi;;
+*'"method":"send"'*)
+ if [ "$COMPACT_FIXTURE_MODE" = unknown ]; then exit 0;
+ else printf '{"id":%s,"result":{}}\n' "$request"; fi;;
+esac
+done
+"#).await;
+        for mode in ["unsupported", "accepted", "unknown"] {
+            let id = uuid::Uuid::new_v4().to_string();
+            let options = SessionOptions { workspace: project.path.clone(), executable: None, resume_id: None, model: None, trust_workspace: true };
+            let create = crate::test_support::create(&manager, "alice", &task_id, options.clone()).await;
+            let lease = tokio_util::sync::CancellationToken::new();
+            let launch = manager.inner.providers.prepare("alice", &id, &task_id, &project, crate::Engine::Codex, &options, create.project_revision, create.provider, &lease).await.unwrap();
+            let mut command = Command::new(&executable);
+            command.current_dir(&root).env("COMPACT_FIXTURE_MODE", mode);
+            let (wire, _events) = Transport::spawn(command, launch.lease.cancellation_token(), ProcessDiagnostic::new("agent_start", "claude"), launch.lease.clone()).unwrap();
+            let mut view = SessionView::new(project.path.clone()); view.status = "idle".into();
+            let session = ClaudeSession { wire, view: Arc::new(Mutex::new(view)), native_capability_bits: Arc::default(), auth_launch: None };
+            let request_id = uuid::Uuid::new_v4().to_string();
+            let result = session.compact(request_id.clone()).await;
+            let view = session.snapshot().await;
+            match mode {
+                "unsupported" => { assert_eq!(result.unwrap_err(), "codex_operation_unsupported"); assert_eq!(view.status, "idle"); assert!(view.active_run.is_none()); },
+                "accepted" => { result.unwrap(); assert_eq!(view.status, "running"); assert_eq!(view.active_run.as_deref(), Some(request_id.as_str())); assert!(view.terminal_run.is_none()); },
+                _ => { assert!(result.is_err()); assert_eq!(view.status, "unknown"); assert_eq!(view.terminal_run.as_ref().unwrap().status, "unknown"); },
+            }
+            let requests: Vec<serde_json::Value> = std::fs::read_to_string(root.join("protocol")).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+            let sends: Vec<_> = requests.iter().filter(|request| request["method"] == "send" && request["params"]["request_id"] == request_id).collect();
+            assert_eq!(sends.len(), usize::from(mode != "unsupported"));
+            if let Some(send) = sends.first() {
+                assert_eq!(send["params"]["text"], "/compact");
+                assert!(send["params"].get("settings").is_none());
+            }
+            assert!(session.wire.close().await);
+            manager.inner.providers.cleanup("alice", &id, &launch.binding, true, false).await.unwrap();
+        }
         assert!(manager.shutdown().await);
         std::fs::remove_dir_all(root).unwrap();
     }

@@ -6,7 +6,7 @@ export default {
   'modelPicker.current': '当前选择',
   'modelPicker.none': '尚未选择模型',
   'modelPicker.search': '查找模型',
-  'modelPicker.searchHint': '模型名称、Provider 连接或 ID',
+  'modelPicker.searchHint': '搜索模型…',
   'modelPicker.loading': '正在读取本机模型目录…',
   'modelPicker.refresh': '刷新目录',
   'modelPicker.readFailed': '无法读取模型目录，请刷新重试；当前选择保持不变。',
@@ -24,4 +24,8 @@ export default {
   'modelPicker.manageProviders': 'Provider 设置',
   'modelPicker.manageCli': 'CLI 设置',
   'modelPicker.boundary': '可用仅表示宿主支持此路由且本机 CLI 可用，不代表已验收外部服务兼容性。选择模型不会发送消息。',
+  'modelPicker.platform': '平台',
+  'modelPicker.provider': 'Provider 连接',
+  'modelPicker.other': '其他',
+  'modelPicker.configuredConnection': '已配置的模型连接',
 } as const;

@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button, Input } from '@dgos/ui';
-import { Dialog } from 'radix-ui';
-import { Check, ChevronDown, Search, X } from 'lucide-react';
+import { Popover as Primitive } from 'radix-ui';
+import { Check, ChevronDown, Cpu, KeyRound, Search, Settings2 } from 'lucide-react';
 import { useLocale } from '../../i18n';
 import { readCliProviderCatalog, type CliProviderCatalog, type CliProviderConfiguration } from '../../stores/developmentCapabilities';
 import { useDevelopment } from '../../stores/developmentStore';
@@ -13,7 +13,7 @@ import './composer-model-picker.css';
 type Engine = CliProviderConfiguration['engine'];
 type Route = { engine: Engine; revision: number; available: boolean; reason: string | null };
 type Model = { id: string; name: string; routes: Route[] };
-type Provider = { id: string; name: string; models: Model[] };
+type Provider = { id: string; name: string; platform: string; models: Model[] };
 type Scope = { projectId: string; epoch: number; generation: number };
 type CatalogState = Scope & { reload: number; ticket: number; providers: Provider[]; failed: boolean; loading: boolean };
 const engineNames = { codex: 'Codex', claude: 'Claude' } as const;
@@ -28,7 +28,7 @@ function mergeCatalogs(catalogs: CliProviderCatalog[]): Provider[] {
     for (const source of catalog.providers) {
       let provider = providers.get(source.id);
       if (!provider) {
-        provider = { id: source.id, name: source.name, models: [] };
+        provider = { id: source.id, name: source.name, platform: source.provider_type ?? 'other', models: [] };
         providers.set(source.id, provider);
       }
       // Missing or contradictory availability is not evidence of a usable route.
@@ -68,6 +68,8 @@ export function ComposerModelPicker({ projectId, value, preferred, disabled = fa
   const restoreFocus = useRef(false);
   const [openScope, setOpenScope] = useState<Scope | null>(null);
   const [query, setQuery] = useState('');
+  const [platformFilter, setPlatformFilter] = useState<string | null>(null);
+  const [providerFilter, setProviderFilter] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const [state, setState] = useState<CatalogState | null>(null);
   const open = Boolean(openScope && sameScope(openScope, scope) && active && !pending);
@@ -81,10 +83,12 @@ export function ComposerModelPicker({ projectId, value, preferred, disabled = fa
   const selectedRoute = value && selectedModel?.routes.find(route => route.engine === value.engine && route.revision === value.provider.provider_revision);
   const invalid = Boolean(value && ready && !selectedRoute?.available);
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const filtered = providers.map(provider => ({
-    ...provider,
-    models: provider.models.filter(model => !normalizedQuery || [provider.name, provider.id, model.name, model.id].some(text => text.toLocaleLowerCase().includes(normalizedQuery))),
-  })).filter(provider => provider.models.length > 0 || !normalizedQuery);
+  const platforms = [...new Set(providers.map(provider => provider.platform))];
+  const platform = platformFilter && platforms.includes(platformFilter) ? platformFilter : selectedProvider?.platform ?? platforms[0];
+  const platformProviders = providers.filter(provider => provider.platform === platform);
+  const browsingProvider = platformProviders.find(provider => provider.id === providerFilter) ?? platformProviders.find(provider => provider.id === selectedProvider?.id) ?? platformProviders[0];
+  const filteredModels = browsingProvider?.models.filter(model => !normalizedQuery || [model.name, model.id].some(text => text.toLocaleLowerCase().includes(normalizedQuery))) ?? [];
+  const platformName = (name: string) => name === 'openai_compatible' ? 'OpenAI' : name === 'anthropic' ? 'Anthropic' : name === 'other' ? t('modelPicker.other') : name;
 
   function refresh() {
     ++operation.current;
@@ -131,6 +135,7 @@ export function ComposerModelPicker({ projectId, value, preferred, disabled = fa
     if (next && (disabled || pending || !active)) return;
     setOpenScope(next ? scope : null);
     setQuery('');
+    if (next) { setPlatformFilter(null); setProviderFilter(null); }
     if (next) refresh();
   }
 
@@ -177,69 +182,56 @@ export function ComposerModelPicker({ projectId, value, preferred, disabled = fa
     : t('modelPicker.choose');
 
   return <div className="composer-model-picker">
-    <Dialog.Root open={open} onOpenChange={changeOpen}>
-      <Dialog.Trigger asChild>
-        <Button ref={trigger} variant="ghost" size="sm" className="composer-model-picker-trigger" disabled={disabled || pending || !active} aria-label={t('modelPicker.open', { selection: currentLabel })} aria-invalid={invalid || undefined} data-testid="composer-model-picker-trigger">
-          <span>{currentLabel}</span><ChevronDown size={14} aria-hidden="true" />
+    <Primitive.Root open={open} onOpenChange={changeOpen}>
+      <Primitive.Trigger asChild>
+        <Button ref={trigger} variant="ghost" size="xs" className="composer-model-picker-trigger" disabled={disabled || pending || !active} aria-label={t('modelPicker.open', { selection: currentLabel })} title={currentLabel} aria-invalid={invalid || undefined} data-testid="composer-model-picker-trigger">
+          <Cpu size={15} aria-hidden="true" /><span>{selectedModel?.name ?? value?.provider.model_id ?? t('modelPicker.choose')}</span>
         </Button>
-      </Dialog.Trigger>
-      <Dialog.Portal>
-        <Dialog.Overlay className="composer-model-picker-overlay" />
-        <Dialog.Content className="composer-model-picker-dialog" data-testid="composer-model-picker-dialog" onOpenAutoFocus={event => {
-          event.preventDefault();
-          document.getElementById(`${id}-search`)?.focus({ preventScroll: true });
+      </Primitive.Trigger>
+      <Primitive.Portal>
+        <Primitive.Content side="top" align="end" sideOffset={10} collisionPadding={12} aria-label={t('modelPicker.title')} className="composer-model-picker-dialog" data-testid="composer-model-picker-dialog" onOpenAutoFocus={event => {
+          event.preventDefault(); document.getElementById(`${id}-search`)?.focus({ preventScroll: true });
         }} onCloseAutoFocus={event => {
-          event.preventDefault();
-          restoreFocus.current = true;
+          event.preventDefault(); restoreFocus.current = true;
           requestAnimationFrame(() => {
             const target = trigger.current;
-            if (latest.current.active && target?.isConnected && !target.closest('[hidden], [inert]') && !target.disabled) {
-              restoreFocus.current = false;
-              target.focus({ preventScroll: true });
-            }
+            if (latest.current.active && target?.isConnected && !target.closest('[hidden], [inert]') && !target.disabled) { restoreFocus.current = false; target.focus({ preventScroll: true }); }
           });
         }}>
-          <header className="composer-model-picker-header">
-            <Dialog.Title>{t('modelPicker.title')}</Dialog.Title>
-            <Dialog.Close asChild><Button variant="ghost" size="sm" iconOnly aria-label={t('modelPicker.close')}><X size={16} aria-hidden="true" /></Button></Dialog.Close>
-          </header>
-          <Dialog.Description className="composer-model-picker-description">{t('modelPicker.boundary')}</Dialog.Description>
-          <section className="composer-model-picker-current" aria-label={t('modelPicker.current')}>
-            <strong>{t('modelPicker.current')}</strong>
-            <span>{value ? currentLabel : t('modelPicker.none')}</span>
-            {value ? <small>{engineNames[value.engine]}</small> : null}
-            {invalid ? <p role="alert" className="composer-model-picker-warning">{t('modelPicker.reselect')}{selectedRoute && !selectedRoute.available ? ` ${reasonText(selectedRoute.reason)}` : ''}</p> : null}
-          </section>
-          <div className="composer-model-picker-search"><Search size={16} aria-hidden="true" /><Input id={`${id}-search`} type="search" label={t('modelPicker.search')} placeholder={t('modelPicker.searchHint')} value={query} onChange={event => setQuery(event.target.value)} /></div>
-          <div className="composer-model-picker-toolbar"><Button variant="secondary" size="xs" disabled={loading} onClick={refresh}>{t('modelPicker.refresh')}</Button>{loading ? <span role="status">{t('modelPicker.loading')}</span> : null}</div>
-          <div className="composer-model-picker-results" aria-busy={loading}>
-            {scoped?.failed ? <p role="alert" className="composer-model-picker-warning">{t('modelPicker.readFailed')}</p> : null}
-            {ready && !providers.length ? <p className="composer-model-picker-empty">{t('modelPicker.empty')}</p> : null}
-            {ready && providers.length > 0 && !filtered.length ? <p className="composer-model-picker-empty">{t('modelPicker.noMatches')}</p> : null}
-            {ready ? filtered.map(provider => <section key={provider.id} className="composer-model-picker-provider" aria-label={provider.name}>
-              <header><h3>{provider.name}</h3></header>
-              {!provider.models.length ? <p className="composer-model-picker-empty">{t('modelPicker.noModels')}</p> : null}
-              {provider.models.map(model => {
-                const selected = value?.provider.provider_id === provider.id && value.provider.model_id === model.id;
+          <aside className="composer-model-picker-platforms" aria-label={t('modelPicker.platform')}>
+            <h3>{t('modelPicker.platform')}</h3>
+            {platforms.map(name => <Button key={name} variant="ghost" aria-pressed={platform === name} onClick={() => { setPlatformFilter(name); setProviderFilter(null); setQuery(''); }}><Cpu size={17} aria-hidden="true" /><span>{platformName(name)}</span></Button>)}
+            <WorkspaceLink className="composer-model-picker-manage" to="/settings/providers" onClick={() => changeOpen(false)}><Settings2 size={16} aria-hidden="true" />{t('modelPicker.manageProviders')}</WorkspaceLink>
+          </aside>
+          <div className="composer-model-picker-main">
+            <div className="composer-model-picker-top">
+              <label className="composer-model-picker-provider-select"><KeyRound size={19} aria-hidden="true" /><span><span className="sr-only">{t('modelPicker.provider')}</span><select aria-label={t('modelPicker.provider')} value={browsingProvider?.id ?? ''} disabled={!platformProviders.length} onChange={event => { setProviderFilter(event.target.value); setQuery(''); }}>{platformProviders.map(provider => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select><small>{t('modelPicker.configuredConnection')}</small></span><ChevronDown size={15} aria-hidden="true" /></label>
+              <div className="composer-model-picker-search"><Search size={16} aria-hidden="true" /><Input id={`${id}-search`} type="search" aria-label={t('modelPicker.search')} placeholder={t('modelPicker.searchHint')} value={query} onChange={event => setQuery(event.target.value)} /></div>
+            </div>
+            <div className="composer-model-picker-results" aria-busy={loading}>
+              {loading ? <p role="status" className="composer-model-picker-empty">{t('modelPicker.loading')}</p> : null}
+              {scoped?.failed ? <p role="alert" className="composer-model-picker-warning">{t('modelPicker.readFailed')}</p> : null}
+              {invalid ? <p role="alert" className="composer-model-picker-warning">{t('modelPicker.reselect')}</p> : null}
+              {ready && !providers.length ? <p className="composer-model-picker-empty">{t('modelPicker.empty')}</p> : null}
+              {ready && browsingProvider && !filteredModels.length ? <p className="composer-model-picker-empty">{t(normalizedQuery ? 'modelPicker.noMatches' : 'modelPicker.noModels')}</p> : null}
+              {ready && browsingProvider ? filteredModels.map(model => {
+                const selected = value?.provider.provider_id === browsingProvider.id && value.provider.model_id === model.id;
                 const available = model.routes.some(route => route.available);
                 return <div key={model.id} className="composer-model-picker-model">
-                  <Button variant="ghost" className="composer-model-picker-option" aria-pressed={Boolean(selected)} disabled={disabled || !available} onClick={() => chooseModel(provider, model)}>
-                    <span className="composer-model-picker-model-copy"><strong>{model.name}</strong><small>{model.id}</small></span>
-                    {selected ? <span className="composer-model-picker-selected"><Check size={14} aria-hidden="true" />{t('modelPicker.current')}</span> : null}
+                  <Button variant="ghost" className="composer-model-picker-option" aria-pressed={Boolean(selected)} disabled={disabled || !available} title={available ? model.id : reasonText(model.routes[0]?.reason ?? null)} onClick={() => chooseModel(browsingProvider, model)}>
+                    <span className="composer-model-picker-model-copy">{model.name}</span>{selected ? <Check size={16} aria-hidden="true" /> : null}
                   </Button>
-                  <details className="composer-model-picker-route-summary"><summary>{t('desktop.advancedRoute')}</summary>
-                    <div className="composer-model-picker-routes" role="group" aria-label={t('modelPicker.chooseRoute')}>
-                      {model.routes.map(route => <Button key={route.engine} variant="secondary" disabled={disabled || !route.available} aria-pressed={Boolean(selected && value?.engine === route.engine && value.provider.provider_revision === route.revision)} onClick={() => chooseRoute(provider, model, route)}>{engineNames[route.engine]}{!route.available ? ` — ${reasonText(route.reason)}` : ''}</Button>)}
-                    </div>
-                  </details>
+                  {!available ? <small className="composer-model-picker-unavailable">{reasonText(model.routes[0]?.reason ?? null)}</small> : null}
                 </div>;
-              })}
-            </section>) : null}
+              }) : null}
+            </div>
+            <footer className="composer-model-picker-footer"><Button variant="ghost" size="xs" disabled={loading} onClick={refresh}>{t('modelPicker.refresh')}</Button><details><summary>{t('desktop.advancedRoute')}</summary><div className="composer-model-picker-routes" role="group" aria-label={t('modelPicker.chooseRoute')}>
+              {browsingProvider && filteredModels.map(model => <div key={model.id}><span>{model.name}</span>{model.routes.map(route => <Button key={route.engine} size="xs" variant="ghost" disabled={disabled || !route.available} onClick={() => chooseRoute(browsingProvider, model, route)}>{engineNames[route.engine]}</Button>)}</div>)}
+              <WorkspaceLink to="/settings/cli" onClick={() => changeOpen(false)}>{t('modelPicker.manageCli')}</WorkspaceLink>
+            </div></details></footer>
           </div>
-          <footer className="composer-model-picker-footer"><WorkspaceLink to="/settings/providers" onClick={() => changeOpen(false)}>{t('modelPicker.manageProviders')}</WorkspaceLink><WorkspaceLink to="/settings/cli" onClick={() => changeOpen(false)}>{t('modelPicker.manageCli')}</WorkspaceLink></footer>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-    {invalid ? <span role="status" className="composer-model-picker-warning">{t('modelPicker.reselect')}</span> : null}
+        </Primitive.Content>
+      </Primitive.Portal>
+    </Primitive.Root>
   </div>;
 }

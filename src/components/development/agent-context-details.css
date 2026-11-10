@@ -1,0 +1,22 @@
+.agent-usage { display: flex; flex-direction: column; gap: var(--spacing-3); width: min(calc(350rem / 14), calc(100vw - 3rem)); max-width: 100%; min-width: 0; color: var(--text-primary); }
+.agent-usage .agent-usage-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--spacing-3); }
+.agent-usage .agent-usage-heading h3 { margin: 0; font-size: var(--font-size-base); font-weight: var(--font-weight-semibold); }
+.agent-usage-heading > span, .agent-usage-progress > span, .agent-usage-totals dd { font-variant-numeric: tabular-nums; }
+.agent-usage-progress { display: flex; flex-direction: column; gap: var(--spacing-2); min-width: 0; }
+.agent-usage-progress progress { appearance: none; width: 100%; height: 0.5rem; overflow: hidden; border: 0; border-radius: var(--radius-full); background: var(--surface-selected); accent-color: var(--accent-default); }
+.agent-usage-progress progress::-webkit-progress-bar { border-radius: var(--radius-full); background: var(--surface-selected); }
+.agent-usage-progress progress::-webkit-progress-value { border-radius: var(--radius-full); background: var(--accent-default); }
+.agent-usage-progress progress::-moz-progress-bar { border-radius: var(--radius-full); background: var(--accent-default); }
+.agent-usage-progress progress:indeterminate::-webkit-progress-value { background: transparent; }
+.agent-usage-progress progress:indeterminate::-moz-progress-bar { background: transparent; }
+.agent-usage-progress > span { color: var(--text-secondary); font-size: var(--font-size-sm); }
+.agent-usage button { display: inline-flex; align-items: center; justify-content: center; gap: var(--spacing-2); min-height: var(--control-height-compact); padding: var(--spacing-2) var(--spacing-3); border: 1px solid var(--border-control); border-radius: var(--radius-md); background: var(--surface-panel); color: var(--text-primary); font: inherit; font-size: var(--font-size-sm); cursor: pointer; white-space: normal; overflow-wrap: anywhere; }
+.agent-usage button:disabled { opacity: 0.55; cursor: default; }
+.agent-usage button:not(:disabled):hover { background: var(--surface-selected); }
+.agent-usage button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.agent-usage-compression { display: flex; flex-wrap: wrap; gap: var(--spacing-2); }
+.agent-usage-compression p { flex-basis: 100%; margin: 0; font-size: var(--font-size-sm); color: var(--status-error-text); overflow-wrap: anywhere; }
+.agent-usage .agent-usage-totals { display: flex; flex-direction: column; gap: var(--spacing-3); margin: 0; padding: var(--spacing-3); border-radius: var(--radius-lg); background: var(--surface-hover); }
+.agent-usage-totals > div { display: flex; justify-content: space-between; align-items: baseline; gap: var(--spacing-4); min-width: 0; }
+.agent-usage-totals dt { color: var(--text-secondary); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.agent-usage-totals dd { margin: 0; color: var(--text-primary); font-size: var(--font-size-sm); overflow-wrap: anywhere; text-align: end; }

@@ -116,13 +116,15 @@ it('freezes original session configuration while new drafts inherit explicit pro
   bindAgentDraftSettings('p', 'draft', session);
   const key = agentSettingsKey(session);
   expect(agentSettingsKey({ ...session, generation: 'next-generation' })).toBe(key);
-  expect(agentTurnSettings(session)).toEqual({ reasoning_effort: 'high' });
+  const frozenSettings = { collaboration_mode: 'plan', reasoning_effort: 'high' };
+  expect(agentTurnSettings(session)).toEqual(frozenSettings);
   setAgentDefaults('p', { configuration: application, settings: {} });
   expect(resolveAgentDefaults('p', session.id).configuration).toEqual(project);
   expect(resolveAgentDefaults('p').configuration).toEqual(application);
+  expect(agentTurnSettings(session)).toEqual(frozenSettings);
   await flushDesktopState(); useDevelopment.getState().reset(); await initializeDesktopState('alice');
   useDevelopment.setState({ selection: { project_id: 'p', task_id: null, session_id: session.id } });
-  expect(agentTurnSettings({ ...session, generation: 'restarted' })).toEqual({ reasoning_effort: 'high' });
+  expect(agentTurnSettings({ ...session, generation: 'restarted' })).toEqual(frozenSettings);
 });
 
 it('retains reference hashes and skill identities across restart without treating them as validated capabilities', async () => {

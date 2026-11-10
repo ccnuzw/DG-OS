@@ -1,0 +1,20 @@
+.agent-chat-preferences { width: 100%; min-width: 0; color: var(--text-primary); font-size: var(--font-size-sm); }
+.agent-chat-preference-select { padding: 5px 4px; }
+.agent-chat-preference-select > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(8rem, 48%); align-items: center; gap: 12px; }
+.agent-chat-preference-select label { font-weight: 400; }
+.agent-chat-preference-select button { background: var(--surface-control); }
+.agent-chat-preference-toggles { margin-top: 8px; padding: 8px 4px; border-top: 1px solid var(--border-subtle); }
+.agent-chat-preference-toggle { display: flex; align-items: center; gap: 16px; position: relative; min-height: 38px; cursor: pointer; }
+.agent-chat-preference-toggle > span:first-child { flex: 1; }
+.agent-chat-preference-toggle input { position: absolute; right: 0; width: 34px; height: 22px; opacity: 0; cursor: pointer; }
+.agent-chat-preference-track { flex: 0 0 34px; height: 20px; padding: 2px; border-radius: 12px; background: var(--border-control); pointer-events: none; }
+.agent-chat-preference-track::after { content: ''; display: block; width: 16px; height: 16px; border-radius: 50%; background: var(--surface-control); box-shadow: var(--shadow-sm); }
+.agent-chat-preference-toggle input:checked + .agent-chat-preference-track { background: var(--accent-default); }
+.agent-chat-preference-toggle input:checked + .agent-chat-preference-track::after { transform: translateX(14px); }
+.agent-chat-preference-toggle input:focus-visible + .agent-chat-preference-track { outline: 2px solid var(--border-focus); outline-offset: 3px; }
+.agent-chat-preference-toggle:has(input:disabled) { opacity: .55; cursor: default; }
+.agent-chat-preferences-settings { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 12px 4px; border-top: 1px solid var(--border-subtle); color: var(--text-secondary); text-decoration: none; }
+.agent-chat-preferences-settings:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; border-radius: 4px; }
+.agent-chat-preferences-settings:hover { color: var(--text-primary); }
+.agent-chat-preferences-hint, .agent-chat-preferences-error { margin: 4px; font-size: var(--font-size-xs); color: var(--text-secondary); }
+.agent-chat-preferences-error { color: var(--status-error-text); }

@@ -6,6 +6,7 @@ import { codexOperationsService as service, type CodexChildHistory, type CodexOp
 export const codexOperationsKey = (scope: CodexOperationScope) => JSON.stringify([scope.epoch, scope.accountKey, scope.owner, scope.projectId, scope.taskId, scope.sessionId, scope.generation]);
 export interface CodexOperationsState {
   snapshot: CodexOperationsSnapshot | null;
+  compressionSupported: boolean | null;
   histories: Record<string, CodexChildHistory>;
   busy: boolean;
   reading: boolean;
@@ -19,13 +20,14 @@ interface Store {
   entries: Record<string, CodexOperationsState>;
   draft(scope: CodexOperationScope, id: string, value: string): void;
   observe(scope: CodexOperationScope): Promise<void>;
+  observeCompression(scope: CodexOperationScope): Promise<void>;
   history(scope: CodexOperationScope, threadId: string): Promise<void>;
   act(scope: CodexOperationScope, action: CodexOperationAction): Promise<CodexOperationReceipt | null>;
   inspect(scope: CodexOperationScope): Promise<CodexOperationReceipt | null>;
   reset(): void;
 }
-export const emptyCodexOperations: CodexOperationsState = { snapshot: null, histories: {}, busy: false, reading: false, stale: true, pending: null, receipt: null, error: null, drafts: {} };
-const safeRefusals: Record<string, true> = { invalid_codex_operation: true, invalid_request_id: true, session_not_found: true, stale_generation: true, session_closed: true, project_archived: true, file_access_denied: true, busy: true, session_busy: true, task_not_found: true, codex_operation_unsupported: true, engine_rejected: true, method_unsupported: true, codex_child_unobserved: true, not_running: true, codex_terminal_unobserved: true, codex_queue_unobserved: true, codex_queue_empty: true, codex_queue_membership_changed: true, codex_turn_unobserved: true, codex_observation_incomplete: true };
+export const emptyCodexOperations: CodexOperationsState = { snapshot: null, compressionSupported: null, histories: {}, busy: false, reading: false, stale: true, pending: null, receipt: null, error: null, drafts: {} };
+const safeRefusals: Record<string, true> = { invalid_codex_operation: true, invalid_request_id: true, session_not_found: true, stale_generation: true, session_closed: true, project_archived: true, file_access_denied: true, busy: true, session_busy: true, task_not_found: true, codex_operation_unsupported: true, unsupported_operation: true, engine_rejected: true, method_unsupported: true, codex_child_unobserved: true, not_running: true, codex_terminal_unobserved: true, codex_queue_unobserved: true, codex_queue_empty: true, codex_queue_membership_changed: true, codex_turn_unobserved: true, codex_observation_incomplete: true };
 const knownErrors: Record<string, true> = { ...safeRefusals, session_invalid: true, workspace_changed: true, provider_revision_changed: true, provider_binding_unconfirmed: true, capability_revoked: true, storage_failed: true, request_conflict: true };
 export const codexOperationError = (error: unknown) => typeof error === 'string' && Object.prototype.hasOwnProperty.call(knownErrors, error) ? error : 'unavailable';
 function owned(scope: CodexOperationScope): boolean {
@@ -33,10 +35,10 @@ function owned(scope: CodexOperationScope): boolean {
   if (state.epoch !== scope.epoch || state.workspaceOwner !== scope.accountKey) return false;
   const metadata = state.sessions.find(session => session.id === scope.sessionId);
   const project = state.projects.find(item => item.id === scope.projectId && item.owner === scope.owner && !item.archived);
-  if (!project || !metadata || metadata.owner !== scope.owner || metadata.project_id !== scope.projectId || metadata.task_id !== scope.taskId || metadata.engine !== 'codex') return false;
+  if (!project || !metadata || metadata.owner !== scope.owner || metadata.project_id !== scope.projectId || metadata.task_id !== scope.taskId) return false;
   const runner = useAgentRunner.getState();
   const runtime = runner.session?.id === scope.sessionId ? runner.session : runner.snapshots[scope.sessionId];
-  return !runtime || runtime.generation === scope.generation;
+  return !runtime || runtime.generation === scope.generation && runtime.engine === metadata.engine;
 }
 function validReceipt(scope: CodexOperationScope, requestId: string, receipt: CodexOperationReceipt | null): receipt is CodexOperationReceipt {
   return !!receipt && receipt.session_id === scope.sessionId && receipt.generation === scope.generation && receipt.request_id === requestId && ['applied', 'unknown'].includes(receipt.state);
@@ -64,6 +66,18 @@ export const useCodexOperations = create<Store>((set, get) => {
   return {
     entries: {},
     draft(scope, id, value) { patch(scope, { drafts: { ...entry(scope).drafts, [id]: value } }); },
+    async observeCompression(scope) {
+      if (!owned(scope) || entry(scope).reading || entry(scope).busy) return;
+      const key = codexOperationsKey(scope), sequence = (reads.get(key) ?? 0) + 1;
+      reads.set(key, sequence); patch(scope, { reading: true, error: null });
+      try {
+        const supported = await service.compression(scope);
+        if (reads.get(key) !== sequence) return;
+        if (typeof supported !== 'boolean') throw new Error('Invalid capability');
+        patch(scope, { compressionSupported: supported });
+      } catch (error) { if (reads.get(key) === sequence) patch(scope, { compressionSupported: null, error: codexOperationError(error) }); }
+      finally { if (reads.get(key) === sequence) patch(scope, { reading: false }); }
+    },
     async observe(scope) {
       if (!owned(scope) || entry(scope).reading) return;
       const key = codexOperationsKey(scope), sequence = (reads.get(key) ?? 0) + 1;
@@ -73,6 +87,8 @@ export const useCodexOperations = create<Store>((set, get) => {
         if (!owned(scope) || reads.get(key) !== sequence) return;
         if (value.session_id !== scope.sessionId || value.generation !== scope.generation || !Array.isArray(value.children) || !Array.isArray(value.terminals) || !Array.isArray(value.queue) || !Array.isArray(value.turns) || !Array.isArray(value.unsupported)) throw new Error('Invalid snapshot');
         patch(scope, { snapshot: value, stale: false, error: null });
+        const compressionSupported = await service.compression(scope).catch(() => null);
+        if (reads.get(key) === sequence && typeof compressionSupported === 'boolean') patch(scope, { compressionSupported });
       } catch (error) { if (reads.get(key) === sequence) patch(scope, { snapshot: null, stale: true, error: codexOperationError(error) }); }
       finally { if (reads.get(key) === sequence) patch(scope, { reading: false }); }
     },
@@ -95,18 +111,24 @@ export const useCodexOperations = create<Store>((set, get) => {
       const runtime = runner.session?.id === scope.sessionId ? runner.session : runner.snapshots[scope.sessionId];
       if (runtime && ['closed', 'starting', 'unknown'].includes(runtime.status)) return null;
       const snapshot = entry(scope).snapshot;
-      if (!snapshot || entry(scope).stale) { patch(scope, { error: 'invalid_codex_operation' }); return null; }
-      if (snapshot.unsupported.includes(action.kind)) { patch(scope, { error: 'codex_operation_unsupported' }); return null; }
-      const child = 'child_thread_id' in action ? snapshot.children.find(item => item.thread_id === action.child_thread_id) : null;
+      if (action.kind === 'compact') {
+        if (entry(scope).compressionSupported !== true) { patch(scope, { error: 'codex_operation_unsupported' }); return null; }
+        if (!runtime || runner.selected !== scope.sessionId || runner.busy || runner.acting || runtime.status !== 'idle' || runtime.active_run || runtime.pending.length || runtime.persistence_error) return null;
+      } else {
+        if (runtime?.engine !== 'codex') return null;
+        if (!snapshot || entry(scope).stale) { patch(scope, { error: 'invalid_codex_operation' }); return null; }
+        if (snapshot.unsupported.includes(action.kind)) { patch(scope, { error: 'codex_operation_unsupported' }); return null; }
+      }
+      const child = 'child_thread_id' in action ? snapshot?.children.find(item => item.thread_id === action.child_thread_id) : null;
       const scopedAction = 'child_thread_id' in action || 'submission_id' in action || action.kind === 'queue_reorder' || action.kind === 'revert' || action.kind === 'terminate_terminal' || action.kind === 'fork' && !!action.last_turn_id;
-      if (scopedAction && snapshot.incomplete
+      if (scopedAction && snapshot?.incomplete
         || 'child_thread_id' in action && !child
         || action.kind === 'interrupt_child' && child?.turn_id !== action.turn_id
-        || 'submission_id' in action && action.submission_id !== undefined && !snapshot.queue.some(item => item.id === action.submission_id)
-        || action.kind === 'terminate_terminal' && !snapshot.terminals.some(item => item.process_id === action.process_id)
-        || action.kind === 'revert' && !snapshot.turns.some(item => item.id === action.before_turn_id)
-        || action.kind === 'fork' && action.last_turn_id !== undefined && !snapshot.turns.some(item => item.id === action.last_turn_id)
-        || action.kind === 'queue_reorder' && (action.submission_ids.length !== snapshot.queue.length || new Set(action.submission_ids).size !== snapshot.queue.length || action.submission_ids.some(id => !snapshot.queue.some(item => item.id === id)))) {
+        || 'submission_id' in action && action.submission_id !== undefined && !snapshot?.queue.some(item => item.id === action.submission_id)
+        || action.kind === 'terminate_terminal' && !snapshot?.terminals.some(item => item.process_id === action.process_id)
+        || action.kind === 'revert' && !snapshot?.turns.some(item => item.id === action.before_turn_id)
+        || action.kind === 'fork' && action.last_turn_id !== undefined && !snapshot?.turns.some(item => item.id === action.last_turn_id)
+        || action.kind === 'queue_reorder' && (!snapshot || action.submission_ids.length !== snapshot.queue.length || new Set(action.submission_ids).size !== snapshot.queue.length || action.submission_ids.some(id => !snapshot.queue.some(item => item.id === id)))) {
         patch(scope, { error: 'invalid_codex_operation' }); return null;
       }
       const request: CodexOperationRequest = { session_id: scope.sessionId, generation: scope.generation, request_id: crypto.randomUUID(), action };

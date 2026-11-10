@@ -18,6 +18,12 @@ pub struct SetWorkspaceTrustInput {
     pub expected_directory_identity: String, pub expected_revision: i64,
     pub scope: String, pub granted: bool,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActivateWorkspaceAgentInput {
+    pub project_id: String, pub task_id: Option<String>,
+    pub expected_path: String, pub expected_directory_identity: String, pub expected_revision: i64,
+}
 fn live(lease: &CancellationToken) -> Result<(), String> {
     if lease.is_cancelled() { Err("session_invalid".into()) } else { Ok(()) }
 }
@@ -64,6 +70,21 @@ impl AgentManager {
         let project = self.trust_project(owner, &input.project_id, input.task_id.as_deref(), true).await?;
         let result = self.inner.repository.workspace_trust(owner, &project).await;
         live(&lease)?; result
+    }
+    /// Entering an opened project's selected workspace is the trusted host
+    /// action; reading grants or restoring hidden tabs never creates authority.
+    pub async fn activate_development_workspace_agent(&self, owner: &str, input: ActivateWorkspaceAgentInput, lease: CancellationToken) -> Result<WorkspaceTrust, String> {
+        let _admission = self.admit_native_extensions(&lease).await?;
+        let _permit = self.inner.gate.admit().map_err(|_| "maintenance_active")?;
+        let project = self.trust_project(owner, &input.project_id, input.task_id.as_deref(), true).await?;
+        let selected = self.inner.repository.selection(owner).await?;
+        if selected.project_id.as_deref() != Some(input.project_id.as_str()) || selected.task_id != input.task_id { return Err("invalid_selection".into()); }
+        if project.path != input.expected_path || project.directory_identity != input.expected_directory_identity { return Err("workspace_changed".into()); }
+        live(&lease)?;
+        let result = self.inner.repository.activate_workspace_agent(owner, &project, input.expected_revision, || !lease.is_cancelled() && !self.inner.stop.is_cancelled()).await?;
+        crate::projects::validate_directory(&project).await?;
+        live(&lease)?;
+        Ok(result)
     }
     pub async fn set_development_workspace_trust(&self, owner: &str, input: SetWorkspaceTrustInput, lease: CancellationToken) -> Result<WorkspaceTrust, String> {
         let _admission = self.admit_native_extensions(&lease).await?;

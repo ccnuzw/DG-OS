@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button, Input, Modal, Select } from '@dgos/ui';
 import { t, useLocale } from '../../i18n';
 import { useDevelopment } from '../../stores/developmentStore';
-import type { AgentSession } from '../../stores/agentRunnerStore';
+import { useAgentRunner, type AgentSession } from '../../stores/agentRunnerStore';
 import { codexOperationError, codexOperationsKey, emptyCodexOperations, useCodexOperations } from '../../stores/codexOperations';
 import type { CodexChildAgent, CodexOperationAction, CodexOperationReceipt, CodexOperationScope, CodexReviewTarget } from './codexOperationsService';
 import { codexOperationsService } from './codexOperationsService';
@@ -31,6 +31,7 @@ export default function CodexOperations(props: CodexOperationsProps) {
 function OperationsPanel({ session, disabled = false, onSessionChanged, onOpenSession, scope }: CodexOperationsProps & { scope: CodexOperationScope }) {
   const state = useCodexOperations(store => store.entries[codexOperationsKey(scope)] ?? emptyCodexOperations);
   const store = useCodexOperations.getState();
+  const runnerBusy = useAgentRunner(state => state.busy || state.acting);
   const [dialog, setDialog] = useState<'review' | 'fork' | 'revert' | null>(null);
   const [selectedChild, setSelectedChild] = useState('');
   const [editing, setEditing] = useState<string | null>(null);
@@ -47,9 +48,10 @@ function OperationsPanel({ session, disabled = false, onSessionChanged, onOpenSe
   const unavailable = disabled || ['closed', 'starting', 'unknown'].includes(session.status);
   const blocked = unavailable || state.busy || !!state.pending;
   const snapshot = !unavailable && !state.stale ? state.snapshot : null;
-  const supported = (kind: string) => !!snapshot && !snapshot.unsupported.includes(kind);
+  const supported = (kind: string) => !!snapshot && !snapshot.unsupported.includes(kind) && (kind !== 'compact' || state.compressionSupported === true);
   const canAct = (kind: string) => !blocked && supported(kind);
   const idle = session.status !== 'running' && !session.active_run && !session.persistence_error;
+  const canCompact = !runnerBusy && session.status === 'idle' && !session.active_run && !session.pending.length && !session.persistence_error && canAct('compact');
   const draft = (id: string) => state.drafts[id] ?? '';
   const updateDraft = (id: string, value: string) => store.draft(scope, id, value);
   const refresh = () => { if (!unavailable) void store.observe(scope); };
@@ -112,7 +114,7 @@ function OperationsPanel({ session, disabled = false, onSessionChanged, onOpenSe
         <p className="m-0 text-ink-secondary">{t('codexOperations.historyOnly')}</p>
         <div className="flex flex-wrap gap-2">
           <Button data-testid="codex-review-open" variant="secondary" disabled={!idle || !canAct('review')} onClick={() => setDialog('review')}>{t('codexOperations.review')}</Button>
-          <Button data-testid="codex-compact" variant="secondary" disabled={!idle || !canAct('compact')} onClick={() => void act({ kind: 'compact' })}>{t('codexOperations.compact')}</Button>
+          <Button data-testid="codex-compact" variant="secondary" disabled={!canCompact} onClick={() => void act({ kind: 'compact' })}>{t('codexOperations.compact')}</Button>
           <Button data-testid="codex-fork" variant="secondary" disabled={!idle || !canAct('fork')} onClick={() => setDialog('fork')}>{t('codexOperations.fork')}</Button>
           <Button data-testid="codex-revert-open" variant="secondary" disabled={!idle || !canAct('revert') || !snapshot?.turns.length || snapshot.incomplete} onClick={() => setDialog('revert')}>{t('codexOperations.revert')}</Button>
         </div>

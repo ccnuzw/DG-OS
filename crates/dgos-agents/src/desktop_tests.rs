@@ -1,5 +1,5 @@
 #![cfg(unix)]
-use crate::{AgentManager, Engine, SessionOptions, desktop::{ReadWorkspaceTrustInput, SetWorkspaceTrustInput, SaveDesktopStateInput}, projects::{CreateProjectInput, SaveTaskInput}, runtime::{StartProcessInput, ReadinessInput}};
+use crate::{AgentManager, Engine, SessionOptions, desktop::{ActivateWorkspaceAgentInput, ReadWorkspaceTrustInput, SetWorkspaceTrustInput, SaveDesktopStateInput}, projects::{CreateProjectInput, SaveTaskInput}, runtime::{StartProcessInput, ReadinessInput}};
 use tokio_util::sync::CancellationToken;
 
 struct Fixture { root: tempfile::TempDir, manager: AgentManager, project: String, task: String }
@@ -148,5 +148,84 @@ async fn service_coexistence_never_bypasses_a_cancelled_native_execution() {
     f.manager.session_cancellation(&id).await.unwrap().0.cancel();
     assert_eq!(f.manager.start_development_process("alice",f.process(true),CancellationToken::new()).await.unwrap_err(),"workspace_busy");
     assert!(f.manager.close_session("alice",&id).await.unwrap());
+    assert!(f.manager.shutdown().await);
+}
+
+#[tokio::test]
+async fn entering_selected_workspace_activates_only_agent_and_preserves_explicit_revocation() {
+    let f=Fixture::new().await;
+    let project=f.manager.inner.repository.project("alice",&f.project).await.unwrap();
+    let input=|task_id: Option<String>, revision| ActivateWorkspaceAgentInput {
+        project_id:f.project.clone(), task_id, expected_path:project.path.clone(), expected_directory_identity:project.directory_identity.clone(), expected_revision:revision,
+    };
+    assert_eq!(f.manager.activate_development_workspace_agent("alice",input(None,0),CancellationToken::new()).await.unwrap_err(),"invalid_selection");
+    f.manager.select_development_context("alice",dgos_db::development_repository::Selection {project_id:Some(f.project.clone()),task_id:None,session_id:None},CancellationToken::new()).await.unwrap();
+    // Existing project metadata and ordinary reads must not implicitly grant.
+    assert_eq!(f.manager.read_development_workspace_trust("alice",ReadWorkspaceTrustInput {project_id:f.project.clone(),task_id:None},CancellationToken::new()).await.unwrap().revision,0);
+    let active=f.manager.activate_development_workspace_agent("alice",input(None,0),CancellationToken::new()).await.unwrap();
+    assert!(active.agent && !active.agent_revoked && !active.terminal && !active.service);
+    assert_eq!(f.manager.activate_development_workspace_agent("alice",input(None,1),CancellationToken::new()).await.unwrap().revision,1);
+    f.manager.select_development_context("alice",dgos_db::development_repository::Selection {project_id:Some(f.project.clone()),task_id:Some(f.task.clone()),session_id:None},CancellationToken::new()).await.unwrap();
+    f.scope("agent",false).await;
+    let denied=f.manager.activate_development_workspace_agent("alice",input(Some(f.task.clone()),2),CancellationToken::new()).await.unwrap();
+    assert!(denied.agent_revoked && !denied.agent && denied.revision==2);
+    f.scope("agent",true).await;
+    let enabled=f.manager.activate_development_workspace_agent("alice",input(Some(f.task.clone()),3),CancellationToken::new()).await.unwrap();
+    assert!(enabled.agent && !enabled.agent_revoked);
+    assert_eq!(f.manager.activate_development_workspace_agent("alice",input(None,3),CancellationToken::new()).await.unwrap_err(),"invalid_selection");
+    assert!(f.manager.shutdown().await);
+}
+
+#[tokio::test]
+async fn activation_rejects_foreign_owner_invalid_task_stale_identity_and_cancelled_account() {
+    let f=Fixture::new().await;
+    let project=f.manager.task_project("alice",&f.task).await.unwrap();
+    let input=|| ActivateWorkspaceAgentInput {project_id:f.project.clone(),task_id:Some(f.task.clone()),expected_path:project.path.clone(),expected_directory_identity:project.directory_identity.clone(),expected_revision:0};
+    f.manager.select_development_context("alice",dgos_db::development_repository::Selection {project_id:Some(f.project.clone()),task_id:Some(f.task.clone()),session_id:None},CancellationToken::new()).await.unwrap();
+    assert_eq!(f.manager.activate_development_workspace_agent("bob",input(),CancellationToken::new()).await.unwrap_err(),"project_not_found");
+    let mut invalid=input();invalid.task_id=Some("missing".into());
+    assert_eq!(f.manager.activate_development_workspace_agent("alice",invalid,CancellationToken::new()).await.unwrap_err(),"task_not_found");
+    let mut stale=input();stale.expected_directory_identity="other-directory".into();
+    assert_eq!(f.manager.activate_development_workspace_agent("alice",stale,CancellationToken::new()).await.unwrap_err(),"workspace_changed");
+    let mut stale_path=input();stale_path.expected_path.push_str("-foreign");
+    assert_eq!(f.manager.activate_development_workspace_agent("alice",stale_path,CancellationToken::new()).await.unwrap_err(),"workspace_changed");
+    let lease=CancellationToken::new();lease.cancel();
+    assert_eq!(f.manager.activate_development_workspace_agent("alice",input(),lease).await.unwrap_err(),"session_invalid");
+    std::fs::rename(f.root.path().join("code"),f.root.path().join("previous-code")).unwrap();
+    std::fs::create_dir(f.root.path().join("code")).unwrap();
+    assert_eq!(f.manager.activate_development_workspace_agent("alice",input(),CancellationToken::new()).await.unwrap_err(),"workspace_changed");
+    assert_eq!(f.manager.inner.repository.workspace_trust("alice",&project).await.unwrap().revision,0);
+    assert!(f.manager.shutdown().await);
+}
+
+#[tokio::test]
+async fn selected_task_worktree_gets_its_own_grant_without_inheriting_project_directory() {
+    let f=Fixture::new().await;
+    let source=f.root.path().join("code");
+    for args in [vec!["init","-b","main"],vec!["add","source"],vec!["-c","user.name=Fixture","-c","user.email=fixture@example.invalid","commit","-m","base"]] {
+        let output=std::process::Command::new("git").current_dir(&source).args(args).output().unwrap();
+        assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));
+    }
+    let head=std::process::Command::new("git").current_dir(&source).args(["rev-parse","HEAD"]).output().unwrap();
+    assert!(head.status.success());
+    let head=String::from_utf8(head.stdout).unwrap().trim().to_owned();
+    let target=f.root.path().join("isolated");
+    f.manager.save_development_workspaces("alice",crate::workspaces::SaveWorkspaceInput {
+        request_id:uuid::Uuid::new_v4().to_string(),task_id:f.task.clone(),action:"create".into(),workspace_id:None,path:Some(target.to_string_lossy().into()),branch:Some("task/trust".into()),base_commit:Some(head),retain_branch:None,
+    },CancellationToken::new()).await.unwrap();
+    let original=f.manager.inner.repository.project("alice",&f.project).await.unwrap();
+    let worktree=f.manager.task_project("alice",&f.task).await.unwrap();
+    assert_ne!(worktree.directory_identity,original.directory_identity);
+    f.manager.select_development_context("alice",dgos_db::development_repository::Selection {project_id:Some(f.project.clone()),task_id:Some(f.task.clone()),session_id:None},CancellationToken::new()).await.unwrap();
+    let wrong=ActivateWorkspaceAgentInput {project_id:f.project.clone(),task_id:Some(f.task.clone()),expected_path:original.path.clone(),expected_directory_identity:original.directory_identity.clone(),expected_revision:0};
+    assert_eq!(f.manager.activate_development_workspace_agent("alice",wrong,CancellationToken::new()).await.unwrap_err(),"workspace_changed");
+    let active=f.manager.activate_development_workspace_agent("alice",ActivateWorkspaceAgentInput {project_id:f.project.clone(),task_id:Some(f.task.clone()),expected_path:worktree.path.clone(),expected_directory_identity:worktree.directory_identity.clone(),expected_revision:0},CancellationToken::new()).await.unwrap();
+    assert!(active.agent && !active.terminal && !active.service);
+    assert_eq!(active.path,worktree.path);
+    assert_eq!(f.manager.inner.repository.workspace_trust("alice",&original).await.unwrap().revision,0);
+    let other_path=f.root.path().join("other-project");std::fs::create_dir(&other_path).unwrap();
+    let other=f.manager.create_project("alice",CreateProjectInput {kind:"import".into(),name:"Another project".into(),path:other_path.to_string_lossy().into(),source:None},CancellationToken::new()).await.unwrap();
+    let mismatched=ActivateWorkspaceAgentInput {project_id:other.id,task_id:Some(f.task.clone()),expected_path:worktree.path,expected_directory_identity:worktree.directory_identity,expected_revision:1};
+    assert_eq!(f.manager.activate_development_workspace_agent("alice",mismatched,CancellationToken::new()).await.unwrap_err(),"task_not_found");
     assert!(f.manager.shutdown().await);
 }

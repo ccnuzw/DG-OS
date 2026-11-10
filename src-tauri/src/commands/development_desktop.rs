@@ -1,5 +1,5 @@
 use crate::host::{self, Capability};
-use dgos_agents::{AgentManager, desktop::{DesktopState, WorkspaceTrust, SaveDesktopStateInput, ReadWorkspaceTrustInput, SetWorkspaceTrustInput}};
+use dgos_agents::{AgentManager, desktop::{DesktopState, WorkspaceTrust, SaveDesktopStateInput, ReadWorkspaceTrustInput, SetWorkspaceTrustInput, ActivateWorkspaceAgentInput}};
 use dgos_types::{BuiltinCaller, HostExecutionContext};
 use tauri::{Manager, WebviewWindow};
 use tokio_util::sync::CancellationToken;
@@ -29,6 +29,13 @@ pub async fn save_development_desktop_state(app: tauri::AppHandle, window: Webvi
 pub async fn read_development_workspace_trust(app: tauri::AppHandle, window: WebviewWindow, input: ReadWorkspaceTrustInput) -> Result<WorkspaceTrust, String> {
     let (context, lease) = caller(&app, &window)?;
     let result = app.state::<AgentManager>().read_development_workspace_trust(context.user_id(), input, lease.clone()).await;
+    if lease.is_cancelled() { return Err("session_invalid".into()); }
+    result
+}
+#[tauri::command]
+pub async fn activate_development_workspace_agent(app: tauri::AppHandle, window: WebviewWindow, input: ActivateWorkspaceAgentInput) -> Result<WorkspaceTrust, String> {
+    let (context, lease) = caller(&app, &window)?;
+    let result = app.state::<AgentManager>().activate_development_workspace_agent(context.user_id(), input, lease.clone()).await;
     if lease.is_cancelled() { return Err("session_invalid".into()); }
     result
 }

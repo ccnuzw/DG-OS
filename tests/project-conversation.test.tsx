@@ -35,6 +35,7 @@ function host(existingTask = false, trusted = true) {
     trusted,
     trustIdentity: workspace.directory_identity,
     trustRevision: 1,
+    revoked: false,
     taskError: null as string | null,
     openError: null as string | null,
     sendError: null as string | null,
@@ -45,13 +46,26 @@ function host(existingTask = false, trusted = true) {
   useDevelopment.setState({ workspaceOwner: project.owner, loaded: true, projects: [project], tasks: existingTask ? [task] : [], selection: { ...selection, task_id: existingTask ? task.id : null } });
   invoke.mockImplementation(async (command, args) => {
     switch (command) {
-      case 'read_development_workspace_trust': return { path: state.workspace.path, directory_identity: state.workspace.directory_identity, agent: state.trusted && state.trustIdentity === state.workspace.directory_identity, terminal: false, service: false, revision: state.trustRevision };
+      case 'read_development_workspace_trust': {
+        if (state.trustIdentity !== state.workspace.directory_identity) throw 'workspace_changed';
+        return { path: state.workspace.path, directory_identity: state.workspace.directory_identity, agent: state.trusted, agent_revoked: state.revoked, terminal: false, service: false, revision: state.trustRevision };
+      }
+      case 'activate_development_workspace_agent': {
+        const input = args.input;
+        const selected = useDevelopment.getState().selection;
+        if (selected.project_id !== input.project_id || selected.task_id !== input.task_id) throw 'invalid_selection';
+        if (input.expected_path !== state.workspace.path || input.expected_directory_identity !== state.workspace.directory_identity) throw 'workspace_changed';
+        if (input.expected_revision !== state.trustRevision) throw 'workspace_trust_conflict';
+        if (!state.trusted && !state.revoked) { state.trusted = true; ++state.trustRevision; }
+        return { path: state.workspace.path, directory_identity: state.workspace.directory_identity, agent: state.trusted, agent_revoked: state.revoked, terminal: false, service: false, revision: state.trustRevision };
+      }
       case 'set_development_workspace_trust': {
         if (args.input.expected_directory_identity !== state.workspace.directory_identity || args.input.expected_revision !== state.trustRevision) throw 'workspace_changed';
         state.trusted = args.input.granted;
+        state.revoked = args.input.scope === 'agent' && !args.input.granted;
         state.trustIdentity = state.workspace.directory_identity;
         ++state.trustRevision;
-        return { path: state.workspace.path, directory_identity: state.workspace.directory_identity, agent: state.trusted, terminal: false, service: false, revision: state.trustRevision };
+        return { path: state.workspace.path, directory_identity: state.workspace.directory_identity, agent: state.trusted, agent_revoked: state.revoked, terminal: false, service: false, revision: state.trustRevision };
       }
       case 'read_development_cli_provider': return state.capability;
       case 'read_development_cli_provider_catalog': return { project_id: project.id, engine: args.engine, providers: [{ id: 'provider', name: 'Provider', enabled: true, config_revision: state.providerRevision, availability: { available: true, reason: null }, models: [{ id: 'model', name: 'Model', model_type: 'text' }] }] };
@@ -65,6 +79,7 @@ function host(existingTask = false, trusted = true) {
         return state.session;
       }
       case 'get_agent_session': if (!state.session) throw 'session_not_found'; return state.session;
+      case 'cancel_unstarted_agent_session': return !state.session;
       case 'send_agent_message':
         if (state.sendError) throw state.sendError;
         state.session = { ...state.session!, status: 'running', active_run: args.input.request_id };
@@ -110,24 +125,40 @@ async function passPreparationDebounce() {
   await act(async () => { await elapsed.promise; });
 }
 
-it('requires host-confirmed trust of the actual directory before opening or sending', async () => {
-  const { start } = host(false, false);
-  render(conversation(start));
+it('auto-activates the selected host directory and never sends a retained draft', async () => {
+  const { state, start } = host(false, false);
+  const setSessionDraft = vi.fn();
+  render(conversation(start, null, undefined, setSessionDraft));
   fireEvent.change(prompt(), { target: { value: 'Goal' } });
-  const authorize = await screen.findByTestId('direct-conversation-authorize');
-  await waitFor(() => expect(authorize).toHaveProperty('disabled', false));
+  await waitFor(() => expect(calls('activate_development_workspace_agent')).toHaveLength(1));
+  expect(calls('activate_development_workspace_agent')[0][1].input).toEqual({ project_id: 'p', task_id: null, expected_path: workspace.path, expected_directory_identity: workspace.directory_identity, expected_revision: 1 });
+  await waitFor(() => expect(calls('open_agent_session')).toHaveLength(1));
+  expect(calls('save_development_task')).toHaveLength(1);
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(screen.queryByTestId('direct-conversation-authorize')).toBeNull();
+  expect(start).toHaveBeenCalledTimes(1);
+  expect(calls('send_agent_message')).toHaveLength(0);
+  expect(state.trusted).toBe(true);
+  expect(setSessionDraft).toHaveBeenLastCalledWith(state.session!.id, 'Goal');
+});
+
+it('never prepares or sends when host activation rejects a changed directory', async () => {
+  const { start } = host(false, false);
+  const fallback = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command, args) => {
+    if (command === 'activate_development_workspace_agent') throw 'workspace_changed';
+    return fallback(command, args);
+  });
+  render(conversation(start));
+  fireEvent.change(prompt(), { target: { value: 'Retain this draft on directory replacement' } });
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('dev.error.workspace_changed'));
   await passPreparationDebounce();
   expect(calls('save_development_task')).toHaveLength(0);
-  expect(start).not.toHaveBeenCalled();
+  expect(calls('open_agent_session')).toHaveLength(0);
   expect(calls('send_agent_message')).toHaveLength(0);
-  fireEvent.click(send());
-  const confirmation = await screen.findByRole('dialog', { name: 'desktop.trust.agent.title' });
-  expect(confirmation.textContent).toContain(workspace.path);
   expect(calls('set_development_workspace_trust')).toHaveLength(0);
-  fireEvent.click(screen.getByRole('button', { name: 'dev.cancel' }));
-  expect(prompt().value).toBe('Goal');
   expect(start).not.toHaveBeenCalled();
-  expect(calls('send_agent_message')).toHaveLength(0);
+  expect(prompt().value).toBe('Retain this draft on directory replacement');
 });
 
 it('admits one task, session and first prompt despite double click and preserves edits made during open', async () => {
@@ -317,8 +348,8 @@ it('revokes directory trust when the resolved workspace identity changes before 
   render(conversation(start)); await prepare();
   state.workspace = { ...workspace, directory_identity: 'replacement-directory' };
   fireEvent.click(send());
-  await screen.findByTestId('direct-conversation-authorize');
-  expect(screen.getByRole('alert').textContent).toContain('dev.error.workspace_changed');
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('dev.error.workspace_changed'));
+  expect(screen.queryByTestId('direct-conversation-authorize')).toBeNull();
   await passPreparationDebounce();
   expect(start).not.toHaveBeenCalled();
   expect(calls('send_agent_message')).toHaveLength(0);
@@ -364,7 +395,7 @@ it('never replays an uncertain first send and clears it only after explicit run-
 it.each(['cli_incompatible', 'provider_revision_changed', 'provider_binding_unconfirmed', 'session_busy', 'bridge_unavailable', 'workspace_busy', 'cleanup_pending', 'session_exists', 'unrecognized transport failure', 'result_unknown'])('preserves the prompt and task after host open rejection without replaying uncertainty (%s)', async failure => {
   const { state, start } = host(true); state.openError = failure;
   render(conversation(start, task.id)); await prepare(); fireEvent.click(send());
-  const blocked = !['cli_incompatible', 'provider_revision_changed'].includes(failure);
+  const blocked = !['cli_incompatible', 'provider_revision_changed', 'cleanup_pending'].includes(failure);
   await waitFor(() => expect(screen.getAllByRole('alert').some(alert => alert.textContent?.includes(`dev.error.${['unrecognized transport failure', 'result_unknown'].includes(failure) ? 'unknown' : failure}`))).toBe(true));
   await waitFor(() => expect(send().disabled).toBe(blocked));
   expect(prompt().value).toBe('Goal\nKeep this complete prompt');
@@ -378,6 +409,27 @@ it.each(['cli_incompatible', 'provider_revision_changed', 'provider_binding_unco
   }
   expect(calls('save_development_task')).toHaveLength(0);
   expect(calls('send_agent_message')).toHaveLength(0);
+});
+
+it('keeps a retained failed launch blocked until the host confirms it closed, then preserves the draft for explicit retry', async () => {
+  const { state, start } = host(true); state.openError = 'cleanup_pending';
+  state.session = { id: 'retained', generation: 'runtime-generation', engine: 'codex', native_id: null, workspace: workspace.path, status: 'idle', events: [], pending: [], error: null };
+  render(conversation(start, task.id)); await prepare(); fireEvent.click(send());
+  await screen.findByRole('button', { name: 'directConversation.recheck' });
+  const first = calls('open_agent_session')[0][1].input;
+  state.session = { ...state.session, id: first.id, status: 'closed' };
+  expect(send().disabled).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'directConversation.recheck' }));
+  await waitFor(() => expect(send().disabled).toBe(false));
+  expect(prompt().value).toBe('Goal\nKeep this complete prompt');
+  await passPreparationDebounce();
+  expect(calls('open_agent_session')).toHaveLength(1);
+  expect(calls('send_agent_message')).toHaveLength(0);
+  state.openError = null;
+  fireEvent.click(send());
+  await waitFor(() => expect(calls('send_agent_message')).toHaveLength(1));
+  expect(calls('open_agent_session')[1][1].input.id).not.toBe(first.id);
+  expect(calls('open_agent_session')[1][1].input.task_id).toBe(first.task_id);
 });
 
 it('does not dispatch a delayed startup after its composer unmounts, and remount keeps it pending verification', async () => {
@@ -576,22 +628,24 @@ it('uses a captured reference path as the task title for an explicit reference-o
   expect(getConversationReferences('p', 'p')).toEqual([]);
 });
 
-it('authorizes the host directory once and automatically prepares without sending the retained draft', async () => {
+it('re-enables an explicitly revoked directory directly and prepares without sending its retained draft', async () => {
   const { state, start } = host(false, false);
+  state.revoked = true;
   const setSessionDraft = vi.fn();
   render(conversation(start, null, undefined, setSessionDraft));
   fireEvent.change(prompt(), { target: { value: 'Unsent setup draft' } });
   const authorize = await screen.findByTestId('direct-conversation-authorize');
   await waitFor(() => expect(authorize).toHaveProperty('disabled', false));
-  fireEvent.click(authorize);
-  const dialog = await screen.findByRole('dialog', { name: 'desktop.trust.agent.title' });
-  expect(dialog.textContent).toContain(workspace.path);
+  await passPreparationDebounce();
+  expect(calls('activate_development_workspace_agent')).toHaveLength(0);
   expect(calls('open_agent_session')).toHaveLength(0);
-  fireEvent.click(screen.getByRole('button', { name: 'desktop.trust.allow' }));
+  fireEvent.click(authorize);
   await waitFor(() => expect(useDevelopment.getState().selection.session_id).toEqual(expect.any(String)));
   expect(calls('set_development_workspace_trust')).toHaveLength(1);
   expect(calls('set_development_workspace_trust')[0][1]).toEqual({ input: { project_id: project.id, task_id: null, expected_directory_identity: workspace.directory_identity, expected_revision: 1, scope: 'agent', granted: true } });
+  expect(screen.queryByRole('dialog')).toBeNull();
   expect(state.trusted).toBe(true);
+  expect(state.revoked).toBe(false);
   expect(setSessionDraft).toHaveBeenLastCalledWith(state.session!.id, 'Unsent setup draft');
   expect(calls('open_agent_session')).toHaveLength(1);
   expect(calls('send_agent_message')).toHaveLength(0);
@@ -953,4 +1007,46 @@ it.each(['agent_image_invalid', 'agent_image_type', 'agent_image_total_limit'])(
   await waitFor(() => expect(calls('send_agent_message')).toHaveLength(2));
   expect(calls('open_agent_session')).toHaveLength(1);
   expect(calls('send_agent_message')[1][1].input.request_id).not.toBe(calls('send_agent_message')[0][1].input.request_id);
+});
+
+it('recovers an absent startup only after the host fences the old identity, preserving drafts without replay', async () => {
+  const { state, start } = host(true); state.openError = 'unknown';
+  render(conversation(start, task.id)); await prepare('Retained startup draft'); fireEvent.click(send());
+  await screen.findByText('directConversation.open_unknown');
+  const originalId = calls('open_agent_session')[0][1].input.id;
+  state.openError = null;
+  fireEvent.click(screen.getByRole('button', { name: 'directConversation.recheck' }));
+  await screen.findByText('dev.error.session_not_started');
+  expect(calls('cancel_unstarted_agent_session')[0][1]).toEqual({ input: { session_id: originalId, task_id: task.id } });
+  await passPreparationDebounce();
+  expect(prompt().value).toBe('Retained startup draft');
+  expect(calls('open_agent_session')).toHaveLength(1); expect(calls('send_agent_message')).toHaveLength(0);
+  fireEvent.click(send());
+  await waitFor(() => expect(calls('send_agent_message')).toHaveLength(1));
+  expect(calls('open_agent_session')[1][1].input.id).not.toBe(originalId);
+});
+
+it('keeps an absent startup unknown when its host fence cannot be confirmed', async () => {
+  const { state, start } = host(true); state.openError = 'unknown';
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command, args) => command === 'cancel_unstarted_agent_session' ? Promise.reject('storage_failed') : original(command, args));
+  render(conversation(start, task.id)); await prepare('Keep this draft'); fireEvent.click(send());
+  await screen.findByText('directConversation.open_unknown');
+  fireEvent.click(screen.getByRole('button', { name: 'directConversation.recheck' }));
+  await screen.findByText('dev.error.storage_failed');
+  expect(screen.getByText('directConversation.open_unknown')).toBeTruthy();
+  expect(send()).toHaveProperty('disabled', true);
+  expect(prompt().value).toBe('Keep this draft');
+  expect(calls('open_agent_session')).toHaveLength(1); expect(calls('send_agent_message')).toHaveLength(0);
+});
+
+it('does not persist startup uncertainty when the parent rejects before dispatch', async () => {
+  host(true);
+  const start: Start = async () => ({ ok: false, code: 'cancelled', notStarted: true });
+  render(conversation(start, task.id)); await prepare('Never dispatched'); fireEvent.click(send());
+  await screen.findByText('dev.error.cancelled');
+  expect(screen.queryByText('directConversation.open_unknown')).toBeNull();
+  expect(prompt().value).toBe('Never dispatched');
+  expect(calls('open_agent_session')).toHaveLength(0);
+  expect(calls('send_agent_message')).toHaveLength(0);
 });

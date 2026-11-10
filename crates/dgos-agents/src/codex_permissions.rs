@@ -57,6 +57,17 @@ pub(super) fn valid_response(params: &Value, response: &Value) -> bool {
         || (matches!(scope, "turn" | "session") && permissions == &params["permissions"])
 }
 
+pub(super) fn turn_policy(mode: crate::session::PermissionMode, planning: bool, sandbox: Option<&Value>) -> Result<Value, String> {
+    use crate::session::PermissionMode;
+    if planning || mode == PermissionMode::ReadOnly {
+        return Ok(serde_json::json!({"approvalPolicy":"never","approvalsReviewer":"user","sandboxPolicy":{"type":"readOnly","networkAccess":false}}));
+    }
+    if mode == PermissionMode::AcceptEdits { return Err("unsupported_permission_mode".into()); }
+    // Full auto removes approval prompts only inside the original workspace sandbox.
+    // It never substitutes dangerFullAccess or broadens writable roots/network.
+    Ok(serde_json::json!({"approvalPolicy":if mode == PermissionMode::FullAuto { "never" } else { "on-request" },"approvalsReviewer":"user","sandboxPolicy":sandbox.ok_or("unsupported_permission_mode")?}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,5 +94,17 @@ mod tests {
         assert!(!valid_request(&request));
         request["permissions"] = json!({"network":{"enabled":true,"futureExpansion":true}});
         assert!(!valid_request(&request));
+    }
+    #[test]
+    fn full_auto_keeps_workspace_scope_and_planning_always_tightens_it() {
+        use crate::session::PermissionMode;
+        let sandbox = json!({"type":"workspaceWrite","networkAccess":false,"writableRoots":["/fixture"]});
+        let auto = turn_policy(PermissionMode::FullAuto, false, Some(&sandbox)).unwrap();
+        assert_eq!(auto["approvalPolicy"], "never");
+        assert_eq!(auto["sandboxPolicy"], sandbox);
+        let plan = turn_policy(PermissionMode::FullAuto, true, Some(&sandbox)).unwrap();
+        assert_eq!(plan["sandboxPolicy"]["type"], "readOnly");
+        assert_eq!(plan["sandboxPolicy"]["networkAccess"], false);
+        assert_eq!(turn_policy(PermissionMode::FullAuto, false, Some(&sandbox)).unwrap(), auto);
     }
 }

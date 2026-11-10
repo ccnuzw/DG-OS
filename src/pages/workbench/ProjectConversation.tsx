@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { Button, Input } from '@dgos/ui';
+import { ArrowUp } from 'lucide-react';
 import { useLocale } from '../../i18n';
 import { useDevelopment, type Project, type Outcome } from '../../stores/developmentStore';
 import { useAgentRunner, type AgentOpenInput, type AgentSession } from '../../stores/agentRunnerStore';
@@ -15,6 +17,7 @@ import { AgentComposerControls } from '../../components/development/AgentCompose
 import { acknowledgeConversationReferences, captureConversationReferences, type CapturedConversationReference } from '../../stores/developmentReferences';
 import { useComposerReferences } from '../../components/development/ComposerReferences';
 import { agentTurnSettings, bindAgentDraftSettings, rememberAgentSessionConfiguration, resolveAgentDefaults } from '../../stores/agentTurnSettings';
+import { agentChatPreferences, bindAgentChatPreferences } from '../../stores/agentChatPreferences';
 import { useSurfaceActive } from '../../workspace/SurfaceContext';
 import { acknowledgeAgentSkills, captureAgentSkills, type CapturedAgentSkill } from '../../stores/agentSkills';
 import { AgentImages } from '../../components/development/AgentImages';
@@ -45,7 +48,7 @@ export interface ConversationDraft {
 export const emptyConversationDraft: ConversationDraft = { prompt: '', configuration: null, taskId: null, sessionId: null, requestId: null, submitted: null, submittedReferences: [], submittedSkills: [], submittedImageIds: [], submittedGeneration: null, preparedImageGeneration: null, beforeTasks: [], phase: 'draft', preparing: false, error: null };
 const operations = new Set<string>();
 export const sameConfiguration = (a: CliProviderConfiguration | null, b: CliProviderConfiguration | null) => Boolean(a && b && a.engine === b.engine && a.provider.provider_id === b.provider.provider_id && a.provider.model_id === b.provider.model_id && a.provider.provider_revision === b.provider.provider_revision);
-type Open = (input: AgentOpenInput, projectId: string, taskId: string, dispatch: (session: AgentSession) => Promise<Outcome<null>>) => Promise<Outcome<null>>;
+type Open = (input: AgentOpenInput, projectId: string, taskId: string, dispatch: (session: AgentSession) => Promise<Outcome<null>>) => Promise<Outcome<null> & { notStarted?: boolean }>;
 
 export function ProjectConversation({ project, taskId, draftId, onStart, onInspect, setSessionDraft, visible = true }: { project: Project; taskId: string | null; draftId?: string; onStart: Open; onInspect: (sessionId: string) => Promise<void>; setSessionDraft: (id: string, prompt: string) => void; visible?: boolean }) {
   const { t } = useLocale();
@@ -76,7 +79,7 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
   const mounted = useRef(true);
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const surfaceActive = useSurfaceActive();
-  const trust = useWorkspaceTrust(project.id, value.taskId ?? taskId, visible && surfaceActive);
+  const trust = useWorkspaceTrust(project.id, value.taskId ?? taskId, visible && surfaceActive && !pending, { autoAgent: true });
   const visibleOwner = useRef(visible && surfaceActive);
   visibleOwner.current = visible && surfaceActive;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -151,7 +154,7 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
     let images = captureAgentImages(imageOwner);
     if (images.length && configuration.engine !== 'codex') { update({ error: 'agent_images_unsupported' }); return; }
     if (!preparationOnly && !text.trim() && !captured.length && !images.length) return;
-    if (!trusted && !await trust.grant('agent')) return;
+    if (!trusted) return;
     if (!current()) return;
     const selected = configuration;
     const confirmedDirectory = directory;
@@ -198,6 +201,7 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
         }
         rememberAgentSessionConfiguration(project.id, id, selected);
         bindAgentDraftSettings(project.id, draftId ?? project.id, session);
+        bindAgentChatPreferences(project.id, draftId ?? project.id, session);
         const skillSource = developmentDraftKey('conversation', project.id, draftId ?? project.id, 'skills');
         const skillTarget = developmentDraftKey('conversation', project.id, session.id, 'skills');
         if (skillSource !== skillTarget) useDevelopmentDrafts.setState(state => {
@@ -221,9 +225,10 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
         }
         const skills = captureAgentSkills(project.id, session);
         update({ phase: 'send_unknown', submittedSkills: skills, submittedGeneration: session.generation });
-        const settings = agentTurnSettings(session);
+        const { language, brevity, next_step_suggestions } = agentChatPreferences({ projectId: project.id, session });
+        const settings = { ...agentTurnSettings(session), response_preferences: { language, brevity, next_step_suggestions } };
         let failure: string | undefined;
-        const sent = await useAgentRunner.getState().action('send_agent_message', { input: { session_id: id, generation: session.generation, request_id: requestId, text, ...(settings ? { settings: { ...settings } } : {}), ...(captured.length ? { references: captured.map(item => item.reference) } : {}), ...(skills.length ? { skills: skills.map(item => item.skill) } : {}), ...(images.length ? { images: agentImageInputs(images) } : {}) } }, code => { failure = code; });
+        const sent = await useAgentRunner.getState().action('send_agent_message', { input: { session_id: id, generation: session.generation, request_id: requestId, text, settings, ...(captured.length ? { references: captured.map(item => item.reference) } : {}), ...(skills.length ? { skills: skills.map(item => item.skill) } : {}), ...(images.length ? { images: agentImageInputs(images) } : {}) } }, code => { failure = code; });
         if (epoch !== useDevelopment.getState().epoch) return { ok: false, code: 'cancelled' };
         if (!sent) {
           const code = failure ?? 'unknown';
@@ -251,6 +256,20 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
         if (epoch !== useDevelopment.getState().epoch) return;
         if (opened.ok) clearCommitted(id);
         else if (readDraft().phase === 'open_unknown') {
+          if (opened.notStarted) {
+            update({ phase: 'draft', sessionId: null, requestId: null, submitted: null, error: opened.code });
+            return;
+          }
+          // Cleanup can reject before reservation or retain a failed launch. Only a
+          // completed rejection plus an absent host session proves a fresh retry is safe.
+          if (opened.code === 'cleanup_pending') {
+            await useAgentRunner.getState().attach(id);
+            if (!current()) return;
+            if (useAgentRunner.getState().error === 'session_not_found') {
+              update({ phase: 'draft', sessionId: null, requestId: null, submitted: null, error: opened.code });
+              return;
+            }
+          }
           const rejected = ['provider_incompatible', 'provider_required', 'provider_revision_changed', 'credential_unavailable', 'cli_incompatible', 'cli_not_installed', 'cli_not_executable', 'cli_probe_timeout', 'cli_probe_failed', 'cli_start_failed', 'cli_handshake_failed', 'cli_handshake_timeout', 'workspace_untrusted', 'workspace_changed', 'invalid_workspace', 'project_archived', 'project_not_found', 'task_not_found', 'capability_conflict', 'capability_revoked'].includes(opened.code);
           update({ phase: rejected ? 'draft' : 'open_unknown', sessionId: rejected ? null : id, error: opened.code });
         } else if (!(opened.code === 'cancelled' && !sameConfiguration(readDraft().configuration, selected) && readDraft().phase === 'draft')) update({ error: opened.code });
@@ -268,10 +287,23 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
         return;
       }
       if (!value.sessionId) return;
+      if (value.phase === 'open_unknown') {
+        const cancelled = await invoke<boolean>('cancel_unstarted_agent_session', { input: { session_id: value.sessionId, task_id: value.taskId ?? taskId } });
+        if (!current()) return;
+        if (cancelled) {
+          update({ phase: 'draft', sessionId: null, requestId: null, submitted: null, error: 'session_not_started' });
+          return;
+        }
+      }
       await useAgentRunner.getState().attach(value.sessionId);
       if (!current()) return;
       const runner = useAgentRunner.getState();
       if (runner.error || runner.session?.id !== value.sessionId) { update({ error: runner.error ?? 'unknown' }); return; }
+      if (value.phase === 'open_unknown' && runner.session.status === 'closed' && !runner.session.persistence_error) {
+        // No message was dispatched in this phase. Keep the draft and require an explicit retry.
+        update({ phase: 'draft', sessionId: null, requestId: null, submitted: null, error: 'session_closed' });
+        return;
+      }
       if (value.phase === 'send_unknown') {
         // A host run identity proves admission; absence is not proof of non-execution.
         if (!runner.session.events.some(event => event.run === value.requestId) && runner.session.active_run !== value.requestId) { update({ error: 'unknown' }); return; }
@@ -288,7 +320,8 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
         await onInspect(value.sessionId);
         clearCommitted(value.sessionId);
       } else update({ phase: 'ready' });
-    } finally { operations.delete(key); if (useDevelopmentDrafts.getState().entries[key]) update({ preparing: false }); }
+    } catch (error) { if (current()) update({ error: hostCode(error) }); }
+    finally { operations.delete(key); if (useDevelopmentDrafts.getState().entries[key]) update({ preparing: false }); }
   }
   const blocked = pending || imageDraft?.busy || Boolean(draftSession?.persistence_error) || project.archived || !configuration || !directory || firstSendQueued || (value.preparing && !initialPreparation.current) || (!initialPreparation.current && ['task_unknown', 'open_unknown', 'send_unknown', 'sent'].includes(value.phase)) || !value.prompt.trim() && !inputReferences.references.length && !imageDraft?.images.length;
   const imageDisabled = !visible || !surfaceActive || value.preparing || project.archived || ['task_unknown', 'open_unknown', 'send_unknown', 'sent'].includes(value.phase);
@@ -301,15 +334,15 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
       {interruptPending ? <p role="status">{t('agent.interruptPending')}</p> : null}
       {project.archived ? <p role="alert" className="text-status-error">{t('dev.error.project_archived')}</p> : null}
       {draftSession?.persistence_error ? <p role="alert" className="text-status-error">{t('agent.storageFailed')}</p> : null}
-      {value.error || directoryError ? <p role="alert" className="text-status-error">{errorText(value.error ?? directoryError!)}</p> : null}
+      {(value.error || directoryError) && (value.error ?? directoryError) !== trust.error ? <p role="alert" className="text-status-error">{errorText(value.error ?? directoryError!)}</p> : null}
       {trust.error ? <p role="alert" className="text-status-error">{errorText(trust.error)} <Button size="xs" variant="ghost" onClick={() => void trust.refresh()}>{t('review.refresh')}</Button></p> : null}
       {value.error === 'cleanup_pending' ? <CliCleanupRecheck /> : null}
       {['task_unknown', 'open_unknown', 'send_unknown', 'sent'].includes(value.phase) ? <div><p role="alert">{t(`directConversation.${value.phase}`)}</p><Button size="xs" disabled={value.preparing} onClick={() => void reconcile()}>{t('directConversation.recheck')}</Button>
         {value.phase === 'task_unknown' ? tasks.filter(item => item.project_id === project.id && !value.beforeTasks.includes(item.id)).map(item => <Button key={item.id} size="xs" disabled={value.preparing} onClick={() => update({ taskId: item.id, phase: 'draft' })}>{t('directConversation.useTask', { title: item.goal })}</Button>) : null}</div> : null}
-      <div className="agent-dialogue-composer"><div className="agent-composer-shell">{inputReferences.chips}{configuration?.engine === 'codex' ? <AgentImages owner={imageOwner} disabled={imageDisabled} active={visible && surfaceActive} /> : null}<div className="agent-composer-input"><Input multiline rows={2} id="agent-message" ref={composerInput} label={t('agent.prompt')} className="type-reading" aria-describedby="agent-send-hint" value={value.prompt} onPaste={agentImagePaste(imageOwner, imageDisabled || configuration?.engine !== 'codex')} onChange={event => update({ prompt: inputReferences.promptChange(event.target.value, value.prompt, event.target.selectionStart, (event.nativeEvent as InputEvent).isComposing), configuration })} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); if (!event.repeat) void send(); } }} /></div>
+      <div className="agent-dialogue-composer"><div className="agent-composer-shell">{inputReferences.chips}{configuration?.engine === 'codex' ? <AgentImages owner={imageOwner} disabled={imageDisabled} active={visible && surfaceActive} /> : null}<div className="agent-composer-input"><Input multiline rows={2} id="agent-message" ref={composerInput} label={t('agent.prompt')} placeholder={t('agentPreferences.placeholder')} className="type-reading" aria-describedby="agent-send-hint" value={value.prompt} onPaste={agentImagePaste(imageOwner, imageDisabled || configuration?.engine !== 'codex')} onChange={event => update({ prompt: inputReferences.promptChange(event.target.value, value.prompt, event.target.selectionStart, (event.nativeEvent as InputEvent).isComposing), configuration })} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); if (!event.repeat) void send(); } }} /></div>
         <AgentSlashPicker session={readySession} skillDraftKey={developmentDraftKey('conversation', project.id, draftId ?? project.id, 'skills')} engine={configuration?.engine} projectId={project.id} value={value.prompt} onChange={prompt => update({ prompt })} inputRef={composerInput} active={visible && surfaceActive} disabled={value.preparing} />
-        <AgentComposerControls session={readySession} projectId={project.id} engine={configuration?.engine} draftId={draftId} visible={visible} disabled={value.preparing} referencePicker={inputReferences.picker} model={visible && surfaceActive ? <ComposerModelPicker projectId={project.id} value={configuration} preferred={saved.value?.configuration ?? null} onOpenChange={setModelPickerOpen} disabled={Boolean(value.sessionId && value.phase !== 'draft' && !initialPreparation.current)} onChange={next => { if (current()) { if (next.engine !== 'codex' && captureAgentImages(imageOwner).length) { update({ error: 'agent_images_unsupported' }); return; } if (next.engine !== 'codex' && useDevelopmentDrafts.getState().entries[developmentDraftKey('conversation', project.id, draftId ?? project.id, 'skills')]) { update({ error: 'agent_skills_unsupported' }); return; } queuedSend.current = null; setFirstSendQueued(false); autoAttempt.current = ''; update({ configuration: next, error: null }); } }} /> : null} more={<Button size="xs" variant="ghost" disabled={value.preparing} onClick={() => { if (current()) { capabilitiesChanged(); setReload(n => n + 1); } }}>{t('capabilities.reload')}</Button>} sendHint={t('agent.sendShortcut')} send={<Button data-testid="direct-conversation-send" disabled={Boolean(blocked)} onClick={() => void send()}>{t('agent.send')}</Button>} />
-        {!trusted && !trust.loading ? <Button size="xs" variant="secondary" data-testid="direct-conversation-authorize" disabled={!directory || value.preparing} onClick={() => void trust.grant('agent')}>{t('desktop.trust.start')}</Button> : null}
+        <AgentComposerControls session={readySession} projectId={project.id} engine={configuration?.engine} draftId={draftId} visible={visible} disabled={value.preparing} referencePicker={inputReferences.picker} model={visible && surfaceActive ? <ComposerModelPicker projectId={project.id} value={configuration} preferred={saved.value?.configuration ?? null} onOpenChange={setModelPickerOpen} disabled={Boolean(value.sessionId && value.phase !== 'draft' && !initialPreparation.current)} onChange={next => { if (current()) { if (next.engine !== 'codex' && captureAgentImages(imageOwner).length) { update({ error: 'agent_images_unsupported' }); return; } if (next.engine !== 'codex' && useDevelopmentDrafts.getState().entries[developmentDraftKey('conversation', project.id, draftId ?? project.id, 'skills')]) { update({ error: 'agent_skills_unsupported' }); return; } queuedSend.current = null; setFirstSendQueued(false); autoAttempt.current = ''; update({ configuration: next, error: null }); } }} /> : null} more={<Button size="xs" variant="ghost" disabled={value.preparing} onClick={() => { if (current()) { capabilitiesChanged(); setReload(n => n + 1); } }}>{t('capabilities.reload')}</Button>} sendHint={t('agent.sendShortcut')} send={<Button iconOnly aria-label={t('agent.send')} title={t('agent.sendShortcut')} data-testid="direct-conversation-send" disabled={Boolean(blocked) || !trusted} onClick={() => void send()}><ArrowUp size={18} aria-hidden="true" /></Button>} />
+        {trust.value?.agent_revoked && !trust.loading ? <div className="agent-composer-trust"><span>{t('desktop.trust.disabled')}</span><Button size="xs" variant="secondary" data-testid="direct-conversation-authorize" disabled={!directory || value.preparing} onClick={() => void trust.grant('agent')}>{t('desktop.trust.start')}</Button></div> : null}
         {value.error && value.phase === 'draft' ? <Button size="xs" variant="ghost" onClick={() => { autoAttempt.current = ''; update({ error: null }); }}>{t('desktop.retryPrepare')}</Button> : null}
       </div></div>
     </footer>

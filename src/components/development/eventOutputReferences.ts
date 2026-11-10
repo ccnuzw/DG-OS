@@ -10,7 +10,7 @@ export interface AgentOutputReference {
   diff: boolean;
 }
 export interface AgentReferenceActions {
-  onOpenReference?: (reference: AgentOutputReference, mode: 'file' | 'diff') => void | Promise<void>;
+  onOpenReference?: (reference: AgentOutputReference, mode: 'file' | 'diff', shouldOpen?: () => boolean) => void | Promise<void>;
   onSelectRun?: (runId: string) => void;
 }
 const object = (value: Json | undefined): { [key: string]: Json } => value && typeof value === 'object' && !Array.isArray(value) ? value : {};

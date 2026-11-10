@@ -355,6 +355,7 @@ impl CodexSession {
                         control.source = "codex/turn_start".into();
                         control.reason = None;
                     }
+                    if let Some(preferences) = &settings.response_preferences { controls.response_preferences = Some(preferences.clone()); }
                 }
                 for event in std::mem::take(&mut turn.deferred) {
                     if let Some(reply) = Self::apply_event(&mut view, &mut turn, event) { replies.push(reply); }
@@ -387,7 +388,8 @@ impl CodexSession {
         let standalone = pending.kind == "mcpServer/elicitation/request" && pending.data.get("turnId").is_none_or(Value::is_null);
         if !Self::matches_thread(&view, &pending.data) || (!standalone && !Self::matches_turn(&view, &turn, &pending.data)) { return Err("request_expired".into()); }
         if !Self::valid_response(pending, &response) { return Err("invalid_response".into()); }
-        if view.controls.as_ref().and_then(|controls| controls.permission.current) == Some(crate::session::PermissionMode::ReadOnly)
+        let planning = view.controls.as_ref().and_then(|controls| controls.collaboration.as_ref()).and_then(|control| control.current.as_deref()).is_some_and(|mode| matches!(mode, "plan" | "deep"));
+        if (planning || view.controls.as_ref().and_then(|controls| controls.permission.current) == Some(crate::session::PermissionMode::ReadOnly))
             && !read_only_response(pending, &response) { return Err("invalid_response".into()); }
         let (native_id, request) = turn.requests.iter_mut().find(|(_, request)| request.public_id == request_id && !request.answered).ok_or("request_expired")?;
         let id: Value = serde_json::from_str(native_id).map_err(|_| "invalid_response")?;
@@ -748,7 +750,9 @@ fn codex_controls(result: &Value, model: Option<&Value>) -> crate::session::Sess
         .filter(|value| !value.is_empty() && value.len() <= 128 && !value.chars().any(char::is_control))
         .map(str::to_owned).collect();
     let default_effort = model.and_then(|row| row["defaultReasoningEffort"].as_str()).filter(|value| options.iter().any(|option| option == value)).map(str::to_owned);
-    let permission_available = result["approvalPolicy"] == "on-request" && result.pointer("/sandbox/type").and_then(Value::as_str) == Some("workspaceWrite")
+    let workspace_sandbox = result.pointer("/sandbox/type").and_then(Value::as_str) == Some("workspaceWrite");
+    let read_only_sandbox = result.pointer("/sandbox/type").and_then(Value::as_str) == Some("readOnly");
+    let permission_available = (result["approvalPolicy"] == "on-request" || result["approvalPolicy"] == "never") && (workspace_sandbox || read_only_sandbox)
         && result.get("approvalsReviewer").is_none_or(|value| value == "user");
     SessionControls {
         reasoning: SessionControl {
@@ -758,22 +762,23 @@ fn codex_controls(result: &Value, model: Option<&Value>) -> crate::session::Sess
         },
         permission: SessionControl {
             available: permission_available,
-            options: if permission_available { vec![PermissionMode::Default, PermissionMode::ReadOnly] } else { vec![] },
-            current: permission_available.then_some(PermissionMode::Default), source: "codex/thread".into(),
+            options: if permission_available && workspace_sandbox { vec![PermissionMode::Default, PermissionMode::ReadOnly, PermissionMode::FullAuto] } else if permission_available { vec![PermissionMode::ReadOnly] } else { vec![] },
+            current: permission_available.then(|| if result["approvalPolicy"] == "never" && workspace_sandbox { PermissionMode::FullAuto } else if read_only_sandbox { PermissionMode::ReadOnly } else { PermissionMode::Default }), source: "codex/thread".into(),
             reason: (!permission_available).then(|| "native_policy_unavailable".into()),
         },
         collaboration: None,
         steering: true,
         bound_model: result["model"].as_str().map(str::to_owned),
         default_effort,
-        default_sandbox: permission_available.then(|| result["sandbox"].clone()),
+        default_sandbox: workspace_sandbox.then(|| result["sandbox"].clone()),
+        response_preferences: None,
     }
 }
 
 fn collaboration_control(listed: Option<&Value>) -> Option<crate::session::SessionControl<String>> {
     let rows = listed?.get("data")?.as_array()?;
-    let options: Vec<String> = ["default", "plan"].into_iter()
-        .filter(|mode| rows.iter().any(|row| row["mode"].as_str() == Some(*mode)))
+    let options: Vec<String> = ["default", "plan", "deep"].into_iter()
+        .filter(|mode| rows.iter().any(|row| row["mode"].as_str() == Some(if *mode == "deep" { "plan" } else { *mode })))
         .map(str::to_owned).collect();
     if options.is_empty() { return None; }
     Some(crate::session::SessionControl {
@@ -784,7 +789,7 @@ fn collaboration_control(listed: Option<&Value>) -> Option<crate::session::Sessi
 }
 
 fn turn_overrides(controls: Option<&crate::session::SessionControls>, settings: Option<&crate::session::AgentTurnSettings>) -> Result<Option<serde_json::Map<String, Value>>, String> {
-    use crate::session::PermissionMode;
+    use crate::session::{CollaborationMode, PermissionMode};
     let Some(settings) = settings.filter(|settings| !settings.is_empty()) else { return Ok(None); };
     let controls = controls.ok_or("turn_controls_unavailable")?;
     controls.validate(settings)?;
@@ -794,26 +799,29 @@ fn turn_overrides(controls: Option<&crate::session::SessionControls>, settings: 
         let effort = effort.as_ref().or(controls.default_effort.as_ref()).ok_or("unsupported_reasoning_effort")?;
         params.insert("effort".into(), json!(effort));
     }
-    if let Some(permission) = settings.permission_mode {
-        params.insert("approvalPolicy".into(), json!(if permission == PermissionMode::ReadOnly { "never" } else { "on-request" }));
-        params.insert("approvalsReviewer".into(), json!("user"));
-        params.insert("sandboxPolicy".into(), match permission {
-            PermissionMode::Default => controls.default_sandbox.clone().ok_or("unsupported_permission_mode")?,
-            PermissionMode::ReadOnly => json!({"type":"readOnly","networkAccess":false}),
-            PermissionMode::AcceptEdits => return Err("unsupported_permission_mode".into()),
-        });
-    }
     let mode = settings.collaboration_mode.or_else(|| controls.collaboration.as_ref()?.current.as_deref().and_then(|mode| match mode {
-        "default" => Some(crate::session::CollaborationMode::Default), "plan" => Some(crate::session::CollaborationMode::Plan), _ => None,
+        "default" => Some(CollaborationMode::Default), "plan" => Some(CollaborationMode::Plan), "deep" => Some(CollaborationMode::Deep), _ => None,
     }));
-    if let Some(mode) = mode {
+    if settings.permission_mode.is_some() || settings.collaboration_mode.is_some() || mode.is_some_and(CollaborationMode::planning) {
+        let permission = settings.permission_mode.or(controls.permission.current).unwrap_or(PermissionMode::Default);
+        let policy = permissions::turn_policy(permission, mode.is_some_and(CollaborationMode::planning), controls.default_sandbox.as_ref())?;
+        params.extend(policy.as_object().unwrap().clone());
+    }
+    if mode.is_some() || settings.response_preferences.is_some() {
+        let mode = mode.unwrap_or(CollaborationMode::Default);
         let effort = match &settings.reasoning_effort {
             Some(effort) => effort.as_ref().or(controls.default_effort.as_ref()),
             None => controls.reasoning.current.as_ref().or(controls.default_effort.as_ref()),
         };
-        params.insert("collaborationMode".into(), json!({"mode":mode,"settings":{
+        let mut instructions = Vec::new();
+        if mode == CollaborationMode::Deep {
+            instructions.push("Planning workflow: clarify the user's goals and unresolved constraints first; compare viable approaches and their tradeoffs; then produce a concrete plan and wait for the user to choose execution mode before implementation.".to_owned());
+        }
+        if let Some(preferences) = settings.response_preferences.as_ref().or(controls.response_preferences.as_ref()) { instructions.push(preferences.instructions()); }
+        let instructions = (!instructions.is_empty()).then(|| instructions.join("\n"));
+        params.insert("collaborationMode".into(), json!({"mode":if mode.planning() { "plan" } else { "default" },"settings":{
             "model":controls.bound_model.as_deref().ok_or("unsupported_collaboration_mode")?,
-            "reasoning_effort":effort,"developer_instructions":null
+            "reasoning_effort":effort,"developer_instructions":instructions
         }}));
     }
     Ok(Some(params))
@@ -871,25 +879,25 @@ mod tests {
         let model = json!({"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"}]});
         let controls = codex_controls(&original, Some(&model));
         assert!(turn_overrides(Some(&controls), None).unwrap().is_none());
-        let empty = AgentTurnSettings { reasoning_effort: None, permission_mode: None, collaboration_mode: None };
+        let empty = AgentTurnSettings { reasoning_effort: None, permission_mode: None, collaboration_mode: None, response_preferences: None };
         assert!(turn_overrides(None, Some(&empty)).unwrap().is_none());
-        let permission_only = turn_overrides(Some(&controls), Some(&AgentTurnSettings { reasoning_effort: None, permission_mode: Some(PermissionMode::ReadOnly), collaboration_mode: None })).unwrap().unwrap();
+        let permission_only = turn_overrides(Some(&controls), Some(&AgentTurnSettings { reasoning_effort: None, permission_mode: Some(PermissionMode::ReadOnly), collaboration_mode: None, response_preferences: None })).unwrap().unwrap();
         assert!(!permission_only.contains_key("effort"));
-        let settings = AgentTurnSettings { reasoning_effort: Some(None), permission_mode: Some(PermissionMode::Default), collaboration_mode: None };
+        let settings = AgentTurnSettings { reasoning_effort: Some(None), permission_mode: Some(PermissionMode::Default), collaboration_mode: None, response_preferences: None };
         let params = turn_overrides(Some(&controls), Some(&settings)).unwrap().unwrap();
         assert_eq!(params["effort"], "medium");
         assert_eq!(params["sandboxPolicy"], original["sandbox"]);
         assert_eq!(params["approvalPolicy"], "on-request");
         for settings in [
-            AgentTurnSettings { reasoning_effort: Some(Some("xhigh".into())), permission_mode: Some(PermissionMode::Default), collaboration_mode: None },
-            AgentTurnSettings { reasoning_effort: None, permission_mode: Some(PermissionMode::AcceptEdits), collaboration_mode: None },
+            AgentTurnSettings { reasoning_effort: Some(Some("xhigh".into())), permission_mode: Some(PermissionMode::Default), collaboration_mode: None, response_preferences: None },
+            AgentTurnSettings { reasoning_effort: None, permission_mode: Some(PermissionMode::AcceptEdits), collaboration_mode: None, response_preferences: None },
         ] { assert!(turn_overrides(Some(&controls), Some(&settings)).is_err()); }
         let unavailable = codex_controls(&original, None);
         assert!(!unavailable.reasoning.available);
-        assert!(turn_overrides(Some(&unavailable), Some(&AgentTurnSettings { reasoning_effort: Some(Some("low".into())), permission_mode: None, collaboration_mode: None })).is_err());
+        assert!(turn_overrides(Some(&unavailable), Some(&AgentTurnSettings { reasoning_effort: Some(Some("low".into())), permission_mode: None, collaboration_mode: None, response_preferences: None })).is_err());
         let unsafe_policy = codex_controls(&json!({"approvalPolicy":"never","sandbox":{"type":"dangerFullAccess"}}), Some(&model));
         assert!(!unsafe_policy.permission.available);
-        let effort_only = turn_overrides(Some(&unsafe_policy), Some(&AgentTurnSettings { reasoning_effort: Some(Some("low".into())), permission_mode: None, collaboration_mode: None })).unwrap().unwrap();
+        let effort_only = turn_overrides(Some(&unsafe_policy), Some(&AgentTurnSettings { reasoning_effort: Some(Some("low".into())), permission_mode: None, collaboration_mode: None, response_preferences: None })).unwrap().unwrap();
         assert!(!effort_only.contains_key("approvalPolicy"));
         assert!(!effort_only.contains_key("sandboxPolicy"));
     }
@@ -902,18 +910,29 @@ mod tests {
         let mut controls = codex_controls(&native, Some(&model));
         assert!(collaboration_control(None).is_none());
         assert!(collaboration_control(Some(&json!({"data":[]}))).is_none());
-        let mut settings = AgentTurnSettings { reasoning_effort: None, permission_mode: None, collaboration_mode: Some(CollaborationMode::Plan) };
+        let mut settings = AgentTurnSettings { reasoning_effort: None, permission_mode: None, collaboration_mode: Some(CollaborationMode::Plan), response_preferences: None };
         assert_eq!(turn_overrides(Some(&controls), Some(&settings)).unwrap_err(), "unsupported_collaboration_mode");
         controls.collaboration = collaboration_control(Some(&json!({"data":[{"mode":"default","model":"injected"},{"mode":"plan","model":"other-model","reasoning_effort":"high"}]})));
         assert!(controls.collaboration.as_ref().unwrap().current.is_none());
         let params = turn_overrides(Some(&controls), Some(&settings)).unwrap().unwrap();
         assert_eq!(params["collaborationMode"], json!({"mode":"plan","settings":{"model":"bound-model","reasoning_effort":"medium","developer_instructions":null}}));
-        assert!(!params.contains_key("sandboxPolicy"));
-        assert!(!params.contains_key("approvalPolicy"));
+        assert_eq!(params["sandboxPolicy"]["type"], "readOnly");
+        assert_eq!(params["approvalPolicy"], "never");
         settings.reasoning_effort = Some(Some("low".into()));
         assert_eq!(turn_overrides(Some(&controls), Some(&settings)).unwrap().unwrap()["collaborationMode"]["settings"]["reasoning_effort"], "low");
         settings.reasoning_effort = Some(None);
         assert_eq!(turn_overrides(Some(&controls), Some(&settings)).unwrap().unwrap()["collaborationMode"]["settings"]["reasoning_effort"], "medium");
+        controls.permission.current = Some(crate::session::PermissionMode::FullAuto);
+        controls.collaboration.as_mut().unwrap().current = Some("deep".into());
+        settings.collaboration_mode = Some(CollaborationMode::Deep);
+        let deep = turn_overrides(Some(&controls), Some(&settings)).unwrap().unwrap();
+        assert_eq!(deep["collaborationMode"]["mode"], "plan");
+        assert!(deep["collaborationMode"]["settings"]["developer_instructions"].as_str().unwrap().contains("compare"));
+        assert_eq!(deep["sandboxPolicy"]["type"], "readOnly");
+        settings.collaboration_mode = Some(CollaborationMode::Default);
+        let execute = turn_overrides(Some(&controls), Some(&settings)).unwrap().unwrap();
+        assert_eq!(execute["sandboxPolicy"], native["sandbox"]);
+        assert_eq!(execute["approvalPolicy"], "never");
     }
 
     #[test]

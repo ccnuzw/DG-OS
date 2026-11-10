@@ -38,7 +38,7 @@ done
     let generation = opened.generation;
     assert!(opened.view.controls.unwrap().steering);
     let run = Uuid::new_v4().to_string();
-    manager.send("alice", &id, &generation, run.clone(), "start".into(), Some(AgentTurnSettings { reasoning_effort: Some(Some("low".into())), permission_mode: None, collaboration_mode: Some(CollaborationMode::Plan) }), vec![], vec![], vec![]).await.unwrap();
+    manager.send("alice", &id, &generation, run.clone(), "start".into(), Some(AgentTurnSettings { reasoning_effort: Some(Some("low".into())), permission_mode: None, collaboration_mode: Some(CollaborationMode::Plan), response_preferences: None }), vec![], vec![], vec![]).await.unwrap();
     assert_eq!(manager.steer("bob", &id, &generation, run.clone(), Uuid::new_v4().to_string(), "wrong owner".into()).await.unwrap_err(), "session_not_found");
     assert_eq!(manager.steer("alice", &id, &Uuid::new_v4().to_string(), run.clone(), Uuid::new_v4().to_string(), "old generation".into()).await.unwrap_err(), "stale_generation");
     assert_eq!(manager.steer("alice", &id, &generation, Uuid::new_v4().to_string(), Uuid::new_v4().to_string(), "old run".into()).await.unwrap_err(), "not_running");

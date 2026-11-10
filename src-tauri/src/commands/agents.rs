@@ -23,6 +23,22 @@ pub struct RespondAgentRequestInput { session_id: String, generation: String, re
 #[serde(deny_unknown_fields)]
 pub struct SteerAgentTurnInput { session_id: String, generation: String, run_id: String, request_id: String, text: String }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CancelUnstartedAgentSessionInput { session_id: String, task_id: String }
+
+#[tauri::command]
+pub async fn cancel_unstarted_agent_session(app: tauri::AppHandle, window: WebviewWindow, input: CancelUnstartedAgentSessionInput) -> Result<bool, String> {
+    let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
+    let _permit = host::admit_activity(&app).map_err(|e| e.to_string())?;
+    let resolver = app.state::<std::sync::Arc<crate::session::SessionResolver>>();
+    let (session, lease) = resolver.agent_session().map_err(|e| e.to_string())?;
+    if session.user_id() != context.user_id() || lease.is_cancelled() { return Err("session_invalid".into()); }
+    let result = app.state::<AgentManager>().cancel_unstarted_session(context.user_id(), &input.session_id, &input.task_id, &lease).await?;
+    if lease.is_cancelled() { return Err("session_invalid".into()); }
+    Ok(result)
+}
+
 #[tauri::command]
 pub async fn list_agent_sessions(app: tauri::AppHandle, window: WebviewWindow) -> Result<Vec<SessionRecord>, String> {
     let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
@@ -127,6 +143,17 @@ pub async fn classify_agent_session(app: tauri::AppHandle, window: WebviewWindow
     let (session, lease) = resolver.agent_session().map_err(|e| e.to_string())?;
     if session.user_id() != context.user_id() || lease.is_cancelled() { return Err("session_invalid".into()); }
     app.state::<AgentManager>().classify_session(context.user_id(), input, lease).await
+}
+
+#[tauri::command]
+pub async fn observe_agent_compression(app: tauri::AppHandle, window: WebviewWindow, input: dgos_agents::codex_operations::CodexScope) -> Result<bool, String> {
+    let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
+    let resolver = app.state::<std::sync::Arc<crate::session::SessionResolver>>();
+    let (session, lease) = resolver.agent_session().map_err(|e| e.to_string())?;
+    if session.user_id() != context.user_id() || lease.is_cancelled() { return Err("session_invalid".into()); }
+    let result = app.state::<AgentManager>().observe_agent_compression(context.user_id(), input).await;
+    if lease.is_cancelled() { return Err("session_invalid".into()); }
+    result
 }
 
 #[tauri::command]
