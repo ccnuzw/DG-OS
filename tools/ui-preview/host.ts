@@ -1,5 +1,5 @@
 import { DEFAULTS, DENSITIES, type AppearanceSnapshot } from '../../src/ui/appearance/model';
-import type { ChatMessage, ChatSession } from '../../src/stores/chatStore';
+import type { ChatMessage, ChatSession, ChatRun, ChatSummary } from '../../src/stores/chatStore';
 export const clock = 1793966400000;
 const params = new URLSearchParams(location.search);
 export const scenario = params.get('scenario') ?? 'controls';
@@ -39,6 +39,10 @@ const ok = (data: unknown) => ({ success: true, data });
 export class Channel<T> { onmessage: (event: T) => void = () => {}; }
 const streams = new Map<string, { channel: Channel<any>; assistantId: string; sessionId: string }>();
 let sequence = 0;
+let previewSummary: ChatSummary | null = null;
+const previewSkill = { pin: { skill_id: 'preview-writing', version: '1.0', content_hash: 'preview-only-content-hash' }, name: en ? 'Preview writing guide' : '预览写作指南', description: en ? 'Synthetic metadata; no package is read.' : '合成元数据，不读取真实技能包。', category: 'writing', tags: ['writing'] };
+const previewRun: ChatRun = { task_id: 'preview-retained-run', session_id: sessions[0].id, assistant_message_id: 'preview-assistant', source_run_id: null, status: 'interrupted', partial_content: en ? 'Synthetic retained partial response. No external action occurred.' : '合成保留片段，未发生外部动作。', dispatched: false, result_unknown: params.get('fault') === 'chat-unknown', audit_warning: null, total_tokens: null, steps: [{ id: 'preview-load', ordinal: 1, kind: 'skill', phase: 'processing_result', status: 'completed', dispatched: false, result_unknown: false, receipt: { pin: previewSkill.pin, path: 'references/preview.txt', sha256: 'preview-only-resource-hash', bytes: 128 }, created_at: clock / 1000 - 3, updated_at: clock / 1000 - 2 }], created_at: clock / 1000 - 3, updated_at: clock / 1000 - 2 };
+if (params.get('fault') === 'chat-unknown') previewRun.steps.push({ id: 'preview-unknown-tool', ordinal: 2, kind: 'tool', phase: 'tool', status: 'dispatched', dispatched: true, result_unknown: true, receipt: null, created_at: clock / 1000 - 2, updated_at: clock / 1000 - 1 });
 const cliVersions = new Map<string, string>();
 const cliTickets = new Map<string, { tool: string; path: string }>();
 let cliTicketSequence = 0;
@@ -106,13 +110,34 @@ export async function invoke<T>(command: string, args: Record<string, any> = {})
     case 'list_chat_sessions': result = ok({ items: sessions, next_cursor: null }); break;
     case 'get_chat_session': result = ok(sessions.find(s => s.id === input.session_id) ?? sessions[0]); break;
     case 'list_chat_messages': result = ok({ items: input.session_id === sessions[1].id ? [] : messages, next_before_seq: null }); break;
+    case 'inspect_chat_context': result = ok({ model_id: 'preview-model', model_window_tokens: null, host_text_limit_bytes: 24576, reserved_output_tokens: 1024, estimated_input_tokens: 1024, text_bytes: 4096, image_reserve_tokens: 0, skill_bytes: 0, tool_schema_bytes: 0, history_bytes: 4000, dropped_turns: 0, summary: previewSummary, can_send: diagnostics.fault !== 'chat-budget', rejection: diagnostics.fault === 'chat-budget' ? 'preview_budget_limit' : null }); break;
+    case 'chat_skill_catalog': result = ok({ items: [previewSkill], recommendations: input.query ? [{ entry: previewSkill, score: 1, reasons: ['lexical_description:preview'] }] : [] }); break;
+    case 'list_chat_runs': result = ok({ items: input.session_id === sessions[0].id ? [previewRun] : [] }); break;
+    case 'get_chat_run': result = ok(previewRun); break;
+    case 'resolve_chat_run_step': {
+      const step = previewRun.steps.find(entry => entry.id === input.step_id);
+      if (input.task_id !== previewRun.task_id || !step || input.confirmed !== true || !input.note?.trim()) { result = { success: false, error: { code: 1006017 } }; break; }
+      step.receipt = { source: 'user_report', synthetic_preview_only: true, outcome: input.outcome, note: input.note, original_receipt: step.receipt };
+      step.status = 'manually_resolved'; step.result_unknown = false;
+      previewRun.result_unknown = previewRun.steps.some(entry => entry.result_unknown);
+      result = ok(previewRun); break;
+    }
+    case 'summarize_chat_context': {
+      const taskId = `preview-summary-${++sequence}`;
+      const assistantId = `${taskId}-assistant`;
+      previewSummary = { id: taskId, source_first_seq: 1, source_last_seq: 2, source_digest: 'preview-only-source-digest', content: en ? 'Synthetic summary preview; no model was called.' : '合成摘要预览，未调用模型。', provider_id: 'preview-provider', model_id: 'preview-model', created_at: clock / 1000 };
+      args.onEvent.onmessage({ kind: 'summary_done', task_id: taskId, assistant_message_id: assistantId, summary: previewSummary, dispatched: false, result_unknown: false, audit_warning: null });
+      result = ok({ task_id: taskId, user_message_id: '', assistant_message_id: assistantId, dropped_turns: 0, replayed: false }); break;
+    }
     case 'rename_chat_session': { const s = sessions.find(s => s.id === input.session_id)!; s.title = input.title; result = ok(s); break; }
-    case 'send_chat_message': case 'regenerate_chat_message': {
+    case 'send_chat_message': case 'regenerate_chat_message': case 'continue_chat_run': {
       if (scenario === 'chat-error') { result = { success: false, error: { code: 1006005 } }; break; }
       const n = ++sequence;
       const taskId = `preview-task-${n}`;
       const assistantId = `preview-response-${n}`;
       streams.set(taskId, { channel: args.onEvent, assistantId, sessionId: input.session_id ?? sessions[0].id });
+      args.onEvent.onmessage({ kind: 'phase', task_id: taskId, assistant_message_id: assistantId, phase: 'model' });
+      if (scenario === 'chat-recovery') args.onEvent.onmessage({ kind: 'activity', task_id: taskId, assistant_message_id: assistantId, step: previewRun.steps[0] });
       args.onEvent.onmessage({ kind: 'delta', assistant_message_id: assistantId, text: en ? 'Preview streaming response. No external request.' : '预览流式回复，未发出外部请求。' });
       if (scenario === 'chat-approval') args.onEvent.onmessage({ kind: 'tool_proposal', assistant_message_id: assistantId, proposal: { id: 'preview-proposal', server_id: 'preview-server', server_name: 'Preview only', tool_name: 'review_sample', schema_hash: 'preview-hash', arguments: { path: '/preview/only', explanation: (en ? 'Long approval parameter; no tool will execute.\n' : '长审批参数；不会执行真实工具。\n').repeat(60) }, expires_at: clock/1000+300 } });
       result = ok({ task_id: taskId, user_message_id: `preview-sent-${n}`, assistant_message_id: assistantId, dropped_turns: 0, replayed: false });
@@ -121,7 +146,7 @@ export async function invoke<T>(command: string, args: Record<string, any> = {})
     case 'advance_chat_tool_turn': result = ok(null); break;
     case 'cancel_chat_generation': case 'cancel_chat_task': {
       const stream = streams.get(input.task_id ?? input.taskId);
-      if (stream) stream.channel.onmessage({ kind: 'done', message: { ...messages[1], id: stream.assistantId, session_id: stream.sessionId, status: 'interrupted' } });
+      if (stream) { stream.channel.onmessage({ kind: 'done', message: { ...messages[1], id: stream.assistantId, session_id: stream.sessionId, status: 'interrupted' }, dispatched: false, result_unknown: false, audit_warning: null }); streams.delete(input.task_id ?? input.taskId); }
       result = ok(null); break;
     }
     case 'get_lan_status': result = ok({ enabled: false, state: 'stopped', address: null, preferred_port: 8635, port_fallback: false, failure_code: null, session_count: 0, code_expires_at: null }); break;

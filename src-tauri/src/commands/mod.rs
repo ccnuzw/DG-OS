@@ -6,6 +6,8 @@ mod development_takeover;
 pub use development_takeover::*;
 mod development_delivery;
 pub use development_delivery::*;
+mod development_commit_message;
+pub use development_commit_message::*;
 mod development_capabilities;
 pub use development_capabilities::*;
 mod development_runtime;
