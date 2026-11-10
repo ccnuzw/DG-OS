@@ -76,9 +76,11 @@ MCP 管理系统让 DGOS 能够连接 MCP 服务器，使 AI 可以访问文件�
 
 ### 2.4 D136 双运行时管理增量
 
-统一管理页按 DG-OS AI、Codex、Claude 分开配置、范围、认证和活动会话状态。DG-OS AI 继续由宿主 McpManager 管理；两家 CLI 原生配置通过保留未知字段的文件事务编辑，不导入宿主数据库、不额外启动宿主连接。配置存在、凭据存在、已认证、已连接、已批准和会话生效是独立事实，缺少证据时保留未知。
+按 [D145](../../../06-决策记录/V7-冻结决策.md#d145-cli-agent-插件抽屉与独立扩展管理)，AI 助手页面与 CLI Agent 插件抽屉独立；CLI 管理器只切换 Codex/Claude，提供已配置、官方 Registry 市场和手动添加。DG-OS AI 继续由宿主 McpManager 管理；CLI 原生配置通过保留未知字段的文件事务编辑，不导入宿主数据库、不额外建立生产宿主连接。配置存在、凭据存在、已认证、已连接、已批准和会话生效独立表达，缺少证据时保留未知。
 
 发现不运行 CLI 或 helper；连接、认证、刷新、重新连接均须独立显式操作，按已验证原生能力开放。移除配置不等于注销凭据或停止外部进程；原生审批不计作宿主工具批准。共享 OS 用户、同名遮蔽、所有者只读、账户撤权和 unknown 核实遵循 [D136 原生扩展设计](../../../04-技术架构/当前版本/D136-原生扩展统一管理技术设计.md)，新增配置命令见 [接口契约 §17.6](../../../04-技术架构/当前版本/V1-接口契约.md#176-d136-原生-skillsmcp-管理-ipc)。本增量按 D136 技术任务及 B136C 分支验收，原 V1 宿主连接证据不替代双 CLI 真实加载与审批证据。
+
+市场按官方版本化 API 显式搜索和分页，失败不伪装为空目录；目录上架不是兼容性或可信背书。部署选择只填写非敏感配置及凭据引用，不执行包管理器。独立临时测试先预览精确目标/命令再批准，仅 initialize/tools/list，15秒总期限、2秒结束清理、最多一个探针；取消/撤权回收自有进程和连接，不调用工具、不使用 DG-OS 凭据、不伪装成 CLI 当前连接。工具 Schema 标注临时来源，配置变化使旧结果过期，未知只核实原请求、不自动重试。
 
 ## 3. 核心流程
 
@@ -261,6 +263,30 @@ When 点击刷新
 
 Then 成功替换，失败保留旧快照
 
+#### AC16 CLI 独立管理与市场配置
+
+Given CLI 工作台及可访问或离线的官方 Registry
+
+When 从插件抽屉浏览已配置、显式搜索/翻页并选择部署配置
+
+Then 不进入 AI 助手管理页，范围绑定实际 workspace；保留来源/版本/缓存时间及失败事实，配置只填写草稿并经预览确认，不下载或执行包，不继承宿主凭据/批准
+
+#### AC17 临时连接测试与工具 Schema
+
+Given 已保存原生服务或完整未保存草稿
+
+When 用户批准精确计划后执行临时测试
+
+Then 有界完成 initialize 和 tools/list，返回带来源的工具定义与 Schema，不调用工具、不写生产连接池；HTTP 200、保存成功和临时测试不能冒充原生会话连接
+
+#### AC18 探针取消、过期与账户隔离
+
+Given 进行中、超时或清理未知的临时探针
+
+When 取消、账户撤权、配置/工作区/程序身份变化或重复确认
+
+Then 有界关闭自有连接并回收自有进程，迟到结果不串账户/范围；未确认清理保留 unknown 及核实，不重新派发，不停止外部服务或当前 CLI
+
 #### AC 逐项测试设计
 
 证据状态按 spec-docs-pro 词表记录：未创建 / 已创建 / 静态核验 / 本地通过 / 预发通过 / 生产通过 / 失败 / 不适用。原“证据限制”列的内容移入“备注”，不代表升格。
@@ -282,6 +308,9 @@ Then 成功替换，失败保留旧快照
 | AC13 | 工具使用记录 | 单元/集成 | `tools_discovery_schema_confirmation_and_redacted_audit` 及第 10.2 节取消/中断专项 | `cargo test --offline -p dgos-mcp` | 本地通过 | fake 脱敏/隔离、拒绝/取消、pending 中断恢复和结果审计失败提示通过 |
 | AC14 | MCP 服务器启用/禁用 | 单元/集成 | `disabling_waits_for_inflight_call_then_revokes_connections_and_consent` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake 通过 |
 | AC15 | 刷新工具列表 | 单元/集成 | `refresh_uses_same_session_replaces_snapshot_and_revokes_only_its_consent`、`failed_refresh_preserves_entire_snapshot_and_live_session`、`snapshot_database_failure_rolls_back_without_stuck_connecting_status` | `cargo test --offline -p dgos-mcp` | 本地通过 | fake 同会话刷新、分页失败保留与 DB 回滚通过 |
+| AC16 | CLI 入口、Registry 与配置分离 | 前端+宿主 | `tests/agent-workbench.test.tsx`、`src-tauri/src/native_extensions/mcp_catalog.rs` | `npx vitest run tests/agent-workbench.test.tsx`；`cargo test -p dgos --lib native_extensions` | 已创建 | D145，运行证据见实现状态 |
+| AC17 | 临时握手与工具定义 | 协议+宿主 | `crates/dgos-mcp/src/probe.rs`、`src-tauri/src/native_extensions/mcp_catalog.rs` | `cargo test -p dgos-mcp probe`；`cargo test -p dgos --lib native_extensions` | 已创建 | D145，真实与本地协议 fixture 分开；运行证据见实现状态 |
+| AC18 | 取消、撤权与清理 | 协议+宿主 | `crates/dgos-mcp/src/probe.rs`、`src-tauri/src/native_extensions/mcp_catalog.rs` | `cargo test -p dgos-mcp probe`；`cargo test -p dgos --lib native_extensions` | 已创建 | D145，证据只回写实现状态 |
 
 
 ### 5.2 边界条件测试
@@ -561,6 +590,7 @@ D140增量：聊天允许保存选择偏好但不保存批准，工具参数流�
 | 2026-11-01 | 按代码事实核对：§6.1 补模块发起的 `mcp.call` 路径（D093）；§11.3 用户依赖改为宿主会话派生；AC 原文、编号与证据状态未改 | Kiro |
 | 2026-11-01 | AC07、AC10、AC11 改为“本地通过”：新增成功心跳测试，加强重试耗尽与多调用方并发配对断言，两处变异验证；AC 原文与编号不变 | Kiro |
 | 2026-11-02 | 增加 W4 macOS 真实 WebView smoke 6/6，并核对 unsigned release `.app` 中双官方 Server 配置/连接/确认/调用；跨平台凭据与签名安装仍未验证 | Codex |
+| 2026-11-10 | CLI 独立入口、官方 Registry 与有界临时探针，新增 AC16～AC18，关联 B145-05～09；临时工具 Schema 与原生会话连接分开 | D145 |
 
 ---
 

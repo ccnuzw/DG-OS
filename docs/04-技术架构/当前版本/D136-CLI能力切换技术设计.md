@@ -3,13 +3,13 @@ title: "D136 CLI 能力切换技术设计"
 version: V7
 technical_task: D136-DUAL-RUNTIME
 spec_status: Draft
-updated: 2026-11-07
+updated: 2026-11-10
 ---
 # D136 CLI 能力切换技术设计
 
 > 风险 L3。依据已冻结 D136，本文记录 Provider-only 运行、旧混合历史切换、租约失效及清理契约；工程细节沿后续章节的实际 API 收口。代码和验证状态以唯一实现状态为准，不以本文草案标记或早期拟实施措辞推断未实现，也不提升 V7 门禁。
 
-来源：[D136 / D135](../../06-决策记录/V7-冻结决策.md#d136-双运行时分工与统一能力管理) · [实施计划 §12](../../02-产品与版本/后续版本/V7-编程项目工作台方案草案.md#12-双运行时与统一能力管理实施计划) · [旧阶段4契约 §9](../../02-产品与版本/后续版本/V7-项目任务基础技术契约.md#9-阶段4增量契约项目级-provider-skills-mcp) · [D130 / D131](../../06-决策记录/V2-冻结决策.md#d130-单任务与cli-agent停止并等待终态) · [原生适配](../../02-产品与版本/后续版本/V7-AI-Agent-CLI适配设计.md)。实现与验证证据仍以 [V1 实现状态](../../02-产品与版本/当前版本/V1-实现状态.md) 为唯一维护位置。
+来源：[D136 / D135](../../06-决策记录/V7-冻结决策.md#d136-双运行时分工与统一能力管理) · [D144 输入、信任与用量增量](../../06-决策记录/V7-冻结决策.md#d144-cli-agent-直接配置精确工作区自动信任与用量交互) · [实施计划 §12](../../02-产品与版本/后续版本/V7-编程项目工作台方案草案.md#12-双运行时与统一能力管理实施计划) · [旧阶段4契约 §9](../../02-产品与版本/后续版本/V7-项目任务基础技术契约.md#9-阶段4增量契约项目级-provider-skills-mcp) · [D130 / D131](../../06-决策记录/V2-冻结决策.md#d130-单任务与cli-agent停止并等待终态) · [原生适配](../../02-产品与版本/后续版本/V7-AI-Agent-CLI适配设计.md)。实现与验证证据仍以 [V1 实现状态](../../02-产品与版本/当前版本/V1-实现状态.md) 为唯一维护位置。
 
 ## 1. 基准、授权与边界
 
@@ -80,7 +80,7 @@ Codex `item/permissions/requestApproval` 沿上述原生请求归属规则，独
 | `read_development_capability_catalog` | 替换为 `read_development_cli_provider_catalog(project_id, engine)`；返回当前 owner 最小 Provider/模型目录、修订、兼容状态与固定原因，不加载 DG-OS Skills/MCP |
 | `get_development_session_capabilities` | 替换为 `read_development_session_configuration(session_id)`；返回 tagged legacy history 或 Provider 快照及独立 native observations |
 | `list/respond_development_capability_confirmation` | 删除；不返回永远空数组作 shim；CLI 工具批准只经 `respond_agent_request` |
-| `open_agent_session` | 输入改为 tagged `create` 与 `resume`；create 必有精确 `provider_revision >= 0` 与 task_id；resume 只含 DG-OS session_id、目录信任确认，不接受替代 Provider 或任意 native_id |
+| `open_agent_session` | 输入改为 tagged `create` 与 `resume`；create 必有精确 `provider_revision >= 0` 与 task_id；resume 只含 DG-OS session_id、trust_workspace，不接受替代 Provider 或任意 native_id。D144 新入口传 false，由宿主消费精确活动工作区的有效 agent 授权，不再要求重复确认；授权动作见[接口契约 §17.11](V1-接口契约.md#1711-d143-cli-agent-工作现场目录授权与退出) |
 | `AgentManager::open/open_with_capabilities` | 合并为唯一 Provider-bound 创建/恢复入口；无可选 service、默认 launch 或绕过 binding 的公开路径；测试 fixture 显式构造测试专用服务 |
 | `send_agent_message/respond_agent_request` | 除旧归属与 pending 校验，重验运行策略、进程级 Provider 租约、项目 epoch 及 Provider 可用性；历史发送/批准统一拒绝 |
 | `prepare/accept_development_handoff` | 保留命令，扩展同引擎迁移；目标显式选择 Provider 自身修订（允许 0）及正项目配置修订；摘要只作为草稿，单独显式发送 |
@@ -113,7 +113,7 @@ Claude 的必需路由控制与可选能力分开判断：启动仍须成功执�
 
 ## 5. CLI 版本与兼容证据
 
-只读扫描不执行程序。用户显式探测或确认创建/恢复时告知将启动所选 CLI；版本探测不隐式安装依赖、不运行项目脚本、不调用模型。复用 `cli.rs::probe` 的固定 argv、无 stdin、5 秒、4 KiB 读取上限及独立进程组清理，删除 capabilities.rs 的第二条 10 秒探测。探测返回原有 not_installed/not_executable/start_failed/timeout/output_limit/protocol_unsupported 分类。
+只读扫描不执行程序。显式版本探测不隐式安装依赖、不运行项目脚本、不调用模型；活动草稿自动准备及继续时恢复由 D143/D144 授权规则驱动，不再要求独立启动确认。CLI 加载原生配置、Hooks/MCP 的范围在项目权限说明中可查。复用 `cli.rs::probe` 的固定 argv、无 stdin、5 秒、4 KiB 读取上限及独立进程组清理，删除 capabilities.rs 的第二条 10 秒探测。探测返回原有 not_installed/not_executable/start_failed/timeout/output_limit/protocol_unsupported 分类。
 
 | 具体组合 | 依据与证据等级 | 下一轮处理 |
 | --- | --- | --- |
@@ -481,7 +481,7 @@ P0初稿/返工证据仅为当时静态阅读与核对。P2-PROVIDER 本轮实�
 | 会话同步 | 保留同一宿主状态与只读快照接口，增加可选 generation/after_seq 游标；有效游标只传新增事件及当前状态/审批，代次变化、历史缺口或非法游标返回全量重置。前端按序合并并淘汰宿主不再保留的事件，缺口重新读取，不触发任务发送 | 多会话隔离、迟到响应、账号重置、事件淘汰、审批独立更新；有界长历史载荷对比 |
 | 能力来源 | 明确本机引擎及版本、DG-OS Provider/model、工作目录和原生 Skills/MCP；配置、清单发现、用户选择、实际执行分别表达 | 不将清单或选择表示为已执行；当前代次失效后不提供可操作权限 |
 | 原生 Skill 输入 | 本节替代 §3.1 中本轮不新增选择器的范围限制。Codex 已建立会话可从真实发现结果显式选择最多8项 name/path；发送输入新增 skills，宿主按当前代次重验启用状态与唯一精确身份，转换为结构化 UserInput::Skill。不解析正文伪造选择，不自动每轮注入，不替 Claude 承诺该输入协议 | 恶意路径/禁用/过期拒绝；Skill身份纳入持久与内存幂等指纹；已派发回执先核实；草稿按会话隔离与未知结果不重发 |
-| Claude 原生命令输入 | 已启动会话通过 supportedCommands 读取原名；仅完整清单内唯一且非 builtin 的命令可选，选择只将 `/原名` 加入当前消息草稿，参数由用户编辑并显式发送。仍走 text，不填 Codex 的 skills；首次发送前不偷偷启动会话 | 账户、项目、session/generation 或运行状态改变使旧清单失效；builtin/同名只读。来源为 unknown，不冒充确定 Skill 实例；正文/资源使用由原生事件另行验收 |
+| Claude 原生命令输入 | 自动准备的活动会话通过 supportedCommands 读取原名；仅完整清单内唯一且非 builtin 的命令可选，选择只将 `/原名` 加入当前消息草稿，参数由用户编辑并显式发送。仍走 text，不填 Codex 的 skills；D143/D144 允许有效精确工作区授权及模型下首发前准备，不发送占位回合 | 账户、项目、session/generation 或运行状态改变使旧清单失效；builtin/同名只读。来源为 unknown，不冒充确定 Skill 实例；正文/资源使用由原生事件另行验收 |
 | MCP 会话管理 | 仅开放固定版本具有明确请求、取消与结果确认语义的操作。无可靠协议继续报告不支持并提供对应原生操作指引，不使用 shell、任意RPC或全局配置改写绕过 | 逐项核对官方协议；不可用原因、原生CLI操作指引及迟到/未知结果行为 |
 
 同步优化优先减少全量历史复制与传输，不先建立推送订阅系统。现有600ms轮询的合成长历史载荷测量用于判断优化收益，不作为真实UI延迟或实机吞吐证据；运行态可缩短轮询间隔，非运行态仍保持状态可见，不改变隐藏页面保持运行的规则。
@@ -504,15 +504,15 @@ P0初稿/返工证据仅为当时静态阅读与核对。P2-PROVIDER 本轮实�
 
 - 只投影原生公开 reasoning summary，按 run/item/summaryIndex 合并增量；对应完整 summary 替换同项流，不展示原始 reasoning content，不编造缺失摘要。
 - Plan/diff 按 run 保留更新版本，明确最新与历史；保留步骤状态和说明，计划完成、回复完成与 diff 展示都不等于补丁已应用或产品验收通过。畸形字段保留检查入口。
-- 上下文面板区分最新回合与累计 token，展示输入、输出、缓存、推理分项以及事件序号/来源。只使用原生窗口，累计量不算占用百分比；执行中说明快照时点，不估算费用。Claude 既有原生统计规则不替换。
+- 上下文面板区分最新回合与累计 token，展示输入、输出、缓存、推理分项。只使用原生窗口，累计量不算占用百分比；执行中保留最近原生统计的时点。D144 扩展费用、耗时及压缩，实际费用、可靠原生价格预估及未知分别表达，详见 §17；不从模型名称估价。
 - 验收覆盖跨 run/item 隔离、流与快照替换、多次计划/diff更新、异常统计和缺窗口。
 
 ### 15.3 批次 C：有身份约束的原生回合交互
 
 - 运行中追加指令使用原生 `turn/steer`，宿主检查 owner、Provider租约、目录、generation 与 run；捕获原生 `expectedTurnId`，不能把旧请求转发下一轮。请求身份绑定原文本，一次派发；调用者取消后仍监督应答，未知结果仅核实、不自动重发。界面保留未确认草稿，不把接收确认当执行完成。
-- Plan/default 通过 `collaborationMode/list` 的实际发现开放，采用原生内置指令和当前绑定模型，前端不能传任意 developer instructions 或模型。使用实验协议必须显式初始化 opt-in；不支持时仅禁用对应控制，普通发送保持。Plan 不是只读沙箱或审批授权，权限仍按既有独立策略执行。
+- Plan/default 通过 `collaborationMode/list` 的实际发现开放，采用原生内置指令和当前绑定模型，前端不能传任意 developer instructions 或模型。使用实验协议必须显式初始化 opt-in；不支持时仅禁用对应控制，普通发送保持。D144 的 plan/deep 另施加原生受限执行策略，不能只靠 Plan 名称或提示词保证不写入，见 §17。
 - 模式选择是下一回合意图，实际状态由原生确认更新；拒绝/未知保留意图，不能显示成已生效。会话/账户切换不得让迟到应答清空新草稿。
-- 首条消息前可显式“连接并配置”：复用现有目录信任、Provider修订、任务归属与会话启动，不发送占位消息或模型回合；空草稿允许连接，进入同一会话的能力控制区后选择Plan/default、权限和推理强度，再显式发送。准备不消费草稿或文件引用，切换成功后迁移最新输入；双击不重复创建，未知结果只核实原会话，不自动重启或发送。保留已有直接发送路径；缺失原生能力时明确不可用，不伪造可选项。
+- 首条消息前由有效 Provider/模型和精确工作区 agent 授权自动准备，替代独立“连接并配置”入口；不发送占位消息或模型回合。输入保持可编辑，真实能力就绪后直接选择模式和推理；准备不消费草稿或文件引用，切换成功后迁移最新输入。双击不重复创建，未知结果只核实原会话，不自动重启或发送；缺失能力就地显示简短不可用原因。
 - 验收覆盖旧代次/旧回合、同ID不同输入、未知不重发、能力缺失、绑定模型不变、Plan/default切回以及导航隔离。
 
 ### 15.4 批次 D：长时间运行资源收口
@@ -540,6 +540,27 @@ B～D 编辑阶段不逐文件执行检查；公共契约确有必要时做局�
 
 共享约束：所有新增变更操作使用类型化参数白名单、请求身份及有界回执；不得向renderer开放任意RPC或命令。前端采用现有设计token、组件与账户/项目/session草稿隔离；原生工作管理作为渐进展开区域，不挤占主要代码与对话。图片、子线程和认证的私密内容不进入普通诊断。开发期间只对影响后续实现的高风险契约做必要探针，汇合后集中测试、构建、真实界面与真实引擎验收，修复后仅复验相关失败及其集成边界。
 
+## 17. D144 输入、模式与原生用量增量
+
+依据已冻结 [D144](../../06-决策记录/V7-冻结决策.md#d144-cli-agent-直接配置精确工作区自动信任与用量交互)。本节取代旧逐次信任、Plan 不约束写入及不启用全自动的规则；Provider-only、账户/目录归属、撤销和未知不重放边界保持。活动精确 workspace 的自动授权、持久拒绝与重新启用以[接口契约 §17.11](V1-接口契约.md#1711-d143-cli-agent-工作现场目录授权与退出)为准，terminal/service 不随 Agent 自动授权。
+
+五项菜单分别组合 `permission_mode` 与 `collaboration_mode`，不是一个新增的原生 mode 枚举；`read_only` 仍是宿主权限值，不额外占一个菜单项。字段、空值和能力返回以[接口契约 §17.9](V1-接口契约.md#179-codex-接入完善增量读取与原生-skill-输入)为准。
+
+| 选择 | 原生应用与边界 |
+| --- | --- |
+| 手动确认 | `default` 执行权限及默认任务方式；审批按原生可信规则，不承诺每次读取弹窗 |
+| 自动编辑 | `accept_edits`；Claude 映射 `acceptEdits`。Codex 当前适配不支持此策略，显示简短不可用原因，不以全自动代替 |
+| 规划 / 深度 | `plan/deep` 任务方式，保存的执行权限意图可仍为 `default`。Codex 使用原生 plan、readOnly sandbox、networkAccess=false 及 never 审批；宿主拒绝写入/扩权批准。Claude 使用原生 plan，深度追加 planModeInstructions；宿主拒绝其他副作用批准，仅允许原生问答及显式 ExitPlanMode。Claude 不据此宣称 OS 沙箱，其原生计划文件/元数据仍遵循 CLI 规则 |
+| 全自动 | `full_auto`，菜单点击明确授权当前会话。Codex 为 never 审批并保留原 workspaceWrite 根与网络限制，不使用 dangerFullAccess；Claude 为 bypassPermissions，只有显式选择后才开启对应启动许可。不得成为其他项目或新会话默认，不消耗既有 pending |
+
+深度先澄清目标、比较方案，再产出计划，推理强度保持独立。离开规划恢复所选执行权限；不能因保存的 permission 仍为 default 就取消规划期间的原生限制。Claude SDK 0.3.317 / CLI 2.1.319 为本轮核对写协议组合，不据此推断其他版本或全部模型支持；模式能力以当前代次实际返回开放。拒绝/未知保留意图和草稿，不把选择、schema 或原生受理回执当实际工具执行证据。
+
+推理使用原生真实离散档位及显式默认 null，不以默认冒充“关闭”，不按模型名称补档。响应语言、精简程度和下一步建议经 `response_preferences` 作用于后续回复，不改写用户 text；跟随修改、流式展示和代码高亮只改变呈现，主题复用应用外观。关闭流式展示仍实时处理审批、取消、工具和失败。偏好在既有账户私有工作现场保存，不另建状态源；保存失败就地反馈并恢复已确认值。
+
+用量仅消费原生回执：Codex 最新 last 与累计 total 分开，缓存/推理为子集，不重复相加；Claude 上下文取最近主响应用量及同回合、同模型窗口，累计取最新 model_usage 快照，不能把多份累计快照相加。实际费用与原生可靠价格预估明确区分；缺少价格依据、窗口、用量或完整耗时均显示未知，历史裁剪不能冒充完整会话统计。
+
+压缩复用 `observe_agent_compression` 当前代次能力读取、`control_codex_operation` 的类型化 compact 动作及原请求核实，沿账户、Provider、目录、generation 和空闲检查。Codex 使用 `thread/compact/start`，首次能力依据精确已核对 0.167.0 schema 或当前进程既有直接协议成功证据，不按版本大小推断，请求受理不等于完成；Claude 仅在原生 supportedCommands 确认 builtin `/compact` 后调用，并关联原生结果。版本/schema、能力发现、协议 fixture、真实 CLI 执行和桌面交互分别留证；未支持时局部禁用，不以普通提示词、前端调低进度条或旧压缩成功记录替代当前完成。失败/未知不修改占用、不自动重发，刷新占用必须等待新的原生用量。
+
 ## 变更记录
 
 | 日期 | 变更 | 关联决策 |
@@ -548,3 +569,4 @@ B～D 编辑阶段不逐文件执行检查；公共契约确有必要时做局�
 | 2026-11-07 | P0-B审查返工1：允许Provider自身修订0；移除逐组合付费验证门槛；分离数据/本地清理/外部unknown并补boot恢复出口；复用capability表、合并binding清理、补最小DDL和可独立派发接口；更新当前候选版本，沿用agent_lease | D136、D130、D131 |
 | 2026-11-07 | P2-PROVIDER：收窄历史重启门槛；实现共享提交/spawn gate、opening租约、同步失效/锁外通知、变更路径接线及边界测试源码；§7.2记录实际API、宿主接入与集中smoke方案 | D136、D130、D131 |
 | 2026-11-08 | 第四阶段：Stage4 原生资源事务、独立读取/审批/执行/结果回送证据及新版 artifact 恢复边界；驱动能力限制和实际证据见 V1 实现状态 | D136、D131 |
+| 2026-11-10 | D144：收口活动精确工作区自动信任、五项模式的原生限制、响应偏好与用量/压缩证据边界；取代重复确认和旧 Plan 规则，不回写实现状态 | D144 |
