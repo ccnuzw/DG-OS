@@ -1,4 +1,5 @@
 mod content_manager;
+mod consumption;
 pub mod content_package;
 pub mod dependency;
 pub mod entity;
@@ -14,6 +15,7 @@ pub mod source_parser;
 mod registry_tests;
 
 pub use dependency::DependencyChecker;
+pub use consumption::{recommend_skills, validate_skill_read_path, SkillCatalogEntry, SkillLoadReceipt, SkillReadResult, SkillRecommendation};
 pub use entity::*;
 pub use error::{Result, SkillError};
 pub use github::{GithubAdapter, ResolvedGithubSource};

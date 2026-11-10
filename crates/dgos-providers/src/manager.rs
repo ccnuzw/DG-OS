@@ -901,20 +901,60 @@ impl ProviderManager {
         if cancellation.is_cancelled() { return Err(DgosError::StreamInterrupted); }
         if tokio::time::Instant::now() >= deadline { return Err(DgosError::Timeout); }
         let started = Instant::now();
-        dispatched.store(true, Ordering::Release);
         let mut audit = StreamAudit { db: self.db.clone(), provider_id: provider_id.into(), model_id: model_id.into(), user_id: user_id.into(),
             provenance: provenance.cloned(), started, finished: false, permit: Some(permit) };
         let opened = tokio::select! {
             biased;
-            stream = adapter.stream(model_id, request) => stream,
             _ = cancellation.cancelled() => return Err(DgosError::StreamInterrupted),
             _ = tokio::time::sleep_until(deadline) => return Err(DgosError::Timeout),
+            stream = adapter.stream_with_dispatch(model_id, request, Some(dispatched.as_ref())) => stream,
         };
         match opened {
             Ok(stream) => Ok(Box::pin(cancellable_stream(audited_stream(stream, audit), cancellation))),
             Err(error) => {
                 audit.finish(StreamOutcome::Failed(error.error_code())).await;
                 Err(error)
+            }
+        }
+    }
+
+    /// Tool mode uses its own incremental protocol parser, but shares the same admission,
+    /// cancellation and exactly-one usage audit as text streams.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn stream_provider_tools_bound_cancellable_controlled_with_provenance(
+        &self, provider_id: &str, model_id: &str, request: ToolChatRequest, user_id: &str,
+        expected_revision: Option<i64>, provenance: Option<&ExecutionProvenance>, cancellation: CancellationToken,
+        deadline: tokio::time::Instant, dispatched: Arc<AtomicBool>,
+    ) -> DgosResult<crate::traits::BoxStream<dgos_types::ToolStreamEvent>> {
+        let permit = self.gate.admit().map_err(|_| DgosError::ProviderRequestRejected)?;
+        let prepare = async {
+            let provider = self.provider_repo.get(provider_id, user_id).await?
+                .filter(|provider| provider.enabled && provider.user_id == user_id)
+                .ok_or_else(|| DgosError::ProviderUnavailable("Provider unavailable for this user".into()))?;
+            self.adapter_for_saved(&provider, true, expected_revision).await
+        };
+        let adapter = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err(DgosError::StreamInterrupted),
+            _ = tokio::time::sleep_until(deadline) => return Err(DgosError::Timeout),
+            result = prepare => result?,
+        };
+        if cancellation.is_cancelled() { return Err(DgosError::StreamInterrupted); }
+        if tokio::time::Instant::now() >= deadline { return Err(DgosError::Timeout); }
+        let started = Instant::now();
+        let mut audit = StreamAudit { db: self.db.clone(), provider_id: provider_id.into(), model_id: model_id.into(), user_id: user_id.into(),
+            provenance: provenance.cloned(), started, finished: false, permit: Some(permit) };
+        let opened = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err(DgosError::StreamInterrupted),
+            _ = tokio::time::sleep_until(deadline) => return Err(DgosError::Timeout),
+            result = adapter.stream_tools_with_dispatch(model_id, request, Some(dispatched.as_ref())) => result,
+        };
+        match opened {
+            Ok(stream) => Ok(Box::pin(cancellable_stream(audited_tool_stream(stream, audit), cancellation))),
+            Err(error) => {
+                if audit.finish(StreamOutcome::Failed(error.error_code())).await { Err(error) }
+                else { Ok(Box::pin(futures::stream::iter(vec![Ok(dgos_types::ToolStreamEvent::AuditWarning), Err(error)]))) }
             }
         }
     }
@@ -1307,7 +1347,7 @@ async fn write_stream_log(
     let (prompt, completion, reported, error_code) = match outcome {
         StreamOutcome::Done {
             usage: Some((prompt, completion)),
-        } => (prompt, completion, prompt > 0 || completion > 0, None),
+        } => (prompt, completion, true, None),
         StreamOutcome::Done { usage: None } => (0, 0, false, None),
         StreamOutcome::Failed(code) => (0, 0, false, Some(code.to_string())),
     };
@@ -1343,7 +1383,16 @@ struct StreamAudit {
 impl StreamAudit {
     async fn finish(&mut self, outcome: StreamOutcome) -> bool {
         if std::mem::replace(&mut self.finished, true) { return true; }
-        write_stream_log(&self.db, &self.provider_id, &self.model_id, &self.user_id, self.provenance.as_ref(), self.started, outcome).await
+        // The consumer may cancel while awaiting SQLite. Once terminal usage is observed,
+        // detach an owned write so dropping the stream cannot erase it or enqueue a duplicate.
+        let (db, provider_id, model_id, user_id, provenance, started, permit) = (
+            self.db.clone(), self.provider_id.clone(), self.model_id.clone(), self.user_id.clone(),
+            self.provenance.clone(), self.started, self.permit.take(),
+        );
+        tokio::spawn(async move {
+            let _permit = permit;
+            write_stream_log(&db, &provider_id, &model_id, &user_id, provenance.as_ref(), started, outcome).await
+        }).await.unwrap_or(false)
     }
 }
 
@@ -1416,19 +1465,50 @@ fn audited_stream(
     ))
 }
 
-fn cancellable_stream(
-    stream: crate::traits::BoxStream<crate::ChatChunk>,
-    cancellation: CancellationToken,
-) -> impl futures::Stream<Item = DgosResult<crate::ChatChunk>> + Send {
-    futures::stream::unfold(
-        (stream, cancellation, false),
-        |(mut stream, cancellation, emitted_interrupt)| async move {
-            if emitted_interrupt {
-                return None;
+fn audited_tool_stream(
+    stream: crate::traits::BoxStream<dgos_types::ToolStreamEvent>, audit: StreamAudit,
+) -> crate::traits::BoxStream<dgos_types::ToolStreamEvent> {
+    Box::pin(futures::stream::unfold((stream, audit, false, None), |(mut stream, mut audit, ended, pending)| async move {
+        if let Some(error) = pending { return Some((Err(error), (stream, audit, true, None))); }
+        if ended { return None; }
+        match stream.next().await {
+            Some(Ok(mut event)) => {
+                let terminal = if let dgos_types::ToolStreamEvent::Complete { response, usage_unknown } = &mut event {
+                    let usage = (!*usage_unknown).then_some((response.usage.prompt_tokens, response.usage.completion_tokens));
+                    response.audit_warning |= !audit.finish(StreamOutcome::Done { usage }).await;
+                    true
+                } else { false };
+                Some((Ok(event), (stream, audit, terminal, None)))
             }
+            item => {
+                let error = match item { Some(Err(error)) => error, _ => DgosError::StreamInterrupted };
+                if audit.finish(StreamOutcome::Failed(error.error_code())).await {
+                    Some((Err(error), (stream, audit, true, None)))
+                } else {
+                    Some((Ok(dgos_types::ToolStreamEvent::AuditWarning), (stream, audit, false, Some(error))))
+                }
+            }
+        }
+    }))
+}
+
+fn cancellable_stream<T: Send + 'static>(
+    stream: crate::traits::BoxStream<T>,
+    cancellation: CancellationToken,
+) -> impl futures::Stream<Item = DgosResult<T>> + Send {
+    futures::stream::unfold(
+        Some((stream, cancellation)),
+        |state| async move {
+            let (mut stream, cancellation) = state?;
             tokio::select! {
-                item = stream.next() => item.map(|item| (item, (stream, cancellation, false))),
-                _ = cancellation.cancelled() => Some((Err(DgosError::StreamInterrupted), (stream, cancellation, true))),
+                biased;
+                _ = cancellation.cancelled() => {
+                    // Release the response and its audit now, even if the consumer never
+                    // polls again after observing the interruption.
+                    drop(stream);
+                    Some((Err(DgosError::StreamInterrupted), None))
+                }
+                item = stream.next() => item.map(|item| (item, Some((stream, cancellation)))),
             }
         },
     )
@@ -1476,6 +1556,38 @@ mod tests {
             output.next().await,
             Some(Err(DgosError::StreamInterrupted))
         ));
+        assert!(output.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn cancelled_tool_stream_never_yields_a_proposal_or_replays() {
+        let cancellation = CancellationToken::new();
+        let source: BoxStream<dgos_types::ToolStreamEvent> = Box::pin(stream::pending());
+        let output = cancellable_stream(source, cancellation.clone());
+        futures::pin_mut!(output);
+        cancellation.cancel();
+        assert!(matches!(output.next().await, Some(Err(DgosError::StreamInterrupted))));
+        assert!(output.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn cancellation_preempts_ready_tool_events_and_drops_the_source_immediately() {
+        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+        struct DropSignal(Arc<AtomicBool>);
+        impl Drop for DropSignal {
+            fn drop(&mut self) { self.0.store(true, Ordering::Release); }
+        }
+        let cancellation = CancellationToken::new();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let guard = DropSignal(dropped.clone());
+        let source: BoxStream<dgos_types::ToolStreamEvent> = Box::pin(stream::unfold(guard, |guard| async move {
+            Some((Ok(dgos_types::ToolStreamEvent::Delta("must not escape".into())), guard))
+        }));
+        let output = cancellable_stream(source, cancellation.clone());
+        futures::pin_mut!(output);
+        cancellation.cancel();
+        assert!(matches!(output.next().await, Some(Err(DgosError::StreamInterrupted))));
+        assert!(dropped.load(Ordering::Acquire), "the audit and response must not wait for another poll");
         assert!(output.next().await.is_none());
     }
 }

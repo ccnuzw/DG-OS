@@ -8,10 +8,11 @@ use async_trait::async_trait;
 use dgos_types::{
     build_model, valid_model_id, ChatChunk, ChatRequest, ChatResponse, DgosError, DgosResult, Hint,
     MessageReasoning, Model, ModelSource, RetryConfig, TokenUsage, ToolCall, ToolChatRequest,
-    ToolChatResponse, ToolFunctionCall, ToolMessage, PROTOCOL_ANTHROPIC,
+    ToolChatResponse, ToolFunctionCall, ToolMessage, ToolStreamEvent, PROTOCOL_ANTHROPIC,
 };
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
+use std::sync::atomic::AtomicBool;
 use tracing::debug;
 
 use super::preflight;
@@ -174,6 +175,7 @@ impl AnthropicAdapter {
                 model_id,
                 Some(self.transport.options.request_timeout),
                 None,
+                None,
             )
             .await
             .map(|_| ())
@@ -268,7 +270,7 @@ impl ProviderAdapter for AnthropicAdapter {
             .execute_hinted(|| async {
                 let response = self
                     .transport
-                    .post_json(&url, &state, model_id, Some(options.request_timeout), None)
+                    .post_json(&url, &state, model_id, Some(options.request_timeout), None, None)
                     .await?;
                 let bytes = read_limited(response, options.max_body_bytes).await?;
                 let mut response = parse_chat_response(&bytes)?;
@@ -305,17 +307,43 @@ impl ProviderAdapter for AnthropicAdapter {
         let options = &self.transport.options;
         let response = self
             .transport
-            .post_json(&url, &state, model_id, Some(options.request_timeout), None)
+            .post_json(&url, &state, model_id, Some(options.request_timeout), None, None)
             .await
             .map_err(|failure| failure.error)?;
         let bytes = read_limited(response, options.max_body_bytes).await?;
         parse_tool_response(&bytes)
     }
 
-    async fn stream(
+    async fn stream_tools_with_dispatch(
+        &self,
+        model_id: &str,
+        request: ToolChatRequest,
+        dispatched: Option<&AtomicBool>,
+    ) -> DgosResult<BoxStream<ToolStreamEvent>> {
+        let url = self.transport.url("/v1/messages")?;
+        let mut body = tool_body(self.profile(), model_id, &request)?;
+        body["stream"] = Value::Bool(true);
+        let state = BodyState::new(body);
+        let idle = self.transport.options.stream_idle_timeout;
+        // Exactly one transport attempt; neither tool proposals nor partial text are replayed.
+        let response = self
+            .transport
+            .post_json(&url, &state, model_id, None, Some(idle), dispatched)
+            .await
+            .map_err(|failure| failure.error)?;
+        Ok(Box::pin(sse_stream(
+            response,
+            idle,
+            self.transport.options.max_event_bytes,
+            AnthropicToolMapper::default(),
+        )))
+    }
+
+    async fn stream_with_dispatch(
         &self,
         model_id: &str,
         request: ChatRequest,
+        dispatched: Option<&AtomicBool>,
     ) -> DgosResult<BoxStream<ChatChunk>> {
         let url = self.transport.url("/v1/messages")?;
         preflight(self.profile(), &request, true)?;
@@ -328,7 +356,7 @@ impl ProviderAdapter for AnthropicAdapter {
             .retry
             .execute_hinted(|| {
                 self.transport
-                    .post_json(&url, &state, model_id, None, Some(idle))
+                    .post_json(&url, &state, model_id, None, Some(idle), dispatched)
             })
             .await?;
         Ok(Box::pin(sse_stream(
@@ -764,8 +792,8 @@ fn parse_tool_response(bytes: &[u8]) -> DgosResult<ToolChatResponse> {
 // Streaming
 // ---------------------------------------------------------------------------------------------
 
-/// Maps Messages stream events (B01-61, B01-62). Tool use is not streamed (V1 streams text
-/// only), signature and JSON deltas are dropped, unknown events are ignored.
+/// Maps plain text Messages streams (B01-61, B01-62). Tool streams use the strict lifecycle
+/// mapper below; this existing plain-chat path retains its compatible text-only behavior.
 #[derive(Default)]
 struct AnthropicMapper {
     input: Option<u32>,
@@ -917,6 +945,326 @@ impl Mapper for AnthropicMapper {
         } else {
             Outcome::Fail(DgosError::StreamInterrupted)
         }
+    }
+}
+
+const TOOL_STREAM_TEXT_BYTES: usize = 64 * 1024;
+const TOOL_STREAM_REASONING_BYTES: usize = 64 * 1024;
+const TOOL_STREAM_ARGUMENT_BYTES: usize = 16 * 1024;
+
+enum ToolStreamBlock {
+    Text,
+    Thinking { block: Value, signed: bool },
+    Redacted(Value),
+    Tool { call: ToolCall, initial_input: bool, json_started: bool },
+}
+
+/// Tool proposals stay private until every indexed block and the entire message have ended.
+/// Only visible text/thinking deltas escape before the validated terminal response.
+#[derive(Default)]
+struct AnthropicToolMapper {
+    usage: AnthropicMapper,
+    started: bool,
+    output_reported: bool,
+    next_index: u64,
+    active: Option<ToolStreamBlock>,
+    parsed: Parsed,
+    reasoning_bytes: usize,
+}
+
+fn stream_identity(value: &Value, field: &str) -> DgosResult<String> {
+    value.get(field).and_then(Value::as_str)
+        .filter(|text| !text.is_empty() && text.len() <= 256
+            && !text.chars().any(char::is_whitespace) && !text.chars().any(char::is_control))
+        .map(str::to_owned).ok_or(DgosError::ProviderResponseInvalid)
+}
+
+impl AnthropicToolMapper {
+    fn reserve_reasoning(&mut self, bytes: usize) -> DgosResult<()> {
+        if bytes > TOOL_STREAM_REASONING_BYTES.saturating_sub(self.reasoning_bytes) {
+            return Err(DgosError::ProviderResponseInvalid);
+        }
+        self.reasoning_bytes += bytes;
+        Ok(())
+    }
+
+    fn text(&mut self, text: &str, out: &mut Vec<ToolStreamEvent>) -> DgosResult<()> {
+        let room = TOOL_STREAM_TEXT_BYTES.saturating_sub(self.parsed.text.len());
+        let mut end = room.min(text.len());
+        while !text.is_char_boundary(end) { end -= 1; }
+        if end > 0 {
+            self.parsed.text.push_str(&text[..end]);
+            out.push(ToolStreamEvent::Delta(text[..end].to_owned()));
+        }
+        if end < text.len() { return Err(DgosError::ProviderOutputLimit); }
+        Ok(())
+    }
+
+    fn start_block(&mut self, value: &Value, out: &mut Vec<ToolStreamEvent>) -> DgosResult<()> {
+        if self.active.is_some()
+            || value.get("index").and_then(Value::as_u64) != Some(self.next_index) {
+            return Err(DgosError::ProviderResponseInvalid);
+        }
+        let block = value.get("content_block").ok_or(DgosError::ProviderResponseInvalid)?;
+        self.active = Some(match block.get("type").and_then(Value::as_str) {
+            Some("text") => {
+                let text = block.get("text").and_then(Value::as_str)
+                    .ok_or(DgosError::ProviderResponseInvalid)?;
+                self.text(text, out)?;
+                ToolStreamBlock::Text
+            }
+            Some("thinking") => {
+                let text = block.get("thinking").and_then(Value::as_str)
+                    .ok_or(DgosError::ProviderResponseInvalid)?;
+                if block.get("signature").is_some_and(|signature| !signature.is_string()) {
+                    return Err(DgosError::ProviderResponseInvalid);
+                }
+                self.reserve_reasoning(block.to_string().len())?;
+                if !text.is_empty() {
+                    out.push(ToolStreamEvent::ReasoningDelta(text.to_owned()));
+                }
+                ToolStreamBlock::Thinking {
+                    block: block.clone(),
+                    signed: block.get("signature").and_then(Value::as_str).is_some_and(|s| !s.is_empty()),
+                }
+            }
+            Some("redacted_thinking") => {
+                if !block.get("data").and_then(Value::as_str).is_some_and(|data| !data.is_empty()) {
+                    return Err(DgosError::ProviderResponseInvalid);
+                }
+                self.reserve_reasoning(block.to_string().len())?;
+                ToolStreamBlock::Redacted(block.clone())
+            }
+            Some("tool_use") => {
+                // A second call is rejected even if it reuses the previous id or a new index.
+                if !self.parsed.calls.is_empty() {
+                    return Err(DgosError::ProviderToolCallLimit);
+                }
+                let id = stream_identity(block, "id")?;
+                let name = stream_identity(block, "name")?;
+                let input = block.get("input").filter(|input| input.is_object())
+                    .ok_or(DgosError::ProviderToolArgumentsInvalid)?;
+                let arguments = input.to_string();
+                if arguments.len() > TOOL_STREAM_ARGUMENT_BYTES {
+                    return Err(DgosError::ProviderToolArgumentsInvalid);
+                }
+                ToolStreamBlock::Tool {
+                    call: ToolCall { id, kind: "function".into(),
+                        function: ToolFunctionCall { name, arguments } },
+                    initial_input: !input.as_object().is_some_and(Map::is_empty),
+                    json_started: false,
+                }
+            }
+            // Unknown/server-tool blocks cannot be silently treated as an ordinary final answer.
+            _ => return Err(DgosError::ProviderResponseInvalid),
+        });
+        Ok(())
+    }
+
+    fn block_delta(&mut self, value: &Value, out: &mut Vec<ToolStreamEvent>) -> DgosResult<()> {
+        if value.get("index").and_then(Value::as_u64) != Some(self.next_index) {
+            return Err(DgosError::ProviderResponseInvalid);
+        }
+        let delta = value.get("delta").ok_or(DgosError::ProviderResponseInvalid)?;
+        let kind = delta.get("type").and_then(Value::as_str)
+            .ok_or(DgosError::ProviderResponseInvalid)?;
+        if matches!(self.active, Some(ToolStreamBlock::Text)) && kind == "text_delta" {
+            return self.text(delta.get("text").and_then(Value::as_str)
+                .ok_or(DgosError::ProviderResponseInvalid)?, out);
+        }
+        if matches!(self.active, Some(ToolStreamBlock::Thinking { .. })) {
+            let field = match kind {
+                "thinking_delta" => "thinking",
+                "signature_delta" => "signature",
+                _ => return Err(DgosError::ProviderResponseInvalid),
+            };
+            let text = delta.get(field).and_then(Value::as_str)
+                .ok_or(DgosError::ProviderResponseInvalid)?;
+            // Count escaped wire bytes, including opaque signature data and unknown start fields.
+            let field_bytes = match self.active.as_ref() {
+                Some(ToolStreamBlock::Thinking { block, .. }) if block.get(field).is_none() => field.len() + 6,
+                _ => 0,
+            };
+            let escaped_bytes: usize = text.bytes().map(|byte| match byte {
+                b'"' | b'\\' | b'\x08' | b'\t' | b'\n' | b'\x0c' | b'\r' => 2,
+                0..=0x1f => 6,
+                _ => 1,
+            }).sum();
+            self.reserve_reasoning(field_bytes + escaped_bytes)?;
+            if let Some(ToolStreamBlock::Thinking { block, signed }) = self.active.as_mut() {
+                if kind == "thinking_delta" && *signed {
+                    return Err(DgosError::ProviderResponseInvalid);
+                }
+                let fields = block.as_object_mut().ok_or(DgosError::ProviderResponseInvalid)?;
+                if !fields.contains_key(field) {
+                    fields.insert(field.to_owned(), Value::String(String::new()));
+                }
+                let target = fields.get_mut(field).ok_or(DgosError::ProviderResponseInvalid)?;
+                let Value::String(target) = target else {
+                    return Err(DgosError::ProviderResponseInvalid);
+                };
+                target.push_str(text);
+                if kind == "signature_delta" {
+                    *signed = true;
+                } else if !text.is_empty() {
+                    out.push(ToolStreamEvent::ReasoningDelta(text.to_owned()));
+                }
+            }
+            return Ok(());
+        }
+        if let Some(ToolStreamBlock::Tool { call, initial_input, json_started }) = self.active.as_mut() {
+            if kind != "input_json_delta" || *initial_input {
+                return Err(DgosError::ProviderResponseInvalid);
+            }
+            // Identity is assigned only in content_block_start, never via parameter deltas.
+            if delta.get("id").is_some() || delta.get("name").is_some()
+                || value.get("id").is_some() || value.get("name").is_some() {
+                return Err(DgosError::ProviderResponseInvalid);
+            }
+            let fragment = delta.get("partial_json").and_then(Value::as_str)
+                .ok_or(DgosError::ProviderResponseInvalid)?;
+            if !*json_started {
+                call.function.arguments.clear();
+                *json_started = true;
+            }
+            if fragment.len() > TOOL_STREAM_ARGUMENT_BYTES.saturating_sub(call.function.arguments.len()) {
+                return Err(DgosError::ProviderToolArgumentsInvalid);
+            }
+            call.function.arguments.push_str(fragment);
+            return Ok(());
+        }
+        Err(DgosError::ProviderResponseInvalid)
+    }
+
+    fn stop_block(&mut self, value: &Value) -> DgosResult<()> {
+        if value.get("index").and_then(Value::as_u64) != Some(self.next_index) {
+            return Err(DgosError::ProviderResponseInvalid);
+        }
+        match self.active.take().ok_or(DgosError::ProviderResponseInvalid)? {
+            ToolStreamBlock::Text => {}
+            ToolStreamBlock::Thinking { block, .. } => {
+                if !block.get("signature").and_then(Value::as_str).is_some_and(|s| !s.is_empty()) {
+                    return Err(DgosError::ProviderResponseInvalid);
+                }
+                self.parsed.thinking.push_str(block.get("thinking").and_then(Value::as_str)
+                    .ok_or(DgosError::ProviderResponseInvalid)?);
+                self.parsed.blocks.push(block);
+            }
+            ToolStreamBlock::Redacted(block) => self.parsed.blocks.push(block),
+            ToolStreamBlock::Tool { call, .. } => {
+                let input: Value = serde_json::from_str(&call.function.arguments)
+                    .map_err(|_| DgosError::ProviderToolArgumentsInvalid)?;
+                if !input.is_object() {
+                    return Err(DgosError::ProviderToolArgumentsInvalid);
+                }
+                self.parsed.calls.push(call);
+            }
+        }
+        self.next_index = self.next_index.checked_add(1).ok_or(DgosError::ProviderResponseInvalid)?;
+        Ok(())
+    }
+
+    fn accept(&mut self, event: &SseEvent, out: &mut Vec<ToolStreamEvent>) -> DgosResult<bool> {
+        let value: Value = serde_json::from_str(event.data.trim())
+            .map_err(|_| DgosError::ProviderResponseInvalid)?;
+        let kind = value.get("type").and_then(Value::as_str)
+            .ok_or(DgosError::ProviderResponseInvalid)?;
+        if event.event.as_deref().is_some_and(|name| name != kind) {
+            return Err(DgosError::ProviderResponseInvalid);
+        }
+        if kind == "error" {
+            return Err(DgosError::StreamInterrupted);
+        }
+        if kind == "ping" {
+            return Ok(false);
+        }
+        if kind == "message_start" {
+            if self.started { return Err(DgosError::ProviderResponseInvalid); }
+            let message = value.get("message").ok_or(DgosError::ProviderResponseInvalid)?;
+            stream_identity(message, "id")?;
+            if message.get("role").and_then(Value::as_str) != Some("assistant")
+                || message.get("type").and_then(Value::as_str) != Some("message")
+                || !message.get("content").and_then(Value::as_array).is_some_and(Vec::is_empty)
+                || message.get("stop_reason").is_some_and(|reason| !reason.is_null()) {
+                return Err(DgosError::ProviderResponseInvalid);
+            }
+            self.started = true;
+            self.usage.absorb_usage(message.get("usage"));
+            return Ok(false);
+        }
+        if !self.started { return Err(DgosError::ProviderResponseInvalid); }
+        match kind {
+            "content_block_start" | "content_block_delta" | "content_block_stop" => {
+                if self.usage.stop_reason.is_some() { return Err(DgosError::ProviderResponseInvalid); }
+                match kind {
+                    "content_block_start" => self.start_block(&value, out)?,
+                    "content_block_delta" => self.block_delta(&value, out)?,
+                    _ => self.stop_block(&value)?,
+                }
+            }
+            "message_delta" => {
+                if self.active.is_some() { return Err(DgosError::ProviderResponseInvalid); }
+                let reason = value.pointer("/delta/stop_reason").and_then(Value::as_str)
+                    .ok_or(DgosError::ProviderResponseInvalid)?;
+                if self.usage.stop_reason.as_deref().is_some_and(|previous| previous != reason) {
+                    return Err(DgosError::ProviderResponseInvalid);
+                }
+                if !matches!(reason, "end_turn" | "stop_sequence" | "tool_use")
+                    || (self.parsed.calls.is_empty() != (reason != "tool_use")) {
+                    return Err(DgosError::ProviderResponseInvalid);
+                }
+                self.usage.stop_reason = Some(reason.to_owned());
+                self.usage.absorb_usage(value.get("usage"));
+                self.output_reported |= value.pointer("/usage/output_tokens").and_then(Value::as_u64).is_some();
+            }
+            "message_stop" => {
+                if self.active.is_some() || self.usage.stop_reason.is_none() {
+                    return Err(DgosError::ProviderResponseInvalid);
+                }
+                return Ok(true);
+            }
+            _ => return Err(DgosError::ProviderResponseInvalid),
+        }
+        Ok(false)
+    }
+}
+
+impl Mapper<ToolStreamEvent> for AnthropicToolMapper {
+    fn event(&mut self, event: &SseEvent, out: &mut Vec<ToolStreamEvent>) -> Outcome {
+        match self.accept(event, out) {
+            Ok(true) => Outcome::Complete,
+            Ok(false) => Outcome::Continue,
+            Err(error) => Outcome::Fail(error),
+        }
+    }
+
+    fn terminal(&mut self) -> ToolStreamEvent {
+        let parsed = std::mem::take(&mut self.parsed);
+        let prompt = self.usage.input.unwrap_or(0);
+        let completion = self.usage.output.unwrap_or(0);
+        ToolStreamEvent::Complete {
+            response: ToolChatResponse {
+                message: ToolMessage {
+                    role: "assistant".into(),
+                    content: (!parsed.text.is_empty()).then_some(parsed.text),
+                    tool_call_id: None,
+                    tool_calls: parsed.calls,
+                    reasoning: (!parsed.blocks.is_empty()).then_some(MessageReasoning {
+                        text: parsed.thinking, fields: vec![], blocks: parsed.blocks,
+                    }),
+                    images: Vec::new(),
+                },
+                usage: TokenUsage { prompt_tokens: prompt, completion_tokens: completion,
+                    total_tokens: prompt.saturating_add(completion) },
+                audit_warning: false,
+            },
+            usage_unknown: self.usage.input.is_none() || !self.output_reported,
+        }
+    }
+
+    fn at_eof(&mut self) -> Outcome {
+        // Unlike plain-chat compatibility, a missing message_stop never authorizes a tool.
+        Outcome::Fail(DgosError::StreamInterrupted)
     }
 }
 

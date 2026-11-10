@@ -4,11 +4,12 @@
 use async_trait::async_trait;
 use dgos_types::{
     build_model, valid_model_id, ChatChunk, ChatRequest, ChatResponse, DgosError, DgosResult,
-    MessageReasoning, Model, ModelSource, RetryConfig, TokenUsage, ToolChatRequest,
-    ToolChatResponse, ToolMessage, PROTOCOL_OPENAI_COMPATIBLE,
+    MessageReasoning, Model, ModelSource, RetryConfig, TokenUsage, ToolCall, ToolChatRequest,
+    ToolChatResponse, ToolFunctionCall, ToolMessage, ToolStreamEvent, PROTOCOL_OPENAI_COMPATIBLE,
 };
 use serde_json::{json, Value};
 use std::collections::HashSet;
+use std::sync::atomic::AtomicBool;
 use tracing::debug;
 
 use super::preflight;
@@ -116,6 +117,7 @@ impl OpenAIAdapter {
                 model_id,
                 Some(self.transport.options.request_timeout),
                 None,
+                None,
             )
             .await
             .map(|_| ())
@@ -158,7 +160,7 @@ impl ProviderAdapter for OpenAIAdapter {
             .execute_hinted(|| async {
                 let response = self
                     .transport
-                    .post_json(&url, &state, model_id, Some(options.request_timeout), None)
+                    .post_json(&url, &state, model_id, Some(options.request_timeout), None, None)
                     .await?;
                 let bytes = read_limited(response, options.max_body_bytes).await?;
                 let mut response = parse_chat_response(&bytes)?;
@@ -195,7 +197,7 @@ impl ProviderAdapter for OpenAIAdapter {
         let options = &self.transport.options;
         let response = self
             .transport
-            .post_json(&url, &state, model_id, Some(options.request_timeout), None)
+            .post_json(&url, &state, model_id, Some(options.request_timeout), None, None)
             .await
             .map_err(|failure| failure.error)?;
         let limit = options.max_body_bytes.min(MAX_TOOL_BODY_BYTES);
@@ -203,10 +205,38 @@ impl ProviderAdapter for OpenAIAdapter {
         parse_tool_response(&bytes)
     }
 
-    async fn stream(
+    async fn stream_tools_with_dispatch(
+        &self,
+        model_id: &str,
+        request: ToolChatRequest,
+        dispatched: Option<&AtomicBool>,
+    ) -> DgosResult<BoxStream<ToolStreamEvent>> {
+        let url = self.transport.url("/chat/completions")?;
+        let mut body = tool_body(self.profile(), model_id, &request)?;
+        body["stream"] = json!(true);
+        if self.profile().send_stream_options {
+            body["stream_options"] = json!({"include_usage": true});
+        }
+        let state = BodyState::new(body);
+        let idle = self.transport.options.stream_idle_timeout;
+        // One logical transport attempt, never a synchronous fallback or a replay.
+        let response = self.transport
+            .post_json(&url, &state, model_id, None, Some(idle), dispatched)
+            .await
+            .map_err(|failure| failure.error)?;
+        Ok(Box::pin(sse_stream(
+            response,
+            idle,
+            self.transport.options.max_event_bytes,
+            OpenAiToolMapper::default(),
+        )))
+    }
+
+    async fn stream_with_dispatch(
         &self,
         model_id: &str,
         request: ChatRequest,
+        dispatched: Option<&AtomicBool>,
     ) -> DgosResult<BoxStream<ChatChunk>> {
         let url = self.transport.url("/chat/completions")?;
         preflight(self.profile(), &request, true)?;
@@ -219,7 +249,7 @@ impl ProviderAdapter for OpenAIAdapter {
             .retry
             .execute_hinted(|| {
                 self.transport
-                    .post_json(&url, &state, model_id, None, Some(idle))
+                    .post_json(&url, &state, model_id, None, Some(idle), dispatched)
             })
             .await?;
         Ok(Box::pin(sse_stream(
@@ -616,6 +646,285 @@ impl Mapper for OpenAiMapper {
         } else {
             Outcome::Fail(DgosError::StreamInterrupted)
         }
+    }
+}
+
+const TOOL_TEXT_LIMIT: usize = 64 * 1024;
+const TOOL_REASONING_LIMIT: usize = 64 * 1024;
+const TOOL_ARGUMENT_LIMIT: usize = 16 * 1024;
+
+#[derive(Default)]
+struct StreamToolCall {
+    id: Option<String>,
+    kind: Option<String>,
+    name: Option<String>,
+    arguments: String,
+}
+
+#[derive(Default)]
+struct OpenAiToolMapper {
+    content: Option<String>,
+    reasoning: Vec<(String, Value)>,
+    reasoning_bytes: usize,
+    call: Option<StreamToolCall>,
+    finish: Option<String>,
+    usage: Option<TokenUsage>,
+}
+
+fn invalid_tool_stream() -> DgosError {
+    DgosError::ProviderResponseInvalid
+}
+
+fn append_tool_text(target: &mut String, text: &str, limit: usize) -> DgosResult<()> {
+    if text.len() > limit.saturating_sub(target.len()) {
+        return Err(invalid_tool_stream());
+    }
+    target.push_str(text);
+    Ok(())
+}
+
+// Count the encoded size without allocating a second copy of opaque reasoning/signatures.
+fn reasoning_wire_len<T: serde::Serialize + ?Sized>(value: &T) -> DgosResult<usize> {
+    struct Counter(usize);
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(bytes.len());
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+    let mut counter = Counter(0);
+    serde_json::to_writer(&mut counter, value).map_err(|_| invalid_tool_stream())?;
+    Ok(counter.0)
+}
+
+/// Merge structured reasoning by its wire index, retaining encrypted data and signatures.
+/// Identity metadata is immutable; only actual incremental string fields are concatenated.
+/// Returns the exact encoded-size increase, so each fragment is counted only once.
+fn merge_stream_reasoning(target: &mut Value, next: &Value, available: usize) -> DgosResult<usize> {
+    match (target, next) {
+        (Value::String(old), Value::String(part)) => {
+            let growth = reasoning_wire_len(next)?.saturating_sub(2);
+            if growth > available { return Err(invalid_tool_stream()); }
+            append_tool_text(old, part, TOOL_REASONING_LIMIT)?;
+            Ok(growth)
+        }
+        (Value::Object(old), Value::Object(part)) => {
+            let mut growth = 0;
+            for (key, value) in part {
+                if let Some(previous) = old.get_mut(key) {
+                    if matches!(key.as_str(), "index" | "id" | "type" | "format") {
+                        if *previous != *value { return Err(invalid_tool_stream()); }
+                    } else {
+                        growth += merge_stream_reasoning(previous, value, available.saturating_sub(growth))?;
+                    }
+                } else {
+                    growth += usize::from(!old.is_empty())
+                        + reasoning_wire_len(key)? + 1 + reasoning_wire_len(value)?;
+                    if growth > available { return Err(invalid_tool_stream()); }
+                    old.insert(key.clone(), value.clone());
+                }
+            }
+            Ok(growth)
+        }
+        (Value::Array(old), Value::Array(parts)) => {
+            let mut growth = 0;
+            let mut indices = HashSet::new();
+            for part in parts {
+                let index = part.get("index");
+                if let Some(index) = index {
+                    let index = index.as_u64().ok_or_else(invalid_tool_stream)?;
+                    if !indices.insert(index) { return Err(invalid_tool_stream()); }
+                }
+                let existing = index.and_then(|index| old.iter_mut().find(|item| item.get("index") == Some(index)));
+                if let Some(existing) = existing {
+                    growth += merge_stream_reasoning(existing, part, available.saturating_sub(growth))?;
+                } else {
+                    growth += usize::from(!old.is_empty()) + reasoning_wire_len(part)?;
+                    if growth > available { return Err(invalid_tool_stream()); }
+                    old.push(part.clone());
+                }
+            }
+            Ok(growth)
+        }
+        (old, new) if *old == *new => Ok(0),
+        _ => Err(invalid_tool_stream()),
+    }
+}
+
+impl OpenAiToolMapper {
+    fn delta(&mut self, delta: &Value, out: &mut Vec<ToolStreamEvent>) -> DgosResult<()> {
+        let delta = delta.as_object().ok_or_else(invalid_tool_stream)?;
+        if let Some(role) = delta.get("role") {
+            if role.as_str() != Some("assistant") {
+                return Err(invalid_tool_stream());
+            }
+        }
+        if delta.contains_key("function_call") || delta.contains_key("tool_call_id") {
+            return Err(invalid_tool_stream());
+        }
+        if let Some(content) = delta.get("content").filter(|value| !value.is_null()) {
+            let text = content.as_str().ok_or_else(invalid_tool_stream)?;
+            let content = self.content.get_or_insert_with(String::new);
+            let room = TOOL_TEXT_LIMIT.saturating_sub(content.len());
+            let mut end = room.min(text.len());
+            while !text.is_char_boundary(end) { end -= 1; }
+            if end > 0 {
+                content.push_str(&text[..end]);
+                out.push(ToolStreamEvent::Delta(text[..end].to_owned()));
+            }
+            if end < text.len() { return Err(DgosError::ProviderOutputLimit); }
+        }
+        // Emit one display field per event, as the existing plain-chat mapper does, while
+        // retaining *all* original wire fields for the next tool turn.
+        let mut shown = false;
+        for name in REASONING_FIELDS {
+            let Some(value) = delta.get(name).filter(|value| !value.is_null()) else { continue; };
+            if !matches!(value, Value::String(_) | Value::Array(_) | Value::Object(_)) {
+                return Err(invalid_tool_stream());
+            }
+            let available = TOOL_REASONING_LIMIT.saturating_sub(self.reasoning_bytes);
+            let growth = if let Some((_, old)) = self.reasoning.iter_mut().find(|(key, _)| key == name) {
+                merge_stream_reasoning(old, value, available)?
+            } else {
+                let growth = name.len() + reasoning_wire_len(value)?;
+                if growth > available { return Err(invalid_tool_stream()); }
+                self.reasoning.push((name.to_owned(), value.clone()));
+                growth
+            };
+            self.reasoning_bytes += growth;
+            if !shown {
+                let text = displayable(value);
+                if !text.is_empty() {
+                    out.push(ToolStreamEvent::ReasoningDelta(text));
+                    shown = true;
+                }
+            }
+        }
+        if let Some(calls) = delta.get("tool_calls").filter(|value| !value.is_null()) {
+            let calls = calls.as_array().ok_or_else(invalid_tool_stream)?;
+            if calls.len() > 1 { return Err(DgosError::ProviderToolCallLimit); }
+            for raw in calls {
+                let raw = raw.as_object().ok_or_else(invalid_tool_stream)?;
+                let index = raw.get("index").and_then(Value::as_u64).ok_or_else(invalid_tool_stream)?;
+                if index != 0 { return Err(DgosError::ProviderToolCallLimit); }
+                let call = self.call.get_or_insert_with(StreamToolCall::default);
+                for (key, slot) in [("id", &mut call.id), ("type", &mut call.kind)] {
+                    if let Some(value) = raw.get(key) {
+                        let value = value.as_str().filter(|value| !value.is_empty() && value.len() <= TOOL_ARGUMENT_LIMIT)
+                            .ok_or_else(invalid_tool_stream)?;
+                        if slot.is_some() { return Err(invalid_tool_stream()); }
+                        *slot = Some(value.to_owned());
+                    }
+                }
+                if let Some(function) = raw.get("function") {
+                    let function = function.as_object().ok_or_else(invalid_tool_stream)?;
+                    if let Some(name) = function.get("name") {
+                        let name = name.as_str().filter(|name| !name.is_empty() && name.len() <= TOOL_ARGUMENT_LIMIT)
+                            .ok_or_else(invalid_tool_stream)?;
+                        if call.name.is_some() { return Err(invalid_tool_stream()); }
+                        call.name = Some(name.to_owned());
+                    }
+                    if let Some(arguments) = function.get("arguments") {
+                        let arguments = arguments.as_str().ok_or(DgosError::ProviderToolArgumentsInvalid)?;
+                        if arguments.len() > TOOL_ARGUMENT_LIMIT.saturating_sub(call.arguments.len()) { return Err(DgosError::ProviderToolArgumentsInvalid); }
+                        call.arguments.push_str(arguments);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_complete(&self) -> DgosResult<()> {
+        match (self.finish.as_deref(), &self.call) {
+            (Some("stop"), None) => Ok(()),
+            (Some("tool_calls"), Some(call)) if call.id.is_some() && call.name.is_some()
+                && call.kind.as_deref() == Some("function") => {
+                let arguments: Value = serde_json::from_str(&call.arguments).map_err(|_| DgosError::ProviderToolArgumentsInvalid)?;
+                if arguments.is_object() { Ok(()) } else { Err(DgosError::ProviderToolArgumentsInvalid) }
+            }
+            _ => Err(invalid_tool_stream()),
+        }
+    }
+
+    fn map_event(&mut self, event: &SseEvent, out: &mut Vec<ToolStreamEvent>) -> DgosResult<bool> {
+        if event.event.as_deref() == Some("error") { return Err(DgosError::StreamInterrupted); }
+        let data = event.data.trim();
+        if data == "[DONE]" {
+            self.validate_complete()?;
+            return Ok(true);
+        }
+        let value: Value = serde_json::from_str(data).map_err(|_| invalid_tool_stream())?;
+        if value.get("error").is_some_and(|error| !error.is_null()) {
+            return Err(DgosError::StreamInterrupted);
+        }
+        if let Some(usage) = value.get("usage").filter(|usage| !usage.is_null()) {
+            let (usage, unknown) = parse_usage(Some(usage));
+            if !unknown {
+                if self.usage.is_some() { return Err(invalid_tool_stream()); }
+                self.usage = Some(usage);
+            }
+        }
+        let choices = value.get("choices").and_then(Value::as_array).ok_or_else(invalid_tool_stream)?;
+        if choices.len() > 1 { return Err(invalid_tool_stream()); }
+        if let Some(choice) = choices.first() {
+            if self.finish.is_some() || choice.get("index").and_then(Value::as_u64) != Some(0) {
+                return Err(invalid_tool_stream());
+            }
+            self.delta(choice.get("delta").ok_or_else(invalid_tool_stream)?, out)?;
+            if let Some(finish) = choice.get("finish_reason").filter(|value| !value.is_null()) {
+                let finish = finish.as_str().filter(|reason| matches!(*reason, "stop" | "tool_calls"))
+                    .ok_or_else(invalid_tool_stream)?;
+                self.finish = Some(finish.to_owned());
+                self.validate_complete()?;
+            }
+        }
+        Ok(false)
+    }
+}
+
+impl Mapper<ToolStreamEvent> for OpenAiToolMapper {
+    fn event(&mut self, event: &SseEvent, out: &mut Vec<ToolStreamEvent>) -> Outcome {
+        match self.map_event(event, out) {
+            Ok(true) => Outcome::Complete,
+            Ok(false) => Outcome::Continue,
+            Err(error) => Outcome::Fail(error),
+        }
+    }
+
+    fn terminal(&mut self) -> ToolStreamEvent {
+        let tool_calls = self.call.take().map(|call| ToolCall {
+            id: call.id.expect("validated tool id"),
+            kind: call.kind.expect("validated tool type"),
+            function: ToolFunctionCall {
+                name: call.name.expect("validated tool name"),
+                arguments: call.arguments,
+            },
+        }).into_iter().collect();
+        let reasoning = if self.reasoning.is_empty() { None } else {
+            Some(MessageReasoning {
+                text: self.reasoning.iter().map(|(_, value)| displayable(value)).find(|text| !text.is_empty()).unwrap_or_default(),
+                fields: std::mem::take(&mut self.reasoning),
+                blocks: Vec::new(),
+            })
+        };
+        ToolStreamEvent::Complete {
+            usage_unknown: self.usage.is_none(),
+            response: ToolChatResponse {
+                message: ToolMessage {
+                    role: "assistant".into(), content: self.content.take(), tool_call_id: None,
+                    tool_calls, reasoning, images: Vec::new(),
+                },
+                usage: self.usage.take().unwrap_or_default(),
+                audit_warning: false,
+            },
+        }
+    }
+
+    fn at_eof(&mut self) -> Outcome {
+        // Unlike tolerant text streaming, tool proposals require both finish and [DONE].
+        Outcome::Fail(DgosError::StreamInterrupted)
     }
 }
 

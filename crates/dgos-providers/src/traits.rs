@@ -5,6 +5,7 @@ use dgos_types::{
 };
 use futures::stream::Stream;
 use std::pin::Pin;
+use std::sync::atomic::AtomicBool;
 
 pub type BoxStream<T> = Pin<Box<dyn Stream<Item = DgosResult<T>> + Send>>;
 
@@ -60,11 +61,42 @@ pub trait ProviderAdapter: Send + Sync {
         request: ToolChatRequest,
     ) -> DgosResult<ToolChatResponse>;
 
+    /// Genuine incremental tool-mode completion; never a buffered synchronous fallback.
+    async fn stream_tools(
+        &self,
+        model_id: &str,
+        request: ToolChatRequest,
+    ) -> DgosResult<BoxStream<dgos_types::ToolStreamEvent>> {
+        self.stream_tools_with_dispatch(model_id, request, None).await
+    }
+
+    /// Shared tool-stream implementation. Set the optional signal only after local request
+    /// validation, immediately before a transport send attempt. Once set it must remain true,
+    /// including on connection failure, cancellation, or an invalid upstream response: it
+    /// records possible delivery, not a successful response or proof of remote receipt.
+    async fn stream_tools_with_dispatch(
+        &self,
+        model_id: &str,
+        request: ToolChatRequest,
+        dispatched: Option<&AtomicBool>,
+    ) -> DgosResult<BoxStream<dgos_types::ToolStreamEvent>>;
+
     /// Make a streaming chat completion request
     async fn stream(
         &self,
         model_id: &str,
         request: ChatRequest,
+    ) -> DgosResult<BoxStream<ChatChunk>> {
+        self.stream_with_dispatch(model_id, request, None).await
+    }
+
+    /// Shared text-stream implementation, with the same send-attempt semantics as
+    /// `stream_tools_with_dispatch`. Normal callers use `stream` without allocating a signal.
+    async fn stream_with_dispatch(
+        &self,
+        model_id: &str,
+        request: ChatRequest,
+        dispatched: Option<&AtomicBool>,
     ) -> DgosResult<BoxStream<ChatChunk>>;
 
     /// Verify the endpoint and key.

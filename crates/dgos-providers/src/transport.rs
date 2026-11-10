@@ -2,6 +2,7 @@
 //! authentication headers, one logical request with a single parameter downgrade, and the
 //! model-list GET. Everything protocol specific (bodies, parsing) stays in the adapters.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use dgos_types::{DgosError, DgosResult, RetryConfig};
@@ -221,6 +222,8 @@ impl Transport {
     ///
     /// `timeout` bounds the whole exchange (non-streaming). `idle` bounds the wait for response
     /// headers of a stream; hitting it is final, not retried.
+    /// `dispatched` is sticky send-attempt evidence, not proof of receipt. Request/header/body
+    /// construction failures leave it untouched; every outcome after `execute` starts retains it.
     pub async fn post_json(
         &self,
         url: &str,
@@ -228,6 +231,7 @@ impl Transport {
         model_id: &str,
         timeout: Option<Duration>,
         idle: Option<Duration>,
+        dispatched: Option<&AtomicBool>,
     ) -> Result<Response, AttemptError> {
         let client = self.client()?;
         loop {
@@ -236,12 +240,19 @@ impl Transport {
             if let Some(timeout) = timeout {
                 request = request.timeout(timeout);
             }
+            let request = request.build().map_err(DgosError::from)?;
+            let send = async {
+                if let Some(dispatched) = dispatched {
+                    dispatched.store(true, Ordering::Release);
+                }
+                client.execute(request).await
+            };
             let sent = match idle {
-                Some(idle) => match tokio::time::timeout(idle, request.send()).await {
+                Some(idle) => match tokio::time::timeout(idle, send).await {
                     Ok(sent) => sent,
                     Err(_) => return Err(AttemptError::terminal(DgosError::Timeout)),
                 },
-                None => request.send().await,
+                None => send.await,
             };
             let response = sent.map_err(|error| AttemptError::new(DgosError::from(error)))?;
             if response.status().is_success() {
@@ -307,5 +318,34 @@ mod routing_tests {
     fn loopback_routing_does_not_bypass_proxy_for_private_or_similar_named_hosts() {
         for url in ["http://127.0.0.1:1", "http://127.13.2.3", "https://[::1]", "http://LOCALHOST:1"] { assert!(loopback_endpoint(url), "{url}"); }
         for url in ["http://10.0.0.1", "http://192.168.1.1", "https://localhost.example", "http://127.0.0.1.example", "https://api.example", "invalid"] { assert!(!loopback_endpoint(url), "{url}"); }
+    }
+
+    #[tokio::test]
+    async fn dispatch_signal_stays_false_for_auth_and_request_builder_rejection() {
+        use super::{AdapterOptions, BodyState, Transport};
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        for invalid_auth in [true, false] {
+            let transport = Transport::new(
+                endpoint.clone(),
+                if invalid_auth { "synthetic\ninvalid" } else { "synthetic-valid" }.into(),
+                None,
+                AdapterOptions {
+                    workspace_id: (!invalid_auth).then(|| "invalid\nworkspace".into()),
+                    ..Default::default()
+                },
+                &crate::vendor::ANTHROPIC_OFFICIAL,
+                crate::upstream::ANTHROPIC_DOWNGRADABLE,
+            );
+            let url = transport.url("/v1/messages").unwrap();
+            let state = BodyState::new(serde_json::json!({"messages": []}));
+            let dispatched = AtomicBool::new(false);
+            let result = transport.post_json(&url, &state, "fixture-chat", None, None, Some(&dispatched)).await;
+            assert!(result.is_err(), "invalid local headers unexpectedly passed validation");
+            assert!(!dispatched.load(Ordering::Acquire), "invalid headers must not claim a transport send attempt");
+        }
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(30), listener.accept()).await.is_err());
     }
 }
