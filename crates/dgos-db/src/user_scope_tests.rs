@@ -63,13 +63,31 @@ fn seed(user: &str, n: u32) -> String {
           VALUES ('task-{n}', 'srv-{n}', 't', 'h');
         INSERT INTO ai_run_bindings (task_id,user_id,module_id,module_version,module_integrity,runtime_id,request_id,authorization_epoch,skill_refs,tool_refs)
           VALUES ('ai-task-{n}','{user}','mod-1','1.0.0','aaaa','rt','ai-request-{n}',0,'[]','[]');
+        INSERT INTO ai_content_resources(id,user_id,scope,name,mime,bytes,sha256,created_at,expires_at)
+          VALUES('ai-resource-{n}','{user}','module:mod-1','note.txt','text/plain',X'61','{n:064x}',1,86401);
+        INSERT INTO ai_content_runs(run_id,user_id,scope,retain,status,content,created_at,updated_at,expires_at)
+          VALUES('ai-content-{n}','{user}','module:mod-1',1,'succeeded','retained module result',1,1,86401);
+        INSERT INTO ai_content_tool_receipts(run_id,call_id,fingerprint,outcome)
+          VALUES('ai-content-{n}','module-call-{n}','{n:064x}','succeeded');
         INSERT INTO chat_sessions (id, user_id, title, created_at, updated_at)
           VALUES ('chat-{n}', '{user}', 't', 1, 1);
         INSERT INTO chat_messages (id, session_id, user_id, seq, role, status, task_id, created_at, updated_at)
           VALUES ('msg-{n}', 'chat-{n}', '{user}', 1, 'user', 'completed', 'task-{n}', 1, 1);
+        INSERT INTO chat_runs (task_id,user_id,session_id,assistant_message_id,status,partial_content,created_at,updated_at)
+          VALUES ('task-{n}','{user}','chat-{n}','assistant-{n}','completed','retained private partial',1,1);
+        INSERT INTO chat_run_steps (id,task_id,ordinal,kind,phase,status,receipt,created_at,updated_at)
+          VALUES ('step-{n}','task-{n}',0,'tool','tool','settled','{{\"outcome\":\"success\"}}',1,1);
+        INSERT INTO chat_summaries (id,user_id,session_id,source_first_seq,source_last_seq,source_digest,source_json,content,provider_id,model_id,created_at)
+          VALUES ('summary-{n}','{user}','chat-{n}',1,1,'hash','[]','private summary','prov-{n}','m',1);
         INSERT INTO chat_assets (id,user_id,name,mime,bytes,created_at) VALUES ('asset-{n}','{user}','a.txt','text/plain',X'61',1);
         INSERT INTO chat_message_assets (message_id,user_id,asset_id,position) VALUES ('msg-{n}','{user}','asset-{n}',0);
         INSERT INTO asset_leases (asset_id,user_id,lease_id,expires_at) VALUES ('asset-{n}','{user}','draft-{n}',1);
+        INSERT INTO ai_content_resources(id,user_id,scope,name,mime,bytes,sha256,created_at,expires_at)
+          VALUES('chat-resource-{n}','{user}','chat:chat-{n}','note.txt','text/plain',X'61','{n:064x}',1,86401);
+        INSERT INTO ai_content_runs(run_id,user_id,scope,retain,status,content,created_at,updated_at,expires_at)
+          VALUES('chat-content-{n}','{user}','chat:chat-{n}',1,'succeeded','retained chat result',1,1,86401);
+        INSERT INTO ai_content_tool_receipts(run_id,call_id,fingerprint,outcome)
+          VALUES('chat-content-{n}','chat-call-{n}','{n:064x}','succeeded');
         INSERT INTO skills (id, skill_id, name, version, install_path, call_type, manifest, installed_at, updated_at, user_id)
           VALUES ('legacy-{n}', 'skill-1', 's', '1', '/x', 'cli', '{{}}', 1, 1, '{user}');
         INSERT INTO skill_user_states (user_id, skill_id, version_id, enabled, created_at)
@@ -126,6 +144,9 @@ async fn rows_of(db: &DatabaseConnection, user: &str, n: u32) -> Vec<(String, i6
         ("mcp_server_tools", "server_id", format!("srv-{n}")),
         ("workbench_task_skills", "task_id", format!("task-{n}")),
         ("workbench_task_tools", "task_id", format!("task-{n}")),
+        ("chat_run_steps", "task_id", format!("task-{n}")),
+        ("ai_content_tool_receipts", "run_id", format!("ai-content-{n}")),
+        ("ai_content_tool_receipts", "run_id", format!("chat-content-{n}")),
     ] {
         out.push((
             table.to_owned(),
@@ -181,6 +202,7 @@ async fn every_user_scoped_table_has_exactly_one_purge_entry() {
 async fn purging_a_user_removes_only_that_users_rows_and_is_idempotent() {
     let (_dir, db) = database().await;
     db.execute_unprepared(GLOBAL).await.unwrap();
+    db.execute_unprepared("INSERT INTO users(id,username,username_key,password_hash,created_at,updated_at) VALUES('alice','alice','alice','x',1,1),('bob','bob','bob','x',1,1)").await.unwrap();
     db.execute_unprepared(&seed("alice", 1)).await.unwrap();
     db.execute_unprepared(&seed("bob", 2)).await.unwrap();
     let data = UserDataRepository::new(db.clone());
@@ -235,8 +257,6 @@ async fn chat_purge_waits_for_a_running_generation() {
 async fn marking_a_deletion_lists_every_vault_item_of_the_user_once() {
     let (_dir, db) = database().await;
     db.execute_unprepared(GLOBAL).await.unwrap();
-    db.execute_unprepared(&seed("alice", 1)).await.unwrap();
-    db.execute_unprepared(&seed("bob", 2)).await.unwrap();
     let users = UserRepository::new(db.clone());
     for (id, name) in [("alice", "alice"), ("bob", "bob")] {
         users
@@ -250,6 +270,8 @@ async fn marking_a_deletion_lists_every_vault_item_of_the_user_once() {
             .await
             .unwrap();
     }
+    db.execute_unprepared(&seed("alice", 1)).await.unwrap();
+    db.execute_unprepared(&seed("bob", 2)).await.unwrap();
     users.mark_deleting("alice", 5).await.unwrap();
     users.mark_deleting("alice", 9).await.unwrap();
     assert_eq!(

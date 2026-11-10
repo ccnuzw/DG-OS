@@ -229,6 +229,17 @@ pub struct ToolChatResponse {
     pub audit_warning: bool,
 }
 
+/// Host-internal tool stream. Calls are exposed only by a fully validated terminal response;
+/// parameter fragments and opaque reasoning never cross the renderer boundary.
+#[derive(Debug, Clone)]
+pub enum ToolStreamEvent {
+    Delta(String),
+    ReasoningDelta(String),
+    /// Provider usage journaling failed; retain this even when followed by an error.
+    AuditWarning,
+    Complete { response: ToolChatResponse, usage_unknown: bool },
+}
+
 /// Token usage information
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct TokenUsage {
@@ -249,6 +260,7 @@ pub struct ChatChunk {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_delta: Option<String>,
     /// True when persisting this stream's provider usage audit failed.
+    #[serde(default)]
     pub audit_warning: bool,
 }
 

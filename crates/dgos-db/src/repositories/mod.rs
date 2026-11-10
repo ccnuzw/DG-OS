@@ -1,3 +1,5 @@
+pub mod ai_content_repository;
+pub use ai_content_repository::AiContentRepository;
 pub mod ai_run_repository;
 pub use ai_run_repository::{AiRunRepository, NewAiRun};
 pub mod maintenance_gate;
@@ -15,6 +17,7 @@ pub use desktop_repository::{DesktopRepository, DesktopSave, DesktopSnapshot, De
 pub mod development_repository;
 pub use development_repository::{DevelopmentRepository, DevelopmentTask, DevelopmentWorkspace, Project, ProjectOperation, Selection, StoredAgentSession, StoredRun};
 pub use development_repository::{StoredCapabilityRevision, StoredSessionCapabilities};
+pub use development_repository::CodexOperationJournal;
 pub mod lan_audit_repository;
 pub mod mcp_credential_cleanup_repository;
 pub mod model_repository;
@@ -32,6 +35,7 @@ pub use chat_repository::{
     auto_title, like_pattern, result_is_unknown, snippet, BeginGeneration, Begun, ChatMessage,
     ChatRepository, ChatSession, ChatStoreError, ChatTarget, FinalizeGeneration, Finalized,
     History, HistoryRow, PinnedSkill, SearchHit, DEFAULT_TITLE,
+    ChatSummary, ChatRun, ChatRunStep, SummarySourceRow,
 };
 pub use lan_audit_repository::{
     LanAuditEvent, LanAuditKind, LanAuditPage, LanAuditRecord, LanAuditRepository,

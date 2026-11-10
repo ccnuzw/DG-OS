@@ -1,4 +1,8 @@
 pub use sea_orm_migration::prelude::*;
+use sea_orm::TransactionTrait;
+
+#[cfg(test)]
+mod atomic_tests;
 
 mod m003_create_skills_tables;
 mod m004_create_skill_content_tables;
@@ -41,11 +45,31 @@ mod m20261107_000031_ai_runs;
 mod m20261107_000032_cli_provider_cutover;
 mod m20261107_000033_git_pull;
 mod m20261109_000034_task_requirements;
+mod m20261109_000035_git_restore;
+mod m20261109_000036_chat_continuous;
+mod m20261110_000037_ai_foundation;
+mod m20261110_000038_codex_operations;
 
 pub struct Migrator;
 
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
+    async fn up<'c, C>(db: C, steps: Option<u32>) -> Result<(), DbErr>
+    where
+        C: IntoSchemaManagerConnection<'c>,
+    {
+        // SQLite upgrades must commit schema changes and version receipts together.
+        let db = db.into_schema_manager_connection();
+        let tx = db.begin().await?;
+        match MigrationRunner::up(&tx, steps).await {
+            Ok(()) => tx.commit().await,
+            Err(error) => {
+                tx.rollback().await?;
+                Err(error)
+            }
+        }
+    }
+
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
         vec![
             Box::new(m20261027_000001_create_providers::Migration),
@@ -89,6 +113,20 @@ impl MigratorTrait for Migrator {
             Box::new(m20261107_000032_cli_provider_cutover::Migration),
             Box::new(m20261107_000033_git_pull::Migration),
             Box::new(m20261109_000034_task_requirements::Migration),
+            Box::new(m20261109_000035_git_restore::Migration),
+            Box::new(m20261109_000036_chat_continuous::Migration),
+            Box::new(m20261110_000037_ai_foundation::Migration),
+            Box::new(m20261110_000038_codex_operations::Migration),
         ]
+    }
+}
+
+// Reuse SeaORM ordering/history without recursively calling the override.
+// Transactions inside individual migrations use savepoints under this boundary.
+struct MigrationRunner;
+#[async_trait::async_trait]
+impl MigratorTrait for MigrationRunner {
+    fn migrations() -> Vec<Box<dyn MigrationTrait>> {
+        Migrator::migrations()
     }
 }

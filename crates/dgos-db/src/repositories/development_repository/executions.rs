@@ -73,6 +73,42 @@ impl DevelopmentRepository {
         }.await;
         match result { Ok(())=>{tx.commit().await.map_err(db)},Err(error)=>{let _=tx.rollback().await;Err(error)} }
     }
+
+    /// Records an already observed native Codex turn, never permission to start
+    /// one. Late native events can arrive after close/revocation; their audit
+    /// still belongs to the exact persisted binding and complete snapshot.
+    pub async fn record_observed_codex_run(&self, run: &StoredRun, snapshot: &CliProviderSnapshot) -> Result<(), String> {
+        if run.source != "native_agent" || run.engine != "codex" || snapshot.engine != "codex"
+            || run.status != "running" || run.id.is_empty() || run.owner.is_empty()
+            || run.session_id.is_none() || run.events.len() > MAX_EVENTS || run.summary.len() > 16384 {
+            return Err("invalid_cli_binding".into());
+        }
+        let session_id = run.session_id.as_deref().ok_or("invalid_cli_binding")?;
+        let tx = self.db.begin().await.map_err(db)?;
+        let result = async {
+            // Serialize against resume/revocation and competing run admission,
+            // without requiring the binding to retain execution authority.
+            execute(&tx, "UPDATE development_cli_session_bindings SET updated_at=updated_at WHERE owner=? AND session_id=?", vec![v(run.owner.as_str()), v(session_id)]).await?;
+            let row = fetch_one(&tx,
+                "SELECT c.snapshot FROM development_cli_session_bindings b JOIN development_agent_sessions s ON s.owner=b.owner AND s.id=b.session_id JOIN development_session_capabilities c ON c.owner=b.owner AND c.session_id=b.session_id AND c.project_id=b.project_id AND c.revision=b.revision AND c.permission_epoch=b.permission_epoch AND c.format='cli_provider_v1' WHERE b.owner=? AND b.session_id=? AND b.binding_id=? AND b.execution_policy='provider_bound' AND b.project_id=? AND b.task_id=? AND s.project_id=b.project_id AND s.task_id=b.task_id AND s.engine='codex' AND b.revision=? AND b.permission_epoch=? AND b.provider_id=? AND b.model_id=? AND b.provider_revision=?",
+                vec![v(run.owner.as_str()), v(session_id), v(snapshot.binding_id.as_str()), v(run.project_id.as_str()), v(run.task_id.as_str()), v(snapshot.revision), v(snapshot.permission_epoch), v(snapshot.provider_id.as_str()), v(snapshot.model_id.as_str()), v(snapshot.provider_revision)],
+            ).await?.ok_or("capability_revoked")?;
+            let encoded: String = row.try_get("", "snapshot").map_err(db)?;
+            let persisted: CliProviderSnapshot = serde_json::from_str(&encoded).map_err(|_| "storage_failed")?;
+            if &persisted != snapshot { return Err("capability_revoked".into()); }
+            if fetch_one(&tx, "SELECT 1 AS busy FROM development_runs WHERE owner=? AND session_id=? AND status IN ('running','waiting')", vec![v(run.owner.as_str()), v(session_id)]).await?.is_some() {
+                return Err("busy".into());
+            }
+            execute(&tx, "INSERT INTO development_runs(id,owner,session_id,task_id,project_id,engine,status,started_at,finished_at,summary,reason,events,fingerprint,start_fingerprint,truncated,request_fingerprint,source,runtime) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vec![v(run.id.as_str()), v(run.owner.as_str()), v(session_id), v(run.task_id.as_str()), v(run.project_id.as_str()), v(run.engine.as_str()), v(run.status.as_str()), v(run.started_at), v(run.finished_at), v(run.summary.as_str()), v(run.reason.clone()), v(run.events.as_str()), v(run.fingerprint.as_str()), v(run.start_fingerprint.as_str()), v(run.truncated as i64), v(run.request_fingerprint.as_str()), v("native_agent"), v(run.runtime.clone())]).await?;
+            execute(&tx, "INSERT INTO development_run_capabilities(owner,run_id,snapshot,format) VALUES(?,?,?,'observed_codex_v1')", vec![v(run.owner.as_str()), v(run.id.as_str()), v(encoded)]).await?;
+            execute(&tx, "UPDATE development_tasks SET status='in_progress' WHERE owner=? AND id=? AND status NOT IN ('completed','cancelled')", vec![v(run.owner.as_str()), v(run.task_id.as_str())]).await?;
+            Ok::<(), String>(())
+        }.await;
+        match result {
+            Ok(()) => tx.commit().await.map_err(db),
+            Err(error) => { let _ = tx.rollback().await; Err(error) }
+        }
+    }
     pub async fn review_baseline(&self, owner: &str, task_id: &str) -> Result<Option<serde_json::Value>, String> {
         let row = fetch_one(&self.db, "SELECT b.baseline FROM development_review_baselines b JOIN development_tasks t ON t.id=b.task_id AND t.owner=b.owner WHERE b.owner=? AND b.task_id=?", vec![v(owner), v(task_id)]).await?;
         row.map(|r| r.try_get::<String>("", "baseline").map_err(db).and_then(|s| serde_json::from_str(&s).map_err(|_| "storage_failed".into()))).transpose()

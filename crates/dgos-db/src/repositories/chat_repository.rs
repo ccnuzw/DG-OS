@@ -10,6 +10,8 @@
 use sea_orm::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+mod continuous;
+pub use continuous::*;
 
 pub const DEFAULT_TITLE: &str = "新会话";
 const TITLE_MAX_CHARS: usize = 80;
@@ -99,6 +101,8 @@ pub struct ChatMessage {
     /// `None` is "usage unknown"; it is never rendered as 0.
     pub total_tokens: Option<i64>,
     pub result_unknown: bool,
+    pub dispatched: bool,
+    pub audit_warning: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -169,7 +173,11 @@ pub struct FinalizeGeneration<'a> {
     pub task_status: &'a str,
     pub task_error: Option<&'a str>,
     pub total_tokens: Option<i64>,
+    pub evidence: Option<ChatTerminalEvidence>,
 }
+
+#[derive(Clone, Debug, Default)]
+pub struct ChatTerminalEvidence { pub dispatched: bool, pub result_unknown: bool, pub audit_warning: Option<String> }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Finalized {
@@ -298,8 +306,9 @@ const SESSION_COLUMNS: &str = "id, title, title_source, provider_id, model_id, s
 
 const MESSAGE_SELECT: &str = "SELECT m.id, m.session_id, m.seq, m.role, m.content, m.status, \
     m.task_id, m.finish_reason, m.error_code, m.created_at, m.updated_at, \
-    t.total_tokens AS task_tokens \
-    FROM chat_messages m LEFT JOIN workbench_tasks t ON t.id = m.task_id AND t.user_id = m.user_id";
+    t.total_tokens AS task_tokens, r.dispatched AS run_dispatched, r.result_unknown AS run_unknown, r.audit_warning AS run_audit \
+    FROM chat_messages m LEFT JOIN workbench_tasks t ON t.id = m.task_id AND t.user_id = m.user_id \
+    LEFT JOIN chat_runs r ON r.task_id=m.task_id AND r.user_id=m.user_id";
 
 fn message_from_row(row: &QueryResult) -> Result<ChatMessage> {
     let status: String = row.try_get("", "status")?;
@@ -307,9 +316,9 @@ fn message_from_row(row: &QueryResult) -> Result<ChatMessage> {
     let total_tokens: Option<i64> = row.try_get("", "task_tokens")?;
     let role: String = row.try_get("", "role")?;
     let task_id: Option<String> = row.try_get("", "task_id")?;
-    let result_unknown = role == "assistant"
-        && task_id.is_some()
-        && result_is_unknown(&status, total_tokens, error_code.as_deref());
+    let result_unknown = role == "assistant" && task_id.is_some() && row.try_get::<Option<i64>>("", "run_unknown")?
+        .map(|v| v != 0).unwrap_or_else(|| result_is_unknown(&status, total_tokens, error_code.as_deref()));
+    let dispatched = role == "assistant" && row.try_get::<Option<i64>>("", "run_dispatched")?.unwrap_or(0) != 0;
     Ok(ChatMessage {
         id: row.try_get("", "id")?,
         session_id: row.try_get("", "session_id")?,
@@ -322,6 +331,8 @@ fn message_from_row(row: &QueryResult) -> Result<ChatMessage> {
         error_code,
         total_tokens,
         result_unknown,
+        dispatched,
+        audit_warning: row.try_get("", "run_audit")?,
         created_at: row.try_get("", "created_at")?,
         updated_at: row.try_get("", "updated_at")?,
     })
@@ -341,9 +352,8 @@ async fn session_in(db: &impl ConnectionTrait, user: &str, id: &str) -> Result<C
 async fn has_generating(db: &impl ConnectionTrait, user: &str, session_id: &str) -> Result<bool> {
     Ok(db
         .query_one(stmt(
-            "SELECT 1 AS x FROM chat_messages WHERE session_id = ? AND user_id = ? \
-             AND role = 'assistant' AND status = 'generating' LIMIT 1",
-            vec![session_id.into(), user.into()],
+            "SELECT 1 AS x WHERE EXISTS(SELECT 1 FROM chat_messages WHERE session_id=? AND user_id=? AND role='assistant' AND status='generating') OR EXISTS(SELECT 1 FROM chat_runs WHERE session_id=? AND user_id=? AND status='running')",
+            vec![session_id.into(), user.into(), session_id.into(), user.into()],
         ))
         .await?
         .is_some())
@@ -517,6 +527,8 @@ impl ChatRepository {
             vec![id.into(), user.into()],
         ))
         .await?;
+        tx.execute(stmt("DELETE FROM chat_summaries WHERE session_id=? AND user_id=?",vec![id.into(),user.into()])).await?;
+        tx.execute(stmt("DELETE FROM chat_runs WHERE session_id=? AND user_id=?",vec![id.into(),user.into()])).await?;
         tx.execute(stmt(
             "DELETE FROM chat_messages WHERE session_id = ? AND user_id = ?",
             vec![id.into(), user.into()],
@@ -540,8 +552,8 @@ impl ChatRepository {
         let tx = self.db.begin().await?;
         let active = tx
             .query_one(stmt(
-                "SELECT 1 AS x FROM chat_messages WHERE user_id = ? AND status = 'generating' LIMIT 1",
-                vec![user.into()],
+                "SELECT 1 AS x WHERE EXISTS(SELECT 1 FROM chat_messages WHERE user_id=? AND status='generating') OR EXISTS(SELECT 1 FROM chat_runs WHERE user_id=? AND status='running')",
+                vec![user.into(),user.into()],
             ))
             .await?;
         if active.is_some() {
@@ -552,6 +564,8 @@ impl ChatRepository {
             vec![user.into()],
         ))
         .await?;
+        tx.execute(stmt("DELETE FROM chat_summaries WHERE user_id=?",vec![user.into()])).await?;
+        tx.execute(stmt("DELETE FROM chat_runs WHERE user_id=?",vec![user.into()])).await?;
         tx.execute(stmt(
             "DELETE FROM chat_messages WHERE user_id = ?",
             vec![user.into()],
@@ -837,11 +851,20 @@ impl ChatRepository {
     /// message and the `generating` assistant placeholder. A repeated task id with the same
     /// content returns the original ids; different content is a conflict.
     pub async fn begin_generation(&self, p: &BeginGeneration<'_>) -> Result<Begun> {
+        self.begin_generation_with_metadata(p, None, None).await
+    }
+
+    /// Pin request semantics and continuation ancestry with the generating placeholder.
+    pub async fn begin_generation_with_metadata(&self, p: &BeginGeneration<'_>, foundation_fingerprint: Option<&str>, source_run_id: Option<&str>) -> Result<Begun> {
         let tx = self.db.begin().await?;
         if let Some(begun) = replay(&tx, p).await? {
             return Ok(begun);
         }
         session_in(&tx, p.user, p.session_id).await?;
+        if let Some(source) = source_run_id {
+            let valid = tx.query_one(stmt("SELECT 1 AS valid FROM chat_runs r WHERE r.task_id=? AND r.user_id=? AND r.session_id=? AND r.status<>'running' AND r.audit_warning IS NULL AND NOT EXISTS(SELECT 1 FROM chat_run_steps s WHERE s.task_id=r.task_id AND s.kind='tool' AND (s.result_unknown=1 OR s.status='dispatched'))", vec![source.into(),p.user.into(),p.session_id.into()])).await?;
+            if valid.is_none() { return Err(ChatStoreError::GenerationInProgress); }
+        }
         let stamp = now();
         let mut user_message_id = p.user_message_id.to_owned();
         let mut replaces: Option<String> = None;
@@ -999,6 +1022,12 @@ impl ChatRepository {
             ],
         ))
         .await?;
+        if let Some(fingerprint) = foundation_fingerprint {
+            tx.execute(stmt("INSERT INTO chat_run_steps(id,task_id,ordinal,kind,phase,status,receipt,created_at,updated_at) VALUES(?,?,0,'foundation','preparing_context','pinned',?,?,?)", vec![Uuid::new_v4().to_string().into(),p.task_id.into(),serde_json::json!({"foundation_fingerprint":fingerprint}).to_string().into(),stamp.into(),stamp.into()])).await?;
+        }
+        if let Some(source) = source_run_id {
+            tx.execute(stmt("UPDATE chat_runs SET source_run_id=? WHERE task_id=? AND user_id=?", vec![source.into(),p.task_id.into(),p.user.into()])).await?;
+        }
         tx.execute(stmt(
             "UPDATE chat_sessions SET updated_at = ? WHERE id = ? AND user_id = ?",
             vec![stamp.into(), p.session_id.into(), p.user.into()],
@@ -1049,6 +1078,11 @@ impl ChatRepository {
             ],
         ))
         .await?;
+        if let Some(evidence) = &f.evidence {
+            tx.execute(stmt("UPDATE chat_runs SET dispatched=MAX(dispatched,?),result_unknown=MAX(?,EXISTS(SELECT 1 FROM chat_run_steps WHERE task_id=? AND kind='tool' AND (result_unknown=1 OR status='dispatched'))),audit_warning=?,total_tokens=? WHERE task_id=? AND user_id=?",vec![i64::from(evidence.dispatched).into(),i64::from(evidence.result_unknown).into(),f.task_id.into(),evidence.audit_warning.clone().into(),f.total_tokens.into(),f.task_id.into(),f.user.into()])).await?;
+        } else {
+            tx.execute(stmt("UPDATE chat_runs SET result_unknown=?,total_tokens=? WHERE task_id=? AND user_id=?",vec![i64::from(result_is_unknown(f.message_status,f.total_tokens,f.task_error)).into(),f.total_tokens.into(),f.task_id.into(),f.user.into()])).await?;
+        }
         let own = message_in(&tx, f.user, f.assistant_message_id).await?;
         let replaces = tx
             .query_one(stmt(

@@ -45,6 +45,22 @@ const SUMMARY: &str = "SELECT t.id,t.provider_id,t.model_id,t.created_at,t.finis
 impl AiRunRepository {
     pub fn new(db: DatabaseConnection) -> Self { Self { db } }
 
+    pub fn content_repository(&self) -> super::AiContentRepository {
+        super::AiContentRepository::new(self.db.clone())
+    }
+
+    /// Inspection never initializes authorization state or creates run/audit rows.
+    pub async fn current_authorization_epoch(&self, user: &str, module: &str) -> DgosResult<i64> {
+        let row = self.db.query_one(stmt(
+            "SELECT e.epoch FROM module_authorization_epochs e \
+             JOIN users u ON u.id=e.user_id AND u.deleting_since IS NULL \
+             JOIN modules m ON m.id=e.module_id AND m.is_enabled=1 \
+             WHERE e.user_id=?1 AND e.module_id=?2 AND e.epoch<9223372036854775807",
+            vec![user.into(),module.into()],
+        )).await.map_err(db_error)?.ok_or(DgosError::PermissionDenied)?;
+        row.try_get("","epoch").map_err(db_error)
+    }
+
     /// Establish the first epoch only for a live account and enabled module.
     /// Existing tombstones are returned unchanged, including after uninstall.
     pub async fn authorization_epoch(&self, user: &str, module: &str) -> DgosResult<i64> {
@@ -165,6 +181,17 @@ impl AiRunRepository {
 
     /// Exactly one running -> terminal CAS. A deleted task/binding stays deleted.
     pub async fn finish(&self, user: &str, module: &str, run_id: &str, terminal: &AiTerminal) -> DgosResult<bool> {
+        self.finish_inner(user,module,run_id,terminal,None).await
+    }
+
+    /// Commit audit/task and opted-in content together: a content failure rolls all back.
+    pub async fn finish_with_content(&self, user: &str, module: &str, run_id: &str, terminal: &AiTerminal,
+        output_valid: bool) -> DgosResult<bool> {
+        self.finish_inner(user,module,run_id,terminal,Some(output_valid)).await
+    }
+
+    async fn finish_inner(&self, user: &str, module: &str, run_id: &str, terminal: &AiTerminal,
+        output_valid: Option<bool>) -> DgosResult<bool> {
         if terminal.status == AiRunStatus::Running { return Err(invalid()); }
         let tx = self.db.begin().await.map_err(db_error)?;
         let error = terminal.error.as_ref();
@@ -186,6 +213,11 @@ impl AiRunRepository {
                 error.map(|e| e.code.to_string()).into(),terminal.total_tokens.into()],
         )).await.map_err(db_error)?.rows_affected();
         if task_changed != 1 { return Err(DgosError::DatabaseError("AI task binding mismatch".into())); }
+        if let Some(output_valid)=output_valid {
+            let scope=format!("module:{module}");
+            super::ai_content_repository::finish_in(&tx,user,&scope,run_id,terminal.content.as_deref(),
+                terminal.status.as_str(),output_valid,terminal.audit_warning).await?;
+        }
         tx.commit().await.map_err(db_error)?;
         Ok(true)
     }
