@@ -13,7 +13,7 @@ use super::provider_commands::{CommandError, CommandResponse};
 use super::{McpState, SkillsState};
 use crate::host::{self, Capability};
 use dgos_providers::ProviderManager;
-use dgos_types::{BuiltinCaller, DgosError};
+use dgos_types::{BuiltinCaller, DgosError, PreviewChatResourceInput};
 use dgos_workbench::{
     AdvanceChatToolTurnInput, ChatError, ChatEvent, ChatManager, ChatMessagePage, ChatSearchPage,
     ChatSessionPage, ChatSink, CreateChatSessionInput, DeleteChatSessionInput,
@@ -368,4 +368,21 @@ pub async fn chat_delete_ai_resource(app:tauri::AppHandle,window:WebviewWindow,s
     let context=match host::context(&window,BuiltinCaller::Workbench,Capability::TasksRun){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
     let chat=match leased_chat(&app,context.user_id()){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
     respond(chat.delete_ai_resource(context.user_id(),&session_id,&resource_id).await)
+}
+
+#[tauri::command]
+pub async fn preview_chat_resource(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    input: PreviewChatResourceInput,
+) -> CommandResponse<dgos_types::ChatResourcePreview> {
+    let context = match host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    let chat = match leased_chat(&app, context.user_id()) {
+        Ok(chat) => chat,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    respond(chat.preview_chat_resource(context.user_id(), input).await)
 }

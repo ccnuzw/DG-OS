@@ -685,7 +685,7 @@ impl ChatManager {
         input: CreateChatSessionInput,
     ) -> Result<ChatSession> {
         let target = match &input.target {
-            Some(target) => resolve_target(providers, skills, user, target).await?,
+            Some(target) => resolve_target(providers, skills, user, target, &[]).await?,
             None => ChatTarget::default(),
         };
         self.repo
@@ -745,7 +745,7 @@ impl ChatManager {
         input: UpdateChatSessionTargetInput,
     ) -> Result<ChatSession> {
         // Existence first: a stranger's id must not reveal validation details.
-        self.repo.get_session(user, &input.session_id).await?;
+        let session = self.repo.get_session(user, &input.session_id).await?;
         let target = resolve_target(
             providers,
             skills,
@@ -757,6 +757,7 @@ impl ChatManager {
                 generation: input.generation,
                 no_skill: input.no_skill,
             },
+            &session.skills,
         )
         .await?;
         if self.has_active_session(user, &input.session_id) {
@@ -1858,6 +1859,7 @@ async fn resolve_target(
     skills: &SkillsManager,
     user: &str,
     target: &ChatTargetInput,
+    retained_pins: &[PinnedSkill],
 ) -> Result<ChatTarget> {
     if !target.skill_ids.is_empty() && target.no_skill {
         return Err(ChatError::InvalidMessageContent);
@@ -1877,7 +1879,18 @@ async fn resolve_target(
     let mut pins = Vec::with_capacity(target.skill_ids.len());
     for id in &target.skill_ids {
         let content = skills.prepare_content_skill_with_provenance(id, user, None).await.map_err(|_| ChatError::SkillUnavailable)?;
-        pins.push(PinnedSkill { skill_id: content.skill_id.clone(), version_id: format!("{}@{}", content.skill_id, content.version), content_hash: content.content_hash });
+        if let Some(pin) = retained_pins.iter().find(|pin| pin.skill_id == *id) {
+            // Only removal followed by selection may resolve a replacement version.
+            // Preferences, model changes and reordering must validate the original pin.
+            if format!("{}@{}", content.skill_id, content.version) != pin.version_id
+                || content.content_hash != pin.content_hash
+            {
+                return Err(ChatError::SkillUnavailable);
+            }
+            pins.push(pin.clone());
+        } else {
+            pins.push(PinnedSkill { skill_id: content.skill_id.clone(), version_id: format!("{}@{}", content.skill_id, content.version), content_hash: content.content_hash });
+        }
     }
     Ok(ChatTarget {
         provider_id: target.provider_id.clone(),

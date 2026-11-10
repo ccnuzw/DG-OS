@@ -26,11 +26,11 @@ const proposal = (id = 'proposal-1', seconds = 5): ChatToolProposal => ({
 });
 const emit = (event: ChatStreamEvent) => act(() => MockChannel.last().emit(event));
 const arrive = (value = proposal()) => emit({ kind: 'tool_proposal', assistant_message_id: 'a1', proposal: value });
-const heading = () => screen.getByRole('heading', { name: '确认工具调用', hidden: true });
+const heading = () => screen.getByRole('heading', { hidden: true });
 const remaining = () => screen.getByText(/剩余 \d+ 秒/).textContent;
 const originalFocus = HTMLElement.prototype.focus;
 let focus: MockInstance<HTMLElement['focus']>;
-const approvalFocusAttempts = () => focus.mock.contexts.filter(element => element instanceof HTMLElement && element.id === 'chat-proposal-heading');
+const approvalFocusAttempts = () => focus.mock.contexts.filter(element => element instanceof HTMLElement && element === heading());
 
 beforeEach(async () => {
   vi.useFakeTimers();
@@ -141,7 +141,7 @@ describe('chat approval surface activity', () => {
     mount();
     await startGeneration();
     arrive();
-    const notice = screen.getAllByRole('status').find(node => node.classList.contains('sr-only'))!;
+    const notice = screen.getAllByRole('status').find(node => node.textContent?.trim())!;
     const before = notice.textContent;
     act(() => vi.advanceTimersByTime(1000));
     emit({ kind: 'delta', assistant_message_id: 'a1', text: '无需连续播报' });

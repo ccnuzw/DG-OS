@@ -837,6 +837,130 @@ async fn repeats_and_concurrent_sends_never_reach_the_upstream_twice() {
     turn(&fx, ALICE, &s.id, "next").await;
 }
 
+#[tokio::test]
+async fn target_updates_preserve_skill_pins_until_explicit_remove_and_reselect() {
+    use dgos_db::{
+        entities::{skill_user_states, skill_versions},
+        sea_orm::{ActiveModelTrait, EntityTrait, Set},
+    };
+    use sha2::{Digest, Sha256};
+
+    let fx = fx().await;
+    let source = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills");
+    fx.skills.register_bundled_catalog(&source).await.unwrap();
+    let first = "dgos.official.writing.summarize";
+    let second = "dgos.official.writing.rewrite";
+    for id in [first, second] {
+        fx.skills.install_skill(id, ALICE).await.unwrap();
+    }
+    let s = fx.chat.create_session(
+        &fx.providers, &fx.skills, ALICE,
+        CreateChatSessionInput { target: Some(ChatTargetInput {
+            skill_ids: vec![first.into(), second.into()], no_skill: false, ..target(&fx)
+        }) },
+    ).await.unwrap();
+    let original = s.skills.clone();
+    let mut update = UpdateChatSessionTargetInput {
+        session_id: s.id.clone(), provider_id: Some(fx.provider_id.clone()),
+        model_id: Some("chat-model".into()), skill_ids: vec![second.into(), first.into()],
+        generation: dgos_types::GenerationParameters {
+            instruction: "Use the saved preferences.".into(), ..Default::default()
+        },
+        no_skill: false,
+    };
+    fx.providers.add_manual_model(&fx.provider_id, ALICE, "other-model", Some("text-generation"))
+        .await.unwrap();
+    update.model_id = Some("other-model".into());
+    let reordered = fx.chat.update_target(&fx.providers, &fx.skills, ALICE, update.clone())
+        .await.unwrap();
+    assert_eq!(reordered.skills, vec![original[1].clone(), original[0].clone()]);
+    assert_eq!(reordered.model_id.as_deref(), Some("other-model"));
+    assert_eq!(reordered.generation.instruction, "Use the saved preferences.");
+
+    // Retaining a disabled or tampered selection must still block the whole update.
+    fx.skills.toggle_skill(first, ALICE, false).await.unwrap();
+    assert_eq!(fx.chat.update_target(&fx.providers, &fx.skills, ALICE, update.clone())
+        .await.err(), Some(ChatError::SkillUnavailable));
+    fx.skills.toggle_skill(first, ALICE, true).await.unwrap();
+    let old = skill_versions::Entity::find_by_id(&original[0].version_id)
+        .one(&fx.db).await.unwrap().unwrap();
+    let body_path = std::path::PathBuf::from(&old.install_path).join("SKILL.md");
+    let old_body = std::fs::read(&body_path).unwrap();
+    std::fs::write(&body_path, "tampered").unwrap();
+    assert_eq!(fx.chat.update_target(&fx.providers, &fx.skills, ALICE, update.clone())
+        .await.err(), Some(ChatError::SkillUnavailable));
+    std::fs::write(&body_path, &old_body).unwrap();
+
+    // Publish a valid replacement snapshot and switch the user's installed version.
+    // The old session selection is deliberately left untouched, as on a Skill upgrade.
+    let version = "99.0.0";
+    let replacement_path = fx._dir.path().join("skills/bundled").join(first).join(version);
+    std::fs::create_dir_all(&replacement_path).unwrap();
+    let mut metadata = old.metadata.clone();
+    metadata["version"] = json!(version);
+    let mut files = std::collections::BTreeMap::from([
+        ("LICENSE", std::fs::read(std::path::PathBuf::from(&old.install_path).join("LICENSE")).unwrap()),
+        ("SKILL.md", old_body),
+        ("skill.json", serde_json::to_vec(&metadata).unwrap()),
+    ]);
+    files.get_mut("SKILL.md").unwrap().extend_from_slice(b"\nReplacement version marker.\n");
+    let mut hash = Sha256::new();
+    let mut manifest = serde_json::Map::new();
+    for (path, bytes) in &files {
+        hash.update(path.as_bytes());
+        hash.update([0]);
+        hash.update(bytes);
+        hash.update([0]);
+        manifest.insert((*path).into(), json!(format!("{:x}", Sha256::digest(bytes))));
+        std::fs::write(replacement_path.join(path), bytes).unwrap();
+    }
+    let replacement_hash = format!("{:x}", hash.finalize());
+    let mut replacement: skill_versions::ActiveModel = old.into();
+    replacement.id = Set(format!("{first}@{version}"));
+    replacement.version = Set(version.into());
+    replacement.content_hash = Set(replacement_hash.clone());
+    replacement.install_path = Set(replacement_path.to_string_lossy().into_owned());
+    replacement.metadata = Set(metadata);
+    replacement.file_manifest = Set(Value::Object(manifest));
+    replacement.insert(&fx.db).await.unwrap();
+    let mut state: skill_user_states::ActiveModel = skill_user_states::Entity::find_by_id(
+        (ALICE.to_string(), first.to_string()),
+    ).one(&fx.db).await.unwrap().unwrap().into();
+    state.version_id = Set(format!("{first}@{version}"));
+    state.update(&fx.db).await.unwrap();
+
+    update.generation.instruction = "Another unrelated preference.".into();
+    assert_eq!(fx.chat.update_target(&fx.providers, &fx.skills, ALICE, update.clone())
+        .await.err(), Some(ChatError::SkillUnavailable), "preferences cannot silently upgrade a stale pin");
+    let unchanged = fx.chat.get_session(ALICE, &s.id).await.unwrap();
+    assert_eq!(unchanged.skills, reordered.skills);
+    assert_eq!(unchanged.generation, reordered.generation);
+    let mut stale_send = send_input(&s.id, "Use my pinned Skill.");
+    stale_send.skill_mode = dgos_workbench::ChatSkillMode::Manual;
+    assert_eq!(start(&fx, ALICE, stale_send).await.err(), Some(ChatError::SkillUnavailable));
+    assert_eq!(fx.up.hits(), 0);
+
+    // A persisted removal is the boundary: adding the id again explicitly selects current.
+    update.skill_ids = vec![second.into()];
+    let removed = fx.chat.update_target(&fx.providers, &fx.skills, ALICE, update.clone())
+        .await.unwrap();
+    assert_eq!(removed.skills, vec![original[1].clone()]);
+    update.skill_ids.push(first.into());
+    let reselected = fx.chat.update_target(&fx.providers, &fx.skills, ALICE, update)
+        .await.unwrap();
+    assert_eq!(reselected.skills[0], original[1]);
+    assert_eq!(reselected.skills[1].version_id, format!("{first}@{version}"));
+    assert_eq!(reselected.skills[1].content_hash, replacement_hash);
+    assert_ne!(reselected.skills[1], original[0]);
+    let mut fresh_send = send_input(&s.id, "Use the explicitly reselected Skill.");
+    fresh_send.skill_mode = dgos_workbench::ChatSkillMode::Manual;
+    let sent = start(&fx, ALICE, fresh_send).await.unwrap();
+    let sink = Collect::default();
+    fx.chat.run_generation(&fx.providers, sent.job.unwrap(), &sink).await;
+    assert!(matches!(terminal(&sink.take()), ChatEvent::Done { .. }));
+    assert!(fx.up.body(0).to_string().contains("Replacement version marker."));
+}
+
 // ---------------------------------------------------------------------------------------------
 // AC20: provider and model snapshot
 

@@ -10,6 +10,7 @@ import Markdown from './Markdown';
 import { AssetPreview } from './Attachments';
 import { useSurfaceActive } from '../../workspace/SurfaceContext';
 import RunSteps, { chatPhaseText } from './RunSteps';
+import RunInspector from './RunInspector';
 
 const BOTTOM_FOLLOW_THRESHOLD = 2;
 
@@ -61,7 +62,7 @@ function MessageItem({ message, regenerateId, dropped }: { message: ChatMessage;
         {assistant && message.finish_reason === 'length' ? <p className="mt-2 mb-0 text-xs text-status-warning-text">{t('chat.truncated')}</p> : null}
         {errorText ? <p className="mt-2 mb-0 text-xs text-status-error-text">{errorText}</p> : null}
         {assistant && message.result_unknown ? <p className="mt-2 mb-0 text-xs text-status-warning-text">{t('chat.unknownResult')}</p> : null}
-        {assistant && (evidence || message.dispatched !== undefined) ? <p className="mt-2 mb-0 text-xs text-ink-secondary">{t((message.dispatched ?? evidence?.dispatched) ? 'chat.dispatched' : 'chat.notDispatched')}</p> : null}
+        {assistant && message.status === 'interrupted' && !message.result_unknown && !message.audit_warning && !evidence?.audit_warning ? <p className="mt-2 mb-0 text-sm text-ink-secondary">{t('chat.activityInterruptedHelp')}</p> : null}
         {assistant && (message.audit_warning || evidence?.audit_warning) ? <ChatNotice tone="warning">{t('chat.auditWarning')}</ChatNotice> : null}
         {assistant && message.status !== 'generating' ? (
           <footer className="chat-message-actions">
@@ -69,6 +70,7 @@ function MessageItem({ message, regenerateId, dropped }: { message: ChatMessage;
               {copyState === 'copied' ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
             </Button>
             {regenerateId ? <Button size="xs" variant="ghost" iconOnly className="chat-regenerate-button" aria-label={t('chat.regenerate')} title={t('chat.regenerate')} onClick={() => void regenerate(regenerateId)}><RotateCcw size={15} aria-hidden="true" /></Button> : null}
+            {message.task_id ? <RunInspector sessionId={message.session_id} taskId={message.task_id} messageId={message.id} /> : null}
             <span role="status" className={cn('chat-copy-status', copyState === 'failed' && 'text-status-error-text', copyState === 'copied' && 'text-status-success-text')}>{COPY_TEXT[copyState]}</span>
             <span className="chat-token-usage">{message.total_tokens === null ? t('chat.usageUnknown') : t('chat.usage', { count: formatNumber(message.total_tokens) })}</span>
           </footer>
@@ -112,12 +114,12 @@ function ToolProposalCard({ proposal, busy }: { proposal: ChatToolProposal; busy
   return (
     <section aria-labelledby="chat-proposal-heading" className="chat-approval-card">
       <div className="chat-approval-body">
-      <h3 id="chat-proposal-heading" tabIndex={-1} className={cn('m-0 mb-2 text-base font-semibold', FOCUS_RING)}>{t('chat.confirmTool')}</h3>
-      <p className="m-0 mb-2 text-sm wrap-anywhere">
-        {t('chat.modelRequests')}<strong>{proposal.server_name} / {proposal.tool_name}</strong>{t('chat.argsHelp')}</p>
+      <h3 id="chat-proposal-heading" tabIndex={-1} className={cn('m-0 mb-2 text-base font-semibold', FOCUS_RING)}>{t('chat.activityApproveTitle', { service: proposal.server_name, action: proposal.tool_name })}</h3>
+      <p className="m-0 mb-2 text-sm wrap-anywhere">{t('chat.activityApproveHelp')}</p>
       <pre tabIndex={0} aria-label={t('chat.toolArgs')} className={cn('chat-tool-arguments type-code m-0 mb-2 rounded-md bg-surface-inset p-3 whitespace-pre-wrap wrap-anywhere', FOCUS_RING)}>
         {JSON.stringify(proposal.arguments, null, 2)}
       </pre>
+      <details className="chat-activity-approval-metadata"><summary>{t('chat.activityTechnical')}</summary><dl className="chat-activity-metadata"><div><dt>{t('chat.activityServiceId')}</dt><dd>{proposal.server_id}</dd></div><div><dt>{t('chat.activitySchemaHash')}</dt><dd>{proposal.schema_hash}</dd></div><div><dt>{t('chat.activityProposalId')}</dt><dd>{proposal.id}</dd></div></dl></details>
       </div>
       <div className="chat-approval-decisions">
       <p className="m-0 mb-2 text-xs text-ink-secondary"><span role="status">{expired ? t('chat.expired') : ''}</span>{!expired ? t('chat.remaining', { seconds: formatNumber(remaining) }) : null}</p>

@@ -52,6 +52,25 @@ pub struct AiResource {
     pub expires_at: i64,
 }
 
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreviewChatResourceInput {
+    pub session_id: String,
+    pub resource_id: String,
+    pub sha256: String,
+}
+
+/// Full, bounded resource content for its owning chat; deliberately not `Debug`.
+#[derive(Clone, Serialize)]
+pub struct ChatResourcePreview {
+    pub base64: String,
+    pub mime: String,
+    pub start: u32,
+    pub bytes: u32,
+    pub total_bytes: u64,
+    pub truncated: bool,
+}
+
 #[derive(Clone, Debug, Default, Serialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AiOutputContract {

@@ -332,7 +332,12 @@ async fn a_disabled_tampered_or_changed_skill_blocks_the_send_until_the_user_cho
     .await;
     assert_eq!(user_messages, 1, "a blocked send stores no message");
 
-    // Only an explicit choice repairs the session: re-pin, or run without a skill.
+    // A retained id cannot repair or replace a pin. Remove, then explicitly select it again.
+    let reselect = UpdateChatSessionTargetInput { session_id: s.clone(), provider_id: Some(fx.provider_id.clone()), model_id: Some("chat".into()), skill_ids: vec![SKILL.into()], generation: Default::default(), no_skill: false };
+    assert_eq!(fx.chat.update_target(&fx.providers, &fx.skills, ALICE, reselect.clone()).await.err(),
+        Some(ChatError::SkillUnavailable));
+    fx.chat.update_target(&fx.providers, &fx.skills, ALICE,
+        UpdateChatSessionTargetInput { skill_ids: vec![], ..reselect }).await.unwrap();
     fx.chat
         .update_target(
             &fx.providers,

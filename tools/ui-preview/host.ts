@@ -46,6 +46,7 @@ if (params.get('fault') === 'chat-unknown') previewRun.steps.push({ id: 'preview
 const cliVersions = new Map<string, string>();
 const cliTickets = new Map<string, { tool: string; path: string }>();
 let cliTicketSequence = 0;
+const previewAssets = new Map<string, { id: string; name: string; mime: string; bytes_len: number; base64: string; sessionId?: string; sha256?: string; expires_at?: number }>();
 export async function invoke<T>(command: string, args: Record<string, any> = {}): Promise<T> {
   diagnostics.calls.push({ command });
   const input = args.input ?? args;
@@ -103,14 +104,43 @@ export async function invoke<T>(command: string, args: Record<string, any> = {})
     case 'probe_node_directory':
       result = ok(diagnostics.fault === 'node-invalid' ? { status: 'not_installed', path: null, version: null } : { status: 'available', path: '/preview/node-install/bin/node', version: 'v22.1.0' }); break;
     case 'list_local_fonts': result = ok([{family:'Arial',monospace:false},{family:'Menlo',monospace:true}]); break;
-    case 'list_mcp_servers': case 'list_installed_skills': result = []; break;
+    case 'list_mcp_servers': result = [{ id: 'preview-server', name: en ? 'Preview tool service' : '预览工具服务', enabled: true, status: 'ready' }]; break;
+    case 'list_mcp_tools': result = [{ server_id: 'preview-server', tool_name: 'review_sample', description: en ? 'Read an isolated sample; no external action.' : '读取隔离样本，不执行外部操作。', input_schema: { type: 'object', properties: { topic: { type: 'string' } } }, schema_hash: 'preview-hash', discovered_at: clock / 1000 }]; break;
+    case 'list_installed_skills': result = [{ id: previewSkill.pin.skill_id, skill_id: previewSkill.pin.skill_id, name: previewSkill.name, description: previewSkill.description, category: 'writing', version: '1.0', content_hash: previewSkill.pin.content_hash, enabled: true, call_type: 'content' }]; break;
     case 'list_modules': case 'list_provider_vendors': result = ok([]); break;
-    case 'list_providers': result = ok([{ id: 'preview-provider', name: en ? 'Preview only provider' : '仅预览 Provider', provider_type: 'openai', base_url: 'https://example.invalid', enabled: true, credential_status: 'stored', config_revision: 1 }]); break;
-    case 'list_models': result = ok([{ id: 'preview-model', provider_id: 'preview-provider', model_id: 'preview-model', model_name: 'Preview model', model_type: 'text-generation', supports_streaming: true }]); break;
+    case 'list_providers': result = ok([{ id: 'preview-provider', name: en ? 'Preview service' : '预览模型服务', provider_type: 'openai_compatible', base_url: 'https://example.invalid', enabled: true, credential_status: 'stored', config_revision: 1 }]); break;
+    case 'list_models': result = ok(['preview-model', 'preview-alternate'].map((id, index) => ({ id, provider_id: 'preview-provider', model_id: id, model_name: index ? 'Preview alternate' : 'Preview model', model_type: 'text-generation', supports_streaming: true, capabilities: { streaming: 'supported', vision: 'supported', reasoning: params.get('reasoning') === 'unsupported' ? 'unsupported' : 'supported' } }))); break;
+    case 'update_chat_session_target': {
+      if (diagnostics.fault === 'target-save') { result = { success: false, error: { code: 1006005 } }; break; }
+      const index = sessions.findIndex(session => session.id === input.session_id);
+      if (index < 0) throw Error('Unknown preview session');
+      const prior = sessions[index];
+      sessions[index] = { ...prior, provider_id: input.provider_id, model_id: input.model_id, generation: input.generation, no_skill_confirmed: input.no_skill, skills: input.skill_ids.map((id: string) => prior.skills.find(skill => skill.skill_id === id) ?? { ...previewSkill.pin, skill_id: id }) };
+      result = ok(structuredClone(sessions[index])); break;
+    }
+    case 'import_chat_asset': case 'chat_import_ai_resource': {
+      const raw = Uint8Array.from(atob(input.base64), char => char.charCodeAt(0));
+      const digest = await crypto.subtle.digest('SHA-256', raw);
+      const sha256 = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+      const asset = { id: `preview-material-${++sequence}`, name: input.name, mime: input.mime, bytes_len: raw.length, base64: input.base64, sessionId: args.sessionId, sha256, expires_at: clock / 1000 + 86400 };
+      previewAssets.set(asset.id, asset);
+      result = ok({ id: asset.id, name: asset.name, mime: asset.mime, bytes_len: asset.bytes_len, sha256, expires_at: asset.expires_at }); break;
+    }
+    case 'preview_chat_asset': {
+      const asset = previewAssets.get(args.assetId);
+      if (!asset || asset.sessionId) throw Error('Unknown preview attachment');
+      result = ok({ asset: { id: asset.id, name: asset.name, mime: asset.mime, bytes_len: asset.bytes_len }, base64: asset.base64 }); break;
+    }
+    case 'preview_chat_resource': {
+      const asset = previewAssets.get(input.resource_id);
+      if (!asset || asset.sessionId !== input.session_id || asset.sha256 !== input.sha256) throw Error('Unknown preview resource');
+      result = ok({ base64: asset.base64, mime: asset.mime, start: 0, bytes: asset.bytes_len, total_bytes: asset.bytes_len, truncated: false }); break;
+    }
+    case 'remove_chat_asset': case 'chat_delete_ai_resource': result = ok(previewAssets.delete(args.assetId ?? args.resourceId)); break;
     case 'list_chat_sessions': result = ok({ items: sessions, next_cursor: null }); break;
     case 'get_chat_session': result = ok(sessions.find(s => s.id === input.session_id) ?? sessions[0]); break;
     case 'list_chat_messages': result = ok({ items: input.session_id === sessions[1].id ? [] : messages, next_before_seq: null }); break;
-    case 'inspect_chat_context': result = ok({ model_id: 'preview-model', model_window_tokens: null, host_text_limit_bytes: 24576, reserved_output_tokens: 1024, estimated_input_tokens: 1024, text_bytes: 4096, image_reserve_tokens: 0, skill_bytes: 0, tool_schema_bytes: 0, history_bytes: 4000, dropped_turns: 0, summary: previewSummary, can_send: diagnostics.fault !== 'chat-budget', rejection: diagnostics.fault === 'chat-budget' ? 'preview_budget_limit' : null }); break;
+    case 'inspect_chat_context': result = ok({ model_id: 'preview-model', model_window_tokens: params.get('window') === 'known' ? 8192 : null, host_text_limit_bytes: 24576, reserved_output_tokens: 1024, estimated_input_tokens: diagnostics.fault === 'chat-budget' ? 8000 : 1024, text_bytes: diagnostics.fault === 'chat-budget' ? 26000 : 4096, image_reserve_tokens: 0, skill_bytes: 0, tool_schema_bytes: 0, history_bytes: 4000, dropped_turns: diagnostics.fault === 'chat-trimmed' ? 3 : 0, summary: previewSummary, can_send: diagnostics.fault !== 'chat-budget', rejection: diagnostics.fault === 'chat-budget' ? 'preview_budget_limit' : null }); break;
     case 'chat_skill_catalog': result = ok({ items: [previewSkill], recommendations: input.query ? [{ entry: previewSkill, score: 1, reasons: ['lexical_description:preview'] }] : [] }); break;
     case 'list_chat_runs': result = ok({ items: input.session_id === sessions[0].id ? [previewRun] : [] }); break;
     case 'get_chat_run': result = ok(previewRun); break;
@@ -167,4 +197,11 @@ export async function open(): Promise<string | null> {
   diagnostics.calls.push({ command: 'plugin-dialog.open' });
   if (diagnostics.fault === 'node-picker-error') throw Error('Preview picker failure');
   return diagnostics.fault === 'node-cancel' ? null : '/preview/node-install';
+}
+
+// Isolated browser events only; this preview never subscribes to native account events.
+export async function listen<T>(event: string, handler: (event: { payload: T }) => void): Promise<() => void> {
+  const listener = (incoming: Event) => handler({ payload: (incoming as CustomEvent<T>).detail });
+  window.addEventListener(`preview:${event}`, listener);
+  return () => window.removeEventListener(`preview:${event}`, listener);
 }
