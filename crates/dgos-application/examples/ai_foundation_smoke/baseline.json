@@ -1,0 +1,57 @@
+{
+  "id": "asst-foundation-fixed-2026-11-10",
+  "version": 1,
+  "data_classification": "Fixed synthetic public sample; no personal, business or production data",
+  "source": "Release: Friday. Owner: Lin. Budget: pending approval. Do not infer approval.",
+  "unicode_source": "甲乙Friday; budget pending",
+  "expected_facts": { "release": "Friday", "owner": "Lin", "budget": "pending" },
+  "schema": {
+    "type": "object", "required": ["release", "owner", "budget"], "additionalProperties": false,
+    "properties": {
+      "release": { "type": "string", "const": "Friday" },
+      "owner": { "type": "string", "const": "Lin" },
+      "budget": { "type": "string", "const": "pending" }
+    }
+  },
+  "local_configuration": {
+    "provider": "OpenAI-compatible protocol fixture bound to loopback only",
+    "model": "foundation-fixture-model",
+    "credentials": "synthetic memory-only key",
+    "module": "published foundation-smoke-consumer@1.0.0 with integrity pin and host grants",
+    "skill": "installed repository bundled dgos.official.writing.summarize; runtime pin and SHA-256 recorded",
+    "mcp": "node crates/dgos-mcp/tests/fixtures/mcp-server.mjs normal; isolated fixture only",
+    "database": "temporary SQLite with production migrations",
+    "cost": "not applicable: no billed local upstream; real cost remains unknown",
+    "quality_claim": "Local mechanism evidence only. Scripted responses do not establish model factual quality or real supplier compatibility."
+  },
+  "real_configuration": {
+    "default": "NOT RUN; excluded from pass count",
+    "opt_in": "--real plus explicit endpoint/model/key and fixed-sample two-HTTP-attempt/128-output-token authorization",
+    "authorization": "I_AUTHORIZE_FIXED_FOUNDATION_SAMPLE_2_HTTP_ATTEMPTS_128_OUTPUT_TOKENS",
+    "data": "Only source, schema and prompt in this fixed sample, plus the host policy; no Skills, MCP, user files or production database",
+    "coverage": "One actual AiService context+structured-output factual sample only; other real groups and Anthropic remain NOT RUN",
+    "cost": "unknown; one logical run, at most two HTTP attempts including existing parameter negotiation, max_tokens=128, transient retries disabled, no tool calls; monetary hard-cap not asserted",
+    "additional_existing_cli": "cargo run --offline -p dgos-workbench --example real_chat_smoke -- --only openai --openai-base-url <authorized-endpoint> --openai-model <authorized-model>",
+    "additional_cli_warning": "Separate explicit authorization/data/call-budget review required; not invoked by this example and not foundation evidence by itself"
+  },
+  "cases": [
+    { "id": "context-success", "group": "context", "path": "success", "expected_facts": ["release=Friday", "owner=Lin", "budget=pending"], "expected_actions": ["Import immutable text through AiService", "Inspect without Provider dispatch", "Verify actual request contains exact selected text", "Record exact inline source receipt, not understanding"] },
+    { "id": "context-boundary", "group": "context", "path": "boundary", "expected_facts": ["Only 甲 is supplied from a four-byte UTF-8 range", "Unread remainder is not claimed read"], "expected_actions": ["On-demand source excluded from initial text", "Actual shared loop dispatches bounded resource read", "UTF-8 end rounds down to three bytes", "Budget inspection rejects oversized assembled context before dispatch"] },
+    { "id": "context-failure", "group": "context", "path": "failure", "expected_facts": ["Deleted source cannot be read", "Hash mismatch is not authority"], "expected_actions": ["Reject deleted/hash-changed references before dispatch", "Delete selected source during a delayed model step", "Never provide deleted bytes in next local-tool step"] },
+    { "id": "tools-success", "group": "tools", "path": "success", "expected_facts": ["Existing MCP fixture receives exact approved parameters once"], "expected_actions": ["Use published module provenance", "Require fresh host approval", "Observe real fixture result in next model request", "Persist settled fingerprint and content-free usage receipt"] },
+    { "id": "tools-boundary", "group": "tools", "path": "boundary", "expected_facts": ["Changing model call ID cannot repeat a completed effect"], "expected_actions": ["Finish and retain source run", "Start explicit new run linked to retained source", "Carry fingerprints", "Block same server/tool/arguments before fresh approval or dispatch"] },
+    { "id": "tools-failure", "group": "tools", "path": "failure", "expected_facts": ["Rejected approval causes zero MCP usage"], "expected_actions": ["Present exact proposal through host notifier", "Reject approval", "Finish without invented tool success", "No second model request"] },
+    { "id": "skills-success", "group": "skills", "path": "success", "expected_facts": ["Exact pinned bundled SKILL.md is actually supplied", "Skill does not grant MCP permission"], "expected_actions": ["Install existing repository Skill", "List pin through AiService", "On-demand load via shared executor", "Persist actual path/hash/byte receipt"] },
+    { "id": "skills-boundary", "group": "skills", "path": "boundary", "expected_facts": ["A Skill resource path is not arbitrary filesystem authority"], "expected_actions": ["Request ../SKILL.md through actual local-tool loop", "Reject traversal", "Record no successful read receipt", "No external MCP approval"] },
+    { "id": "skills-failure", "group": "skills", "path": "failure", "expected_facts": ["Disabled pin cannot be silently replaced"], "expected_actions": ["Disable installed bundled Skill after selecting pin", "Reject inspect and run before Provider dispatch"] },
+    { "id": "output-success", "group": "output", "path": "success", "expected_facts": ["Exact fixed facts match schema, not merely nonempty output"], "expected_actions": ["Post-validate actual generated JSON", "Retain only by explicit opt-in", "Retrieve repeatedly and acknowledge idempotently without redispatch", "Continue as a distinct linked run with preserved original"] },
+    { "id": "output-boundary", "group": "output", "path": "boundary", "expected_facts": ["Opt-out keeps execution metadata but no stored body"], "expected_actions": ["Default retention off", "Read result and acknowledge locally", "Reject continuation of unretained body", "No automatic repair or Provider redispatch"] },
+    { "id": "output-failure", "group": "output", "path": "failure", "expected_facts": ["Budget approved is false for the fixed source"], "expected_actions": ["Fail invalid generated schema output", "Keep output_valid false", "Reject remote-ref schema before dispatch", "Do not automatically repair output"] },
+    { "id": "lifecycle-success", "group": "cancel_recovery", "path": "success", "expected_facts": ["Explicit continuation is a new user intent, not replay"], "expected_actions": ["Retain original successful source", "Inspect source continuation without external work", "Create distinct linked run", "Preserve source and terminal uniqueness"] },
+    { "id": "lifecycle-boundary", "group": "cancel_recovery", "path": "boundary", "expected_facts": ["Eight execution admissions do not starve local controls", "Control pool is independently bounded to two"], "expected_actions": ["Hold eight live execution admissions", "Read original result and cancel locally through control admission", "Reject ninth execution and third simultaneous control", "Reject reused call ID"] },
+    { "id": "lifecycle-failure", "group": "cancel_recovery", "path": "failure", "expected_facts": ["A killed independent process is interrupted, not succeeded", "Retained checkpoint is not a delivered final result"], "expected_actions": ["Launch this executable as independent child", "Observe persisted running checkpoint from actual AiService stream", "Kill child before upstream completes", "Reopen same SQLite and recover via AiService", "Retrieve interrupted partial with zero recovery dispatch"] },
+    { "id": "isolation-success", "group": "isolation", "path": "success", "expected_facts": ["Module API needs no hidden chat session"], "expected_actions": ["Publish and pin real module package", "Import and execute through bound host invocation", "Read retained result under same module", "Assert no chat sessions created"] },
+    { "id": "isolation-boundary", "group": "isolation", "path": "boundary", "expected_facts": ["Attachment and account lease are authority, not route string"], "expected_actions": ["Reject wrong attachment", "Reject foreign account binding", "Reject cancelled account lease", "Do not dispatch Provider"] },
+    { "id": "isolation-failure", "group": "isolation", "path": "failure", "expected_facts": ["Revoked Provider grant cannot retrieve source/result or execute new work"], "expected_actions": ["Retain result before revocation", "Revoke host permission", "Reject result read/import/run with fresh bound calls", "Never redispatch original run"] }
+  ]
+}

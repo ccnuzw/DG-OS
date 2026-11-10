@@ -308,7 +308,7 @@ impl ChatSink for Rec {
                     g.reasoning_events += 1;
                     g.reasoning_text.push_str(&text);
                 }
-                ChatEvent::Done { message } => {
+                ChatEvent::Done { message, .. } => {
                     g.term = Some(Term::Done {
                         status: message.status.clone(),
                         finish: message.finish_reason.clone(),
@@ -551,14 +551,13 @@ impl Env {
                 &self.skills,
                 USER,
                 WINDOW,
-                SendChatInput {
-                    session_id: session.into(),
-                    content: text,
-                    client_request_id: uuid::Uuid::new_v4().to_string(),
-                    accept_destination: None,
-                    tools: vec![],
-                    asset_ids: vec![],
-                },
+                SendChatInput { skill_mode: Default::default(), authorized_skill_refs: Vec::new(), session_id: session.into(),
+                foundation: Default::default(),
+                content: text,
+                client_request_id: uuid::Uuid::new_v4().to_string(),
+                accept_destination: None,
+                tools: vec![],
+                asset_ids: vec![], },
             )
             .await
     }
@@ -579,6 +578,8 @@ impl Env {
                 USER,
                 WINDOW,
                 RegenerateChatInput {
+                    skill_mode: Default::default(), authorized_skill_refs: Vec::new(),
+                    foundation: Default::default(),
                     message_id: message_id.into(),
                     client_request_id: uuid::Uuid::new_v4().to_string(),
                     accept_destination: None,

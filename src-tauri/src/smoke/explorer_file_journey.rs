@@ -25,6 +25,9 @@ const p=await need('dev-tool-projects');if(p.getAttribute('aria-expanded')!=='tr
     step(app,fx,ck,ev,"native tree refresh and file open",json!({}),r#"
 await click('dev-review-refresh');await click('dev-file-item-src');await click('dev-file-item-src/hello.txt');return {ok:!!await until(()=>document.body.innerText.includes('original bytes')||tid('dev-file-editor')?.value==='original bytes\n')};
 "#).await?;
+    step(app,fx,ck,ev,"native file panel is independent",json!({}),r#"
+const file=await need('dev-file-workspace'),column=file.closest('.dev-document-column'),main=document.querySelector('.dev-workspace-main'),body=document.querySelector('.dev-workspace-body');const bar=file.querySelector('.workbench-tabbar'),tabs=main.querySelector('.dev-session-tabs');return {ok:column.parentElement===body&&main.parentElement===body&&!main.contains(file)&&Math.abs(bar.getBoundingClientRect().top-tabs.getBoundingClientRect().top)<2&&column.getBoundingClientRect().height>300};
+"#).await?;
     let workspace = host(app,"read_development_workspace",json!({})).await?;
     require(fx,ck,ev,"native explorer creates no task or agent",workspace["tasks"].as_array().is_some_and(Vec::is_empty)&&workspace["sessions"].as_array().is_some_and(Vec::is_empty),"taskless file operations")?;
     let _ = super::super::capture_native(app,&fx.root,"explorer-native").await;

@@ -2,6 +2,32 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+// OAuth snapshots are transient IPC only; never append them to SessionView or journals.
+#[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeAuthKind { Login, Logout }
+#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct StartNativeAuth {
+    pub session_id: String, pub generation: String, pub request_id: String,
+    pub server_name: String, pub kind: NativeAuthKind,
+}
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeAuthRequest { pub session_id: String, pub generation: String, pub request_id: String }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeAuthCallback {
+    pub session_id: String, pub generation: String, pub request_id: String, pub callback_url: String,
+}
+#[derive(Clone, Serialize)]
+pub struct NativeAuthSnapshot {
+    pub session_id: String, pub generation: String, pub request_id: String,
+    pub server_name: String, pub kind: NativeAuthKind, pub state: String,
+    pub reason: Option<String>, pub credential_outcome: String,
+    pub authorization_url: Option<String>, pub callback_required: bool,
+    pub expires_at: i64, pub exit_code: Option<i32>,
+}
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionDomain { Skills, Mcp }
@@ -56,7 +82,7 @@ pub struct NativeAuthGuidance {
 impl NativeAuthGuidance {
     pub(crate) fn installed(engine: crate::Engine) -> Self {
         let (command, version, reason) = match engine {
-            crate::Engine::Codex => ("codex", crate::cli::codex_protocol_reference().version, "missing_mcp_login_cancel_and_logout_contract"),
+            crate::Engine::Codex => ("codex", crate::cli::codex_protocol_reference().version, "isolated_auth_process_unavailable"),
             crate::Engine::Claude => ("claude", "2.1.319", "missing_session_interaction_cancel_contract"),
         };
         Self { verified_version: version.into(), reason: reason.into(),
@@ -71,20 +97,42 @@ pub enum NativeSkillClassification { Skill, BuiltinCommand, Unknown }
 pub struct NativeSkillStatus {
     pub name: String, pub enabled: Option<bool>, pub classification: NativeSkillClassification,
     pub builtin: Option<bool>,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub plugin_name: Option<String>,
     // Native-reported provenance only. No root, instance token or file authority is issued here.
     pub path: Option<String>, pub scope: Option<String>, pub plugin_id: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NativeMcpCallEvidence {
+    pub tool: String, pub status: String, pub event_seq: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NativeMcpStatus {
     pub name: String, pub status: String, pub auth_status: Option<String>,
     pub source: Option<String>, pub scope: Option<String>, pub tools: Vec<String>,
     pub schema_observed: bool,
+    #[serde(default)]
+    pub plugin_id: Option<String>,
+    #[serde(default)]
+    pub last_call: Option<NativeMcpCallEvidence>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NativeSkillCandidate {
+    pub name: String, pub source: String, pub state: String, pub advertised: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NativeSessionObservation {
     pub session_id: String, pub generation: String, pub engine: crate::Engine,
     pub observed_at: i64, pub domain: SessionDomain, pub capabilities: NativeSessionCapabilities,
     pub skills: Vec<NativeSkillStatus>, pub mcp_servers: Vec<NativeMcpStatus>, pub incomplete: bool,
+    #[serde(default)]
+    pub source_incomplete: bool,
+    pub skill_candidates: Vec<NativeSkillCandidate>,
+    pub skill_candidates_incomplete: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NativeSessionHandle {
@@ -102,10 +150,17 @@ pub struct NativeSessionReceipt {
 #[derive(Default)]
 pub(crate) struct Projection {
     pub skills: Vec<NativeSkillStatus>, pub mcp_servers: Vec<NativeMcpStatus>, pub incomplete: bool,
+    pub source_incomplete: bool,
+    pub skill_candidates: Vec<NativeSkillCandidate>, pub skill_candidates_incomplete: bool,
 }
 pub(crate) fn safe_name(text: &str) -> Option<String> {
     // Names are identifiers, never arbitrary native descriptions, URLs, errors or paths.
     (!text.is_empty() && text.len() <= 128 && text.bytes().all(|c| c.is_ascii_alphanumeric() || b"_-.:@".contains(&c)))
+        .then(|| text.to_owned())
+}
+fn safe_command_name(text: &str) -> Option<String> {
+    (!text.is_empty() && text.len() <= 128 && !text.starts_with('/')
+        && text.bytes().all(|c| c.is_ascii_alphanumeric() || b"_-.:@/".contains(&c)))
         .then(|| text.to_owned())
 }
 fn name(value: &Value) -> Option<String> { safe_name(value.as_str()?) }
@@ -121,24 +176,68 @@ fn observed_text(value: &Value, limit: usize, incomplete: &mut bool) -> Option<S
 }
 pub(crate) fn skills(values: &[Value], codex: bool, out: &mut Projection) {
     out.incomplete |= values.len() > 256;
+    // Command identifiers and aliases are dispatch tokens, never resource paths.
+    let mut dispatch_names = std::collections::HashMap::new();
+    if !codex {
+        out.source_incomplete = true;
+        for value in values {
+            let mut names = std::collections::HashSet::new();
+            if let Some(name) = value["name"].as_str() { names.insert(name); }
+            if let Some(aliases) = value["aliases"].as_array() {
+                names.extend(aliases.iter().filter_map(Value::as_str));
+            }
+            for name in names { *dispatch_names.entry(name).or_insert(0usize) += 1; }
+        }
+    }
     for value in values.iter().take(256) {
         if out.skills.len() >= 256 { out.incomplete = true; break; }
-        let Some(name) = value.get("name").and_then(name) else { out.incomplete = true; continue; };
-        let (enabled, builtin, path, scope, plugin_id, classification) = if codex {
+        let Some(name) = value["name"].as_str().and_then(if codex { safe_name } else { safe_command_name }) else { out.incomplete = true; continue; };
+        let mut aliases = Vec::new();
+        if !codex && !value["aliases"].is_null() {
+            if let Some(values) = value["aliases"].as_array() {
+                out.incomplete |= values.len() > 64;
+                for alias in values.iter().take(64) {
+                    if let Some(alias) = alias.as_str().and_then(safe_command_name) {
+                        if !aliases.contains(&alias) { aliases.push(alias); }
+                    } else { out.incomplete = true; }
+                }
+            } else { out.incomplete = true; }
+        }
+        let (enabled, builtin, path, scope, plugin_id, source, plugin_name, classification) = if codex {
             let path = observed_text(&value["path"], 2048, &mut out.incomplete);
             let scope = category(&value["scope"], &["user", "repo", "system", "admin"]);
             let plugin_id = observed_text(&value["pluginId"], 256, &mut out.incomplete);
             let enabled = value["enabled"].as_bool();
             out.incomplete |= path.is_none() || scope.is_none() || enabled.is_none();
-            (enabled, None, path, scope, plugin_id, NativeSkillClassification::Skill)
+            (enabled, None, path, scope, plugin_id, None, None, NativeSkillClassification::Skill)
         } else {
-            // SDK 0.3.317 SlashCommand exposes builtin, not a source/path/owner.
-            // Names (including built-in collisions and MCP prefixes) cannot prove provenance.
             let builtin = value["builtin"].as_bool();
             out.incomplete |= !value["builtin"].is_null() && builtin.is_none();
-            (None, builtin, None, None, None, if builtin == Some(true) { NativeSkillClassification::BuiltinCommand } else { NativeSkillClassification::Unknown })
+            let active = &value["active_source"];
+            let reliable = builtin != Some(true) && dispatch_names.get(name.as_str()) == Some(&1) && active.is_object();
+            let source = if reliable { observed_text(&active["source"], 128, &mut out.source_incomplete) } else { None };
+            let (path, plugin_id, plugin_name) = if source.is_some() {
+                (observed_text(&active["path"], 2048, &mut out.source_incomplete),
+                    observed_text(&active["plugin_id"], 256, &mut out.source_incomplete),
+                    observed_text(&active["plugin_name"], 256, &mut out.source_incomplete))
+            } else { (None, None, None) };
+            let classification = if builtin == Some(true) { NativeSkillClassification::BuiltinCommand }
+                else if source.is_some() { NativeSkillClassification::Skill } else { NativeSkillClassification::Unknown };
+            (None, builtin, path, None, plugin_id, source, plugin_name, classification)
         };
-        out.skills.push(NativeSkillStatus { name, enabled, classification, builtin, path, scope, plugin_id });
+        out.skills.push(NativeSkillStatus { name, aliases, enabled, classification, builtin, path, scope, plugin_id, source, plugin_name });
+    }
+}
+pub(crate) fn skill_candidates(value: &Value, out: &mut Projection) {
+    let Some(values) = value.as_array() else { out.skill_candidates_incomplete = true; return; };
+    out.skill_candidates_incomplete |= values.len() > 256;
+    for value in values.iter().take(256) {
+        let name = value["name"].as_str().and_then(safe_command_name);
+        let source = observed_text(&value["source"], 128, &mut out.skill_candidates_incomplete);
+        let state = category(&value["state"], &["on", "name-only", "user-invocable-only", "off"]);
+        if let (Some(name), Some(source), Some(state), Some(advertised)) = (name, source, state, value["advertised"].as_bool()) {
+            out.skill_candidates.push(NativeSkillCandidate { name, source, state, advertised });
+        } else { out.skill_candidates_incomplete = true; }
     }
 }
 fn tool_names<'a>(names: impl Iterator<Item = Option<&'a str>>, tools: &mut Vec<String>, incomplete: &mut bool) {
@@ -164,12 +263,48 @@ pub(crate) fn mcp(values: &[Value], codex: bool, out: &mut Projection) {
                 tool_names(candidates.iter().map(|v| v["name"].as_str()), &mut tools, &mut out.incomplete);
             } else { out.incomplete = true; }
         }
-        if codex { out.incomplete |= value.get("toolsError").is_some_and(|error| !error.is_null()); }
+        if codex && status == "connected" { out.incomplete |= value.get("toolsError").is_some_and(|error| !error.is_null()); }
+        let plugin_id = if codex { observed_text(&value["pluginId"], 256, &mut out.source_incomplete) } else { None };
+        // Codex reports pluginId, not a configuration layer/path. Never invent
+        // provenance from fields absent from its verified status contract.
+        let source = if codex { plugin_id.as_ref().map(|_| "plugin".into()) }
+            else { category(&value["source"], &["sdk", "plugin", "user", "project", "local", "dynamic", "managed", "enterprise", "claudeai", "agent"]) };
         out.mcp_servers.push(NativeMcpStatus { name, status,
             auth_status: category(&value["authStatus"], &["unknown", "unsupported", "notLoggedIn", "bearerToken", "oAuth"]),
-            source: category(&value["source"], &["sdk", "plugin", "user", "project", "local", "dynamic", "managed", "enterprise", "claudeai", "agent"]),
-            scope: category(&value["scope"], &["user", "project", "local", "managed", "claudeai"]),
-            tools, schema_observed: false });
+            source, scope: if codex { None } else { category(&value["scope"], &["user", "project", "local", "managed", "claudeai"]) },
+            tools, schema_observed: false, plugin_id, last_call: None });
+    }
+}
+
+/// Retained events were already scoped to this native thread/turn. Project only
+/// the latest observed call per discovered server; never arguments or outputs.
+/// This is historical evidence, not a continuing connection or tool approval.
+pub(crate) fn mcp_call_evidence(events: &[crate::session::SessionEvent], out: &mut Projection) {
+    for event in events.iter().rev() {
+        if !matches!(event.kind.as_str(), "mcpToolCall" | "item/started") || event.data["type"] != "mcpToolCall" { continue; }
+        let item = &event.data;
+        let (Some(server), Some(tool), Some(status)) = (
+            item["server"].as_str().and_then(safe_name), item["tool"].as_str().and_then(safe_name),
+            category(&item["status"], &["inProgress", "completed", "failed"]),
+        ) else { continue; };
+        for observed in out.mcp_servers.iter_mut().filter(|observed| observed.name == server && observed.last_call.is_none()) {
+            observed.last_call = Some(NativeMcpCallEvidence { tool: tool.clone(), status: status.clone(), event_seq: event.seq });
+        }
+    }
+}
+
+pub(crate) fn auth_server_allowed(engine: crate::Engine, observed: &Projection, name: &str) -> bool {
+    if observed.incomplete { return false; }
+    let mut matches = observed.mcp_servers.iter().filter(|server| server.name == name);
+    let Some(server) = matches.next() else { return false; };
+    if matches.next().is_some() { return false; }
+    match engine {
+        crate::Engine::Claude => matches!(server.source.as_deref(), Some("user" | "project" | "local")),
+        // Authentication is resolved afresh by the CLI, not applied to a thread.
+        // Plugin names and changed/unknown runtime configurations are unsafe to
+        // dispatch by bare name. Bearer/stdio servers do not supply native OAuth.
+        crate::Engine::Codex => !observed.source_incomplete && server.plugin_id.is_none() && server.status != "unknown"
+            && matches!(server.auth_status.as_deref(), Some("notLoggedIn" | "oAuth")),
     }
 }
 #[cfg(test)]
@@ -219,6 +354,62 @@ mod tests {
         assert_eq!(p.skills[1].builtin, None);
         assert_eq!(p.skills[2].builtin, Some(false));
         assert!(!p.incomplete, "source unknown is distinct from catalog truncation");
+        assert!(p.source_incomplete);
+    }
+    #[test]
+    fn claude_active_sources_preserve_metadata_without_authority_or_guesses() {
+        let mut p = Projection::default();
+        skills(&[
+            json!({"name":"apps/web:deploy", "builtin":false, "aliases":["deploy", "deploy"], "active_source":{"source":"plugin", "plugin_name":"fixture", "plugin_id":"fixture@marketplace", "path":"/native/skills/deploy/SKILL.md", "root":"secret"}}),
+            json!({"name":"source-only", "builtin":false, "active_source":{"source":"project", "plugin_name":"not-an-id"}}),
+        ], false, &mut p);
+        let skill = &p.skills[0];
+        assert_eq!(skill.name, "apps/web:deploy");
+        assert_eq!(skill.aliases, vec!["deploy"]);
+        assert_eq!(skill.classification, NativeSkillClassification::Skill);
+        assert_eq!(skill.source.as_deref(), Some("plugin"));
+        assert_eq!(skill.path.as_deref(), Some("/native/skills/deploy/SKILL.md"));
+        assert_eq!(skill.plugin_id.as_deref(), Some("fixture@marketplace"));
+        assert_eq!(skill.plugin_name.as_deref(), Some("fixture"));
+        assert!(skill.scope.is_none() && skill.enabled.is_none());
+        assert!(p.skills[1].path.is_none() && p.skills[1].plugin_id.is_none());
+        assert!(!p.incomplete && p.source_incomplete);
+        assert!(safe_name("apps/web:deploy").is_none(), "command names never widen MCP or resource identifiers");
+        assert!(!serde_json::to_string(skill).unwrap().contains("secret"));
+        assert!(serde_json::from_value::<NativeSessionAction>(json!({"kind":"reload_skills", "path":skill.path})).is_err());
+    }
+    #[test]
+    fn claude_sources_accept_omitted_builtin_but_reject_builtin_and_colliding_names() {
+        let source = json!({"source":"project", "path":"/unproven", "plugin_id":"unproven"});
+        let mut p = Projection::default();
+        skills(&[
+            json!({"name":"help", "builtin":true, "active_source":source}),
+            json!({"name":"legacy", "active_source":source}),
+            json!({"name":"duplicate", "builtin":false, "active_source":source}),
+            json!({"name":"duplicate", "builtin":false, "active_source":source}),
+            json!({"name":"alias-collision", "builtin":false, "active_source":source}),
+            json!({"name":"other", "builtin":false, "aliases":["alias-collision"]}),
+        ], false, &mut p);
+        assert_eq!(p.skills[0].classification, NativeSkillClassification::BuiltinCommand);
+        assert_eq!(p.skills[1].source.as_deref(), Some("project"));
+        assert_eq!(p.skills[1].classification, NativeSkillClassification::Skill);
+        for skill in p.skills.iter().enumerate().filter_map(|(i, skill)| (i != 1).then_some(skill)) {
+            assert!(skill.source.is_none() && skill.path.is_none() && skill.plugin_id.is_none() && skill.plugin_name.is_none());
+        }
+        assert!(!p.incomplete && p.source_incomplete);
+    }
+    #[test]
+    fn claude_source_errors_do_not_invalidate_command_dispatch() {
+        let mut p = Projection::default();
+        skills(&[json!({"name":"fixture", "builtin":false, "active_source":{"source":"project", "path":"/native/\nSKILL.md", "plugin_id":123}})], false, &mut p);
+        assert_eq!(p.skills[0].classification, NativeSkillClassification::Skill);
+        assert_eq!(p.skills[0].source.as_deref(), Some("project"));
+        assert!(p.skills[0].path.is_none() && p.skills[0].plugin_id.is_none());
+        assert!(!p.incomplete && p.source_incomplete);
+        let mut codex = Projection::default();
+        skills(&[json!({"name":"fixture", "enabled":true, "path":"/native/SKILL.md", "scope":"user", "aliases":["ignored"]})], true, &mut codex);
+        assert!(codex.skills[0].aliases.is_empty() && codex.skills[0].source.is_none());
+        assert!(!codex.source_incomplete);
     }
     #[test]
     fn skill_source_limits_drop_invalid_metadata_and_preserve_incompleteness() {
@@ -287,5 +478,43 @@ mod tests {
         let mut p = Projection::default();
         mcp(&[json!({"name":"fixture","runtimeStatus":"connected","tools":{},"toolsError":{}})], true, &mut p);
         assert!(p.incomplete);
+    }
+    #[test]
+    fn codex_oauth_admission_uses_native_inventory_not_guessed_config_source() {
+        let server = json!({"name":"fixture", "runtimeStatus":"authenticationRequired", "authStatus":"notLoggedIn", "tools":{}, "toolsError":"authentication needed", "source":"user", "scope":"project"});
+        let mut out = Projection::default();
+        mcp(&[server.clone()], true, &mut out);
+        assert!(!out.incomplete);
+        assert!(out.mcp_servers[0].source.is_none() && out.mcp_servers[0].scope.is_none());
+        assert!(auth_server_allowed(crate::Engine::Codex, &out, "fixture"));
+        assert!(!auth_server_allowed(crate::Engine::Claude, &out, "fixture"));
+        for patch in [json!({"pluginId":"fixture@marketplace"}), json!({"pluginId":12}), json!({"runtimeStatus":null}), json!({"authStatus":"bearerToken"}), json!({"authStatus":"unsupported"})] {
+            let mut value = server.clone();
+            value.as_object_mut().unwrap().extend(patch.as_object().unwrap().clone());
+            let mut out = Projection::default(); mcp(&[value], true, &mut out);
+            assert!(!auth_server_allowed(crate::Engine::Codex, &out, "fixture"));
+        }
+        out.incomplete = true;
+        assert!(!auth_server_allowed(crate::Engine::Codex, &out, "fixture"));
+        out.incomplete = false; out.mcp_servers.push(out.mcp_servers[0].clone());
+        assert!(!auth_server_allowed(crate::Engine::Codex, &out, "fixture"));
+    }
+
+    #[test]
+    fn latest_call_evidence_preserves_native_status_without_arguments_or_outputs() {
+        let mut out = Projection::default();
+        mcp(&[json!({"name":"fixture", "runtimeStatus":"connected", "authStatus":"oAuth", "tools":{}})], true, &mut out);
+        let event = |seq, kind: &str, status: &str, server: &str| crate::session::SessionEvent {
+            seq, kind: kind.into(), text: Some("private-SENTINEL".into()), run: None,
+            data: json!({"type":"mcpToolCall", "server":server, "tool":"echo", "status":status, "arguments":{"token":"private-SENTINEL"}, "error":{"message":"private-SENTINEL"}, "result":{"content":["private-SENTINEL"]}}),
+        };
+        mcp_call_evidence(&[event(1, "item/started", "inProgress", "fixture"), event(2, "mcpToolCall", "failed", "fixture"), event(3, "mcpToolCall", "completed", "another"), event(4, "untrusted", "completed", "fixture")], &mut out);
+        let call = out.mcp_servers[0].last_call.as_ref().unwrap();
+        assert_eq!((call.tool.as_str(), call.status.as_str(), call.event_seq), ("echo", "failed", 2));
+        assert!(!serde_json::to_string(&out.mcp_servers).unwrap().contains("private-SENTINEL"));
+        let mut no_call = Projection::default();
+        mcp(&[json!({"name":"fixture", "runtimeStatus":"connected", "tools":{"echo":{}}})], true, &mut no_call);
+        mcp_call_evidence(&[], &mut no_call);
+        assert!(no_call.mcp_servers[0].last_call.is_none(), "configured/discovered does not imply called");
     }
 }

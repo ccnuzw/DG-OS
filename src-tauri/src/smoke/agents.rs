@@ -16,9 +16,19 @@
 //! Set `DGOS_TERMINAL_TYPOGRAPHY_ONLY=1` with `terminal-activity` for live installed-font/size
 //! changes, native PTY identity/stty and rendered Latin/CJK evidence. Retains terminal-typography.json/png.
 //! Requires a foreground macOS desktop and Screen Recording permission; no model provider or CLI run.
-//! `phase6-local` is the safe deterministic App/WKWebView/IPC mode: a fresh temporary
-//! root, isolated HOME/config roots, memory vault and protocol-only executable peers.
-//! It never runs a real CLI/model or reads the user's native CLI configuration.
+//! By default `phase6-local` is the safe deterministic App/WKWebView/IPC mode:
+//! a fresh temporary root, isolated HOME/config roots, memory vault and
+//! protocol-only peers. It never reads the user's native CLI configuration.
+//! Explicit real opt-in: add `DGOS_CODEX_REAL_LIFECYCLE_SMOKE=1` and authorized
+//! `DGOS_STAGE6_CODEX_URL`, `DGOS_STAGE6_CODEX_KEY`, `DGOS_STAGE6_CODEX_MODEL` to
+//! `phase6-local`. This bypasses every protocol fixture, pins installed Codex
+//! 0.167.0, isolates native config and uses only the selected memory-vault Provider.
+//! The real journey prepares without dispatch, selects Plan/high/read_only before
+//! the first actual model turn, steers and interrupts a bounded read-only task,
+//! sends again, closes and resumes without replay. Native approvals are denied
+//! only if genuinely requested; absence is explicitly uncovered, never fabricated.
+//! Evidence is content-free `phase6-real-codex-*.json` plus masked actual-window
+//! captures before first dispatch and after resume; no raw protocol/transcript dump.
 //! `worktree-runtime` verifies actual task-worktree npm/Cargo execution, captures macOS editor
 //! open events with a temporary local application, and checks real IPC owner/lease rejection.
 //! The real CLIs, AccountService, SessionResolver, HostSessionPort and AgentManager run

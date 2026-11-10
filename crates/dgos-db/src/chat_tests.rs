@@ -52,18 +52,16 @@ fn done<'a>(
     task: &'a str,
     text: &'a str,
 ) -> FinalizeGeneration<'a> {
-    FinalizeGeneration {
-        user,
-        assistant_message_id: assistant,
-        task_id: task,
-        content: text,
-        message_status: "completed",
-        finish_reason: Some("stop"),
-        message_error: None,
-        task_status: "succeeded",
-        task_error: None,
-        total_tokens: Some(12),
-    }
+    FinalizeGeneration { evidence: None, user,
+    assistant_message_id: assistant,
+    task_id: task,
+    content: text,
+    message_status: "completed",
+    finish_reason: Some("stop"),
+    message_error: None,
+    task_status: "succeeded",
+    task_error: None,
+    total_tokens: Some(12), }
 }
 
 #[tokio::test]
@@ -643,15 +641,13 @@ async fn terminal_state_is_written_once_and_unknown_usage_is_null() {
     ))
     .await
     .unwrap();
-    let interrupted = FinalizeGeneration {
-        message_status: "interrupted",
-        finish_reason: None,
-        message_error: Some("task_cancelled"),
-        task_status: "interrupted",
-        task_error: Some("task_cancelled"),
-        total_tokens: None,
-        ..done(ALICE, "a1", "t1", "partial")
-    };
+    let interrupted = FinalizeGeneration { evidence: None, message_status: "interrupted",
+    finish_reason: None,
+    message_error: Some("task_cancelled"),
+    task_status: "interrupted",
+    task_error: Some("task_cancelled"),
+    total_tokens: None,
+    ..done(ALICE, "a1", "t1", "partial") };
     let Finalized::Done { message, discarded } =
         repo.finalize_generation(&interrupted).await.unwrap()
     else {
@@ -766,13 +762,11 @@ async fn regeneration_replaces_only_on_success_and_only_the_last_reply() {
         !shown.iter().any(|m| m.id == "n1"),
         "the draft is hidden from the message list"
     );
-    let failed = FinalizeGeneration {
-        message_status: "failed",
-        task_status: "failed",
-        task_error: Some("provider_1001007"),
-        total_tokens: None,
-        ..done(ALICE, "n1", "r1", "")
-    };
+    let failed = FinalizeGeneration { evidence: None, message_status: "failed",
+    task_status: "failed",
+    task_error: Some("provider_1001007"),
+    total_tokens: None,
+    ..done(ALICE, "n1", "r1", "") };
     let Finalized::Done { message, discarded } = repo.finalize_generation(&failed).await.unwrap()
     else {
         panic!("applies");
@@ -938,12 +932,10 @@ async fn history_returns_only_completed_messages_inside_the_byte_budget() {
         .unwrap();
         let answer = format!("answer {i}");
         let outcome = if i == 3 {
-            FinalizeGeneration {
-                message_status: "failed",
-                task_status: "failed",
-                total_tokens: None,
-                ..done(ALICE, &a, &task, "")
-            }
+            FinalizeGeneration { evidence: None, message_status: "failed",
+            task_status: "failed",
+            total_tokens: None,
+            ..done(ALICE, &a, &task, "") }
         } else {
             done(ALICE, &a, &task, &answer)
         };
@@ -1113,4 +1105,97 @@ async fn generation_preferences_survive_reload_but_guidance_stays_out_of_audit()
     assert_eq!(audit["temperature"], serde_json::json!(0.4_f32));
     assert!(audit.get("instruction").is_none());
     assert!(!audit.to_string().contains("PRIVATE-GUIDANCE"));
+}
+
+#[tokio::test]
+async fn summary_prefix_cas_preserves_long_tail_and_invalidates_only_covered_changes() {
+    let db=memory().await;let repo=ChatRepository::new(db.clone());
+    let session=repo.create_session(ALICE,&ChatTarget::default()).await.unwrap();
+    for i in 0..4 {
+        let task=format!("summary-source-{i}");let user=format!("summary-user-{i}");let assistant=format!("summary-assistant-{i}");
+        repo.begin_generation(&begin(ALICE,&session.id,&task,Some(&"中".repeat(3000)),None,(&user,&assistant))).await.unwrap();
+        repo.finalize_generation(&done(ALICE,&assistant,&task,&"x".repeat(3000))).await.unwrap();
+    }
+    let original=repo.summary_source(ALICE,&session.id).await.unwrap();
+    assert!(original.iter().map(|r|r.content.len()).sum::<usize>()>24*1024);
+    let prefix=&original[..2];
+    let summary=ChatSummary{id:"summary-id".into(),source_first_seq:prefix[0].seq,source_last_seq:prefix[1].seq,source_digest:"synthetic-source-digest".into(),content:"Goal and constraints from first turn".into(),provider_id:"provider-1".into(),model_id:"model-1".into(),created_at:1};
+    assert!(repo.install_summary(ALICE,&session.id,prefix,&summary,None,||true).await.unwrap());
+    assert_eq!(repo.summary_source(ALICE,&session.id).await.unwrap(),original,"summary never deletes original text");
+    db.execute_unprepared(&format!("UPDATE chat_messages SET content='tail edited' WHERE id='summary-assistant-3' AND session_id='{}'",session.id)).await.unwrap();
+    assert!(repo.summary(ALICE,&session.id).await.unwrap().is_some(),"uncovered tail does not invalidate a valid prefix");
+    assert!(!repo.install_summary(ALICE,&session.id,prefix,&summary,None,||false).await.unwrap(),"revoked lease cannot install");
+    db.execute_unprepared("UPDATE chat_messages SET content='covered edited' WHERE id='summary-assistant-0'").await.unwrap();
+    assert!(repo.summary(ALICE,&session.id).await.unwrap().is_none());
+    assert!(!repo.install_summary(ALICE,&session.id,prefix,&summary,None,||true).await.unwrap(),"covered source mutation fails CAS");
+}
+
+#[tokio::test]
+async fn restart_checkpoint_and_manual_report_retain_unknown_effect_identity() {
+    let db=memory().await;let repo=ChatRepository::new(db.clone());
+    let session=repo.create_session(ALICE,&ChatTarget::default()).await.unwrap();
+    repo.begin_generation(&begin(ALICE,&session.id,"checkpoint-task",Some("perform explicit action"),None,("checkpoint-user","checkpoint-assistant"))).await.unwrap();
+    repo.checkpoint(ALICE,"checkpoint-task","persisted partial").await.unwrap();
+    let step=repo.record_step(ALICE,"checkpoint-task","tool","tool","dispatched",true,true,Some(serde_json::json!({"call_id":"one","effect_key":"stable-hash"}))).await.unwrap();
+    repo.recover_runs(None).await.unwrap();repo.recover_generating().await.unwrap();
+    let run=repo.get_run(ALICE,"checkpoint-task").await.unwrap();assert_eq!(run.partial_content,"persisted partial");assert_eq!(run.status,"interrupted");assert!(run.result_unknown);assert_eq!(run.steps[0].status,"unknown");
+    assert!(repo.get_run(BOB,"checkpoint-task").await.is_err());
+    assert!(repo.manually_resolve_step(BOB,"checkpoint-task",&step.id,"completed","external evidence").await.is_err());
+    let resolved=repo.manually_resolve_step(ALICE,"checkpoint-task",&step.id,"completed","externally inspected operation id").await.unwrap();
+    assert!(!resolved.result_unknown);assert_eq!(resolved.steps[0].status,"manually_resolved");
+    let receipt=resolved.steps[0].receipt.as_ref().unwrap();assert_eq!(receipt["effect_key"],"stable-hash");assert_eq!(receipt["resolution"],"user_reported_not_authoritatively_verified");assert_eq!(receipt["original_receipt"]["call_id"],"one");
+    repo.delete_session(ALICE,&session.id).await.unwrap();
+    assert!(repo.get_run(ALICE,"checkpoint-task").await.is_err());assert_eq!(one(&db,"SELECT COUNT(*) FROM chat_run_steps").await,0);
+}
+
+#[tokio::test]
+async fn foundation_identity_failure_rolls_back_the_entire_generation() {
+    let db = memory().await;
+    let repo = ChatRepository::new(db.clone());
+    let session = repo.create_session(ALICE, &ChatTarget::default()).await.unwrap();
+    db.execute_unprepared("CREATE TRIGGER reject_foundation BEFORE INSERT ON chat_run_steps WHEN NEW.kind='foundation' BEGIN SELECT RAISE(ABORT,'synthetic identity failure'); END").await.unwrap();
+    let request = begin(ALICE, &session.id, "atomic-task", Some("question"), None, ("atomic-user", "atomic-assistant"));
+    assert!(repo.begin_generation_with_metadata(&request, Some("fixed-fingerprint"), None).await.is_err());
+    assert_eq!(one(&db, "SELECT COUNT(*) FROM chat_messages").await, 0);
+    assert_eq!(one(&db, "SELECT COUNT(*) FROM workbench_tasks").await, 0);
+    assert_eq!(one(&db, "SELECT COUNT(*) FROM chat_runs").await, 0);
+    db.execute_unprepared("DROP TRIGGER reject_foundation").await.unwrap();
+    repo.begin_generation_with_metadata(&request, Some("fixed-fingerprint"), None).await.unwrap();
+    let run = repo.get_run(ALICE, "atomic-task").await.unwrap();
+    assert_eq!(run.steps[0].receipt.as_ref().unwrap()["foundation_fingerprint"], "fixed-fingerprint");
+}
+
+#[tokio::test]
+async fn terminal_evidence_cannot_clear_an_unsettled_tool_journal() {
+    let db = memory().await;
+    let repo = ChatRepository::new(db.clone());
+    let session = repo.create_session(ALICE, &ChatTarget::default()).await.unwrap();
+    repo.begin_generation(&begin(ALICE, &session.id, "unsettled-task", Some("question"), None, ("unsettled-user", "unsettled-assistant"))).await.unwrap();
+    repo.record_step(ALICE, "unsettled-task", "tool", "tool", "dispatched", true, true, Some(serde_json::json!({"call_id":"journaled", "effect_key":"fixed-effect"}))).await.unwrap();
+    let mut terminal = done(ALICE, "unsettled-assistant", "unsettled-task", "");
+    terminal.message_status = "failed";
+    terminal.task_status = "failed";
+    terminal.evidence = Some(ChatTerminalEvidence::default());
+    repo.finalize_generation(&terminal).await.unwrap();
+    let run = repo.get_run(ALICE, "unsettled-task").await.unwrap();
+    assert!(run.dispatched && run.result_unknown);
+    assert!(repo.get_message(ALICE, "unsettled-assistant").await.unwrap().result_unknown);
+}
+
+#[tokio::test]
+async fn continuation_link_failure_cannot_leave_a_running_placeholder() {
+    let db = memory().await;
+    let repo = ChatRepository::new(db.clone());
+    let session = repo.create_session(ALICE, &ChatTarget::default()).await.unwrap();
+    repo.begin_generation(&begin(ALICE, &session.id, "source-task", Some("first intent"), None, ("source-user", "source-assistant"))).await.unwrap();
+    repo.finalize_generation(&done(ALICE, "source-assistant", "source-task", "confirmed progress")).await.unwrap();
+    let next = begin(ALICE, &session.id, "continued-task", Some("next intent"), None, ("continued-user", "continued-assistant"));
+    db.execute_unprepared("CREATE TRIGGER reject_continuation BEFORE UPDATE OF source_run_id ON chat_runs WHEN NEW.source_run_id IS NOT NULL BEGIN SELECT RAISE(ABORT,'synthetic continuation failure'); END").await.unwrap();
+    assert!(repo.begin_generation_with_metadata(&next, Some("fixed-fingerprint"), Some("source-task")).await.is_err());
+    assert_eq!(one(&db, "SELECT COUNT(*) FROM chat_messages WHERE task_id='continued-task'").await, 0);
+    assert_eq!(one(&db, "SELECT COUNT(*) FROM workbench_tasks WHERE id='continued-task'").await, 0);
+    assert!(repo.get_run(ALICE, "continued-task").await.is_err());
+    db.execute_unprepared("DROP TRIGGER reject_continuation").await.unwrap();
+    repo.begin_generation_with_metadata(&next, Some("fixed-fingerprint"), Some("source-task")).await.unwrap();
+    assert_eq!(repo.get_run(ALICE, "continued-task").await.unwrap().source_run_id.as_deref(), Some("source-task"));
 }

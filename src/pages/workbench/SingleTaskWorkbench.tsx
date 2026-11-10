@@ -323,6 +323,7 @@ export default function SingleTaskWorkbench() {
               {!outcome && <p className={PARA}>{t('workbench.noResult')}</p>}
               {outcome && <>
                 <p className="m-0 text-sm wrap-anywhere">{t('detail.task')}{outcome.record.task.id} · {outcome.record.task.status}</p>
+                {toolTask && <p className={PARA}>{t(toolTask.dispatched ? 'chat.dispatched' : 'chat.notDispatched')}{toolTask.usage_unknown ? ` · ${t('chat.usageUnknown')}` : ''}</p>}
                 {outcome.record.skills.map(s => <p key={s.version_id} className="m-0 font-mono text-xs text-ink-secondary wrap-anywhere">{t('detail.boundVersion')}{s.version_id}<br />{t('common.sha256')} {s.content_hash}</p>)}
                 {!outcome.record.skills.length && <p className={PARA}>{t('workbench.explicitNoSkill')}</p>}
                 {outcome.record.tools?.map(tool => <p key={JSON.stringify([tool.server_id, tool.tool_name])} className="m-0 font-mono text-xs text-ink-secondary wrap-anywhere">{t('detail.selectedTool')}{tool.tool_name}<br />{t('detail.server')}{tool.server_id}<br />{t('detail.schema')}{tool.schema_hash}</p>)}

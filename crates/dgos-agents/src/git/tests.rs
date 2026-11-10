@@ -2,6 +2,10 @@ use super::*;
 use std::process::Command as StdCommand;
 #[path = "pull_tests.rs"]
 mod pull;
+#[path = "details_restore_tests.rs"]
+mod details_restore;
+#[path = "commit_tests.rs"]
+mod commit_details;
 
 struct Fixture { root: PathBuf, path: PathBuf }
 impl Fixture {

@@ -12,14 +12,15 @@ impl Fixture {
         crate::test_support::codex_fixture(&executable, &r##"
 printf '%s' "$$" > pid
 while IFS= read -r line; do
+request=${line#*\"id\":}; request=${request%%,*}
 case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*)
- if [ -f reject-open ]; then printf '%s\n' '{"id":1,"error":{"code":-1,"message":"credential-SENTINEL"}}'; continue; fi
+ if [ -f reject-open ]; then printf '{"id":%s,"error":{"code":-1,"message":"credential-SENTINEL"}}\n' "$request"; continue; fi
  if [ -f block-open ]; then touch entered; while :; do sleep 1; done; fi
- printf '%s\n' '{"id":1,"result":{}}';;
-*'"method":"model/list"'*) printf '%s\n' '{"id":4,"result":{"data":[],"nextCursor":null}}';;
-*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":3,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"saved-thread","turns":[]}}}\n' "$PWD";;
+ printf '{"id":%s,"result":{}}\n' "$request";;
+*'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
+*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"saved-thread","turns":[]}}}\n' "$request" "$PWD";;
 *'"method":"turn/start"'*) touch entered; while :; do sleep 1; done;;
 esac
 done
@@ -79,7 +80,7 @@ async fn shutdown_rejects_an_inflight_send_and_reaps_its_process() {
     manager.open_session("alice", Engine::Codex, id.clone(), crate::test_support::create(&manager, "alice", &development_task, fixture.options()).await, Some(development_task), CancellationToken::new()).await.unwrap();
     let generation = manager.snapshot("alice", &id).await.unwrap().generation;
     let worker = manager.clone(); let task_id = id.clone();
-    let send = tokio::spawn(async move { worker.send("alice", &task_id, &generation, uuid::Uuid::new_v4().to_string(), "task".into(), None, vec![], vec![]).await });
+    let send = tokio::spawn(async move { worker.send("alice", &task_id, &generation, uuid::Uuid::new_v4().to_string(), "task".into(), None, vec![], vec![], vec![]).await });
     let pid = entered(&fixture.0).await;
     assert!(manager.shutdown().await);
     assert_ne!(unsafe { libc::kill(pid, 0) }, 0);
@@ -159,7 +160,7 @@ async fn active_provider_disable_and_reenable_never_resurrects_and_shutdown_drai
     let enabled = providers.toggle_provider("fixture-alice", true, "alice").await.unwrap();
     assert!(!disabled.enabled && enabled.enabled);
     assert_eq!(enabled.config_revision, disabled.config_revision + 1);
-    assert!(manager.send("alice", &id, &generation, uuid::Uuid::new_v4().to_string(), "must never run".into(), None, vec![], vec![]).await.is_err());
+    assert!(manager.send("alice", &id, &generation, uuid::Uuid::new_v4().to_string(), "must never run".into(), None, vec![], vec![], vec![]).await.is_err());
     assert!(manager.shutdown().await);
     let binding = manager.inner.repository.read_cli_session_configuration("alice", &id).await.unwrap().binding.unwrap();
     assert_eq!(binding.state, "revoked");
@@ -182,12 +183,28 @@ async fn recovered_unknown_binding_blocks_only_its_actual_directory() {
     let binding = restarted.inner.repository.read_cli_session_configuration("alice", &id).await.unwrap().binding.unwrap();
     assert_eq!(binding.state, "unknown");
     assert!(binding.cleanup_proof.is_none());
+    assert_eq!(binding.cleanup_state, "unknown");
+    let unresolved_slot = *restarted.inner.slots.lock().await.get(&id).unwrap();
+    assert_eq!(restarted.slot_count().await, 1);
     let directory = fixture.0.canonicalize().unwrap();
     assert_eq!(restarted.workspace_available(directory.to_str().unwrap(), None).await.unwrap_err(), "cleanup_pending");
     let other = fixture.0.join("other"); std::fs::create_dir(&other).unwrap();
     assert!(restarted.workspace_available(other.to_str().unwrap(), None).await.is_ok());
+    assert!(!restarted.shutdown().await, "unowned unknown cleanup cannot report settled shutdown");
+    assert_eq!(restarted.inner.slots.lock().await.get(&id), Some(&unresolved_slot));
+    assert_eq!(restarted.workspace_available(directory.to_str().unwrap(), None).await.unwrap_err(), "cleanup_pending");
     assert!(original.shutdown().await);
+    // Only the original host can supply the durable exit receipt that releases
+    // the recovered slot; the restarted host must reconcile that receipt.
+    let settled = restarted.inner.repository.read_cli_session_configuration("alice", &id).await.unwrap().binding.unwrap();
+    assert_eq!(settled.host_instance_id, binding.host_instance_id);
+    assert_eq!(settled.state, "closed");
+    assert_eq!(settled.cleanup_state, "stopped");
+    assert_eq!(settled.cleanup_proof.as_deref(), Some("owned_exit"));
+    let pid: i32 = std::fs::read_to_string(fixture.0.join("pid")).unwrap().parse().unwrap();
+    assert_ne!(unsafe { libc::kill(pid, 0) }, 0, "the owning host must reap its child");
     assert!(restarted.shutdown().await);
+    assert_eq!(restarted.slot_count().await, 0, "the prior host's durable owned-exit receipt releases the recovered reservation");
 }
 
 #[tokio::test]
@@ -243,11 +260,12 @@ async fn no_execution_session_id_can_retry_only_the_same_binding_input() {
     assert_eq!(manager.open_session("alice", Engine::Codex, id.clone(), changed_create, Some(task.clone()), CancellationToken::new()).await.err().unwrap(), "session_exists");
     crate::test_support::codex_fixture(&retry_executable, &r##"
 while IFS= read -r line; do
+request=${line#*\"id\":}; request=${request%%,*}
 case "$line" in
 CONFIG_REPLY
-*'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}';;
-*'"method":"model/list"'*) printf '%s\n' '{"id":4,"result":{"data":[],"nextCursor":null}}';;
-*'"method":"thread/start"'*) printf '{"id":3,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"saved-thread","turns":[]}}}\n' "$PWD";;
+*'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
+*'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
+*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"saved-thread","turns":[]}}}\n' "$request" "$PWD";;
 esac
 done
 "##.replace("CONFIG_REPLY", crate::test_support::CODEX_CONFIG_REPLY)).await;
@@ -269,13 +287,13 @@ async fn unknown_cleanup_keeps_its_capacity_slot() {
         tasks.push(manager.save_development_task("alice", crate::projects::SaveTaskInput { id: None, project_id: project.id, goal: "Occupy a session slot".into(), requirements: "Retain uncertain sessions".into(), status: "todo".into() }, CancellationToken::new()).await.unwrap().id);
     }
     let uncertain_id = uuid::Uuid::new_v4().to_string();
-    let mut missing = fixture.options();
-    missing.executable = Some(fixture.0.join("absent").to_string_lossy().into_owned());
-    let create = crate::test_support::create(&manager, "alice", &tasks[0], missing).await;
-    assert!(manager.open_session("alice", Engine::Codex, uncertain_id.clone(), create, Some(tasks[0].clone()), CancellationToken::new()).await.is_err());
+    let create = crate::test_support::create(&manager, "alice", &tasks[0], fixture.options()).await;
+    manager.open_session("alice", Engine::Codex, uncertain_id.clone(), create, Some(tasks[0].clone()), CancellationToken::new()).await.unwrap();
+    let original = manager;
+    let manager = crate::test_support::manager(&fixture.0).await;
     let binding = manager.inner.repository.read_cli_session_configuration("alice", &uncertain_id).await.unwrap().binding.unwrap();
-    manager.inner.repository.record_cli_cleanup("alice", &uncertain_id, &binding.binding_id, binding.host_instance_id.as_deref().unwrap(), &dgos_db::development_repository::CleanupObservation { binding_id: binding.binding_id.clone(), state: "unknown".into(), proof: String::new(), reason: Some("cleanup_pending".into()) }).await.unwrap();
-    manager.inner.slots.lock().await.insert(uncertain_id.clone(), uuid::Uuid::new_v4());
+    assert_eq!(binding.state, "unknown");
+    assert!(binding.cleanup_proof.is_none());
     for task in tasks.iter().skip(1).take(7) {
         let id = uuid::Uuid::new_v4().to_string();
         let create = crate::test_support::create(&manager, "alice", task, fixture.options()).await;
@@ -286,7 +304,10 @@ async fn unknown_cleanup_keeps_its_capacity_slot() {
     let extra_task = crate::test_support::task(&manager, &unused).await;
     let create = crate::test_support::create(&manager, "alice", &extra_task, fixture.options()).await;
     assert_eq!(manager.open_session("alice", Engine::Codex, uuid::Uuid::new_v4().to_string(), create, Some(extra_task), CancellationToken::new()).await.err().unwrap(), "session_capacity");
+    assert!(!manager.shutdown().await, "external unknown cleanup is not proof of a settled shutdown");
+    assert!(original.shutdown().await);
     assert!(manager.shutdown().await);
+    assert_eq!(manager.slot_count().await, 0);
 }
 
 #[tokio::test]
@@ -294,16 +315,19 @@ async fn natural_exit_releases_capacity_only_after_cleanup_converges() {
     let fixture = Fixture::new().await;
     crate::test_support::codex_fixture(&fixture.0.join("codex"), &r##"
 while IFS= read -r line; do
+request=${line#*\"id\":}; request=${request%%,*}
 case "$line" in
-CONFIG_REPLY
-*'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}';;
-*'"method":"thread/start"'*)
- printf '{"id":3,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"saved-thread","turns":[]}}}\n' "$PWD"
- ;;
-*'"method":"model/list"'*)
- printf '%s\n' '{"id":4,"result":{"data":[],"nextCursor":null}}'
+*'"method":"collaborationMode/list"'*)
+ printf '{"id":%s,"result":{"data":[]}}\n' "$request"
  while [ ! -f "$PWD/exit" ]; do sleep 0.01; done
  exit 0;;
+CONFIG_REPLY
+*'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
+*'"method":"thread/start"'*)
+ printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"saved-thread","turns":[]}}}\n' "$request" "$PWD"
+ ;;
+*'"method":"model/list"'*)
+ printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
 esac
 done
 "##.replace("CONFIG_REPLY", crate::test_support::CODEX_CONFIG_REPLY)).await;

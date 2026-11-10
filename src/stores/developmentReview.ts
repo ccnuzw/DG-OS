@@ -27,7 +27,7 @@ export interface DevReview {
   runs_stale: boolean;
   excluded?: { path: string; reason: string }[];
 }
-export interface DevDiff { path: string; before: string | null; after: string | null; diff: string; reason: string | null }
+export interface DevDiff { path: string; before: string | null; after: string | null; diff: string; diff_hash?: string | null; reason: string | null }
 
 export type RunStatus = 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled' | 'unknown';
 export interface DevRun {

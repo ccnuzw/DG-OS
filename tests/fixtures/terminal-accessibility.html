@@ -19,7 +19,7 @@
     if (workflow) {
       document.title = 'Round3 production workflow fault coverage';
       document.querySelector('h1').textContent = 'Round3 production workflow fault coverage';
-      document.querySelector('p').textContent = 'Run the production-component fixture with deterministic IPC faults. Add scenario=capability-roundtrip, stale-capabilities, cleanup-failure, stale-review-unknown, or host-native-approvals; scenario=all is the default. Add hold=1 for a static final-surface capture.';
+      document.querySelector('p').textContent = 'Run the production-component fixture with deterministic IPC faults. Add scenario=capability-roundtrip, stale-capabilities, cleanup-failure, stale-review-unknown, or native-approval; scenario=all is the default. Add hold=1 for a static final-surface capture.';
       button.textContent = 'Run Round3 workflow scenarios';
     }
     button.addEventListener('click', async () => {

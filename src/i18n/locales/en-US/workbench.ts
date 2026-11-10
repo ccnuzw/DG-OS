@@ -72,7 +72,7 @@ export default {
   "workbench.taskNotCompleted": "Task not completed: {error}. No fallback request was sent. Check task history before submitting again.",
   "workbench.taskNotRunning": "Task is no longer running. Check task history for its final state.",
   "workbench.timeoutTask": "Task timed out.",
-  "workbench.title": "AI Workbench",
+  "workbench.title": "AI Assistant",
   "workbench.tokenCount": "{count} tokens",
   "workbench.toolAuditIncomplete": "The tool may have executed, but its audit is incomplete; do not retry automatically.",
   "workbench.toolCount": "{selected} / {limit}",

@@ -160,6 +160,15 @@ pub enum DgosError {
     #[error("Provider response is not the expected format")]
     ProviderResponseInvalid,
 
+    /// Internal stream rejection detail. Public provider error code remains response-invalid;
+    /// host execution maps these to its established bounded-generation/tool failure contract.
+    #[error("Provider output exceeded the host reply limit")]
+    ProviderOutputLimit,
+    #[error("Provider tool arguments are invalid")]
+    ProviderToolArgumentsInvalid,
+    #[error("Provider proposed more than one serial tool call")]
+    ProviderToolCallLimit,
+
     // Network errors
     #[error("Network error: {0}")]
     NetworkError(String),
@@ -228,7 +237,8 @@ impl DgosError {
             DgosError::UnsupportedProviderType => 1001022,
             DgosError::InsecureEndpoint => 1001023,
             DgosError::ProviderQuotaExhausted => 1001024,
-            DgosError::ProviderResponseInvalid => 1001025,
+            DgosError::ProviderResponseInvalid | DgosError::ProviderOutputLimit
+                | DgosError::ProviderToolArgumentsInvalid | DgosError::ProviderToolCallLimit => 1001025,
             _ => 1000000,
         }
     }

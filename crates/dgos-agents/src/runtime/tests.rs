@@ -191,30 +191,43 @@ async fn known_credentials_are_rejected_in_command_names_and_working_directories
 
 #[cfg(unix)]
 #[tokio::test]
-async fn sqlite_checkpoint_failure_reaps_owned_child_and_restart_does_not_replay() {
+async fn sqlite_checkpoint_failure_reaps_child_but_retains_ownership_until_terminal_is_durable() {
     use dgos_db::sea_orm::ConnectionTrait;
     let(root,manager,_,task)=setup().await;
     let db=dgos_db::establish_connection(&format!("sqlite://{}?mode=rwc",root.join("metadata.sqlite").display())).await.unwrap();
     db.execute_unprepared("CREATE TRIGGER deny_host_checkpoint BEFORE UPDATE ON development_runs WHEN NEW.engine='host' BEGIN SELECT RAISE(ABORT,'injected'); END").await.unwrap();
     let input=command(&task,"printf 'once\\n' >> invocations; printf 'retained code\\n' > source.txt; printf '%s' $$ > child-pid; printf 'checkpoint output\\n'; sleep 30");
     manager.start_development_process("alice",input.clone(),CancellationToken::new()).await.unwrap();
-    let watchers=std::mem::take(&mut *manager.inner.watchers.lock().await);
-    assert_eq!(watchers.len(),1);
-    for watcher in watchers {assert!(!tokio::time::timeout(Duration::from_secs(8),watcher).await.unwrap().unwrap());}
+    tokio::time::timeout(Duration::from_secs(8),async {
+        loop {
+            let view=manager.read_development_process("alice",&input.id).await.unwrap();
+            if view.finished_at.is_some() {break;}
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }).await.unwrap();
     let pid=std::fs::read_to_string(root.join("code/child-pid")).unwrap().parse::<i32>().unwrap();
     assert_ne!(unsafe{libc::kill(pid,0)},0,"storage failure left the owned command executing");
-    assert!(manager.inner.host.lock().await.is_empty());
+    assert!(manager.inner.host.lock().await.contains_key(&input.id));
+    assert!(manager.inner.gate.begin_maintenance().is_err());
+    assert_eq!(manager.inner.watchers.lock().await.len(),1);
+    assert!(!manager.inner.watchers.lock().await[0].is_finished());
     assert_eq!(manager.inner.repository.run("alice",&input.id).await.unwrap().unwrap().status,"running");
     db.execute_unprepared("DROP TRIGGER deny_host_checkpoint").await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5),async {
+        while manager.inner.host.lock().await.contains_key(&input.id) {tokio::time::sleep(Duration::from_millis(20)).await;}
+    }).await.unwrap();
+    assert!(manager.inner.gate.begin_maintenance().is_ok());
+    assert_eq!(manager.inner.repository.run("alice",&input.id).await.unwrap().unwrap().status,"failed");
+    assert!(manager.shutdown().await);
     let restarted=crate::test_support::manager(&root).await;
     let history=restarted.read_development_process("alice",&input.id).await.unwrap();
-    assert_eq!(history.status,"unknown");assert_eq!(history.reason.as_deref(),Some("interrupted_by_restart"));assert!(history.preview_url.is_none());
-    assert_eq!(restarted.start_development_process("alice",input,CancellationToken::new()).await.unwrap().status,"unknown");
+    assert_eq!(history.status,"failed");assert_eq!(history.reason.as_deref(),Some("storage_failed"));assert!(history.preview_url.is_none());
+    assert_eq!(restarted.start_development_process("alice",input,CancellationToken::new()).await.unwrap().status,"failed");
     assert!(restarted.inner.host.lock().await.is_empty());
     assert_eq!(std::fs::read_to_string(root.join("code/invocations")).unwrap(),"once\n");
     assert_eq!(std::fs::read_to_string(root.join("code/source.txt")).unwrap(),"retained code\n");
     assert_eq!(restarted.inner.repository.task("alice",&task).await.unwrap().status,"blocked");
-    assert!(manager.shutdown().await);assert!(restarted.shutdown().await);std::fs::remove_dir_all(root).unwrap();
+    assert!(restarted.shutdown().await);std::fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(unix)]

@@ -1,0 +1,18 @@
+export default {
+  'codexInteractions.title': 'Codex 回合控制',
+  'codexInteractions.mode': '协作模式',
+  'codexInteractions.default': '默认',
+  'codexInteractions.plan': 'Plan',
+  'codexInteractions.unavailable': '原生模式不可用或尚未确认',
+  'codexInteractions.modeBoundary': '下一回合使用 Codex 内置模式和当前绑定模型。Plan 不是只读沙箱，也不会代替工具审批。',
+  'codexInteractions.applied': '原生已确认',
+  'codexInteractions.nextTurn': '已选择下回合模式，尚未确认生效。',
+  'codexInteractions.steer': '追加到本次执行',
+  'codexInteractions.sending': '正在追加…',
+  'codexInteractions.steerBoundary': '只追加输入框中的文字，不发送附件、Skill 选择或下一回合设置。',
+  'codexInteractions.runningHint': '执行中：可追加文字到当前回合；新回合需等待结束或先停止。',
+  'codexInteractions.steerUnavailable': '当前原生会话不支持追加指令。可停止后发送下一回合。',
+  'codexInteractions.unknown': '追加结果待核实。草稿已保留，不会自动重发；回合结束也不能证明追加未发生。',
+  'codexInteractions.recheck': '核实追加结果',
+  'codexInteractions.rejected': '追加未被接受，草稿已保留。请核对当前回合与会话能力。',
+};

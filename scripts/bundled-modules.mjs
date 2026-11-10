@@ -21,7 +21,7 @@ const root = fileURLToPath(new URL('../bundled-modules/', import.meta.url));
 const admissionPath = fileURLToPath(new URL('../crates/dgos-modules/src/admission.rs', import.meta.url));
 const write = process.argv.includes('--write');
 // Retiring code requires an explicit release decision; never infer it from directory order.
-const retainedReleases = new Set(['provider-console@1.0.0']);
+const retainedReleases = new Set(['provider-console@1.0.0', 'provider-console@1.1.0']);
 
 const u64 = (n) => {
   const buffer = Buffer.alloc(8);

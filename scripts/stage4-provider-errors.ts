@@ -9,19 +9,22 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const repository = process.cwd();
+const args = process.argv.slice(2);
+const selectedEngine = args.length === 0 ? 'both' : args.length === 2 && args[0] === '--engine' ? args[1] : '';
+if (!['both', 'codex', 'claude'].includes(selectedEngine)) throw new Error('invalid_engine');
+const engines = selectedEngine === 'both' ? ['codex', 'claude'] : [selectedEngine];
 const root = await mkdtemp(join(tmpdir(), 'dgos-stage4-provider-errors-'));
 await chmod(root, 0o700);
 let failure = 'bootstrap_failed';
 const shell = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 try {
-  if (process.argv.length !== 2) throw Error('arguments_not_supported');
   await access(join(repository, 'crates/dgos-agents/examples/stage4_provider_errors.rs'));
   const codex = Bun.which('codex');
   const claude = Bun.which('claude');
   const cargo = Bun.which('cargo');
   const bridge = resolve(process.env.DGOS_CLAUDE_BRIDGE ?? join(repository, 'tools/agent-bridge/bin/dgos-claude-bridge'));
-  if (!codex || !claude || !cargo) throw Error('native_cli_or_cargo_missing');
-  await access(bridge);
+  if (!cargo || engines.includes('codex') && !codex || engines.includes('claude') && !claude) throw Error('native_cli_or_cargo_missing');
+  if (engines.includes('claude')) await access(bridge);
   for (const directory of ['home', 'codex-home', 'claude-home', 'skills', 'capability-material', 'cache', 'config', 'data']) {
     await mkdir(join(root, directory), { mode: 0o700 });
   }
@@ -29,14 +32,15 @@ try {
   // The launcher is deliberately a real-CLI pass-through. Only --version can be
   // changed for the explicitly labelled inert recovery scenario. Never fake a turn.
   for (const [engine, executable] of [['codex', codex], ['claude', claude]]) {
+    if (!engines.includes(engine!)) continue;
     const marker = join(root, `${engine}-changed-version`);
-    const source = `#!/bin/sh\nif [ "$#" -eq 1 ] && [ "$1" = --version ] && [ -f ${shell(marker)} ]; then\n  printf '%s\\n' 'stage4-controlled-version-change'\n  exit 0\nfi\n${engine === 'codex' ? `if [ "$#" -eq 1 ] && [ "$1" = --version ]; then\n  exec ${shell(executable)} "$@"\nfi\nexec ${shell(executable)} "$@" -c 'model_providers.dgos_project.request_max_retries=0' -c 'model_providers.dgos_project.stream_max_retries=0'\n` : `export CLAUDE_CODE_MAX_RETRIES=0\nexport ANTHROPIC_MAX_RETRIES=0\nexport MAX_RETRIES=0\nexec ${shell(executable)} "$@"\n`}`;
+    const source = `#!/bin/sh\nif [ "$#" -eq 1 ] && [ "$1" = --version ] && [ -f ${shell(marker)} ]; then\n  printf '%s\\n' 'stage4-controlled-version-change'\n  exit 0\nfi\n${engine === 'codex' ? `if [ "$#" -eq 1 ] && [ "$1" = --version ]; then\n  exec ${shell(executable!)} "$@"\nfi\nexec ${shell(executable!)} "$@" -c 'model_providers.dgos_project.request_max_retries=0' -c 'model_providers.dgos_project.stream_max_retries=0'\n` : `export CLAUDE_CODE_MAX_RETRIES=0\nexport ANTHROPIC_MAX_RETRIES=0\nexport MAX_RETRIES=0\nexec ${shell(executable!)} "$@"\n`}`;
     await writeFile(join(root, `${engine}-cli`), source, { mode: 0o700 });
   }
   const description = 'Local throwaway package used only to prove missing skill recovery fails closed.';
   // Each engine owns a distinct package: uninstalling the Codex fixture must not
   // make Claude's preview reuse an already committed, subsequently removed install.
-  for (const engine of ['codex', 'claude']) {
+  for (const engine of engines) {
     const id = `stage4-${engine}-provider-errors-restore`;
     await writeFile(join(root, `${engine}-restore-skill.zip`), zipStore([
       ['SKILL.md', `---\nname: ${id}\ndescription: ${description}\n---\n# Restore fixture\nThis local fixture has no tools or executable instructions.\n`],
@@ -58,6 +62,7 @@ try {
   env.XDG_CONFIG_HOME = join(root, 'config');
   env.XDG_DATA_HOME = join(root, 'data');
   env.DGOS_CLAUDE_BRIDGE = bridge;
+  env.DGOS_STAGE4_ENGINE = selectedEngine;
   env.RUST_LOG = 'off';
   env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
   env.DISABLE_TELEMETRY = '1';

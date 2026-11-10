@@ -19,6 +19,9 @@ use dgos_workbench::{
     ChatSessionPage, ChatSink, CreateChatSessionInput, DeleteChatSessionInput,
     ListChatMessagesInput, ListChatSessionsInput, RegenerateChatInput, RenameChatSessionInput,
     SearchChatSessionsInput, SendAck, SendChatInput, Sent, UpdateChatSessionTargetInput,
+    InspectChatContextInput, ChatContextBudget, SummarizeChatContextInput,
+    ListChatRunsInput, GetChatRunInput, ChatRunPage, ChatRun, ContinueChatRunInput,
+    ChatSkillCatalogInput, ChatSkillCatalog, ResolveChatRunStepInput,
 };
 use serde::Serialize;
 use std::sync::Arc;
@@ -44,6 +47,13 @@ fn respond<T: Serialize>(result: Result<T, ChatError>) -> CommandResponse<T> {
     }
 }
 
+fn leased_chat(app:&tauri::AppHandle,owner:&str)->Result<ChatManager,DgosError>{
+    let resolver=app.state::<Arc<crate::session::SessionResolver>>();
+    let (session,lease)=resolver.agent_session()?;
+    if session.user_id()!=owner||lease.is_cancelled(){return Err(DgosError::SessionInvalid)}
+    Ok(app.state::<ChatManager>().with_account_lease(lease))
+}
+
 /// Forwards events to the renderer's Channel. `false` once the page is gone, which stops the
 /// generation and saves what was received.
 struct ChannelSink(Channel<ChatEvent>);
@@ -63,10 +73,11 @@ fn drive(app: &tauri::AppHandle, sent: Sent, on_event: Channel<ChatEvent>) -> Se
             let chat = handle.state::<ChatManager>();
             let providers = handle.state::<ProviderManager>();
             if job.is_tool_turn() {
-                // Tool turns do not stream: they park at a proposal and continue through
-                // `advance_chat_tool_turn`, reporting to this same Channel.
+                // Genuine streaming parks only for complete validated tool proposals.
                 let mcp = handle.state::<McpState>().manager.clone();
-                chat.run_tool_turn(&providers, &mcp, job, Arc::new(ChannelSink(on_event)))
+                let skills=handle.state::<SkillsState>();
+                let skills=skills.manager.clone();
+                chat.run_tool_turn(&providers, &mcp, skills, job, Arc::new(ChannelSink(on_event)))
                     .await;
             } else {
                 chat.run_generation(&providers, job, &ChannelSink(on_event))
@@ -198,7 +209,7 @@ pub async fn send_chat_message(
         Ok(context) => context,
         Err(error) => return CommandResponse::from(Err(error)),
     };
-    let chat = app.state::<ChatManager>();
+    let chat = match leased_chat(&app,context.user_id()){Ok(chat)=>chat,Err(error)=>return CommandResponse::from(Err(error))};
     let providers = app.state::<ProviderManager>();
     let sent = {
         let skills = app.state::<SkillsState>();
@@ -228,7 +239,7 @@ pub async fn regenerate_chat_message(
         Ok(context) => context,
         Err(error) => return CommandResponse::from(Err(error)),
     };
-    let chat = app.state::<ChatManager>();
+    let chat = match leased_chat(&app,context.user_id()){Ok(chat)=>chat,Err(error)=>return CommandResponse::from(Err(error))};
     let providers = app.state::<ProviderManager>();
     let sent = {
         let skills = app.state::<SkillsState>();
@@ -258,7 +269,7 @@ pub async fn advance_chat_tool_turn(
         Ok(context) => context,
         Err(error) => return CommandResponse::from(Err(error)),
     };
-    let chat = app.state::<ChatManager>();
+    let chat = match leased_chat(&app,context.user_id()){Ok(chat)=>chat,Err(error)=>return CommandResponse::from(Err(error))};
     let job = match chat.begin_tool_action(context.user_id(), input).await {
         Ok(job) => job,
         Err(error) => return respond::<()>(Err(error)),
@@ -268,7 +279,9 @@ pub async fn advance_chat_tool_turn(
         let chat = handle.state::<ChatManager>();
         let providers = handle.state::<ProviderManager>();
         let mcp = handle.state::<McpState>().manager.clone();
-        chat.run_tool_action(&providers, &mcp, job).await;
+        let skills=handle.state::<SkillsState>();
+        let skills=skills.manager.clone();
+        chat.run_tool_action(&providers, &mcp, skills, job).await;
     });
     respond(Ok(()))
 }
@@ -288,4 +301,71 @@ pub async fn cancel_chat_generation(
     CommandResponse::from(Ok::<bool, DgosError>(
         chat.cancel(context.user_id(), &task_id),
     ))
+}
+
+#[tauri::command]
+pub async fn inspect_chat_context(app:tauri::AppHandle,window:WebviewWindow,input:InspectChatContextInput)->CommandResponse<ChatContextBudget>{
+    let context=match host::context(&window,BuiltinCaller::Workbench,Capability::TasksRun){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    let chat=match leased_chat(&app,context.user_id()){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    let providers=app.state::<ProviderManager>();let skills=app.state::<SkillsState>();let skills=skills.manager.read().await;let mcp=app.state::<McpState>();
+    respond(chat.inspect_context(&providers,&skills,&mcp.manager,context.user_id(),input).await)
+}
+
+#[tauri::command]
+pub async fn summarize_chat_context(app:tauri::AppHandle,window:WebviewWindow,input:SummarizeChatContextInput,on_event:Channel<ChatEvent>)->CommandResponse<SendAck>{
+    let context=match host::context(&window,BuiltinCaller::Workbench,Capability::TasksRun){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    let chat=match leased_chat(&app,context.user_id()){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    let providers=app.state::<ProviderManager>();let skills=app.state::<SkillsState>();let skills=skills.manager.read().await;
+    respond(chat.summarize_context(&providers,&skills,context.user_id(),window.label(),input).await.map(|sent|drive(&app,sent,on_event)))
+}
+
+#[tauri::command]
+pub async fn list_chat_runs(app:tauri::AppHandle,window:WebviewWindow,input:ListChatRunsInput)->CommandResponse<ChatRunPage>{
+    let context=match host::context(&window,BuiltinCaller::Workbench,Capability::TasksRun){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    let chat=match leased_chat(&app,context.user_id()){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    respond(chat.list_runs(context.user_id(),input).await)
+}
+
+#[tauri::command]
+pub async fn get_chat_run(app:tauri::AppHandle,window:WebviewWindow,input:GetChatRunInput)->CommandResponse<ChatRun>{
+    let context=match host::context(&window,BuiltinCaller::Workbench,Capability::TasksRun){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    let chat=match leased_chat(&app,context.user_id()){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    respond(chat.get_run(context.user_id(),input).await)
+}
+
+#[tauri::command]
+pub async fn continue_chat_run(app:tauri::AppHandle,window:WebviewWindow,input:ContinueChatRunInput,on_event:Channel<ChatEvent>)->CommandResponse<SendAck>{
+    let context=match host::context(&window,BuiltinCaller::Workbench,Capability::TasksRun){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    let chat=match leased_chat(&app,context.user_id()){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    let providers=app.state::<ProviderManager>();let skills=app.state::<SkillsState>();let skills=skills.manager.read().await;let mcp=app.state::<McpState>();
+    respond(chat.continue_run(&providers,&skills,&mcp.manager,context.user_id(),window.label(),input).await.map(|sent|drive(&app,sent,on_event)))
+}
+
+#[tauri::command]
+pub async fn chat_skill_catalog(app:tauri::AppHandle,window:WebviewWindow,input:ChatSkillCatalogInput)->CommandResponse<ChatSkillCatalog>{
+    let context=match host::context(&window,BuiltinCaller::Workbench,Capability::TasksRun){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    let chat=match leased_chat(&app,context.user_id()){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    let skills=app.state::<SkillsState>();let skills=skills.manager.read().await;
+    respond(chat.skill_catalog(&skills,context.user_id(),input).await)
+}
+
+#[tauri::command]
+pub async fn resolve_chat_run_step(app:tauri::AppHandle,window:WebviewWindow,input:ResolveChatRunStepInput)->CommandResponse<ChatRun>{
+    let context=match host::context(&window,BuiltinCaller::Workbench,Capability::TasksRun){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    let chat=match leased_chat(&app,context.user_id()){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    respond(chat.resolve_run_step(context.user_id(),input).await)
+}
+
+#[tauri::command]
+pub async fn chat_import_ai_resource(app:tauri::AppHandle,window:WebviewWindow,session_id:String,input:dgos_types::AiResourceImport)->CommandResponse<dgos_types::AiResource>{
+    let context=match host::context(&window,BuiltinCaller::Workbench,Capability::TasksRun){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    let chat=match leased_chat(&app,context.user_id()){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    respond(chat.import_ai_resource(context.user_id(),&session_id,input).await)
+}
+
+#[tauri::command]
+pub async fn chat_delete_ai_resource(app:tauri::AppHandle,window:WebviewWindow,session_id:String,resource_id:String)->CommandResponse<bool>{
+    let context=match host::context(&window,BuiltinCaller::Workbench,Capability::TasksRun){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    let chat=match leased_chat(&app,context.user_id()){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
+    respond(chat.delete_ai_resource(context.user_id(),&session_id,&resource_id).await)
 }

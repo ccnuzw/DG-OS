@@ -17,6 +17,8 @@ import { useComposerReferences } from '../../components/development/ComposerRefe
 import { agentTurnSettings } from '../../stores/agentTurnSettings';
 import { useSurfaceActive } from '../../workspace/SurfaceContext';
 import { acknowledgeAgentSkills, captureAgentSkills, type CapturedAgentSkill } from '../../stores/agentSkills';
+import { AgentImages } from '../../components/development/AgentImages';
+import { acknowledgeAgentImages, agentImageInputs, agentImagePaste, agentImagesKey, captureAgentImages, transferAgentImages, useAgentImages } from '../../stores/agentImages';
 
 // Only UI intent and reconciliation identities live here. Tasks, bindings, runs and sessions
 // remain owned by their existing host repositories and AgentManager.
@@ -29,13 +31,15 @@ export interface ConversationDraft {
   submitted: string | null;
   submittedReferences: CapturedConversationReference[];
   submittedSkills: CapturedAgentSkill[];
+  submittedImageIds: string[];
   submittedGeneration: string | null;
+  preparedImageGeneration: string | null;
   beforeTasks: string[];
   phase: 'draft' | 'task_unknown' | 'open_unknown' | 'ready' | 'send_unknown' | 'sent';
   preparing: boolean;
   error: string | null;
 }
-export const emptyConversationDraft: ConversationDraft = { prompt: '', configuration: null, taskId: null, sessionId: null, requestId: null, submitted: null, submittedReferences: [], submittedSkills: [], submittedGeneration: null, beforeTasks: [], phase: 'draft', preparing: false, error: null };
+export const emptyConversationDraft: ConversationDraft = { prompt: '', configuration: null, taskId: null, sessionId: null, requestId: null, submitted: null, submittedReferences: [], submittedSkills: [], submittedImageIds: [], submittedGeneration: null, preparedImageGeneration: null, beforeTasks: [], phase: 'draft', preparing: false, error: null };
 const operations = new Set<string>();
 export const sameConfiguration = (a: CliProviderConfiguration | null, b: CliProviderConfiguration | null) => Boolean(a && b && a.engine === b.engine && a.provider.provider_id === b.provider.provider_id && a.provider.model_id === b.provider.model_id && a.provider.provider_revision === b.provider.provider_revision);
 type Open = (input: AgentOpenInput, projectId: string, taskId: string, dispatch: (session: AgentSession) => Promise<Outcome<null>>) => Promise<Outcome<null>>;
@@ -51,8 +55,13 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
   const key = developmentDraftKey('conversation', ...scope);
   const value = draft.value;
   const configuration = value.configuration;
+  const imageOwner = agentImagesKey(project.id, value.sessionId && value.preparedImageGeneration ? { id: value.sessionId, generation: value.preparedImageGeneration } : draftId ?? project.id);
+  const imageDraft = useAgentImages(state => state.drafts[imageOwner]);
   const liveSession = useAgentRunner(state => state.session);
-  const readySession = value.phase === 'ready' && liveSession?.id === value.sessionId ? liveSession : undefined;
+  const draftSession = liveSession?.id === value.sessionId ? liveSession : undefined;
+  const readySession = value.phase === 'ready' ? draftSession : undefined;
+  const interrupt = useAgentRunner(state => value.sessionId ? state.interrupts[value.sessionId] : undefined);
+  const interruptPending = Boolean(draftSession && interrupt?.generation === draftSession.generation && interrupt.runId === draftSession.active_run);
   const [directory, setDirectory] = useState<StoredWorkspace | null>(null);
   const [directoryError, setDirectoryError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
@@ -71,11 +80,14 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
     useDevelopmentDrafts.setState(state => ({ entries: { ...state.entries, [key]: { kind: 'conversation', value: next, baseline: emptyConversationDraft } } }));
   }
   function clearCommitted(id: string) {
-    if (epoch !== useDevelopment.getState().epoch || useDevelopment.getState().selection.session_id !== id || readDraft().phase !== 'sent') return;
+    if (epoch !== useDevelopment.getState().epoch || useDevelopment.getState().selection.session_id !== id || !['sent', 'ready'].includes(readDraft().phase)) return;
     // References may be added while the acknowledged session is still being selected.
     const remaining = readDraft().prompt;
     if (remaining) setSessionDraft(id, remaining);
     acknowledgeConversationReferences(project.id, draftId ?? project.id, id, []);
+    const runner = useAgentRunner.getState();
+    const session = runner.snapshots[id] ?? (runner.session?.id === id ? runner.session : undefined);
+    if (session) transferAgentImages(imageOwner, agentImagesKey(project.id, session));
     useDevelopmentDrafts.setState(state => { const entries = { ...state.entries }; delete entries[key]; return { entries }; });
   }
   useEffect(() => {
@@ -108,11 +120,13 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
     node.rows = Math.max(2, Math.min(10, Math.ceil((node.scrollHeight - padding) / lineHeight)));
   }, [value.prompt, visible, surfaceActive]);
 
-  async function send() {
-    if (!current() || pending || operations.has(key) || value.preparing || !configuration || !directory || trust !== trustKey || project.archived || ['task_unknown', 'open_unknown', 'send_unknown', 'sent'].includes(value.phase)) return;
+  async function send(preparationOnly = false) {
+    if (!current() || pending || operations.has(key) || value.preparing || useAgentImages.getState().drafts[imageOwner]?.busy || draftSession?.persistence_error || !configuration || !directory || trust !== trustKey || project.archived || ['task_unknown', 'open_unknown', 'send_unknown', 'sent'].includes(value.phase)) return;
     const text = value.prompt;
     const captured = captureConversationReferences(project.id, referenceOwnerId);
-    if (!text.trim() && !captured.length) return;
+    const images = captureAgentImages(imageOwner);
+    if (images.length && configuration.engine !== 'codex') { update({ error: 'agent_images_unsupported' }); return; }
+    if (!preparationOnly && !text.trim() && !captured.length && !images.length) return;
     const selected = configuration;
     const confirmedDirectory = directory;
     operations.add(key);
@@ -132,7 +146,7 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
       capabilitiesChanged();
       if (!activeTask) {
         update({ phase: 'task_unknown', beforeTasks: useDevelopment.getState().tasks.filter(item => item.project_id === project.id).map(item => item.id) });
-        const created = await useDevelopment.getState().saveTask({ id: null, project_id: project.id, goal: Array.from(text.trim().split(/\r?\n/, 1)[0] || captured[0].reference.path).slice(0, 80).join(''), requirements: '', status: 'todo' });
+        const created = await useDevelopment.getState().saveTask({ id: null, project_id: project.id, goal: Array.from(text.trim().split(/\r?\n/, 1)[0] || captured[0]?.reference.path || t('directConversation.defaultTaskGoal')).slice(0, 80).join(''), requirements: '', status: 'todo' });
         if (epoch !== useDevelopment.getState().epoch) return;
         if (!created.ok) { update({ phase: created.code === 'unknown' ? 'task_unknown' : 'draft', error: created.code }); return; }
         activeTask = created.value.id;
@@ -146,26 +160,36 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
       if (!workspace || workspace.path !== confirmedDirectory.path || workspace.directory_identity !== confirmedDirectory.directory_identity) { setTrust(null); setReload(n => n + 1); update({ error: 'workspace_changed' }); return; }
       const id = value.sessionId ?? crypto.randomUUID();
       const requestId = crypto.randomUUID();
-      update({ taskId: activeTask, sessionId: id, requestId, submitted: text, submittedReferences: captured, phase: 'open_unknown' });
+      update({ taskId: activeTask, sessionId: id, requestId, submitted: text, submittedReferences: captured, submittedImageIds: images.map(image => image.id), phase: 'open_unknown' });
       const dispatch = async (session: AgentSession): Promise<Outcome<null>> => {
         if (!current()) return { ok: false, code: 'cancelled' };
         if (session.id !== id || session.status !== 'idle') { update({ phase: 'ready', error: 'session_busy' }); return { ok: false, code: 'session_busy' }; }
+        if (preparationOnly) {
+          // Commit ownership before onStart binds/selects the session: that transition
+          // can unmount this composer before clearCommitted gets control back.
+          transferAgentImages(imageOwner, agentImagesKey(project.id, session));
+          // Opening discovers controls without dispatching a turn or consuming draft inputs.
+          update({ phase: 'ready', submittedGeneration: session.generation, preparedImageGeneration: session.generation, error: null });
+          setSessionDraft(id, readDraft().prompt);
+          return { ok: true, value: null };
+        }
         const skills = captureAgentSkills(project.id, session);
         update({ phase: 'send_unknown', submittedSkills: skills, submittedGeneration: session.generation });
         const settings = agentTurnSettings(session);
         let failure: string | undefined;
-        const sent = await useAgentRunner.getState().action('send_agent_message', { input: { session_id: id, generation: session.generation, request_id: requestId, text, ...(settings ? { settings: { ...settings } } : {}), ...(captured.length ? { references: captured.map(item => item.reference) } : {}), ...(skills.length ? { skills: skills.map(item => item.skill) } : {}) } }, code => { failure = code; });
+        const sent = await useAgentRunner.getState().action('send_agent_message', { input: { session_id: id, generation: session.generation, request_id: requestId, text, ...(settings ? { settings: { ...settings } } : {}), ...(captured.length ? { references: captured.map(item => item.reference) } : {}), ...(skills.length ? { skills: skills.map(item => item.skill) } : {}), ...(images.length ? { images: agentImageInputs(images) } : {}) } }, code => { failure = code; });
         if (epoch !== useDevelopment.getState().epoch) return { ok: false, code: 'cancelled' };
         if (!sent) {
           const code = failure ?? 'unknown';
-          // These are host reference preflight failures, before any run receipt or native dispatch.
-          const rejected = ['invalid_reference', 'reference_limit', 'file_sensitive', 'file_access_denied', 'file_not_found', 'file_too_large', 'file_binary', 'file_changed', 'file_symlink', 'scan_limit', 'agent_skill_invalid', 'agent_skill_limit', 'agent_skills_unsupported', 'agent_skills_unavailable', 'agent_skill_unavailable'].includes(code);
+          // Explicit host preflight rejections precede any run receipt or native dispatch.
+          const rejected = ['invalid_reference', 'reference_limit', 'file_sensitive', 'file_access_denied', 'file_not_found', 'file_too_large', 'file_binary', 'file_changed', 'file_symlink', 'scan_limit', 'agent_skill_invalid', 'agent_skill_limit', 'agent_skills_unsupported', 'agent_skills_unavailable', 'agent_skill_unavailable', 'agent_image_count_limit', 'agent_image_bytes_limit', 'agent_image_total_limit', 'agent_image_type', 'agent_image_invalid', 'agent_image_dimensions', 'agent_images_unsupported', 'unsupported_reasoning_effort', 'unsupported_permission_mode', 'unsupported_collaboration_mode', 'invalid_turn_settings', 'turn_controls_unavailable'].includes(code);
           update({ error: code, ...(rejected ? { phase: 'ready' as const } : {}) });
           return { ok: false, code };
         }
         const remaining = readDraft().prompt === text ? '' : readDraft().prompt;
         acknowledgeConversationReferences(project.id, referenceOwnerId, id, captured);
         acknowledgeAgentSkills(project.id, session, skills);
+        acknowledgeAgentImages(imageOwner, images);
         update({ phase: 'sent', prompt: remaining, error: null });
         setSessionDraft(id, remaining);
         return { ok: true, value: null };
@@ -208,6 +232,7 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
         const remaining = readDraft().prompt === value.submitted ? '' : readDraft().prompt;
         acknowledgeConversationReferences(project.id, referenceOwnerId, value.sessionId, value.submittedReferences ?? []);
         if (value.submittedGeneration) acknowledgeAgentSkills(project.id, { id: value.sessionId, generation: value.submittedGeneration }, value.submittedSkills ?? []);
+        acknowledgeAgentImages(imageOwner, (value.submittedImageIds ?? []).map(id => ({ id })));
         update({ phase: 'sent', prompt: remaining });
         setSessionDraft(value.sessionId, remaining);
         await onInspect(value.sessionId);
@@ -219,19 +244,33 @@ export function ProjectConversation({ project, taskId, draftId, onStart, onInspe
       } else update({ phase: 'ready' });
     } finally { operations.delete(key); if (useDevelopmentDrafts.getState().entries[key]) update({ preparing: false }); }
   }
-  const blocked = pending || value.preparing || project.archived || !configuration || !directory || trust !== trustKey || !value.prompt.trim() && !inputReferences.references.length || ['task_unknown', 'open_unknown', 'send_unknown', 'sent'].includes(value.phase);
+  function selectCommand(command: string) {
+    const live = useAgentRunner.getState().session;
+    const latest = readDraft();
+    if (!current() || pending || operations.has(key) || latest.preparing || project.archived || latest.phase !== 'ready' || !readySession || live?.id !== readySession.id || live.generation !== readySession.generation || live.status !== 'idle' || live.active_run || live.pending.length) return;
+    update({ prompt: `${command} ${latest.prompt}` });
+    composerInput.current?.focus({ preventScroll: true });
+  }
+  const preparationBlocked = pending || value.preparing || imageDraft?.busy || Boolean(draftSession?.persistence_error) || project.archived || !configuration || !directory || trust !== trustKey || ['task_unknown', 'open_unknown', 'send_unknown', 'sent'].includes(value.phase);
+  const blocked = preparationBlocked || !value.prompt.trim() && !inputReferences.references.length && !imageDraft?.images.length;
+  const imageDisabled = !visible || !surfaceActive || value.preparing || project.archived || ['task_unknown', 'open_unknown', 'send_unknown', 'sent'].includes(value.phase);
   return <div className="agent-conversation-product" data-testid="dev-project-conversation">
-    <div className="agent-dialogue-transcript"><h2>{t('directConversation.title')}</h2><p>{t('directConversation.hint')}</p></div>
+    <div className="agent-dialogue-transcript"><h2>{t('directConversation.title')}</h2><p>{t('directConversation.hint')}</p>
+      {draftSession ? <header className="agent-dialogue-header"><span className="agent-dialogue-status" data-state={draftSession.status}>{t(`agent.state.${draftSession.status}`)}</span><div className="agent-dialogue-actions"><Button size="xs" variant="secondary" disabled={interruptPending || !draftSession.active_run || !['running', 'waiting'].includes(draftSession.status)} onClick={() => { if (current()) void useAgentRunner.getState().action('interrupt_agent_session', { sessionId: draftSession.id, generation: draftSession.generation, runId: draftSession.active_run }); }}>{t('agent.interrupt')}</Button><Button size="xs" variant="secondary" disabled={draftSession.status === 'closed'} onClick={() => { if (current()) void useAgentRunner.getState().action('close_agent_session', { sessionId: draftSession.id }); }}>{t('agent.close')}</Button></div></header> : null}
+    </div>
     <footer className="agent-dialogue-footer">
       {value.preparing ? <p role="status">{t('directConversation.preparing')}</p> : null}
+      {interruptPending ? <p role="status">{t('agent.interruptPending')}</p> : null}
       {project.archived ? <p role="alert" className="text-status-error">{t('dev.error.project_archived')}</p> : null}
+      {draftSession?.persistence_error ? <p role="alert" className="text-status-error">{t('agent.storageFailed')}</p> : null}
       {value.error || directoryError ? <p role="alert" className="text-status-error">{errorText(value.error ?? directoryError!)}</p> : null}
       {value.error === 'cleanup_pending' ? <CliCleanupRecheck /> : null}
       {['task_unknown', 'open_unknown', 'send_unknown', 'sent'].includes(value.phase) ? <div><p role="alert">{t(`directConversation.${value.phase}`)}</p><Button size="xs" disabled={value.preparing} onClick={() => void reconcile()}>{t('directConversation.recheck')}</Button>
         {value.phase === 'task_unknown' ? tasks.filter(item => item.project_id === project.id && !value.beforeTasks.includes(item.id)).map(item => <Button key={item.id} size="xs" disabled={value.preparing} onClick={() => update({ taskId: item.id, phase: 'draft' })}>{t('directConversation.useTask', { title: item.goal })}</Button>) : null}</div> : null}
-      <div className="agent-dialogue-composer"><div className="agent-composer-shell">{inputReferences.chips}<div className="agent-composer-input"><Input multiline rows={2} id="agent-message" ref={composerInput} label={t('agent.prompt')} className="type-reading" aria-describedby="agent-send-hint" value={value.prompt} onChange={event => update({ prompt: inputReferences.promptChange(event.target.value, value.prompt, event.target.selectionStart, (event.nativeEvent as InputEvent).isComposing), configuration })} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); if (!event.repeat) void send(); } }} /></div>
-        <AgentComposerControls session={readySession} projectId={project.id} engine={configuration?.engine} draftId={draftId} visible={visible} disabled={value.preparing} referencePicker={inputReferences.picker} model={visible && surfaceActive ? <ComposerModelPicker projectId={project.id} value={configuration} preferred={saved.value?.configuration ?? null} disabled={value.preparing || Boolean(value.sessionId && value.phase !== 'draft')} onChange={next => { if (current()) update({ configuration: next, error: null }); }} /> : null} more={<Button size="xs" variant="ghost" disabled={value.preparing} onClick={() => { if (current()) { capabilitiesChanged(); setReload(n => n + 1); } }}>{t('capabilities.reload')}</Button>} sendHint={t('agent.sendShortcut')} send={<Button data-testid="direct-conversation-send" disabled={Boolean(blocked)} onClick={() => void send()}>{t(value.preparing ? 'directConversation.preparing' : 'agent.send')}</Button>} />
+      <div className="agent-dialogue-composer"><div className="agent-composer-shell">{inputReferences.chips}{configuration?.engine === 'codex' ? <AgentImages owner={imageOwner} disabled={imageDisabled} active={visible && surfaceActive} /> : null}<div className="agent-composer-input"><Input multiline rows={2} id="agent-message" ref={composerInput} label={t('agent.prompt')} className="type-reading" aria-describedby="agent-send-hint" value={value.prompt} onPaste={agentImagePaste(imageOwner, imageDisabled || configuration?.engine !== 'codex')} onChange={event => update({ prompt: inputReferences.promptChange(event.target.value, value.prompt, event.target.selectionStart, (event.nativeEvent as InputEvent).isComposing), configuration })} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); if (!event.repeat) void send(); } }} /></div>
+        <AgentComposerControls session={readySession} projectId={project.id} engine={configuration?.engine} draftId={draftId} visible={visible} disabled={value.preparing} onCommandSelect={selectCommand} referencePicker={inputReferences.picker} model={visible && surfaceActive ? <ComposerModelPicker projectId={project.id} value={configuration} preferred={saved.value?.configuration ?? null} disabled={value.preparing || Boolean(value.sessionId && value.phase !== 'draft')} onChange={next => { if (current()) { if (next.engine !== 'codex' && captureAgentImages(imageOwner).length) { update({ error: 'agent_images_unsupported' }); return; } update({ configuration: next, error: null }); } }} /> : null} more={<Button size="xs" variant="ghost" disabled={value.preparing} onClick={() => { if (current()) { capabilitiesChanged(); setReload(n => n + 1); } }}>{t('capabilities.reload')}</Button>} sendHint={t('agent.sendShortcut')} send={<Button data-testid="direct-conversation-send" disabled={Boolean(blocked)} onClick={() => void send()}>{t(value.preparing ? 'directConversation.preparing' : 'agent.send')}</Button>} />
         <label className="dev-checkbox agent-composer-trust"><input type="checkbox" data-testid="direct-conversation-trust" checked={Boolean(trustKey && trust === trustKey)} disabled={!directory || value.preparing} onChange={event => setTrust(event.target.checked ? trustKey : null)} />{t('dev.trustProject')}</label>
+        <div className="dev-review-toolbar"><Button size="xs" variant="secondary" data-testid="direct-conversation-prepare" disabled={Boolean(preparationBlocked)} onClick={() => void send(true)}>{t('directConversation.prepare')}</Button><small>{t('directConversation.prepareHint')}</small></div>
       </div></div>
     </footer>
   </div>;

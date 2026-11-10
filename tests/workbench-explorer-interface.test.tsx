@@ -170,7 +170,8 @@ function fileCommands(command: string, args: { input: { path: string } }) {
 it('preserves a dirty editor on failed rename and only remaps it after successful mutation', async () => {
   invoke.mockImplementation(fileCommands);
   useDevelopment.setState(state => ({ ...state, selection: { project_id: 'p', task_id: 't', session_id: null } }));
-  useDevelopmentEditor.setState({ projectId: 'p', taskId: 't', path: 'app.ts', file: { path: 'app.ts', text: 'saved', hash: 'hash', reason: null, size: 5 }, draft: 'unsaved', busy: false, saving: false });
+  await useDevelopmentEditor.getState().open('p', 't', 'app.ts');
+  useDevelopmentEditor.getState().edit('unsaved');
   const onMutation = vi.fn();
   render(<Files projectId="p" taskId="t" onOpenFile={vi.fn()} onMutation={onMutation} />);
   const row = await screen.findByTestId('dev-file-item-app.ts');
@@ -185,7 +186,9 @@ it('preserves a dirty editor on failed rename and only remaps it after successfu
   invoke.mockImplementation((command: string, args: unknown) => command === 'mutate_development_entry' ? Promise.resolve({ path: 'renamed.ts', kind: 'file' }) : original(command, args));
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'workbenchFiles.rename' })); await act(async () => {});
   expect(onMutation).toHaveBeenCalledWith({ action: 'rename', path: 'app.ts', destination: 'renamed.ts' });
-  expect(useDevelopmentEditor.getState().path).toBeNull();
+  expect(useDevelopmentEditor.getState().path).toBe('renamed.ts');
+  expect(useDevelopmentEditor.getState().file?.path).toBe('renamed.ts');
+  expect(useDevelopmentEditor.getState().draft).toBe('unsaved');
   expect(invoke).toHaveBeenCalledWith('mutate_development_entry', { input: { project_id: 'p', task_id: 't', path: 'app.ts', expected_version: 'original-version', action: 'rename', destination: 'renamed.ts', trust_directory: true } });
 });
 

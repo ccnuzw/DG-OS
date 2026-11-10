@@ -19,7 +19,7 @@ pub struct ReviewChange { pub path: String, pub kind: String, pub pre_existing: 
 #[derive(Serialize)]
 pub struct TaskReview { pub task_id: String, pub captured_at: Option<i64>, pub baseline_late: bool, pub truncated: bool, pub fingerprint: String, pub changes: Vec<ReviewChange>, pub excluded: Vec<ReviewExclusion>, pub runs_stale: bool }
 #[derive(Serialize)]
-pub struct FileDiff { pub path: String, pub before: Option<String>, pub after: Option<String>, pub diff: String, pub reason: Option<String> }
+pub struct FileDiff { pub path: String, pub before: Option<String>, pub after: Option<String>, pub diff: String, pub diff_hash: Option<String>, pub reason: Option<String> }
 #[derive(Serialize)]
 pub struct ReviewExclusion { pub path: String, pub reason: String }
 fn now() -> i64 { SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64 }
@@ -168,6 +168,6 @@ impl AgentManager {
         let reason = before.and_then(|f| f.reason.clone()).or_else(|| after.and_then(|f| f.reason.clone())).or_else(|| (baseline.truncated && before.is_none()).then(|| "scan_limit".into()));
         let old = before.and_then(|f| f.text.clone()); let new = after.and_then(|f| f.text.clone());
         let diff = if reason.is_none() { similar::TextDiff::from_lines(old.as_deref().unwrap_or(""), new.as_deref().unwrap_or("")).unified_diff().context_radius(3).header(&format!("baseline/{}", input.path), &format!("current/{}", input.path)).to_string() } else { String::new() };
-        Ok(FileDiff { path: input.path, before: old, after: new, diff, reason })
+        Ok(FileDiff { path: input.path, before: old, after: new, diff, diff_hash: None, reason })
     }
 }

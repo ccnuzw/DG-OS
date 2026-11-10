@@ -7,59 +7,84 @@ import { confirmDiscard } from '../workspace/closeCoordinator';
 import { t } from '../i18n';
 import { useDevelopmentDrafts } from './developmentDrafts';
 
+export interface EditorDocument {
+  id: string; projectId: string; taskId: string | null; workspacePath: string; path: string;
+  file: DevFileView | null; draft: string; disk: DevFileView | null;
+  busy: boolean; saving: boolean; error: string | null; revision: number;
+}
+export interface DocumentTab { id: string; projectId: string; taskId: string | null; workspacePath: string; path: string; mode: 'file' | 'diff'; source: 'task' | 'index' | 'worktree'; line?: number }
+const empty = { projectId: null, taskId: null, path: null, file: null, draft: '', disk: null, busy: false, saving: false, error: null };
 interface EditorState {
   projectId: string | null; taskId: string | null; path: string | null;
-  file: DevFileView | null; draft: string; disk: DevFileView | null;
-  busy: boolean; saving: boolean; error: string | null;
-  open(projectId: string, taskId: string | null, path: string): Promise<void>;
-  edit(text: string): void; save(): Promise<void>; reloadDisk(): Promise<void>; reset(): void;
+  file: DevFileView | null; draft: string; disk: DevFileView | null; busy: boolean; saving: boolean; error: string | null;
+  activeId: string | null; documents: Record<string, EditorDocument>; tabs: DocumentTab[]; activeTabs: Record<string, string>;
+  open(projectId: string, taskId: string | null, path: string, workspacePath?: string, reload?: boolean): Promise<void>;
+  edit(text: string, id?: string): void; save(id?: string): Promise<void>; reloadDisk(id?: string): Promise<void>; reset(): void;
 }
-let revision = 0;
-export const useDevelopmentEditor = create<EditorState>((set, get) => ({
-  projectId: null, taskId: null, path: null, file: null, draft: '', disk: null, busy: false, saving: false, error: null,
-  async open(projectId, taskId, path) {
-    if (developmentEditorMutationAffects(projectId, taskId, path)) return;
-    const ticket = ++revision;
-    const epoch = useDevelopment.getState().epoch;
-    set({ projectId, taskId, path, file: null, draft: '', disk: null, busy: true, saving: false, error: null });
-    const result = await readDevelopmentFile({ project_id: projectId, task_id: taskId, path });
-    if (ticket !== revision || epoch !== useDevelopment.getState().epoch) return;
-    set(result.ok ? { file: result.value, draft: result.value.text ?? '', busy: false } : { error: result.code, busy: false });
-  },
-  edit(draft) { set({ draft }); },
-  async save() {
-    const { projectId, taskId, path, file, draft, saving } = get();
-    if (!projectId || !taskId || !path || !file?.hash || file.text === null || saving || get().error === 'file_changed' || developmentEditorMutationAffects(projectId, taskId, path)) return;
-    const ticket = revision;
-    const epoch = useDevelopment.getState().epoch;
-    set({ saving: true, error: null });
-    try {
-      const saved = await invoke<DevFileView>('save_development_file', { input: { project_id: projectId, task_id: taskId, path, expected_hash: file.hash, text: draft } });
-      if (ticket !== revision || epoch !== useDevelopment.getState().epoch) return;
-      // Edits typed while saving remain a draft against the newly saved version.
-      set({ file: saved, disk: null, saving: false });
-    } catch (error) {
-      if (ticket !== revision || epoch !== useDevelopment.getState().epoch) return;
-      const code = hostCode(error);
-      set({ error: code, saving: false });
-      if (code === 'file_changed') {
-        const disk = await readDevelopmentFile({ project_id: projectId, task_id: taskId, path });
-        if (ticket !== revision || epoch !== useDevelopment.getState().epoch) return;
-        if (disk.ok) set({ disk: disk.value });
+export const documentScope = (projectId: string, taskId: string | null, workspacePath = '') => JSON.stringify([useDevelopment.getState().epoch, projectId, taskId, workspacePath]);
+export const documentId = (projectId: string, taskId: string | null, path: string, workspacePath = '') => JSON.stringify([useDevelopment.getState().epoch, projectId, taskId, workspacePath, path]);
+export const documentDirty = (document: EditorDocument) => document.file?.text != null && document.draft !== document.file.text;
+const affected = (path: string, source: string) => source === '' || path === source || path.startsWith(`${source}/`);
+const matches = (document: Pick<EditorDocument, 'projectId' | 'taskId' | 'path' | 'workspacePath'>, projectId: string, taskId: string | null, paths: string[], workspacePath?: string) => document.projectId === projectId && document.taskId === taskId && (workspacePath === undefined || workspacePath === document.workspacePath) && paths.some(path => affected(document.path, path));
+let sequence = 0;
+export const useDevelopmentEditor = create<EditorState>((set, get) => {
+  function activate(id: string | null, documents = get().documents) {
+    const document = id ? documents[id] : null;
+    return { activeId: id, ...(document ?? empty) };
+  }
+  function update(id: string, patch: Partial<EditorDocument>) {
+    set(state => {
+      if (!state.documents[id]) return state;
+      const documents = { ...state.documents, [id]: { ...state.documents[id], ...patch } };
+      return { documents, ...(state.activeId === id ? activate(id, documents) : {}) };
+    });
+  }
+  return {
+    ...empty, activeId: null, documents: {}, tabs: [], activeTabs: {},
+    async open(projectId, taskId, path, workspacePath = '', reload = false) {
+      if (developmentEditorMutationAffects(projectId, taskId, path)) return;
+      const id = documentId(projectId, taskId, path, workspacePath);
+      if (get().documents[id] && !reload) { set(activate(id)); return; }
+      const revision = ++sequence, epoch = useDevelopment.getState().epoch;
+      const document: EditorDocument = { id, projectId, taskId, workspacePath, path, file: null, draft: '', disk: null, busy: true, saving: false, error: null, revision };
+      const documents = { ...get().documents, [id]: document };
+      set({ documents, ...activate(id, documents) });
+      const result = await readDevelopmentFile({ project_id: projectId, task_id: taskId, path });
+      if (epoch !== useDevelopment.getState().epoch || get().documents[id]?.revision !== revision) return;
+      update(id, result.ok ? { file: result.value, draft: result.value.text ?? '', busy: false } : { error: result.code, busy: false });
+    },
+    edit(draft, id = get().activeId ?? '') { update(id, { draft }); },
+    async save(id = get().activeId ?? '') {
+      const document = get().documents[id];
+      if (!document) return;
+      const { projectId, taskId, path, file, draft, saving, revision } = document;
+      if (!taskId || !file?.hash || file.text === null || saving || document.error === 'file_changed' || developmentEditorMutationAffects(projectId, taskId, path)) return;
+      const epoch = useDevelopment.getState().epoch;
+      const valid = () => epoch === useDevelopment.getState().epoch && get().documents[id]?.revision === revision;
+      update(id, { saving: true, error: null });
+      try {
+        const saved = await invoke<DevFileView>('save_development_file', { input: { project_id: projectId, task_id: taskId, path, expected_hash: file.hash, text: draft } });
+        if (valid()) update(id, { file: saved, disk: null, saving: false });
+      } catch (error) {
+        if (!valid()) return;
+        const code = hostCode(error);
+        update(id, { error: code, saving: false });
+        if (code === 'file_changed') {
+          const disk = await readDevelopmentFile({ project_id: projectId, task_id: taskId, path });
+          if (valid() && disk.ok) update(id, { disk: disk.value });
+        }
       }
-    }
-  },
-  async reloadDisk() {
-    if (!await guardDevelopmentDraft()) return;
-    const { projectId, taskId, path } = get();
-    if (projectId && path) await get().open(projectId, taskId, path);
-  },
-  reset() { ++revision; set({ projectId: null, taskId: null, path: null, file: null, draft: '', disk: null, busy: false, saving: false, error: null }); },
-}));
-export function hasDevelopmentDraft(): boolean {
-  const { file, draft } = useDevelopmentEditor.getState();
-  return file?.text !== null && file !== null && draft !== file.text;
-}
+    },
+    async reloadDisk(id = get().activeId ?? '') {
+      const document = get().documents[id];
+      if (!document || !await guardDocuments([document])) return;
+      if (get().documents[id] !== document) return;
+      await get().open(document.projectId, document.taskId, document.path, document.workspacePath, true);
+    },
+    reset() { ++sequence; set({ ...empty, activeId: null, documents: {}, tabs: [], activeTabs: {} }); },
+  };
+});
+export function hasDevelopmentDraft(): boolean { return Object.values(useDevelopmentEditor.getState().documents).some(documentDirty); }
 export function developmentEditorMutationAffects(projectId: string, taskId: string | null, path: string): boolean {
   const epoch = useDevelopment.getState().epoch;
   return Object.entries(useDevelopmentDrafts.getState().entries).some(([key, draft]) => {
@@ -69,25 +94,78 @@ export function developmentEditorMutationAffects(projectId: string, taskId: stri
     const value = draft.value;
     if (!value || typeof value !== 'object' || !('operation' in value) || !value.operation || typeof value.operation !== 'object') return false;
     const operation = value.operation;
-    if (!('path' in operation) || typeof operation.path !== 'string' || !('status' in operation) || !['pending', 'unknown'].includes(String(operation.status)) || !('action' in operation) || !['rename', 'delete'].includes(String(operation.action))) return false;
-    return path === operation.path || path.startsWith(`${operation.path}/`);
+    if (!('status' in operation) || !['pending', 'unknown'].includes(String(operation.status)) || !('action' in operation) || !['rename', 'delete', 'restore_hunk', 'restore', 'pull', 'switch'].includes(String(operation.action))) return false;
+    const paths = 'paths' in operation && Array.isArray(operation.paths) ? operation.paths.filter((entry): entry is string => typeof entry === 'string') : 'path' in operation && typeof operation.path === 'string' ? [operation.path] : [];
+    return paths.some(source => affected(path, source) || affected(source, path));
   });
 }
+async function guardDocuments(documents: EditorDocument[], allowMutation = false): Promise<boolean> {
+  if (documents.some(document => document.saving || !allowMutation && developmentEditorMutationAffects(document.projectId, document.taskId, document.path))) return false;
+  const dirty = documents.filter(documentDirty);
+  if (!dirty.length) return true;
+  const approved = await confirmDiscard({ title: t('dev.discardDraft'), content: dirty.map(document => t('dev.discardDraft.file', { path: document.path })).join('\n'), confirmText: t('dev.discardDraft') });
+  return approved && documents.every(document => useDevelopmentEditor.getState().documents[document.id] === document);
+}
+export async function guardDevelopmentDocuments(projectId: string, taskId: string | null, paths: string[], workspacePath?: string, allowMutation = false): Promise<boolean> {
+  if (!allowMutation && paths.some(path => developmentEditorMutationAffects(projectId, taskId, path))) return false;
+  return guardDocuments(Object.values(useDevelopmentEditor.getState().documents).filter(document => matches(document, projectId, taskId, paths, workspacePath)), allowMutation);
+}
 export async function guardDevelopmentDraft(allowMutation = false): Promise<boolean> {
-  const current = useDevelopmentEditor.getState();
-  if (!allowMutation && current.projectId && current.path && developmentEditorMutationAffects(current.projectId, current.taskId, current.path)) return false;
-  if (!hasDevelopmentDraft()) return true;
-  const { draft, file } = useDevelopmentEditor.getState();
-  return await confirmDiscard({ title: t('dev.discardDraft'), content: t('dev.discardDraft.file', { path: file?.path ?? '' }), confirmText: t('dev.discardDraft') }) && useDevelopmentEditor.getState().draft === draft && useDevelopmentEditor.getState().file === file;
+  const state = useDevelopmentEditor.getState();
+  if (!allowMutation && state.tabs.some(tab => developmentEditorMutationAffects(tab.projectId, tab.taskId, tab.path))) return false;
+  return guardDocuments(Object.values(state.documents), allowMutation);
 }
 export async function discardDevelopmentDraft(): Promise<boolean> {
-  const epoch = useDevelopment.getState().epoch;
-  if (!await guardDevelopmentDraft() || epoch !== useDevelopment.getState().epoch) return false;
-  const current = useDevelopmentEditor.getState();
-  ++revision;
-  useDevelopmentEditor.setState({ draft: current.file?.text ?? '', disk: null, error: null, saving: false, busy: false });
+  const documents = useDevelopmentEditor.getState().documents, epoch = useDevelopment.getState().epoch;
+  if (!await guardDevelopmentDraft() || epoch !== useDevelopment.getState().epoch || useDevelopmentEditor.getState().documents !== documents) return false;
+  useDevelopmentEditor.setState(state => {
+    const next = Object.fromEntries(Object.entries(state.documents).map(([id, document]) => [id, { ...document, draft: document.file?.text ?? '', disk: null, error: null }]));
+    return { documents: next, ...(state.activeId && next[state.activeId] ? next[state.activeId] : {}) };
+  });
   return true;
 }
-useDevelopment.subscribe((state, previous) => {
-  if (state.epoch !== previous.epoch) useDevelopmentEditor.getState().reset();
-});
+export function openDevelopmentDocument(tab: Omit<DocumentTab, 'id'>): void {
+  const id = `${documentId(tab.projectId, tab.taskId, tab.path, tab.workspacePath)}:${tab.mode}`;
+  const scope = documentScope(tab.projectId, tab.taskId, tab.workspacePath);
+  useDevelopmentEditor.setState(state => ({ tabs: state.tabs.some(item => item.id === id) ? state.tabs.map(item => item.id === id ? { ...tab, id } : item) : [...state.tabs, { ...tab, id }], activeTabs: { ...state.activeTabs, [scope]: id } }));
+}
+export async function closeDevelopmentDocuments(ids: string[]): Promise<boolean> {
+  const state = useDevelopmentEditor.getState(), tabs = state.tabs.filter(tab => ids.includes(tab.id));
+  if (tabs.some(tab => developmentEditorMutationAffects(tab.projectId, tab.taskId, tab.path))) return false;
+  const documentIds = new Set(tabs.filter(tab => tab.mode === 'file').map(tab => documentId(tab.projectId, tab.taskId, tab.path, tab.workspacePath)));
+  const documents = Object.values(state.documents).filter(document => documentIds.has(document.id));
+  if (!await guardDocuments(documents) || useDevelopmentEditor.getState().tabs !== state.tabs || documents.some(document => useDevelopmentEditor.getState().documents[document.id] !== document)) return false;
+  useDevelopmentEditor.setState(current => {
+    const remaining = current.tabs.filter(tab => !ids.includes(tab.id));
+    const next = { ...current.documents }; for (const id of documentIds) delete next[id];
+    const activeTabs = { ...current.activeTabs };
+    for (const [scope, id] of Object.entries(activeTabs)) if (ids.includes(id)) {
+      const scoped = remaining.filter(tab => documentScope(tab.projectId, tab.taskId, tab.workspacePath) === scope);
+      activeTabs[scope] = scoped[scoped.length - 1]?.id ?? '';
+    }
+    return { tabs: remaining, documents: next, activeTabs, ...(current.activeId && documentIds.has(current.activeId) ? { ...empty, activeId: null } : {}) };
+  });
+  return true;
+}
+export function invalidateDevelopmentDocuments(projectId: string, taskId: string | null, paths: string[], workspacePath?: string): void {
+  useDevelopmentEditor.setState(state => {
+    const documents = Object.fromEntries(Object.entries(state.documents).filter(([, document]) => !matches(document, projectId, taskId, paths, workspacePath)));
+    return { documents, tabs: state.tabs.filter(tab => !matches(tab, projectId, taskId, paths, workspacePath)), ...(state.activeId && !documents[state.activeId] ? { ...empty, activeId: null } : {}) };
+  });
+}
+export function remapDevelopmentDocuments(projectId: string, taskId: string | null, path: string, destination: string, workspacePath: string): void {
+  useDevelopmentEditor.setState(state => {
+    const remap = <T extends Pick<EditorDocument, 'projectId' | 'taskId' | 'path' | 'workspacePath'>>(item: T): T => matches(item, projectId, taskId, [path], workspacePath) ? { ...item, path: `${destination}${item.path.slice(path.length)}` } : item;
+    const documents: Record<string, EditorDocument> = {};
+    let activeId = state.activeId;
+    for (const document of Object.values(state.documents)) {
+      const changed = remap(document), id = documentId(changed.projectId, changed.taskId, changed.path, changed.workspacePath);
+      documents[id] = changed === document ? document : { ...changed, id, revision: ++sequence, file: changed.file ? { ...changed.file, path: changed.path } : null };
+      if (state.activeId === document.id) activeId = id;
+    }
+    const idMap = new Map<string, string>();
+    const tabs = state.tabs.map(tab => { const changed = remap(tab), id = `${documentId(changed.projectId, changed.taskId, changed.path, changed.workspacePath)}:${changed.mode}`; idMap.set(tab.id, id); return { ...changed, id }; });
+    return { documents, tabs, activeId, activeTabs: Object.fromEntries(Object.entries(state.activeTabs).map(([scope, id]) => [scope, idMap.get(id) ?? id])), ...(activeId && documents[activeId] ? documents[activeId] : {}) };
+  });
+}
+useDevelopment.subscribe((state, previous) => { if (state.epoch !== previous.epoch) useDevelopmentEditor.getState().reset(); });

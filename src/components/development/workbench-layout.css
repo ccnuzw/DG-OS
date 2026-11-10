@@ -5,13 +5,12 @@
 .dev-context-details > .dev-detail { min-width: 0; padding: var(--spacing-2); overflow-wrap: anywhere; }
 .dev-context-details p { margin: 0; }
 
-.dev-workspace-body { position: relative; min-width: 0; overflow: hidden; grid-template-columns: 3.5rem minmax(0, 1fr); }
-.dev-workspace-body[data-drawer-open=true] { grid-template-columns: 3.5rem auto minmax(0, 1fr); }
-.dev-tool-rail { display: flex; flex-direction: column; align-items: stretch; gap: var(--spacing-1); min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: var(--spacing-1); border-inline-end: 1px solid var(--border-subtle); background: var(--surface-panel); }
+.dev-workspace-body { position: relative; display:flex; min-width: 0; overflow: hidden; }
+.dev-tool-rail { display: flex; flex:0 0 3.5rem; flex-direction: column; align-items: stretch; gap: var(--spacing-1); min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: var(--spacing-1); border-inline-end: 1px solid var(--border-subtle); background: var(--surface-panel); }
 .dev-tool-rail > button { flex-shrink: 0; width: 100%; min-width: 0; min-height: 2.75rem; height: auto; padding: var(--spacing-2) var(--spacing-1); white-space: normal; overflow-wrap: anywhere; }
 .dev-tool-rail > button[data-active=true] { background: var(--surface-inset); color: var(--text-primary); box-shadow: inset 2px 0 var(--accent-default); }
 .dev-tool-rail > button:focus-visible, .dev-session-tabs > button:focus-visible { outline: 1px solid var(--border-focus); outline-offset: -2px; }
-.dev-navigation { position: relative; display: flex; flex-direction: column; width: 24rem; min-width: 0; min-height: 0; overflow: hidden; padding: 0; border-inline-end: 1px solid var(--border-subtle); background: var(--surface-panel); }
+.dev-navigation { position: relative; display: flex; flex:0 0 auto; flex-direction: column; width: 24rem; max-width:40%; min-width: 0; min-height: 0; overflow: hidden; padding: 0; border-inline-end: 1px solid var(--border-subtle); background: var(--surface-panel); }
 /* Half-rem resize steps keep geometry declarative under D068's no-inline-style rule. */
 .dev-workspace[data-drawer-width="18"] .dev-navigation { width: 18rem; }
 .dev-workspace[data-drawer-width="18.5"] .dev-navigation { width: 18.5rem; }
@@ -82,14 +81,9 @@
 .dev-panel-resizer:hover { background: var(--accent-default); }
 .dev-panel-resizer:focus-visible, .dev-context-details summary:focus-visible { outline: 1px solid var(--border-focus); outline-offset: -1px; }
 
-.dev-workspace-main { overflow: hidden; }
-.dev-session-tabs { display: flex; flex-direction: column; flex-shrink: 0; min-width: 0; max-width: 100%; border-bottom: 1px solid var(--border-subtle); background: var(--surface-panel); }
-.dev-conversation-tablist { display: flex; min-width: 0; gap: var(--spacing-1); overflow-x: auto; overscroll-behavior-x: contain; padding: var(--spacing-1) var(--spacing-2); }
-.dev-conversation-tab { display: flex; flex-shrink: 0; align-items: center; max-width: min(26rem, 100%); border-bottom: 2px solid transparent; }
-.dev-conversation-tab[data-selected=true] { background: var(--surface-inset); border-bottom-color: var(--accent-default); }
-.dev-conversation-tab [role=tab] { flex: 1; min-width: 0; height: auto; min-height: 3rem; white-space: normal; }
-.dev-tab-name { display: grid; gap: var(--spacing-1); min-width: 0; max-width: 16rem; overflow: hidden; text-align: start; text-overflow: ellipsis; white-space: nowrap; }
-.dev-tab-name small { color: var(--text-secondary); font-size: var(--font-size-xs); font-weight: 400; }
+.dev-workspace-main { flex:1 1 24rem; overflow: hidden; container-type: inline-size; }
+.dev-session-tabs { flex:none; min-width:0; max-width:100%; background:var(--surface-panel); }
+.dev-tab-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .dev-tab-rename { display: flex; align-items: end; gap: var(--spacing-2); flex-wrap: wrap; padding: var(--spacing-2); }
 .dev-session-project h3 { margin: var(--spacing-3) 0 var(--spacing-1); color: var(--text-secondary); font-size: var(--font-size-xs); }
 .dev-conversation-pane { flex: 1; min-width: 0; min-height: 0; border: 0; container-type: inline-size; }
@@ -106,7 +100,6 @@
 .dev-nav-search { min-width: 0; }
 .dev-workspace [hidden] { display: none !important; }
 
-.dev-workspace[data-compact=true] .dev-workspace-body[data-drawer-open] { grid-template-columns: 3.5rem minmax(0, 1fr); }
 .dev-workspace[data-compact=true] .dev-navigation { position: absolute; z-index: 4; inset: 0 auto 0 3.5rem; max-width: calc(100% - 3.5rem); max-height: 100%; border-inline-end: 1px solid var(--border-control); box-shadow: var(--shadow-md); }
 
 .dev-main-view-nav, .dev-main-tool-header { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: var(--spacing-2); padding: var(--spacing-2); border-bottom: 1px solid var(--border-subtle); }
@@ -124,3 +117,68 @@
 .dev-composer-location > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dev-composer-location > svg { flex-shrink: 0; }
 @container (max-width: 600px) { .dev-main-tool-surface .dev-comparison, .dev-main-tool-surface .dev-command-catalog { grid-template-columns: minmax(0, 1fr); } }
+.dev-conversation-column { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.dev-document-column { position: relative; display: flex; flex: 0 1 auto; flex-direction: column; min-width: 0; min-height: 0; max-width: 55%; padding-inline-start: .5rem; border-inline-start: 1px solid var(--border-subtle); overflow: hidden; background:var(--surface-panel); }
+.dev-document-column > .dev-panel-resizer { right: auto; left: 0; }
+.dev-workspace[data-document-width="18"] .dev-document-column { width: 18rem; }
+.dev-workspace[data-document-width="18.5"] .dev-document-column { width: 18.5rem; }
+.dev-workspace[data-document-width="19"] .dev-document-column { width: 19rem; }
+.dev-workspace[data-document-width="19.5"] .dev-document-column { width: 19.5rem; }
+.dev-workspace[data-document-width="20"] .dev-document-column { width: 20rem; }
+.dev-workspace[data-document-width="20.5"] .dev-document-column { width: 20.5rem; }
+.dev-workspace[data-document-width="21"] .dev-document-column { width: 21rem; }
+.dev-workspace[data-document-width="21.5"] .dev-document-column { width: 21.5rem; }
+.dev-workspace[data-document-width="22"] .dev-document-column { width: 22rem; }
+.dev-workspace[data-document-width="22.5"] .dev-document-column { width: 22.5rem; }
+.dev-workspace[data-document-width="23"] .dev-document-column { width: 23rem; }
+.dev-workspace[data-document-width="23.5"] .dev-document-column { width: 23.5rem; }
+.dev-workspace[data-document-width="24"] .dev-document-column { width: 24rem; }
+.dev-workspace[data-document-width="24.5"] .dev-document-column { width: 24.5rem; }
+.dev-workspace[data-document-width="25"] .dev-document-column { width: 25rem; }
+.dev-workspace[data-document-width="25.5"] .dev-document-column { width: 25.5rem; }
+.dev-workspace[data-document-width="26"] .dev-document-column { width: 26rem; }
+.dev-workspace[data-document-width="26.5"] .dev-document-column { width: 26.5rem; }
+.dev-workspace[data-document-width="27"] .dev-document-column { width: 27rem; }
+.dev-workspace[data-document-width="27.5"] .dev-document-column { width: 27.5rem; }
+.dev-workspace[data-document-width="28"] .dev-document-column { width: 28rem; }
+.dev-workspace[data-document-width="28.5"] .dev-document-column { width: 28.5rem; }
+.dev-workspace[data-document-width="29"] .dev-document-column { width: 29rem; }
+.dev-workspace[data-document-width="29.5"] .dev-document-column { width: 29.5rem; }
+.dev-workspace[data-document-width="30"] .dev-document-column { width: 30rem; }
+.dev-workspace[data-document-width="30.5"] .dev-document-column { width: 30.5rem; }
+.dev-workspace[data-document-width="31"] .dev-document-column { width: 31rem; }
+.dev-workspace[data-document-width="31.5"] .dev-document-column { width: 31.5rem; }
+.dev-workspace[data-document-width="32"] .dev-document-column { width: 32rem; }
+.dev-workspace[data-document-width="32.5"] .dev-document-column { width: 32.5rem; }
+.dev-workspace[data-document-width="33"] .dev-document-column { width: 33rem; }
+.dev-workspace[data-document-width="33.5"] .dev-document-column { width: 33.5rem; }
+.dev-workspace[data-document-width="34"] .dev-document-column { width: 34rem; }
+.dev-workspace[data-document-width="34.5"] .dev-document-column { width: 34.5rem; }
+.dev-workspace[data-document-width="35"] .dev-document-column { width: 35rem; }
+.dev-workspace[data-document-width="35.5"] .dev-document-column { width: 35.5rem; }
+.dev-workspace[data-document-width="36"] .dev-document-column { width: 36rem; }
+.dev-workspace[data-document-width="36.5"] .dev-document-column { width: 36.5rem; }
+.dev-workspace[data-document-width="37"] .dev-document-column { width: 37rem; }
+.dev-workspace[data-document-width="37.5"] .dev-document-column { width: 37.5rem; }
+.dev-workspace[data-document-width="38"] .dev-document-column { width: 38rem; }
+.dev-workspace[data-document-width="38.5"] .dev-document-column { width: 38.5rem; }
+.dev-workspace[data-document-width="39"] .dev-document-column { width: 39rem; }
+.dev-workspace[data-document-width="39.5"] .dev-document-column { width: 39.5rem; }
+.dev-workspace[data-document-width="40"] .dev-document-column { width: 40rem; }
+.dev-workspace[data-document-width="40.5"] .dev-document-column { width: 40.5rem; }
+.dev-workspace[data-document-width="41"] .dev-document-column { width: 41rem; }
+.dev-workspace[data-document-width="41.5"] .dev-document-column { width: 41.5rem; }
+.dev-workspace[data-document-width="42"] .dev-document-column { width: 42rem; }
+.dev-workspace[data-compact=true] .dev-document-column { width: 100%; max-width: 100%; flex: 1; padding-inline-start: 0; }
+.dev-workspace[data-compact=true] .dev-document-column > .dev-panel-resizer { display: none; }
+.dev-commit-column { flex:0 0 25rem; min-width:0; min-height:0; overflow:hidden; border-inline-end:1px solid var(--border-subtle); background:var(--surface-panel); }
+.dev-workspace-body[data-commit-overlay=true] > .dev-commit-column { position:absolute; z-index:5; inset:0 0 0 3.5rem; border-inline-start:1px solid var(--border-control); box-shadow:var(--shadow-md); }
+.dev-drawer-content:has(> div:not([hidden]) > .dev-explorer-tabs) { overflow:hidden; padding:0; }
+.dev-drawer-content > div:has(> .dev-explorer-tabs):not([hidden]) { display:flex; flex:1; flex-direction:column; min-height:0; overflow:hidden; }
+.dev-drawer-content > div:has(> .dev-explorer-tabs) > .dev-explorer-location, .dev-drawer-content > div:has(> .dev-explorer-tabs) > .dev-explorer-tabs { flex:none; padding-inline:var(--spacing-2); }
+.dev-drawer-content > div:has(> .dev-explorer-tabs) > div:has(> .git-panel):not([hidden]) { flex:1; min-height:0; overflow:hidden; }
+.dev-drawer-content > div:has(> .dev-explorer-tabs) > div:has(> .dev-file-explorer):not([hidden]) { display:flex; flex:1; flex-direction:column; min-height:0; overflow:hidden; }
+.dev-navigation .dev-file-explorer:has(> .dev-file-browser) { display:flex; flex:1; flex-direction:column; min-height:0; overflow:hidden; }
+.dev-navigation .dev-file-explorer:has(> .dev-file-browser) > :not(.dev-file-browser) { flex:none; }
+.dev-navigation .dev-file-browser { display:flex; flex:1; flex-direction:column; min-height:0; overflow:hidden; }
+.dev-navigation .dev-file-browser > .dev-file-list { flex:1; min-height:0; max-height:none; overscroll-behavior:contain; }

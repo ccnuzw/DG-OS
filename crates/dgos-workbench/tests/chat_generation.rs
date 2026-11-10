@@ -197,6 +197,10 @@ async fn fx() -> Fx {
     let url = format!("sqlite://{}?mode=rwc", db_path.display());
     let db = dgos_db::establish_connection(&url).await.unwrap();
     Migrator::up(&db, None).await.unwrap();
+    let users=dgos_db::UserRepository::new(db.clone());
+    for (id,username) in [(ALICE,"Alice"),(BOB,"Bob")] {
+        users.insert(dgos_db::NewUser{id,username,username_key:id,password_hash:"fixture",now:1}).await.unwrap();
+    }
     let up = Upstream::start().await;
     let vault = Arc::new(MemoryCredentialVault::default());
     let provider = seed_provider(
@@ -299,14 +303,13 @@ async fn session(fx: &Fx, user: &str) -> ChatSession {
 }
 
 fn send_input(session: &str, content: &str) -> SendChatInput {
-    SendChatInput {
-        session_id: session.into(),
-        content: content.into(),
-        client_request_id: uuid::Uuid::new_v4().to_string(),
-        accept_destination: None,
-        tools: vec![],
-        asset_ids: vec![],
-    }
+    SendChatInput { skill_mode: Default::default(), authorized_skill_refs: Vec::new(), session_id: session.into(),
+    foundation: Default::default(),
+    content: content.into(),
+    client_request_id: uuid::Uuid::new_v4().to_string(),
+    accept_destination: None,
+    tools: vec![],
+    asset_ids: vec![], }
 }
 
 async fn start(fx: &Fx, user: &str, input: SendChatInput) -> Result<Sent, ChatError> {
@@ -338,6 +341,8 @@ async fn regenerate(
             user,
             "main",
             RegenerateChatInput {
+                skill_mode: Default::default(), authorized_skill_refs: Vec::new(),
+                foundation: Default::default(),
                 message_id: message_id.into(),
                 client_request_id: request_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                 accept_destination: None,
@@ -480,9 +485,7 @@ async fn a_streamed_reply_is_saved_with_the_snapshot_and_feeds_the_next_turn() {
         })
         .collect();
     assert_eq!(joined, "Hello world");
-    let ChatEvent::Done { message } = terminal(&events) else {
-        panic!("done")
-    };
+    let ChatEvent::Done { message, .. } = terminal(&events) else { panic!("done") };
     assert_eq!(
         (message.content.as_str(), message.status.as_str()),
         ("Hello world", "completed")
@@ -762,10 +765,8 @@ async fn repeats_and_concurrent_sends_never_reach_the_upstream_twice() {
     let conflict = start(
         &fx,
         ALICE,
-        SendChatInput {
-            content: "different".into(),
-            ..input.clone()
-        },
+        SendChatInput { skill_mode: Default::default(), authorized_skill_refs: Vec::new(), content: "different".into(),
+        ..input.clone() },
     )
     .await;
     assert_eq!(conflict.err(), Some(ChatError::RequestIdConflict));
@@ -784,10 +785,8 @@ async fn repeats_and_concurrent_sends_never_reach_the_upstream_twice() {
     let not_a_uuid = start(
         &fx,
         ALICE,
-        SendChatInput {
-            client_request_id: "nope".into(),
-            ..send_input(&s.id, "x")
-        },
+        SendChatInput { skill_mode: Default::default(), authorized_skill_refs: Vec::new(), client_request_id: "nope".into(),
+        ..send_input(&s.id, "x") },
     )
     .await;
     assert_eq!(not_a_uuid.err(), Some(ChatError::InvalidMessageContent));
@@ -909,10 +908,8 @@ async fn each_send_rereads_the_provider_and_blocks_a_changed_destination() {
     let confirmed = start(
         &fx,
         ALICE,
-        SendChatInput {
-            accept_destination: Some(fingerprint.clone()),
-            ..send_input(&s.id, "to the new host")
-        },
+        SendChatInput { skill_mode: Default::default(), authorized_skill_refs: Vec::new(), accept_destination: Some(fingerprint.clone()),
+        ..send_input(&s.id, "to the new host") },
     )
     .await
     .unwrap();
@@ -1068,18 +1065,16 @@ async fn history_over_budget_drops_whole_oldest_turns_and_reports_them() {
         endpoint_fingerprint: "seed", skills: &[], generation: &dgos_types::GenerationParameters::default(), tools: &[], })
         .await
         .unwrap();
-        repo.finalize_generation(&FinalizeGeneration {
-            user: ALICE,
-            assistant_message_id: &assistant,
-            task_id: &task,
-            content: &format!("reply-{i}-{}", "r".repeat(7000)),
-            message_status: "completed",
-            finish_reason: Some("stop"),
-            message_error: None,
-            task_status: "succeeded",
-            task_error: None,
-            total_tokens: Some(1),
-        })
+        repo.finalize_generation(&FinalizeGeneration { evidence: None, user: ALICE,
+        assistant_message_id: &assistant,
+        task_id: &task,
+        content: &format!("reply-{i}-{}", "r".repeat(7000)),
+        message_status: "completed",
+        finish_reason: Some("stop"),
+        message_error: None,
+        task_status: "succeeded",
+        task_error: None,
+        total_tokens: Some(1), })
         .await
         .unwrap();
     }
@@ -1155,9 +1150,7 @@ async fn regeneration_replaces_the_reply_only_when_the_new_one_succeeds() {
         regenerate(&fx, ALICE, &ack.assistant_message_id, Some(request.clone()))
             .await
             .unwrap();
-    let ChatEvent::Done { message } = terminal(&events) else {
-        panic!("done")
-    };
+    let ChatEvent::Done { message, .. } = terminal(&events) else { panic!("done") };
     assert_eq!(message.content, "new answer");
     let listed = messages(&fx, ALICE, &s.id).await;
     assert_eq!(
@@ -1232,6 +1225,8 @@ async fn restart_recovery_finalizes_unfinished_generations_without_resending() {
             ALICE,
             "main",
             RegenerateChatInput {
+                skill_mode: Default::default(), authorized_skill_refs: Vec::new(),
+                foundation: Default::default(),
                 message_id: ack.assistant_message_id.clone(),
                 client_request_id: uuid::Uuid::new_v4().to_string(),
                 accept_destination: None,
@@ -1697,4 +1692,228 @@ async fn public_executor_streams_real_deltas_and_aborts_on_closed_sink() {
     assert_eq!(*received.lock().unwrap(), vec!["visible-piece"]);
     until(|| f.up.open() == 0).await;
     assert_eq!(f.up.hits(), 1);
+}
+
+#[tokio::test]
+async fn captured_account_lease_cannot_dispatch_after_same_account_relogin() {
+    let fx=fx().await;let s=session(&fx,ALICE).await;
+    let lease=tokio_util::sync::CancellationToken::new();
+    let bound=fx.chat.with_account_lease(lease.clone());
+    let sent=bound.send(&fx.providers,&fx.skills,ALICE,"main",send_input(&s.id,"old lease")).await.unwrap();
+    lease.cancel();
+    let sink=Collect::default();bound.run_generation(&fx.providers,sent.job.unwrap(),&sink).await;
+    assert_eq!(fx.up.hits(),0,"revoked prepared generation cannot dispatch");
+    let run=bound.get_run(ALICE,dgos_workbench::GetChatRunInput{task_id:sent.ack.task_id}).await;
+    assert!(run.is_err(),"old lease cannot inspect through bound manager");
+    let fresh=fx.chat.with_account_lease(tokio_util::sync::CancellationToken::new());
+    assert!(fresh.list_runs(ALICE,dgos_workbench::ListChatRunsInput{session_id:s.id}).await.is_ok(),"new login does not revive old lease but can inspect account history");
+}
+
+#[tokio::test]
+async fn context_inspection_is_read_only_and_discloses_attachment_refusal() {
+    let fx=fx().await;let s=session(&fx,ALICE).await;
+    let assets=dgos_workbench::ChatAssets::new(fx.db.clone());
+    let asset=assets.import(ALICE,dgos_workbench::ChatAssetImportInput{name:"large-context.txt".into(),mime:"text/plain".into(),base64:{use base64::Engine as _;base64::engine::general_purpose::STANDARD.encode(vec![b'x';24*1024])}}).await.unwrap();
+    let mcp=dgos_mcp::McpManager::new(fx.db.clone());
+    let before=scalar(&fx.db,"SELECT COUNT(*) FROM usage_logs").await;
+    let budget=fx.chat.inspect_context(&fx.providers,&fx.skills,&mcp,ALICE,dgos_workbench::InspectChatContextInput{session_id:s.id.clone(),content:"analyze source".into(),asset_ids:vec![asset.id],tools:vec![],skill_mode:Default::default(),authorized_skill_refs:vec![],foundation:Default::default()}).await.unwrap();
+    assert!(!budget.can_send);assert_eq!(budget.rejection.as_deref(),Some("context_too_long"));assert_eq!(budget.host_text_limit_bytes,24*1024);
+    assert_eq!(fx.up.hits(),0);assert!(messages(&fx,ALICE,&s.id).await.is_empty());assert_eq!(scalar(&fx.db,"SELECT COUNT(*) FROM usage_logs").await,before);
+}
+
+#[tokio::test]
+async fn explicit_summary_uses_provider_output_retains_history_and_replays_without_billing() {
+    let fx=fx().await;let s=session(&fx,ALICE).await;
+    fx.up.script(reply("original confirmed constraint"));turn(&fx,ALICE,&s.id,"retain original source").await;
+    fx.up.script(reply("Goals: retain source. Constraints: no replay. Results: confirmed original answer. Open tasks: next intent."));
+    let request=dgos_workbench::SummarizeChatContextInput{session_id:s.id.clone(),client_request_id:uuid::Uuid::new_v4().to_string(),confirmed:true,accept_destination:None};
+    let sent=fx.chat.summarize_context(&fx.providers,&fx.skills,ALICE,"main",request.clone()).await.unwrap();
+    let sink=Collect::default();fx.chat.run_generation(&fx.providers,sent.job.unwrap(),&sink).await;
+    assert!(sink.take().iter().any(|e|matches!(e,ChatEvent::SummaryDone{summary,..}if summary.content.starts_with("Goals: retain source."))));
+    assert_eq!(messages(&fx,ALICE,&s.id).await.len(),2,"summary cannot insert synthetic conversation messages");
+    let replay=fx.chat.summarize_context(&fx.providers,&fx.skills,ALICE,"main",request).await.unwrap();assert!(replay.ack.replayed&&replay.job.is_none());assert_eq!(fx.up.hits(),2);
+    fx.up.script(reply("new answer"));turn(&fx,ALICE,&s.id,"next question").await;
+    assert!(fx.up.body(2)["messages"].as_array().unwrap().iter().any(|m|m["role"]=="user"&&m["content"].as_str().is_some_and(|s|s.contains("Untrusted conversation summary")&&s.contains("Goals: retain source."))));
+}
+
+async fn foundation_resource(fx: &Fx, session: &str, text: &str) -> dgos_types::AiResource {
+    use base64::Engine as _;
+    fx.chat.import_ai_resource(ALICE, session, dgos_types::AiResourceImport {
+        name: "source.txt".into(), mime: "text/plain".into(),
+        base64: base64::engine::general_purpose::STANDARD.encode(text),
+    }).await.unwrap()
+}
+
+fn foundation_reference(resource: &dgos_types::AiResource) -> dgos_types::AiContextRef {
+    dgos_types::AiContextRef { resource_id: resource.id.clone(), sha256: resource.sha256.clone(),
+        start: 0, max_bytes: 8192, mode: Default::default() }
+}
+
+#[tokio::test]
+async fn foundation_inline_context_is_session_owned_and_records_actual_range() {
+    let fx=fx().await;let s=session(&fx,ALICE).await;let other=session(&fx,ALICE).await;
+    let resource=foundation_resource(&fx,&s.id,"xxSELECTED-SOURCEyy").await;
+    let mut reference=foundation_reference(&resource);reference.start=2;reference.max_bytes=15;
+    let mut input=send_input(&other.id,"read source");input.foundation.context_refs=vec![reference.clone()];
+    assert!(start(&fx,ALICE,input).await.is_err());
+    assert!(fx.chat.delete_ai_resource(BOB,&s.id,&resource.id).await.is_err());
+    let mut input=send_input(&s.id,"read source");input.foundation.context_refs=vec![reference];
+    fx.up.script(reply("source received"));
+    let sent=start(&fx,ALICE,input).await.unwrap();let task=sent.ack.task_id.clone();
+    assert!(!sent.job.as_ref().unwrap().is_tool_turn(),"inline source does not require tool support");
+    let sink=Collect::default();fx.chat.run_generation(&fx.providers,sent.job.unwrap(),&sink).await;
+    assert!(matches!(terminal(&sink.take()),ChatEvent::Done{..}));
+    let body=fx.up.body(0).to_string();assert!(body.contains("SELECTED-SOURCE"));assert!(!body.contains("xxSELECTED-SOURCEyy"));
+    let run=fx.chat.get_run(ALICE,dgos_workbench::GetChatRunInput{task_id:task}).await.unwrap();
+    let receipt=run.steps.iter().filter_map(|step|step.receipt.as_ref()).find_map(|value|value.get("context_receipts")).unwrap();
+    assert_eq!(receipt[0]["resource_id"],resource.id);assert_eq!(receipt[0]["start"],2);assert_eq!(receipt[0]["bytes"],15);
+    assert_eq!(scalar(&fx.db,"SELECT COUNT(*) FROM ai_run_bindings").await,0,"chat never creates module runs");
+}
+
+#[tokio::test]
+async fn foundation_schema_is_rejected_before_dispatch_and_validated_after_generation() {
+    let fx=fx().await;let s=session(&fx,ALICE).await;
+    let mut bad=send_input(&s.id,"structured output");
+    bad.foundation.output=dgos_types::AiOutputContract::JsonSchema{schema:json!({"$ref":"https://example.invalid/schema"})};
+    assert!(start(&fx,ALICE,bad).await.is_err());assert_eq!(fx.up.hits(),0);
+    let schema=json!({"type":"object","required":["answer"],"properties":{"answer":{"type":"integer"}},"additionalProperties":false});
+    let mut invalid=send_input(&s.id,"structured output");invalid.foundation.output=dgos_types::AiOutputContract::JsonSchema{schema:schema.clone()};
+    fx.up.script(reply("{\"answer\":\"wrong\"}"));
+    let sent=start(&fx,ALICE,invalid).await.unwrap();let sink=Collect::default();
+    fx.chat.run_generation(&fx.providers,sent.job.unwrap(),&sink).await;
+    let events=sink.take();assert_eq!(expect_error(terminal(&events)).1,"output_validation_failed");assert_eq!(fx.up.hits(),1,"no paid repair");
+    let mut valid=send_input(&s.id,"structured output");valid.foundation.output=dgos_types::AiOutputContract::JsonSchema{schema};
+    fx.up.script(reply("{\"answer\":42}"));let sent=start(&fx,ALICE,valid).await.unwrap();
+    fx.chat.run_generation(&fx.providers,sent.job.unwrap(),&sink).await;
+    assert!(matches!(terminal(&sink.take()),ChatEvent::Done{..}));
+}
+
+#[tokio::test]
+async fn foundation_deleted_source_blocks_admitted_send_and_regeneration() {
+    let fx=fx().await;let s=session(&fx,ALICE).await;
+    let resource=foundation_resource(&fx,&s.id,"immutable source").await;
+    fx.up.script(reply("original answer"));let (ack,_)=turn(&fx,ALICE,&s.id,"question").await;
+    let mut input=send_input(&s.id,"use imported source");input.foundation.context_refs=vec![foundation_reference(&resource)];
+    let sent=start(&fx,ALICE,input).await.unwrap();
+    assert!(fx.chat.delete_ai_resource(ALICE,&s.id,&resource.id).await.unwrap());
+    let sink=Collect::default();fx.chat.run_generation(&fx.providers,sent.job.unwrap(),&sink).await;
+    assert!(matches!(terminal(&sink.take()),ChatEvent::Error{..}));assert_eq!(fx.up.hits(),1);
+    let mut foundation=dgos_types::AiFoundationOptions::default();foundation.context_refs=vec![foundation_reference(&resource)];
+    let result=fx.chat.regenerate(&fx.providers,&fx.skills,ALICE,"main",RegenerateChatInput{message_id:ack.assistant_message_id,client_request_id:uuid::Uuid::new_v4().to_string(),accept_destination:None,foundation,skill_mode:Default::default(),authorized_skill_refs:vec![]}).await;
+    assert!(result.is_err());assert_eq!(fx.up.hits(),1);
+}
+
+
+#[tokio::test]
+async fn foundation_inspect_and_continue_cannot_reuse_deleted_source_coverage() {
+    let fx=fx().await;let s=session(&fx,ALICE).await;
+    let resource=foundation_resource(&fx,&s.id,"selected context").await;
+    let mut foundation=dgos_types::AiFoundationOptions::default();foundation.context_refs=vec![foundation_reference(&resource)];
+    let mcp=dgos_mcp::McpManager::new(fx.db.clone());
+    let budget=fx.chat.inspect_context(&fx.providers,&fx.skills,&mcp,ALICE,dgos_workbench::InspectChatContextInput{session_id:s.id.clone(),content:"read source".into(),asset_ids:vec![],tools:vec![],skill_mode:Default::default(),authorized_skill_refs:vec![],foundation:foundation.clone()}).await.unwrap();
+    assert!(budget.can_send);assert!(budget.text_bytes>"read source".len());assert_eq!(fx.up.hits(),0);
+    let mut input=send_input(&s.id,"read source");input.foundation=foundation.clone();fx.up.script(reply("retained progress"));
+    let sent=start(&fx,ALICE,input).await.unwrap();let task=sent.ack.task_id.clone();let sink=Collect::default();
+    fx.chat.run_generation(&fx.providers,sent.job.unwrap(),&sink).await;
+    assert!(fx.chat.delete_ai_resource(ALICE,&s.id,&resource.id).await.unwrap());
+    let continuation=fx.chat.continue_run(&fx.providers,&fx.skills,&mcp,ALICE,"main",dgos_workbench::ContinueChatRunInput{source_task_id:task,client_request_id:uuid::Uuid::new_v4().to_string(),intent:"continue with prior progress".into(),accept_destination:None,tools:vec![],skill_mode:Default::default(),authorized_skill_refs:vec![],foundation:Default::default()}).await;
+    assert!(continuation.is_err());assert_eq!(fx.up.hits(),1);
+    let inspect=fx.chat.inspect_context(&fx.providers,&fx.skills,&mcp,ALICE,dgos_workbench::InspectChatContextInput{session_id:s.id,content:"read source".into(),asset_ids:vec![],tools:vec![],skill_mode:Default::default(),authorized_skill_refs:vec![],foundation}).await;
+    assert!(inspect.is_err());assert_eq!(fx.up.hits(),1);
+}
+
+#[tokio::test]
+async fn foundation_regeneration_enforces_explicit_output_contract_without_repair() {
+    let fx=fx().await;let s=session(&fx,ALICE).await;fx.up.script(reply("original"));
+    let (ack,_)=turn(&fx,ALICE,&s.id,"question").await;
+    let mut foundation=dgos_types::AiFoundationOptions::default();foundation.output=dgos_types::AiOutputContract::JsonSchema{schema:json!({"type":"object","required":["value"]})};
+    fx.up.script(reply("not JSON"));
+    let sent=fx.chat.regenerate(&fx.providers,&fx.skills,ALICE,"main",RegenerateChatInput{message_id:ack.assistant_message_id.clone(),client_request_id:uuid::Uuid::new_v4().to_string(),accept_destination:None,foundation,skill_mode:Default::default(),authorized_skill_refs:vec![]}).await.unwrap();
+    let sink=Collect::default();fx.chat.run_generation(&fx.providers,sent.job.unwrap(),&sink).await;
+    let events=sink.take();assert_eq!(expect_error(terminal(&events)).1,"output_validation_failed");
+    assert_eq!(fx.up.hits(),2);assert!(messages(&fx,ALICE,&s.id).await.iter().any(|message|message.id==ack.assistant_message_id&&message.content=="original"));
+}
+
+
+#[tokio::test]
+async fn foundation_replay_cannot_relabel_an_existing_output_contract() {
+    let fx=fx().await;let s=session(&fx,ALICE).await;
+    let mut input=send_input(&s.id,"one structured answer");
+    input.foundation.output=dgos_types::AiOutputContract::JsonSchema{schema:json!({"type":"object"})};
+    fx.up.script(reply("{}"));let sent=start(&fx,ALICE,input.clone()).await.unwrap();let sink=Collect::default();
+    fx.chat.run_generation(&fx.providers,sent.job.unwrap(),&sink).await;
+    assert!(start(&fx,ALICE,input.clone()).await.unwrap().ack.replayed);
+    input.foundation.output=dgos_types::AiOutputContract::JsonSchema{schema:json!({"type":"array"})};
+    assert!(matches!(start(&fx,ALICE,input).await,Err(ChatError::RequestIdConflict)));
+    assert_eq!(fx.up.hits(),1);
+}
+
+#[tokio::test]
+async fn explicit_summary_never_covers_only_the_question_of_a_completed_turn() {
+    let fx = fx().await;
+    let s = session(&fx, ALICE).await;
+    fx.up.script(reply("first confirmed reply"));
+    turn(&fx, ALICE, &s.id, "first question").await;
+    fx.up.script(reply(&"a".repeat(16_000)));
+    turn(&fx, ALICE, &s.id, &"q".repeat(16_000)).await;
+    fx.up.script(reply("Summary of the first complete turn only."));
+    let sent = fx.chat.summarize_context(&fx.providers, &fx.skills, ALICE, "main", dgos_workbench::SummarizeChatContextInput {
+        session_id: s.id.clone(), client_request_id: uuid::Uuid::new_v4().to_string(), confirmed: true, accept_destination: None,
+    }).await.unwrap();
+    let sink = Collect::default();
+    fx.chat.run_generation(&fx.providers, sent.job.unwrap(), &sink).await;
+    let events = sink.take();
+    assert!(events.iter().any(|event| matches!(event, ChatEvent::SummaryDone { summary, .. } if summary.source_last_seq == 2)));
+    assert_eq!(messages(&fx, ALICE, &s.id).await.len(), 4);
+}
+
+#[tokio::test]
+async fn summary_terminal_persistence_failure_is_reported_as_audit_warning() {
+    let fx = fx().await;
+    let s = session(&fx, ALICE).await;
+    fx.up.script(reply("source answer"));
+    turn(&fx, ALICE, &s.id, "source question").await;
+    fx.up.script(reply(" "));
+    let sent = fx.chat.summarize_context(&fx.providers, &fx.skills, ALICE, "main", dgos_workbench::SummarizeChatContextInput {
+        session_id: s.id, client_request_id: uuid::Uuid::new_v4().to_string(), confirmed: true, accept_destination: None,
+    }).await.unwrap();
+    fx.db.execute_unprepared("CREATE TRIGGER reject_summary_terminal BEFORE UPDATE OF status ON chat_runs WHEN OLD.kind='summary' AND NEW.status='failed' BEGIN SELECT RAISE(ABORT,'synthetic terminal failure'); END").await.unwrap();
+    let sink = Collect::default();
+    fx.chat.run_generation(&fx.providers, sent.job.unwrap(), &sink).await;
+    assert!(sink.take().iter().any(|event| matches!(event, ChatEvent::Error { error_code, audit_warning, .. }
+        if error_code == "persistence_failed" && audit_warning.as_deref() == Some("terminal_persistence_failed"))));
+}
+
+#[tokio::test]
+async fn new_send_recovers_abandoned_model_evidence_before_message_status_changes() {
+    let fx = fx().await;
+    let s = session(&fx, ALICE).await;
+    let abandoned = start(&fx, ALICE, send_input(&s.id, "abandoned model")).await.unwrap();
+    let task = abandoned.ack.task_id.clone();
+    dgos_db::ChatRepository::new(fx.db.clone()).record_step(ALICE, &task, "model", "model", "admitted", false, false, None).await.unwrap();
+    drop(abandoned);
+    let next = start(&fx, ALICE, send_input(&s.id, "new explicit intent")).await.unwrap();
+    let run = fx.chat.get_run(ALICE, dgos_workbench::GetChatRunInput { task_id: task }).await.unwrap();
+    assert!(run.result_unknown, "message recovery must not hide abandoned model uncertainty");
+    drop(next);
+    assert_eq!(fx.up.hits(), 0);
+}
+
+#[tokio::test]
+async fn a_new_summary_recovers_abandoned_summary_admission() {
+    let fx = fx().await;
+    let s = session(&fx, ALICE).await;
+    fx.up.script(reply("confirmed source"));
+    turn(&fx, ALICE, &s.id, "source question").await;
+    let input = || dgos_workbench::SummarizeChatContextInput {
+        session_id: s.id.clone(), client_request_id: uuid::Uuid::new_v4().to_string(), confirmed: true, accept_destination: None,
+    };
+    let abandoned = fx.chat.summarize_context(&fx.providers, &fx.skills, ALICE, "main", input()).await.unwrap();
+    let task = abandoned.ack.task_id.clone();
+    drop(abandoned);
+    let next = fx.chat.summarize_context(&fx.providers, &fx.skills, ALICE, "main", input()).await.unwrap();
+    let previous = fx.chat.get_run(ALICE, dgos_workbench::GetChatRunInput { task_id: task }).await.unwrap();
+    assert_eq!(previous.status, "interrupted");
+    assert_eq!(fx.up.hits(), 1, "recovering an abandoned summary never bills another call");
+    drop(next);
 }

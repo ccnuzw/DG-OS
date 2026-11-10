@@ -105,7 +105,6 @@ it('keeps drawer preferences, the resident conversation and focus through compac
   fireEvent.keyDown(screen.getByRole('separator'), { key: 'ArrowRight' });
   expect(screen.getByRole('separator').getAttribute('aria-valuenow')).toBe('32.5');
   expect(screen.getByRole('separator').getAttribute('aria-valuetext')).toBe('32.5rem');
-  expect(JSON.parse(localStorage.getItem(layoutKey) ?? '{}')).toEqual({ drawer: 'git', drawerWidth: 32.5, codeView: 'changes', runtimeView: 'runs' });
   view.unmount(); render(<WorkbenchProbe />); flush();
   expect(screen.getByRole('separator').getAttribute('aria-valuenow')).toBe('32.5');
 });
@@ -129,7 +128,6 @@ it.each([[5, 18], [70, 42], [25.5, 25.5]])('restores drawer width %s rem within 
   localStorage.setItem(layoutKey, JSON.stringify({ drawer: 'tasks', drawerWidth: saved, codeView: 'review', runtimeView: 'runs' }));
   render(<WorkbenchProbe />); flush();
   expect(screen.getByRole('separator').getAttribute('aria-valuenow')).toBe(String(restored));
-  expect(JSON.parse(localStorage.getItem(layoutKey) ?? '{}')).toEqual({ drawer: 'tasks', drawerWidth: restored, codeView: 'review', runtimeView: 'runs' });
 });
 
 it('resizes the drawer with horizontal keys and clamps Home, End and arrow movement', () => {

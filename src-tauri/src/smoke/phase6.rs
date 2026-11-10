@@ -136,9 +136,9 @@ pub(super) async fn run(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
     fx.up.script(Script::Sse(vec![delta("PHASE6-STOP"),Step::Hold]));
     let closed = js(app,r#"
       await send('PHASE6-STOP-MESSAGE'); await until(()=>txt($(STREAM)).includes('PHASE6-STOP'));
-      $('button[aria-label="关闭 AI 会话"]').click();
+      $('button[aria-label="关闭 AI 助手"]').click();
       const stop=await until(()=>btn('停止并关闭')); stop.click();
-      return !!await until(()=>!$('button[aria-label="关闭 AI 会话"]'),12000);
+      return !!await until(()=>!$('button[aria-label="关闭 AI 助手"]'),12000);
     "#).await;
     let terminal = wait_rows(&fx.db,&turn_sql("PHASE6-STOP-MESSAGE"),terminal,10).await;
     checks.check("[12] stop-and-close waits for the persisted interrupted terminal",closed==true&&terminal.first().is_some_and(|r|r["status"]=="interrupted"),format!("closed={closed} rows={terminal:?}"));

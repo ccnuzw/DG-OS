@@ -261,9 +261,17 @@ async fn provider(listener: TcpListener, root: PathBuf) {
             while bytes.len() < start + length { let n = socket.read(&mut buffer).await.unwrap_or(0); if n == 0 { return; } bytes.extend_from_slice(&buffer[..n]); }
             let mut log = fs::OpenOptions::new().create(true).append(true).open(root.join("provider-wire.jsonl")).unwrap();
             writeln!(log,"{{\"role\":\"loopback-provider-fixture\",\"driver_pid\":{}}}",std::process::id()).unwrap();
-            // A single controlled tool proposal; a second model request would be a replay failure.
-            let body = json!({"id":"lifecycle-fixture","object":"chat.completion","model":"fixture-chat","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"local-tool-1","type":"function","function":{"name":"dgos_tool_0","arguments":"{\"text\":\"lifecycle-controlled\",\"delay\":60000}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}).to_string();
-            let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+            // Match the public tool stream while retaining the one-call/replay assertion.
+            let request: Value = serde_json::from_slice(&bytes[start..start + length]).unwrap();
+            let message = json!({"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"local-tool-1","type":"function","function":{"name":"dgos_tool_0","arguments":"{\"text\":\"lifecycle-controlled\",\"delay\":60000}"}}]});
+            let (content_type, body) = if request["stream"] == true {
+                let delta = json!({"id":"lifecycle-fixture","object":"chat.completion.chunk","model":"fixture-chat","choices":[{"index":0,"delta":message,"finish_reason":null}]});
+                let terminal = json!({"id":"lifecycle-fixture","object":"chat.completion.chunk","model":"fixture-chat","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}});
+                ("text/event-stream", format!("data: {delta}\n\ndata: {terminal}\n\ndata: [DONE]\n\n"))
+            } else {
+                ("application/json", json!({"id":"lifecycle-fixture","object":"chat.completion","model":"fixture-chat","choices":[{"index":0,"message":message,"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}).to_string())
+            };
+            let response = format!("HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
             let _ = socket.write_all(response.as_bytes()).await; let _ = socket.shutdown().await;
         });
     }

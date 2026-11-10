@@ -445,7 +445,8 @@ async fn scenario(app: AppHandle, world: ModWorld, ready: bool) {
     let after_upgrade = list(&app).await;
     checks.check("explicit update migrates the disabled retained release to the current bundle without granting new permissions",
         upgraded["outcome"] == "updated" && module(&after_upgrade, CONSOLE).is_some_and(|m|
-            m["version"] == "1.1.0" && m["official"] == true && m["enabled"] == false
+            m["version"].as_str().zip(m["integrity"].as_str()).is_some_and(|(version, integrity)| PinnedModuleAdmission::builtin().admits(CONSOLE, version, integrity))
+            && m["version"] != "1.0.0" && m["official"] == true && m["enabled"] == false
             && m["permissions"].as_array().is_some_and(|permissions| permissions.iter().all(|permission| permission["granted"] == false))),
         format!("{upgraded} {:?}", module(&after_upgrade, CONSOLE)));
 

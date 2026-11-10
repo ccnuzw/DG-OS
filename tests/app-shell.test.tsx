@@ -140,11 +140,11 @@ describe('navigation', () => {
     render(<MemoryRouter initialEntries={['/workbench']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><App /></MemoryRouter>);
     await screen.findByRole('heading', { name: '开始一次对话' });
     act(() => useChatStore.getState().setDraft('kept-session', 'unsent'));
-    expect(within(screen.getByRole('tab', { name: /AI 会话/ })).getByRole('img', { name: '未保存的内容' })).toBeTruthy();
+    expect(within(screen.getByRole('tab', { name: /AI 助手/ })).getByRole('img', { name: '未保存的内容' })).toBeTruthy();
     fireEvent.click(screen.getByRole('link', { name: '技能中心' }));
-    expect(within(screen.getByRole('tab', { name: /AI 会话/ })).getByRole('img', { name: '未保存的内容' })).toBeTruthy();
+    expect(within(screen.getByRole('tab', { name: /AI 助手/ })).getByRole('img', { name: '未保存的内容' })).toBeTruthy();
     act(() => useChatStore.getState().setDraft('kept-session', ''));
-    expect(within(screen.getByRole('tab', { name: /AI 会话/ })).queryByRole('img', { name: '未保存的内容' })).toBeNull();
+    expect(within(screen.getByRole('tab', { name: /AI 助手/ })).queryByRole('img', { name: '未保存的内容' })).toBeNull();
   });
 
   it('retranslates visible launcher feedback without losing its current query', async () => {

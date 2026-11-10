@@ -12,6 +12,11 @@ use tokio_util::sync::CancellationToken;
 mod operations;
 mod reconcile;
 mod file_diff;
+mod details;
+mod restore;
+mod commit;
+pub use commit::{GitCommitDetails, GitCommitDiffInput, GitCommitFile, GitCommitInput};
+pub use details::{GitDetails, GitDetailsInput, GitFileStats};
 pub use file_diff::{ProjectDiffInput, ProjectDiffSource};
 #[cfg(test)]
 mod tests;
@@ -57,6 +62,9 @@ pub struct DiscardFile { pub path: String, pub expected_hash: String }
 pub enum GitAction {
     Stage { paths: Vec<String> },
     Unstage { paths: Vec<String> },
+    Untrack { paths: Vec<String> },
+    Restore { paths: Vec<String>, confirmed: bool },
+    RestoreHunk { path: String, diff_hash: String, hunk_index: usize, confirmed: bool },
     Commit { message: String, confirm_full_index: bool, confirm_preexisting_staged: bool },
     Push { remote: String, trust_directory: bool, trust_network: bool },
     Switch { branch: String },
@@ -65,7 +73,7 @@ pub enum GitAction {
     Pull { remote: String, branch: String, preview_token: String, trust_directory: bool, trust_network: bool },
 }
 impl GitAction {
-    fn operation_kind(&self) -> &'static str { match self { Self::Stage { .. } => "git_stage", Self::Unstage { .. } => "git_unstage", Self::Commit { .. } => "git_commit", Self::Push { .. } => "git_push", Self::Pull { .. } => "git_pull", Self::Switch { .. } => "git_switch", Self::Merge { .. } => "git_merge", Self::Discard { .. } => "git_discard" } }
+    fn operation_kind(&self) -> &'static str { match self { Self::Stage { .. } => "git_stage", Self::Unstage { .. } => "git_unstage", Self::Untrack { .. } => "git_untrack", Self::Restore { .. } => "git_restore", Self::RestoreHunk { .. } => "git_restore_hunk", Self::Commit { .. } => "git_commit", Self::Push { .. } => "git_push", Self::Pull { .. } => "git_pull", Self::Switch { .. } => "git_switch", Self::Merge { .. } => "git_merge", Self::Discard { .. } => "git_discard" } }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -230,6 +238,7 @@ fn validate_paths(project: &Project, paths: &[String], index: &[GitIndexEntry]) 
     let root = files::open_root(project)?;
     for path in paths {
         files::relative(path, false)?;
+        if files::sensitive(path) { return Err("file_sensitive".into()); }
         if path.contains(['\r', '\n']) { return Err("invalid_git_paths".into()); }
         let mut current = PathBuf::new();
         for part in Path::new(path).components() {
@@ -237,7 +246,7 @@ fn validate_paths(project: &Project, paths: &[String], index: &[GitIndexEntry]) 
             match root.symlink_metadata(&current) {
                 Ok(m) if m.file_type().is_symlink() || (!m.is_dir() && current != Path::new(path)) || (current == Path::new(path) && !m.is_file()) => return Err("file_access_denied".into()),
                 Ok(_) => {},
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound && current == Path::new(path) && index.iter().any(|e| e.path == *path && matches!(e.mode.as_str(), "100644" | "100755")) => {},
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound && index.iter().any(|e| e.path == *path && matches!(e.mode.as_str(), "100644" | "100755")) => {},
                 Err(_) => return Err("file_access_denied".into()),
             }
         }
@@ -269,8 +278,22 @@ impl AgentManager {
         if head.as_deref().is_some_and(|h| !valid_oid(h)) { return Err("git_invalid_output".into()); }
         let index = parse_index(&output(path, &["ls-files", "--stage", "-z"], lease, &self.inner.stop, false).await?)?;
         let files = parse_status(&output(path, &["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], lease, &self.inner.stop, false).await?)?;
-        let staged_diff = text(output(path, &["diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-renames", "--binary", "--"], lease, &self.inner.stop, false).await?)?;
-        let worktree_diff = text(output(path, &["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--binary", "--"], lease, &self.inner.stop, false).await?)?;
+        let mut display_paths = BTreeSet::new();
+        for file in &files {
+            for selected in std::iter::once(&file.path).chain(file.original_path.iter()) {
+                if !files::sensitive(selected) && !index.iter().any(|e| e.path == *selected && !matches!(e.mode.as_str(), "100644" | "100755")) { display_paths.insert(selected.as_str()); }
+            }
+        }
+        let mut diffs = Vec::new();
+        for cached in [true, false] {
+            if display_paths.is_empty() { diffs.push(String::new()); continue; }
+            let mut args = vec!["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--binary"];
+            if cached { args.push("--cached"); }
+            args.push("--"); args.extend(display_paths.iter().copied());
+            diffs.push(crate::executions::sanitize_text(&text(output(path, &args, lease, &self.inner.stop, false).await?)?));
+        }
+        let worktree_diff = diffs.pop().ok_or("git_invalid_output")?;
+        let staged_diff = diffs.pop().ok_or("git_invalid_output")?;
         let conflicts = index.iter().filter(|e| e.stage != 0).cloned().collect();
         crate::projects::validate_directory(project).await?;
         Ok(GitStatus { overview: ProjectGitOverview { kind: "git".into(), path: project.path.clone(), branch, head, files, conflicts, staged_diff, worktree_diff }, index })
@@ -295,8 +318,9 @@ impl AgentManager {
         let root = files::open_root(&project)?;
         for entry in &review.files {
             files::relative(&entry.path, false)?;
+            if files::sensitive(&entry.path) { return Err("git_review_incomplete".into()); }
             let version = match files::read_at(&root, &entry.path) {
-                Ok(view) => { if view.reason.is_some() || view.hash.is_none() { return Err("git_review_incomplete".into()); } view.hash.unwrap() },
+                Ok(view) => { if view.hash.is_none() || view.reason.as_deref().is_some_and(|r| r != "file_binary") { return Err("git_review_incomplete".into()); } view.hash.unwrap() },
                 Err(error) if error == "file_not_found" => "deleted".into(),
                 Err(_) => return Err("git_review_incomplete".into()),
             };

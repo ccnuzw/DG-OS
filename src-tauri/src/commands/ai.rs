@@ -18,6 +18,18 @@ fn invocation(app: &tauri::AppHandle, window: &WebviewWindow, attachment_id: &st
     AiInvocation::bind(call, &session, account, attachment)
 }
 
+// Only host-selected control commands enter this pool; the renderer cannot choose a class.
+fn control_invocation(app: &tauri::AppHandle, window: &WebviewWindow, attachment_id: &str, route: &str, call_id: &str) -> DgosResult<AiInvocation> {
+    host::module_host_window(window)?;
+    let call = app.state::<Arc<ModuleCallRouter>>().admit_control_once(route, attachment_id, call_id)
+        .map_err(|e| if matches!(e, CallRejection::Busy) { DgosError::RateLimitExceeded } else { DgosError::PermissionDenied })?;
+    let (session, account, attachment) = match host::module_call_leases(window, &call) {
+        Ok(leases) => leases,
+        Err(error) => { call.finish(ModuleRequestOutcome::Denied); return Err(error); }
+    };
+    AiInvocation::bind(call, &session, account, attachment)
+}
+
 #[tauri::command]
 pub async fn module_run_ai(app: tauri::AppHandle, window: WebviewWindow, attachment_id: String, route: String, call_id: String, input: AiRunInput, on_event: Channel<AiEvent>) -> CommandResponse<AiTerminal> {
     let invocation = match invocation(&app, &window, &attachment_id, &route, &call_id) { Ok(v) => v, Err(e) => return CommandResponse::from(Err(e)) };
@@ -50,18 +62,48 @@ pub async fn module_list_ai_tools(app: tauri::AppHandle, window: WebviewWindow, 
 
 #[tauri::command]
 pub async fn module_list_ai_runs(app: tauri::AppHandle, window: WebviewWindow, attachment_id: String, route: String, call_id: String, input: AiRunListInput) -> CommandResponse<AiRunPage> {
-    let invocation = match invocation(&app, &window, &attachment_id, &route, &call_id) { Ok(v) => v, Err(e) => return CommandResponse::from(Err(e)) };
+    let invocation = match control_invocation(&app, &window, &attachment_id, &route, &call_id) { Ok(v) => v, Err(e) => return CommandResponse::from(Err(e)) };
     CommandResponse::from(app.state::<AiService>().list_runs(invocation, input).await)
 }
 
 #[tauri::command]
 pub async fn module_get_ai_run(app: tauri::AppHandle, window: WebviewWindow, attachment_id: String, route: String, call_id: String, run_id: String) -> CommandResponse<Option<AiRunSummary>> {
-    let invocation = match invocation(&app, &window, &attachment_id, &route, &call_id) { Ok(v) => v, Err(e) => return CommandResponse::from(Err(e)) };
+    let invocation = match control_invocation(&app, &window, &attachment_id, &route, &call_id) { Ok(v) => v, Err(e) => return CommandResponse::from(Err(e)) };
     CommandResponse::from(app.state::<AiService>().get_run(invocation, &run_id).await)
 }
 
 #[tauri::command]
 pub async fn module_cancel_ai_run(app: tauri::AppHandle, window: WebviewWindow, attachment_id: String, route: String, call_id: String, run_id: String) -> CommandResponse<bool> {
-    let invocation = match invocation(&app, &window, &attachment_id, &route, &call_id) { Ok(v) => v, Err(e) => return CommandResponse::from(Err(e)) };
+    let invocation = match control_invocation(&app, &window, &attachment_id, &route, &call_id) { Ok(v) => v, Err(e) => return CommandResponse::from(Err(e)) };
     CommandResponse::from(app.state::<AiService>().cancel(invocation, &run_id).await)
+}
+
+#[tauri::command]
+pub async fn module_import_ai_resource(app: tauri::AppHandle, window: WebviewWindow, attachment_id: String, route: String, call_id: String, input: AiResourceImport) -> CommandResponse<AiResource> {
+    let invocation = match invocation(&app, &window, &attachment_id, &route, &call_id) { Ok(v) => v, Err(e) => return CommandResponse::from(Err(e)) };
+    CommandResponse::from(app.state::<AiService>().import_resource(invocation, input).await)
+}
+
+#[tauri::command]
+pub async fn module_delete_ai_resource(app: tauri::AppHandle, window: WebviewWindow, attachment_id: String, route: String, call_id: String, resource_id: String) -> CommandResponse<bool> {
+    let invocation = match invocation(&app, &window, &attachment_id, &route, &call_id) { Ok(v) => v, Err(e) => return CommandResponse::from(Err(e)) };
+    CommandResponse::from(app.state::<AiService>().delete_resource(invocation, &resource_id).await)
+}
+
+#[tauri::command]
+pub async fn module_inspect_ai_context(app: tauri::AppHandle, window: WebviewWindow, attachment_id: String, route: String, call_id: String, input: AiRunInput) -> CommandResponse<AiContextBudget> {
+    let invocation = match invocation(&app, &window, &attachment_id, &route, &call_id) { Ok(v) => v, Err(e) => return CommandResponse::from(Err(e)) };
+    CommandResponse::from(app.state::<AiService>().inspect_context(invocation, input).await)
+}
+
+#[tauri::command]
+pub async fn module_get_ai_result(app: tauri::AppHandle, window: WebviewWindow, attachment_id: String, route: String, call_id: String, run_id: String) -> CommandResponse<Option<AiRunContent>> {
+    let invocation = match control_invocation(&app, &window, &attachment_id, &route, &call_id) { Ok(v) => v, Err(e) => return CommandResponse::from(Err(e)) };
+    CommandResponse::from(app.state::<AiService>().get_result(invocation, &run_id).await)
+}
+
+#[tauri::command]
+pub async fn module_ack_ai_result(app: tauri::AppHandle, window: WebviewWindow, attachment_id: String, route: String, call_id: String, run_id: String) -> CommandResponse<bool> {
+    let invocation = match control_invocation(&app, &window, &attachment_id, &route, &call_id) { Ok(v) => v, Err(e) => return CommandResponse::from(Err(e)) };
+    CommandResponse::from(app.state::<AiService>().acknowledge_result(invocation, &run_id).await)
 }

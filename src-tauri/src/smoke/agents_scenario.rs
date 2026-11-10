@@ -13,6 +13,9 @@ pub(super) async fn scenario(app:AppHandle,loaded:bool){
  let fx=app.state::<Fx>().inner().clone();let mut ck=Checks::default();let mut ev=vec![];
  record(&mut ck,&mut ev,"production WebView loaded",loaded,"/workbench");
  let phase=std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").unwrap_or_default();
+ if super::phase6_local::real_codex_enabled() {
+  assert_eq!(phase, "phase6-local", "real Codex must stay in the isolated desktop phase");
+ }
  println!("ACCEPTANCE selected phase: {phase:?}");
  let restart=matches!(phase.as_str(),"restart"|"stage3-restart"|"stage6-restart");
  if !restart {

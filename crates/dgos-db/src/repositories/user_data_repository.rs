@@ -1,7 +1,9 @@
 //! Per-user data removal for account deletion (V1-FR-008, D087, D090).
 //!
-//! There is no foreign key to `users`, so every table with a `user_id` column
-//! is listed under exactly one domain here, or in `RETAINED_FOR_VAULT_RETRY`.
+//! Legacy tables do not consistently reference `users`, so every table with a
+//! `user_id` column is listed under one domain here, or in `RETAINED_FOR_VAULT_RETRY`.
+//! Temporary AI content additionally cascades on account/session deletion; it is
+//! still registered for explicit idempotent account-domain purge and orphan accounting.
 //! The schema test (`user_scope_tests`) fails when a migration adds a
 //! `user_id` table that is in neither list, so a new user-scoped table cannot
 //! be forgotten by account deletion.
@@ -63,7 +65,7 @@ impl UserDataDomain {
     /// Tables keyed by `owner`, purged with the workbench domain and included in orphan accounting.
     pub fn owner_tables(self) -> &'static [&'static str] {
         match self {
-            UserDataDomain::Workbench => &["development_cli_legacy_history", "development_cli_session_bindings", "development_handoffs", "development_file_writes", "development_task_workspaces", "development_workspaces", "development_run_capabilities", "development_session_capabilities", "development_capability_heads", "development_capability_revisions", "development_selection", "development_commands", "development_runs", "development_review_observations", "development_review_baselines", "development_agent_sessions", "development_project_operations", "development_tasks", "development_projects"],
+            UserDataDomain::Workbench => &["development_codex_operations", "development_cli_legacy_history", "development_cli_session_bindings", "development_handoffs", "development_file_writes", "development_task_workspaces", "development_workspaces", "development_run_capabilities", "development_session_capabilities", "development_capability_heads", "development_capability_revisions", "development_selection", "development_commands", "development_runs", "development_review_observations", "development_review_baselines", "development_agent_sessions", "development_project_operations", "development_tasks", "development_projects"],
             _ => &[],
         }
     }
@@ -71,8 +73,8 @@ impl UserDataDomain {
     /// Tables keyed by `user_id`; child tables without an owner column are removed through their parents.
     pub fn user_tables(self) -> &'static [&'static str] {
         match self {
-            UserDataDomain::Chat => &["chat_message_assets", "asset_leases", "chat_assets", "chat_messages", "chat_sessions"],
-            UserDataDomain::Workbench => &["ai_run_bindings", "workbench_tasks"],
+            UserDataDomain::Chat => &["chat_summaries", "chat_runs", "chat_message_assets", "asset_leases", "chat_assets", "chat_messages", "chat_sessions"],
+            UserDataDomain::Workbench => &["ai_content_resources", "ai_content_runs", "ai_run_bindings", "workbench_tasks"],
             UserDataDomain::Mcp => &["mcp_usage_logs", "mcp_connection_logs", "mcp_servers"],
             UserDataDomain::Providers => &["provider_usage_logs", "usage_logs", "providers"],
             UserDataDomain::Skills => &[
@@ -212,6 +214,9 @@ fn statements(domain: UserDataDomain) -> &'static [&'static str] {
     match domain {
         UserDataDomain::Chat => &[],
         UserDataDomain::Workbench => &[
+            "DELETE FROM ai_content_resources WHERE user_id = ?1",
+            "DELETE FROM ai_content_runs WHERE user_id = ?1",
+            "DELETE FROM development_codex_operations WHERE owner = ?1",
             "DELETE FROM development_cli_legacy_history WHERE owner = ?1",
             "DELETE FROM development_cli_session_bindings WHERE owner = ?1",
             "DELETE FROM development_handoffs WHERE owner = ?1",

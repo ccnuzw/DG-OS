@@ -2,6 +2,24 @@
 // `{ success, data, error }`; the wrappers return `data` or throw a ModuleApiError carrying the
 // host's code and message, so the UI never has to show a raw transport error.
 import { invoke } from '@tauri-apps/api/core';
+import type { HostCallOptions } from './moduleRuntimeHost';
+import type { AiEvent, AiRunInput, AiTerminal, AiProviderEntry, AiSkillEntry, AiToolEntry, AiRunListInput, AiRunPage, AiRunSummary, AiResourceImport, AiResource, AiContextBudget, AiRunContent } from '../types/ai';
+
+/** Attachment-bound host API; callers never supply an owner or content scope. */
+export interface ModuleAiApi {
+  listProviders: (options?: HostCallOptions) => Promise<AiProviderEntry[]>;
+  listSkills: (options?: HostCallOptions) => Promise<AiSkillEntry[]>;
+  listTools: (options?: HostCallOptions) => Promise<AiToolEntry[]>;
+  run: (input: AiRunInput, onEvent: (event: AiEvent) => void, options?: HostCallOptions) => Promise<AiTerminal>;
+  listRuns: (input?: AiRunListInput, options?: HostCallOptions) => Promise<AiRunPage>;
+  getRun: (runId: string, options?: HostCallOptions) => Promise<AiRunSummary | null>;
+  cancel: (runId: string, options?: HostCallOptions) => Promise<boolean>;
+  importResource: (input: AiResourceImport, options?: HostCallOptions) => Promise<AiResource>;
+  deleteResource: (resourceId: string, options?: HostCallOptions) => Promise<boolean>;
+  inspect: (input: AiRunInput, options?: HostCallOptions) => Promise<AiContextBudget>;
+  getResult: (runId: string, options?: HostCallOptions) => Promise<AiRunContent | null>;
+  ackResult: (runId: string, options?: HostCallOptions) => Promise<boolean>;
+}
 
 export type RuntimeState = 'not_loaded' | 'starting' | 'ready' | 'draining' | 'stopped' | 'failed';
 

@@ -118,7 +118,7 @@ describe('TabBar (AC15)', () => {
     );
     const runningTab = screen.getByRole('tab', { name: /模型调试台/ });
     expect(within(runningTab).getByRole('img', { name: '运行中' })).toBeTruthy();
-    expect(within(screen.getByRole('tab', { name: /AI 会话/ })).queryByRole('img', { name: '运行中' })).toBeNull();
+    expect(within(screen.getByRole('tab', { name: /AI 助手/ })).queryByRole('img', { name: '运行中' })).toBeNull();
   });
 
   it('toggles focus from the bar and reflects it through aria-pressed', () => {
@@ -156,7 +156,7 @@ describe('AppShell (AC15, AC17)', () => {
   const baseProps = {
     navEntries: [
       { id: 'desktop', label: '桌面总览', to: '/', end: true, icon: <span /> },
-      { id: 'ai', label: 'AI 会话', to: '/workbench', icon: <span /> },
+      { id: 'ai', label: 'AI 助手', to: '/workbench', icon: <span /> },
     ],
     tabs: { ...tabProps, surfaces: [aiSurface], activeSurfaceId: 'ai' },
     children: <div>工作区内容</div>,
@@ -165,9 +165,9 @@ describe('AppShell (AC15, AC17)', () => {
   it('renders the rail, the tab bar and the content area', () => {
     render(<AppShell {...baseProps} />, { wrapper: Router });
     expect(screen.getByRole('complementary', { name: '主导航' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: /AI 会话/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /AI 助手/ })).toBeTruthy();
     expect(screen.getByText('工作区内容')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'AI 会话' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('link', { name: 'AI 助手' }).getAttribute('aria-current')).toBe('page');
     expect(screen.getByRole('link', { name: '桌面总览' }).getAttribute('aria-current')).toBeNull();
   });
 
@@ -194,12 +194,12 @@ describe('AppShell (AC15, AC17)', () => {
   it('hides the rail for full-bleed surfaces but keeps the tab bar', () => {
     render(<AppShell {...baseProps} railHidden />, { wrapper: Router });
     expect(screen.queryByRole('complementary', { name: '主导航' })).toBeNull();
-    expect(screen.getByRole('tab', { name: /AI 会话/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /AI 助手/ })).toBeTruthy();
   });
 
   it('distinguishes the open launcher from the background route and restores selection', () => {
     const { rerender } = render(<AppShell {...baseProps} onOpenLauncher={() => {}} />, { wrapper: Router });
-    const ai = screen.getByRole('link', { name: 'AI 会话' });
+    const ai = screen.getByRole('link', { name: 'AI 助手' });
     expect(ai.classList.contains('is-active')).toBe(true);
     rerender(<AppShell {...baseProps} onOpenLauncher={() => {}} launcherOpen />);
     expect(ai.getAttribute('aria-current')).not.toBe('page');
@@ -246,7 +246,7 @@ describe('workspace route projection (D120, D124)', () => {
       expect(screen.getAllByRole('tab')).toHaveLength(2);
       expect(screen.getAllByRole('tab').every(tab => tab.getAttribute('aria-selected') === 'false')).toBe(true);
     }
-    fireEvent.click(screen.getByRole('tab', { name: 'AI 会话' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'AI 助手' }));
     expect(screen.getByRole('status', { name: 'path' }).textContent).toBe('/workbench');
   });
 
@@ -260,10 +260,10 @@ describe('workspace route projection (D120, D124)', () => {
     await waitFor(() => expect(screen.queryByRole('tab', { name: '技能中心' })).toBeNull());
     fireEvent.click(screen.getByRole('button', { name: '关闭 MCP 管理' }));
     await waitFor(() => expect(screen.getByRole('status', { name: 'path' }).textContent).toBe('/workbench'));
-    fireEvent.click(screen.getByRole('button', { name: '关闭 AI 会话' }));
+    fireEvent.click(screen.getByRole('button', { name: '关闭 AI 助手' }));
     await waitFor(() => expect(screen.getByRole('status', { name: 'path' }).textContent).toBe('/'));
     expect(screen.queryAllByRole('tab')).toEqual([]);
     fireEvent.click(screen.getByRole('link', { name: 'AI' }));
-    expect(screen.getByRole('tab', { name: 'AI 会话' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'AI 助手' }).getAttribute('aria-selected')).toBe('true');
   });
 });

@@ -45,4 +45,11 @@ export default {
   "agentControls.scope.unknown.default": "Native permission state has not been observed.",
   "agentControls.scope.unknown.read_only": "Native permission state has not been observed.",
   "agentControls.scope.unknown.accept_edits": "Native permission state has not been observed.",
+  "agentControls.reason.native_protocol_unsupported": "This CLI's settings protocol is unconfirmed. Existing conversations can still use native defaults.",
+  "agentControls.reason.bound_model_metadata_unavailable": "The native model catalog has no reliable effort levels for the bound model.",
+  "agentControls.reason.bound_model_metadata_ambiguous": "The native catalog reports conflicting effort capabilities for this model. Adjustment is unavailable until they can be resolved.",
+  "agentControls.reason.native_current_unobserved": "Available levels are confirmed, but native events have not reported the current effort.",
+  "agentControls.reason.awaiting_native_effort": "The setting was delivered. Waiting for native events to confirm actual effort, which native policy may adjust.",
+  "agentControls.reason.result_unknown": "The setting outcome is unconfirmed. Check the session state before continuing; it will not be applied again automatically.",
+  "agentControls.reason.unavailable": "The native session has not provided enough information to confirm or adjust this setting.",
 } as const;

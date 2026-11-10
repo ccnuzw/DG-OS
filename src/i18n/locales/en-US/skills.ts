@@ -1,7 +1,7 @@
 export default {
   "skills.uninstall": "Uninstall",
   "skills.sourceFormats": "URL / ZIP",
-  "skills.added": "Skill added to My Skills. Select it explicitly in the AI Workbench to use it for a task.",
+  "skills.added": "Skill added to My Skills. Select it explicitly in AI Assistant to use it for a task.",
   "skills.addFailed": "Unable to add skill: {error}",
   "skills.adding": "Adding…",
   "skills.addToMySkills": "Add to My Skills",

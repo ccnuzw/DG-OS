@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import NativeManager from '../src/components/nativeExtensions/NativeManager';
 import { useDevelopment } from '../src/stores/developmentStore';
 import { useNativeExtensions } from '../src/stores/nativeExtensions';
-import type { NativeMcpInstance, NativeReceipt, NativeSkill, NativeSkillPreview } from '../src/types/nativeExtensions';
+import type { NativeMcpInstance, NativeReceipt, NativeSelection, NativeSkill, NativeSkillPreview, NativeSkillRuleIntentState, NativeVisibilityPreview } from '../src/types/nativeExtensions';
 import { ModalHost } from '@dgos/ui';
 import { SurfaceScope } from '../src/workspace/SurfaceContext';
 import { createWorkspaceController } from '../src/workspace/controller';
@@ -15,7 +15,7 @@ vi.mock('../src/components/nativeExtensions/NativeSessionPanel', () => ({ defaul
 const skill: NativeSkill = { instance: { id: 'skill-1', revision: 'rev-1' }, target: 'Codex', scope: 'OsUser', slug: 'sample-skill', owner: 'Loose', metadata: { name: 'Sample skill', description: 'Installed description', license: null, dependencies: { declared: true, tools: [], packages: [], required_tools: [] }, dynamic_commands: false }, resources: [], source: { source_hash: 'installed-hash', commit: 'installed-commit' }, can_update: true };
 const receipt: NativeReceipt = { operation_id: 'preview-operation', state: 'Previewed', pending_activation: false, recovery_material_retained: false };
 const basePreview = { receipt, target: 'Codex' as const, scope: 'OsUser' as const, expires_at: 4102444800 };
-const skillPreview: NativeSkillPreview = { ...basePreview, project_id: null, slug: 'returned-slug', before_hash: 'before-hash', after_hash: 'after-hash', source: { source_hash: 'returned-source-hash', commit: 'returned-commit' }, metadata: { ...skill.metadata, name: 'Authoritative package', description: 'Returned description', license: 'MIT', dynamic_commands: true, dependencies: { declared: true, tools: [{ program: 'python', version_requirement: '>=3' }], packages: ['sample-package'], required_tools: ['sample-tool'] } }, resources: [{ path: 'scripts/inspect.py', hash: 'script-hash', bytes: 42, executable: true }] };
+const skillPreview: NativeSkillPreview = { ...basePreview, project_id: null, slug: 'returned-slug', before_hash: 'before-hash', after_hash: 'after-hash', source: { source_hash: 'returned-source-hash', commit: 'returned-commit' }, metadata: { ...skill.metadata, name: 'Authoritative package', description: 'Returned description', license: 'MIT', dynamic_commands: true, dependencies: { declared: true, tools: [{ program: 'python', version_requirement: '>=3' }], packages: ['sample-package'], required_tools: ['sample-tool'] } }, impact: null, resources: [{ path: 'scripts/inspect.py', hash: 'script-hash', bytes: 42, executable: true }] };
 const server: NativeMcpInstance = { native_key: 'alpha', transport: 'Stdio', enabled: true, owner: 'Loose', has_auth_configuration: true, unknown_fields_present: true, authentication: { configured: true, credential_present: null, authenticated: null, connected: null, approved: null, active_session: null, login: 'Unsupported', logout: 'Unsupported', delete_credentials: 'Unsupported' } };
 
 async function choose(label: string, option: string) {
@@ -36,6 +36,7 @@ beforeEach(() => {
   useNativeExtensions.getState().reset();
   invoke.mockImplementation(async (command: string) => {
     if (command === 'discover_native_skills') return { instances: [skill], readonly_entries: [], missing: false, incomplete: false };
+    if (command === 'discover_native_skill_rules') return { rules: [], coverage: 'selected_settings_layer' };
     if (command === 'preview_native_skill') return skillPreview;
     if (command === 'preview_native_mcp') return basePreview;
     if (command === 'commit_native_operation') return { ...receipt, state: 'Committed', pending_activation: true };
@@ -64,6 +65,22 @@ describe('native skill workflows', () => {
     expect(invoke).not.toHaveBeenCalledWith('commit_native_operation', expect.anything());
   });
 
+  it('shows bounded Claude same-name evidence and refuses to imply complete visibility', async () => {
+    invoke.mockImplementation(async (command: string) => command === 'discover_native_skill_rules' ? { rules: [], coverage: 'selected_settings_layer' } : command === 'preview_native_skill'
+      ? { ...skillPreview, target: 'Claude', impact: { native_name: 'fixture', previous_name: null, same_name: [{ scope: 'ProjectShared', slug: 'other-folder', native_name: 'fixture', owner: 'Loose' }], coverage: 'authorized_loose_roots', incomplete: true, visibility_writable: false } }
+      : { instances: [{ ...skill, target: 'Claude' }], readonly_entries: [], missing: false, incomplete: false });
+    render(<NativeManager kind="skills" initialSelection={{ target: 'Claude', scope: 'OsUser', project_id: null }} />);
+    await screen.findAllByText('Sample skill');
+    fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.remove' }));
+    const preview = within(await screen.findByRole('region', { name: 'nativeExtensions.preview' }));
+    expect(preview.getByText('nativeExtensions.looseImpactCoverage')).toBeTruthy();
+    expect(preview.getByText('nativeExtensions.visibilityUnavailable')).toBeTruthy();
+    expect(preview.getByText(/other-folder.*nativeExtensions.scope.ProjectShared.*nativeExtensions.owner.Loose/)).toBeTruthy();
+    expect(preview.getByText(/scripts\/inspect.py/)).toBeTruthy();
+    expect(preview.getByRole('status').textContent).toBe('nativeExtensions.incomplete');
+    expect(invoke).not.toHaveBeenCalledWith('commit_native_operation', expect.anything());
+  });
+
   it('updates the selected revision with an explicit source and removes without a source', async () => {
     render(<NativeManager kind="skills" />);
     await screen.findAllByText('Sample skill');
@@ -85,7 +102,7 @@ describe('native skill workflows', () => {
 
   it('previews exact-instance visibility and shows returned affected scopes without consuming an update draft', async () => {
     invoke.mockImplementation(async (command: string) => command === 'preview_native_skill_visibility'
-      ? { preview: basePreview, coverage: 'all-known-scopes', affected: [{ selection: { target: 'Claude', scope: 'ProjectShared', project_id: 'project-a' }, instance: { id: 'other-instance', revision: 'other-revision' }, slug: 'same-native-name' }] }
+      ? { preview: basePreview, rule: null, coverage: 'exact_path', affected: [{ selection: { target: 'Codex', scope: 'ProjectShared', project_id: 'project-a' }, instance: { id: 'other-instance', revision: 'other-revision' }, slug: 'same-native-name' }] }
       : command === 'commit_native_operation' ? { ...receipt, state: 'Committed' }
         : { instances: [skill], readonly_entries: [], missing: false, incomplete: false });
     render(<NativeManager kind="skills" />);
@@ -93,9 +110,9 @@ describe('native skill workflows', () => {
     fireEvent.change(screen.getByLabelText('nativeExtensions.source'), { target: { value: 'keep-this-update-source' } });
     fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.disableSkill' }));
     const preview = within(await screen.findByRole('region', { name: 'nativeExtensions.preview' }));
-    expect(preview.getByText(/same-native-name.*Claude.*nativeExtensions.scope.ProjectShared.*project-a.*other-instance.*other-revision/)).toBeTruthy();
-    expect(preview.getByText(/all-known-scopes/)).toBeTruthy();
-    expect(invoke).toHaveBeenCalledWith('preview_native_skill_visibility', { input: { target: 'Codex', scope: 'OsUser', project_id: null, instance: skill.instance, visible: false } });
+    expect(preview.getByText(/same-native-name.*Codex.*nativeExtensions.scope.ProjectShared.*project-a.*other-instance.*other-revision/)).toBeTruthy();
+    expect(preview.getByText('nativeExtensions.coverage.exact_path')).toBeTruthy();
+    expect(invoke).toHaveBeenCalledWith('preview_native_skill_visibility', { input: { target: 'Codex', scope: 'OsUser', project_id: null, intent: { kind: 'codex_path', instance: skill.instance, visible: false } } });
     fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.confirm' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'nativeExtensions.confirm' })).toBeNull());
     expect((screen.getByLabelText('nativeExtensions.source') as HTMLInputElement).value).toBe('keep-this-update-source');
@@ -116,6 +133,94 @@ describe('native skill workflows', () => {
     await choose('nativeExtensions.scope', 'nativeExtensions.scope.OsUser');
     expect(await screen.findByRole('button', { name: 'nativeExtensions.confirm' })).toBeTruthy();
     expect(screen.getByText('returned-commit')).toBeTruthy();
+  });
+});
+
+describe('Claude name rule consumers', () => {
+  function mockRules(rules: { name: string; state: 'off' | 'name-only' }[] = []) {
+    invoke.mockImplementation(async (command: string, args: { input: Record<string, unknown> }) => {
+      if (command === 'discover_native_skill_rules') return { rules, coverage: 'selected_settings_layer' };
+      if (command === 'discover_native_skills') return { instances: [], readonly_entries: [], missing: false, incomplete: false };
+      if (command === 'preview_native_skill_visibility') {
+        const intent = args.input.intent as { name: string; state: NativeSkillRuleIntentState };
+        const scope = args.input.scope as NativeSelection['scope'];
+        return { preview: { ...basePreview, target: 'Claude', scope }, affected: [], coverage: 'current_observations_only', observation_coverage: 'not_captured', rule: { evidence_version: 1, name: intent.name, state: intent.state, previous: rules.find(rule => rule.name === intent.name)?.state ?? null, scope, current_and_future: true, plugins_excluded: true, higher_precedence: 'not_evaluated', config_change_hook_possible: true } } satisfies NativeVisibilityPreview;
+      }
+      if (command === 'commit_native_operation') return { ...receipt, state: 'Committed', pending_activation: true };
+      if (command === 'cancel_native_operation') return { ...receipt, state: 'Cancelled' };
+      throw 'unexpected command';
+    });
+  }
+
+  it.each(['on', 'name-only', 'user-invocable-only', 'off', 'inherit'] as const)('previews explicit absent-resource name with %s semantics and cancels without writing', async state => {
+    mockRules();
+    render(<NativeManager kind="skills" initialSelection={{ target: 'Claude', scope: 'OsUser', project_id: null }}/>);
+    await screen.findByText('nativeExtensions.noNameRules');
+    fireEvent.change(screen.getByLabelText('nativeExtensions.ruleName'), { target: { value: 'future-skill' } });
+    await choose('nativeExtensions.ruleState', `nativeExtensions.ruleState.${state}`);
+    fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.previewRule' }));
+    const preview = within(await screen.findByRole('region', { name: 'nativeExtensions.preview' }));
+    expect(invoke).toHaveBeenCalledWith('preview_native_skill_visibility', { input: { target: 'Claude', scope: 'OsUser', project_id: null, intent: { kind: 'claude_name', name: 'future-skill', state } } });
+    for (const key of [`ruleMeaning.${state}`, 'ruleNameImpact', 'rulePluginsExcluded', 'rulePrecedenceWarning', 'ruleHookWarning', 'coverage.current_observations_only']) expect(preview.getByText(`nativeExtensions.${key}`)).toBeTruthy();
+    expect(preview.getByText('nativeExtensions.ruleObservationsNotCaptured')).toBeTruthy();
+    const observationsLink = preview.getByRole('button', { name: 'nativeExtensions.reviewRuleObservations' });
+    fireEvent.click(observationsLink);
+    expect(document.activeElement?.id).toBe(observationsLink.getAttribute('aria-controls'));
+    expect(invoke.mock.calls.some(([command]) => command === 'observe_native_session')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.cancel' }));
+    await screen.findByText('nativeExtensions.state.Cancelled', { selector: 'dd' });
+    expect((screen.getByLabelText('nativeExtensions.ruleName') as HTMLInputElement).value).toBe('future-skill');
+    expect(invoke).not.toHaveBeenCalledWith('commit_native_operation', expect.anything());
+    expect(invoke.mock.calls.some(([command]) => command === 'native_session_action')).toBe(false);
+  });
+
+  it.each(['OsUser', 'ProjectShared', 'ProjectLocal'] as const)('restores a saved absent-instance rule in %s without resource authority or implicit refresh', async scope => {
+    mockRules([{ name: 'hidden-skill', state: 'off' }]);
+    const selection = { target: 'Claude' as const, scope, project_id: scope === 'OsUser' ? null : 'project-a' };
+    render(<NativeManager kind="skills" initialSelection={selection}/>);
+    const rules = within(await screen.findByRole('region', { name: 'nativeExtensions.nameRules' }));
+    await rules.findByText('hidden-skill');
+    expect(invoke).toHaveBeenCalledWith('discover_native_skill_rules', { input: selection });
+    fireEvent.click(rules.getByRole('button', { name: 'nativeExtensions.restoreInherit' }));
+    const preview = within(await screen.findByRole('region', { name: 'nativeExtensions.preview' }));
+    expect(preview.getByText('nativeExtensions.ruleState.off')).toBeTruthy();
+    expect(preview.getByText('nativeExtensions.ruleState.inherit')).toBeTruthy();
+    expect(invoke).toHaveBeenCalledWith('preview_native_skill_visibility', { input: { ...selection, intent: { kind: 'claude_name', name: 'hidden-skill', state: 'inherit' } } });
+    const readCount = invoke.mock.calls.filter(([command]) => command.startsWith('discover_')).length;
+    fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.confirm' }));
+    await screen.findByText('nativeExtensions.state.Committed', { selector: 'dd' });
+    expect(invoke.mock.calls.filter(([command]) => command.startsWith('discover_'))).toHaveLength(readCount);
+    expect(invoke.mock.calls.some(([command]) => command === 'native_session_action')).toBe(false);
+    expect(screen.getByText('nativeExtensions.refreshRequired')).toBeTruthy();
+    if (scope === 'ProjectLocal') {
+      expect(screen.getByRole('button', { name: 'nativeExtensions.installSkill' }).hasAttribute('disabled')).toBe(true);
+      expect(invoke).not.toHaveBeenCalledWith('discover_native_skills', expect.anything());
+      expect(invoke).not.toHaveBeenCalledWith('preview_native_skill', expect.anything());
+    }
+    const manager = screen.getByRole('region', { name: 'nativeExtensions.skills' });
+    const ruleReadCount = invoke.mock.calls.filter(([command]) => command === 'discover_native_skill_rules').length;
+    fireEvent.click(within(manager.querySelector('header')!).getByRole('button', { name: 'nativeExtensions.refresh' }));
+    await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === 'discover_native_skill_rules')).toHaveLength(ruleReadCount + 1));
+  });
+
+  it('fills only the native name from a resource and preserves its separate update draft', async () => {
+    mockRules();
+    const rulesMock = invoke.getMockImplementation()!;
+    invoke.mockImplementation(async (command: string, args: { input: Record<string, unknown> }) => command === 'discover_native_skills' ? { instances: [{ ...skill, target: 'Claude' }], readonly_entries: [], missing: false, incomplete: false } : rulesMock(command, args));
+    render(<NativeManager kind="skills" initialSelection={{ target: 'Claude', scope: 'OsUser', project_id: null }}/>);
+    const source = await screen.findByLabelText('nativeExtensions.source');
+    fireEvent.change(source, { target: { value: 'keep-update-source' } });
+    fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.useRuleName' }));
+    expect((screen.getByLabelText('nativeExtensions.ruleName') as HTMLInputElement).value).toBe(skill.metadata.name);
+    expect(screen.queryByRole('button', { name: 'nativeExtensions.enableSkill' })).toBeNull();
+    expect(invoke).not.toHaveBeenCalledWith('preview_native_skill_visibility', expect.anything());
+    fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.previewRule' }));
+    await screen.findByRole('button', { name: 'nativeExtensions.confirm' });
+    fireEvent.change(screen.getByLabelText('nativeExtensions.ruleName'), { target: { value: 'newer-name' } });
+    fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.confirm' }));
+    await screen.findByText('nativeExtensions.state.Committed', { selector: 'dd' });
+    expect((source as HTMLInputElement).value).toBe('keep-update-source');
+    expect((screen.getByLabelText('nativeExtensions.ruleName') as HTMLInputElement).value).toBe('newer-name');
   });
 });
 

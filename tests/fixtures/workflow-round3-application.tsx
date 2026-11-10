@@ -18,7 +18,7 @@ import { useDevelopmentDrafts } from '../../src/stores/developmentDrafts';
 import { useDevelopmentRuntime, type DevelopmentProcess } from '../../src/stores/developmentRuntime';
 import { useDevelopmentTakeover } from '../../src/stores/developmentTakeover';
 import { useAgentRunner, type AgentSession } from '../../src/stores/agentRunnerStore';
-import type { CapabilityConfirmation, CliProviderCatalog, CliProviderRevision } from '../../src/stores/developmentCapabilities';
+import type { CliProviderCatalog, CliProviderRevision } from '../../src/stores/developmentCapabilities';
 import type { WorkspaceView } from '../../src/stores/developmentDelivery';
 import '../../src/index.css';
 import '../../src/components/development/development.css';
@@ -62,7 +62,7 @@ const testid = <T extends Element = HTMLElement>(id: string) => required<T>(`[da
 interface Call { command: string; args: unknown; outcome: 'pending' | 'resolved' | 'rejected'; error?: string }
 interface Assertion { name: string; passed: boolean; actual: unknown; expected: unknown }
 interface ScenarioResult { scenario: string; passed: boolean; assertions: Assertion[]; calls: Call[]; counts: Record<string, number>; identities: unknown; error?: string }
-const scenarios = ['capability-roundtrip', 'stale-capabilities', 'cleanup-failure', 'stale-review-unknown', 'host-native-approvals'] as const;
+const scenarios = ['capability-roundtrip', 'stale-capabilities', 'cleanup-failure', 'stale-review-unknown', 'native-approval'] as const;
 type Scenario = typeof scenarios[number];
 
 class FixtureHost {
@@ -74,10 +74,8 @@ class FixtureHost {
   workspaces: WorkspaceView = { workspaces: [{ id: 'fixture-workspace', owner: project.owner, project_id: project.id, path: project.path, directory_identity: project.directory_identity, kind: 'original', common_dir: null, common_identity: null, created_operation: null, base_commit: null }], selected_workspace_id: 'fixture-workspace', operation: null, operations: [] };
   fingerprint = 'files-current';
   session: AgentSession = { id: 'fixture-session', generation: 'fixture-generation', engine: 'codex', native_id: 'fixture-native', workspace: project.path, status: 'waiting', events: [], pending: [], error: null, capabilities: null };
-  confirmations: CapabilityConfirmation[] = [];
   cleanupFails = false;
   workspaceBusy = false;
-  hostApprovalFails = false;
   constructor() {
     mockIPC(async (command, args) => {
       const call: Call = { command, args: structuredClone(args), outcome: 'pending' }; this.calls.push(call);
@@ -112,9 +110,7 @@ class FixtureHost {
       case 'list_development_runs': return [];
       case 'read_development_git': return { task_id: task.id, kind: 'directory', path: project.path, branch: null, head: null, merge_heads: [], files: [], index: [], conflicts: [], staged_diff: '', worktree_diff: '', review_token: 'fixture-review-token', baseline_version: 'fixture-baseline', initial_staged_paths: [], file_versions: {} };
       case 'read_development_workspaces': return this.workspaces;
-      case 'get_development_session_capabilities': return null;
-      case 'list_development_capability_confirmations': return this.confirmations;
-      case 'respond_development_capability_confirmation': if (this.hostApprovalFails) throw 'unknown'; this.confirmations = []; return null;
+      case 'get_development_session_configuration': return { format: 'provider_bound', read_only: false, snapshot: { binding_id: 'fixture-binding', engine: 'codex', ...this.capability.configuration.provider, revision: this.capability.revision, permission_epoch: this.capability.permission_epoch } };
       case 'respond_agent_request': this.session = { ...this.session, status: 'idle', pending: [] }; return null;
       case 'get_agent_session': return this.session;
       case 'open_agent_session': throw 'unknown';
@@ -249,25 +245,15 @@ export async function runWorkflowRound3Probe() {
           check('unknown delivery request identity retained', host.workspaces.operations[0].id, 'fixture-unknown-push');
         } else {
           host.session.pending = [{ id: 'fixture-native-approval', kind: 'item/commandExecution/requestApproval', title: 'Native command approval', data: { command: 'node --test fixture.js', availableDecisions: ['accept', 'decline'] } }];
-          host.confirmations = [{ id: 'fixture-host-approval', project_id: project.id, task_id: task.id, session_id: host.session.id, run_id: 'fixture-run', server_id: 'fixture-server', tool_name: 'fixture-tool', schema_hash: 'fixture-schema', arguments: { path: 'fixture.js' } }];
-          host.hostApprovalFails = true;
           useAgentRunner.setState({ selected: host.session.id, session: structuredClone(host.session) });
-          await render(<Conversation />); await until(() => stage.querySelector(`[aria-label="${t('capabilities.hostApproval')}"]`), 'both approval channels');
+          await render(<Conversation />); await until(() => stage.querySelector(`section[aria-label="${t('agent.approval')}"]`), 'native approval');
           const native = required(`section[aria-label="${t('agent.approval')}"]`, stage); const nativeAllow = button('agent.allow', native); nativeAllow.click(); nativeAllow.click();
           await until(() => host.count('respond_agent_request') === 1 && !useAgentRunner.getState().session?.pending.length, 'native approval acknowledgement');
-          const hostSection = required(`section[aria-label="${t('capabilities.hostApproval')}"]`, stage); const hostAllow = button('agent.allow', hostSection); hostAllow.click(); hostAllow.click();
-          await until(() => host.count('respond_development_capability_confirmation') === 1, 'host approval unknown receipt');
-          const reads = host.count('list_development_capability_confirmations'); await until(() => host.count('list_development_capability_confirmations') > reads, 'stale host approval poll');
-          hostAllow.click(); await settle();
           check('native approval dispatched exactly once', host.count('respond_agent_request'), 1);
-          check('host approval unknown result never replays', host.count('respond_development_capability_confirmation'), 1);
-          check('failed host approval is not shown actionable after stale poll', Boolean(stage.querySelector(`[aria-label="${t('capabilities.hostApproval')}"]`)), false);
           const nativeArgs = host.calls.find(call => call.command === 'respond_agent_request')?.args;
-          const hostArgs = host.calls.find(call => call.command === 'respond_development_capability_confirmation')?.args;
           const nativeIdentity = nativeArgs && typeof nativeArgs === 'object' && 'input' in nativeArgs && nativeArgs.input && typeof nativeArgs.input === 'object' && 'request_id' in nativeArgs.input ? nativeArgs.input.request_id : null;
-          const hostIdentity = hostArgs && typeof hostArgs === 'object' && 'input' in hostArgs && hostArgs.input && typeof hostArgs.input === 'object' && 'confirmation_id' in hostArgs.input ? hostArgs.input.confirmation_id : null;
           check('native request identity preserved', nativeIdentity, 'fixture-native-approval');
-          check('host request identity preserved', hostIdentity, 'fixture-host-approval');
+          check('removed host gateway is never called', host.calls.filter(call => ['get_development_session_capabilities', 'list_development_capability_confirmations', 'respond_development_capability_confirmation'].includes(call.command)).length, 0);
         }
       } catch (failure) { error = failure instanceof Error ? failure.stack ?? failure.message : String(failure); }
       check('fixture rejects no unmodeled IPC silently', host.calls.filter(call => call.error?.startsWith('Error: Unexpected')).map(call => ({ command: call.command, error: call.error })), []);

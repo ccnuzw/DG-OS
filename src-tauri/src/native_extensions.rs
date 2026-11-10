@@ -40,7 +40,8 @@ fn validate_selection(selection: &Selection, domain: Domain) -> Result<(), Strin
         (Scope::ProjectShared | Scope::ProjectLocal, Some(id)) if !id.is_empty() && id.len() <= 128 => {},
         _ => return Err(fail("InvalidFormat")),
     }
-    if selection.scope == Scope::ProjectLocal && (domain == Domain::Skills || selection.target == Target::Codex) { return Err(fail("Unsupported")); }
+    if selection.scope == Scope::ProjectLocal && selection.target == Target::Codex { return Err(fail("Unsupported")); }
+    let _ = domain;
     Ok(())
 }
 impl NativeHost {
@@ -128,11 +129,13 @@ impl NativeHost {
         Ok(Admitted { api, owner, generation, selection, project, _project_lock: project_lock, _project_admission: project_admission, _permit: permit })
     }
     pub async fn discover_skills(&self, agents: &AgentManager, input: DiscoverSkills, permit: ActivityPermit, ticket: Ticket) -> Result<core::ResourceDiscovery, String> {
+        if input.scope == Scope::ProjectLocal { return Err(fail("Unsupported")); }
         let permit = Arc::new(permit);
         let admitted = self.admit(agents, input.selection(), Domain::Skills, false, permit.clone(), &ticket).await?;
         tokio::task::spawn_blocking(move || { let _permit = permit; let result = admitted.api.discover_resources(admitted.selection.target, admitted.selection.scope.clone(), &input.query).map_err(|e| e.to_string()); drop(admitted); result }).await.map_err(|_| fail("Unavailable"))?
     }
     pub async fn get_skill(&self, agents: &AgentManager, input: GetSkill, permit: ActivityPermit, ticket: Ticket) -> Result<core::ResourceSummary, String> {
+        if input.scope == Scope::ProjectLocal { return Err(fail("Unsupported")); }
         let permit = Arc::new(permit);
         let admitted = self.admit(agents, input.selection(), Domain::Skills, false, permit.clone(), &ticket).await?;
         tokio::task::spawn_blocking(move || { let _permit = permit; let result = admitted.api.resource_summary(admitted.selection.target, admitted.selection.scope.clone(), &input.slug).map_err(|e| e.to_string()); drop(admitted); result }).await.map_err(|_| fail("Unavailable"))?
@@ -158,7 +161,14 @@ impl NativeHost {
             Ok(preview)
         }).await.map_err(|_| fail("Unavailable"))?
     }
+    pub async fn discover_skill_rules(&self, agents: &AgentManager, selection: Selection, permit: ActivityPermit, ticket: Ticket) -> Result<core::skills::Rules, String> {
+        if selection.target != Target::Claude { return Err(fail("Unsupported")); }
+        let permit = Arc::new(permit);
+        let admitted = self.admit(agents, selection, Domain::Skills, false, permit.clone(), &ticket).await?;
+        tokio::task::spawn_blocking(move || { let _permit = permit; let result = admitted.api.discover_skill_rules(admitted.selection.target, admitted.selection.scope.clone()).map_err(|e| e.to_string()); drop(admitted); result }).await.map_err(|_| fail("Unavailable"))?
+    }
     pub async fn preview_skill(&self, agents: &AgentManager, input: PreviewSkill, permit: ActivityPermit, ticket: Ticket) -> Result<SkillPreview, String> {
+        if input.scope == Scope::ProjectLocal { return Err(fail("Unsupported")); }
         let selection = input.selection();
         let permit = Arc::new(permit);
         if (input.action == SkillAction::Install && input.expected.is_some()) || (input.action != SkillAction::Install && input.expected.is_none()) || (input.action == SkillAction::Remove && input.source.is_some()) || (input.action != SkillAction::Remove && input.source.is_none()) { return Err(fail("InvalidFormat")); }
@@ -199,7 +209,7 @@ impl NativeHost {
             };
             let preview = admitted.api.preview_resource(admitted.selection.target, admitted.selection.scope.clone(), &input.slug, action).map_err(|e| e.to_string())?;
             if Self::save_binding(&journal, &admitted, &preview.receipt, Domain::Skills, true).is_err() { let _ = admitted.api.cancel_resource(&preview.receipt.operation_id); return Err(fail("RecoveryRequired")); }
-            Ok(SkillPreview { receipt: preview.receipt, target: preview.target, scope: preview.scope, project_id: admitted.selection.project_id.clone(), slug: preview.slug, before_hash: preview.before_hash, after_hash: preview.after_hash, source: preview.source, resources: preview.resources, metadata: preview.metadata, expires_at: preview.expires_at })
+            Ok(SkillPreview { receipt: preview.receipt, target: preview.target, scope: preview.scope, project_id: admitted.selection.project_id.clone(), slug: preview.slug, before_hash: preview.before_hash, after_hash: preview.after_hash, source: preview.source, resources: preview.resources, metadata: preview.metadata, impact: preview.impact, expires_at: preview.expires_at })
         }).await.map_err(|_| fail("Unavailable"))?
     }
     pub async fn preview_visibility(&self, agents: &AgentManager, input: Visibility, permit: ActivityPermit, ticket: Ticket) -> Result<VisibilityPreview, String> {
@@ -209,17 +219,26 @@ impl NativeHost {
         tokio::task::spawn_blocking(move || {
             let admitted = admitted;
             let _permit = permit;
-            let found = admitted.api.discover_resources(admitted.selection.target, admitted.selection.scope.clone(), "").map_err(|e| e.to_string())?;
-            if found.incomplete { return Err(fail("Limit")); }
-            let selected = found.instances.into_iter().find(|s| s.instance == input.instance).ok_or_else(|| fail("Conflict"))?;
-            if selected.owner != core::Owner::Loose { return Err(fail("Unsupported")); }
-            // No bounded loose-root scanner can prove all Claude plugin, synced,
-            // parent/nested and other-project aliases. Do not fake a complete preview.
-            if admitted.selection.target == Target::Claude { return Err(fail("Unsupported")); }
-            let selector = roots.skill_path(admitted.selection.target, admitted.project.as_deref(), &selected.slug).to_str().ok_or_else(|| fail("UnsafePath"))?.to_owned();
-            let preview = admitted.api.preview_skill_visibility(admitted.selection.target, admitted.selection.scope.clone(), core::skills::VisibilityChange { selector, visible: input.visible }).map_err(|e| e.to_string())?;
+            let (change, affected, coverage) = match (admitted.selection.target, input.intent) {
+                (Target::Codex, VisibilityIntent::CodexPath { instance, visible }) => {
+                    let found = admitted.api.discover_resources(Target::Codex, admitted.selection.scope.clone(), "").map_err(|e| e.to_string())?;
+                    if found.incomplete { return Err(fail("Limit")); }
+                    let selected = found.instances.into_iter().find(|s| s.instance == instance).ok_or_else(|| fail("Conflict"))?;
+                    if selected.owner != core::Owner::Loose { return Err(fail("Unsupported")); }
+                    let selector = roots.skill_path(Target::Codex, admitted.project.as_deref(), &selected.slug).to_str().ok_or_else(|| fail("UnsafePath"))?.to_owned();
+                    (core::skills::VisibilityChange::CodexPath { selector, visible }, vec![VisibilityEffect { selection: admitted.selection.clone(), instance: selected.instance, slug: selected.slug }], "exact_path")
+                },
+                (Target::Claude, VisibilityIntent::ClaudeName { name, state }) => {
+                    // This is a scoped name rule, independent of resource discovery.
+                    // Empty observations do not narrow its current/future impact.
+                    (core::skills::VisibilityChange::ClaudeName { name, state }, Vec::new(), "current_observations_only")
+                },
+                _ => return Err(fail("InvalidFormat")),
+            };
+            let preview = admitted.api.preview_skill_visibility(admitted.selection.target, admitted.selection.scope.clone(), change).map_err(|e| e.to_string())?;
             if Self::save_binding(&journal, &admitted, &preview.receipt, Domain::Skills, false).is_err() { let _ = admitted.api.cancel(&preview.receipt.operation_id); return Err(fail("RecoveryRequired")); }
-            Ok(VisibilityPreview { preview, affected: vec![VisibilityEffect { selection: admitted.selection.clone(), instance: selected.instance, slug: selected.slug }], coverage: "exact_path".into() })
+            let observation_coverage = if admitted.selection.target == Target::Claude { "not_captured" } else { "not_applicable" }.into();
+            Ok(VisibilityPreview { rule: preview.rule.clone(), preview, affected, coverage: coverage.into(), observation_coverage })
         }).await.map_err(|_| fail("Unavailable"))?
     }
     pub async fn operation_domain(&self, id: &str, permit: Arc<ActivityPermit>, ticket: &Ticket) -> Result<Domain, String> {

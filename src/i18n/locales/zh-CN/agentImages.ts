@@ -1,0 +1,16 @@
+export default {
+  'agentImages.title': '图片',
+  'agentImages.add': '添加图片',
+  'agentImages.preview': '预览 {name}',
+  'agentImages.remove': '移除 {name}',
+  'agentImages.reading': '正在读取图片…',
+  'agentImages.size': '{kib} KiB',
+  'agentImages.limits': '支持 PNG、JPEG、WebP；最多 4 张，每张及合计最多 2 MiB。也可直接粘贴图片。',
+  'agentImages.privacy': '所选图片会发送给已配置的 Codex Provider。DG-OS 对话历史仅保存图片元数据，发送后不保留预览。',
+  'agentImages.history': '图片输入：{count} 张',
+  'agentImages.historyPrivacy': '历史中不保留图片内容或可重开链接；恢复会话不会重新发送图片。',
+  'agentImages.error.limits': '图片超出限制。最多 4 张，每张及合计最多 2 MiB；必要时移除其他草稿中的图片。',
+  'agentImages.error.type': '请选择 PNG、JPEG 或 WebP 图片文件。图片链接和文件系统路径不能作为图片输入。',
+  'agentImages.error.read': '无法读取图片，请重新选择或粘贴。',
+  'agentImages.error.expired': '未发送的图片预览已在一小时后过期，请重新选择后发送。',
+} as const;

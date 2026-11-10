@@ -1,14 +1,21 @@
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 
-// SDK 0.3.317 SlashCommand has no provenance fields beyond builtin. Keep the
-// marker, never descriptions/aliases or guessed sources derived from names.
-export function projectSupportedCommands(commands: readonly SlashCommand[]) {
+// Command identifiers are native dispatch tokens, never paths or file authorization.
+function validCommandName(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128 && value[0] !== '/' && !/[^a-zA-Z0-9_.:@/\-]/.test(value);
+}
+
+// SDK aliases are dispatch metadata; they carry no provenance or resource authority.
+export function projectSupportedCommands(commands: readonly Pick<SlashCommand, 'name' | 'builtin' | 'aliases'>[]) {
   let incomplete = commands.length > 256;
   const skills = commands.slice(0, 256).map(command => {
-    const name = typeof command.name === 'string' && command.name.length > 0 && command.name.length <= 128 && /^[a-zA-Z0-9_.:@\-]+$/.test(command.name) ? command.name : null;
+    const name = validCommandName(command.name) ? command.name : null;
     const builtin = typeof command.builtin === 'boolean' ? command.builtin : null;
     incomplete ||= name === null || command.builtin != null && builtin === null;
-    return { name, builtin };
+    const rawAliases: unknown = command.aliases ?? [];
+    const aliases = Array.isArray(rawAliases) ? [...new Set(rawAliases.slice(0, 64).filter(validCommandName))] : [];
+    incomplete ||= !Array.isArray(rawAliases) || rawAliases.length > 64 || rawAliases.some(alias => !validCommandName(alias));
+    return { name, builtin, aliases };
   });
   return { skills, incomplete };
 }

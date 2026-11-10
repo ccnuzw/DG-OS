@@ -277,9 +277,9 @@ async fn real_console_upgrade_preserves_enabled_state_and_permissions_without_ru
         let supervisor = ModuleRuntimeSupervisor::new(fixture.publisher.clone(), fixture.loader.clone())
             .with_admission(Arc::new(crate::PinnedModuleAdmission::builtin()));
         let source = crate::BuiltinModuleSources::new(&root).unwrap();
-        assert_eq!(source.resolve(id).unwrap().1, "1.1.0");
+        let candidate_version = source.resolve(id).unwrap().1;
         let provision = fixture.publisher.provision_builtin(&root).await.unwrap();
-        assert_eq!(provision.kept_other_release, [(id.to_owned(), "1.1.0".to_owned())]);
+        assert_eq!(provision.kept_other_release, vec![(id.to_owned(), candidate_version.to_owned())]);
         assert_eq!(fixture.publisher.published_modules("default-user").await.unwrap()[0].version, "1.0.0");
         let retained = fixture.publisher.published_modules("default-user").await.unwrap().remove(0);
         assert_eq!(retained.enabled, enabled);
@@ -291,7 +291,7 @@ async fn real_console_upgrade_preserves_enabled_state_and_permissions_without_ru
         let report = supervisor.update_builtin_with_operation_id(&HostSession::local_default(), id, &source, "console-upgrade").await.unwrap();
         assert_eq!(report.outcome, ModuleUpdateOutcome::Switched { previous_stopped: true });
         let row = fixture.publisher.published_modules("default-user").await.unwrap().remove(0);
-        assert_eq!(row.version, "1.1.0");
+        assert_eq!(row.version, candidate_version);
         assert_eq!(row.enabled, enabled);
         assert_eq!(row.granted, ["providers.call"]);
         assert_eq!(row.declared, ["providers.call", "skills.execute", "mcp.call"]);
@@ -299,7 +299,7 @@ async fn real_console_upgrade_preserves_enabled_state_and_permissions_without_ru
         assert_eq!(supervisor.runtime(id).is_some(), enabled);
         if enabled { supervisor.stop(id).await.unwrap(); }
         fixture.publisher.recover_registered().await.unwrap();
-        assert_eq!(fs::read_to_string(fixture.store.path().join("current").join(id).join("version")).unwrap().trim(), "1.1.0");
+        assert_eq!(fs::read_to_string(fixture.store.path().join("current").join(id).join("version")).unwrap().trim(), candidate_version);
         assert!(fixture.store.path().join("versions").join(id).join("1.0.0/entry.js").exists());
         assert_eq!(supervisor.update_builtin_with_operation_id(&HostSession::local_default(), id, &source, "console-idempotent").await.unwrap().outcome, ModuleUpdateOutcome::Unchanged);
     }
@@ -311,10 +311,11 @@ async fn real_console_activation_failure_restores_old_release_and_grants_without
     let fixture = d136_console_fixture(true).await;
     let id = "provider-console";
     fixture.loader.executes.store(true, Ordering::SeqCst);
-    fixture.loader.fail_start(Some("1.1.0"));
     let supervisor = ModuleRuntimeSupervisor::new(fixture.publisher.clone(), fixture.loader.clone())
         .with_admission(Arc::new(crate::PinnedModuleAdmission::builtin()));
     let source = crate::BuiltinModuleSources::new(&root).unwrap();
+    let candidate_version = source.resolve(id).unwrap().1;
+    fixture.loader.fail_start(Some(&candidate_version));
     let failure = supervisor.update_builtin_with_operation_id(&HostSession::local_default(), id, &source, "console-fail").await.unwrap_err();
     fs::write(fixture.store.path().join("upgrade-failure.txt"), failure.to_string()).unwrap();
     assert!(matches!(failure, ModuleSupervisorError::RolledBack(_)));
@@ -338,5 +339,5 @@ async fn real_console_activation_failure_restores_old_release_and_grants_without
     assert!(matches!(supervisor.start(&HostSession::local_default(), id).await, Err(ModuleSupervisorError::NotAdmitted)));
     fixture.loader.fail_start(None);
     supervisor.update_builtin_with_operation_id(&HostSession::local_default(), id, &source, "console-retry").await.unwrap();
-    assert_eq!(fixture.publisher.published_modules("default-user").await.unwrap()[0].version, "1.1.0");
+    assert_eq!(fixture.publisher.published_modules("default-user").await.unwrap()[0].version, candidate_version);
 }

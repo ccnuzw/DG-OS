@@ -107,6 +107,17 @@ describe('clean fixture passes (AC11, AC12)', () => {
   });
 });
 
+it('allows Intl text formatting style options while still rejecting DOM inline styles', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dgos-intl-style-'));
+  try {
+    cpSync(join(cleanRoot, 'src', 'ui'), join(dir, 'src', 'ui'), { recursive: true });
+    writeFileSync(join(dir, 'src', 'intl.ts'), `new Intl.RelativeTimeFormat('en', { style: 'narrow' });\nnew Intl.NumberFormat('en', { "style": 'currency', currency: 'USD' });\nh('div', { style: { display: 'none' } });\n`);
+    const result = await runDesignCheck(dir);
+    expect(result.toolErrors).toEqual([]);
+    expect(result.violations.map((finding: Finding) => ({ line: finding.line, tag: finding.tag }))).toEqual([{ line: 3, tag: 'R1' }]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 it('rejects indirect token dependency cycles',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'dgos-cycle-'));
   try {

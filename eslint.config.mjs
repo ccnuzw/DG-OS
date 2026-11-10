@@ -30,12 +30,14 @@ function text(pattern) {
 }
 
 const CALLEES = '/^(?:createElement|h|jsx|jsxs|jsxDEV)$/';
+// Intl formatting options use `style` as a text-format enum, never DOM/CSS.
+const INTL_STYLE_OPTION = 'NewExpression[callee.object.name="Intl"][callee.property.name=/^(?:DateTimeFormat|NumberFormat|RelativeTimeFormat|ListFormat)$/] > ObjectExpression';
 
 const inlineStyle = [
   ['JSXAttribute[name.name="style"]', 'JSX 的 style 属性'],
   ['JSXOpeningElement[name.name="style"]', 'JSX 的 <style> 元素'],
-  ['ObjectExpression > Property[computed=false][key.name="style"]', '对象字面量的 style 键（含 createElement/h 的 props）'],
-  ['ObjectExpression > Property[key.value="style"]', '对象字面量的 "style" 键'],
+  [`ObjectExpression:not(${INTL_STYLE_OPTION}) > Property[computed=false][key.name="style"]`, '对象字面量的 style 键（含 createElement/h 的 props）'],
+  [`ObjectExpression:not(${INTL_STYLE_OPTION}) > Property[key.value="style"]`, '对象字面量的 "style" 键'],
   ['MemberExpression[computed=false][property.name="style"]', '.style 成员访问'],
   ['MemberExpression[computed=true][property.value="style"]', '["style"] 成员访问'],
   ['CallExpression[callee.property.name="setAttribute"][arguments.0.value="style"]', 'setAttribute(\'style\', …)'],

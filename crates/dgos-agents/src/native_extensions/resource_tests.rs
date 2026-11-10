@@ -494,3 +494,81 @@ fn historical_removal_preview_cannot_remove_a_reserved_tree() {
         assert!(fs::read_to_string(f.skill().join("SKILL.md")).unwrap().contains("keep-first"));
     }
 }
+
+#[test]
+fn removal_preview_lists_exact_resources_and_bounded_same_name_files() {
+    let f = Fixture::new();
+    let project = f.root.join("project"); fs::create_dir(&project).unwrap();
+    let mut context = f.context.clone(); context.roots.project = Some(project.clone());
+    let api = NativeExtensions::new(context).unwrap();
+    f.install(&api, Target::Claude, Scope::OsUser);
+    f.install(&api, Target::Claude, Scope::ProjectShared);
+    let summary = api.resource_summary(Target::Claude, Scope::OsUser, "fixture").unwrap();
+    let preview = api.preview_resource(Target::Claude, Scope::OsUser, "fixture", ResourceAction::Remove { expected: summary.instance }).unwrap();
+    assert!(preview.after_hash.is_none());
+    assert_eq!(preview.metadata.as_ref().unwrap().name, "fixture");
+    assert_eq!(preview.resources.len(), 3);
+    assert!(preview.resources.iter().any(|file| file.path == "scripts/never-run.sh" && file.executable));
+    assert!(preview.resources.iter().any(|file| file.path == "references/file.bin" && file.bytes == 3));
+    let impact = preview.impact.unwrap();
+    assert_eq!(impact.coverage, "authorized_loose_roots");
+    assert_eq!(impact.native_name, "fixture");
+    assert!(!impact.visibility_writable);
+    assert!(!impact.incomplete);
+    assert!(impact.same_name.iter().any(|entry| entry.scope == Scope::OsUser));
+    assert!(impact.same_name.iter().any(|entry| entry.scope == Scope::ProjectShared));
+    assert!(f.root.join(".claude/skills/fixture/SKILL.md").exists());
+    assert!(f.root.join(".claude/skills/fixture/references/file.bin").exists());
+    assert!(project.join(".claude/skills/fixture/SKILL.md").exists());
+}
+
+#[test]
+fn skill_root_ownership_cannot_be_bypassed_by_a_loose_child() {
+    for marker in [".claude-plugin", ".MANAGED", "PLUGIN.JSON"] {
+        let f = Fixture::new(); let api = f.api();
+        f.install(&api, Target::Claude, Scope::OsUser);
+        let summary = api.resource_summary(Target::Claude, Scope::OsUser, "fixture").unwrap();
+        let preview = api.preview_resource(Target::Claude, Scope::OsUser, "fixture", ResourceAction::Remove { expected: summary.instance }).unwrap();
+        fs::write(f.root.join(".claude/skills").join(marker), b"{}").unwrap();
+        let protected = api.resource_summary(Target::Claude, Scope::OsUser, "fixture").unwrap();
+        assert_ne!(protected.owner, Owner::Loose);
+        assert!(!protected.can_update);
+        let discovered = api.discover_skills(Target::Claude, Scope::OsUser).unwrap();
+        assert_ne!(discovered.instances.iter().find(|entry| entry.directory_name == "fixture").unwrap().owner, Owner::Loose);
+        assert_eq!(api.commit_resource(&preview.receipt.operation_id).unwrap_err(), Error::Unsupported);
+        assert_eq!(api.preview_resource(Target::Claude, Scope::OsUser, "fixture", ResourceAction::Remove { expected: protected.instance }).unwrap_err(), Error::Unsupported);
+        let package = pkg("new"); let source = source(&package);
+        assert_eq!(api.preview_resource(Target::Claude, Scope::OsUser, "new", ResourceAction::Install { package, source }).unwrap_err(), Error::Unsupported);
+        assert!(f.root.join(".claude/skills/fixture/SKILL.md").exists());
+    }
+}
+
+#[test]
+fn mcp_creation_cannot_exceed_complete_discovery_limit() {
+    let mut servers = serde_json::Map::new();
+    for index in 0..2048 { servers.insert(format!("s{index:04}"), serde_json::json!({"command":"never-run"})); }
+    let original = serde_json::json!({"mcpServers":servers}).to_string();
+    let change = mcp::Change::Upsert { name: "new".into(), fields: mcp::ServerPatch { program: mcp::Field::Set("never-run".into()), ..Default::default() } };
+    mcp::validate_original(&original, Target::Claude, &Scope::OsUser, None, &change).unwrap();
+    let patches = mcp::patches(Target::Claude, &Scope::OsUser, None, change.clone()).unwrap();
+    let edited = super::config::apply(&original, Target::Claude, &patches).unwrap();
+    assert_eq!(mcp::validate_edited(&edited, Target::Claude, &Scope::OsUser, None, &change).unwrap_err(), Error::Limit);
+}
+
+#[test]
+fn claude_update_previews_both_declared_names_without_claiming_visibility() {
+    let f = Fixture::new(); let api = f.api();
+    f.install(&api, Target::Claude, Scope::OsUser);
+    let summary = api.resource_summary(Target::Claude, Scope::OsUser, "fixture").unwrap();
+    let package = NativeSkillPackage::from_files(vec![PackageFile { path: "SKILL.md".into(), bytes: b"---\nname: renamed\ndescription: renamed fixture\n---\nbody\n".to_vec(), executable: false }]).unwrap();
+    let source = source(&package);
+    symlink("fixture", f.root.join(".claude/skills/linked")).unwrap();
+    let preview = api.preview_resource(Target::Claude, Scope::OsUser, "fixture", ResourceAction::Update { expected: summary.instance, package, source }).unwrap();
+    let impact = preview.impact.unwrap();
+    assert_eq!(impact.native_name, "renamed");
+    assert_eq!(impact.previous_name.as_deref(), Some("fixture"));
+    assert!(impact.same_name.iter().any(|entry| entry.slug == "fixture" && entry.native_name == "fixture"));
+    assert!(impact.incomplete); // A linked instance's metadata was not read.
+    assert!(!impact.visibility_writable);
+    assert!(fs::read_to_string(f.root.join(".claude/skills/fixture/SKILL.md")).unwrap().contains("name: fixture"));
+}

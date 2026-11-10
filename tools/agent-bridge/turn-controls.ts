@@ -13,12 +13,21 @@ export type TurnControls = {
 };
 
 export function projectTurnControls(models: ModelInfo[], boundModel: string, protocolSupported: boolean): TurnControls {
-  // No family/name heuristic: aliases qualify only through native resolvedModel metadata.
-  const model = models.find(row => row.value === boundModel) ?? models.find(row => row.resolvedModel === boundModel);
-  const options = protocolSupported && model?.supportsEffort === true ? [...new Set(model.supportedEffortLevels ?? [])] : [];
+  // Explicit wire IDs win over aliases; conflicting rows cannot establish effort support.
+  const exact = models.filter(row => row.value === boundModel);
+  const matches = exact.length ? exact : models.filter(row => row.resolvedModel === boundModel);
+  const levels = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+  const optionsFor = (row: ModelInfo) => row.supportsEffort === true
+    ? levels.filter(level => row.supportedEffortLevels?.includes(level)) : [];
+  const first = matches[0];
+  const candidate = first ? optionsFor(first) : [];
+  const ambiguous = matches.some(row => row.supportsEffort !== first?.supportsEffort
+    || optionsFor(row).join(',') !== candidate.join(','));
+  const options = protocolSupported && !ambiguous ? candidate : [];
   return {
     reasoning: { available: options.length > 0, options, current: null, source: 'claude/supported_models',
-      reason: options.length ? 'native_current_unobserved' : 'bound_model_metadata_unavailable' },
+      reason: !protocolSupported ? 'native_protocol_unsupported' : ambiguous ? 'bound_model_metadata_ambiguous'
+        : options.length ? 'native_current_unobserved' : 'bound_model_metadata_unavailable' },
     permission: { available: protocolSupported, options: protocolSupported ? ['default', 'accept_edits'] : [],
       current: protocolSupported ? 'default' : null, source: 'claude/query_options', reason: protocolSupported ? null : 'native_protocol_unsupported' },
   };

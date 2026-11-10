@@ -5,6 +5,7 @@ import { checkReactVersions } from './react-version.mjs';
 
 // Static contract checks supplement compilation; they do not prove WebView isolation.
 const files = ['native_extensions', 'ai', 'provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'chat_assets', 'agents', 'development_review', 'development_explorer', 'development_runtime', 'development_takeover', 'development_capabilities', 'development_delivery', 'desktop', 'cli', 'storage', 'modules', 'module_host', 'module_capabilities', 'appearance', 'accounts', 'lan', 'locale'];
+files.push('development_commit_message');
 // FR-010 / interface contract §14.8: the eight LAN host commands. Exact parameter lists; no user
 // id, caller, session token or access code. Every one enters through the Settings caller with
 // `Capability::LanManage`, which `allows` grants to Settings only.
@@ -134,12 +135,24 @@ const chatExactParams = new Map([
   ['regenerate_chat_message', ['app', 'window', 'input', 'on_event']],
   ['advance_chat_tool_turn', ['app', 'window', 'input']],
   ['cancel_chat_generation', ['app', 'window', 'task_id']],
+  ['inspect_chat_context', ['app', 'window', 'input']],
+  ['summarize_chat_context', ['app', 'window', 'input', 'on_event']],
+  ['list_chat_runs', ['app', 'window', 'input']],
+  ['get_chat_run', ['app', 'window', 'input']],
+  ['continue_chat_run', ['app', 'window', 'input', 'on_event']],
+  ['chat_skill_catalog', ['app', 'window', 'input']],
+  ['resolve_chat_run_step', ['app', 'window', 'input']],
+  ['chat_import_ai_resource', ['app', 'window', 'session_id', 'input']],
+  ['chat_delete_ai_resource', ['app', 'window', 'session_id', 'resource_id']],
 ]);
 const aiParams = new Map([
   ['module_run_ai', ['app', 'window', 'attachment_id', 'route', 'call_id', 'input', 'on_event']],
   ...['module_list_ai_providers', 'module_list_ai_skills', 'module_list_ai_tools'].map(name => [name, ['app', 'window', 'attachment_id', 'route', 'call_id']]),
   ['module_list_ai_runs', ['app', 'window', 'attachment_id', 'route', 'call_id', 'input']],
   ...['module_get_ai_run', 'module_cancel_ai_run'].map(name => [name, ['app', 'window', 'attachment_id', 'route', 'call_id', 'run_id']]),
+  ...['module_import_ai_resource', 'module_inspect_ai_context'].map(name => [name, ['app', 'window', 'attachment_id', 'route', 'call_id', 'input']]),
+  ['module_delete_ai_resource', ['app', 'window', 'attachment_id', 'route', 'call_id', 'resource_id']],
+  ...['module_get_ai_result', 'module_ack_ai_result'].map(name => [name, ['app', 'window', 'attachment_id', 'route', 'call_id', 'run_id']]),
 ]);
 let commands = 0;
 for (const file of files) {
@@ -157,7 +170,8 @@ for (const file of files) {
       assert.ok(exact, `${name}: AI command must have an exact parameter contract`);
       const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
       assert.deepEqual(names.sort(), [...exact].sort(), `${name}: only binding and business selectors allowed`);
-      assert.match(body, /invocation\(&app, &window, &attachment_id, &route, &call_id\)/, `${name}: fresh bound invocation required`);
+      const control = ['module_list_ai_runs', 'module_get_ai_run', 'module_cancel_ai_run', 'module_get_ai_result', 'module_ack_ai_result'].includes(name);
+      assert.match(body, control ? /control_invocation\(&app, &window, &attachment_id, &route, &call_id\)/ : /\binvocation\(&app, &window, &attachment_id, &route, &call_id\)/, `${name}: fresh bound invocation with host-selected admission class required`);
       assert.doesNotMatch(body, /\.emit(?:_to|_filter)?\(|emit_all/, `${name}: no global AI events`);
       if (name === 'module_run_ai') {
         assert.match(args, /on_event:\s*Channel<AiEvent>/, `${name}: private event channel`);
@@ -169,6 +183,11 @@ for (const file of files) {
       assert.match(binding, /\.admit_once\(route, attachment_id, call_id\)/, 'AI runtime admission');
       assert.match(binding, /host::module_call_leases\(window, &call\)/, 'AI real host leases');
       assert.match(binding, /AiInvocation::bind\(call, &session, account, attachment\)/, 'AI trusted binding');
+      const controlBinding = source.match(/\nfn control_invocation\([\s\S]*?\n\}/)?.[0];
+      assert.ok(controlBinding, 'AI bounded control binding helper is required');
+      assert.match(controlBinding, /host::module_host_window\(window\)\?/, 'AI control window gate');
+      assert.match(controlBinding, /\.admit_control_once\(route, attachment_id, call_id\)/, 'AI reserved control admission');
+      assert.match(controlBinding, /host::module_call_leases\(window, &call\)/, 'AI control real host leases');
     } else if (file === 'module_host') {
       const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
       const allowed = callCommands.get(name) ?? recordCommands.get(name) ?? cancelCommands.get(name) ?? (name.startsWith('module_call') ? null : bridgeAllowed);
@@ -335,7 +354,7 @@ for (const file of files) {
           assert.match(body, /window\.label\(\)/, `${name}: the generation must be owned by the calling window`);
         }
         if (exact.includes('input')) {
-          assert.match(args, /input:\s*\w+Input/, `${name}: input must be a typed deny_unknown_fields struct`);
+          assert.match(args, /input:\s*(?:\w+Input|dgos_types::AiResourceImport)/, `${name}: input must be a typed deny_unknown_fields struct`);
         }
       }
       if (file === 'skills' && skillExactParams.has(name)) {
@@ -406,6 +425,14 @@ for (const file of files) {
           assert.doesNotMatch(body, /input\.(?:path|program|editor|owner|user_id)/, `${name}: no renderer path or executable`);
         }
       }
+      if (file === 'development_commit_message') {
+        const expected = name === 'generate_development_commit_message' ? ['app', 'window', 'input'] : ['app', 'window', 'request_id'];
+        const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
+        assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: commit generation parameter allow-list`);
+        assert.match(body, /BuiltinCaller::Workbench, Capability::ProvidersCall/, `${name}: provider capability gate`);
+        assert.match(body, /agent_session\(\)/, `${name}: account lease`);
+        assert.match(body, /session\.user_id\(\) != context\.user_id\(\) \|\| lease\.is_cancelled\(\)/, `${name}: owner agreement`);
+      }
       if (file === 'development_capabilities') {
         const expected = ['read_development_cli_provider','revoke_development_cli_provider'].includes(name) ? ['app','window','project_id']
           : name === 'save_development_cli_provider' ? ['app','window','input']
@@ -427,21 +454,27 @@ for (const file of files) {
         assert.match(body, /agent_session\(\)/, `${name}: delivery account lease`);
         assert.match(body, /session\.user_id\(\)\s*!=\s*context\.user_id\(\)/, `${name}: delivery owner agreement`);
         assert.match(body, /lease\.is_cancelled\(\)/, `${name}: delivery revoked lease`);
+        if (['read_development_git_details', 'read_development_git_commit', 'read_development_git_commit_diff'].includes(name)) assert.ok(body.includes(`${name}(context.user_id(),input,lease.clone())`), `${name}: cancellable read lease`);
       }
       if (file === 'agents') {
-        const expected = ['open_agent_session', 'send_agent_message', 'respond_agent_request', 'create_development_project', 'update_development_project', 'save_development_task', 'select_development_context', 'classify_agent_session'].includes(name)
+        const expected = ['open_agent_session', 'send_agent_message', 'steer_agent_turn', 'respond_agent_request', 'create_development_project', 'update_development_project', 'save_development_task', 'select_development_context', 'classify_agent_session', 'observe_codex_operations', 'control_codex_operation', 'inspect_codex_operation', 'read_codex_child_history'].includes(name)
           ? ['app', 'window', 'input']
           : ['list_agent_sessions', 'read_development_workspace'].includes(name)
             ? ['app', 'window']
             : name === 'get_agent_session' ? ['app', 'window', 'session_id', 'cursor']
-              : ['interrupt_agent_session', 'close_agent_session'].includes(name)
-                ? ['app', 'window', 'session_id']
-                : name === 'inspect_development_project' ? ['app', 'window', 'project_id'] : null;
+              : name === 'interrupt_agent_session' ? ['app', 'window', 'session_id', 'generation', 'run_id']
+                : name === 'close_agent_session' ? ['app', 'window', 'session_id']
+                  : name === 'inspect_development_project' ? ['app', 'window', 'project_id'] : null;
         assert.ok(expected, `${name}: unrecognized Agent command`);
         const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
         assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: parameter allow-list changed`);
         assert.match(body, /host::context\(\s*&window,\s*BuiltinCaller::Workbench,\s*Capability::TasksRun/, `${name}: Agent commands require Workbench TasksRun`);
         assert.doesNotMatch(body, /sandbox|credential|provider_secret/i, `${name}: renderer must not control process authority`);
+        if (name.includes('codex_')) {
+          assert.match(body, /agent_session\(\)/, `${name}: advanced Codex account lease`);
+          assert.match(body, /session\.user_id\(\) != context\.user_id\(\) \|\| lease\.is_cancelled\(\)/, `${name}: advanced Codex owner agreement`);
+          assert.doesNotMatch(args, /\b(?:method|params|owner|path|argv)\s*:/, `${name}: typed operation DTO only`);
+        }
       }
     }
     commands += 1;

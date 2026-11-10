@@ -21,11 +21,24 @@ impl AgentManager {
                 details["expected_index"] = json!(sorted(expected));
             },
             GitAction::Unstage { paths } => {
-                validate_paths(project, paths, &before.index)?;
                 let tree = if let Some(head) = &before.head { head_tree(path, head, lease, &self.inner.stop).await? } else { vec![] };
+                // A staged deletion has no index entry or worktree file. HEAD
+                // supplies its regular-file authority without relaxing link checks.
+                let mut authorized = before.index.clone();
+                authorized.extend(tree.iter().filter(|entry| paths.contains(&entry.path)).cloned());
+                validate_paths(project, paths, &authorized)?;
                 let mut expected: Vec<_> = before.index.iter().filter(|e| !paths.contains(&e.path)).cloned().collect();
                 expected.extend(tree.into_iter().filter(|e| paths.contains(&e.path)));
                 details["expected_index"] = json!(sorted(expected));
+            },
+            GitAction::Untrack { paths } => {
+                validate_paths(project, paths, &before.index)?;
+                if paths.iter().any(|p| !before.index.iter().any(|e| e.path == *p && e.stage == 0)) || before.index.iter().any(|e| paths.contains(&e.path) && e.stage != 0) { return Err("git_unmerged".into()); }
+                details["expected_index"] = json!(sorted(before.index.iter().filter(|e| !paths.contains(&e.path)).cloned().collect()));
+                details["preserved_files"] = restore::file_hashes(project, paths)?;
+            },
+            GitAction::Restore { .. } | GitAction::RestoreHunk { .. } => {
+                details["restore_plan"] = restore::plan(&restore::replacements(project, &input.action, before, lease, &self.inner.stop).await?);
             },
             GitAction::Commit { message, confirm_full_index, confirm_preexisting_staged } => {
                 if !confirm_full_index { return Err("git_full_index_confirmation_required".into()); }
@@ -123,6 +136,15 @@ impl AgentManager {
                 else { command.args(["update-index", "--force-remove", "--"]); }
                 command.args(paths);
                 complete(git_output(command, Duration::from_secs(120), lease, &self.inner.stop).await?)?
+            },
+            GitAction::Untrack { paths } => {
+                let mut command = safe_command(path).await?;
+                command.args(["rm", "--cached", "--force", "--"]).args(paths);
+                complete(git_output(command, Duration::from_secs(120), lease, &self.inner.stop).await?)?
+            },
+            GitAction::Restore { .. } | GitAction::RestoreHunk { .. } => {
+                restore::run(self, owner, project, input, details, lease).await?;
+                vec![]
             },
             GitAction::Commit { message, .. } => output(path, &["-c", "commit.cleanup=verbatim", "commit", "--no-verify", "--no-gpg-sign", "--no-status", "-m", message], lease, &self.inner.stop, true).await?,
             GitAction::Push { .. } => {
@@ -229,9 +251,15 @@ impl AgentManager {
         details["output"] = json!(crate::executions::sanitize_text(&String::from_utf8_lossy(&bytes)));
         let after = self.git_snapshot(owner, &input.task_id, &CancellationToken::new()).await.map_err(|_| "git_unknown")?;
         match &input.action {
-            GitAction::Stage { .. } | GitAction::Unstage { .. } => {
+            GitAction::Stage { .. } | GitAction::Unstage { .. } | GitAction::Untrack { .. } => {
                 let expected: Vec<GitIndexEntry> = serde_json::from_value(details["expected_index"].clone()).map_err(|_| "storage_failed")?;
                 if sorted(after.index.clone()) != expected || after.head != details["before"]["head"].as_str().map(str::to_owned) { return Err("git_unknown".into()); }
+                if let GitAction::Untrack { paths } = &input.action {
+                    if !restore::untrack_matches(project, paths, &before, &after, details).map_err(|_| "git_unknown")? { return Err("git_unknown".into()); }
+                }
+            },
+            GitAction::Restore { .. } | GitAction::RestoreHunk { .. } => {
+                if !restore::matches_plan(project, &before, &after, details).map_err(|_| "git_unknown")? { return Err("git_unknown".into()); }
             },
             GitAction::Commit { message, .. } => {
                 if !self.commit_matches(project, &after, details, message, lease).await? { return Err("git_unknown".into()); }

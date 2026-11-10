@@ -38,11 +38,36 @@ pub trait ExecutionSink: Send + Sync { fn send(&self, event: CoreEvent) -> bool;
 impl<F: Fn(CoreEvent) -> bool + Send + Sync> ExecutionSink for F {
     fn send(&self, event: CoreEvent) -> bool { self(event) }
 }
+
+/// Host-only capabilities. Definitions never grant MCP authority; the host supplies the
+/// explicitly authorized immutable skill collection for this run.
+#[async_trait]
+pub trait LocalTools: Send {
+    fn definitions(&self) -> Vec<dgos_types::ToolDefinition>;
+    /// Called only after the Provider reports a real outbound dispatch, never preflight rejection.
+    fn model_dispatched(&mut self) {}
+    /// Host authorization/configuration and immutable resource leases, checked each model step.
+    async fn revalidate(&mut self) -> Result<(), String> { Ok(()) }
+    async fn dispatch(&mut self, name: &str, args: Value, remaining_context_bytes: usize) -> Result<Value, String>;
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ToolReceipt {
+    pub call_id: String,
+    pub outcome: String,
+    pub result: Option<Value>,
+    pub audit_warning: bool,
+    pub result_unknown: bool,
+}
 #[async_trait]
 pub trait ExecutionGuard: Send + Sync {
     async fn before_model(&self) -> Result<(), String>;
     async fn before_tool(&self) -> Result<(), String>;
     async fn approve(&self, proposal: &ToolProposal) -> Result<bool, String>;
+    /// Persist the dispatch boundary before any external MCP await. Failure blocks dispatch.
+    async fn tool_dispatched(&self, _: &ToolProposal) -> Result<(), String> { Ok(()) }
+    /// Persist the observed outcome before permitting the next model/tool round.
+    async fn tool_settled(&self, _: &ToolProposal, _: &ToolReceipt) -> Result<(), String> { Ok(()) }
 }
 
 pub fn host_policy(has_tools: bool) -> &'static str {
@@ -95,20 +120,29 @@ impl StepBinding<'_> {
 pub struct AiExecutor;
 impl AiExecutor {
     pub async fn run(providers: &ProviderManager, mcp: &McpManager, request: ExecutionRequest, guard: &dyn ExecutionGuard, sink: &dyn ExecutionSink) -> ExecutionResult {
+        Self::run_with_local(providers, mcp, request, guard, sink, None).await
+    }
+
+    pub async fn run_with_local(providers: &ProviderManager, mcp: &McpManager, request: ExecutionRequest, guard: &dyn ExecutionGuard, sink: &dyn ExecutionSink, mut local: Option<&mut dyn LocalTools>) -> ExecutionResult {
         let mut result = ExecutionResult::default();
         let binding = StepBinding { user: &request.user, provider_id: &request.provider_id, model_id: &request.model_id, revision: request.revision,
             provenance: &request.provenance, cancellation: &request.cancellation, deadline: request.deadline, guard, sink };
-        if request.tools.is_empty() {
+        if request.tools.is_empty() && local.as_ref().is_none_or(|host| host.definitions().is_empty()) {
             let bytes = request.messages.iter().map(|m| m.content.len()).sum::<usize>();
-            if bytes > 24 * 1024 || request.context_window.is_some_and(|window| window <= 0 || bytes + 1024 + request.generation.output_tokens() as usize > window as usize) {
+            let images = request.messages.iter().map(|m| m.images.len()).sum();
+            if !crate::foundation::context_budget(bytes, images, 0, request.context_window, request.generation.output_tokens()).can_send {
                 result.error = Some("context_budget_exceeded".into());
                 return result;
+            }
+            if let Some(host) = local.as_mut() {
+                if let Err(error) = binding.bounded(host.revalidate()).await { result.error = Some(error); return result; }
             }
             let admission = binding.bounded(guard.before_model()).await.and_then(|_| binding.emit(CoreEvent::Phase(AiPhase::Model)));
             if let Err(error) = admission { result.error = Some(error); return result; }
             let mut wire = ChatRequest { messages: request.messages, stream: Some(true), ..Default::default() };
             request.generation.apply(&mut wire);
             let drained = drain_stream(providers, &binding, wire).await;
+            if drained.dispatched { if let Some(host) = local.as_mut() { host.model_dispatched(); } }
             result.content = Some(drained.content).filter(|content| !content.is_empty());
             result.audit_warning = drained.audit_warning;
             match drained.end {
@@ -119,21 +153,41 @@ impl AiExecutor {
                 StreamEnd::Stopped(error) => { result.error = Some(error.into()); result.result_unknown = drained.dispatched; }
                 StreamEnd::Failed(code) => { result.error = Some(format!("provider_{code}")); result.result_unknown = drained.dispatched && !provider_rejection(code); }
             }
+            if let Some(host) = local.as_mut() {
+                if let Err(error) = binding.bounded(host.revalidate()).await { result.error = Some(error); }
+            }
             return result;
         }
         if request.tools.len() > 8 { result.error = Some("tool_call_limit".into()); return result; }
-        let tools = match binding.bounded(resolve_selected_tools(mcp, &request.user, request.tools)).await {
-            Ok(tools) => tools,
-            Err(error) => { result.error = Some(error); return result; }
+        let tools = if request.tools.is_empty() { vec![] } else {
+            match binding.bounded(resolve_selected_tools(mcp, &request.user, request.tools)).await {
+                Ok(tools) => tools,
+                Err(error) => { result.error = Some(error); return result; }
+            }
         };
+        let partial = std::sync::Mutex::new(String::new());
+        let tool_sink = |event: CoreEvent| {
+            if let CoreEvent::Delta(text) = &event {
+                let mut output = partial.lock().unwrap_or_else(|error| error.into_inner());
+                let room = (64usize * 1024).saturating_sub(output.len());
+                output.push_str(prefix(text, room));
+            }
+            sink.send(event)
+        };
+        let binding = StepBinding { sink: &tool_sink, ..binding };
         let mut context = ToolContext { record: None, messages: request.messages.into_iter().map(|m| ToolMessage {
             role: m.role, content: Some(m.content), tool_call_id: None, tool_calls: vec![], reasoning: None, images: m.images,
-        }).collect(), tools, window: request.context_window, generation: request.generation, pending: None, calls: HashSet::new(), tokens: 0 };
+        }).collect(), tools, window: request.context_window, generation: request.generation, pending: None, calls: HashSet::new(), tokens: 0,
+            receipts: vec![], retained_results: vec![], dispatched: false, result_unknown: false, audit_warning: false, usage_unknown: false };
         let mut action = ToolAction::RunModel;
         let mut audit_warning = false;
         let mut unknown = false;
         let terminal = loop {
-            match advance_tool_context(providers, mcp, &binding, &mut context, action, &mut audit_warning, &mut unknown).await {
+            let step = match local.as_mut() {
+                Some(host) => advance_tool_context_with_local(providers, mcp, &binding, &mut context, action, &mut audit_warning, &mut unknown, Some(&mut **host)).await,
+                None => advance_tool_context(providers, mcp, &binding, &mut context, action, &mut audit_warning, &mut unknown).await,
+            };
+            match step {
                 Ok(Some(content)) => break Ok(content),
                 Err(error) => break Err(error),
                 Ok(None) => {
@@ -154,10 +208,16 @@ impl AiExecutor {
                 }
             }
         };
-        result.total_tokens = Some(context.tokens).filter(|n| *n > 0);
+        result.total_tokens = Some(context.tokens).filter(|n| *n > 0 && !context.usage_unknown);
         result.audit_warning = audit_warning;
         result.result_unknown = unknown;
-        match terminal { Ok(content) => result.content = Some(content), Err(error) => result.error = Some(error) }
+        match terminal {
+            Ok(content) => result.content = Some(content),
+            Err(error) => {
+                result.error = Some(error);
+                result.content = Some(std::mem::take(&mut *partial.lock().unwrap_or_else(|error| error.into_inner()))).filter(|text| !text.is_empty());
+            }
+        }
         result
     }
 }
@@ -168,7 +228,18 @@ pub(crate) async fn advance_tool_context(
     providers: &ProviderManager, mcp: &McpManager, binding: &StepBinding<'_>, context: &mut ToolContext,
     action: ToolAction, audit_warning: &mut bool, unknown: &mut bool,
 ) -> Result<Option<String>, String> {
+    advance_tool_context_with_local(providers, mcp, binding, context, action, audit_warning, unknown, None).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn advance_tool_context_with_local(
+    providers: &ProviderManager, mcp: &McpManager, binding: &StepBinding<'_>, context: &mut ToolContext,
+    action: ToolAction, audit_warning: &mut bool, unknown: &mut bool, mut local: Option<&mut dyn LocalTools>,
+) -> Result<Option<String>, String> {
+    if *unknown || context.result_unknown { return Err("tool_result_unknown".into()); }
+    if *audit_warning { return Err("tool_audit_warning".into()); }
     if !context.accepts(&action) { return Err("invalid_tool_action".into()); }
+    if let Some(host) = local.as_mut() { binding.bounded(host.revalidate()).await?; }
     if let Some(revision) = binding.revision {
         binding.bounded(async { providers.ensure_revision(binding.provider_id, binding.user, revision).await.map_err(|e| format!("provider_{}", e.error_code())) }).await?;
     }
@@ -179,71 +250,221 @@ pub(crate) async fn advance_tool_context(
         binding.emit(CoreEvent::Phase(AiPhase::Tool))?;
         let selected = &context.tools[pending.selected];
         let mut request = CallMcpToolRequest { server_id: selected.tool.server_id.clone(), tool_name: selected.tool.tool_name.clone(),
-            arguments: pending.public.arguments, call_id: Some(uuid::Uuid::new_v4().to_string()), task_ref: Some(binding.provenance.request_id.clone()),
+            arguments: pending.public.arguments.clone(), call_id: Some(pending.public.id.clone()), task_ref: Some(binding.provenance.request_id.clone()),
             timeout_ms: Some(30_000), confirmation_token: None };
         request.confirmation_token = Some(binding.bounded(async { mcp.confirm_call(binding.user, &request).await.map_err(|e| format!("mcp_{}", e.error_code())) }).await?);
+        binding.bounded(binding.guard.before_tool()).await?;
+        binding.bounded(binding.guard.tool_dispatched(&pending.public)).await?;
         *unknown = true;
-        let call = async { mcp.call_tool_at_schema_cancellable_with_provenance(binding.user, request, &selected.tool.schema_hash, binding.cancellation, binding.provenance).await.map_err(|e| format!("mcp_{}", e.error_code())) };
-        tokio::pin!(call);
-        let result = tokio::select! {
-            biased;
-            _ = tokio::time::sleep_until(binding.deadline) => {
-                binding.cancellation.cancel();
-                None
-            }
-            result = &mut call => Some(result),
-        };
-        let result = match result {
-            Some(result) => result,
-            None => call.await,
+        context.result_unknown = true;
+        context.dispatched = true;
+        let result = {
+            let call = async { mcp.call_tool_at_schema_cancellable_with_provenance(binding.user, request, &selected.tool.schema_hash, binding.cancellation, binding.provenance).await.map_err(|e| format!("mcp_{}", e.error_code())) };
+            tokio::pin!(call);
+            let result = tokio::select! {
+                biased;
+                _ = tokio::time::sleep_until(binding.deadline) => { binding.cancellation.cancel(); None }
+                result = &mut call => Some(result),
+            };
+            match result { Some(result) => result, None => call.await }
         };
         let result = match result {
             Ok(result) => result,
-            Err(error) => { *unknown = false; return Err(error); }
+            Err(error) => {
+                let receipt = ToolReceipt { call_id: pending.public.id.clone(), outcome: "unknown".into(), result: None, audit_warning: false, result_unknown: true };
+                context.receipts.push(receipt.clone());
+                if binding.guard.tool_settled(&pending.public, &receipt).await.is_err() { *audit_warning = true; }
+                return Err(error);
+            }
         };
         *audit_warning |= result.audit_warning;
         *unknown = !matches!(result.outcome.as_str(), "success" | "error") || (result.outcome == "error" && !result.content.is_array());
+        context.result_unknown = *unknown;
+        let raw = json!({"isError": result.is_error, "content": result.content, "structuredContent": result.structured_content}).to_string();
+        let view = retain_tool_result(context, raw);
+        let receipt = ToolReceipt { call_id: pending.public.id.clone(), outcome: result.outcome.clone(), result: Some(view.clone()), audit_warning: result.audit_warning, result_unknown: *unknown };
+        context.receipts.push(receipt.clone());
+        if binding.guard.tool_settled(&pending.public, &receipt).await.is_err() { *audit_warning = true; return Err("tool_journal_failed".into()); }
         if *unknown { return Err(format!("mcp_{}", match result.outcome.as_str() { "timeout" => 1003006, "cancelled" => 1003016, _ => 1003005 })); }
         if result.audit_warning { return Err("mcp_audit_warning".into()); }
         if binding.cancellation.is_cancelled() { return Err("task_cancelled".into()); }
+        binding.emit(CoreEvent::Phase(AiPhase::ProcessingResult))?;
         context.messages.push(pending.assistant);
-        context.messages.push(ToolMessage { role: "tool".into(), content: Some(json!({"isError": result.is_error, "content": result.content, "structuredContent": result.structured_content}).to_string()),
-            tool_call_id: Some(pending.call.id), tool_calls: vec![], reasoning: None, images: vec![] });
+        context.messages.push(tool_result_message(pending.call.id, view));
     }
-    let request = ToolChatRequest { messages: context.messages.clone(), tools: context.tools.iter().map(|t| t.definition.clone()).collect(),
-        max_tokens: context.generation.output_tokens(), temperature: context.generation.temperature, reasoning: context.generation.reasoning.clone() };
-    validate_budget(&request, context.window)?;
-    let (response, stopped) = settle_model(providers, binding, ModelRequest::Tools(request), unknown).await;
-    let response = match response? {
-        ModelResponse::Tools(response) => response,
-        ModelResponse::Text(_) => unreachable!("tool request returns tool response"),
-    };
-    *unknown = false;
-    context.tokens = context.tokens.saturating_add(i64::from(response.usage.total_tokens));
-    *audit_warning |= response.audit_warning;
-    if let Some(reason) = stopped { return Err(reason.into()); }
-    if response.message.tool_calls.is_empty() {
-        return response.message.content.filter(|s| !s.trim().is_empty()).map(Some).ok_or_else(|| "empty_response".into());
+    loop {
+        let mut definitions: Vec<_> = context.tools.iter().map(|tool| tool.definition.clone()).collect();
+        if let Some(host) = local.as_ref() { definitions.extend(host.definitions()); }
+        if !context.retained_results.is_empty() { definitions.push(result_read_definition()); }
+        let mut names = HashSet::new();
+        if definitions.iter().any(|definition| !names.insert(definition.function.name.clone())) { return Err("duplicate_tool_definition".into()); }
+        let request = ToolChatRequest { messages: context.messages.clone(), tools: definitions.clone(), max_tokens: context.generation.output_tokens(),
+            temperature: context.generation.temperature, reasoning: context.generation.reasoning.clone() };
+        validate_budget(&request, context.window)?;
+        if let Some(host) = local.as_mut() { binding.bounded(host.revalidate()).await?; }
+        let mut round_dispatched = false;
+        let streamed = drain_tool_stream(providers, binding, request, unknown, &mut round_dispatched, audit_warning).await;
+        context.dispatched |= round_dispatched;
+        if round_dispatched { if let Some(host) = local.as_mut() { host.model_dispatched(); } }
+        let (response, usage_unknown) = match streamed {
+            Ok(response) => response,
+            Err(error) => { context.usage_unknown |= round_dispatched && *unknown; return Err(error); }
+        };
+        *unknown = false;
+        context.usage_unknown |= usage_unknown;
+        context.tokens = context.tokens.saturating_add(i64::from(response.usage.total_tokens));
+        *audit_warning |= response.audit_warning;
+        if let Some(host) = local.as_mut() { binding.bounded(host.revalidate()).await?; }
+        if response.audit_warning { return Err("provider_audit_warning".into()); }
+        if response.message.tool_calls.is_empty() {
+            binding.emit(CoreEvent::Phase(AiPhase::FinalAnswer))?;
+            return response.message.content.filter(|s| !s.trim().is_empty()).map(Some).ok_or_else(|| "empty_response".into());
+        }
+        if response.message.tool_calls.len() != 1 || context.calls.len() >= 8 { return Err("tool_call_limit".into()); }
+        let assistant = response.message;
+        let call = assistant.tool_calls[0].clone();
+        if call.kind != "function" || call.id.is_empty() || call.id.len() > 128 || !call.id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-') || !context.calls.insert(call.id.clone()) {
+            return Err("invalid_tool_call".into());
+        }
+        if call.function.arguments.len() > 16 * 1024 { return Err("tool_arguments_limit".into()); }
+        let arguments: Value = serde_json::from_str(&call.function.arguments).map_err(|_| "invalid_tool_arguments")?;
+        let definition = definitions.iter().find(|definition| definition.function.name == call.function.name).ok_or("unselected_tool")?;
+        if !arguments.is_object() || !jsonschema::validator_for(&definition.function.parameters).map_err(|_| "invalid_tool_schema")?.is_valid(&arguments) { return Err("invalid_tool_arguments".into()); }
+        if let Some(selected) = context.tools.iter().position(|tool| tool.definition.function.name == call.function.name) {
+            let tool = &context.tools[selected];
+            context.pending = Some(PendingProposal { public: ToolProposal { id: uuid::Uuid::new_v4().to_string(), server_id: tool.tool.server_id.clone(), server_name: tool.server_name.clone(),
+                tool_name: tool.tool.tool_name.clone(), schema_hash: tool.tool.schema_hash.clone(), arguments, expires_at: chrono::Utc::now().timestamp() + 120 }, selected, call, assistant,
+                expires: Instant::now() + Duration::from_secs(120) });
+            return Ok(None);
+        }
+        binding.bounded(binding.guard.before_model()).await?;
+        binding.emit(CoreEvent::Phase(AiPhase::ProcessingResult))?;
+        context.messages.push(assistant);
+        let remaining = remaining_tool_bytes(context, &definitions);
+        let value = if call.function.name == "dgos_tool_result_read" {
+            read_tool_result(context, &arguments)?
+        } else {
+            let host = local.as_mut().ok_or("unselected_tool")?;
+            binding.bounded(host.dispatch(&call.function.name, arguments, remaining)).await?
+        };
+        binding.bounded(binding.guard.before_model()).await?;
+        if let Some(host) = local.as_mut() { binding.bounded(host.revalidate()).await?; }
+        if crate::foundation::tool_result_content_bytes(&value)? > remaining { return Err("context_budget_exceeded".into()); }
+        context.messages.push(tool_result_message(call.id.clone(), value.clone()));
+        context.receipts.push(ToolReceipt { call_id: call.id, outcome: "host_read".into(), result: Some(value), audit_warning: false, result_unknown: false });
     }
-    if response.message.tool_calls.len() != 1 || context.calls.len() >= 8 { return Err("tool_call_limit".into()); }
-    let assistant = response.message;
-    let call = assistant.tool_calls[0].clone();
-    if call.kind != "function" || call.id.is_empty() || call.id.len() > 128 || !call.id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-') || !context.calls.insert(call.id.clone()) {
-        return Err("invalid_tool_call".into());
-    }
-    let selected = context.tools.iter().position(|t| t.definition.function.name == call.function.name).ok_or("unselected_tool")?;
-    if call.function.arguments.len() > 16 * 1024 { return Err("tool_arguments_limit".into()); }
-    let arguments: Value = serde_json::from_str(&call.function.arguments).map_err(|_| "invalid_tool_arguments")?;
-    let tool = &context.tools[selected];
-    if !arguments.is_object() || !jsonschema::validator_for(&tool.tool.input_schema).map_err(|_| "invalid_tool_schema")?.is_valid(&arguments) { return Err("invalid_tool_arguments".into()); }
-    context.pending = Some(PendingProposal { public: ToolProposal { id: uuid::Uuid::new_v4().to_string(), server_id: tool.tool.server_id.clone(), server_name: tool.server_name.clone(),
-        tool_name: tool.tool.tool_name.clone(), schema_hash: tool.tool.schema_hash.clone(), arguments, expires_at: chrono::Utc::now().timestamp() + 120 }, selected, call, assistant,
-        expires: Instant::now() + Duration::from_secs(120) });
-    Ok(None)
 }
 
-pub(crate) enum ModelRequest { Text(ChatRequest), Tools(ToolChatRequest) }
-pub(crate) enum ModelResponse { Text(dgos_types::ChatResponse), Tools(dgos_types::ToolChatResponse) }
+fn tool_result_message(id: String, value: Value) -> ToolMessage {
+    ToolMessage { role: "tool".into(), content: Some(value.to_string()), tool_call_id: Some(id), tool_calls: vec![], reasoning: None, images: vec![] }
+}
+
+fn remaining_tool_bytes(context: &ToolContext, definitions: &[dgos_types::ToolDefinition]) -> usize {
+    let request = ToolChatRequest { messages: context.messages.clone(), tools: definitions.to_vec(), max_tokens: context.generation.output_tokens(),
+        temperature: context.generation.temperature, reasoning: context.generation.reasoning.clone() };
+    let used = serde_json::to_vec(&request).map_or(usize::MAX, |bytes| bytes.len())
+        .saturating_add(context.messages.iter().filter_map(|message| message.reasoning.as_ref()).map(|reasoning| reasoning.encoded_len()).sum::<usize>());
+    let actual_schema = serde_json::to_vec(definitions).map_or(usize::MAX, |bytes| bytes.len().saturating_sub(2));
+    let reserved_schema = crate::foundation::tool_schema_bytes(definitions).unwrap_or(usize::MAX);
+    let used = used.saturating_add(reserved_schema.saturating_sub(actual_schema));
+    let images = context.messages.iter().map(|message| message.images.len()).sum();
+    crate::context_text_ceiling(context.window, context.generation.output_tokens(), images).unwrap_or(0).saturating_sub(used).saturating_sub(1024)
+}
+
+fn prefix(text: &str, limit: usize) -> &str {
+    let mut end = limit.min(text.len());
+    while !text.is_char_boundary(end) { end -= 1; }
+    &text[..end]
+}
+
+fn retain_tool_result(context: &mut ToolContext, raw: String) -> Value {
+    if raw.len() <= 4096 { return serde_json::from_str(&raw).expect("host encoded tool result"); }
+    let retained = context.retained_results.iter().map(String::len).sum::<usize>();
+    let stored = prefix(&raw, (256usize * 1024).saturating_sub(retained)).to_owned();
+    let index = context.retained_results.len();
+    let retained_bytes = stored.len();
+    if retained_bytes > 0 { context.retained_results.push(stored); }
+    json!({"omitted":true,"total_bytes":raw.len(),"preview":prefix(&raw,4096),"preview_bytes":prefix(&raw,4096).len(),
+        "retained_bytes":retained_bytes,"unavailable_bytes":raw.len()-retained_bytes,"result_index":(retained_bytes>0).then_some(index),
+        "retrieval":"Only the preview has been consumed. Use dgos_tool_result_read with result_index and byte offset for retained portions; unavailable bytes cannot be read. In-memory results expire with this run."})
+}
+
+pub(crate) fn result_read_definition() -> dgos_types::ToolDefinition {
+    dgos_types::ToolDefinition { kind: "function".into(), function: dgos_types::ToolFunction { name: "dgos_tool_result_read".into(),
+        description: "Read at most 4096 bytes from an explicitly omitted tool result retained in this run. Does not fetch external resources.".into(),
+        parameters: json!({"type":"object","properties":{"result_index":{"type":"integer","minimum":0},"offset":{"type":"integer","minimum":0}},"required":["result_index","offset"],"additionalProperties":false}) } }
+}
+
+fn read_tool_result(context: &ToolContext, arguments: &Value) -> Result<Value, String> {
+    let index = arguments["result_index"].as_u64().and_then(|value| usize::try_from(value).ok()).ok_or("invalid_tool_arguments")?;
+    let offset = arguments["offset"].as_u64().and_then(|value| usize::try_from(value).ok()).ok_or("invalid_tool_arguments")?;
+    let text = context.retained_results.get(index).ok_or("tool_result_unavailable")?;
+    if offset > text.len() || !text.is_char_boundary(offset) { return Err("invalid_tool_result_offset".into()); }
+    let piece = prefix(&text[offset..], 4096);
+    Ok(json!({"result_index":index,"offset":offset,"content":piece,"next_offset":offset+piece.len(),"retained_bytes":text.len(),"more_retained":offset+piece.len()<text.len()}))
+}
+
+fn tool_stream_error(error: DgosError) -> String {
+    match error {
+        DgosError::ProviderOutputLimit => "generation_limit".into(),
+        DgosError::ProviderToolArgumentsInvalid => "invalid_tool_arguments".into(),
+        DgosError::ProviderToolCallLimit => "tool_call_limit".into(),
+        error => format!("provider_{}", error.error_code()),
+    }
+}
+
+async fn drain_tool_stream(providers: &ProviderManager, binding: &StepBinding<'_>, request: ToolChatRequest,
+    unknown: &mut bool, any_dispatched: &mut bool, audit_warning: &mut bool) -> Result<(dgos_types::ToolChatResponse, bool), String> {
+    binding.bounded(binding.guard.before_model()).await?;
+    binding.emit(CoreEvent::Phase(AiPhase::Model))?;
+    let dispatch = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let opening = providers.stream_provider_tools_bound_cancellable_controlled_with_provenance(binding.provider_id, binding.model_id, request,
+        binding.user, binding.revision, Some(binding.provenance), binding.cancellation.clone(), binding.deadline, dispatch.clone());
+    let opened = binding.bounded(async { opening.await.map_err(tool_stream_error) }).await;
+    let sent = dispatch.load(std::sync::atomic::Ordering::Acquire);
+    *any_dispatched |= sent;
+    *unknown = sent;
+    let mut stream = match opened {
+        Ok(stream) => stream,
+        Err(error) => {
+            if error.strip_prefix("provider_").and_then(|code| code.parse().ok()).is_some_and(provider_rejection) { *unknown = false; }
+            return Err(error);
+        }
+    };
+    let mut text_bytes = 0usize;
+    let mut reasoning_bytes = 0usize;
+    loop {
+        let next = binding.bounded(async { stream.next().await.ok_or_else(|| "provider_stream_interrupted".to_string())?
+            .map_err(tool_stream_error) }).await;
+        let event = match next {
+            Ok(event) => event,
+            Err(error) => {
+                if error.strip_prefix("provider_").and_then(|code| code.parse().ok()).is_some_and(provider_rejection) { *unknown = false; }
+                return Err(error);
+            }
+        };
+        match event {
+            dgos_types::ToolStreamEvent::AuditWarning => { *audit_warning = true; }
+            dgos_types::ToolStreamEvent::Delta(text) => {
+                text_bytes = text_bytes.saturating_add(text.len());
+                if text_bytes > 64 * 1024 { return Err("generation_limit".into()); }
+                if !text.is_empty() { binding.emit(CoreEvent::Delta(text))?; }
+            }
+            dgos_types::ToolStreamEvent::ReasoningDelta(text) => {
+                reasoning_bytes = reasoning_bytes.saturating_add(text.len());
+                if reasoning_bytes > 64 * 1024 { return Err("generation_limit".into()); }
+                if !text.is_empty() { binding.emit(CoreEvent::ReasoningDelta(text))?; }
+            }
+            dgos_types::ToolStreamEvent::Complete { response, usage_unknown } => {
+                *unknown = false;
+                return Ok((response, usage_unknown));
+            }
+        }
+    }
+}
+
+pub(crate) enum ModelRequest { Text(ChatRequest) }
+pub(crate) enum ModelResponse { Text(dgos_types::ChatResponse) }
 
 pub(crate) async fn call_model(providers: &ProviderManager, binding: &StepBinding<'_>, request: ModelRequest, dispatched: &mut bool) -> Result<ModelResponse, String> {
     let (result, stopped) = settle_model(providers, binding, request, dispatched).await;
@@ -256,7 +477,6 @@ async fn settle_model(providers: &ProviderManager, binding: &StepBinding<'_>, re
     let call = async {
         match request {
             ModelRequest::Text(request) => providers.call_provider_bound_cancellable_with_provenance(binding.provider_id, binding.model_id, request, binding.user, binding.revision, Some(binding.provenance), binding.cancellation.clone(), binding.deadline, dispatch_state.clone()).await.map(ModelResponse::Text).map_err(|e| format!("provider_{}", e.error_code())),
-            ModelRequest::Tools(request) => providers.call_provider_tools_bound_cancellable_with_provenance(binding.provider_id, binding.model_id, request, binding.user, binding.revision, Some(binding.provenance), binding.cancellation.clone(), binding.deadline, dispatch_state.clone()).await.map(ModelResponse::Tools).map_err(|e| format!("provider_{}", e.error_code())),
         }
     };
     tokio::pin!(call);
@@ -350,4 +570,61 @@ impl ExecutionGuard for LegacyGuard {
     async fn before_model(&self) -> Result<(), String> { Ok(()) }
     async fn before_tool(&self) -> Result<(), String> { Ok(()) }
     async fn approve(&self, _: &ToolProposal) -> Result<bool, String> { Err("approval_requires_parked_action".into()) }
+}
+
+#[cfg(test)]
+mod result_tests {
+    use super::*;
+
+    fn new_context() -> ToolContext {
+        ToolContext { record: None, messages: vec![], tools: vec![], window: None, generation: Default::default(),
+            pending: None, calls: HashSet::new(), tokens: 0, receipts: vec![], retained_results: vec![],
+            dispatched: false, result_unknown: false, audit_warning: false, usage_unknown: false }
+    }
+
+    #[test]
+    fn large_results_disclose_omission_and_only_explicit_reads_consume_more() {
+        let mut context = new_context();
+        let raw = json!({"content":"界".repeat(4000)}).to_string();
+        let view = retain_tool_result(&mut context, raw.clone());
+        assert_eq!(view["omitted"], true);
+        assert_eq!(view["total_bytes"], raw.len());
+        assert!(view["preview"].as_str().unwrap().len() <= 4096);
+        assert!(!view["preview"].as_str().unwrap().contains(&"界".repeat(2000)));
+        let offset = view["preview_bytes"].as_u64().unwrap();
+        let next = read_tool_result(&context, &json!({"result_index":0,"offset":offset})).unwrap();
+        assert_eq!(next["offset"], offset);
+        assert!(next["content"].as_str().unwrap().len() <= 4096);
+        assert!(read_tool_result(&context, &json!({"result_index":1,"offset":0})).is_err());
+        assert!(read_tool_result(&context, &json!({"result_index":0,"offset":raw.len()+1})).is_err());
+    }
+
+    #[test]
+    fn retained_results_have_a_run_wide_memory_ceiling_and_no_cross_run_lookup() {
+        let mut context = new_context();
+        let view = retain_tool_result(&mut context, json!({"content":"x".repeat(300 * 1024)}).to_string());
+        assert_eq!(view["retained_bytes"], 256 * 1024);
+        assert!(view["unavailable_bytes"].as_u64().unwrap() > 0);
+        let second = retain_tool_result(&mut context, json!({"content":"y".repeat(8192)}).to_string());
+        assert_eq!(second["retained_bytes"], 0);
+        assert!(second["result_index"].is_null());
+        assert_eq!(context.retained_results.iter().map(String::len).sum::<usize>(), 256 * 1024);
+        assert!(read_tool_result(&new_context(), &json!({"result_index":0,"offset":0})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod tool_stream_error_tests {
+    use super::*;
+
+    #[test]
+    fn semantic_stream_rejections_preserve_existing_host_codes() {
+        assert_eq!(tool_stream_error(DgosError::ProviderOutputLimit), "generation_limit");
+        assert_eq!(tool_stream_error(DgosError::ProviderToolArgumentsInvalid), "invalid_tool_arguments");
+        assert_eq!(tool_stream_error(DgosError::ProviderToolCallLimit), "tool_call_limit");
+        assert_eq!(tool_stream_error(DgosError::ProviderResponseInvalid), "provider_1001025");
+        for error in [DgosError::ProviderOutputLimit, DgosError::ProviderToolArgumentsInvalid, DgosError::ProviderToolCallLimit] {
+            assert_eq!(error.error_code(), 1001025, "public provider error codes remain unchanged");
+        }
+    }
 }

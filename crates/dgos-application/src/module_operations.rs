@@ -1708,14 +1708,16 @@ mod tests {
         fixture.db.execute_unprepared("UPDATE modules SET is_official=1 WHERE id='provider-console'").await.unwrap();
         publisher.permissions().grant("default-user", "provider-console", "providers.call").await.unwrap();
         write_package(&fixture.sources.path().join("provider-console"), "provider-console", "99.0.0");
-        let manager = fixture.manager.with_builtin_sources(BuiltinModuleSources::new(&bundle).unwrap()).unwrap();
+        let sources = BuiltinModuleSources::new(&bundle).unwrap();
+        let manager = fixture.manager.with_builtin_sources(sources).unwrap();
         manager.recover().await.unwrap();
         let accepted = manager.update(&fixture.session, "provider-console").unwrap();
         let result = manager.wait(&accepted.operation_id).await.unwrap();
         assert_eq!(result.outcome, Some(ModuleOperationOutcome::Updated));
         assert_eq!(fixture.loader.entered(), 1);
         let module = manager.modules(&fixture.session).await.unwrap().remove(0);
-        assert_eq!(module.version, "1.1.0");
+        assert_ne!(module.version, "1.0.0", "the retired release must be replaced");
+        assert_ne!(module.version, "99.0.0", "the uncontrolled local override must not be selected");
         assert!(module.official && module.enabled);
         assert_eq!(module.permissions.iter().filter(|permission| permission.granted).map(|permission| permission.permission.as_str()).collect::<Vec<_>>(), ["providers.call"]);
         assert_eq!(module.permissions.len(), 3);

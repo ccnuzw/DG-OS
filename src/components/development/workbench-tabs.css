@@ -1,0 +1,19 @@
+.workbench-tabbar { display:flex; align-items:center; flex:none; min-width:0; min-height:3rem; border-bottom:1px solid var(--border-subtle); background:var(--surface-panel); }
+.workbench-tablist { display:flex; flex:1; align-items:center; min-width:0; gap:var(--spacing-1); padding:var(--spacing-1); overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:thin; }
+.workbench-tablist > div { display:flex; flex:none; min-width:0; max-width:100%; }
+.workbench-tab { display:flex; align-items:center; min-width:0; max-width:22rem; height:2.4rem; border:1px solid transparent; border-radius:var(--radius-md); color:var(--text-secondary); }
+.workbench-tab:hover { background:var(--surface-inset); color:var(--text-primary); }
+.workbench-tab[data-selected=true] { background:var(--surface-selected); color:var(--text-primary); border-color:var(--border-subtle); }
+.workbench-tab .workbench-tab-select { display:flex; align-items:center; justify-content:flex-start; flex:1; gap:var(--spacing-2); min-width:0; height:100%; min-height:0; padding:0 var(--spacing-2); border:0; border-radius:var(--radius-sm); background:transparent; color:inherit; font:inherit; font-size:var(--font-size-sm); cursor:pointer; white-space:nowrap; }
+.workbench-tab-select > svg { flex:none; }
+.workbench-tab-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workbench-tab .workbench-tab-close, .workbench-tab .workbench-tab-menu { display:inline-flex; flex:none; align-items:center; justify-content:center; width:1.65rem; height:1.65rem; min-height:0; padding:0; color:var(--text-secondary); opacity:0; }
+.workbench-tab .workbench-tab-close { margin-inline-end:var(--spacing-1); }
+.workbench-tab[data-selected=true] .workbench-tab-close, .workbench-tab:hover .workbench-tab-close, .workbench-tab:focus-within .workbench-tab-close, .workbench-tab:hover .workbench-tab-menu, .workbench-tab:focus-within .workbench-tab-menu, .workbench-tab-menu[aria-expanded=true] { opacity:1; }
+.workbench-tab-actions { display:flex; align-items:center; flex:none; gap:var(--spacing-1); padding-inline:var(--spacing-1); border-inline-start:1px solid var(--border-subtle); }
+.workbench-tab-actions > button { width:2rem; height:2rem; min-height:0; padding:0; }
+.workbench-tab button:focus-visible { outline:1px solid var(--border-focus); outline-offset:-2px; }
+.workbench-tab button:disabled { cursor:default; }
+.workbench-tab .dev-nav-status { display:inline-flex; flex:none; color:var(--accent-default); }
+.workbench-tab .dev-nav-status svg { width:.6rem; height:.6rem; fill:currentColor; }
+@media (pointer:coarse) { .workbench-tab { height:2.75rem; } .workbench-tab .workbench-tab-close, .workbench-tab .workbench-tab-menu { opacity:1; width:2rem; height:2rem; } }

@@ -3,15 +3,16 @@ import { invoke } from '@tauri-apps/api/core';
 import { Button, Select } from '@dgos/ui';
 import { t } from '../../i18n';
 import { useDevelopment } from '../../stores/developmentStore';
-import { nativeError } from '../../stores/nativeExtensions';
+import { nativeError, useNativeExtensions } from '../../stores/nativeExtensions';
 import { useAgentRunner } from '../../stores/agentRunnerStore';
-import type { NativeObservedSkill } from '../../types/nativeExtensions';
+import type { NativeObservedSkill, NativeSelection } from '../../types/nativeExtensions';
 import { hostCode } from '../../stores/hostError';
+import NativeAuthPanel from './NativeAuthPanel';
 
 type Domain = 'skills' | 'mcp';
 interface Capabilities { observe_skills: boolean; observe_mcp: boolean; reload_skills: boolean; reload_plugins: boolean; reconnect_mcp: boolean; toggle_mcp: boolean; native_login: boolean; native_logout: boolean; native_auth_guidance: null | { verified_version: string; reason: string; login_argv: string[]; logout_argv: string[] }; mcp_control_guidance?: null | { verified_version: string; reason: string; inspect_argv: string[] } }
 interface Handle { session_id: string; generation: string; project_id: string; engine: 'codex' | 'claude'; capabilities: Capabilities }
-interface Observation { session_id: string; generation: string; engine: Handle['engine']; domain: Domain; observed_at: number; capabilities: Capabilities; skills: NativeObservedSkill[]; mcp_servers: { name: string; status: string; auth_status: string | null; source: string | null; scope: string | null; tools: string[]; schema_observed: false }[]; incomplete: boolean }
+interface Observation { session_id: string; generation: string; engine: Handle['engine']; domain: Domain; observed_at: number; capabilities: Capabilities; skills: NativeObservedSkill[]; mcp_servers: { name: string; status: string; auth_status: string | null; source: string | null; scope: string | null; tools: string[]; schema_observed: false; plugin_id?: string | null; last_call?: { tool: string; status: 'inProgress' | 'completed' | 'failed'; event_seq: number } | null }[]; incomplete: boolean; source_incomplete?: boolean; skill_candidates?: { name: string; source: string; state: string; advertised: boolean }[]; skill_candidates_incomplete?: boolean }
 type Action = { kind: 'reload_skills' } | { kind: 'reload_plugins'; hold_on_cache_impact: boolean } | { kind: 'reconnect_mcp'; server_name: string } | { kind: 'toggle_mcp'; server_name: string; enabled: boolean };
 interface Receipt { session_id: string; generation: string; request_id: string; state: 'applied' | 'held' | 'unknown' }
 
@@ -23,11 +24,13 @@ const subscribe = (listener: () => void) => { listeners.add(listener); return ()
 const notify = () => { revision++; listeners.forEach(listener => listener()); };
 useDevelopment.subscribe((next, previous) => { if (next.epoch !== previous.epoch) { uncertain.clear(); notify(); } });
 
-export default function NativeSessionPanel({ target, domain, initialProjectId, initialSessionId }: { target: 'Codex' | 'Claude'; domain: Domain; initialProjectId?: string; initialSessionId?: string }) {
+export default function NativeSessionPanel({ target, domain, initialProjectId, initialSessionId, configSelection }: { target: 'Codex' | 'Claude'; domain: Domain; initialProjectId?: string; initialSessionId?: string; configSelection?: NativeSelection }) {
   const epoch = useDevelopment(state => state.epoch);
   const projects = useDevelopment(state => state.projects);
   useSyncExternalStore(subscribe, () => revision);
   const runnerSession = useAgentRunner(state => state.session);
+  const configKey = configSelection ? JSON.stringify([epoch, configSelection.target, configSelection.scope, configSelection.project_id]) : '';
+  const fileState = useNativeExtensions(state => state.mcp[configKey]);
   const [project, setProject] = useState(initialProjectId ?? '');
   const [handles, setHandles] = useState<Handle[]>([]);
   const [handlesContext, setHandlesContext] = useState('');
@@ -53,6 +56,7 @@ export default function NativeSessionPanel({ target, domain, initialProjectId, i
   const blocked = uncertain.has(handleKey);
   const unavailable = runnerSession?.id === selected && (runnerSession.generation !== handle?.generation || runnerSession.status === 'closed' || runnerSession.status === 'unknown' || runnerSession.status === 'starting');
   const visibleObservation = !unavailable && observationContext === contextKey && observation?.session_id === handle?.session_id && observation?.generation === handle?.generation ? observation : null;
+  const comparableConfig = configSelection?.target === target && (configSelection.scope === 'OsUser' || configSelection.project_id === projectId) && fileState?.value && !fileState.stale && !fileState.loading && !fileState.error ? fileState.value : null;
   useEffect(() => {
     if (!unavailable) return;
     generation.current++; setObservation(null); setBusy(false); inFlight.current = false;
@@ -129,8 +133,11 @@ export default function NativeSessionPanel({ target, domain, initialProjectId, i
     finally { if (seq === generation.current) { inFlight.current = false; setBusy(false); } }
   };
   const select = (id: string) => { requested.current.session = undefined; generation.current++; setSelected(id); setObservation(null); setMessage(''); setBusy(false); inFlight.current = false; };
-  const caps = unavailable ? undefined : handle?.capabilities;
+  const caps = unavailable ? undefined : visibleObservation?.capabilities ?? handle?.capabilities;
   const mcpControlAllowed = (item: Observation['mcp_servers'][number]) => item.status !== 'unknown' && !visibleObservation?.incomplete && ['user', 'project', 'local'].includes(item.source ?? '') && visibleObservation?.mcp_servers.filter(server => server.name === item.name).length === 1;
+  const authAllowed = (item: Observation['mcp_servers'][number]) => handle?.engine === 'claude' ? mcpControlAllowed(item)
+    : !visibleObservation?.incomplete && !visibleObservation?.source_incomplete && item.status !== 'unknown' && !item.plugin_id
+      && ['notLoggedIn', 'oAuth'].includes(item.auth_status ?? '') && visibleObservation?.mcp_servers.filter(server => server.name === item.name).length === 1;
   return <section className="flex min-w-0 flex-col gap-3 border-t border-border-subtle pt-3" aria-label={t('nativeExtensions.sessions')}>
     <h3 className="m-0 text-base">{t('nativeExtensions.sessions')}</h3>
     <div className="flex flex-wrap gap-3">
@@ -149,7 +156,7 @@ export default function NativeSessionPanel({ target, domain, initialProjectId, i
         <div className="break-all"><dt className="inline">{t('capabilities.workspace')}: </dt><dd className="m-0 inline">{runnerSession.workspace}</dd></div>
       </dl>}
       {domain === 'mcp' && <>
-        <p className="m-0">{t('nativeExtensions.authUnsupported')}</p>
+        {!caps?.native_login && <p className="m-0">{t('nativeExtensions.authUnsupported')}</p>}
         {caps?.native_auth_guidance && <>
           <p className="m-0">{t('nativeExtensions.verifiedProtocol', { version: caps.native_auth_guidance.verified_version })}</p>
           <p className="m-0">{t(`nativeExtensions.guidance.${caps.native_auth_guidance.reason}`)}</p>
@@ -163,6 +170,7 @@ export default function NativeSessionPanel({ target, domain, initialProjectId, i
         </>}
       </>}
     </div>}
+    {domain === 'mcp' && handle && !unavailable && (caps?.native_login || caps?.native_logout) && <NativeAuthPanel key={handleKey} session={handle} disabled={busy || blocked} servers={(visibleObservation?.mcp_servers ?? []).map(item => ({ name: item.name, allowed: authAllowed(item) }))} />}
     {domain === 'skills' && <div className="flex flex-wrap gap-2">
       {caps?.reload_skills && <Button disabled={busy || blocked} onClick={() => void act({ kind: 'reload_skills' })}>{t('nativeExtensions.reloadSkills')}</Button>}
       {caps?.reload_plugins && <Button variant="secondary" disabled={busy || blocked} onClick={() => void act({ kind: 'reload_plugins', hold_on_cache_impact: true })}>{t('nativeExtensions.reloadPlugins')}</Button>}
@@ -172,25 +180,50 @@ export default function NativeSessionPanel({ target, domain, initialProjectId, i
       <time dateTime={new Date(visibleObservation.observed_at).toISOString()}>{new Date(visibleObservation.observed_at).toLocaleString()}</time>
       {visibleObservation.incomplete && <p>{t('nativeExtensions.incomplete')}</p>}
       {domain === 'skills' && <><p className="m-0">{t(visibleObservation.engine === 'codex' ? 'nativeExtensions.observedViaCodex' : 'nativeExtensions.observedViaClaude')}</p><p className="m-0 text-ink-secondary">{t('nativeExtensions.observedReadOnly')}</p></>}
+      {domain === 'skills' && visibleObservation.engine === 'claude' && visibleObservation.source_incomplete !== false && <p className="m-0 text-ink-secondary">{t('nativeExtensions.activeSourceCoverage')}</p>}
+      {domain === 'skills' && visibleObservation.engine === 'claude' && <details>
+        <summary className="cursor-pointer">{t('nativeExtensions.skillCandidates')}</summary>
+        <p>{t('nativeExtensions.skillCandidateCoverage')}</p>
+        {visibleObservation.skill_candidates_incomplete !== false && <p>{t('nativeExtensions.skillCandidateIncomplete')}</p>}
+        {visibleObservation.skill_candidates?.map((item, index) => <dl key={`${item.name}:${item.source}:${index}`} className="m-0 min-w-0 border-t border-border-subtle py-2">
+          <dt className="break-all">{item.name}</dt>
+          <dd className="m-0 break-all">{t('nativeExtensions.observedSource')}: {item.source}</dd>
+          <dd className="m-0">{t('nativeExtensions.skillCandidateState')}: {item.state}</dd>
+          <dd className="m-0">{t('nativeExtensions.skillCandidateAdvertised')}: {t(item.advertised ? 'nativeExtensions.yes' : 'nativeExtensions.no')}</dd>
+        </dl>)}
+      </details>}
       {domain === 'mcp' && <p className="m-0 text-ink-secondary">{t(visibleObservation.engine === 'codex' ? 'nativeExtensions.mcpObservedViaCodex' : 'nativeExtensions.mcpObservedViaClaude')}</p>}
+      {domain === 'mcp' && configSelection && <section aria-label={t('nativeExtensions.configComparison')} className="flex min-w-0 flex-col gap-1 rounded border border-border-subtle p-3">
+        <h4 className="m-0 text-sm font-medium">{t('nativeExtensions.configComparison')}</h4>
+        <p className="m-0 text-ink-secondary">{t('nativeExtensions.configComparisonNotice')}</p>
+        <p className="m-0">{configSelection.target} · {t(`nativeExtensions.scope.${configSelection.scope}`)} · {configSelection.project_id ?? t('nativeExtensions.sharedOs')}</p>
+        {!comparableConfig ? <p className="m-0">{t('nativeExtensions.configComparisonUnavailable')}</p> : <>
+          {comparableConfig.incomplete && <p className="m-0">{t('nativeExtensions.incomplete')}</p>}
+          {comparableConfig.instances.map(config => <p className="m-0 break-all" key={config.native_key}>{config.native_key} · {t('nativeExtensions.configuredFile')} · {t(visibleObservation.mcp_servers.some(server => server.name === config.native_key) ? 'nativeExtensions.discoveredSameName' : 'nativeExtensions.notObservedInSession')}</p>)}
+        </>}
+      </section>}
       {domain === 'skills' ? visibleObservation.skills.map((item, index) => <div className="flex min-w-0 flex-col gap-1 border-t border-border-subtle pt-2" key={`${item.name}:${index}`}>
         <p className="m-0 break-all">{item.name}</p>
         <dl className="m-0 grid min-w-0 gap-1">
           <div><dt className="inline">{t('nativeExtensions.observedClassification')}: </dt><dd className="m-0 inline">{t(`nativeExtensions.classification.${item.classification ?? 'unknown'}`)}</dd></div>
           <div><dt className="inline">{t('nativeExtensions.observedEnabled')}: </dt><dd className="m-0 inline">{item.enabled == null ? t('nativeExtensions.unknown') : t(item.enabled ? 'nativeExtensions.yes' : 'nativeExtensions.no')}</dd></div>
-          {visibleObservation.engine === 'claude' && <div><dt className="inline">{t('nativeExtensions.observedSource')}: </dt><dd className="m-0 inline">{t('nativeExtensions.commandSourceUnknown')}</dd></div>}
+          {visibleObservation.engine === 'claude' && <div className="break-all"><dt className="inline">{t('nativeExtensions.observedSource')}: </dt><dd className="m-0 inline">{item.source ?? t('nativeExtensions.commandSourceUnknown')}</dd></div>}
           {item.scope && <div><dt className="inline">{t('nativeExtensions.observedScope')}: </dt><dd className="m-0 inline">{t(`nativeExtensions.observedScope.${item.scope}`)}</dd></div>}
           {item.plugin_id && <div className="break-all"><dt className="inline">{t('nativeExtensions.observedPlugin')}: </dt><dd className="m-0 inline">{item.plugin_id}</dd></div>}
+          {item.plugin_name && <div className="break-all"><dt className="inline">{t('nativeExtensions.observedPluginName')}: </dt><dd className="m-0 inline">{item.plugin_name}</dd></div>}
           {item.path && <div className="break-all"><dt className="inline">{t('nativeExtensions.observedPath')}: </dt><dd className="m-0 inline"><code>{item.path}</code></dd></div>}
         </dl>
       </div>) : visibleObservation.mcp_servers.map((item, index) => <div key={`${item.name}:${index}`} className="flex min-w-0 flex-wrap items-center gap-2 border-t border-border-subtle pt-2">
         <span className="break-all">{item.name} · {item.status} · {item.auth_status ?? t('nativeExtensions.unknown')}</span>
         <span className="break-all">{t('nativeExtensions.observedSource')}: {item.source ?? t('nativeExtensions.unknown')}</span>
         {item.scope && <span>{item.scope}</span>}
+        {item.plugin_id && <span className="w-full break-all">{t('nativeExtensions.observedPlugin')}: {item.plugin_id}</span>}
         {caps?.reconnect_mcp && mcpControlAllowed(item) && <Button size="xs" disabled={busy || blocked} onClick={() => void act({ kind: 'reconnect_mcp', server_name: item.name })}>{t('nativeExtensions.reconnect')}</Button>}
         {caps?.toggle_mcp && mcpControlAllowed(item) && <><Button size="xs" disabled={busy || blocked} onClick={() => void act({ kind: 'toggle_mcp', server_name: item.name, enabled: true })}>{t('nativeExtensions.enable')}</Button><Button size="xs" variant="secondary" disabled={busy || blocked} onClick={() => void act({ kind: 'toggle_mcp', server_name: item.name, enabled: false })}>{t('nativeExtensions.disable')}</Button></>}
         <span className="w-full break-all">{t('nativeExtensions.toolsObserved')}: {item.tools.join(', ') || t('nativeExtensions.unknown')}</span>
         <span className="w-full">{t('nativeExtensions.schemaUnobserved')}</span>
+        <span className="w-full break-all">{t('nativeExtensions.lastToolOutcome')}: {item.last_call ? `${item.last_call.tool} · ${t(`nativeExtensions.toolOutcome.${item.last_call.status}`)} · ${t('nativeExtensions.eventSequence')} ${item.last_call.event_seq}` : t('nativeExtensions.toolOutcome.unobserved')}</span>
+        {item.last_call && <span className="w-full text-ink-secondary">{t('nativeExtensions.toolOutcomeNotice')}</span>}
       </div>)}
     </div>}
   </section>;

@@ -11,7 +11,8 @@ use tokio::{process::Command, sync::Mutex};
 pub struct ClaudeSession {
     wire: Transport,
     view: Arc<Mutex<SessionView>>,
-    native_protocol_supported: Arc<std::sync::atomic::AtomicBool>,
+    native_capability_bits: Arc<std::sync::atomic::AtomicU8>,
+    auth_launch: Option<Arc<crate::manager::native_auth::LaunchContext>>,
 }
 impl ClaudeSession {
     /// Provider material travels only over the private bridge environment and stdio.
@@ -31,6 +32,11 @@ impl ClaudeSession {
             if name.starts_with("ANTHROPIC_") || name.starts_with("CLAUDE_CODE_USE_") || matches!(name.as_ref(), "AWS_BEARER_TOKEN_BEDROCK" | "GOOGLE_API_KEY" | "GOOGLE_APPLICATION_CREDENTIALS") { command.env_remove(key); }
         }
         command.envs(&launch.env);
+        let mut auth_env: std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString> = std::env::vars_os().collect();
+        for (key, value) in command.as_std().get_envs() {
+            if let Some(value) = value { auth_env.insert(key.to_owned(), value.to_owned()); } else { auth_env.remove(key); }
+        }
+        let auth_launch = Arc::new(crate::manager::native_auth::LaunchContext { executable: executable.clone().into(), workspace: options.workspace.clone(), env: auth_env });
         let process_lease = launch.lease.clone();
         let (wire, mut events) = providers.with_cli_spawn(&launch.lease, &launch.launch, |_| {
             Ok(Transport::spawn(command, process_lease.cancellation_token(), diagnostic, process_lease.clone()))
@@ -38,11 +44,17 @@ impl ClaudeSession {
         let session = Self {
             wire,
             view: Arc::new(Mutex::new(SessionView::new(options.workspace.clone()))),
-            native_protocol_supported: Arc::default(),
+            native_capability_bits: Arc::default(),
+            auth_launch: Some(auth_launch),
         };
         let reader = session.clone();
         tokio::spawn(async move {
-            while let Some(event) = events.recv().await {
+            loop {
+                // The transport closes this bounded queue before child reap.
+                // Preserve accepted output and terminal events before closure.
+                let event = events.recv().await;
+                let disconnected = event.is_none();
+                let event = event.unwrap_or_else(|| json!({"method":"host/closed"}));
                 let method = event.get("method").and_then(Value::as_str).unwrap_or("");
                 let params = event.get("params").cloned().unwrap_or(Value::Null);
                 let mut view = reader.view.lock().await;
@@ -104,6 +116,8 @@ impl ClaudeSession {
                         if let Ok(controls) = serde_json::from_value::<crate::session::SessionControls>(params["controls"].clone()) { view.controls = Some(controls); }
                     }
                     "native/initialized" => view.push(method, None, params),
+                    "native/capabilities" => { reader.native_capability_bits.fetch_update(std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Acquire, |bits| Some((bits & 64) | capability_bits(&params))).ok(); }
+                    "native/unavailable" => view.push(method, None, params),
                     "text_delta" => {
                         let run = event_run(&view, &params);
                         let text = params.get("text").and_then(Value::as_str).map(str::to_owned);
@@ -127,6 +141,7 @@ impl ClaudeSession {
                     }
                     _ => {}
                 }
+                if disconnected { break; }
             }
         });
         let params = json!({"workspace":options.workspace,"resume_id":options.resume_id,"executable":executable,"provider":{"model":launch.model,"base_url":launch.launch.metadata().base_url,"auth_style":auth_style,"env":launch.env}});
@@ -147,7 +162,7 @@ impl ClaudeSession {
                 if options.resume_id.as_deref().is_some_and(|expected| result["session_id"].as_str() != Some(expected)) {
                     return Err(session.wire.startup_failure("resume_identity_mismatch".into()).await);
                 }
-                session.native_protocol_supported.store(result["native_protocol_supported"] == true, std::sync::atomic::Ordering::Release);
+                session.native_capability_bits.store(capability_bits(&result["native_capabilities"]) | if result["verified_write_protocol"] == true { 64 } else { 0 }, std::sync::atomic::Ordering::Release);
                 let mut view = session.view.lock().await;
                 if view.status != "starting" || !session.wire.native_available() {
                     drop(view);
@@ -203,9 +218,8 @@ impl ClaudeSession {
             if view.status != "waiting" || !view.pending.iter().any(|pending| pending.id == request_id) {
                 return Err("request_expired".into());
             }
-            if !matches!(response.get("behavior").and_then(Value::as_str), Some("allow" | "deny")) {
-                return Err("invalid_response".into());
-            }
+            let pending = view.pending.iter().find(|pending| pending.id == request_id).ok_or("request_expired")?;
+            if !valid_permission_response(&pending.data, &response) { return Err("invalid_response".into()); }
             // Reserve before IO. A lost acknowledgement never makes approval safe to repeat.
             view.pending.retain(|pending| pending.id != request_id);
         }
@@ -220,8 +234,11 @@ impl ClaudeSession {
         }
         result.map(|_| ())
     }
-    pub async fn interrupt(&self) -> Result<(), String> {
-        self.wire.request("interrupt", json!({})).await.map(|_| ())
+    pub async fn interrupt(&self, run_id: &str) -> Result<(), String> {
+        let view = self.view.lock().await;
+        if view.active_run.as_deref() != Some(run_id) || !matches!(view.status.as_str(), "running" | "waiting") { return Err("not_running".into()); }
+        drop(view);
+        self.wire.request("interrupt", json!({"request_id":run_id})).await.map(|_| ())
     }
     pub async fn snapshot(&self) -> SessionView {
         self.view.lock().await.clone()
@@ -231,25 +248,38 @@ impl ClaudeSession {
     }
     pub(crate) fn native_available(&self) -> bool { self.wire.native_available() }
     pub(crate) fn native_capabilities(&self) -> crate::native_session::NativeSessionCapabilities {
-        if !self.native_protocol_supported.load(std::sync::atomic::Ordering::Acquire) { return crate::native_session::NativeSessionCapabilities::default(); }
-        if !self.native_available() { return crate::native_session::NativeSessionCapabilities { native_auth_guidance: Some(crate::native_session::NativeAuthGuidance::installed(crate::Engine::Claude)), ..Default::default() }; }
-        crate::native_session::NativeSessionCapabilities { observe_skills: true, observe_mcp: true, reload_skills: true, reload_plugins: true, reconnect_mcp: true, toggle_mcp: true, native_auth_guidance: Some(crate::native_session::NativeAuthGuidance::installed(crate::Engine::Claude)), ..Default::default() }
+        let bits = self.native_capability_bits.load(std::sync::atomic::Ordering::Acquire);
+        let guidance = (bits & 64 != 0 && self.auth_launch.is_none()).then(|| crate::native_session::NativeAuthGuidance::installed(crate::Engine::Claude));
+        if !self.native_available() { return crate::native_session::NativeSessionCapabilities { native_auth_guidance: guidance, ..Default::default() }; }
+        let auth = cfg!(unix) && self.auth_launch().is_some();
+        crate::native_session::NativeSessionCapabilities { observe_skills: bits & 1 != 0, observe_mcp: bits & 2 != 0, reload_skills: bits & 4 != 0 && bits & 1 != 0, reload_plugins: bits & 8 != 0 && bits & 1 != 0, reconnect_mcp: bits & 16 != 0 && bits & 2 != 0, toggle_mcp: bits & 32 != 0 && bits & 2 != 0, native_login: auth, native_logout: auth, native_auth_guidance: guidance, ..Default::default() }
     }
     pub(crate) async fn observe_native(&self, domain: crate::native_session::SessionDomain) -> Result<crate::native_session::Projection, String> {
-        if !self.native_capabilities().observe_skills { return Err("native_extension_Unsupported".into()); }
-        let result = self.wire.request("native/observe", json!({"domain":domain})).await?;
+        let capability = match domain { crate::native_session::SessionDomain::Skills => 1, crate::native_session::SessionDomain::Mcp => 2 };
+        if !self.native_available() || self.native_capability_bits.load(std::sync::atomic::Ordering::Acquire) & capability == 0 { return Err("native_extension_Unsupported".into()); }
+        let result = self.wire.request("native/observe", json!({"domain":domain})).await.map_err(|error| {
+            if error == "method_unsupported" { self.native_capability_bits.fetch_and(!capability, std::sync::atomic::Ordering::AcqRel); "native_extension_Unsupported".into() } else { error }
+        })?;
         let mut out = crate::native_session::Projection::default();
         match domain {
             crate::native_session::SessionDomain::Skills => crate::native_session::skills(result["skills"].as_array().ok_or("native_extension_InvalidFormat")?, false, &mut out),
             crate::native_session::SessionDomain::Mcp => crate::native_session::mcp(result["servers"].as_array().ok_or("native_extension_InvalidFormat")?, false, &mut out),
         }
         out.incomplete |= result["incomplete"].as_bool().unwrap_or(true);
+        if domain == crate::native_session::SessionDomain::Skills {
+            out.source_incomplete |= result["source_incomplete"].as_bool().unwrap_or(true);
+            crate::native_session::skill_candidates(&result["skill_candidates"], &mut out);
+            out.skill_candidates_incomplete |= result["skill_candidates_incomplete"].as_bool().unwrap_or(true);
+        }
         Ok(out)
+    }
+    pub(crate) fn auth_launch(&self) -> Option<Arc<crate::manager::native_auth::LaunchContext>> {
+        (self.native_available() && self.native_capability_bits.load(std::sync::atomic::Ordering::Acquire) & 66 == 66).then(|| self.auth_launch.clone()).flatten()
     }
     pub(crate) async fn admit_native_action(&self, action: &crate::native_session::NativeSessionAction) -> Result<(), String> {
         use crate::native_session::NativeSessionAction;
         let name = match action { NativeSessionAction::ReconnectMcp { server_name } | NativeSessionAction::ToggleMcp { server_name, .. } => server_name, _ => return Ok(()) };
-        let observed = self.observe_native(crate::native_session::SessionDomain::Mcp).await.map_err(|_| "native_extension_Unavailable")?;
+        let observed = self.observe_native(crate::native_session::SessionDomain::Mcp).await?;
         if observed.incomplete { return Err("native_extension_Unsupported".into()); }
         let mut matches = observed.mcp_servers.iter().filter(|server| &server.name == name);
         let server = matches.next().ok_or("native_extension_Unsupported")?;
@@ -257,8 +287,14 @@ impl ClaudeSession {
         Ok(())
     }
     pub(crate) async fn native_action(&self, action: &crate::native_session::NativeSessionAction) -> Result<crate::native_session::NativeActionState, String> {
-        if !self.native_capabilities().reload_skills || matches!(action, crate::native_session::NativeSessionAction::NativeLogin { .. } | crate::native_session::NativeSessionAction::NativeLogout { .. }) { return Err("native_extension_Unsupported".into()); }
-        let result = self.wire.request("native/action", json!({"action":action})).await?;
+        use crate::native_session::NativeSessionAction;
+        let capability = match action { NativeSessionAction::ReloadSkills {} => 4, NativeSessionAction::ReloadPlugins { .. } => 8, NativeSessionAction::ReconnectMcp { .. } => 16, NativeSessionAction::ToggleMcp { .. } => 32, _ => return Err("native_extension_Unsupported".into()) };
+        let caps = self.native_capabilities();
+        let supported = match action { NativeSessionAction::ReloadSkills {} => caps.reload_skills, NativeSessionAction::ReloadPlugins { .. } => caps.reload_plugins, NativeSessionAction::ReconnectMcp { .. } => caps.reconnect_mcp, NativeSessionAction::ToggleMcp { .. } => caps.toggle_mcp, _ => false };
+        if !supported { return Err("native_extension_Unsupported".into()); }
+        let result = self.wire.request("native/action", json!({"action":action})).await.map_err(|error| {
+            if error == "method_unsupported" { self.native_capability_bits.fetch_and(!capability, std::sync::atomic::Ordering::AcqRel); "native_extension_Unsupported".into() } else { error }
+        })?;
         serde_json::from_value(result["state"].clone()).map_err(|_| "result_unknown".into())
     }
     pub async fn close(&self) -> bool {
@@ -274,6 +310,24 @@ impl ClaudeSession {
     pub async fn wait_stopped(&self) -> bool {
         self.wire.wait_stopped().await
     }
+}
+
+fn valid_permission_response(pending: &Value, response: &Value) -> bool {
+    match response.get("behavior").and_then(Value::as_str) {
+        Some("deny") => true,
+        Some("allow") if pending["tool"] == "AskUserQuestion" => {
+            let Some(questions) = pending.pointer("/input/questions").and_then(Value::as_array).filter(|questions| !questions.is_empty()) else { return false; };
+            let Some(answers) = response.get("answers").and_then(Value::as_object) else { return false; };
+            let names: Option<std::collections::HashSet<&str>> = questions.iter().map(|question| question.get("question").and_then(Value::as_str)).collect();
+            names.is_some_and(|names| names.len() == questions.len() && answers.len() == names.len() && names.iter().all(|name| answers.get(*name).and_then(Value::as_str).is_some_and(|answer| !answer.trim().is_empty())))
+        }
+        Some("allow") => response.get("answers").is_none(),
+        _ => false,
+    }
+}
+
+fn capability_bits(value: &Value) -> u8 {
+    ["observe_skills", "observe_mcp", "reload_skills", "reload_plugins", "reconnect_mcp", "toggle_mcp"].iter().enumerate().fold(0, |bits, (index, key)| bits | if value[*key] == true { 1 << index } else { 0 })
 }
 
 fn event_run(view: &SessionView, params: &Value) -> Option<String> {
@@ -362,7 +416,24 @@ fn is_executable_file(path: &std::path::Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{event_run, run_status, result_text, terminal_data};
+    #[test]
+    fn optional_domains_and_unverified_writes_remain_separate() {
+        assert_eq!(super::capability_bits(&json!({"observe_skills":true,"observe_mcp":false,"reload_skills":false,"reload_plugins":true})), 9);
+        assert_eq!(super::capability_bits(&json!({"observe_skills":"true","future":true})), 0);
+    }
+
     use serde_json::json;
+    #[test]
+    fn invalid_question_answers_do_not_consume_a_pending_approval() {
+        let pending = json!({"tool":"AskUserQuestion","input":{"questions":[{"question":"One"},{"question":"Two","multiSelect":true}]}});
+        assert!(super::valid_permission_response(&pending, &json!({"behavior":"allow","answers":{"One":"custom answer","Two":"A, B"}})));
+        for response in [json!({"behavior":"allow"}), json!({"behavior":"allow","answers":{"One":"A"}}), json!({"behavior":"allow","answers":{"One":"A","Two":""}})] {
+            assert!(!super::valid_permission_response(&pending, &response));
+        }
+        assert!(super::valid_permission_response(&pending, &json!({"behavior":"deny"})));
+        assert!(!super::valid_permission_response(&json!({"tool":"Bash"}), &json!({"behavior":"allow","answers":{"One":"A"}})));
+    }
+
 
     #[test]
     fn native_abort_allows_next_turn_without_hiding_engine_failures() {
@@ -380,6 +451,7 @@ mod tests {
         assert_eq!(run_status(&json!({"is_error":false,"terminal_reason":"completed"})), "completed");
         assert_eq!(run_status(&json!({"is_error":false,"subtype":"success"})), "completed");
         assert_eq!(run_status(&json!({"is_error":false,"subtype":"future_subtype"})), "unknown");
+        assert_eq!(run_status(&json!({"is_error":false,"subtype":"success","num_turns":0,"local_command":"help","result":""})), "completed");
     }
 
     #[test]
@@ -443,7 +515,7 @@ while IFS= read -r line; do
 request=${line#*\"id\":}; request=${request%%,*}
 case "$line" in
 *'"method":"native/action"'*) printf '{"id":%s,"result":{"state":"held"}}\n' "$request";;
-*'"method":"native/observe"'*'"domain":"skills"'*) printf '{"id":%s,"result":{"skills":[{"name":"help","builtin":true},{"name":"help"},{"name":"mcp__fixture__tool","builtin":false}],"incomplete":false}}\n' "$request";;
+*'"method":"native/observe"'*'"domain":"skills"'*) printf '{"id":%s,"result":{"skills":[{"name":"help","builtin":true},{"name":"help"},{"name":"mcp__fixture__tool","builtin":false},{"name":"apps/web:deploy","builtin":false,"aliases":["deploy"],"active_source":{"source":"project","path":"/native/deploy/SKILL.md","plugin_id":"fixture@marketplace"}}],"incomplete":false,"source_incomplete":true}}\n' "$request";;
 *'"method":"native/observe"'*) printf '{"id":%s,"result":{"servers":[{"name":"managed","status":"connected","source":"managed","config":{"env":{"KEY":"secret"}}}],"incomplete":false}}\n' "$request";;
 esac
 done
@@ -451,24 +523,30 @@ done
         let mut command = Command::new(executable);
         command.current_dir(&root);
         let (wire, _events) = Transport::spawn(command, launch.lease.cancellation_token(), ProcessDiagnostic::new("agent_start", "claude"), launch.lease.clone()).unwrap();
-        let session = ClaudeSession { wire, view: Arc::new(Mutex::new(SessionView::new(root.to_string_lossy().into()))), native_protocol_supported: Arc::new(std::sync::atomic::AtomicBool::new(true)) };
+        let session = ClaudeSession { wire, view: Arc::new(Mutex::new(SessionView::new(root.to_string_lossy().into()))), native_capability_bits: Arc::new(std::sync::atomic::AtomicU8::new(127)), auth_launch: None };
         let commands = session.observe_native(crate::native_session::SessionDomain::Skills).await.unwrap();
         assert_eq!(commands.skills[0].classification, crate::native_session::NativeSkillClassification::BuiltinCommand);
         assert_eq!(commands.skills[1].classification, crate::native_session::NativeSkillClassification::Unknown);
         assert_eq!(commands.skills[2].classification, crate::native_session::NativeSkillClassification::Unknown);
         assert_eq!(commands.skills[2].builtin, Some(false));
         assert!(!commands.incomplete);
+        assert!(commands.source_incomplete);
+        assert_eq!(commands.skills[3].classification, crate::native_session::NativeSkillClassification::Skill);
+        assert_eq!(commands.skills[3].aliases, vec!["deploy"]);
+        assert_eq!(commands.skills[3].source.as_deref(), Some("project"));
+        assert_eq!(commands.skills[3].path.as_deref(), Some("/native/deploy/SKILL.md"));
+        assert_eq!(commands.skills[3].plugin_id.as_deref(), Some("fixture@marketplace"));
         assert_eq!(session.native_action(&NativeSessionAction::ReloadPlugins { hold_on_cache_impact: true }).await.unwrap(), NativeActionState::Held);
         assert_eq!(session.admit_native_action(&NativeSessionAction::ReconnectMcp { server_name: "managed".into() }).await.unwrap_err(), "native_extension_Unsupported");
         assert!(!session.native_capabilities().native_login);
         assert_eq!(session.native_capabilities().native_auth_guidance.unwrap().verified_version, "2.1.319");
-        session.native_protocol_supported.store(false, std::sync::atomic::Ordering::Release);
+        session.native_capability_bits.store(0, std::sync::atomic::Ordering::Release);
         let unsupported = session.native_capabilities();
         assert!(!unsupported.observe_skills);
         assert!(unsupported.native_auth_guidance.is_none());
         assert!(!unsupported.native_login);
         assert_eq!(session.native_action(&NativeSessionAction::ReloadSkills {}).await.unwrap_err(), "native_extension_Unsupported");
-        session.native_protocol_supported.store(true, std::sync::atomic::Ordering::Release);
+        session.native_capability_bits.store(127, std::sync::atomic::Ordering::Release);
         assert!(session.wire.close().await);
         manager.inner.providers.cleanup("alice", &id, &launch.binding, true, false).await.unwrap();
         assert!(manager.shutdown().await);
@@ -508,7 +586,7 @@ done
         let mut command = Command::new(executable); command.current_dir(&root);
         let (wire, _events) = Transport::spawn(command, launch.lease.cancellation_token(), ProcessDiagnostic::new("agent_start", "claude"), launch.lease.clone()).unwrap();
         let mut view = SessionView::new(project.path); view.status = "idle".into();
-        let session = ClaudeSession { wire, view: Arc::new(Mutex::new(view)), native_protocol_supported: Arc::new(std::sync::atomic::AtomicBool::new(true)) };
+        let session = ClaudeSession { wire, view: Arc::new(Mutex::new(view)), native_capability_bits: Arc::new(std::sync::atomic::AtomicU8::new(127)), auth_launch: None };
         session.send(uuid::Uuid::new_v4().to_string(), resolved.clone(), None).await.unwrap();
         let protocol: serde_json::Value = serde_json::from_str(std::fs::read_to_string(root.join("protocol")).unwrap().lines().next().unwrap()).unwrap();
         assert_eq!(protocol["method"], "send");

@@ -32,6 +32,11 @@ pub async fn preview_native_skill_visibility(app: AppHandle, window: WebviewWind
     app.try_state::<NativeHost>().ok_or_else(|| "native_extension_Unavailable".to_owned())?.preview_visibility(&app.state::<AgentManager>(), input, permit, ticket).await
 }
 #[tauri::command]
+pub async fn discover_native_skill_rules(app: AppHandle, window: WebviewWindow, input: Selection) -> Result<core::skills::Rules, String> {
+    let (permit, ticket) = authorize(&app, &window, Domain::Skills, false)?;
+    app.try_state::<NativeHost>().ok_or_else(|| "native_extension_Unavailable".to_owned())?.discover_skill_rules(&app.state::<AgentManager>(), input, permit, ticket).await
+}
+#[tauri::command]
 pub async fn discover_native_mcp(app: AppHandle, window: WebviewWindow, input: Selection) -> Result<core::mcp::Discovery, String> {
     let (permit, ticket) = authorize(&app, &window, Domain::Mcp, false)?;
     app.try_state::<NativeHost>().ok_or_else(|| "native_extension_Unavailable".to_owned())?.discover_mcp(&app.state::<AgentManager>(), input, permit, ticket).await
@@ -95,6 +100,39 @@ pub async fn inspect_native_session_request(app: AppHandle, window: WebviewWindo
     let (_permit, ticket) = authorize(&app, &window, session_domain(input.domain), false)?;
     let lease = session_lease(&app, &ticket)?;
     let result = app.state::<AgentManager>().inspect_native_session_request(&ticket.0, &input.session_id, &input.generation, &input.request_id, input.domain, &lease).await?;
+    session_lease(&app, &ticket)?;
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn start_native_auth(app: AppHandle, window: WebviewWindow, input: dgos_agents::native_session::StartNativeAuth) -> Result<dgos_agents::native_session::NativeAuthSnapshot, String> {
+    let (_permit, ticket) = authorize(&app, &window, Domain::Mcp, true)?;
+    let lease = session_lease(&app, &ticket)?;
+    let result = app.state::<AgentManager>().start_native_auth(&ticket.0, input, &lease).await?;
+    session_lease(&app, &ticket)?;
+    Ok(result)
+}
+#[tauri::command]
+pub async fn read_native_auth(app: AppHandle, window: WebviewWindow, input: dgos_agents::native_session::NativeAuthRequest) -> Result<dgos_agents::native_session::NativeAuthSnapshot, String> {
+    let (_permit, ticket) = authorize(&app, &window, Domain::Mcp, true)?;
+    let lease = session_lease(&app, &ticket)?;
+    let result = app.state::<AgentManager>().read_native_auth(&ticket.0, input, &lease).await?;
+    session_lease(&app, &ticket)?;
+    Ok(result)
+}
+#[tauri::command]
+pub async fn cancel_native_auth(app: AppHandle, window: WebviewWindow, input: dgos_agents::native_session::NativeAuthRequest) -> Result<dgos_agents::native_session::NativeAuthSnapshot, String> {
+    let (_permit, ticket) = authorize(&app, &window, Domain::Mcp, true)?;
+    let lease = session_lease(&app, &ticket)?;
+    let result = app.state::<AgentManager>().cancel_native_auth(&ticket.0, input, &lease).await?;
+    session_lease(&app, &ticket)?;
+    Ok(result)
+}
+#[tauri::command]
+pub async fn submit_native_auth_callback(app: AppHandle, window: WebviewWindow, input: dgos_agents::native_session::NativeAuthCallback) -> Result<dgos_agents::native_session::NativeAuthSnapshot, String> {
+    let (_permit, ticket) = authorize(&app, &window, Domain::Mcp, true)?;
+    let lease = session_lease(&app, &ticket)?;
+    let result = app.state::<AgentManager>().submit_native_auth_callback(&ticket.0, input, &lease).await?;
     session_lease(&app, &ticket)?;
     Ok(result)
 }

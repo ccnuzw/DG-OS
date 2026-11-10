@@ -25,12 +25,25 @@ pub enum ResourceAction {
     Update { expected: ResourceInstance, package: NativeSkillPackage, source: ResourceSource },
     Remove { expected: ResourceInstance },
 }
+/// File evidence only: never an identity mapping to registered native commands.
+#[derive(Clone, Debug, Serialize)]
+pub struct ResourceNameMatch { pub scope: Scope, pub slug: String, pub native_name: String, pub owner: Owner }
+#[derive(Clone, Debug, Serialize)]
+pub struct ResourceImpact {
+    pub native_name: String,
+    pub previous_name: Option<String>,
+    pub same_name: Vec<ResourceNameMatch>,
+    pub coverage: &'static str,
+    pub incomplete: bool,
+    pub visibility_writable: bool,
+}
 #[derive(Clone, Debug, Serialize)]
 pub struct ResourcePreview {
     pub receipt: Receipt, pub target: Target, pub scope: Scope, pub slug: String,
     /// Only shown in the explicitly authorized preview, never a general log.
     pub destination: PathBuf, pub before_hash: Option<String>, pub after_hash: Option<String>,
     pub source: Option<ResourceSource>, pub resources: Vec<ResourceFile>, pub metadata: Option<package::Metadata>, pub expires_at: u64,
+    pub impact: Option<ResourceImpact>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct ResourceDiscovery { pub instances: Vec<ResourceSummary>, pub readonly_entries: Vec<ResourceLink>, pub missing: bool, pub incomplete: bool }
@@ -292,7 +305,8 @@ impl NativeExtensions {
             let root = self.resource_root(target, &scope, false)?;
             let child = root.child(slug.as_ref(), false)?;
             let (snapshot, files) = resource_tree::scan(&child)?;
-            let mut owner = owner(&child, slug)?;
+            let root_owner = owner(&root, "")?;
+            let mut owner = if root_owner == Owner::Loose { owner(&child, slug)? } else { root_owner };
             if owner == Owner::Loose && validate_tree_snapshot(Some(&snapshot)).is_err() { owner = Owner::Unknown; }
             let body = files.iter().find(|f| f.path == "SKILL.md").ok_or(Error::InvalidFormat)?;
             let metadata = package::metadata(&body.bytes)?;
@@ -310,6 +324,26 @@ impl NativeExtensions {
         self.context.admit(false)?;
         Ok(environment.locate(&summary.metadata.dependencies))
     }
+    #[cfg(unix)]
+    fn resource_impact(&self, target: Target, native_name: &str, previous_name: Option<String>) -> Option<ResourceImpact> {
+        if target != Target::Claude { return None; }
+        let mut same_name = Vec::new(); let mut incomplete = false;
+        let scopes = [Scope::OsUser].into_iter().chain(self.context.roots.project.as_ref().map(|_| Scope::ProjectShared));
+        for scope in scopes {
+            match self.discover_resources(target, scope, "") {
+                Ok(discovery) => {
+                    incomplete |= discovery.incomplete || !discovery.readonly_entries.is_empty();
+                    for item in discovery.instances {
+                        if item.metadata.name == native_name || previous_name.as_deref() == Some(item.metadata.name.as_str()) {
+                            same_name.push(ResourceNameMatch { scope: item.scope, slug: item.slug, native_name: item.metadata.name, owner: item.owner });
+                        }
+                    }
+                },
+                Err(_) => incomplete = true,
+            }
+        }
+        Some(ResourceImpact { native_name: native_name.into(), previous_name, same_name, coverage: "authorized_loose_roots", incomplete, visibility_writable: false })
+    }
     pub fn preview_resource(&self, target: Target, scope: Scope, slug: &str, action: ResourceAction) -> Result<ResourcePreview, Error> {
         #[cfg(unix)] {
             if !cfg!(target_os = "macos") { return Err(Error::Unsupported); }
@@ -317,6 +351,7 @@ impl NativeExtensions {
             self.validate(true)?; package::slug(slug)?;
             package::loose_path(slug)?;
             let root = self.resource_root(target, &scope, true)?; let _lock = root.lock()?;
+            if owner(&root, "")? != Owner::Loose { return Err(Error::Unsupported); }
             let journals = self.resource_journals(true)?; let _journal_lock = journals.lock()?;
             let before = tree(&root, slug)?;
             validate_tree_snapshot(before.as_ref())?;
@@ -344,8 +379,26 @@ impl NativeExtensions {
                     let payload = stage.child("payload".as_ref(), true)?;
                     let after = resource_tree::write(&payload, package)?;
                     (Some(after), package.summary(), Some(package.metadata.clone()))
-                }, None => (None, Vec::new(), None),
+                }, None => {
+                    // Removal previews describe the exact tree being removed,
+                    // including scripts and independent resources, not an empty after image.
+                    let child = root.child(slug.as_ref(), false)?;
+                    let (snapshot, files) = resource_tree::scan(&child)?;
+                    if Some(&snapshot) != before.as_ref() { return Err(Error::Conflict); }
+                    let body = files.iter().find(|file| file.path == "SKILL.md").ok_or(Error::InvalidFormat)?;
+                    let metadata = package::metadata(&body.bytes)?;
+                    let resources = files.iter().map(|file| ResourceFile { path: file.path.clone(), bytes: file.bytes.len(), executable: file.executable, hash: paths::hash(&file.bytes) }).collect();
+                    (None, resources, Some(metadata))
+                },
             };
+            let previous_name = if before.is_some() && after.is_some() && target == Target::Claude {
+                let (snapshot, files) = resource_tree::scan(&root.child(slug.as_ref(), false)?)?;
+                if Some(&snapshot) != before.as_ref() { return Err(Error::Conflict); }
+                let body = files.iter().find(|file| file.path == "SKILL.md").ok_or(Error::InvalidFormat)?;
+                let name = package::metadata(&body.bytes)?.name;
+                metadata.as_ref().filter(|metadata| metadata.name != name).map(|_| name)
+            } else { None };
+            let impact = metadata.as_ref().and_then(|metadata| self.resource_impact(target, &metadata.name, previous_name));
             let project = if scope == Scope::ProjectShared {
                 let root = self.context.roots.project.as_ref().ok_or(Error::AccessDenied)?;
                 Some(ResourceProjectBinding { root: root.clone(), identity: Directory::open(root)?.identity()? })
@@ -358,7 +411,7 @@ impl NativeExtensions {
             let record = ResourceJournal { version: 1, id, principal: paths::hash(self.context.principal.as_bytes()), lease: paths::hash(self.context.lease_id.as_bytes()), target, scope: scope.clone(), slug: slug.into(), project, anchors, parent: root.identity()?, before, after, source: source.clone(), expires_at: now()?.checked_add(600).ok_or(Error::Unavailable)?, state: State::Previewed };
             self.validate(true)?; self.validate_path(&root_path(&self.context, target, &scope)?)?;
             save(&journals, &record)?;
-            Ok(ResourcePreview { receipt: record.receipt(), target, scope: scope.clone(), slug: slug.into(), destination: root_path(&self.context, target, &scope)?.join(slug), before_hash: record.before.as_ref().map(|t| t.hash.clone()), after_hash: record.after.as_ref().map(|t| t.hash.clone()), source, resources, metadata, expires_at: record.expires_at })
+            Ok(ResourcePreview { receipt: record.receipt(), target, scope: scope.clone(), slug: slug.into(), destination: root_path(&self.context, target, &scope)?.join(slug), before_hash: record.before.as_ref().map(|t| t.hash.clone()), after_hash: record.after.as_ref().map(|t| t.hash.clone()), source, resources, metadata, impact, expires_at: record.expires_at })
         }
         #[cfg(not(unix))] { let _ = (target, scope, slug, action); Err(Error::Unsupported) }
     }
@@ -371,6 +424,7 @@ impl NativeExtensions {
             if record.lease != paths::hash(self.context.lease_id.as_bytes()) { return Err(Error::AccessDenied); }
             package::loose_path(&record.slug)?;
             let root = self.resource_root(record.target, &record.scope, false)?; let _lock = root.lock()?;
+            if owner(&root, "")? != Owner::Loose { return Err(Error::Unsupported); }
             if root.identity()? != record.parent { return Err(Error::RootChanged); }
             if !matches!(record.state, State::Previewed | State::Prepared) { return self.inspect_resource_locked(&journals, &root, &mut record); }
             if now()? > record.expires_at { return Err(Error::Expired); }
@@ -383,6 +437,7 @@ impl NativeExtensions {
             record.state = State::Prepared; save(&journals, &record)?;
             self.validate(true)?; self.validate_path(&root_path(&self.context, record.target, &record.scope)?)?;
             if self.resource_root(record.target, &record.scope, false)?.identity()? != record.parent || tree(&root, &record.slug)? != record.before { record.state = State::Conflict; save(&journals, &record)?; return Ok(record.receipt()); }
+            if owner(&root, "")? != Owner::Loose { return Err(Error::Unsupported); }
             validate_payload(&stage, record.after.as_ref())?;
             record.state = State::Publishing; save(&journals, &record)?;
             let publication = if record.after.is_some() { root.publish(&stage, "payload", &record.slug, record.before.is_some()) } else { root.move_to(&record.slug, &stage, "payload") };

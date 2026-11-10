@@ -21,7 +21,7 @@ export async function fetchProviders(): Promise<Provider[]> {
 
 export async function fetchModels(providerId: string): Promise<Model[]> {
   const all = await enveloped<Model[]>('list_models', { providerId });
-  return all.filter(model => model.model_type === 'text-generation' || model.model_type === 'chat');
+  return all.filter(model => model.model_type === 'text-generation' && model.capabilities?.streaming !== 'unsupported' && (model.max_output_tokens == null || model.max_output_tokens >= 1024));
 }
 
 export async function fetchSkills(): Promise<Skill[]> {

@@ -8,6 +8,8 @@ mod cutover;
 mod sessions;
 mod runtime;
 mod capabilities;
+mod codex_operations;
+pub use codex_operations::CodexOperationJournal;
 mod workspaces;
 pub use workspaces::{GitOperationIntent, StoredWorkspace};
 mod handoffs;

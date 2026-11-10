@@ -27,6 +27,13 @@ impl AgentManager {
                 let expected: Vec<GitIndexEntry> = serde_json::from_value(details["expected_index"].clone()).map_err(|_| "invalid_git_operation")?;
                 proven = after.head == before.head && sorted(after.index.clone()) == expected && after.file_versions == before.file_versions && after.merge_heads == before.merge_heads;
             },
+            GitAction::Untrack { paths } => {
+                let expected: Vec<GitIndexEntry> = serde_json::from_value(details["expected_index"].clone()).map_err(|_| "invalid_git_operation")?;
+                proven = after.head == before.head && after.branch == before.branch && after.merge_heads == before.merge_heads && sorted(after.index.clone()) == expected && restore::untrack_matches(&project, paths, &before, &after, &details).unwrap_or(false);
+            },
+            GitAction::Restore { .. } | GitAction::RestoreHunk { .. } => {
+                proven = restore::matches_plan(&project, &before, &after, &details).unwrap_or(false);
+            },
             GitAction::Commit { message, .. } => { proven = self.commit_matches(&project, &after, &details, message, &lease).await?; },
             GitAction::Push { .. } => {
                 if !input.trust_directory || !input.trust_network { return Err("git_push_trust_required".into()); }

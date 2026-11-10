@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { useDevelopment } from './developmentStore';
-import type { DiscoverNativeSkills, GetNativeSkill, NativeDraft, NativeMcp, NativeOperation, NativePending, NativePreview, NativeReceipt, NativeResult, NativeSelection, NativeSkill, NativeSkillPreview, NativeSkills, NativeVisibilityPreview, PreviewNativeMcp, PreviewNativeSkill, PreviewNativeVisibility } from '../types/nativeExtensions';
+import type { DiscoverNativeSkills, GetNativeSkill, NativeDraft, NativeMcp, NativeOperation, NativePending, NativePreview, NativeReceipt, NativeResult, NativeSelection, NativeSkill, NativeSkillPreview, NativeSkillRules, NativeSkills, NativeVisibilityPreview, PreviewNativeMcp, PreviewNativeSkill, PreviewNativeVisibility } from '../types/nativeExtensions';
 
 const codes = new Set(['AccessDenied', 'UnsafePath', 'RootChanged', 'InvalidFormat', 'Limit', 'Unsupported', 'Conflict', 'Busy', 'Expired', 'NotFound', 'Unavailable', 'RecoveryRequired', 'StaleGeneration'].map(code => `native_extension_${code}`));
 for (const code of ['session_invalid', 'session_closed', 'session_busy', 'session_exists', 'bridge_unavailable', 'request_capacity', 'provider_revision_changed', 'provider_binding_unconfirmed', 'cli_incompatible', 'provider_required', 'provider_unavailable', 'provider_incompatible', 'credential_unavailable', 'legacy_session_read_only', 'capability_revoked', 'stale_generation', 'invalid_request_id', 'request_conflict', 'project_not_found', 'project_archived', 'workspace_changed', 'storage_failed', 'cancelled', 'maintenance_active']) codes.add(code);
@@ -12,6 +12,7 @@ interface NativeStore {
   epoch: number;
   skills: Record<string, ReadState<NativeSkills>>;
   mcp: Record<string, ReadState<NativeMcp>>;
+  rules: Record<string, ReadState<NativeSkillRules>>;
   receipts: Record<string, NativeReceipt>;
   drafts: Record<string, NativeDraft>;
   pending: Record<string, NativePending>;
@@ -23,6 +24,7 @@ interface NativeStore {
   end(id: string): void;
   clearCommittedDraft(pending: NativePending): void;
   discoverSkills(input: DiscoverNativeSkills): Promise<NativeResult<NativeSkills>>;
+  discoverSkillRules(input: NativeSelection): Promise<NativeResult<NativeSkillRules>>;
   getSkill(input: GetNativeSkill): Promise<NativeResult<NativeSkill>>;
   discoverMcp(input: NativeSelection): Promise<NativeResult<NativeMcp>>;
   previewSkill(input: PreviewNativeSkill): Promise<NativeResult<NativeSkillPreview>>;
@@ -45,7 +47,7 @@ export const useNativeExtensions = create<NativeStore>((set, get) => {
       return epoch === get().epoch && account === useDevelopment.getState().epoch ? { ok: true, value } : { ok: false, code: 'session_invalid' };
     } catch (error) { return { ok: false, code: epoch === get().epoch && account === useDevelopment.getState().epoch ? nativeError(error) : 'session_invalid' }; }
   }
-  async function read<T>(kind: 'skills' | 'mcp', command: string, input: NativeSelection & { query?: string }): Promise<NativeResult<T>> {
+  async function read<T>(kind: 'skills' | 'mcp' | 'rules', command: string, input: NativeSelection & { query?: string }): Promise<NativeResult<T>> {
     const id = key(input) + (kind === 'skills' ? `:${input.query ?? ''}` : '');
     const request = `${kind}:${id}`;
     const existing = readFlights.get(request);
@@ -73,22 +75,25 @@ export const useNativeExtensions = create<NativeStore>((set, get) => {
       if (result.ok && result.value.state === 'Committed') {
         const pending = Object.values(get().pending).find(item => item.receipt.operation_id === input.operation_id);
         if (pending) {
-          const id = key(pending.selection), kind = pending.kind;
-          for (const request of reads.keys()) {
-            if (request === `${kind}:${id}` || request.startsWith(`${kind}:${id}:`)) {
-              reads.set(request, (reads.get(request) ?? 0) + 1);
-              readFlights.delete(request);
+          const id = key(pending.selection);
+          const kinds = pending.kind === 'skills' ? ['skills', 'rules'] as const : ['mcp'] as const;
+          for (const kind of kinds) {
+            for (const request of reads.keys()) {
+              if (request === `${kind}:${id}` || request.startsWith(`${kind}:${id}:`)) {
+                reads.set(request, (reads.get(request) ?? 0) + 1);
+                readFlights.delete(request);
+              }
             }
+            const entries = Object.fromEntries(Object.entries(get()[kind]).map(([entry, state]) => [entry, entry === id || entry.startsWith(`${id}:`) ? { ...state, loading: false, stale: true } : state]));
+            set({ [kind]: entries });
           }
-          const entries = Object.fromEntries(Object.entries(get()[kind]).map(([entry, state]) => [entry, entry === id || entry.startsWith(`${id}:`) ? { ...state, loading: false, stale: true } : state]));
-          set({ [kind]: entries });
         }
       }
       return result;
     } finally { operations.delete(input.operation_id); }
   }
   return {
-    epoch: 0, skills: {}, mcp: {}, receipts: {}, drafts: {}, pending: {}, busy: {},
+    epoch: 0, skills: {}, mcp: {}, rules: {}, receipts: {}, drafts: {}, pending: {}, busy: {},
     setDraft(id, draft) { set({ drafts: { ...get().drafts, [id]: draft } }); },
     discardDrafts(expected) {
       if (Object.entries(expected).some(([id, draft]) => get().drafts[id] !== draft)) return false;
@@ -109,6 +114,7 @@ export const useNativeExtensions = create<NativeStore>((set, get) => {
       const drafts = { ...get().drafts }; delete drafts[pending.draft_key]; set({ drafts });
     },
     discoverSkills: input => read<NativeSkills>('skills', 'discover_native_skills', input),
+    discoverSkillRules: input => read<NativeSkillRules>('rules', 'discover_native_skill_rules', input),
     getSkill: input => call<NativeSkill>('get_native_skill', input),
     discoverMcp: input => read<NativeMcp>('mcp', 'discover_native_mcp', input),
     previewSkill: input => call<NativeSkillPreview>('preview_native_skill', input),
@@ -117,7 +123,7 @@ export const useNativeExtensions = create<NativeStore>((set, get) => {
     commit: input => operation('commit_native_operation', input),
     cancel: input => operation('cancel_native_operation', input),
     inspect: input => operation('inspect_native_operation', input),
-    reset() { reads.clear(); readFlights.clear(); operations.clear(); set({ epoch: get().epoch + 1, skills: {}, mcp: {}, receipts: {}, drafts: {}, pending: {}, busy: {} }); },
+    reset() { reads.clear(); readFlights.clear(); operations.clear(); set({ epoch: get().epoch + 1, skills: {}, mcp: {}, rules: {}, receipts: {}, drafts: {}, pending: {}, busy: {} }); },
   };
 });
 // Existing account reload resets Development before navigating; invalidate synchronously.

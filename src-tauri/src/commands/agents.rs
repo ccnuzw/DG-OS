@@ -15,10 +15,13 @@ pub enum OpenAgentSessionInput {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SendAgentMessageInput { session_id: String, generation: String, request_id: String, text: String, settings: Option<dgos_agents::session::AgentTurnSettings>, #[serde(default)] references: Vec<dgos_agents::references::ConversationReference>, #[serde(default)] skills: Vec<dgos_agents::session::AgentSkillInput> }
+pub struct SendAgentMessageInput { session_id: String, generation: String, request_id: String, text: String, settings: Option<dgos_agents::session::AgentTurnSettings>, #[serde(default)] references: Vec<dgos_agents::references::ConversationReference>, #[serde(default)] skills: Vec<dgos_agents::session::AgentSkillInput>, #[serde(default)] images: Vec<dgos_agents::images::ImageInput> }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RespondAgentRequestInput { session_id: String, generation: String, request_id: String, response: Value }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SteerAgentTurnInput { session_id: String, generation: String, run_id: String, request_id: String, text: String }
 
 #[tauri::command]
 pub async fn list_agent_sessions(app: tauri::AppHandle, window: WebviewWindow) -> Result<Vec<SessionRecord>, String> {
@@ -49,7 +52,15 @@ pub async fn get_agent_session(app: tauri::AppHandle, window: WebviewWindow, ses
 #[tauri::command]
 pub async fn send_agent_message(app: tauri::AppHandle, window: WebviewWindow, input: SendAgentMessageInput) -> Result<(), String> {
     let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
-    app.state::<AgentManager>().send(context.user_id(), &input.session_id, &input.generation, input.request_id, input.text, input.settings, input.references, input.skills).await
+    app.state::<AgentManager>().send(context.user_id(), &input.session_id, &input.generation, input.request_id, input.text, input.settings, input.references, input.skills, input.images).await
+}
+#[tauri::command]
+pub async fn steer_agent_turn(app: tauri::AppHandle, window: WebviewWindow, input: SteerAgentTurnInput) -> Result<dgos_agents::session::SteeringReceipt, String> {
+    let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
+    let resolver = app.state::<std::sync::Arc<crate::session::SessionResolver>>();
+    let (session, lease) = resolver.agent_session().map_err(|e| e.to_string())?;
+    if session.user_id() != context.user_id() || lease.is_cancelled() { return Err("session_invalid".into()); }
+    app.state::<AgentManager>().steer(context.user_id(), &input.session_id, &input.generation, input.run_id, input.request_id, input.text).await
 }
 #[tauri::command]
 pub async fn respond_agent_request(app: tauri::AppHandle, window: WebviewWindow, input: RespondAgentRequestInput) -> Result<(), String> {
@@ -57,9 +68,9 @@ pub async fn respond_agent_request(app: tauri::AppHandle, window: WebviewWindow,
     app.state::<AgentManager>().respond(context.user_id(), &input.session_id, &input.generation, input.request_id, input.response).await
 }
 #[tauri::command]
-pub async fn interrupt_agent_session(app: tauri::AppHandle, window: WebviewWindow, session_id: String) -> Result<(), String> {
+pub async fn interrupt_agent_session(app: tauri::AppHandle, window: WebviewWindow, session_id: String, generation: String, run_id: String) -> Result<(), String> {
     let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
-    app.state::<AgentManager>().interrupt(context.user_id(), &session_id).await
+    app.state::<AgentManager>().interrupt(context.user_id(), &session_id, &generation, &run_id).await
 }
 #[tauri::command]
 pub async fn close_agent_session(app: tauri::AppHandle, window: WebviewWindow, session_id: String) -> Result<bool, String> {
@@ -116,4 +127,37 @@ pub async fn classify_agent_session(app: tauri::AppHandle, window: WebviewWindow
     let (session, lease) = resolver.agent_session().map_err(|e| e.to_string())?;
     if session.user_id() != context.user_id() || lease.is_cancelled() { return Err("session_invalid".into()); }
     app.state::<AgentManager>().classify_session(context.user_id(), input, lease).await
+}
+
+#[tauri::command]
+pub async fn observe_codex_operations(app: tauri::AppHandle, window: WebviewWindow, input: dgos_agents::codex_operations::CodexScope) -> Result<dgos_agents::codex_operations::CodexOperationsSnapshot, String> {
+    let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
+    let resolver = app.state::<std::sync::Arc<crate::session::SessionResolver>>();
+    let (session, lease) = resolver.agent_session().map_err(|e| e.to_string())?;
+    if session.user_id() != context.user_id() || lease.is_cancelled() { return Err("session_invalid".into()); }
+    app.state::<AgentManager>().observe_codex_operations(context.user_id(), input).await
+}
+#[tauri::command]
+pub async fn control_codex_operation(app: tauri::AppHandle, window: WebviewWindow, input: dgos_agents::codex_operations::ControlCodexOperation) -> Result<dgos_agents::codex_operations::CodexOperationReceipt, String> {
+    let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
+    let resolver = app.state::<std::sync::Arc<crate::session::SessionResolver>>();
+    let (session, lease) = resolver.agent_session().map_err(|e| e.to_string())?;
+    if session.user_id() != context.user_id() || lease.is_cancelled() { return Err("session_invalid".into()); }
+    app.state::<AgentManager>().control_codex_operation(context.user_id(), input).await
+}
+#[tauri::command]
+pub async fn inspect_codex_operation(app: tauri::AppHandle, window: WebviewWindow, input: dgos_agents::codex_operations::InspectCodexOperation) -> Result<Option<dgos_agents::codex_operations::CodexOperationReceipt>, String> {
+    let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
+    let resolver = app.state::<std::sync::Arc<crate::session::SessionResolver>>();
+    let (session, lease) = resolver.agent_session().map_err(|e| e.to_string())?;
+    if session.user_id() != context.user_id() || lease.is_cancelled() { return Err("session_invalid".into()); }
+    app.state::<AgentManager>().inspect_codex_operation(context.user_id(), input).await
+}
+#[tauri::command]
+pub async fn read_codex_child_history(app: tauri::AppHandle, window: WebviewWindow, input: dgos_agents::codex_operations::ReadCodexChildHistory) -> Result<dgos_agents::codex_operations::CodexChildHistory, String> {
+    let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
+    let resolver = app.state::<std::sync::Arc<crate::session::SessionResolver>>();
+    let (session, lease) = resolver.agent_session().map_err(|e| e.to_string())?;
+    if session.user_id() != context.user_id() || lease.is_cancelled() { return Err("session_invalid".into()); }
+    app.state::<AgentManager>().read_codex_child_history(context.user_id(), input).await
 }

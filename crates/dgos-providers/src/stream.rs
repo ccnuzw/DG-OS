@@ -19,28 +19,28 @@ pub enum Outcome {
     Fail(DgosError),
 }
 
-pub trait Mapper: Send + 'static {
+pub trait Mapper<T = ChatChunk>: Send + 'static {
     /// Pushes the chunks this event carries (never an empty one) and says whether it ended the
     /// stream.
-    fn event(&mut self, event: &SseEvent, out: &mut Vec<ChatChunk>) -> Outcome;
+    fn event(&mut self, event: &SseEvent, out: &mut Vec<T>) -> Outcome;
     /// The final chunk: finish reason and usage.
-    fn terminal(&mut self) -> ChatChunk;
+    fn terminal(&mut self) -> T;
     /// The body ended without a terminal event. `Complete` only if the protocol already told us
     /// how the answer ended.
     fn at_eof(&mut self) -> Outcome;
 }
 
-struct State<M> {
+struct State<M, T> {
     response: Response,
     decoder: SseDecoder,
     idle: Duration,
-    pending: VecDeque<DgosResult<ChatChunk>>,
+    pending: VecDeque<DgosResult<T>>,
     mapper: M,
     /// A terminal item is queued; nothing further is read.
     done: bool,
 }
 
-impl<M: Mapper> State<M> {
+impl<M: Mapper<T>, T> State<M, T> {
     fn apply(&mut self, outcome: Outcome) {
         match outcome {
             Outcome::Continue => {}
@@ -93,12 +93,12 @@ impl<M: Mapper> State<M> {
     }
 }
 
-pub fn sse_stream<M: Mapper>(
+pub fn sse_stream<M: Mapper<T>, T: Send + 'static>(
     response: Response,
     idle: Duration,
     max_event_bytes: usize,
     mapper: M,
-) -> impl futures::Stream<Item = DgosResult<ChatChunk>> + Send {
+) -> impl futures::Stream<Item = DgosResult<T>> + Send {
     let state = State {
         response,
         decoder: SseDecoder::new(max_event_bytes),

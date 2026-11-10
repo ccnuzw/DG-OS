@@ -13,6 +13,19 @@ describe('pinned Claude turn settings protocol', () => {
     expect(projectTurnControls([{ ...model, supportsEffort: false }], 'sonnet', true).reasoning.options).toEqual([]);
   });
 
+  test('conflicting aliases never choose effort by catalog order and exact IDs take precedence', () => {
+    const conflicting = { ...model, value: 'alternate', supportedEffortLevels: ['low'] as const };
+    const rows: ModelInfo[] = [model, { ...conflicting, supportedEffortLevels: [...conflicting.supportedEffortLevels] }];
+    for (const catalog of [rows, [...rows].reverse()]) {
+      const controls = projectTurnControls(catalog, 'exact-provider-model', true);
+      expect(controls.reasoning.available).toBe(false);
+      expect(controls.reasoning.reason).toBe('bound_model_metadata_ambiguous');
+      expect(() => validateTurnSettings(controls, { reasoning_effort: 'low' })).toThrow('unsupported_reasoning_effort');
+    }
+    expect(projectTurnControls([...rows, { ...model, value: 'exact-provider-model' }], 'exact-provider-model', true).reasoning.options).toEqual(['low', 'high']);
+    expect(projectTurnControls([model, { ...model, value: 'same-capabilities', supportedEffortLevels: ['high', 'low', 'high'] }], 'exact-provider-model', true).reasoning.options).toEqual(['low', 'high']);
+  });
+
   test('dangerous modes, null permissions and extra keys cannot enter the wire', () => {
     for (const permission_mode of ['bypassPermissions', 'danger-full-access', 'auto', 'acceptEdits']) {
       expect(turnSettingsSchema.safeParse({ reasoning_effort: null, permission_mode }).success).toBe(false);

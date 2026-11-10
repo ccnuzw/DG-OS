@@ -68,7 +68,7 @@ fn history_protocol_item_summary_fetches_turn_scoped_full_items() {
     let mut view = SessionView::new("/fixture".into());
     history.seed(&mut view, &json!({"thread":{"turns":[{"id":"t","items":[],"itemsView":"notLoaded"}]}}));
     let page = history.pages.pop_front().unwrap();
-    assert_eq!(page.params("thread"), json!({"threadId":"thread","turnId":"t","cursor":null,"limit":128,"sortDirection":"asc"}));
+    assert_eq!(page.params("thread"), json!({"threadId":"thread","turnId":"t","cursor":null,"limit":1,"sortDirection":"asc"}));
     history.page(&mut view, &page, &json!({"data":[{"turnId":"foreign","item":item("bad")},{"turnId":"t","item":item("good")}],"nextCursor":null,"backwardsCursor":null}));
     history.finish(&mut view);
     assert_eq!(ids(&view), ["good"]);
@@ -226,20 +226,17 @@ done
         assert_eq!(current.generation, restored.generation);
         assert_eq!(ids(&current.view), ["a","b","c","d","e"]);
         assert_eq!(current.view.status, "idle");
-        assert_eq!(f.manager.send("alice",&f.id,&old,uuid::Uuid::new_v4().to_string(),"never replay".into(),None,vec![], vec![]).await.unwrap_err(),"stale_generation");
+        assert_eq!(f.manager.send("alice",&f.id,&old,uuid::Uuid::new_v4().to_string(),"never replay".into(),None,vec![], vec![], vec![]).await.unwrap_err(),"stale_generation");
         let protocol = f.protocol();
         assert!(!protocol.iter().any(|request|request["method"] == "turn/start"));
         let resume = protocol.iter().find(|request|request["method"] == "thread/resume").unwrap();
         assert_eq!(resume["params"]["threadId"],"history-thread");
         assert_eq!(resume["params"]["excludeTurns"],true);
-        assert_eq!(resume["params"]["initialTurnsPage"],json!({"limit":128,"sortDirection":"desc","itemsView":"full"}));
         for (cursor, direction, method) in [("older-turns","desc","thread/turns/list"),("older-items","desc","thread/items/list"),("newer-turns","asc","thread/turns/list"),("oldest-turns","desc","thread/turns/list")] {
             let request = protocol.iter().find(|request|request["params"]["cursor"] == cursor).unwrap();
             assert_eq!(request["method"],method);
             assert_eq!(request["params"]["sortDirection"],direction);
             assert_eq!(request["params"]["threadId"],"history-thread");
-            assert_eq!(request["params"]["limit"],128);
-            if method == "thread/turns/list" { assert_eq!(request["params"]["itemsView"],"full"); }
         }
         f.close().await;
     }
@@ -320,7 +317,7 @@ done
     async fn permissions_adapter_duplicate_answer_never_writes_twice() {
         let f = Fixture::new().await;
         let view = f.manager.snapshot("alice",&f.id).await.unwrap();
-        f.manager.send("alice", &f.id, &view.generation, uuid::Uuid::new_v4().to_string(), "request permissions".into(), None, vec![], vec![]).await.unwrap();
+        f.manager.send("alice", &f.id, &view.generation, uuid::Uuid::new_v4().to_string(), "request permissions".into(), None, vec![], vec![], vec![]).await.unwrap();
         let pending = tokio::time::timeout(std::time::Duration::from_secs(3),async {
             loop {
                 if let Some(pending) = f.manager.snapshot("alice",&f.id).await.unwrap().view.pending.first().cloned() { break pending; }

@@ -1,6 +1,7 @@
 use super::*;
 use crate::{files::{CreateEntryInput, EntryKind}, git::{ProjectDiffInput, ProjectDiffSource, ProjectGitHistoryInput}, projects::{CreateProjectInput, UpdateProjectInput}};
 use std::path::{Path, PathBuf};
+use sha2::Digest;
 use tokio_util::sync::CancellationToken;
 
 struct Fixture(PathBuf);
@@ -141,12 +142,11 @@ async fn task_git_review_still_requires_complete_versions_for_every_changed_file
     let fixture = Fixture::new(); let code = fixture.code(); git(&code, &["init", "-b", "main"]);
     let (manager, project) = fixture.manager_project().await;
     let task = manager.save_development_task("alice", crate::projects::SaveTaskInput { id: None, project_id: project, goal: "Strict review".into(), requirements: "Require every file version".into(), status: "todo".into() }, CancellationToken::new()).await.unwrap();
-    let mut blocked = vec![".env", "binary.dat", "large.txt"];
+    let mut blocked = vec![".env", "large.txt"];
     #[cfg(unix)] blocked.push("link.txt");
     for path in blocked {
         match path {
             ".env" => std::fs::write(code.join(path), "SECRET=hidden\n").unwrap(),
-            "binary.dat" => std::fs::write(code.join(path), [0, 1, 2]).unwrap(),
             "large.txt" => std::fs::write(code.join(path), vec![b'a'; crate::files::FILE_LIMIT + 1]).unwrap(),
             #[cfg(unix)] "link.txt" => std::os::unix::fs::symlink(fixture.0.join("outside.txt"), code.join(path)).unwrap(),
             _ => unreachable!(),
@@ -154,6 +154,16 @@ async fn task_git_review_still_requires_complete_versions_for_every_changed_file
         assert_eq!(manager.read_development_git("alice", &task.id).await.unwrap_err(), "git_review_incomplete", "{path}");
         std::fs::remove_file(code.join(path)).unwrap();
     }
+    // Bounded binary files have exact hashes even though their bodies cannot be
+    // previewed. They must participate in review freshness, not block restore.
+    std::fs::write(code.join("binary.dat"), [0, 1, 2]).unwrap();
+    let binary = manager.read_development_git("alice", &task.id).await.unwrap();
+    assert!(binary.file_versions["binary.dat"].starts_with(&format!("{:x}", sha2::Sha256::digest([0, 1, 2]))));
+    std::fs::write(code.join("binary.dat"), [0, 1, 3]).unwrap();
+    let changed = manager.read_development_git("alice", &task.id).await.unwrap();
+    assert_ne!(binary.file_versions["binary.dat"], changed.file_versions["binary.dat"]);
+    assert_ne!(binary.review_token, changed.review_token);
+    std::fs::remove_file(code.join("binary.dat")).unwrap();
     assert!(manager.inner.repository.review_baseline("alice", &task.id).await.unwrap().is_none());
     assert!(manager.inner.repository.list_git_operations("alice", &task.id).await.unwrap().is_empty());
     assert!(!manager.read_development_git("alice", &task.id).await.unwrap().review_token.is_empty());

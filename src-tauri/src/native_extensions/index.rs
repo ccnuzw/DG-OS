@@ -10,7 +10,7 @@ mod platform {
     use super::*;
     use std::{ffi::CString, os::{fd::{AsRawFd, FromRawFd}, unix::{ffi::OsStrExt, fs::{MetadataExt, OpenOptionsExt}}}, path::Component};
     unsafe extern "C" { fn openat(fd: i32, path: *const std::ffi::c_char, flags: i32, ...) -> i32; fn mkdirat(fd:i32, path:*const std::ffi::c_char, mode:u32)->i32; fn renameat(a:i32,b:*const std::ffi::c_char,c:i32,d:*const std::ffi::c_char)->i32; fn geteuid()->u32; fn acl_get_fd_np(fd:i32,kind:i32)->*mut std::ffi::c_void; fn acl_free(acl:*mut std::ffi::c_void)->i32; }
-    const NOFOLLOW:i32=0x100; const DIRECTORY:i32=0x100000; const CLOEXEC:i32=0x1000000;
+    const NOFOLLOW:i32=0x100; const DIRECTORY:i32=0x100000; const CLOEXEC:i32=0x1000000; const NONBLOCK:i32=0x4;
     fn private(file:&File)->Result<(),String> {
         let m=file.metadata().map_err(|_|fail("Unavailable"))?;
         if m.uid()!=unsafe{geteuid()} || m.mode()&0o077!=0 {return Err(fail("AccessDenied"));}
@@ -43,7 +43,8 @@ mod platform {
         pub fn load(&self,id:&str)->Result<Binding,String>{
             uuid::Uuid::parse_str(id).map_err(|_|fail("NotFound"))?;
             let name=CString::new(format!("host-{id}.json")).map_err(|_|fail("NotFound"))?;
-            let fd=unsafe{openat(self.dir.as_raw_fd(),name.as_ptr(),NOFOLLOW|CLOEXEC)};
+            // Reject special files below without waiting for a FIFO writer first.
+            let fd=unsafe{openat(self.dir.as_raw_fd(),name.as_ptr(),NOFOLLOW|CLOEXEC|NONBLOCK)};
             if fd<0{return Err(fail("NotFound"));}
             let file=opened(fd)?;private(&file)?;
             let m=file.metadata().map_err(|_|fail("Unavailable"))?;
@@ -73,3 +74,30 @@ pub use platform::Index;
 pub struct Index;
 #[cfg(not(target_os = "macos"))]
 impl Index {pub fn open(_: &Path,_:bool)->Result<Self,String>{Err(fail("Unsupported"))}pub fn load(&self,_:&str)->Result<Binding,String>{Err(fail("Unsupported"))}pub fn save(&self,_:&Binding)->Result<(),String>{Err(fail("Unsupported"))}}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    use std::{ffi::CString, os::unix::{ffi::OsStrExt, fs::PermissionsExt}, time::Duration};
+
+    #[test]
+    fn index_load_rejects_fifo_without_waiting_for_a_writer() {
+        unsafe extern "C" { fn mkfifo(path: *const std::ffi::c_char, mode: u16) -> i32; }
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        let path = root.join(format!("host-{id}.json"));
+        let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { mkfifo(name.as_ptr(), 0o600) }, 0);
+        let index = Index::open(&root, false).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || { let _ = tx.send(index.load(&id).err()); });
+        let result = rx.recv_timeout(Duration::from_secs(2));
+        // Unblock the old implementation before asserting, so a regression does
+        // not leave a live reader thread behind in the test process.
+        let _writer = std::fs::OpenOptions::new().read(true).write(true).open(&path).unwrap();
+        worker.join().unwrap();
+        assert!(result.unwrap().is_some(), "a non-regular operation index must be rejected");
+    }
+}

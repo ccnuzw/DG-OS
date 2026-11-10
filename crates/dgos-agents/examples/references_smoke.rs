@@ -180,10 +180,10 @@ async fn main() -> Result<(), String> {
         let opened = manager.open_session("fixture", Engine::Codex, id.clone(), SessionCreate { options: SessionOptions { workspace: project.path, resume_id: None, executable: Some(executable.to_string_lossy().into()), model: None, trust_workspace: true }, project_revision: revision.revision, provider }, Some(task.id.clone()), CancellationToken::new()).await?;
         let reference = ConversationReference { project_id: project.id, task_id: Some(task.id.clone()), path: "source.txt".into(), kind: ReferenceKind::File, diff_source: None, expected_hash: saved.hash, start_line: None, end_line: None };
         let request = uuid::Uuid::new_v4().to_string();
-        manager.send("fixture", &id, &opened.generation, request.clone(), "Review attached host content".into(), None, vec![reference.clone()], vec![skill.clone()]).await?;
+        manager.send("fixture", &id, &opened.generation, request.clone(), "Review attached host content".into(), None, vec![reference.clone()], vec![skill.clone()], vec![]).await?;
         std::fs::remove_file(root.join("code/source.txt")).map_err(io)?;
         std::fs::remove_file(&skill_path).map_err(io)?;
-        manager.send("fixture", &id, &opened.generation, request.clone(), "Review attached host content".into(), None, vec![reference], vec![skill.clone()]).await?;
+        manager.send("fixture", &id, &opened.generation, request.clone(), "Review attached host content".into(), None, vec![reference], vec![skill.clone()], vec![]).await?;
         tokio::time::timeout(std::time::Duration::from_secs(5), async { loop { if manager.list_development_runs("fixture", &task.id).await?.iter().any(|run| run.id == request && run.status == "completed") { return Ok::<_, String>(()); } tokio::time::sleep(std::time::Duration::from_millis(20)).await; } }).await.map_err(|_| "run_timeout")??;
         let protocol: Vec<serde_json::Value> = std::fs::read_to_string(root.join("code/protocol.jsonl")).map_err(io)?.lines().map(serde_json::from_str).collect::<Result<_, _>>().map_err(io)?;
         let sends: Vec<_> = protocol.iter().filter(|event| event["method"] == "turn/start").collect();

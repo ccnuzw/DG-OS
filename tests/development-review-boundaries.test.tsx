@@ -8,6 +8,7 @@ import { chooseContext } from '../src/stores/developmentSelection';
 import { ProjectCapabilities } from '../src/components/development/ProjectCapabilities';
 import { useAgentRunner } from '../src/stores/agentRunnerStore';
 import { DeliveryPanel } from '../src/components/development/DeliveryPanel';
+import { useDevelopmentEditor } from '../src/stores/developmentEditor';
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('../src/i18n', () => ({ useLocale: () => ({ t: (key: string) => key }), t: (key: string) => key, formatDateTime: String }));
@@ -23,21 +24,88 @@ it('does not reveal a late source response after selecting a different task', as
  render(<ProjectReview projectId="p" taskId="t" />);
  fireEvent.click(await screen.findByTestId('dev-file-item-old.ts'));
  await waitFor(() => expect(invoke.mock.calls.some(([cmd]) => cmd === 'read_development_file')).toBe(true));
- await act(async () => { await chooseContext({ project_id: 'p2', task_id: 't2', session_id: null }); source.resolve({ path: 'old.ts', text: 'PRIVATE_OLD_SOURCE', size: 10, reason: null, hash: 'hash' }); });
+ await act(async () => {
+  await chooseContext({ project_id: 'p2', task_id: 't2', session_id: null });
+  expect(useDevelopmentEditor.getState().documents).toEqual({});
+  expect(invoke.mock.calls.some(([cmd]) => cmd === 'select_development_context')).toBe(true);
+  source.resolve({ path: 'old.ts', text: 'PRIVATE_OLD_SOURCE', size: 10, reason: null, hash: 'hash' });
+ });
  expect(document.body.textContent).not.toContain('PRIVATE_OLD_SOURCE');
 });
 
-it('retains multiple selected answers under the native question id and hides unavailable approvals', async () => {
+it('uses the current native question method and selects one offered answer without inventing multi-select', async () => {
  const submit = vi.fn(async () => true);
- const { unmount } = render(<Request engine="codex" pending={{ id: 'q1', kind: 'tool/requestUserInput', title: 'Question', data: { questions: [{ id: 'native-question', question: 'Which?', multiSelect: true, options: [{ label: 'First' }, { label: 'Second' }] }] } }} submit={submit} />);
+ const { unmount } = render(<Request engine="codex" pending={{ id: 'q1', kind: 'item/tool/requestUserInput', title: 'Question', data: { questions: [{ id: 'native-question', header: 'Scope', question: 'Which?', isOther: false, options: [{ label: 'First', description: '' }, { label: 'Second', description: '' }] }] } }} submit={submit} />);
+ expect(screen.queryByRole('textbox')).toBeNull();
  fireEvent.click(screen.getByRole('button', { name: 'First' })); fireEvent.click(screen.getByRole('button', { name: 'Second' }));
  fireEvent.click(screen.getByRole('button', { name: 'agent.answer' }));
- await waitFor(() => expect(submit).toHaveBeenCalledWith({ answers: { 'native-question': { answers: ['First', 'Second'] } } }));
+ await waitFor(() => expect(submit).toHaveBeenCalledWith({ answers: { 'native-question': { answers: ['Second'] } } }));
  unmount();
  render(<Request engine="codex" pending={{ id: 'a1', kind: 'item/commandExecution/requestApproval', title: 'Approve', data: { availableDecisions: ['decline'] } }} submit={submit} />);
  expect(screen.queryByRole('button', { name: 'agent.allow' })).toBeNull();
  fireEvent.click(screen.getByRole('button', { name: 'agent.deny' }));
  await waitFor(() => expect(submit).toHaveBeenLastCalledWith({ decision: 'decline' }));
+});
+
+it('isolates secret answers and policy confirmation when the request generation changes', () => {
+ const submit = vi.fn(async () => true);
+ const pending = { id: 'same-id', kind: 'item/tool/requestUserInput', title: 'Question', data: { questions: [{ id: 'secret', question: 'Secret?', isSecret: true }] } };
+ const view = render(<Request engine="codex" sessionId="session" generation="old" pending={pending} submit={submit} />);
+ const secret = screen.getByLabelText('agent.customAnswer') as HTMLInputElement;
+ expect(secret.type).toBe('password');
+ fireEvent.change(secret, { target: { value: 'private-answer' } });
+ view.rerender(<Request engine="codex" sessionId="session" generation="new" pending={pending} submit={submit} />);
+ expect((screen.getByLabelText('agent.customAnswer') as HTMLInputElement).value).toBe('');
+ expect(submit).not.toHaveBeenCalled();
+});
+
+it('requires explicit confirmation before returning the exact offered persistent rule', async () => {
+ const submit = vi.fn(async () => true);
+ const decision = { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['echo', 'safe'] } };
+ render(<Request engine="codex" pending={{ id: 'policy', kind: 'item/commandExecution/requestApproval', title: 'Command', data: { availableDecisions: [decision, 'decline'] } }} submit={submit} />);
+ const apply = screen.getByRole('button', { name: 'agent.applyPolicy' });
+ expect((apply as HTMLButtonElement).disabled).toBe(true);
+ fireEvent.click(apply);
+ expect(submit).not.toHaveBeenCalled();
+ fireEvent.click(screen.getByRole('checkbox', { name: 'agent.confirmPolicy' }));
+ fireEvent.click(apply);
+ await waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith({ decision }));
+});
+
+it('requires native form fields, preserves comma-bearing enum values and rejects out-of-range numbers', async () => {
+ const submit = vi.fn(async () => true);
+ render(<Request engine="codex" pending={{ id: 'form', kind: 'mcpServer/elicitation/request', title: 'Form', data: { mode: 'form', requestedSchema: { type: 'object', required: ['enabled', 'count', 'targets'], properties: { enabled: { type: 'boolean', title: 'Enabled' }, count: { type: 'integer', title: 'Count', minimum: 1, maximum: 3 }, targets: { type: 'array', title: 'Targets', minItems: 1, maxItems: 1, items: { enum: ['alpha,beta', 'gamma'] } } } } } }} submit={submit} />);
+ const accept = screen.getByRole('button', { name: 'agent.allow' }) as HTMLButtonElement;
+ expect(accept.disabled).toBe(true);
+ fireEvent.click(screen.getByRole('radio', { name: 'agent.no' }));
+ fireEvent.change(screen.getByLabelText(/Count/), { target: { value: '4' } });
+ fireEvent.click(screen.getByRole('checkbox', { name: 'alpha,beta' }));
+ expect(accept.disabled).toBe(true);
+ fireEvent.change(screen.getByLabelText(/Count/), { target: { value: '2' } });
+ expect(accept.disabled).toBe(false);
+ fireEvent.click(accept);
+ await waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith({ action: 'accept', content: { enabled: false, count: 2, targets: ['alpha,beta'] } }));
+});
+
+it('accepts an explicitly empty required string without treating it as omission', async () => {
+ const submit = vi.fn(async () => true);
+ render(<Request engine="codex" pending={{ id: 'empty', kind: 'mcpServer/elicitation/request', title: 'Form', data: { mode: 'form', requestedSchema: { type: 'object', required: ['value'], properties: { value: { type: 'string', title: 'Value', maxLength: 0 } } } } }} submit={submit} />);
+ const accept = screen.getByRole('button', { name: 'agent.allow' }) as HTMLButtonElement;
+ expect(accept.disabled).toBe(true);
+ fireEvent.change(screen.getByRole('textbox', { name: /Value/ }), { target: { value: 'x' } });
+ expect(accept.disabled).toBe(true);
+ fireEvent.change(screen.getByRole('textbox', { name: /Value/ }), { target: { value: '' } });
+ expect(accept.disabled).toBe(false);
+ fireEvent.click(accept);
+ await waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith({ action: 'accept', content: { value: '' } }));
+});
+
+it('cannot falsely accept device verification without a native proof', async () => {
+ const submit = vi.fn(async () => true);
+ render(<Request engine="codex" pending={{ id: 'proof', kind: 'mcpServer/elicitation/request', title: 'Verify', data: { mode: 'openai/userVerification', challenge: 'challenge' } }} submit={submit} />);
+ expect((screen.getByRole('button', { name: 'agent.allow' }) as HTMLButtonElement).disabled).toBe(true);
+ fireEvent.click(screen.getByRole('button', { name: 'agent.deny' }));
+ await waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith({ action: 'decline', content: null }));
 });
 
 it('drops an old account capability catalog instead of offering its providers', async () => {

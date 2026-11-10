@@ -114,12 +114,18 @@ impl AgentManager {
         let (fingerprint,complete)=self.verification_snapshot(owner,&input.task_id).await?;
         let state=ProcessSnapshot{id:input.id.clone(),project_id:project.id.clone(),task_id:task.id.clone(),kind:input.kind.clone(),source:format!("host_{}",input.kind),status:if input.kind=="service" {"starting"} else {"running"}.into(),output:String::new(),truncated:false,exit_code:None,reason:None,started_at:now(),finished_at:None,program:input.program.clone(),args:input.args.clone(),cwd:input.cwd.clone(),fingerprint:fingerprint.clone(),start_fingerprint:fingerprint.clone(),verification_status:if input.verification {"running"} else {"not_requested"}.into(),verification_complete:complete,mutation_observed:false,preview_url:None,native_run_id:input.native_run_id.clone()};
         let run=StoredRun{id:input.id.clone(),owner:owner.into(),session_id:None,task_id:task.id,project_id:project.id.clone(),engine:"host".into(),source:state.source.clone(),status:"running".into(),started_at:state.started_at,finished_at:None,summary:String::new(),reason:None,events:"[]".into(),fingerprint:fingerprint.clone(),start_fingerprint:fingerprint,truncated:false,request_fingerprint,runtime:Some(serde_json::to_string(&state).map_err(|_|"storage_failed")?)};
+        // Reserve registration before the durable receipt. Once start_run commits,
+        // cancellation must not strand a running row without its owned supervisor.
+        let mut watchers=self.inner.watchers.lock().await;
+        self.reap_watchers(&mut watchers).await;
+        let mut host=self.inner.host.lock().await;
         self.inner.repository.start_run(&run).await?;
-        let process=Arc::new(HostProcess{owner:owner.into(),project_id:project.id.clone(),workspace:project.path.clone(),state:Mutex::new(state),cancel:lease.child_token(),done:Notify::new(),terminal:StdMutex::new(None),retained_permit:StdMutex::new(None)});
-        self.inner.host.lock().await.insert(input.id.clone(),process.clone());
+        let process=Arc::new(HostProcess{owner:owner.into(),project_id:project.id.clone(),workspace:project.path.clone(),state:Mutex::new(state),cancel:lease.child_token(),done:Notify::new(),terminal:StdMutex::new(None),retained_permit:StdMutex::new(Some(permit))});
+        host.insert(input.id.clone(),process.clone());
         let manager=self.clone();let watched=process.clone();
-        let handle=tokio::spawn(async move {supervise(manager,watched,input,project,run,permit).await});
-        {let mut watchers=self.inner.watchers.lock().await;watchers.retain(|h|!h.is_finished());watchers.push(handle);}
+        let handle=tokio::spawn(async move {supervise(manager,watched,input,project,run).await});
+        watchers.push(handle);
+        drop(host);drop(watchers);
         let view=process.state.lock().await.clone();Ok(view)
     }
     pub async fn read_development_process(&self,owner:&str,id:&str)->Result<ProcessSnapshot,String> {
@@ -141,7 +147,12 @@ impl AgentManager {
     pub(crate) async fn stop_host_processes(&self,owner:Option<&str>)->bool {
         let processes:Vec<_>=self.inner.host.lock().await.values().filter(|p|owner.is_none_or(|o|o==p.owner)).cloned().collect();
         for p in &processes {p.cancel.cancel();}
-        for p in &processes {let done=p.done.notified();tokio::pin!(done);done.as_mut().enable();if p.state.lock().await.finished_at.is_none(){let _=tokio::time::timeout(Duration::from_secs(8),done).await;}}
+        let deadline=tokio::time::Instant::now()+Duration::from_secs(8);
+        for p in &processes {
+            let done=p.done.notified();tokio::pin!(done);done.as_mut().enable();
+            let registered=self.inner.host.lock().await.values().any(|active|Arc::ptr_eq(active,p));
+            if registered {let _=tokio::time::timeout_at(deadline,done).await;}
+        }
         !self.inner.host.lock().await.values().any(|p|owner.is_none_or(|o|o==p.owner))
     }
     pub async fn write_development_terminal(&self,owner:&str,id:&str,input:String)->Result<(),String> {
@@ -211,15 +222,21 @@ fn session_members(session:i32)->Result<Vec<i32>,String> {
 }
 /// The unreaped session leader pins the session identity until cleanup completes.
 #[cfg(unix)]
-struct OwnedChild {child:std::process::Child,group:i32,reaped:bool}
+pub(crate) struct OwnedChild {pub(crate) child:std::process::Child,pub(crate) group:i32,pub(crate) reaped:bool}
 #[cfg(unix)]
 impl OwnedChild {
-    fn exited(&self)->Result<bool,String> {
+    pub(crate) fn exited(&self)->Result<bool,String> {
         let mut info:libc::siginfo_t=unsafe{std::mem::zeroed()};
         let rc=unsafe{libc::waitid(libc::P_PID,self.group as libc::id_t,&mut info,libc::WEXITED|libc::WNOHANG|libc::WNOWAIT)};
         if rc<0 {Err("process_wait_failed".into())} else {Ok(info.si_signo!=0)}
     }
-    async fn cleanup(&mut self)->(Option<i32>,bool) {
+    pub(crate) async fn cleanup(&mut self)->(Option<i32>,bool) {
+        self.cleanup_owned(false).await
+    }
+    pub(crate) async fn cleanup_auth(&mut self)->(Option<i32>,bool) {
+        self.cleanup_owned(true).await
+    }
+    async fn cleanup_owned(&mut self, retain_uncertain: bool)->(Option<i32>,bool) {
         // Never signal a persisted PID or a cached descendant group: descendants
         // can leave and their group IDs can be recycled during the grace period.
         if self.reaped {return (None,false);}
@@ -243,6 +260,7 @@ impl OwnedChild {
             if session_members(self.group).is_ok_and(|pids|pids.iter().all(|pid|*pid==self.group)) {clean=enumeration_ok;break;}
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
+        if retain_uncertain && !clean { return (None, false); }
         let result=self.child.wait();self.reaped=result.is_ok();
         (result.ok().and_then(|s|s.code()),clean&&self.reaped)
     }
@@ -359,14 +377,36 @@ async fn persist(manager:&AgentManager,run:&mut StoredRun,view:&ProcessSnapshot)
     run.finished_at=view.finished_at;run.reason=view.reason.clone();run.fingerprint=view.fingerprint.clone();run.truncated=view.truncated;
     run.runtime=serde_json::to_string(view).ok();manager.inner.repository.checkpoint_host_run(run).await.is_ok()
 }
+/// Clean process exit alone cannot discard a terminal projection that SQLite
+/// has not accepted. Keep its permit and retry without executing the command again.
+async fn settle_process(manager:&AgentManager,process:&Arc<HostProcess>,run:&mut StoredRun,clean:bool)->bool {
+    process.terminal.lock().ok().map(|mut terminal|terminal.take());
+    let mut backoff=Duration::from_millis(250);
+    loop {
+        let persisted={let view=process.state.lock().await;persist(manager,run,&view).await};
+        if !clean {
+            process.done.notify_waiters();
+            return false;
+        }
+        if persisted {
+            let mut host=manager.inner.host.lock().await;
+            if host.get(&run.id).is_some_and(|active|Arc::ptr_eq(active,process)) {host.remove(&run.id);}
+            process.retained_permit.lock().unwrap_or_else(|error|error.into_inner()).take();
+            process.done.notify_waiters();
+            return true;
+        }
+        tokio::time::sleep(backoff).await;
+        backoff=(backoff*2).min(Duration::from_secs(2));
+    }
+}
 #[cfg(unix)]
-async fn supervise(manager:AgentManager,process:Arc<HostProcess>,input:StartProcessInput,project:dgos_db::development_repository::Project,mut run:StoredRun,permit:dgos_db::ActivityPermit)->bool {
-    let mut permit=Some(permit);let mut launch_error=None;
+async fn supervise(manager:AgentManager,process:Arc<HostProcess>,input:StartProcessInput,project:dgos_db::development_repository::Project,mut run:StoredRun)->bool {
+    let mut launch_error=None;
     if let Some(r)=&input.readiness {if tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST,r.port)).await.is_err(){launch_error=Some("port_conflict".to_string());}}
     let launched=if process.cancel.is_cancelled() || manager.inner.stop.is_cancelled() {Err("cancelled".into())}else if let Some(error)=launch_error {Err(error)}else{launch(&input,&project,&process)};
     let (mut child,rx,secrets)=match launched {Ok(v)=>v,Err(error)=>{
-        let mut view=process.state.lock().await;let cancelled=error=="cancelled";view.status=if cancelled {"cancelled"}else{"failed"}.into();view.reason=Some(error);view.finished_at=Some(now());if input.verification {view.verification_status=if cancelled {"unknown"}else{"failed"}.into();}let ok=persist(&manager,&mut run,&view).await;
-        process.terminal.lock().ok().map(|mut t|t.take());manager.inner.host.lock().await.remove(&input.id);process.done.notify_waiters();return ok;
+        let mut view=process.state.lock().await;let cancelled=error=="cancelled";view.status=if cancelled {"cancelled"}else{"failed"}.into();view.reason=Some(error);view.finished_at=Some(now());if input.verification {view.verification_status=if cancelled {"unknown"}else{"failed"}.into();}
+        drop(view);return settle_process(&manager,&process,&mut run,true).await;
     }};
     let started=std::time::Instant::now();let mut sample=std::time::Instant::now();let mut output=Output{secrets,..Output::default()};let mut failure=None;let mut cancelled=false;let mut persisted_mutation=false;
     loop {
@@ -405,13 +445,8 @@ async fn supervise(manager:AgentManager,process:Arc<HostProcess>,input:StartProc
     view.status=if !clean {"cleanup_pending"}else if cancelled {"cancelled"}else if failure.is_some() || exit_code!=Some(0) {"failed"}else{"exited"}.into();
     view.reason=if !clean {Some("cleanup_pending".into())}else if cancelled {Some("cancelled".into())}else{failure};
     if input.verification {view.verification_status=verification_result(&view,cancelled,clean).into();}
-    let ok=persist(&manager,&mut run,&view).await;
-    drop(view);process.terminal.lock().ok().map(|mut t|t.take());
-    if clean {manager.inner.host.lock().await.remove(&input.id);drop(permit.take());}
-    else { // Unknown cleanup retains both directory ownership and maintenance admission.
-        *process.retained_permit.lock().unwrap_or_else(|e|e.into_inner())=permit.take();
-    }
-    process.done.notify_waiters();ok&&clean
+    drop(view);
+    settle_process(&manager,&process,&mut run,clean).await
 }
 fn verification_result(view:&ProcessSnapshot,cancelled:bool,clean:bool)->&'static str {
     if !clean || cancelled || view.exit_code.is_none() {"unknown"}else if view.exit_code!=Some(0) || view.reason.is_some(){"failed"}else if !view.verification_complete {"incomplete"}else if view.mutation_observed || view.fingerprint!=view.start_fingerprint {"changed"}else{"observed_stable"}
@@ -422,8 +457,8 @@ async fn observe(manager:&AgentManager,process:&HostProcess) {
     match snapshot {Ok((fingerprint,complete))=>{view.verification_complete&=complete;view.mutation_observed|=fingerprint!=view.start_fingerprint;view.fingerprint=fingerprint;},Err(_)=>view.verification_complete=false}
 }
 #[cfg(not(unix))]
-async fn supervise(manager:AgentManager,process:Arc<HostProcess>,input:StartProcessInput,_:dgos_db::development_repository::Project,mut run:StoredRun,_:dgos_db::ActivityPermit)->bool {
-    let mut view=process.state.lock().await;view.status="failed".into();view.reason=Some("process_platform_unsupported".into());view.finished_at=Some(now());let ok=persist(&manager,&mut run,&view).await;manager.inner.host.lock().await.remove(&input.id);process.done.notify_waiters();ok
+async fn supervise(manager:AgentManager,process:Arc<HostProcess>,_input:StartProcessInput,_:dgos_db::development_repository::Project,mut run:StoredRun)->bool {
+    let mut view=process.state.lock().await;view.status="failed".into();view.reason=Some("process_platform_unsupported".into());view.finished_at=Some(now());drop(view);settle_process(&manager,&process,&mut run,true).await
 }
 
 #[cfg(test)]

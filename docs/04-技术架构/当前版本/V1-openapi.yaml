@@ -12,6 +12,13 @@ info:
     **白名单**：只有下列路径。白名单之外的 `/api/` 路径返回 404，已登记路径的其他方法返回 405，
     均为空包体；不映射任何 Tauri command（D039、D088）。
 
+    **ASST-FOUNDATION 边界**：桌面 `host.ai` 与 `chat_*` 新增的资料导入/删除、foundation 配置、
+    上下文检查、结构输出后校验、限期结果读取/确认、显式摘要/继续均不新增 LAN 路由或工具权限。
+    `LanSendInput`/`LanRegenerateInput` 保持独立白名单和 `additionalProperties: false`，不能提交
+    `foundation`、`context_refs`、`source_run_id`、`skill_mode`、`authorized_skill_refs`、`tools` 或宿主 scope；未知字段按解码失败处理，
+    不把桌面共享 DTO 的扩展自动映射到远程输入。具体桌面契约见接口契约 §10.1、§17.5，
+    技术依据为 AI助手运行基础技术设计（ASST-FOUNDATION）；无隐藏聊天或业务应用扩围。
+
     **认证**：主机签发的单次访问凭据经 `POST /api/v1/lan/pair` 换取 Cookie `dgos_lan`
     （`HttpOnly; SameSite=Strict; Path=/`，无 TLS 不设 `Secure`）。不使用 JWT、用户名/密码、
     `Authorization: Bearer` 或浏览器存储（D053、D088）。远程会话没有独立用户身份。
@@ -287,7 +294,7 @@ paths:
       description: |
         生成登记后返回；事件只经 `GET /api/v1/lan/stream` 推送。`client_request_id` 即任务 ID，
         同键同内容返回原确认（`replayed = true`），同键不同内容 409 1006011。目标指纹变化返回 409 1006012
-        且不带 `detail`，须在主机上确认。不接受 `tools` 与 `accept_destination`。
+        且不带 `detail`，须在主机上确认。不接受 `tools`、`accept_destination`、`foundation`、资料引用或来源运行。
       requestBody:
         required: true
         content:
@@ -572,6 +579,7 @@ components:
     LanSendInput:
       type: object
       additionalProperties: false
+      description: 独立LAN白名单；不接收桌面foundation、资源引用、输出契约、结果保留、显式继续或MCP工具配置。
       required: [content, client_request_id]
       properties:
         content:
@@ -585,6 +593,7 @@ components:
     LanRegenerateInput:
       type: object
       additionalProperties: false
+      description: 仅本次配对会话的原重新生成；不接收桌面skill_mode/authorized_skill_refs、foundation或资料/来源运行参数，不开放按需技能授权或桌面显式继续；保留既有会话手选技能的固定版本重验。
       required: [client_request_id]
       properties:
         client_request_id:

@@ -8,6 +8,13 @@ import { readDevelopmentSessionSummaries, type SessionSummary } from '../../stor
 import { ProjectActions } from './ProjectActions';
 import './project-navigation.css';
 
+export interface ConversationRevealTarget {
+  tabId: string;
+  projectId: string;
+  sessionId: string | null;
+  nonce: number;
+}
+
 export interface ProjectSessionTreeProps {
   busy: boolean;
   onSelect: (session: DevelopmentSession) => void;
@@ -16,13 +23,14 @@ export interface ProjectSessionTreeProps {
   onSelectDraft: (tab: ConversationTab) => void;
   onRefreshProject: (projectId: string) => Promise<void>;
   onProjectFiles: (projectId: string) => Promise<void>;
+  revealTarget?: ConversationRevealTarget | null;
 }
 
 const PAGE_SIZE = 5;
 const UNCLASSIFIED = '__unclassified__';
 
 /** Selection is delegated; folding and archived-history disclosure never change context. */
-export function ProjectSessionTree({ busy, onSelect, onNewConversation, onSelectProject, onSelectDraft, onRefreshProject, onProjectFiles }: ProjectSessionTreeProps) {
+export function ProjectSessionTree({ busy, onSelect, onNewConversation, onSelectProject, onSelectDraft, onRefreshProject, onProjectFiles, revealTarget }: ProjectSessionTreeProps) {
   const { t, locale } = useLocale();
   const { projects, tasks, sessions, selection, sessionNames, tabs, activeTabId, epoch, workspaceOwner, pinnedProjectIds, archivedSessionIds } = useDevelopment();
   const snapshots = useAgentRunner(state => state.snapshots);
@@ -36,6 +44,9 @@ export function ProjectSessionTree({ busy, onSelect, onNewConversation, onSelect
   const [unclassifiedOpen, setUnclassifiedOpen] = useState(false);
   const [metadata, setMetadata] = useState<{ epoch: number; owner: string | null; rows: SessionSummary[]; failed: boolean } | null>(null);
   const scheduleSummaryRead = useRef<(() => void) | null>(null);
+  const root = useRef<HTMLElement>(null);
+  const [revealed, setRevealed] = useState<{ target: ConversationRevealTarget; epoch: number; owner: string | null } | null>(null);
+  const pendingReveal = useRef<ConversationRevealTarget | null>(null);
   const treeId = useId();
   const normalized = query.trim().toLocaleLowerCase();
 
@@ -113,14 +124,42 @@ export function ProjectSessionTree({ busy, onSelect, onNewConversation, onSelect
   const visibleUnclassified = unclassified.filter(session => !normalized || session.id === selection.session_id || sessionMatches(session));
   const selectedUnclassified = unclassified.some(session => session.id === selection.session_id);
 
+  useEffect(() => {
+    if (!revealTarget) return;
+    const session = revealTarget.sessionId ? sessions.find(session => session.id === revealTarget.sessionId) : null;
+    const projectId = session ? session.project_id : revealTarget.projectId;
+    const group = projectId && projectIds.has(projectId) ? projectId : UNCLASSIFIED;
+    setQuery('');
+    setRevealed({ target: revealTarget, epoch, owner: workspaceOwner });
+    pendingReveal.current = revealTarget;
+    if (group === UNCLASSIFIED) setUnclassifiedOpen(true);
+    else {
+      setExpanded(value => ({ ...value, [group]: true }));
+      if (projects.find(project => project.id === group)?.archived) setArchivedOpen(true);
+      if (revealTarget.sessionId && archivedSessionIds.includes(revealTarget.sessionId)) setArchivedConversationsOpen(value => ({ ...value, [group]: true }));
+    }
+  }, [revealTarget]);
+
+  useEffect(() => {
+    const target = pendingReveal.current;
+    if (!target || !revealed || revealed.epoch !== epoch || revealed.owner !== workspaceOwner || busy || normalized) return;
+    const item = Array.from(root.current?.querySelectorAll<HTMLElement>('[data-conversation-tab-id], [data-conversation-session-id]') ?? []).find(item => target.sessionId ? item.dataset.conversationSessionId === target.sessionId : item.dataset.conversationTabId === target.tabId);
+    if (!item || item.closest('[hidden]')) return;
+    item.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    item.focus({ preventScroll: true });
+    pendingReveal.current = null;
+  }, [revealed, epoch, workspaceOwner, busy, normalized, expanded, archivedOpen, archivedConversationsOpen, unclassifiedOpen, sessions]);
+
+  const revealedSessionId = revealed?.epoch === epoch && revealed.owner === workspaceOwner ? revealed.target.sessionId : null;
+
   function renderSessions(key: string, rows: DevelopmentSession[], drafts: ConversationTab[], allMatch = false) {
     const matching = rows.filter(session => !normalized || allMatch || session.id === selection.session_id || sessionMatches(session));
     const limit = shown[key] ?? PAGE_SIZE;
-    const visible = normalized ? matching : matching.filter((session, index) => index < limit || session.id === selection.session_id);
+    const visible = normalized ? matching : matching.filter((session, index) => index < limit || session.id === selection.session_id || session.id === revealedSessionId);
     const visibleDrafts = drafts.filter(tab => !normalized || allMatch || tab.id === activeTabId || includes(tab.title, t('workbenchNavigation.unsentDraft')));
     const remaining = matching.length - visible.length;
     return <div className="dev-tree-session-list">
-      {visibleDrafts.map(tab => <Button key={tab.id} size="xs" variant="ghost" className={`dev-tree-session is-draft${activeTabId === tab.id ? ' is-current' : ''}`} aria-pressed={activeTabId === tab.id} disabled={busy} data-testid={`dev-draft-item-${tab.id}`} onClick={() => onSelectDraft(tab)}>
+      {visibleDrafts.map(tab => <Button key={tab.id} size="xs" variant="ghost" className={`dev-tree-session is-draft${activeTabId === tab.id ? ' is-current' : ''}`} aria-pressed={activeTabId === tab.id} disabled={busy} data-testid={`dev-draft-item-${tab.id}`} data-conversation-tab-id={tab.id} onClick={() => onSelectDraft(tab)}>
         <MessageSquare size={14} aria-hidden="true" /><span className="dev-tree-session-main"><strong>{tab.title || t('workbenchNavigation.blank')}</strong><small>{t('workbenchNavigation.unsentDraft')}</small></span>
       </Button>)}
       {visible.map(session => {
@@ -131,7 +170,7 @@ export function ProjectSessionTree({ busy, onSelect, onNewConversation, onSelect
         const snapshot = snapshots[session.id];
         const state = snapshot?.pending.length ? t('workbenchNavigation.waiting') : (live[session.id] ?? snapshot?.status) === 'running' ? t('workbenchNavigation.runningTab') : unread[session.id] ? t('workbenchNavigation.newReply') : '';
         const current = selection.session_id === session.id;
-        return <Button key={session.id} size="xs" variant="ghost" className={`dev-tree-session${current ? ' is-current' : ''}`} aria-pressed={current} disabled={busy} data-testid={`dev-session-item-${session.id}`} onClick={() => onSelect(session)}>
+        return <Button key={session.id} size="xs" variant="ghost" className={`dev-tree-session${current ? ' is-current' : ''}`} aria-pressed={current} disabled={busy} data-testid={`dev-session-item-${session.id}`} data-conversation-session-id={session.id} onClick={() => onSelect(session)}>
           <MessageSquare size={14} aria-hidden="true" />
           <span className="dev-tree-session-main"><strong title={title(session)}>{title(session)}</strong><small title={summary?.preview ?? undefined}>{summary?.preview || t('workbenchNavigation.noPreview')}</small>{state ? <span className="dev-tree-session-status">{state}</span> : null}</span>
           {validDate ? <time dateTime={validDate.toISOString()} title={formatDateTime(validDate, locale)}>{new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(validDate)}</time> : null}
@@ -163,7 +202,7 @@ export function ProjectSessionTree({ busy, onSelect, onNewConversation, onSelect
     </section>;
   }
 
-  return <section className="dev-project-session-tree" data-testid="dev-project-session-tree" aria-label={t('workbenchNavigation.projectsAndSessions')}>
+  return <section ref={root} className="dev-project-session-tree" data-testid="dev-project-session-tree" aria-label={t('workbenchNavigation.projectsAndSessions')}>
     <div className="dev-tree-search"><Input type="search" data-testid="dev-unified-search" aria-label={t('workbenchNavigation.searchProjectsAndSessions')} placeholder={t('workbenchNavigation.searchProjectsAndSessions')} value={query} onChange={event => setQuery(event.target.value)} /></div>
     {metadata?.epoch === epoch && metadata.owner === workspaceOwner && metadata.failed ? <p className="dev-tree-empty" role="status">{t('workbenchNavigation.metadataUnavailable')}</p> : null}
     {!visibleProjects.length && !visibleUnclassified.length ? <p className="dev-tree-empty">{t(normalized ? 'workbenchNavigation.noMatches' : 'dev.none')}</p> : null}

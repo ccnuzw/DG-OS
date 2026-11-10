@@ -1,5 +1,5 @@
 export default {
-  "nav.agent": "Agent",
+  "nav.agent": "CLI Agent",
   "nav.home": "Desktop",
   "nav.homeShort": "Desktop",
   "nav.mcpShort": "MCP",
@@ -8,5 +8,5 @@ export default {
   "nav.providers": "Providers",
   "nav.settings": "Settings",
   "nav.skills": "Skills",
-  "nav.workbench": "AI sessions"
+  "nav.workbench": "AI Assistant"
 } as const;

@@ -18,8 +18,9 @@ pub(super) struct Page {
 }
 impl Page {
     pub fn params(&self, thread: &str) -> Value {
-        let mut params = json!({"threadId":thread,"cursor":self.cursor,"limit":PAGE_SIZE,"sortDirection":if self.descending { "desc" } else { "asc" }});
-        if self.method == "thread/turns/list" { params["itemsView"] = json!("full"); }
+        let limit = if self.method == "thread/items/list" { 1 } else { PAGE_SIZE };
+        let mut params = json!({"threadId":thread,"cursor":self.cursor,"limit":limit,"sortDirection":if self.descending { "desc" } else { "asc" }});
+        if self.method == "thread/turns/list" { params["itemsView"] = json!("notLoaded"); }
         if let Some(turn) = &self.turn { params["turnId"] = json!(turn); }
         params
     }
@@ -172,9 +173,9 @@ impl History {
                     self.exhausted = true;
                     break;
                 }
-                let mut data = item.clone();
+                let mut data = if kind == "reasoning" { json!({"type":"reasoning","id":item.get("id"),"summary":item.get("summary")}) } else { item.clone() };
                 for (field, value) in overlays.into_iter().flatten() { data[field] = value.clone(); }
-                let text = item.get("text").and_then(Value::as_str).map(str::to_owned);
+                let text = (kind != "reasoning").then(|| item.get("text").and_then(Value::as_str).map(str::to_owned)).flatten();
                 if let Some(previous) = previous {
                     let seq = previous.seq;
                     if !view.replace_history_event(seq, kind, text, data) {

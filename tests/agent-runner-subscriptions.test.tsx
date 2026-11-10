@@ -231,3 +231,90 @@ it('replaces a restored generation without retaining old messages or approvals',
   expect(useAgentRunner.getState().session?.events).toEqual([fresh]);
   expect(useAgentRunner.getState().session?.pending).toEqual([]);
 });
+
+it('keeps interrupt pending beyond its acknowledgement and across detach until native terminal observation', async () => {
+  let native = session('one', { status: 'running', active_run: 'first' });
+  invoke.mockImplementation(async (command: string) => command === 'interrupt_agent_session' ? null : native);
+  await useAgentRunner.getState().attach('one');
+  const args = { sessionId: 'one', generation: native.generation, runId: 'first' };
+  expect(await useAgentRunner.getState().action('interrupt_agent_session', args)).toBe(true);
+  expect(useAgentRunner.getState().session?.status).toBe('running');
+  expect(useAgentRunner.getState().interrupts.one).toEqual({ generation: native.generation, runId: 'first' });
+  useAgentRunner.getState().detach();
+  await useAgentRunner.getState().attach('one');
+  expect(await useAgentRunner.getState().action('interrupt_agent_session', args)).toBe(false);
+  expect(invoke.mock.calls.filter(([name]) => name === 'interrupt_agent_session')).toHaveLength(1);
+  native = { ...native, status: 'idle', active_run: null, events: [{ seq: 1, kind: 'turn/completed', text: null, data: { run_status: 'cancelled' }, run: 'first' }] };
+  await vi.advanceTimersByTimeAsync(600);
+  expect(useAgentRunner.getState().interrupts.one).toBeUndefined();
+  expect(useAgentRunner.getState().session?.status).toBe('idle');
+  native = { ...native, status: 'running', active_run: 'second' };
+  await useAgentRunner.getState().attach('one');
+  expect(await useAgentRunner.getState().action('interrupt_agent_session', args)).toBe(false);
+  expect(await useAgentRunner.getState().action('interrupt_agent_session', { ...args, runId: 'second' })).toBe(true);
+  expect(invoke.mock.calls.filter(([name]) => name === 'interrupt_agent_session')).toHaveLength(2);
+});
+
+it('isolates late interrupt failure from a replacement runtime and rejects old generation and run callbacks', async () => {
+  const oldReceipt = Promise.withResolvers<null>();
+  let native = session('one', { status: 'running', active_run: 'reused-run' });
+  let interrupts = 0;
+  invoke.mockImplementation(async (command: string) => command === 'interrupt_agent_session' ? ++interrupts === 1 ? oldReceipt.promise : null : native);
+  await useAgentRunner.getState().attach('one');
+  const stale = { sessionId: 'one', generation: native.generation, runId: 'reused-run' };
+  const stopping = useAgentRunner.getState().action('interrupt_agent_session', stale);
+  native = { ...native, generation: 'replacement' };
+  await useAgentRunner.getState().attach('one');
+  expect(useAgentRunner.getState().interrupts.one).toBeUndefined();
+  expect(await useAgentRunner.getState().action('interrupt_agent_session', stale)).toBe(false);
+  expect(await useAgentRunner.getState().action('interrupt_agent_session', { ...stale, generation: native.generation, runId: 'old-run' })).toBe(false);
+  expect(await useAgentRunner.getState().action('interrupt_agent_session', { ...stale, generation: native.generation })).toBe(true);
+  useAgentRunner.setState({ error: 'request_expired' });
+  const reads = invoke.mock.calls.filter(([name]) => name === 'get_agent_session').length;
+  oldReceipt.reject('bridge_unavailable');
+  expect(await stopping).toBe(false);
+  expect(invoke.mock.calls.filter(([name]) => name === 'get_agent_session')).toHaveLength(reads);
+  expect(useAgentRunner.getState().error).toBe('request_expired');
+  expect(useAgentRunner.getState().interrupts.one).toEqual({ generation: 'replacement', runId: 'reused-run' });
+  expect(useAgentRunner.getState().session?.status).toBe('running');
+});
+
+it('retains uncertain interrupt admission without replay until native run evidence changes', async () => {
+  invoke.mockImplementation(async (command: string) => {
+    if (command === 'interrupt_agent_session') throw new Error('lost acknowledgement');
+    return session('one', { status: 'running', active_run: 'run' });
+  });
+  await useAgentRunner.getState().attach('one');
+  const args = { sessionId: 'one', generation: 'generation-one', runId: 'run' };
+  expect(await useAgentRunner.getState().action('interrupt_agent_session', args)).toBe(false);
+  expect(await useAgentRunner.getState().action('interrupt_agent_session', args)).toBe(false);
+  expect(useAgentRunner.getState().interrupts.one).toEqual({ generation: 'generation-one', runId: 'run' });
+  expect(useAgentRunner.getState().session?.status).toBe('running');
+  expect(invoke.mock.calls.filter(([name]) => name === 'interrupt_agent_session')).toHaveLength(1);
+});
+
+it('observes storage degradation independently of native status and blocks only new sends until recovery', async () => {
+  let native = session('one', { status: 'running', active_run: 'run' });
+  invoke.mockImplementation(async (command: string) => command === 'interrupt_agent_session' || command === 'send_agent_message' ? null : command === 'close_agent_session' ? true : native);
+  await useAgentRunner.getState().attach('one');
+  useAgentRunner.getState().markSeen('one');
+  native = { ...native, persistence_error: 'storage_failed' };
+  await vi.advanceTimersByTimeAsync(150);
+  expect(useAgentRunner.getState().unread.one).toBe(true);
+  expect(useAgentRunner.getState().session).toMatchObject({ status: 'running', error: null, persistence_error: 'storage_failed' });
+  expect(await useAgentRunner.getState().action('interrupt_agent_session', { sessionId: 'one', generation: native.generation, runId: 'run' })).toBe(true);
+  native = { ...native, status: 'idle', active_run: null };
+  await useAgentRunner.getState().attach('one');
+  const failure = vi.fn();
+  const args = { input: { session_id: 'one', generation: native.generation, request_id: 'next', text: 'Keep this draft' } };
+  expect(await useAgentRunner.getState().action('send_agent_message', args, failure)).toBe(false);
+  expect(failure).toHaveBeenCalledWith('storage_failed');
+  expect(invoke.mock.calls.some(([name]) => name === 'send_agent_message')).toBe(false);
+  native = { ...native, persistence_error: null };
+  await useAgentRunner.getState().attach('one');
+  expect(await useAgentRunner.getState().action('send_agent_message', args)).toBe(true);
+  native = { ...native, persistence_error: 'storage_failed' };
+  await useAgentRunner.getState().attach('one');
+  expect(await useAgentRunner.getState().action('close_agent_session', { sessionId: 'one' })).toBe(true);
+  expect(useAgentRunner.getState().session?.status).toBe('closed');
+});

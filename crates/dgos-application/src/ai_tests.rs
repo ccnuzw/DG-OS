@@ -7,7 +7,6 @@ use dgos_modules::{ModuleCallRouter, ModulePageTransport, ModulePublisher, Modul
 use dgos_providers::test_support::{seed_provider, MemoryCredentialVault};
 use dgos_providers::ProviderManager;
 use dgos_skills::SkillsManager;
-use dgos_types::*;
 use std::{sync::{Arc, Mutex}, time::Duration};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -131,7 +130,7 @@ impl Fixture {
         let confirmations = Arc::new(ModuleMcpConfirmations::new(Arc::new(Confirm(sender))));
         let service = AiService::new(HostCapabilityService::with_publisher(permissions.clone(), publisher), repository.clone(), providers, skills, mcp.clone(), confirmations.clone(), MaintenanceGate::new());
         Self { _dir: dir, db, service, mcp, confirmations, prompts: Some(receiver), runtime: handle, permissions, repository, router, route, attachment, account: CancellationToken::new(), page: CancellationToken::new(),
-            input: AiRunInput { provider_id: provider.id, model_id: "fixture-model".into(), provider_revision: revision, prompt: "private source".into(), skill_refs: vec![], tools: vec![], generation: GenerationParameters::default() },
+            input: AiRunInput { provider_id: provider.id, model_id: "fixture-model".into(), provider_revision: revision, prompt: "private source".into(), skill_refs: vec![], tools: vec![], generation: GenerationParameters::default(), foundation: AiFoundationOptions::default() },
             _supervisor: supervisor, driver, _lost: lost }
     }
     fn invoke(&self) -> AiInvocation {
@@ -201,15 +200,22 @@ async fn provider_stream_audit_failure_reaches_ai_promise_and_terminal_event() {
     use dgos_db::sea_orm::{ConnectionTrait, DbBackend, Statement};
     let mut server = mockito::Server::new_async().await;
     let upstream = server.mock("POST", "/chat/completions").with_status(200).with_header("content-type", "text/event-stream").with_body(sse()).expect(1).create_async().await;
-    let f = Fixture::new(&server.url()).await;
+    let mut f = Fixture::new(&server.url()).await;
+    f.input.foundation.retain_result = true;
     f.db.execute(Statement::from_string(DbBackend::Sqlite, "DROP TABLE provider_usage_logs".to_owned())).await.unwrap();
     let received = Arc::new(Mutex::new(Vec::new()));
     let output = received.clone();
     let sink: Arc<dyn AiEventSink> = Arc::new(move |event: AiEvent| { output.lock().unwrap().push(event); true });
     let terminal = f.service.run(f.invoke(), f.input.clone(), sink).await.unwrap();
-    assert_eq!(terminal.status, AiRunStatus::Succeeded);
+    assert_eq!(terminal.status, AiRunStatus::Interrupted);
     assert_eq!(terminal.content.as_deref(), Some("actual answer"));
     assert!(terminal.audit_warning);
+    let persisted = f.service.list_runs(f.invoke(), AiRunListInput::default()).await.unwrap().items.remove(0);
+    assert_eq!(persisted.status, AiRunStatus::Interrupted);
+    let content = f.service.get_result(f.invoke(), &persisted.run_id).await.unwrap().unwrap();
+    assert_eq!(content.status, "interrupted");
+    assert_eq!(content.content.as_deref(), Some("actual answer"));
+    assert!(!content.output_valid);
     let events = received.lock().unwrap();
     let terminals = events.iter().filter_map(|event| match &event.payload { AiEventPayload::Terminal { terminal } => Some(terminal), _ => None }).collect::<Vec<_>>();
     assert_eq!(terminals.len(), 1);
@@ -255,9 +261,9 @@ async fn invocation_cannot_bind_a_foreign_account_or_revoked_lease() {
 }
 
 fn tool_proposal(delay: u64) -> String {
-    json!({"choices":[{"message":{"role":"assistant","content":null,"reasoning_content":"private reasoning","tool_calls":[{
-        "id":"ai-tool-1","type":"function","function":{"name":"dgos_tool_0","arguments":json!({"text":"AI fixture","delay":delay}).to_string()}
-    }]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}).to_string()
+    format!("data: {}\n\ndata: [DONE]\n\n", json!({"choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":"private reasoning","tool_calls":[{
+        "index":0,"id":"ai-tool-1","type":"function","function":{"name":"dgos_tool_0","arguments":json!({"text":"AI fixture","delay":delay}).to_string()}
+    }]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}))
 }
 
 #[tokio::test]
@@ -265,13 +271,13 @@ async fn approved_module_tool_round_preserves_reasoning_usage_and_module_provena
     let mut server = mockito::Server::new_async().await;
     let first = server.mock("POST", "/chat/completions")
         .match_request(|r| !r.body().unwrap().windows(b"tool_call_id".len()).any(|w| w == b"tool_call_id"))
-        .with_header("content-type", "application/json").with_body(tool_proposal(0)).expect(1).create_async().await;
+        .with_header("content-type", "text/event-stream").with_body(tool_proposal(0)).expect(1).create_async().await;
     let second = server.mock("POST", "/chat/completions").match_request(|r| {
         let body: serde_json::Value = serde_json::from_slice(r.body().unwrap()).unwrap();
         let messages = body["messages"].as_array().unwrap();
         messages.last().is_some_and(|m| m["role"] == "tool" && m["tool_call_id"] == "ai-tool-1")
             && messages.iter().any(|m| m["reasoning_content"] == "private reasoning")
-    }).with_header("content-type", "application/json").with_body(json!({"choices":[{"message":{"role":"assistant","content":"tool completed"},"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10}}).to_string()).expect(1).create_async().await;
+    }).with_header("content-type", "text/event-stream").with_body(format!("data: {}\n\ndata: [DONE]\n\n", json!({"choices":[{"index":0,"delta":{"role":"assistant","content":"tool completed"},"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10}}))).expect(1).create_async().await;
     let mut f = Fixture::new(&server.url()).await;
     let (tool, mut prompts) = f.tool().await;
     let received = Arc::new(Mutex::new(Vec::new()));
@@ -306,7 +312,7 @@ async fn module_tool_inflight_invalidation_keeps_unknown_audit_and_usage() {
     use dgos_db::sea_orm::{ConnectionTrait, DbBackend, Statement};
     for reason in ["account", "attachment", "permission", "deadline"] {
         let mut server = mockito::Server::new_async().await;
-        let model = server.mock("POST", "/chat/completions").with_header("content-type", "application/json")
+        let model = server.mock("POST", "/chat/completions").with_header("content-type", "text/event-stream")
             .with_body(tool_proposal(5000)).expect(1).create_async().await;
         let mut f = Fixture::new(&server.url()).await;
         let (tool, mut prompts) = f.tool().await;
@@ -359,7 +365,7 @@ async fn module_tool_inflight_invalidation_keeps_unknown_audit_and_usage() {
 #[tokio::test]
 async fn revoked_then_regranted_proposal_cannot_dispatch() {
     let mut server = mockito::Server::new_async().await;
-    let model = server.mock("POST", "/chat/completions").with_header("content-type", "application/json").with_body(tool_proposal(0)).expect(1).create_async().await;
+    let model = server.mock("POST", "/chat/completions").with_header("content-type", "text/event-stream").with_body(tool_proposal(0)).expect(1).create_async().await;
     let mut f = Fixture::new(&server.url()).await;
     let (tool, mut prompts) = f.tool().await;
     let run = f.service.run(f.invoke(), f.input.clone(), Arc::new(|_: AiEvent| true));
@@ -377,4 +383,141 @@ async fn revoked_then_regranted_proposal_cannot_dispatch() {
     assert!(f.mcp.list_usage_logs("alice", Some(&tool.server_id), None).await.unwrap().is_empty());
     f.mcp.shutdown().await.unwrap();
     model.assert_async().await;
+}
+
+#[tokio::test]
+async fn invalid_structured_output_is_retained_as_failed_without_repair_or_delivery_replay() {
+    let mut server = mockito::Server::new_async().await;
+    let upstream = server.mock("POST", "/chat/completions").with_header("content-type", "text/event-stream").with_body(sse()).expect(1).create_async().await;
+    let mut f = Fixture::new(&server.url()).await;
+    f.input.foundation.retain_result = true;
+    f.input.foundation.output = AiOutputContract::JsonSchema { schema: json!({"type":"object","required":["answer"]}) };
+    let terminal = f.service.run(f.invoke(), f.input.clone(), Arc::new(|_: AiEvent| true)).await.unwrap();
+    assert_eq!(terminal.status, AiRunStatus::Failed);
+    assert_eq!(terminal.error.unwrap().reason, "output_validation_failed");
+    let run = f.service.list_runs(f.invoke(), AiRunListInput::default()).await.unwrap().items.remove(0);
+    for _ in 0..2 {
+        let result = f.service.get_result(f.invoke(), &run.run_id).await.unwrap().unwrap();
+        assert_eq!(result.status, "failed");
+        assert!(!result.output_valid);
+        assert_eq!(result.content.as_deref(), Some("actual answer"));
+        assert!(f.service.acknowledge_result(f.invoke(), &run.run_id).await.unwrap());
+    }
+    f.permissions.revoke("alice", "ai-consumer", ModulePermission::ProvidersCall).await.unwrap();
+    assert!(f.service.get_result(f.invoke(), &run.run_id).await.is_err());
+    upstream.assert_async().await;
+}
+
+#[tokio::test]
+async fn deleted_context_cannot_be_reused_through_retained_progress() {
+    use base64::Engine as _;
+    let mut server = mockito::Server::new_async().await;
+    let upstream = server.mock("POST", "/chat/completions").with_header("content-type", "text/event-stream").with_body(sse()).expect(2).create_async().await;
+    let mut f = Fixture::new(&server.url()).await;
+    let resource = f.service.import_resource(f.invoke(), AiResourceImport {
+        name: "source.txt".into(), mime: "text/plain".into(), base64: base64::engine::general_purpose::STANDARD.encode("fixed source"),
+    }).await.unwrap();
+    f.input.foundation.retain_result = true;
+    f.input.foundation.context_refs.push(AiContextRef { resource_id: resource.id.clone(), sha256: resource.sha256, start: 0, max_bytes: 12, mode: AiContextMode::Inline });
+    let terminal = f.service.run(f.invoke(), f.input.clone(), Arc::new(|_: AiEvent| true)).await.unwrap();
+    assert_eq!(terminal.status, AiRunStatus::Succeeded);
+    let run = f.service.list_runs(f.invoke(), AiRunListInput::default()).await.unwrap().items.remove(0);
+    let result = f.service.get_result(f.invoke(), &run.run_id).await.unwrap().unwrap();
+    assert_eq!(result.context_receipts[0].resource_id, resource.id);
+    f.input.foundation.context_refs.clear();
+    f.input.foundation.source_run_id = Some(run.run_id);
+    let continued = f.service.run(f.invoke(), f.input.clone(), Arc::new(|_: AiEvent| true)).await.unwrap();
+    assert_eq!(continued.status, AiRunStatus::Succeeded);
+    let runs = f.service.list_runs(f.invoke(), AiRunListInput::default()).await.unwrap();
+    let next = runs.items.iter().find(|item| Some(&item.run_id) != f.input.foundation.source_run_id.as_ref()).unwrap();
+    f.input.foundation.source_run_id = Some(next.run_id.clone());
+    assert!(f.service.delete_resource(f.invoke(), &resource.id).await.unwrap());
+    assert!(f.service.inspect_context(f.invoke(), f.input.clone()).await.is_err());
+    assert!(f.service.run(f.invoke(), f.input.clone(), Arc::new(|_: AiEvent| true)).await.is_err());
+    upstream.assert_async().await;
+}
+
+#[tokio::test]
+async fn cancelled_stream_keeps_observed_partial_without_claiming_success() {
+    let mut server = mockito::Server::new_async().await;
+    let upstream = server.mock("POST", "/chat/completions").with_header("content-type", "text/event-stream").with_body(sse()).expect(1).create_async().await;
+    let mut f = Fixture::new(&server.url()).await;
+    f.input.foundation.retain_result = true;
+    let terminal = f.service.run(f.invoke(), f.input.clone(), Arc::new(|event: AiEvent| !matches!(event.payload, AiEventPayload::Delta { .. }))).await.unwrap();
+    assert_ne!(terminal.status, AiRunStatus::Succeeded);
+    let run = f.service.list_runs(f.invoke(), AiRunListInput::default()).await.unwrap().items.remove(0);
+    let retained = f.service.get_result(f.invoke(), &run.run_id).await.unwrap().unwrap();
+    assert_eq!(retained.content.as_deref(), Some("actual answer"));
+    assert_ne!(retained.status, "running");
+    assert!(!retained.output_valid);
+    upstream.assert_async().await;
+}
+
+#[tokio::test]
+async fn rejected_started_does_not_claim_inline_resource_delivery() {
+    use base64::Engine as _;
+    let mut server = mockito::Server::new_async().await;
+    let upstream = server.mock("POST", "/chat/completions").expect(0).create_async().await;
+    let mut f = Fixture::new(&server.url()).await;
+    let resource = f.service.import_resource(f.invoke(), AiResourceImport { name: "undelivered.txt".into(), mime: "text/plain".into(), base64: base64::engine::general_purpose::STANDARD.encode("not sent") }).await.unwrap();
+    f.input.foundation.retain_result = true;
+    f.input.foundation.context_refs.push(AiContextRef { resource_id: resource.id, sha256: resource.sha256, start: 0, max_bytes: 8, mode: AiContextMode::Inline });
+    let terminal = f.service.run(f.invoke(), f.input.clone(), Arc::new(|_: AiEvent| false)).await.unwrap();
+    assert_eq!(terminal.status, AiRunStatus::Cancelled);
+    let run = f.service.list_runs(f.invoke(), AiRunListInput::default()).await.unwrap().items.remove(0);
+    let retained = f.service.get_result(f.invoke(), &run.run_id).await.unwrap().unwrap();
+    assert!(retained.context_receipts.is_empty());
+    upstream.assert_async().await;
+}
+
+#[tokio::test]
+async fn manual_skill_receipts_confirm_only_dispatched_content() {
+    use sha2::{Digest, Sha256};
+    let mut server = mockito::Server::new_async().await;
+    let upstream = server.mock("POST", "/chat/completions").with_header("content-type", "text/event-stream").with_body(sse()).expect(1).create_async().await;
+    let mut f = Fixture::new(&server.url()).await;
+    f.permissions.grant("alice", "ai-consumer", ModulePermission::SkillsExecute).await.unwrap();
+    let (pin, body) = {
+        let skills = f.service.skills.read().await;
+        skills.register_bundled_catalog(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills")).await.unwrap();
+        let id = "dgos.official.writing.summarize";
+        skills.install_skill(id, "alice").await.unwrap();
+        let pin = skills.ai_content_catalog("alice").await.unwrap().into_iter().find(|entry| entry.skill.skill_id == id).unwrap().skill;
+        let body = skills.prepare_content_skill(id, "alice").await.unwrap().body;
+        (pin, body)
+    };
+    f.input.skill_refs = vec![pin.clone()];
+    f.input.foundation.retain_result = true;
+    assert_eq!(f.input.foundation.skill_mode, AiSkillMode::Manual);
+    let invocation = f.invoke();
+    let run_id = invocation.call.context().request_id().to_owned();
+    let terminal = f.service.run(invocation, f.input.clone(), Arc::new(|_: AiEvent| true)).await.unwrap();
+    assert_eq!(terminal.status, AiRunStatus::Succeeded);
+    let content = f.service.get_result(f.invoke(), &run_id).await.unwrap().unwrap();
+    assert_eq!(content.skill_receipts, json!([{"pin":pin,"path":"SKILL.md","sha256":format!("{:x}",Sha256::digest(body.as_bytes())),"bytes":body.len()}]));
+    let invocation = f.invoke();
+    let rejected_id = invocation.call.context().request_id().to_owned();
+    let terminal = f.service.run(invocation, f.input.clone(), Arc::new(|_: AiEvent| false)).await.unwrap();
+    assert_eq!(terminal.status, AiRunStatus::Cancelled);
+    let content = f.service.get_result(f.invoke(), &rejected_id).await.unwrap().unwrap();
+    assert_eq!(content.skill_receipts, json!([]));
+    upstream.assert_async().await;
+}
+
+#[tokio::test]
+async fn summaries_require_explicit_confirmation_before_inspection_or_dispatch() {
+    use base64::Engine as _;
+    let mut server = mockito::Server::new_async().await;
+    let upstream = server.mock("POST", "/chat/completions").expect(0).create_async().await;
+    let mut f = Fixture::new(&server.url()).await;
+    let resource = f.service.import_resource(f.invoke(), AiResourceImport { name: "摘要来源".repeat(50), mime: "text/plain".into(),
+        base64: base64::engine::general_purpose::STANDARD.encode("fixed source") }).await.unwrap();
+    f.input.foundation.operation = AiOperation::Summarize;
+    f.input.foundation.context_refs.push(AiContextRef { resource_id: resource.id, sha256: resource.sha256, start: 0, max_bytes: 12, mode: AiContextMode::Inline });
+    assert!(f.service.inspect_context(f.invoke(), f.input.clone()).await.is_err());
+    assert!(f.service.run(f.invoke(), f.input.clone(), Arc::new(|_: AiEvent| true)).await.is_err());
+    f.input.foundation.confirmed = true;
+    assert!(f.service.inspect_context(f.invoke(), f.input.clone()).await.unwrap().can_send);
+    assert!(f.service.list_runs(f.invoke(), AiRunListInput::default()).await.unwrap().items.is_empty());
+    upstream.assert_async().await;
 }

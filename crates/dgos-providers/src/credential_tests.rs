@@ -1040,6 +1040,33 @@ async fn stream_usage_is_recorded_once_with_the_reported_tokens() {
 }
 
 #[tokio::test]
+async fn explicitly_reported_zero_stream_usage_remains_known() {
+    let (_dir, url, db) = database().await;
+    let vault = Arc::new(MemoryCredentialVault::default());
+    let mut server = mockito::Server::new_async().await;
+    let provider = crate::test_support::seed_provider(
+        db, &vault, config(&server.url(), "synthetic-zero-usage"), "local",
+    ).await.unwrap();
+    let manager = ProviderManager::with_vault(&url, vault).await.unwrap();
+    let call = server.mock("POST", "/chat/completions")
+        .with_status(200).with_header("content-type", "text/event-stream")
+        .with_body(concat!(
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0,\"total_tokens\":0}}\n\n",
+            "data: [DONE]\n\n"
+        )).expect(1).create_async().await;
+    let mut stream = manager.stream_provider(&provider.id, "m", user_request(), "local").await.unwrap();
+    while let Some(item) = stream.next().await { item.unwrap(); }
+    drop(stream);
+    let rows = usage_rows(&manager).await;
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].success);
+    assert_eq!((rows[0].request_tokens, rows[0].response_tokens), (0, 0));
+    assert_eq!(rows[0].usage_reported, Some(true));
+    call.assert_async().await;
+}
+
+#[tokio::test]
 async fn stream_that_ends_without_usage_is_recorded_as_usage_unknown_not_as_zero() {
     // D081: a stream that completes but whose upstream never reports usage has an unknown cost;
     // the zeros in the token columns must not read as "free".
@@ -3026,4 +3053,196 @@ async fn cancelled_dispatched_call_records_usage_as_unknown() {
     assert_eq!(usage.len(), 1);
     assert_eq!((usage[0].request_tokens, usage[0].response_tokens, usage[0].success, usage[0].usage_reported), (0, 0, false, Some(false)));
     call.assert_async().await;
+}
+
+fn dispatch_fixture_request() -> dgos_types::ChatRequest {
+    dgos_types::ChatRequest {
+        messages: vec![dgos_types::ChatMessage {
+            role: "user".into(),
+            content: "inline source whose delivery must remain uncertain".into(),
+            images: vec![],
+        }],
+        max_tokens: Some(32),
+        stream: Some(true),
+        ..Default::default()
+    }
+}
+
+async fn open_controlled_dispatch_fixture(
+    manager: &ProviderManager,
+    provider: &dgos_types::Provider,
+    request: dgos_types::ChatRequest,
+    tools: bool,
+    cancellation: tokio_util::sync::CancellationToken,
+    dispatched: Arc<std::sync::atomic::AtomicBool>,
+) -> dgos_types::DgosResult<()> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    if tools {
+        let request = dgos_types::ToolChatRequest {
+            messages: request.messages.into_iter().map(|message| dgos_types::ToolMessage {
+                role: message.role,
+                content: Some(message.content),
+                tool_call_id: None,
+                tool_calls: vec![],
+                reasoning: None,
+                images: message.images,
+            }).collect(),
+            tools: vec![],
+            max_tokens: request.max_tokens.unwrap(),
+            temperature: request.temperature,
+            reasoning: request.reasoning,
+        };
+        manager.stream_provider_tools_bound_cancellable_controlled_with_provenance(
+            &provider.id, "fixture-chat", request, "local", Some(provider.config_revision),
+            None, cancellation, deadline, dispatched,
+        ).await.map(|_| ())
+    } else {
+        manager.stream_provider_bound_cancellable_controlled_with_provenance(
+            &provider.id, "fixture-chat", request, "local", Some(provider.config_revision),
+            None, cancellation, deadline, dispatched,
+        ).await.map(|_| ())
+    }
+}
+
+#[tokio::test]
+async fn controlled_stream_local_body_rejection_never_dispatches_text_or_tools() {
+    let (_dir, url, db) = database().await;
+    let vault = Arc::new(MemoryCredentialVault::default());
+    let manager = ProviderManager::with_vault(&url, vault.clone()).await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    for protocol in ["anthropic", "openai_compatible"] {
+        let mut saved = config(&endpoint, "synthetic-local-rejection");
+        saved.provider_type = protocol.into();
+        let provider = crate::test_support::seed_provider(db.clone(), &vault, saved, "local").await.unwrap();
+        for tools in [false, true] {
+            let mut request = dispatch_fixture_request();
+            if protocol == "anthropic" {
+                // This reaches build_turns, which cannot express an image-only user turn.
+                request.messages[0].content.clear();
+                request.messages[0].images.push(dgos_types::ImageInput {
+                    mime: "image/png".into(), data: b"\x89PNG\r\n\x1a\n".to_vec(),
+                });
+            } else {
+                request.temperature = Some(f32::NAN);
+            }
+            let dispatched = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let result = open_controlled_dispatch_fixture(
+                &manager, &provider, request, tools, tokio_util::sync::CancellationToken::new(), dispatched.clone(),
+            ).await;
+            assert!(matches!(result, Err(dgos_types::DgosError::RequestNotSupported)), "{protocol}, tools={tools}: {result:?}");
+            assert!(!dispatched.load(std::sync::atomic::Ordering::Acquire), "local rejection must not claim delivery");
+        }
+    }
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(30), listener.accept()).await.is_err(), "local rejection opened a network connection");
+}
+
+async fn receive_dispatch_fixture(socket: &mut tokio::net::TcpStream, path: &str) {
+    use tokio::io::AsyncReadExt;
+    let mut received = Vec::new();
+    let header_end = loop {
+        if let Some(end) = received.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+            break end + 4;
+        }
+        let mut bytes = [0; 1024];
+        let count = socket.read(&mut bytes).await.unwrap();
+        assert_ne!(count, 0, "request ended before its headers");
+        received.extend_from_slice(&bytes[..count]);
+        assert!(received.len() <= 64 * 1024);
+    };
+    let headers = std::str::from_utf8(&received[..header_end]).unwrap();
+    assert!(headers.starts_with(&format!("POST {path} HTTP/1.1\r\n")));
+    let content_len = headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse::<usize>().unwrap())
+    }).unwrap();
+    assert!(content_len <= 64 * 1024);
+    while received.len() < header_end + content_len {
+        let mut bytes = [0; 1024];
+        let count = socket.read(&mut bytes).await.unwrap();
+        assert_ne!(count, 0, "request ended before its body");
+        received.extend_from_slice(&bytes[..count]);
+    }
+    let body: serde_json::Value = serde_json::from_slice(&received[header_end..header_end + content_len]).unwrap();
+    assert_eq!(body["stream"], true);
+    assert!(body["messages"].to_string().contains("inline source whose delivery must remain uncertain"));
+}
+
+#[tokio::test]
+async fn controlled_stream_send_attempt_survives_network_and_upstream_failure() {
+    use tokio::io::AsyncWriteExt;
+    let (_dir, url, db) = database().await;
+    let vault = Arc::new(MemoryCredentialVault::default());
+    let manager = ProviderManager::with_vault(&url, vault.clone()).await.unwrap();
+    for protocol in ["anthropic", "openai_compatible"] {
+        for tools in [false, true] {
+            for upstream_rejects in [false, true] {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let mut saved = config(&format!("http://{}", listener.local_addr().unwrap()), "synthetic-attempt");
+                saved.provider_type = protocol.into();
+                // Preserve the original network error, without replaying the request.
+                saved.config = Some(serde_json::json!({"max_retries": 0, "initial_delay_ms": 1, "max_delay_ms": 1}));
+                let provider = crate::test_support::seed_provider(db.clone(), &vault, saved, "local").await.unwrap();
+                let dispatched = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let observed = dispatched.clone();
+                let server = tokio::spawn(async move {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    receive_dispatch_fixture(&mut socket, if protocol == "anthropic" { "/v1/messages" } else { "/chat/completions" }).await;
+                    assert!(observed.load(std::sync::atomic::Ordering::Acquire), "the complete body arrived before dispatch was recorded");
+                    if upstream_rejects {
+                        socket.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").await.unwrap();
+                    }
+                    // Otherwise close after receiving the whole request, before any response.
+                });
+                let result = open_controlled_dispatch_fixture(
+                    &manager, &provider, dispatch_fixture_request(), tools,
+                    tokio_util::sync::CancellationToken::new(), dispatched.clone(),
+                ).await;
+                tokio::time::timeout(std::time::Duration::from_secs(2), server).await.unwrap().unwrap();
+                if upstream_rejects {
+                    assert!(matches!(result, Err(dgos_types::DgosError::ProviderRequestRejected)), "{result:?}");
+                } else {
+                    assert!(matches!(result, Err(dgos_types::DgosError::NetworkError(_))), "{result:?}");
+                }
+                assert!(dispatched.load(std::sync::atomic::Ordering::Acquire), "failure after sending must retain delivery uncertainty");
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn controlled_stream_cancelled_after_body_delivery_retains_attempt_signal() {
+    for protocol in ["anthropic", "openai_compatible"] {
+        for tools in [false, true] {
+            // Cancellation journals usage asynchronously; scenarios must not race that write
+            // against the next scenario's provider-seeding transaction on the same database.
+            let (_dir, url, db) = database().await;
+            let vault = Arc::new(MemoryCredentialVault::default());
+            let manager = ProviderManager::with_vault(&url, vault.clone()).await.unwrap();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut saved = config(&format!("http://{}", listener.local_addr().unwrap()), "synthetic-cancel-stream");
+            saved.provider_type = protocol.into();
+            let provider = crate::test_support::seed_provider(db.clone(), &vault, saved, "local").await.unwrap();
+            let cancellation = tokio_util::sync::CancellationToken::new();
+            let server_cancel = cancellation.clone();
+            let dispatched = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let observed = dispatched.clone();
+            let (release, hold) = tokio::sync::oneshot::channel::<()>();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                receive_dispatch_fixture(&mut socket, if protocol == "anthropic" { "/v1/messages" } else { "/chat/completions" }).await;
+                assert!(observed.load(std::sync::atomic::Ordering::Acquire));
+                server_cancel.cancel();
+                let _ = hold.await;
+                drop(socket);
+            });
+            let result = open_controlled_dispatch_fixture(
+                &manager, &provider, dispatch_fixture_request(), tools, cancellation, dispatched.clone(),
+            ).await;
+            let _ = release.send(());
+            tokio::time::timeout(std::time::Duration::from_secs(2), server).await.unwrap().unwrap();
+            assert!(matches!(result, Err(dgos_types::DgosError::StreamInterrupted)), "{result:?}");
+            assert!(dispatched.load(std::sync::atomic::Ordering::Acquire));
+        }
+    }
 }

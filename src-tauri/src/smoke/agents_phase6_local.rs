@@ -1,14 +1,15 @@
-//! Safe local phase for the existing shipped App/WKWebView harness.
-//! No real CLI/model/provider request or OS credential vault is used. Run only
-//! with DGOS_PROJECT_ACCEPTANCE_PHASE=phase6-local and a nonexistent temp root.
+//! Isolated phase for the shipped App/WKWebView harness. Default paths are
+//! deterministic protocol fixtures; DGOS_CODEX_REAL_LIFECYCLE_SMOKE=1 selects
+//! the separate authorized real Codex journey, never its protocol fixture.
 use super::*;
 use super::super::ui_keys::{self, Key};
 
 type Journey<T> = Result<T, String>;
 
 /// Must run on the entry thread, before the async runtime or WebView is created.
-/// Both catalog discovery and explicit session launch resolve only fixture peers.
+/// Default discovery resolves fixture peers; explicit real opt-in resolves the installed CLI first.
 pub(super) fn isolate(root: &Path) {
+    if real_codex_enabled() { isolate_real_codex(root); return; }
     assert!(!root.exists(), "phase6-local requires a nonexistent root");
     let parent = root.parent().expect("temporary root parent").canonicalize().expect("canonical parent");
     let temporary = std::env::temp_dir().canonicalize().expect("canonical temp directory");
@@ -20,7 +21,8 @@ pub(super) fn isolate(root: &Path) {
     for name in ["home", "codex-home", "claude-home", "config", "cache", "data"] { fs::create_dir(root.join(name)).expect("isolated home"); }
     #[cfg(unix)] {
         use std::os::unix::fs::PermissionsExt;
-        fs::write(bin.join("codex"), PROTOCOL).expect("protocol fixture");
+        let protocol = if std::env::var_os("DGOS_CODEX_LIFECYCLE_SMOKE").is_some() { include_str!("codex_lifecycle_protocol.sh") } else { PROTOCOL };
+        fs::write(bin.join("codex"), protocol).expect("protocol fixture");
         fs::write(bin.join("claude"), "#!/bin/sh\nif [ \"${1-}\" = --version ]; then printf '2.1.0 (Claude Code)\\n'; exit 0; fi\nprintf 'phase6: Claude execution forbidden\\n' >&2\nexit 79\n").expect("claude discovery fixture");
         fs::write(bin.join("node"), "#!/bin/sh\nif [ \"${1-}\" = --version ]; then printf 'v22.0.0\\n'; exit 0; fi\nprintf 'phase6: Node execution forbidden\\n' >&2\nexit 79\n").expect("node discovery fixture");
         for name in ["codex", "claude", "node"] { fs::set_permissions(bin.join(name), fs::Permissions::from_mode(0o700)).expect("fixture permissions"); }
@@ -100,6 +102,7 @@ async fn settled(app: &AppHandle, sid: &str) -> Journey<Value> {
 }
 
 async fn journey(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>) -> Journey<()> {
+    if std::env::var_os("DGOS_GIT_COMMIT_SMOKE").is_some() { return git_commit_journey(app, fx, ck, ev).await; }
     if std::env::var_os("DGOS_EXPLORER_SMOKE").is_some() { return explorer_file_journey(app, fx, ck, ev).await; }
     let (account, _) = app.state::<Arc<SessionResolver>>().agent_session().map_err(|_| "local account absent")?;
     let owner = account.user_id().to_owned();
@@ -125,6 +128,7 @@ window.fetch=function(url,options,...rest){p.events.push({command:String(url).sp
 document.addEventListener('keydown',e=>p.keys.push({key:e.key,isTrusted:e.isTrusted,target:e.target?.id||e.target?.className}),true);
 const projects=await need('dev-tool-projects');if(projects.getAttribute('aria-expanded')!=='true')projects.click();await click('dev-project-item-'+A.project);return {ok:!!await until(()=>tid('dev-project-conversation'))};
 "#).await?;
+    if std::env::var_os("DGOS_CODEX_LIFECYCLE_SMOKE").is_some() { return codex_lifecycle_journey(app, fx, ck, ev, &path).await; }
     step(app, fx, ck, ev, "select synthetic model and explicitly authorize first send", json!({}), r#"
 await click('composer-model-picker-trigger');const d=await need('composer-model-picker-dialog');const option=await until(()=>$$('.composer-model-picker-option',d).find(e=>txt(e).includes('fixture-model')&&!e.disabled));if(!option)throw Error('synthetic provider route unavailable');option.click();if(!await until(()=>!tid('composer-model-picker-dialog')))throw Error('model selection not committed');const trust=await need('direct-conversation-trust');if(!trust.checked)trust.click();setInput(document.getElementById('agent-message'),'PHASE6 LOCAL explicit protocol request; no model');const send=await until(()=>{const b=tid('direct-conversation-send');return b&&!b.disabled&&b});if(!send)throw Error('first send disabled');send.click();return {ok:!!await until(()=>!tid('dev-project-conversation')&&document.getElementById('agent-message'))};
 "#).await?;
@@ -205,6 +209,7 @@ const p=window.__phase6;return {ok:p.events.filter(e=>e.command==='open_agent_se
 }
 
 pub(super) async fn run(app: &AppHandle, fx: &Fx, mut ck: Checks, mut ev: Vec<Value>) {
+    if real_codex_enabled() { run_real_codex(app, fx, ck, ev).await; return; }
     save(fx, "safety", &json!({"phase":"phase6-local","database":fx.root.join("dgos.db"),"vault":"MemoryCredentialVault","provider":"synthetic loopback port 9; deterministic child never performs HTTP","native_cli":false,"model_calls":0,"configuration_roots":["home","codex-home","claude-home","config","cache","data"],"source":"production App/WKWebView/IPC/components with deterministic protocol subprocess","keyboard":"synthesized NSEvents, not physical keyboard","browser_replacement":false}));
     let renderer = dom(app, json!({}), "return {ok:!!window.__TAURI_INTERNALS__&&location.protocol!=='http:'&&location.protocol!=='https:',url:location.href,userAgent:navigator.userAgent,scripts:[...document.querySelectorAll('script[src]')].map(e=>e.src)};").await;
     save(fx, "renderer", &renderer);
@@ -221,3 +226,6 @@ pub(super) async fn run(app: &AppHandle, fx: &Fx, mut ck: Checks, mut ev: Vec<Va
 }
 
 include!("explorer_file_journey.rs");
+include!("git_commit_journey.rs");
+include!("codex_lifecycle_journey.rs");
+include!("codex_real_lifecycle_journey.rs");

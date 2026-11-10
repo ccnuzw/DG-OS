@@ -12,9 +12,10 @@ import { WorkspaceLink } from '../chat/RuntimeNavigation';
 import { agentContextUsage } from './agentContextUsage';
 import './agent-composer-controls.css';
 import { AgentSkillPicker } from './AgentSkillPicker';
+import { AgentContextDetails } from './AgentContextDetails';
 
 type Panel = 'reasoning' | 'permission' | 'context' | 'more' | 'references';
-export function AgentComposerControls({ session, projectId, engine = session?.engine, draftId, model, references, referencePicker, more, send, sendHint, disabled = false, visible = true }: { session?: AgentSession; projectId: string | null; engine?: Engine; draftId?: string; model: ReactNode; references?: ReactNode; referencePicker?: ReactNode; more?: ReactNode; send?: ReactNode; sendHint?: ReactNode; disabled?: boolean; visible?: boolean }) {
+export function AgentComposerControls({ session, projectId, engine = session?.engine, draftId, model, references, referencePicker, more, send, sendHint, onCommandSelect, disabled = false, visible = true }: { session?: AgentSession; projectId: string | null; engine?: Engine; draftId?: string; model: ReactNode; references?: ReactNode; referencePicker?: ReactNode; more?: ReactNode; send?: ReactNode; sendHint?: ReactNode; onCommandSelect?: (command: string) => void; disabled?: boolean; visible?: boolean }) {
   const { t, locale } = useLocale();
   const epoch = useDevelopment(state => state.epoch);
   const { generation, pending } = useContextSelection();
@@ -32,7 +33,7 @@ export function AgentComposerControls({ session, projectId, engine = session?.en
   latestOwner.current = owner;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { setExpansion(null); setPanel(null); }, [owner]);
-  const settings: Required<AgentTurnSettings> = { reasoning_effort: draft?.reasoning_effort !== undefined ? draft.reasoning_effort : controls?.reasoning.current ?? null, permission_mode: draft?.permission_mode ?? controls?.permission.current ?? 'default' };
+  const settings: Required<Pick<AgentTurnSettings, 'reasoning_effort' | 'permission_mode'>> = { reasoning_effort: draft?.reasoning_effort !== undefined ? draft.reasoning_effort : controls?.reasoning.current ?? null, permission_mode: draft?.permission_mode ?? controls?.permission.current ?? 'default' };
   const awaiting = Boolean(draft && (!controls || draft.reasoning_effort !== undefined && (draft.reasoning_effort !== controls.reasoning.current || Boolean(controls.reasoning.reason)) || draft.permission_mode !== undefined && (draft.permission_mode !== controls.permission.current || Boolean(controls.permission.reason))));
   const usage = agentContextUsage(session);
   const number = (value: number) => value.toLocaleString(locale);
@@ -55,6 +56,11 @@ export function AgentComposerControls({ session, projectId, engine = session?.en
     else update({ permission_mode: mode });
   }
   const availability = !session ? t('agentControls.beforeStart') : !controls ? t('agentControls.unavailable') : t('agentControls.nextTurn');
+  const capabilityReason = (reason: string) => {
+    const key = `agentControls.reason.${reason}`;
+    const translated = t(key);
+    return translated === key ? t('agentControls.reason.unavailable') : translated;
+  };
   const permissionName = (mode: AgentPermissionMode | null | undefined) => t(mode ? `agentControls.permission.${mode}` : 'agentControls.unknown');
   const entryState = { capabilityEntry: { runtime: 'native', selection: { target: engine === 'claude' ? 'Claude' : 'Codex', scope: projectId ? 'ProjectShared' : 'OsUser', project_id: projectId }, sessionId: session?.id, returnTabId: useDevelopment(state => state.activeTabId), epoch } };
   const management = engine ? <><WorkspaceLink to="/skills" state={entryState}>{t('nav.skills')}</WorkspaceLink><WorkspaceLink to="/mcp" state={entryState}>{t('nav.mcp')}</WorkspaceLink></> : <p>{t('agentControls.chooseModel')}</p>;
@@ -65,7 +71,7 @@ export function AgentComposerControls({ session, projectId, engine = session?.en
   return <div className="agent-composer-controls" data-testid="agent-composer-controls">
     <div className="agent-control-leading">
       {referencePicker}
-      <AgentSkillPicker projectId={projectId} session={session} engine={engine} disabled={disabled} active={active && !pending} />
+      <AgentSkillPicker projectId={projectId} session={session} engine={engine} disabled={disabled} active={active && !pending} onCommandSelect={onCommandSelect} />
       {references ? popup('references', <><Paperclip size={14} aria-hidden="true" /><span>{t('agentControls.references')}</span></>, <><h3>{t('agentControls.references')}</h3>{references}</>) : null}
       {popup('more', <><Settings2 size={15} aria-hidden="true" /><span className="agent-control-settings-label">{t('agentControls.settings')}</span></>, <>
         <nav className="agent-control-more-links" aria-label={t('agentControls.management')}>{management}<WorkspaceLink to="/settings/providers">{t('capabilities.provider')}</WorkspaceLink><WorkspaceLink to="/settings/cli">{t('agent.engine')}</WorkspaceLink></nav>
@@ -82,7 +88,7 @@ export function AgentComposerControls({ session, projectId, engine = session?.en
         <p>{t(`agentControls.scope.${engine ?? 'unknown'}.${settings.permission_mode}`)}</p>
         <p>{t('agentControls.applied')}: {permissionName(controls?.permission.current)}</p>
         {expansion?.owner === owner ? <section className="agent-control-confirm" role="group" aria-label={t('agentControls.expandTitle')}><strong>{t('agentControls.expandTitle')}</strong><p>{t(`agentControls.scope.${engine ?? 'unknown'}.${expansion.mode}`)}</p><p>{t('agentControls.noPendingApproval')}</p><Button size="xs" disabled={!writable} onClick={() => update({ permission_mode: expansion.mode })}>{t('agentControls.confirmExpansion')}</Button><Button size="xs" variant="ghost" onClick={() => setExpansion(null)}>{t('common.cancel')}</Button></section> : null}
-        {controls?.permission.reason ? <p>{t('agentControls.capabilityReason')}: {controls.permission.reason}</p> : null}
+        {controls?.permission.reason ? <p>{t('agentControls.capabilityReason')}: {capabilityReason(controls.permission.reason)}</p> : null}
         {controls?.permission.source ? <details><summary>{t('agentControls.source')}</summary><code>{controls.permission.source}</code></details> : null}
       </>)}
       <div className="agent-control-model">{model}</div>
@@ -92,11 +98,11 @@ export function AgentComposerControls({ session, projectId, engine = session?.en
           {[null, ...controls.reasoning.options].map(value => <Button key={value ?? 'native-default'} size="xs" variant={settings.reasoning_effort === value ? 'secondary' : 'ghost'} aria-pressed={settings.reasoning_effort === value} disabled={!writable} onClick={() => update({ reasoning_effort: value })}>{value ?? t('agentControls.default')}</Button>)}
         </div> : <p>{t('agentControls.reasoningUnavailable')}</p>}
         <p>{t('agentControls.applied')}: {controls?.reasoning.current ?? t(controls?.reasoning.reason || !controls ? 'agentControls.unknown' : 'agentControls.default')}</p>
-        {controls?.reasoning.reason ? <p>{t('agentControls.capabilityReason')}: {controls.reasoning.reason}</p> : null}
+        {controls?.reasoning.reason ? <p>{t('agentControls.capabilityReason')}: {capabilityReason(controls.reasoning.reason)}</p> : null}
         {controls?.reasoning.source ? <details><summary>{t('agentControls.source')}</summary><code>{controls.reasoning.source}</code></details> : null}
       </>)}
       {popup('context', <><Gauge size={14} aria-hidden="true" /><span>{t('agentControls.context')} · {contextLabel}</span></>, <>
-        <h3>{t('agentControls.context')}</h3><dl><dt>{t('agentControls.used')}</dt><dd>{usage.used === null ? t('agentControls.unavailable') : `${number(usage.used)} ${t('agentControls.estimated')}`}</dd><dt>{t('agentControls.limit')}</dt><dd>{usage.limit === null ? t('agentControls.unavailable') : number(usage.limit)}</dd><dt>{t('agentControls.source')}</dt><dd>{usage.source || t('agentControls.noNativeData')}</dd></dl><p>{t('agentControls.contextExplanation')}</p>{session && ['running', 'waiting'].includes(session.status) ? <p>{t('agentControls.previousUsage')}</p> : null}
+        <AgentContextDetails usage={usage} />
       </>)}
       {send ? <div className="agent-control-send">{sendHint ? <span className="agent-control-send-hint" id="agent-send-hint">{sendHint}</span> : null}{send}</div> : null}
     </div>

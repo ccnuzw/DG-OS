@@ -1,11 +1,9 @@
 //! Host-side binding for the module-to-host capability channel (D050, ADR-0001).
 //!
-//! Skeleton only: nothing outside this crate reaches the router, no Tauri
-//! command carries a route, and the `host` object handed to module code
-//! (D042) has no call function. It fixes what a future transport must hand
-//! the dispatch layer: a request bound to a supervisor-issued runtime, its
-//! verified `(module_id, version, integrity)`, the page attachment and
-//! generation it was loaded into, and a host-generated `request_id`.
+//! Each call binds a supervisor-issued runtime and its verified
+//! `(module_id, version, integrity)` to the live page attachment and
+//! generation, with a host-generated `request_id`. Host-selected local
+//! control commands use a separate bounded pool from execution requests.
 //!
 //! A route is a routing key, not authority. It names no module, user,
 //! permission or capability, and presenting it grants nothing: admission here
@@ -19,8 +17,8 @@
 use crate::{
     page_loader::PageModuleLoader,
     runtime::{
-        ModuleRequest, ModuleRequestOutcome, ModuleRuntimeError, ModuleRuntimeHandle,
-        ModuleRuntimeState,
+        ModuleRequest, ModuleRequestClass, ModuleRequestOutcome, ModuleRuntimeError,
+        ModuleRuntimeHandle, ModuleRuntimeState,
     },
 };
 use dgos_types::HostExecutionContext;
@@ -35,10 +33,13 @@ use std::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-/// Maximum module calls in flight per runtime (D051). There is one capability
-/// today, so this is also its per-capability limit; a second capability must
-/// register its own limit before it is routed.
+/// Maximum execution calls in flight per runtime (D051). Control admission
+/// never consumes or expands this pool.
 pub const MAX_IN_FLIGHT_CALLS: usize = 8;
+
+/// Separate allowance for host-selected local control commands. These slots
+/// must never dispatch model or tool work.
+const MAX_IN_FLIGHT_CONTROL_CALLS: usize = 2;
 
 /// `call_id`s remembered per route for duplicate suppression (D054). A bound,
 /// not a guarantee: a resend arrives within milliseconds.
@@ -84,7 +85,7 @@ pub enum CallRejection {
     /// The same `call_id` was already delivered on this route, or the id is
     /// malformed (D054). Mapped to `1004004` like every admission failure.
     Duplicate,
-    /// The runtime already has `MAX_IN_FLIGHT_CALLS` calls in flight (D051).
+    /// The selected execution or control pool is at its in-flight limit.
     /// Retryable; mapped to `1001005`, never to a permission error.
     Busy,
 }
@@ -290,8 +291,8 @@ struct Route {
     /// the route.
     seen: std::collections::VecDeque<String>,
     /// Cancel handles of the calls still in flight on this route (D113).
-    /// Bounded by `MAX_IN_FLIGHT_CALLS`; an entry leaves when its call
-    /// settles or is dropped.
+    /// Bounded by the execution plus control limits; an entry leaves when its
+    /// call settles or is dropped.
     in_flight: HashMap<String, CallControl>,
 }
 
@@ -386,7 +387,7 @@ impl ModuleCallRouter {
         route: &str,
         attachment_id: &str,
     ) -> Result<BoundModuleCall, CallRejection> {
-        self.admit_inner(route, attachment_id, None)
+        self.admit_inner(route, attachment_id, None, ModuleRequestClass::Execution)
     }
 
     fn admit_inner(
@@ -394,14 +395,19 @@ impl ModuleCallRouter {
         route: &str,
         attachment_id: &str,
         call_id: Option<&str>,
+        class: ModuleRequestClass,
     ) -> Result<BoundModuleCall, CallRejection> {
         let (runtime, generation) = self.bound_runtime(route, attachment_id)?;
-        let request = runtime
-            .begin_request_limited(MAX_IN_FLIGHT_CALLS)
-            .map_err(|error| match error {
-                ModuleRuntimeError::AtCapacity => CallRejection::Busy,
-                _ => CallRejection::NotReady,
-            })?;
+        let request = match class {
+            ModuleRequestClass::Execution => runtime.begin_request_limited(MAX_IN_FLIGHT_CALLS),
+            ModuleRequestClass::Control => {
+                runtime.begin_control_request_limited(MAX_IN_FLIGHT_CONTROL_CALLS)
+            }
+        }
+        .map_err(|error| match error {
+            ModuleRuntimeError::AtCapacity => CallRejection::Busy,
+            _ => CallRejection::NotReady,
+        })?;
         let control = CallControl::new();
         let registration = call_id.and_then(|call_id| {
             let mut routes = self.routes();
@@ -441,7 +447,33 @@ impl ModuleCallRouter {
         call_id: &str,
     ) -> Result<BoundModuleCall, CallRejection> {
         self.remember_call_id(route, attachment_id, call_id)?;
-        self.admit_inner(route, attachment_id, Some(call_id))
+        self.admit_inner(
+            route,
+            attachment_id,
+            Some(call_id),
+            ModuleRequestClass::Execution,
+        )
+    }
+
+    /// Admit a host-selected local control call using two separate slots per
+    /// runtime, even when all execution slots are occupied. The transport
+    /// chooses this method from the trusted command, never renderer input.
+    /// Origin, lifecycle, cancellation and replay rules match `admit_once`;
+    /// ids are shared across both pools. This admission does not authorize
+    /// model or tool execution.
+    pub fn admit_control_once(
+        &self,
+        route: &str,
+        attachment_id: &str,
+        call_id: &str,
+    ) -> Result<BoundModuleCall, CallRejection> {
+        self.remember_call_id(route, attachment_id, call_id)?;
+        self.admit_inner(
+            route,
+            attachment_id,
+            Some(call_id),
+            ModuleRequestClass::Control,
+        )
     }
 
     /// Cancel one in-flight call of `route` (D113). Identity is derived like
@@ -1333,5 +1365,272 @@ mod tests {
         assert_eq!(in_flight(&f), MAX_IN_FLIGHT_CALLS);
         drop(held);
         assert_eq!(in_flight(&f), 0);
+    }
+
+    #[tokio::test]
+    async fn control_slots_survive_execution_saturation_without_expanding_it() {
+        let f = fixture();
+        let attachment = f.loader.attach("main").attachment_id;
+        let runtime = f.runtime("mod-a");
+        f.load(&runtime).await;
+        let route = f.router.issue(&runtime).unwrap();
+        let execution: Vec<_> = (0..MAX_IN_FLIGHT_CALLS)
+            .map(|n| {
+                f.router
+                    .admit_once(route.as_str(), &attachment, &format!("work-{n}"))
+                    .unwrap()
+            })
+            .collect();
+        let controls: Vec<_> = (0..MAX_IN_FLIGHT_CONTROL_CALLS)
+            .map(|n| {
+                f.router
+                    .admit_control_once(route.as_str(), &attachment, &format!("control-{n}"))
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(runtime.request_stats().in_flight, 10);
+        assert_eq!(
+            f.router.admit_once(route.as_str(), &attachment, "work-over").err(),
+            Some(CallRejection::Busy)
+        );
+        assert_eq!(
+            f.router.admit_control_once(route.as_str(), &attachment, "control-over").err(),
+            Some(CallRejection::Busy)
+        );
+        // Control work can reach an execution even when all work slots are held.
+        assert_eq!(f.router.cancel(route.as_str(), &attachment, "work-0"), Ok(true));
+        let mut execution = execution;
+        assert!(!execution.remove(0).finish(ModuleRequestOutcome::Succeeded));
+        let replacement = f.router.admit_once(route.as_str(), &attachment, "work-new").unwrap();
+        assert_eq!(runtime.request_stats().in_flight, 10);
+        drop(execution);
+        drop(replacement);
+        // Neither control consumes any of the eight execution slots.
+        let refilled: Vec<_> = (0..MAX_IN_FLIGHT_CALLS)
+            .map(|_| f.router.admit(route.as_str(), &attachment).unwrap())
+            .collect();
+        assert_eq!(f.router.admit(route.as_str(), &attachment).err(), Some(CallRejection::Busy));
+        assert_eq!(runtime.request_stats().in_flight, 10);
+        drop(refilled);
+        drop(controls);
+        assert_eq!(runtime.request_stats().in_flight, 0);
+        assert!(invariant_holds(runtime.request_stats()));
+    }
+
+    #[tokio::test]
+    async fn control_finish_drop_and_cancel_release_exactly_their_own_slots() {
+        let f = fixture();
+        let attachment = f.loader.attach("main").attachment_id;
+        let runtime = f.runtime("mod-a");
+        f.load(&runtime).await;
+        let route = f.router.issue(&runtime).unwrap();
+        let admit = |id| f.router.admit_control_once(route.as_str(), &attachment, id);
+        let first = admit("first").unwrap();
+        let second = admit("second").unwrap();
+        assert_eq!(admit("over").err(), Some(CallRejection::Busy));
+        assert!(first.finish(ModuleRequestOutcome::Succeeded));
+        let third = admit("third").unwrap();
+        assert_eq!(admit("still-over").err(), Some(CallRejection::Busy));
+        drop(second);
+        let fourth = admit("fourth").unwrap();
+        assert_eq!(f.router.cancel(route.as_str(), &attachment, "third"), Ok(true));
+        // Cancellation does not release capacity before settlement.
+        assert_eq!(admit("cancel-pending").err(), Some(CallRejection::Busy));
+        assert!(!third.finish(ModuleRequestOutcome::Succeeded));
+        let fifth = admit("fifth").unwrap();
+        assert_eq!(f.router.cancel(route.as_str(), &attachment, "fourth"), Ok(true));
+        fourth.finish_cancelled();
+        let sixth = admit("sixth").unwrap();
+        drop(fifth);
+        assert!(sixth.finish(ModuleRequestOutcome::Denied));
+        assert!(f.router.routes().get(route.as_str()).unwrap().in_flight.is_empty());
+        for id in ["first", "second", "third", "fourth", "fifth", "sixth"] {
+            assert_eq!(f.router.cancel(route.as_str(), &attachment, id), Ok(false));
+        }
+        // Capacity refusals follow execution's replay rule: use a new call id.
+        assert_eq!(admit("over").err(), Some(CallRejection::Duplicate));
+        let stats = runtime.request_stats();
+        assert_eq!((stats.admitted, stats.in_flight), (6, 0));
+        assert_eq!((stats.succeeded, stats.interrupted, stats.cancelled, stats.denied), (1, 2, 2, 1));
+        assert!(invariant_holds(stats));
+    }
+
+    #[tokio::test]
+    async fn controls_share_replay_identity_and_validate_origin_and_ids() {
+        let f = fixture();
+        let attachment = f.loader.attach("main").attachment_id;
+        let runtime = f.runtime("mod-a");
+        f.load(&runtime).await;
+        let route = f.router.issue(&runtime).unwrap();
+        assert_eq!(
+            f.router.admit_control_once(route.as_str(), "foreign", "origin").err(),
+            Some(CallRejection::UnknownRoute)
+        );
+        assert_eq!(
+            f.router.admit_control_once("unknown", &attachment, "origin").err(),
+            Some(CallRejection::UnknownRoute)
+        );
+        for id in ["", "has space", "naïve", &"x".repeat(65)] {
+            assert_eq!(
+                f.router.admit_control_once(route.as_str(), &attachment, id).err(),
+                Some(CallRejection::Duplicate)
+            );
+        }
+        assert_eq!(runtime.request_stats().admitted, 0);
+        let control = f.router.admit_control_once(route.as_str(), &attachment, "origin").unwrap();
+        assert!(control.runtime().is_same_runtime(&runtime));
+        assert_eq!(control.attachment_id(), attachment);
+        assert_eq!(control.context().module_identity(), runtime.context().module_identity());
+        assert_ne!(control.request_id(), runtime.context().request_id());
+        assert_eq!(
+            f.router.admit_once(route.as_str(), &attachment, "origin").err(),
+            Some(CallRejection::Duplicate)
+        );
+        assert!(control.finish(ModuleRequestOutcome::Succeeded));
+        assert_eq!(
+            f.router.admit_control_once(route.as_str(), &attachment, "origin").err(),
+            Some(CallRejection::Duplicate)
+        );
+        let execution = f.router.admit_once(route.as_str(), &attachment, "execution").unwrap();
+        assert_eq!(
+            f.router.admit_control_once(route.as_str(), &attachment, "execution").err(),
+            Some(CallRejection::Duplicate)
+        );
+        drop(execution);
+        assert_eq!(runtime.request_stats().admitted, 2);
+    }
+
+    #[tokio::test]
+    async fn detached_controls_stay_stale_and_drop_releases_the_runtime() {
+        let f = fixture();
+        let attachment = f.loader.attach("main").attachment_id;
+        let runtime = f.runtime("mod-a");
+        f.load(&runtime).await;
+        let route = f.router.issue(&runtime).unwrap();
+        let call = f.router.admit_control_once(route.as_str(), &attachment, "held").unwrap();
+        f.loader.page_started("main");
+        assert_eq!(
+            f.router.admit_control_once(route.as_str(), &attachment, "stale").err(),
+            Some(CallRejection::Stale)
+        );
+        let replacement_attachment = f.loader.attach("main").attachment_id;
+        assert_eq!(
+            f.router.admit_control_once(route.as_str(), &replacement_attachment, "new-page").err(),
+            Some(CallRejection::UnknownRoute)
+        );
+        assert!(f.router.is_empty());
+        assert_eq!(runtime.request_stats().in_flight, 1);
+        drop(call);
+        let stats = runtime.request_stats();
+        assert_eq!((stats.admitted, stats.interrupted, stats.in_flight), (1, 1, 0));
+        assert!(invariant_holds(stats));
+    }
+
+    #[tokio::test]
+    async fn replacing_a_route_does_not_reset_control_capacity_or_affect_other_runtimes() {
+        let f = fixture();
+        let attachment = f.loader.attach("main").attachment_id;
+        let runtime = f.runtime("mod-a");
+        let other = f.runtime("mod-b");
+        f.load(&runtime).await;
+        f.load(&other).await;
+        let route = f.router.issue(&runtime).unwrap();
+        let other_route = f.router.issue(&other).unwrap();
+        let first = f.router.admit_control_once(route.as_str(), &attachment, "first").unwrap();
+        let second = f.router.admit_control_once(route.as_str(), &attachment, "second").unwrap();
+        let replacement = f.router.issue(&runtime).unwrap();
+        assert_eq!(
+            f.router.admit_control_once(route.as_str(), &attachment, "old-route").err(),
+            Some(CallRejection::UnknownRoute)
+        );
+        assert_eq!(
+            f.router.admit_control_once(replacement.as_str(), &attachment, "over").err(),
+            Some(CallRejection::Busy)
+        );
+        let other_call = f.router.admit_control_once(other_route.as_str(), &attachment, "other").unwrap();
+        drop(first);
+        let third = f.router.admit_control_once(replacement.as_str(), &attachment, "third").unwrap();
+        drop(second);
+        assert_eq!(runtime.request_stats().in_flight, 1);
+        assert_eq!(f.router.routes().get(replacement.as_str()).unwrap().in_flight.len(), 1);
+        drop(third);
+        drop(other_call);
+        assert_eq!(runtime.request_stats().in_flight, 0);
+        assert_eq!(other.request_stats().in_flight, 0);
+    }
+
+    #[tokio::test]
+    async fn controls_obey_lifecycle_and_participate_in_draining() {
+        let f = fixture();
+        let attachment = f.loader.attach("main").attachment_id;
+        let runtime = f.runtime("mod-a");
+        f.load(&runtime).await;
+        let route = f.router.issue(&runtime).unwrap();
+        let call = f.router.admit_control_once(route.as_str(), &attachment, "held").unwrap();
+        runtime.begin_draining().unwrap();
+        assert_eq!(
+            f.router.admit_control_once(route.as_str(), &attachment, "draining").err(),
+            Some(CallRejection::NotReady)
+        );
+        assert_eq!(runtime.stop(), Err(ModuleRuntimeError::RequestsInFlight(1)));
+        assert!(!runtime.wait_drained(Duration::from_millis(1)).await);
+        call.finish(ModuleRequestOutcome::Succeeded);
+        assert!(runtime.wait_drained(Duration::from_secs(1)).await);
+        runtime.stop().unwrap();
+        assert_eq!(
+            f.router.admit_control_once(route.as_str(), &attachment, "stopped").err(),
+            Some(CallRejection::NotReady)
+        );
+        let failed = f.runtime("mod-b");
+        f.load(&failed).await;
+        let failed_route = f.router.issue(&failed).unwrap();
+        failed.fail().unwrap();
+        assert_eq!(
+            f.router.admit_control_once(failed_route.as_str(), &attachment, "failed").err(),
+            Some(CallRejection::NotReady)
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_control_and_execution_admissions_keep_independent_caps() {
+        let f = Arc::new(fixture());
+        let attachment = f.loader.attach("main").attachment_id;
+        let runtime = f.runtime("mod-a");
+        f.load(&runtime).await;
+        let route = f.router.issue(&runtime).unwrap();
+        let tasks: Vec<_> = (0..32)
+            .map(|n| {
+                let (f, route, attachment) = (f.clone(), route.clone(), attachment.clone());
+                tokio::spawn(async move {
+                    let is_control = n % 2 == 0;
+                    let id = format!("concurrent-{n}");
+                    let result = if is_control {
+                        f.router.admit_control_once(route.as_str(), &attachment, &id)
+                    } else {
+                        f.router.admit_once(route.as_str(), &attachment, &id)
+                    };
+                    (is_control, result)
+                })
+            })
+            .collect();
+        let mut controls = Vec::new();
+        let mut execution = Vec::new();
+        let mut busy = 0;
+        for task in tasks {
+            match task.await.unwrap() {
+                (true, Ok(call)) => controls.push(call),
+                (false, Ok(call)) => execution.push(call),
+                (_, Err(CallRejection::Busy)) => busy += 1,
+                (_, Err(other)) => panic!("unexpected rejection {other:?}"),
+            }
+        }
+        assert_eq!(controls.len(), MAX_IN_FLIGHT_CONTROL_CALLS);
+        assert_eq!(execution.len(), MAX_IN_FLIGHT_CALLS);
+        assert_eq!(busy, 22);
+        assert_eq!(runtime.request_stats().in_flight, 10);
+        drop(controls);
+        drop(execution);
+        assert_eq!(runtime.request_stats().in_flight, 0);
+        assert!(invariant_holds(runtime.request_stats()));
     }
 }
