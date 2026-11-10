@@ -3,13 +3,16 @@
 // Restart with the same --engine selection and --resume /tmp/dgos-stage4-<id>.
 // Requires Bun, Rust/Cargo, node, selected CLIs and the Claude bridge when selected.
 // --desktop runs the visible production WebView acceptance instead of the Rust round-trip.
-// Provider values must be supplied explicitly; no native configuration is read.
-// Keys exist only in this process and the Rust child environment; never on disk/argv.
+// --saved-config --desktop uses only NextGpt/gpt-6-astra and Kiro/claude-sonnet-4-6
+// metadata from the read-only production DB and scoped Keychain credentials.
+// Example: bun scripts/stage4-acceptance.ts --saved-config --desktop --engine both
+// Without --saved-config, provider values must be supplied explicitly.
+// Keys exist only in private memory/child environment; never on disk/argv/logs.
 import { mkdir, mkdtemp, readFile, writeFile, access } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-
+import { readSavedAcceptanceProvider, runIsolated, SavedProviderError } from './real-codex-acceptance';
 const fail = (message: string): never => { throw new Error(message); };
 const text = (value: unknown): string | undefined => typeof value === 'string' && value.trim() ? value.trim() : undefined;
 const args = process.argv.slice(2);
@@ -18,30 +21,39 @@ const selectedEngine = engineIndex >= 0 ? args[engineIndex + 1] : 'both';
 if (!['both', 'claude', 'codex'].includes(selectedEngine ?? '')) fail('invalid_engine');
 if (engineIndex >= 0) args.splice(engineIndex, 2);
 const engines = selectedEngine === 'both' ? ['codex', 'claude'] : [selectedEngine];
+const savedConfigIndex = args.indexOf('--saved-config');
+const savedConfig = savedConfigIndex >= 0;
+if (savedConfig) args.splice(savedConfigIndex, 1);
 const desktop = args[0] === '--desktop';
 if (desktop) args.shift();
 if (desktop && selectedEngine !== 'both') fail('desktop_engine_selection_not_supported');
-if (!(args.length === 0 || (args.length === 2 && args[0] === '--resume'))) fail('usage: bun scripts/stage4-acceptance.ts [--engine claude|codex|both] [--desktop | --resume <artifact-dir>]');
+if (!(args.length === 0 || (args.length === 2 && args[0] === '--resume'))) fail('usage: bun scripts/stage4-acceptance.ts [--saved-config] [--engine claude|codex|both] [--desktop | --resume <artifact-dir>]');
 const resume = args.length !== 0;
 const root = resume ? resolve(args[1]) : await mkdtemp(join(tmpdir(), 'dgos-stage4-'));
 const repository = process.cwd();
 let failureClass = 'bootstrap_failed';
+let childEnv: Record<string, string | undefined> | undefined;
+const configured: Record<string, { key?: string; url?: string; model?: string; authStyle?: string }> = {};
 try {
   await access(join(repository, 'crates/dgos-agents/Cargo.toml'));
   if (resume) await access(join(root, 'stage4-isolated-root'));
+  if (resume) for (const name of ['config', 'cache', 'data', 'tmp']) await mkdir(join(root, name), { mode: 0o700, recursive: true });
   else {
     await writeFile(join(root, 'stage4-isolated-root'), 'DG-OS temporary acceptance artifact\n', { mode: 0o600 });
-    for (const name of ['codex-home', 'claude-home', 'evidence', 'project-codex', 'project-claude', 'home']) { const path = join(root, name); await mkdir(path, { mode: 0o700 }); }
+    for (const name of ['codex-home', 'claude-home', 'evidence', 'project-codex', 'project-claude', 'home', 'config', 'cache', 'data', 'tmp']) { const path = join(root, name); await mkdir(path, { mode: 0o700 }); }
     await writeFile(join(root, 'fixture-observations.jsonl'), '', { mode: 0o600 });
   }
-  failureClass = 'explicit_provider_configuration_incomplete';
-  const codexKey = text(process.env.DGOS_STAGE4_CODEX_KEY);
-  const codexUrl = text(process.env.DGOS_STAGE4_CODEX_URL);
-  const codexModel = text(process.env.DGOS_STAGE4_CODEX_MODEL);
-  const claudeKey = text(process.env.DGOS_STAGE4_CLAUDE_KEY);
-  const claudeUrl = text(process.env.DGOS_STAGE4_CLAUDE_URL);
-  const claudeModel = text(process.env.DGOS_STAGE4_CLAUDE_MODEL);
-  const configured = { codex: { key: codexKey, url: codexUrl, model: codexModel }, claude: { key: claudeKey, url: claudeUrl, model: claudeModel } };
+  failureClass = savedConfig ? 'saved_provider_configuration_unavailable' : 'explicit_provider_configuration_incomplete';
+  for (const engine of engines) {
+    if (savedConfig) {
+      const route = await readSavedAcceptanceProvider(engine as 'codex' | 'claude');
+      configured[engine] = { key: route.key, url: route.provider.base_url, model: route.model, authStyle: route.provider.auth_style as string | undefined };
+      console.log(`stage4 route engine=${engine} provider=${route.provider.name} model=${route.model} protocol=${engine === 'codex' ? 'responses_candidate' : 'messages_candidate'} credential=available production_database=read_only`);
+    } else {
+      const prefix = `DGOS_STAGE4_${engine.toUpperCase()}`;
+      configured[engine] = { key: text(process.env[`${prefix}_KEY`]), url: text(process.env[`${prefix}_URL`]), model: text(process.env[`${prefix}_MODEL`]), authStyle: text(process.env[`${prefix}_AUTH_STYLE`]) };
+    }
+  }
   for (const engine of engines) {
     const provider = configured[engine as keyof typeof configured];
     if (!provider.key || !provider.url || !provider.model) fail(failureClass);
@@ -49,15 +61,35 @@ try {
     if (url.username || url.password || url.search || url.hash || !['http:', 'https:'].includes(url.protocol)) fail('provider_endpoint_invalid');
   }
   if (desktop && resume) fail('desktop_resume_not_supported');
-  const env: Record<string, string | undefined> = { ...process.env,
-    CARGO_HOME: process.env.CARGO_HOME ?? join(process.env.HOME ?? fail('host_home_missing'), '.cargo'),
-    RUSTUP_HOME: process.env.RUSTUP_HOME ?? join(process.env.HOME ?? fail('host_home_missing'), '.rustup'),
+  const hostHome = homedir();
+  failureClass = 'required_executable_missing';
+  const env: Record<string, string | undefined> = savedConfig ? {
+    // Do not inherit provider keys, proxies, CLI accounts, auth helpers or fixture flags.
+    PATH: [...new Set(['cargo', 'node', ...engines].map(name => {
+      const binary = Bun.which(name);
+      if (!binary) fail('required_executable_missing');
+      return dirname(binary);
+    }).concat([dirname(process.execPath), '/usr/bin', '/bin', '/usr/sbin', '/sbin']))].join(':'),
+    LANG: 'en_US.UTF-8', RUST_BACKTRACE: '0',
+  } : { ...process.env };
+  childEnv = env;
+  Object.assign(env, {
+    CARGO_HOME: process.env.CARGO_HOME ?? join(hostHome, '.cargo'),
+    RUSTUP_HOME: process.env.RUSTUP_HOME ?? join(hostHome, '.rustup'),
     HOME: join(root, 'home'), CODEX_HOME: join(root, 'codex-home'), CLAUDE_CONFIG_DIR: join(root, 'claude-home'),
-    DGOS_STAGE4_CODEX_URL: codexUrl, DGOS_STAGE4_CODEX_MODEL: codexModel, DGOS_STAGE4_CODEX_KEY: codexKey,
-    DGOS_STAGE4_CLAUDE_URL: claudeUrl, DGOS_STAGE4_CLAUDE_MODEL: claudeModel, DGOS_STAGE4_CLAUDE_KEY: claudeKey,
+    XDG_CONFIG_HOME: join(root, 'config'), XDG_CACHE_HOME: join(root, 'cache'), XDG_DATA_HOME: join(root, 'data'),
+    TMPDIR: `${join(root, 'tmp')}/`, TMP: join(root, 'tmp'), TEMP: join(root, 'tmp'),
     DGOS_CLAUDE_BRIDGE: process.env.DGOS_CLAUDE_BRIDGE ?? join(repository, 'tools/agent-bridge/bin/dgos-claude-bridge'), RUST_LOG: 'off',
     DGOS_STAGE4_ENGINE: selectedEngine,
-  };
+  });
+  for (const name of ['CARGO_TARGET_DIR', 'SDKROOT', 'MACOSX_DEPLOYMENT_TARGET']) if (process.env[name]) env[name] = process.env[name];
+  for (const engine of engines) {
+    const provider = configured[engine];
+    const prefix = `DGOS_STAGE4_${engine.toUpperCase()}`;
+    env[`${prefix}_URL`] = provider.url; env[`${prefix}_MODEL`] = provider.model; env[`${prefix}_KEY`] = provider.key;
+    // Preserve only this supported, non-secret protocol metadata from saved config.
+    if (provider.authStyle != null) env[`${prefix}_AUTH_STYLE`] = provider.authStyle;
+  }
   for (const name of ['OPENAI_API_KEY', 'OPENAI_AUTH_TOKEN', 'OPENAI_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_API_KEY', 'DGOS_PROVIDER_KEY', 'DGOS_MCP_BEARER']) delete env[name];
   for (const engine of ['codex', 'claude']) {
     if (engines.includes(engine)) continue;
@@ -83,14 +115,20 @@ try {
   failureClass = 'cargo_or_acceptance_failed';
   if (desktop) { env.DGOS_STAGE4_FIXTURE_ROOT = root; env.DGOS_PROJECT_ACCEPTANCE_ROOT = join(root, 'desktop-ui'); env.DGOS_PROJECT_ACCEPTANCE_PHASE = 'stage4-ui'; }
   const command = desktop ? ['cargo', 'test', '--offline', '-p', 'dgos', '--features', 'webview-smoke', '--test', 'webview_smoke_agents', '--', '--nocapture'] : ['cargo', 'run', '--offline', '-p', 'dgos-agents', '--example', 'stage4_acceptance', '--', '--root', root, ...(resume ? ['--resume'] : [])];
-  const child = Bun.spawn(command, { cwd: repository, env, stdin: 'inherit', stdout: 'inherit', stderr: 'inherit' });
-  const code = await child.exited;
+  const code = savedConfig
+    ? await runIsolated(command, repository, env as Record<string, string>)
+    : await Bun.spawn(command, { cwd: repository, env, stdin: 'inherit', stdout: 'inherit', stderr: 'inherit' }).exited;
   process.exitCode = code;
-  if (code === 0 && !resume && !desktop) console.log(`restart: bun scripts/stage4-acceptance.ts --engine ${selectedEngine} --resume ${root}`);
-} catch {
+  if (code === 0 && !resume && !desktop) console.log(`restart: bun scripts/stage4-acceptance.ts ${savedConfig ? '--saved-config ' : ''}--engine ${selectedEngine} --resume ${root}`);
+} catch (error) {
+  if (error instanceof SavedProviderError) failureClass = error.code;
   // Never stringify native configuration errors, command objects, or provider keys.
   console.error(`stage4 bootstrap failed: ${failureClass}; artifact=${root}`);
   process.exitCode = 1;
+}
+finally {
+  for (const provider of Object.values(configured)) provider.key = undefined;
+  if (childEnv) for (const name of Object.keys(childEnv)) if (name.endsWith('_KEY')) delete childEnv[name];
 }
 
 function crc32(bytes: Uint8Array): number {

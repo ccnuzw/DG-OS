@@ -44,7 +44,7 @@ async fn step(app:&AppHandle,ck:&mut Checks,ev:&mut Vec<Value>,name:&str,args:Va
     Ok(r)
 }
 async fn tab(app:&AppHandle,ck:&mut Checks,ev:&mut Vec<Value>,name:&str)->Journey<()> {
-    step(app,ck,ev,&format!("activate visible {name} review tab"),json!({"name":name}),r#"const t=await need('dev-review-tab-'+A.name);t.focus();t.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return {ok:!!await until(()=>{const current=tid('dev-review-tab-'+A.name);return current?.getAttribute('data-state')==='active'&&visible(document.getElementById(current.getAttribute('aria-controls')));})};"#).await?;
+    step(app,ck,ev,&format!("activate visible {name} review tab"),json!({"name":name}),r#"if(A.name==='files'){const files=await need('dev-tool-files');if(files.getAttribute('aria-expanded')!=='true')files.click();const tab=await until(()=>$$('.dev-explorer-tabs button').find(b=>txt(b)==='文件'));if(!tab)throw Error('Files view absent');tab.click();return {ok:!!await need('dev-file-search')};}await showProjectGoals();const t=await need('dev-review-tab-'+A.name);t.focus();t.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return {ok:!!await until(()=>{const current=tid('dev-review-tab-'+A.name);return current?.getAttribute('data-state')==='active'&&visible(document.getElementById(current.getAttribute('aria-controls')));})};"#).await?;
     Ok(())
 }
 async fn selection(app:&AppHandle)->Value{value(&ipc(app,"main","read_development_workspace",json!({})).await)["selection"].clone()}
@@ -57,7 +57,7 @@ async fn edit(app:&AppHandle,ck:&mut Checks,ev:&mut Vec<Value>,path:&Path,text:&
     require(app,ck,ev,"saved bytes match task worktree",fs::read_to_string(path).unwrap_or_default()==text,path.display())
 }
 async fn close(app:&AppHandle,ck:&mut Checks,ev:&mut Vec<Value>,sid:&str)->Journey<()> {
-    step(app,ck,ev,"close selected native runtime through visible conversation",json!({}),r#"const root=await until(()=>$$('.agent-conversation').find(e=>e.querySelector('#agent-message')));if(!root)throw Error('conversation absent');await button(root,'关闭运行');return {ok:true};"#).await?;
+    step(app,ck,ev,"close selected native runtime through visible conversation",json!({}),r#"await showConversationView();const end=await until(()=>btn('结束会话'));if(!end)throw Error('end-session control absent');end.click();return {ok:true};"#).await?;
     let deadline=tokio::time::Instant::now()+Duration::from_secs(15);
     loop {
         let view=value(&ipc(app,"main","get_agent_session",json!({"sessionId":sid})).await);
@@ -67,7 +67,7 @@ async fn close(app:&AppHandle,ck:&mut Checks,ev:&mut Vec<Value>,sid:&str)->Journ
     }
 }
 async fn resume(app:&AppHandle,ck:&mut Checks,ev:&mut Vec<Value>,sid:&str)->Journey<()> {
-    step(app,ck,ev,"explicit resume through selected visible session row",json!({"sid":sid}),r#"await need('dev-session-item-'+A.sid);await pause();const t=await need('dev-trust');if(!t.checked)t.click();await pause();const b=await until(()=>{const trust=tid('dev-trust');if(trust&&!trust.checked)trust.click();const button=tid('dev-session-item-'+A.sid)?.querySelector('button');return button&&!button.disabled&&button;});if(!b)throw Error('resume disabled');b.click();return {ok:!!await until(()=>tid('dev-session-item-'+A.sid)?.querySelector('[aria-current=true]')&&visible(document.getElementById('agent-message')))};"#).await?;
+    step(app,ck,ev,"resume selected saved conversation by authorized composer focus",json!({"sid":sid}),r#"await prepareSavedConversation(A.sid);return {ok:!!document.getElementById('agent-message')&&visible(document.getElementById('agent-message'))};"#).await?;
     Ok(())
 }
 async fn turn(app:&AppHandle,ck:&mut Checks,ev:&mut Vec<Value>,sid:&str,name:&str,prompt:&str)->Journey<Value> {
@@ -83,7 +83,7 @@ async fn turn(app:&AppHandle,ck:&mut Checks,ev:&mut Vec<Value>,sid:&str,name:&st
         write_json(app.state::<Fx>().root.join(format!("{name}.json")),&view);
         if !succeeded(&reply) { require(app,ck,ev,name,false,reply.describe())?; }
         if view["pending"].as_array().is_some_and(|p|!p.is_empty()) {
-            step(app,ck,ev,"approve real native request through visible conversation",json!({}),r#"const root=$$('.agent-conversation').find(e=>e.querySelector('#agent-message'));if(!root)throw Error('conversation absent');await button(root,'允许本次');return {ok:true};"#).await?;
+            step(app,ck,ev,"approve real native request through visible conversation",json!({}),r#"const root=$$('.agent-conversation-product').find(e=>e.querySelector('#agent-message'));if(!root)throw Error('conversation absent');await button(root,'允许本次');return {ok:true};"#).await?;
         }
         let terminal=view["events"].as_array().is_some_and(|events|events.iter().any(|e|e["run"].as_str().is_some_and(|run|!previous_runs.contains(run))&&matches!(e["kind"].as_str(),Some("turn/completed"|"result"|"failure"|"error"))));
         let status=view["status"].as_str().unwrap_or("");
@@ -96,15 +96,21 @@ async fn turn(app:&AppHandle,ck:&mut Checks,ev:&mut Vec<Value>,sid:&str,name:&st
     }
 }
 async fn host(app:&AppHandle,ck:&mut Checks,ev:&mut Vec<Value>,task:&str,program:&str,args:&[&str],service:Option<u16>)->Journey<Value>{
-    tab(app,ck,ev,"develop").await?;
+    step(app,ck,ev,"open production runtime surface",json!({}),r#"await showRuntimeView();const configuration=await need('dev-runtime-configuration');configuration.open=true;return {ok:true};"#).await?;
     let before=value(&ipc(app,"main","list_development_processes",json!({"taskId":task})).await);
+    let selected=selection(app).await;
+    let trust_input=json!({"input":{"project_id":selected["project_id"],"task_id":task}});
+    let trust_before=value(&ipc(app,"main","read_development_workspace_trust",trust_input.clone()).await);
     step(app,ck,ev,"configure and start actual host command through form",json!({"program":program,"args":args,"port":service}),r#"
 const s=await need('dev-development-runtime');select(tid('dev-process-kind'),A.port?'service':'command');await pause();
 while($$('button[aria-label^="移除参数"]',s).length){$$('button[aria-label^="移除参数"]',s)[0].click();await pause();}
 await fill('dev-process-program',A.program);
 for(let i=0;i<A.args.length;i++){await button(s,'添加参数');const f=await until(()=>$$('input',s).find(e=>labelOf(e)==='参数 '+(i+1)));if(!f)throw Error('argument field');setInput(f,A.args[i]);await pause();}
 if(A.port){setInput(field(s,'回环端口'),String(A.port));setInput(field(s,'HTTP 路径'),'/health');}else{const l=$$('label',s).find(e=>txt(e).includes('验证')&&e.querySelector('input[type=checkbox]'));if(l&&!l.querySelector('input').checked)l.querySelector('input').click();}
-if(!tid('dev-process-trust').checked)tid('dev-process-trust').click();await pause();const start=await until(()=>{const b=tid('dev-process-start');return b&&!b.disabled&&b});if(!start)throw Error('process start disabled');start.click();return {ok:true};"#).await?;
+await authorizeRuntime(A.port?'service':'terminal');await pause();const start=await until(()=>{const b=tid('dev-process-start');return b&&!b.disabled&&b});if(!start)throw Error('process start disabled');start.click();return {ok:true};"#).await?;
+    let trust_after=value(&ipc(app,"main","read_development_workspace_trust",trust_input).await);
+    let granted=if service.is_some(){"service"}else{"terminal"};let independent=if service.is_some(){"terminal"}else{"service"};
+    require(app,ck,ev,"host execution confirms only its independent workspace scope",trust_after[granted]==true&&trust_after[independent]==trust_before[independent]&&trust_after["agent"]==trust_before["agent"],trust_after.to_string())?;
     let old=before.as_array().cloned().unwrap_or_default();let deadline=tokio::time::Instant::now()+Duration::from_secs(120);
     loop {
         let rows=value(&ipc(app,"main","list_development_processes",json!({"taskId":task})).await);
@@ -141,13 +147,12 @@ fn prepare(root:&Path,engine:&str)->(PathBuf,String){
     fs::write(p.join("README.md"),"user staged\n").unwrap();command(&p,&["add","--","README.md"]);fs::write(p.join("README.md"),"user staged\nuser unstaged\n").unwrap();fs::write(p.join("user-notes.txt"),"user notes\n").unwrap();(p,base)
 }
 async fn configure(app:&AppHandle,ck:&mut Checks,ev:&mut Vec<Value>,engine:&str)->Journey<()> {
-    tab(app,ck,ev,"capabilities").await?;
     let resolver=app.state::<Arc<SessionResolver>>();let(session,_)=resolver.agent_session().map_err(|_|"account_session_missing")?;let owner=session.user_id().to_owned();
     let manager=app.state::<dgos_providers::ProviderManager>();let vault=app.state::<Arc<dgos_providers::test_support::MemoryCredentialVault>>();
     let prefix=format!("DGOS_STAGE6_{}",engine.to_uppercase());let endpoint=std::env::var(format!("{prefix}_URL")).map_err(|_|"explicit_stage6_provider_required")?;let key=std::env::var(format!("{prefix}_KEY")).map_err(|_|"explicit_stage6_key_required")?;let model=std::env::var(format!("{prefix}_MODEL")).map_err(|_|"explicit_stage6_model_required")?;
     let provider=dgos_providers::test_support::seed_provider(app.state::<Fx>().db.clone(),vault.inner(),dgos_types::ProviderConfig{name:format!("Stage6 {engine}"),provider_type:if engine=="codex"{"openai_compatible"}else{"anthropic"}.into(),base_url:endpoint,api_key:key,enabled:true,config:None},&owner).await.map_err(|_|"stage6_provider_seed_failed")?;
     manager.add_manual_model(&provider.id,&owner,&model,None).await.map_err(|_|"stage6_model_seed_failed")?;
-    step(app,ck,ev,"save explicit Provider project revision through UI",json!({"engine":engine,"provider":provider.id,"model":model}),r#"const s=await until(()=>$$('section[aria-label="项目能力"]')[0]);if(!s)throw Error('Provider section absent');const c=$$('[role=combobox]',s).find(e=>labelOf(e)==='智能体');if(!c)throw Error('engine selector absent');c.click();const o=await until(()=>$$('[role=option]').find(e=>txt(e)===(A.engine==='codex'?'Codex':'Claude')));o.click();const p=await until(()=>$$('select',s).find(e=>[...e.options].some(o=>o.value===A.provider)));if(!p)throw Error('explicit Provider absent');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(p,A.provider);p.dispatchEvent(new Event('change',{bubbles:true}));await until(()=>$$('select',s).some(e=>e.value===A.model));await button(s,'保存新修订');return {ok:!!await until(()=>txt(s).includes('已保存'))};"#).await?;
+    step(app,ck,ev,"select exact Provider model and confirm automatic preparation through composer",json!({"engine":engine,"model":model}),r#"const nav=$$('.dev-main-view-nav')[0],conversation=nav&&$$('button',nav).find(b=>txt(b)==='对话');if(conversation)conversation.click();await chooseConversationModel(A.engine,'Stage6 '+A.engine,A.model);await authorizeConversation();return {ok:!!await until(()=>!tid('dev-project-conversation')&&document.getElementById('agent-message'))};"#).await?;
     Ok(())
 }
 
@@ -163,11 +168,10 @@ async fn per_engine(app:&AppHandle,fx:&Fx,ck:&mut Checks,ev:&mut Vec<Value>,engi
     let project=sel["project_id"].as_str().ok_or("selected project missing")?;
     let work=fx.root.join(format!("work-{engine}"));
     tab(app,ck,ev,"delivery").await?;
-    step(app,ck,ev,"create task worktree using production delivery form",json!({"path":work,"base":base,"branch":format!("delivery-{engine}")}),r#"const d=await need('dev-delivery');await settled();setInput(field(d,'目录'),A.path);setInput(field(d,'新分支'),A.branch);setInput(field(d,'基准提交哈希'),A.base);await pause();await button(d,'创建 worktree');return {ok:!!await until(()=>txt(tid('dev-session-cwd')).includes(A.path)),alerts:$$('[role=alert]',d).map(txt)};"#).await?;
+    step(app,ck,ev,"create task worktree using production delivery form",json!({"path":work,"base":base,"branch":format!("delivery-{engine}")}),r#"const d=await need('dev-delivery');await settled();setInput(field(d,'目录'),A.path);setInput(field(d,'新分支'),A.branch);setInput(field(d,'基准提交哈希'),A.base);await pause();await button(d,'创建 worktree');return {ok:!!await until(()=>$$('section[aria-label="任务工作区"] p',d).some(p=>txt(p)===A.path)),alerts:$$('[role=alert]',d).map(txt)};"#).await?;
     require(app,ck,ev,"created task worktree exists before file operations",work.join("math.cjs").is_file(),work.display())?;
-    configure(app,ck,ev,engine).await?;
     let before=ids(&sessions_of(app).await);
-    if !ui_start_session(app,ck,ev,engine).await { return Err(format!("{engine}: session startup")); }
+    configure(app,ck,ev,engine).await?;
     let sid=new_session_id(app,&before).await.ok_or("new session absent")?;
     turn(app,ck,ev,&sid,&format!("{engine}-warmup"),"Hello. Acknowledge readiness for a separate project development request. Do not change files yet.").await?;
     let source=turn(app,ck,ev,&sid,&format!("{engine}-feature"),"Implement quantity support across math.cjs and receipt.cjs. total sums price * quantity with default quantity 1; receipt must return exactly 'Items: 4; Total: 23' for [{price:7,quantity:3},{price:2}]. Update meaningful tests in test.cjs, run npm test and npm run build. Preserve README.md and service.cjs. Do not write Git or install dependencies. Implement now.").await?;

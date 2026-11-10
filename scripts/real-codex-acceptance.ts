@@ -18,8 +18,13 @@ import { spawn } from 'node:child_process';
 import { setTimeout, clearTimeout } from 'node:timers';
 import { setTimeout as delay } from 'node:timers/promises';
 
-const usage = 'usage: bun scripts/real-codex-acceptance.ts --provider NextGpt --model gpt-6-astra [--mode readonly33|coding|operations | --check | --stage4]';
 const fail = (code: string): never => { throw new Error(code); };
+export class SavedProviderError extends Error {
+  constructor(readonly code: string) { super(code); }
+}
+// Importing the saved-configuration helpers never reads the DB or Keychain.
+if (import.meta.main) {
+const usage = 'usage: bun scripts/real-codex-acceptance.ts --provider NextGpt --model gpt-6-astra [--mode readonly33|coding|operations | --check | --stage4]';
 const args = process.argv.slice(2);
 let providerName: string | undefined;
 let modelName: string | undefined;
@@ -49,48 +54,9 @@ try {
   if (providerName !== 'NextGpt' || modelName !== 'gpt-6-astra') fail('invalid_arguments');
   if (process.platform !== 'darwin') { failureClass = 'macos_keychain_required'; fail(failureClass); }
 
-  failureClass = 'provider_metadata_unavailable';
   const hostHome = homedir();
-  const database = new Database(join(hostHome, 'Library/Application Support/com.dgos.app/dgos.db'), { readonly: true, strict: true });
-  let provider: Provider;
-  try {
-    // Never SELECT api_key, config, or whole rows: legacy SQLite keys are not credentials.
-    const matches = database.query<Provider, [string]>(`SELECT id, user_id, name, provider_type, base_url, credential_ref,
-      json_extract(config, '$.auth_style') AS auth_style
-      FROM providers WHERE name = ? COLLATE BINARY AND enabled = 1 LIMIT 2`).all(providerName);
-    failureClass = 'enabled_provider_name_must_be_unique';
-    if (matches.length !== 1) fail(failureClass);
-    provider = matches[0];
-    failureClass = 'selected_model_unavailable_or_ambiguous';
-    const models = database.query<{ model_id: string }, [string, string]>(`SELECT model_id FROM models
-      WHERE provider_id = ? AND model_id = ? COLLATE BINARY AND is_available = 1 LIMIT 2`).all(provider.id, modelName);
-    if (models.length !== 1) fail(failureClass);
-  } finally {
-    database.close();
-  }
-  failureClass = 'provider_protocol_incompatible';
-  if (provider.provider_type !== 'openai_compatible' || (provider.auth_style != null && provider.auth_style !== 'bearer')) fail(failureClass);
-  failureClass = 'provider_endpoint_invalid';
-  // The authorized external route must use TLS. Reject credentials, query/fragment,
-  // whitespace, backslashes and implicit schemes instead of normalizing them away.
-  if (!/^https:\/\//i.test(provider.base_url) || /[\s\\\u0000-\u001f\u007f]/.test(provider.base_url)) fail(failureClass);
-  const endpoint = new URL(provider.base_url);
-  if (endpoint.protocol !== 'https:' || !endpoint.hostname || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) fail(failureClass);
-  failureClass = 'provider_credential_reference_missing';
-  if (!provider.credential_ref || !provider.user_id || !provider.id) fail(failureClass);
-  // Exactly matches ProviderCredentialScope::account: compact JSON array of the
-  // original, unnormalized persisted strings, SHA-256 lowercase hex.
-  const scope = JSON.stringify([provider.user_id, provider.id, provider.base_url, provider.credential_ref]);
-  const account = `provider:${createHash('sha256').update(scope, 'utf8').digest('hex')}`;
-  failureClass = 'keychain_credential_unavailable';
-  let credential = await keychain('com.dgos.app.providers.dev', account);
-  if (credential === undefined) credential = await keychain('com.dgos.app.providers', account);
-  failureClass = 'keychain_credential_missing';
-  if (credential === undefined) fail(failureClass);
-  secret = credential;
-  credential = undefined;
-  failureClass = 'keychain_credential_invalid';
-  if (!secret || secret.length > 8192 || /[^\x21-\x7e]/.test(secret)) fail(failureClass);
+  const { provider, endpoint, key } = await readSavedAcceptanceProvider('codex');
+  secret = key;
 
   console.log(`real-codex route provider=${providerName} model=${modelName} origin=${endpoint.origin} protocol=responses_candidate credential=available`);
   if (mode === 'check') {
@@ -146,7 +112,8 @@ try {
     process.exitCode = code;
     if (code !== 0) console.error(`real-codex acceptance_failed exit=${code} isolated_root=${root}`);
   }
-} catch {
+} catch (error) {
+  if (error instanceof SavedProviderError) failureClass = error.code;
   // Do not print error objects, subprocess output, SQL rows, command/env or keys.
   console.error(`real-codex failed: ${failureClass}${root ? `; isolated_root=${root}` : ''}`);
   if (failureClass === 'invalid_arguments') console.error(usage);
@@ -155,11 +122,60 @@ try {
   if (childEnv) for (const name of Object.keys(childEnv)) if (name.endsWith('_KEY')) delete childEnv[name];
   secret = undefined;
 }
+}
 
 type Provider = {
   id: string; user_id: string; name: string; provider_type: string;
   base_url: string; credential_ref: string | null; auth_style: unknown;
 };
+
+
+export async function readSavedAcceptanceProvider(engine: 'codex' | 'claude') {
+  const [providerName, modelName, providerType] = engine === 'codex'
+    ? ['NextGpt', 'gpt-6-astra', 'openai_compatible']
+    : ['Kiro', 'claude-sonnet-4-6', 'anthropic'];
+  let phase = 'macos_keychain_required';
+  try {
+    if (process.platform !== 'darwin') fail(phase);
+    phase = 'provider_metadata_unavailable';
+    const database = new Database(join(homedir(), 'Library/Application Support/com.dgos.app/dgos.db'), { readonly: true, strict: true });
+    let provider: Provider;
+    try {
+      // Never read api_key, whole config objects, or whole provider rows.
+      const matches = database.query<Provider, [string]>(`SELECT id, user_id, name, provider_type, base_url, credential_ref,
+        json_extract(config, '$.auth_style') AS auth_style
+        FROM providers WHERE name = ? COLLATE BINARY AND enabled = 1 LIMIT 2`).all(providerName);
+      phase = 'enabled_provider_name_must_be_unique';
+      if (matches.length !== 1) fail(phase);
+      provider = matches[0];
+      phase = 'selected_model_unavailable_or_ambiguous';
+      const models = database.query<{ model_id: string }, [string, string]>(`SELECT model_id FROM models
+        WHERE provider_id = ? AND model_id = ? COLLATE BINARY AND is_available = 1 LIMIT 2`).all(provider.id, modelName);
+      if (models.length !== 1) fail(phase);
+    } finally { database.close(); }
+    phase = 'provider_protocol_incompatible';
+    const authStyles = engine === 'codex' ? ['bearer'] : ['bearer', 'x-api-key', 'both'];
+    if (provider.provider_type !== providerType || (provider.auth_style != null && !authStyles.includes(provider.auth_style as string))) fail(phase);
+    phase = 'provider_endpoint_invalid';
+    // Reject unsafe syntax instead of silently normalizing an external route.
+    if (!/^https:\/\//i.test(provider.base_url) || /[\s\\\u0000-\u001f\u007f]/.test(provider.base_url)) fail(phase);
+    const endpoint = new URL(provider.base_url);
+    if (endpoint.protocol !== 'https:' || !endpoint.hostname || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) fail(phase);
+    phase = 'provider_credential_reference_missing';
+    if (!provider.credential_ref || !provider.user_id || !provider.id) fail(phase);
+    // Exactly ProviderCredentialScope::account, using original persisted strings.
+    const scope = JSON.stringify([provider.user_id, provider.id, provider.base_url, provider.credential_ref]);
+    const account = `provider:${createHash('sha256').update(scope, 'utf8').digest('hex')}`;
+    phase = 'keychain_credential_unavailable';
+    let key = await keychain('com.dgos.app.providers.dev', account);
+    if (key === undefined) key = await keychain('com.dgos.app.providers', account);
+    phase = 'keychain_credential_missing';
+    if (key === undefined) fail(phase);
+    phase = 'keychain_credential_invalid';
+    if (!key || key.length > 8192 || /[^\x21-\x7e]/.test(key)) fail(phase);
+    return { provider, endpoint, key, model: modelName };
+  } catch { throw new SavedProviderError(phase); }
+}
 
 async function keychain(service: string, account: string): Promise<string | undefined> {
   // stderr is intentionally discarded: Security diagnostics are not safe logs.
@@ -194,7 +210,7 @@ async function keychain(service: string, account: string): Promise<string | unde
   }
 }
 
-async function runIsolated(command: string[], cwd: string, env: Record<string, string>): Promise<number> {
+export async function runIsolated(command: string[], cwd: string, env: Record<string, string>): Promise<number> {
   const child = spawn(command[0], command.slice(1), { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdoutBytes = 0;
   let stderrBytes = 0;

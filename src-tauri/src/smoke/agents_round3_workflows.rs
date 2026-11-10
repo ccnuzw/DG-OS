@@ -101,12 +101,14 @@ pub(super) async fn launch(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut V
     let before=workspace(app).await?;
     let before_ids=ids(&host(app,"list_agent_sessions",json!({})).await?.as_array().cloned().ok_or("session list absent")?);
     let project=before["selection"]["project_id"].as_str().ok_or("selected project absent")?.to_owned();
-    step(app,fx,ck,ev,"choose configured model route and trust first conversation send",json!({"engine":engine,"prompt":prompt}),r#"
-const projects=await need('dev-tool-projects');if(document.querySelector('.agent-workbench')?.dataset.compact==='true'&&projects.getAttribute('aria-expanded')==='true')projects.click();await need('dev-project-conversation');await click('composer-model-picker-trigger');const dialog=await need('composer-model-picker-dialog');const name=A.engine==='codex'?'Codex':'Claude';
-const model=await until(()=>$$('.composer-model-picker-model',dialog).find(row=>$$('.composer-model-picker-route-summary > span',row).some(route=>txt(route)===name)&&!row.querySelector('.composer-model-picker-option')?.disabled));if(!model)throw Error('Prerequisite missing: configure an enabled provider/model with an available '+name+' route in Settings before this smoke; native CLI authentication alone is insufficient');model.querySelector('.composer-model-picker-option').click();
-const choice=await until(()=>!tid('composer-model-picker-dialog')||$$('.composer-model-picker-routes button',model).find(b=>txt(b)===name&&!b.disabled));if(!choice)throw Error('chosen model route absent');if(choice!==true)choice.click();if(!await until(()=>!tid('composer-model-picker-dialog')))throw Error('model picker did not commit');
-const trust=await until(()=>{const e=tid('direct-conversation-trust');return e&&!e.disabled&&e});if(!trust)throw Error('direct conversation trust absent');if(!trust.checked)trust.click();const composer=document.getElementById('agent-message');if(!composer)throw Error('first conversation composer absent');setInput(composer,A.prompt);const send=await until(()=>{const b=tid('direct-conversation-send');return b&&!b.disabled&&b});if(!send)throw Error('first conversation send disabled');send.click();return {ok:true};
+    step(app,fx,ck,ev,"choose configured model route and confirm workspace permission",json!({"engine":engine}),r#"
+const index=window.__round3Workflows.events.length,projects=await need('dev-tool-projects');if(document.querySelector('.agent-workbench')?.dataset.compact==='true'&&projects.getAttribute('aria-expanded')==='true')projects.click();await chooseConversationModel(A.engine);await authorizeConversation();if(!await until(()=>!tid('dev-project-conversation')&&document.getElementById('agent-message')&&!document.getElementById('agent-message').disabled))throw Error('automatic prepare absent');return {ok:!window.__round3Workflows.events.slice(index).some(e=>e.command==='send_agent_message')};
 "#).await?;
+    let prepared=workspace(app).await?;
+    let prepared_sessions:Vec<_>=rows(&prepared,"sessions")?.iter().filter(|r|!before_ids.iter().any(|id|r["id"]==id.as_str())).collect();
+    require(fx,ck,ev,"model selection and remembered permission automatically prepare exactly one session without a turn",prepared_sessions.len()==1&&session(app,prepared_sessions[0]["id"].as_str().ok_or("prepared session id absent")?).await?["events"].as_array().is_some_and(|events|!events.iter().any(|event|event["kind"]=="userMessage")),prepared.to_string())?;
+    let sent=ui_send(app,ck,ev,prompt).await;
+    require(fx,ck,ev,"explicit first conversation send uses prepared native session",sent,engine)?;
     let deadline=tokio::time::Instant::now()+Duration::from_secs(30);
     let after=loop {
         let after=workspace(app).await?;
@@ -179,7 +181,7 @@ async fn attach(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>, 
     step(app,fx,ck,ev,"leave live session for a blank conversation without a model request",json!({}),r#"const projects=await need('dev-tool-projects');if(projects.getAttribute('aria-expanded')!=='true')projects.click();const create=document.querySelector('.dev-tree-project-row.is-current [data-testid^="dev-project-new-"]');if(!create||create.disabled)throw Error('new conversation unavailable');create.click();return {ok:!!await until(()=>tid('dev-project-conversation'))};"#).await?;
     navigation(app).await?;
     step(app,fx,ck,ev,"attach saved live run through session history without native reopen",json!({"sid":sid}),r#"
-const p=window.__round3Workflows,index=p.events.length;const row=await need('dev-session-item-'+A.sid);const select=row.querySelector('.dev-session-select');if(!select||select.disabled)throw Error('saved live session select absent');select.click();const projects=await need('dev-tool-projects');if(document.querySelector('.agent-workbench')?.dataset.compact==='true'&&projects.getAttribute('aria-expanded')==='true')projects.click();
+const p=window.__round3Workflows,index=p.events.length;const row=await need('dev-session-item-'+A.sid);if(row.disabled)throw Error('saved live session select unavailable');row.click();if(!await until(()=>tid('dev-session-item-'+A.sid)?.getAttribute('aria-pressed')==='true'))throw Error('saved session selection not committed');const projects=await need('dev-tool-projects');if(document.querySelector('.agent-workbench')?.dataset.compact==='true'&&projects.getAttribute('aria-expanded')==='true')projects.click();
 if(!await until(()=>document.getElementById('agent-message')&&!document.querySelector('[data-testid="dev-project-conversation"]')&&!document.getElementById('agent-message').disabled))throw Error('attached composer absent');
 await new Promise(r=>setTimeout(r,600));const events=p.events.slice(index);return {ok:events.some(e=>e.command==='get_agent_session'&&e.args.sessionId===A.sid)&&!events.some(e=>['open_agent_session','send_agent_message'].includes(e.command)),events};
 "#).await?;
@@ -223,13 +225,13 @@ if(tid('dev-file-editor')?.value!==A.text)throw Error('draft lost during takeove
 pub(super) async fn verify(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>, engine: &str, project: &str, task: &str, path: &Path) -> Journey<Value> {
     let before=host(app,"list_development_processes",json!({"taskId":task})).await?;
     step(app,fx,ck,ev,"explicitly configure and run real host verification after save",json!({}),r#"
-const t=await need('dev-tool-tasks');if(t.getAttribute('aria-expanded')==='false')t.click();await click('dev-runtime-processes');
+await showRuntimeView();
 const configuration=await need('dev-runtime-configuration');configuration.open=true;const pause=()=>new Promise(r=>setTimeout(r,80));
 const kind=await need('dev-process-kind');kind.value='command';kind.dispatchEvent(new Event('change',{bubbles:true}));await pause();await fill('dev-process-program','node');await fill('dev-process-cwd','');
 const s=await need('dev-development-runtime');while($$('button[aria-label^="移除参数"]',s).length){$$('button[aria-label^="移除参数"]',s)[0].click();await pause();}
 const add=$$('button',s).find(b=>txt(b)==='添加参数');if(!add)throw Error('add argument absent');add.click();await pause();const f=$$('input',s).find(e=>labelOf(e)==='参数 1');if(!f)throw Error('argument field absent');setInput(f,'verify.cjs');await pause();
 const check=$$('input[type=checkbox]',s).find(e=>labelOf(e)==='将本命令记录为验证证据');if(!check)throw Error('verification checkbox absent');if(!check.checked)check.click();
-const trust=await need('dev-process-trust');if(!trust.checked)trust.click();await pause();const b=await until(()=>{const b=tid('dev-process-start');return b&&!b.disabled&&b});if(!b)throw Error('host start disabled');b.click();return {ok:true};
+await authorizeRuntime('terminal');await pause();const b=await until(()=>{const b=tid('dev-process-start');return b&&!b.disabled&&b});if(!b)throw Error('host start disabled');b.click();return {ok:true};
 "#).await?;
     let deadline=tokio::time::Instant::now()+Duration::from_secs(45);
     let process=loop {
@@ -251,10 +253,9 @@ async fn resume(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>, 
     let before=workspace(app).await?;
     navigation(app).await?;
     step(app,fx,ck,ev,"return to saved Agent using explicit native resume after manual takeover",json!({"sid":sid}),r#"
-const row=await need('dev-session-item-'+A.sid);const select=row.querySelector('.dev-session-select');if(!select||select.disabled)throw Error('saved session select absent');select.click();const projects=await need('dev-tool-projects');if(document.querySelector('.agent-workbench')?.dataset.compact==='true'&&projects.getAttribute('aria-expanded')==='true')projects.click();
-const entry=await need('dev-resume-entry'),trust=entry.querySelector('input[type=checkbox]');if(!trust)throw Error('resume trust absent');if(!trust.checked)trust.click();const p=window.__round3Workflows,index=p.events.length;const b=await until(()=>{const b=entry.querySelector('button');return b&&!b.disabled&&b});if(!b)throw Error('saved resume disabled');b.click();
-const opened=await until(()=>p.events.slice(index).filter(e=>e.command==='open_agent_session').length===1);if(!opened)throw Error('explicit native resume absent');
-if(!await until(()=>document.getElementById('agent-message')&&!document.getElementById('agent-message').disabled))throw Error('resumed composer absent');const events=p.events.slice(index);return {ok:events.filter(e=>e.command==='open_agent_session').length===1&&!events.some(e=>e.command==='send_agent_message'),events};
+const p=window.__round3Workflows,index=p.events.length;await prepareSavedConversation(A.sid);
+const opened=await until(()=>p.events.slice(index).filter(e=>e.command==='open_agent_session').length===1);if(!opened)throw Error('focus-triggered native resume absent');
+await new Promise(r=>setTimeout(r,300));const events=p.events.slice(index);return {ok:events.filter(e=>e.command==='open_agent_session').length===1&&!events.some(e=>e.command==='send_agent_message'),events};
 "#).await?;
     let deadline=tokio::time::Instant::now()+Duration::from_secs(30);
     let resumed=loop {

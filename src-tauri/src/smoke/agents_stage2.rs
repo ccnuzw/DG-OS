@@ -52,13 +52,13 @@ pub(super) async fn exercise_turn(app:&AppHandle,ck:&mut Checks,ev:&mut Vec<Valu
     ui_send(app,ck,ev,prompt).await;
     match settle(app,sid,true,from_seq).await { Ok(v)=>{record(ck,ev,"real native turn terminal",v["status"]=="idle",v["status"].to_string());v},Err(e)=>{record(ck,ev,"real native turn terminal",false,e);Value::Null} }
 }
-async fn resume_ui(app:&AppHandle,sid:&str)->Value { ui(app,json!({"sid":sid}),r#"const t=await need('dev-trust');if(!t.checked)t.click();const row=await need('dev-session-item-'+A.sid);const b=await until(()=>{const b=row.querySelector('button');return b&&!b.disabled&&b});if(!b)throw Error('resume disabled');b.click();return {ok:!!(await until(()=>document.getElementById('agent-message')))};"#).await }
+async fn resume_ui(app:&AppHandle,sid:&str)->Value { ui(app,json!({"sid":sid}),r#"await prepareSavedConversation(A.sid);return {ok:true};"#).await }
 async fn inspect_ui(app:&AppHandle,ck:&mut Checks,ev:&mut Vec<Value>,path:&str){
-    let r=ui(app,json!({"path":path}),r#"const t=await need('dev-review-tab-files');t.focus();t.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));await fill('dev-file-search',A.path);const f=await until(()=>tid('dev-file-item-'+A.path));if(!f)throw Error('file absent '+A.path);f.click();const s=await until(()=>tid('dev-file-source')?.querySelector('textarea,code'));return {ok:!!s,text:s?.value??txt(s)};"#).await;
+    let r=ui(app,json!({"path":path}),r#"const files=await need('dev-tool-files');if(files.getAttribute('aria-expanded')!=='true')files.click();const tab=await until(()=>$$('.dev-explorer-tabs button').find(b=>txt(b)==='文件'));if(!tab)throw Error('Files view absent');tab.click();await fill('dev-file-search',A.path);const f=await until(()=>tid('dev-file-item-'+A.path));if(!f)throw Error('file absent '+A.path);f.click();const s=await until(()=>tid('dev-file-source')?.querySelector('textarea,code'));return {ok:!!s,text:s?.value??txt(s)};"#).await;
     record(ck,ev,"actual source rendered",ui_ok(&r)&&!r["value"]["text"].as_str().unwrap_or("").is_empty(),r.to_string());
-    let r=ui(app,json!({"path":path}),r#"const t=await need('dev-review-tab-changes');t.focus();t.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));const f=await until(()=>tid('dev-change-item-'+A.path));if(!f)throw Error('change absent');f.click();const d=await until(()=>tid('dev-file-diff')?.querySelector('pre'));return {ok:!!d,text:txt(d)};"#).await;
+    let r=ui(app,json!({"path":path}),r#"const files=await need('dev-tool-files');if(files.getAttribute('aria-expanded')!=='true')files.click();const tab=await until(()=>$$('.dev-explorer-tabs button').find(b=>txt(b)==='Git'));if(!tab)throw Error('Git view absent');tab.click();const f=await until(()=>$$('.git-file').find(row=>row.dataset.path===A.path)?.querySelector('.git-file-open'));if(!f)throw Error('change absent');f.click();const d=await until(()=>tid('dev-file-diff')?.querySelector('pre'));return {ok:!!d,text:txt(d)};"#).await;
     record(ck,ev,"actual disk diff rendered",ui_ok(&r)&&r["value"]["text"].as_str().is_some_and(|t|t.contains("+")),r.to_string());
-    let r=ui(app,json!({}),r#"const t=await need('dev-review-tab-runs');t.focus();t.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));const d=await until(()=>tid('dev-run-history')?.querySelector('.dev-run'));return {ok:!!d,text:txt(tid('dev-run-history'))};"#).await;
+    let r=ui(app,json!({}),r#"await showRuntimeView();await click('dev-runtime-runs');const d=await until(()=>tid('dev-run-history')?.querySelector('.dev-run'));return {ok:!!d,text:txt(tid('dev-run-history'))};"#).await;
     record(ck,ev,"persisted execution records visible",ui_ok(&r),r.to_string());
     let r=ui(app,json!({}),r#"for(const d of $$('[data-testid=dev-run-history] details'))d.open=true;const d=tid('dev-run-history');const text=txt(d);return {ok:/npm test|cargo test/.test(text)&&/passed|test result|Tests:/.test(text),text};"#).await;
     record(ck,ev,"actual command and result rendered",ui_ok(&r),r.to_string());
@@ -92,11 +92,10 @@ pub(super) async fn run(app:&AppHandle,fx:&Fx,mut ck:Checks,mut ev:Vec<Value>,re
         ui_import_project(app,&mut ck,&mut ev,&format!("Stage2 {engine}"),&path).await;
         let goal=format!("Stage2 multi-file {engine}");ui_new_task(app,&mut ck,&mut ev,&goal).await;
         let selected=value(&ipc(app,"main","read_development_workspace",json!({})).await)["selection"].clone();
-        let _=ui(app,json!({}),r#"const f=$$('input').find(e=>labelOf(e).startsWith('模型'));if(f)setInput(f,'');await new Promise(r=>setTimeout(r,100));return {ok:true};"#).await;
         let task=selected["task_id"].as_str().unwrap_or_default().to_owned();let pid=selected["project_id"].as_str().unwrap_or_default().to_owned();
-        let r=super::acceptance::pick_engine(app,if engine=="codex"{"Codex"}else{"Claude"}).await;record(&mut ck,&mut ev,"choose engine",ui_ok(&r),r.to_string());
         let before=ids(&sessions_of(app).await);ui_start_session(app,&mut ck,&mut ev,engine).await;
         let Some(sid)=new_session_id(app,&before).await else {record(&mut ck,&mut ev,"session created",false,engine);continue;};
+        let chosen=state(app,&sid).await;record(&mut ck,&mut ev,"choose engine through production model route",chosen["engine"]==engine,chosen["engine"].to_string());
         // Claude's known first-turn service behavior gets an ordinary greeting, not an implicit retry.
         exercise_turn(app,&mut ck,&mut ev,&sid,"Hello. We will work on this small receipt project in the next request. Do not modify files yet.").await;
         let prompt=if engine=="codex" {"Implement quantity support across prices.js and receipt.js. total must sum price*quantity (default quantity=1); receipt returns exactly one line formatted 'Items: <sum quantities>; Total: <two decimals>' using semicolon+space as separator. Update meaningful tests in prices.test.js. Execute npm test. Preserve README.md, user-notes.txt and all existing staged changes. Do not run git writes. Implement now."} else {"Implement quantity support across src/price.rs and src/receipt.rs: introduce public Item { price: i64, quantity: i64 }, total(&[Item]) sums price*quantity; receipt::format returns exactly one line 'Items: <sum quantity>; Total: <sum>' using semicolon+space as separator, no newline. Update src/lib.rs tests. Run cargo test --offline. Preserve README.md, user-notes.txt and all staged changes; no git writes. Implement now."};
@@ -148,7 +147,7 @@ pub(super) async fn run(app:&AppHandle,fx:&Fx,mut ck:Checks,mut ev:Vec<Value>,re
         ui_close_run(app,&mut ck,&mut ev).await;
         let mut closed=false;for _ in 0..100 {if state(app,&sid).await["status"]=="closed" {closed=true;break;}tokio::time::sleep(Duration::from_millis(100)).await;}
         record(&mut ck,&mut ev,"UI close confirmed by host",closed,&sid);
-        // An unavailable model exercises a real CLI failure without changing native settings.
+        // Keep failure dispatch on the real Provider-bound route; native settings stay isolated.
         let before=ids(&sessions_of(app).await);
         let mut restore_preferences=None;
         let pid_file=fx.root.join("claude-failure.pid");
@@ -165,8 +164,18 @@ pub(super) async fn run(app:&AppHandle,fx:&Fx,mut ck:Checks,mut ev:Vec<Value>,re
             record(&mut ck,&mut ev,"isolated real CLI launcher configured",result.success()&&result.data()["saved"]==true,result.describe());
             restore_preferences=Some(prefs);
         }
-        let r=ui(app,json!({"model":if engine=="codex"{"dgos-intentionally-missing-model"}else{""}}),r#"const f=$$('input').find(e=>labelOf(e).startsWith('模型'));if(!f)throw Error('model field');setInput(f,A.model);return {ok:true};"#).await;record(&mut ck,&mut ev,"explicit failure configuration selected",ui_ok(&r),r.to_string());
-        let r=ui(app,json!({"engine":engine}),r#"const start=await until(()=>{const b=tid('dev-session-new-'+A.engine);return b&&!b.disabled&&b});if(!start)throw Error('new session disabled');start.click();const outcome=await until(()=>document.querySelector('[role=alert]')||document.getElementById('agent-message'));return {ok:!!outcome,text:txt(outcome)};"#).await;
+        let selected=value(&ipc(app,"main","read_development_cli_provider",json!({"projectId":pid})).await);
+        let mut failure_configuration=selected["configuration"].clone();
+        if engine=="codex" {
+            let resolver=app.state::<Arc<SessionResolver>>();let (account,_)=resolver.agent_session().expect("failure fixture account");
+            let provider=failure_configuration["provider"]["provider_id"].as_str().expect("failure Provider binding");
+            let added=app.state::<dgos_providers::ProviderManager>().add_manual_model(provider,account.user_id(),"dgos-intentionally-missing-model",None).await;
+            record(&mut ck,&mut ev,"unavailable model registered only in isolated Provider catalog",added.is_ok(),if added.is_ok(){"explicit nonexistent upstream model"}else{"failure catalog update refused"});
+            failure_configuration["provider"]["model_id"]=json!("dgos-intentionally-missing-model");
+        }
+        ui_new_task(app,&mut ck,&mut ev,&format!("Stage2 real CLI failure {engine}")).await;
+        let r=ui(app,json!({"engine":engine,"model":failure_configuration["provider"]["model_id"]}),r#"await chooseConversationModel(A.engine,null,A.model);return {ok:true};"#).await;record(&mut ck,&mut ev,"explicit failure configuration selected",ui_ok(&r),r.to_string());
+        let r=ui(app,json!({}),r#"await authorizeConversation();const outcome=await until(()=>document.querySelector('[role=alert]')||!tid('dev-project-conversation')&&document.getElementById('agent-message'));return {ok:!!outcome,text:txt(outcome)};"#).await;
         record(&mut ck,&mut ev,"CLI failure attempt returned visible outcome",ui_ok(&r),r.to_string());
         if let Some(failed_sid)=new_session_id(app,&before).await {
             ui_send(app,&mut ck,&mut ev,if engine=="claude" {"Execute sleep 30, then report the result."} else {"Reply with HELLO."}).await;
@@ -190,7 +199,6 @@ pub(super) async fn run(app:&AppHandle,fx:&Fx,mut ck:Checks,mut ev:Vec<Value>,re
             let result=ipc(app,"main","set_cli_preferences",json!({"paths":prefs["paths"],"expectedRevision":current["revision"]})).await;
             record(&mut ck,&mut ev,"isolated CLI preferences restored",result.success()&&result.data()["saved"]==true,result.describe());
         }
-        let _=ui(app,json!({}),r#"const f=$$('input').find(e=>labelOf(e).startsWith('模型'));if(f)setInput(f,'');await new Promise(r=>setTimeout(r,100));return {ok:true};"#).await;
     }
     fs::write(fx.root.join("stage2-evidence.json"),serde_json::to_vec_pretty(&saved).unwrap()).unwrap();
     finish(app,fx,ck,ev,"first").await;

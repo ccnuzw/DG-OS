@@ -129,16 +129,34 @@ document.addEventListener('keydown',e=>p.keys.push({key:e.key,isTrusted:e.isTrus
 const projects=await need('dev-tool-projects');if(projects.getAttribute('aria-expanded')!=='true')projects.click();await click('dev-project-item-'+A.project);return {ok:!!await until(()=>tid('dev-project-conversation'))};
 "#).await?;
     if std::env::var_os("DGOS_CODEX_LIFECYCLE_SMOKE").is_some() { return codex_lifecycle_journey(app, fx, ck, ev, &path).await; }
-    step(app, fx, ck, ev, "select synthetic model and explicitly authorize first send", json!({}), r#"
-await click('composer-model-picker-trigger');const d=await need('composer-model-picker-dialog');const option=await until(()=>$$('.composer-model-picker-option',d).find(e=>txt(e).includes('fixture-model')&&!e.disabled));if(!option)throw Error('synthetic provider route unavailable');option.click();if(!await until(()=>!tid('composer-model-picker-dialog')))throw Error('model selection not committed');const trust=await need('direct-conversation-trust');if(!trust.checked)trust.click();setInput(document.getElementById('agent-message'),'PHASE6 LOCAL explicit protocol request; no model');const send=await until(()=>{const b=tid('direct-conversation-send');return b&&!b.disabled&&b});if(!send)throw Error('first send disabled');send.click();return {ok:!!await until(()=>!tid('dev-project-conversation')&&document.getElementById('agent-message'))};
+    step(app, fx, ck, ev, "select synthetic model without granting workspace authority", json!({}), r#"
+await chooseConversationModel('codex','Phase6 local protocol ONLY','fixture-model');const authorize=await until(()=>{const b=tid('direct-conversation-authorize');return b&&!b.disabled&&b});if(!authorize)throw Error('agent authorization absent');await new Promise(r=>setTimeout(r,300));const p=window.__phase6;return {ok:!p.events.some(e=>['open_agent_session','send_agent_message'].includes(e.command))};
+"#).await?;
+    step(app, fx, ck, ev, "review actual agent workspace permission before granting", json!({"path":path}), r#"
+await click('direct-conversation-authorize');const dialog=await until(()=>$$('[role=dialog],[role=alertdialog]').find(e=>txt(e).includes(A.path)&&$$('button',e).some(b=>txt(b)==='允许并记住')));return {ok:!!dialog&&!window.__phase6.events.some(e=>['open_agent_session','send_agent_message'].includes(e.command)),dialog:txt(dialog)};
+"#).await?;
+    step(app, fx, ck, ev, "confirm agent permission and automatically prepare without a message", json!({}), r#"
+await confirmWorkspaceGrant();if(!await until(()=>!tid('dev-project-conversation')&&document.getElementById('agent-message')&&!document.getElementById('agent-message').disabled))throw Error('automatic native prepare absent');await new Promise(r=>setTimeout(r,300));const p=window.__phase6;return {ok:p.events.filter(e=>e.command==='open_agent_session').length===1&&!p.events.some(e=>e.command==='send_agent_message'),events:p.events};
+"#).await?;
+    let prepared = host(app, "list_agent_sessions", json!({})).await?;
+    let prepared_rows = prepared.as_array().ok_or("prepared session list absent")?;
+    require(fx, ck, ev, "automatic prepare creates exactly one host session", prepared_rows.len() == 1, prepared.to_string())?;
+    let prepared_view = host(app, "get_agent_session", json!({"sessionId":prepared_rows[0]["id"]})).await?;
+    require(fx, ck, ev, "native prepare is idle and never dispatches an implicit protocol turn", prepared_view["status"] == "idle" && prepared_view["events"].as_array().is_some_and(|events| !events.iter().any(|event| event["kind"] == "userMessage")), prepared_view.to_string())?;
+    let capture = super::super::capture_native(app, &fx.root, "cli-desktop-prepared").await;
+    record(ck, ev, "capture actual prepared WKWebView surface", capture.is_ok(), format!("{capture:?}"));
+    step(app, fx, ck, ev, "send one explicit local protocol request after automatic prepare", json!({}), r#"
+const composer=await until(()=>document.getElementById('agent-message'));if(!composer)throw Error('prepared composer absent');setInput(composer,'PHASE6 LOCAL explicit protocol request; no model');const send=await until(()=>btn('发送'));if(!send)throw Error('explicit send disabled');send.click();return {ok:!!await until(()=>window.__phase6.events.filter(e=>e.command==='send_agent_message').length===1&&document.getElementById('agent-message')?.value==='')};
 "#).await?;
     let sessions = host(app, "list_agent_sessions", json!({})).await?;
     let rows = sessions.as_array().ok_or("session list absent")?;
-    require(fx, ck, ev, "first explicit send creates one real host session", rows.len() == 1, sessions.to_string())?;
+    require(fx, ck, ev, "first explicit send retains exactly one automatically prepared host session", rows.len() == 1, sessions.to_string())?;
     let sid = rows[0]["id"].as_str().ok_or("session ID absent")?.to_owned();
     let original = settled(app, &sid).await?;
     let workspace = host(app, "read_development_workspace", json!({})).await?;
     let task = workspace["selection"]["task_id"].as_str().ok_or("task absent")?.to_owned();
+    let agent_trust = host(app, "read_development_workspace_trust", json!({"input":{"project_id":project["id"],"task_id":task}})).await?;
+    require(fx, ck, ev, "agent permission does not authorize terminal or coexisting services", agent_trust["agent"] == true && agent_trust["terminal"] == false && agent_trust["service"] == false, agent_trust.to_string())?;
     save(fx, "session", &original);
     require(fx, ck, ev, "prepare real WKWebView for native synthesized keyboard", ui_keys::prepare(app).await, "NSEvent, not physical input")?;
     step(app, fx, ck, ev, "record independently scrolled transcript and unsent draft", json!({}), r#"
@@ -180,9 +198,12 @@ if(!await until(()=>!document.querySelector('.dev-conversation-tab')))throw Erro
     // Respect the production directory lease: start the real host PTY only
     // after explicit native session close. Never release occupancy implicitly.
     step(app, fx, ck, ev, "open real production runtime view", json!({}), r#"
-const b=$$('button',$$('.dev-main-view-nav')[0]).find(e=>txt(e)==='终端与运行');if(!b)throw Error('runtime view control absent');b.click();await need('dev-development-runtime');return {ok:true};
+await showRuntimeView();return {ok:true};
 "#).await?;
-    let terminal = host(app, "start_development_process", json!({"input":{"id":uuid::Uuid::new_v4().to_string(),"task_id":task,"kind":"terminal","program":"/bin/sh","args":["-c","stty -echo; printf 'PHASE6_PTY_READY\\n'; read line; stty size; printf 'PHASE6_PTY_INPUT:%s\\n' \"$line\"; sleep 30"],"cwd":"","env_refs":{},"trust_workspace":true,"verification":false,"readiness":null,"native_run_id":null}})).await?;
+    step(app, fx, ck, ev, "independently confirm terminal workspace permission", json!({}), r#"await authorizeRuntime('terminal');return {ok:true};"#).await?;
+    let terminal_trust = host(app, "read_development_workspace_trust", json!({"input":{"project_id":project["id"],"task_id":task}})).await?;
+    require(fx, ck, ev, "terminal grant preserves agent permission without granting services", terminal_trust["agent"] == true && terminal_trust["terminal"] == true && terminal_trust["service"] == false, terminal_trust.to_string())?;
+    let terminal = host(app, "start_development_process", json!({"input":{"id":uuid::Uuid::new_v4().to_string(),"task_id":task,"kind":"terminal","program":"/bin/sh","args":["-c","stty -echo; printf 'PHASE6_PTY_READY\\n'; read line; stty size; printf 'PHASE6_PTY_INPUT:%s\\n' \"$line\"; sleep 30"],"cwd":"","env_refs":{},"trust_workspace":false,"verification":false,"readiness":null,"native_run_id":null}})).await?;
     let id = terminal["id"].as_str().ok_or("PTY id absent")?.to_owned();
     step(app, fx, ck, ev, "select exact native PTY receipt", json!({"id":id}), r#"
 const refresh=await until(()=>document.querySelector('section[aria-label="宿主执行历史"] > .dev-review-toolbar button'));if(!refresh)throw Error('history refresh absent');refresh.click();const row=await until(()=>tid('dev-process-history-'+A.id));if(!row)throw Error('PTY receipt absent');row.click();const f=await until(()=>tid('dev-terminal')?.querySelector('.xterm-helper-textarea'));if(!f)throw Error('xterm input absent');f.focus();return {ok:document.activeElement===f};
@@ -201,6 +222,9 @@ const refresh=await until(()=>document.querySelector('section[aria-label="宿主
     save(fx, "pty", &receipt);
     let stopped = host(app, "stop_development_process", json!({"id":id})).await?;
     require(fx, ck, ev, "explicit stop confirms original PTY cleanup", stopped["finished_at"].is_number() && stopped["status"] == "cancelled", stopped.to_string())?;
+    step(app, fx, ck, ev, "separately confirm coexisting service workspace permission", json!({}), r#"await authorizeRuntime('service');return {ok:true};"#).await?;
+    let service_trust = host(app, "read_development_workspace_trust", json!({"input":{"project_id":project["id"],"task_id":task}})).await?;
+    require(fx, ck, ev, "service confirmation retains independent terminal and agent grants", service_trust["agent"] == true && service_trust["terminal"] == true && service_trust["service"] == true, service_trust.to_string())?;
     let observed = step(app, fx, ck, ev, "record exact production IPC and trusted native key counts", json!({}), r#"
 const p=window.__phase6;return {ok:p.events.filter(e=>e.command==='open_agent_session').length===1&&p.events.filter(e=>e.command==='send_agent_message').length===1&&p.keys.some(e=>e.isTrusted&&e.key==='Enter'),events:p.events,keys:p.keys};
 "#).await?;

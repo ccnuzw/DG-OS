@@ -36,6 +36,9 @@
 //! through its DOM (sign-in, project import, task, session start/send/close, task
 //! switch, resume, relocate, account switch). Account setup, project lifecycle and
 //! cross-account refusals use production IPC as supplementary evidence.
+//! Session startup uses the production composer model route and one-time directory confirmation;
+//! remembered grants automatically prepare without a message. Saved history resumes on composer
+//! focus, and terminal/service permissions are independently confirmed rather than inferred.
 
 use super::{goto, ipc, wait_load, Checks, LoadEvents, Pending, Reply, NEXT_ID};
 use crate::commands;
@@ -166,6 +169,68 @@ const items = (prefix) => $$(`[data-testid^="${prefix}"]`).map((e) => ({ id: e.g
 const itemFor = (prefix, text) => items(prefix).find((i) => i.text.includes(text));
 const isChecked = (c) => c.checked === true || c.getAttribute('aria-checked') === 'true';
 const msgs = () => { const m = document.querySelector('.agent-messages'); return m ? m.textContent : ''; };
+// Exercise shipped controls only: grants are scoped host receipts, never renderer checkboxes.
+const confirmWorkspaceGrant = async () => {
+ const dialog=await until(()=>$$('[role=dialog],[role=alertdialog]').find(e=>$$('button',e).some(b=>/^(允许并记住|Allow and remember)$/.test(txt(b)))));
+ if(!dialog)throw Error('workspace permission confirmation absent');
+ const allow=$$('button',dialog).find(b=>/^(允许并记住|Allow and remember)$/.test(txt(b))&&!b.disabled);if(!allow)throw Error('workspace permission confirmation disabled');allow.click();
+ if(!await until(()=>!dialog.isConnected))throw Error('workspace permission confirmation not committed');
+};
+const chooseConversationModel = async (engine, providerName=null, modelId=null) => {
+ await showConversationView();
+ const trigger=await until(()=>{const b=tid('composer-model-picker-trigger');return b&&!b.disabled&&b});if(!trigger)throw Error('model picker unavailable');trigger.click();
+ const dialog=await need('composer-model-picker-dialog'),name=engine==='codex'?'Codex':'Claude';
+ const row=await until(()=>$$('.composer-model-picker-model',dialog).find(row=>(!providerName||row.closest('.composer-model-picker-provider')?.getAttribute('aria-label')===providerName)&&(!modelId||txt(row.querySelector('.composer-model-picker-model-copy small'))===modelId)&&[...row.querySelectorAll('.composer-model-picker-routes button')].some(b=>txt(b)===name&&!b.disabled)));
+ if(!row)throw Error('Prerequisite missing: enabled Provider/model with available '+name+' route'+(modelId?' / '+modelId:''));
+ const details=row.querySelector('details');if(details)details.open=true;
+ const route=await until(()=>$$('.composer-model-picker-routes button',row).find(b=>txt(b)===name&&!b.disabled));if(!route)throw Error('selected model route unavailable');route.click();
+ if(!await until(()=>!tid('composer-model-picker-dialog')))throw Error('model selection not committed');
+};
+const authorizeConversation = async () => {
+ const state=await until(()=>{const b=tid('direct-conversation-authorize');return b&&!b.disabled?b:!tid('dev-project-conversation')&&document.getElementById('agent-message')?true:null});
+ if(state===true)return;
+ if(state){state.click();await confirmWorkspaceGrant();return;}
+ // An existing grant can prepare before the authorization button is ever rendered.
+ if(!await until(()=>!tid('dev-project-conversation')&&document.getElementById('agent-message')))throw Error('authorized conversation did not automatically prepare');
+};
+const prepareSavedConversation = async sid => {
+ await showConversationView();
+ const projects=await need('dev-tool-projects');if(projects.getAttribute('aria-expanded')!=='true')projects.click();
+ const select=await until(()=>{const b=tid('dev-session-item-'+sid);return b&&!b.disabled&&b});if(!select)throw Error('saved session select unavailable');if(select.getAttribute('aria-pressed')!=='true'){select.focus();select.click();}
+ const entry=await until(()=>tid('dev-session-item-'+sid)?.getAttribute('aria-pressed')==='true'&&(tid('saved-conversation-composer')||document.getElementById('agent-message')));if(!entry)throw Error('selected saved conversation composer absent');
+ if(tid('saved-conversation-composer')){
+  const start=await until(()=>{const s=tid('saved-conversation-composer');if(!s)return null;const grant=$$('button',s).find(b=>/^(信任项目并开始|Trust project and start)$/.test(txt(b)));if(grant)return grant.disabled?null:grant;const recovery=s.querySelector('details button');return recovery&&!recovery.disabled?s.querySelector('textarea:not(:disabled)'):null});
+  if(!start)throw Error('saved conversation continuation unavailable');
+  if(start.tagName==='BUTTON'){
+   start.click();const confirmation=await until(()=>$$('[role=dialog],[role=alertdialog]').some(e=>$$('button',e).some(b=>/^(允许并记住|Allow and remember)$/.test(txt(b))))?'confirm':!tid('saved-conversation-composer')&&document.getElementById('agent-message')?'prepared':null);
+   if(confirmation==='confirm')await confirmWorkspaceGrant();else if(confirmation!=='prepared')throw Error('saved conversation authorization outcome absent');
+  }else start.focus();
+ }
+ if(!await until(()=>!tid('saved-conversation-composer')&&document.getElementById('agent-message')&&!document.getElementById('agent-message').disabled))throw Error('saved conversation native prepare did not finish');
+};
+const authorizeRuntime = async scope => {
+ const root=await need('dev-development-runtime'),label=scope==='service'?/^(与 Agent 编辑共存的开发服务|Development services alongside Agent editing)$/:/^(直接 Shell 命令与交互终端|Direct shell commands and interactive terminals)$/;
+ const details=[...root.querySelectorAll('details')].find(d=>[...d.querySelectorAll('span')].some(s=>label.test(txt(s))));if(!details)throw Error(scope+' permission controls absent');details.open=true;
+ const row=await until(()=>$$('.dev-review-toolbar',details).find(r=>$$('span',r).some(s=>label.test(txt(s)))));if(!row)throw Error(scope+' permission row absent');
+ const button=await until(()=>$$('button',row).find(b=>!b.disabled));if(!button)throw Error(scope+' permission action unavailable');
+ if(/^(撤销授权|Revoke permission)$/.test(txt(button)))return;
+ if(!/^(授权工作区|Authorize workspace)$/.test(txt(button)))throw Error('unexpected '+scope+' permission action');button.click();await confirmWorkspaceGrant();
+ if(!await until(()=>$$('button',row).some(b=>/^(撤销授权|Revoke permission)$/.test(txt(b)))))throw Error(scope+' grant not reflected');
+};
+const showRuntimeView = async () => {
+ const projects=tid('dev-tool-projects');if(document.querySelector('.agent-workbench')?.dataset.compact==='true'&&projects?.getAttribute('aria-expanded')==='true')projects.click();
+ const button=await until(()=>$$('.dev-main-view-nav button').find(b=>/^(终端与运行|Terminal and runs)$/.test(txt(b))&&!b.disabled));if(!button)throw Error('runtime view control absent');button.click();
+ const processes=await need('dev-runtime-processes');processes.click();await need('dev-development-runtime');
+};
+const showConversationView = async () => {
+ const button=await until(()=>$$('.dev-main-view-nav button').find(b=>/^(对话|Conversation)$/.test(txt(b))&&!b.disabled));if(!button)throw Error('conversation view control absent');button.click();
+};
+const showProjectGoals = async () => {
+ const projects=await need('dev-tool-projects');if(projects.getAttribute('aria-expanded')!=='true')projects.click();
+ const more=await until(()=>document.querySelector('.dev-tree-project-row.is-current button[aria-haspopup="menu"]'));if(!more||more.disabled)throw Error('current project action menu unavailable');
+ more.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerType:'mouse',ctrlKey:false}));more.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,button:0,pointerType:'mouse'}));
+ const goals=await until(()=>$$('[role=menuitem]').find(item=>/^(目标与完成要求|Goals and completion requirements)$/.test(txt(item))));if(!goals)throw Error('project goals action absent');goals.click();await need('dev-task-new');
+};
 "##;
 
 /// Evaluates one UI step: the shared helpers, then `A` (the arguments), then `body`.
@@ -370,7 +435,7 @@ async fn ui_select_task(app: &AppHandle, ck: &mut Checks, ev: &mut Vec<Value>, g
     ui_ok(&reply)
 }
 
-/// Starts a new session for `engine` under the selected task: trust, then the New session control.
+/// Selects a production model route, confirms directory authority once and waits for automatic preparation.
 async fn ui_start_session(app: &AppHandle, ck: &mut Checks, ev: &mut Vec<Value>, engine: &str) -> bool {
     let reply = ui(app, json!({"engine": engine}), START_SESSION).await;
     record(ck, ev, &format!("{engine} session started from the UI"), ui_ok(&reply), reply.to_string());
@@ -393,7 +458,8 @@ async fn ui_close_run(app: &AppHandle, ck: &mut Checks, ev: &mut Vec<Value>) -> 
 }
 
 const IMPORT_PROJECT: &str = r#"
-const panel=await need('dev-project-list');const add=panel.querySelector('button[aria-haspopup="menu"]');if(!add)throw Error('current Add project menu absent');
+const projects=await need('dev-tool-projects');if(projects.getAttribute('aria-expanded')!=='true')projects.click();
+const panel=await until(()=>document.getElementById('dev-navigation'));const add=panel?.querySelector('.dev-drawer-header button[aria-haspopup="menu"]');if(!add)throw Error('current Add project menu absent');
 add.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerType:'mouse',ctrlKey:false}));
 add.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,button:0,pointerType:'mouse'}));
 const item=await until(()=>$$('[role=menuitem]').find(e=>/打开文件夹|Open folder/.test(txt(e))));if(!item)throw Error('Open folder menu item absent');item.click();
@@ -401,6 +467,7 @@ return {ok:true};
 "#;
 
 const NEW_TASK: &str = r#"
+await showProjectGoals();
 await click('dev-task-new');
 await until(() => { const f=tid('dev-task-goal');return f&&f.value===''; });
 await need('dev-task-form');
@@ -414,6 +481,7 @@ return {ok: !!row};
 "#;
 
 const SELECT_TASK: &str = r#"
+await showProjectGoals();
 const row = await until(() => $$('[data-testid^="dev-task-item-"]').find((e) => txt(e).includes(A.goal)));
 if (!row) throw new Error('no task row ' + A.goal);
 row.click();
@@ -421,31 +489,29 @@ return {ok: true};
 "#;
 
 const START_SESSION: &str = r#"
-await need('dev-trust');
-const trust = tid('dev-trust');
-const box = trust.matches('input,[role=checkbox]') ? trust : trust.querySelector('input,[role=checkbox]') || trust;
-if (!(box.checked === true || box.getAttribute('aria-checked') === 'true')) box.click();
-const start = await until(() => { const b=tid('dev-session-new-'+A.engine);return b&&!b.disabled&&b; });
-if (!start) throw Error('new session disabled');
-start.click();
-const composer = await until(() => document.getElementById('agent-message'));
+await showConversationView();
+await chooseConversationModel(A.engine);
+await authorizeConversation();
+const composer = await until(() => !tid('dev-project-conversation') && document.getElementById('agent-message'));
 return {ok: !!composer, alerts: $$('[role=alert]').map(txt), body: composer ? null : document.body.innerText};
 "#;
 
 const SEND: &str = r#"
+await showConversationView();
 const composer = await until(() => document.getElementById('agent-message'));
 if (!composer) throw new Error('no composer');
 setInput(composer, A.text);
 await new Promise(resolve => setTimeout(resolve, 50));
-const send = await until(() => btn('发送'));
+const send = await until(() => tid('direct-conversation-send') && !tid('direct-conversation-send').disabled ? tid('direct-conversation-send') : btn('发送') || btn('Send'));
 if (!send) throw new Error('no send button');
 send.click();
 return {ok: !!(await until(() => document.getElementById('agent-message')?.value === ''))};
 "#;
 
 const CLOSE_RUN: &str = r#"
-const close = await until(() => btn('关闭运行'));
-if (!close) throw new Error('no close-run button');
+await showConversationView();
+const close = await until(() => btn('结束会话') || btn('End session'));
+if (!close) throw new Error('no end-session button');
 close.click();
 return {ok: true};
 "#;
@@ -454,7 +520,7 @@ return {ok: true};
 async fn new_session_id(app: &AppHandle, before: &[String]) -> Option<String> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
-        let found = ids(&sessions_of(app).await).into_iter().find(|id| !before.contains(id));
+        let found = sessions_of(app).await.into_iter().find(|row| row["status"] != "closed" && row["id"].as_str().is_some_and(|id| !before.iter().any(|old| old == id))).and_then(|row| row["id"].as_str().map(str::to_owned));
         if found.is_some() || tokio::time::Instant::now() >= deadline {
             return found;
         }

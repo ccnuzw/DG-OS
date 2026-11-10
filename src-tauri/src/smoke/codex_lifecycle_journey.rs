@@ -37,13 +37,12 @@ const option=await until(()=>$$('.composer-model-picker-option',dialog).find(e=>
 if(!option)throw Error('synthetic model missing');option.click();
 if(!await until(()=>!tid('composer-model-picker-dialog')))throw Error('model selection not committed');
 setInput(document.getElementById('agent-message'),A.draft);
-const trust=await need('direct-conversation-trust');if(!trust.checked)trust.click();
-return {ok:!!tid('direct-conversation-prepare')&&!window.__phase6.events.some(e=>['open_agent_session','send_agent_message'].includes(e.command))};
+await click('direct-conversation-authorize');
+return {ok:!!await until(()=>$$('[role=dialog] button').find(b=>['允许并记住','Allow and remember'].includes(txt(b))))&&!window.__phase6.events.some(e=>['open_agent_session','send_agent_message'].includes(e.command))};
 "#).await?;
-    step(app, fx, ck, ev, "explicit prepare connects without dispatch and transfers latest draft", json!({"draft":FIRST}), r#"
-const prepare=await until(()=>{const b=tid('direct-conversation-prepare');return b&&!b.disabled&&b});
-if(!prepare)throw Error('prepare unavailable');prepare.click();
-return {ok:!!await until(()=>!tid('dev-project-conversation')&&document.getElementById('agent-message')?.value===A.draft)};
+    step(app, fx, ck, ev, "confirmed directory authorization auto-prepares without dispatch and transfers latest draft", json!({"draft":FIRST}), r#"
+await confirmWorkspaceGrant();
+return {ok:!!await until(()=>!tid('dev-project-conversation')&&document.getElementById('agent-message')?.value===A.draft)&&!window.__phase6.events.some(e=>e.command==='send_agent_message')};
 "#).await?;
     let sessions = host(app, "list_agent_sessions", json!({})).await?;
     let rows = sessions.as_array().ok_or("session list absent")?;
@@ -69,10 +68,9 @@ if(!await until(()=>!$$('.agent-control-popover').length))throw Error('permissio
 return {ok:!!await until(()=>txt(trigger(['推理强度','Reasoning'])).includes('high')&&['只读沙箱','Read-only sandbox'].some(label=>txt(trigger(['权限','Permissions'])).includes(label)))&&!window.__phase6.events.some(e=>e.command==='send_agent_message')};
 "#).await?;
     step(app, fx, ck, ev, "explicitly select Plan before first model dispatch", json!({}), r#"
-const section=await until(()=>$$('section.agent-dialogue-native',tid('dev-panel-agent')).find(e=>$$('button',e).some(b=>txt(b)==='Plan')));
-if(!section)throw Error('Plan controls absent');const details=section.querySelector('details');if(details&&!details.open)details.querySelector('summary').click();
-const plan=$$('button',section).find(b=>txt(b)==='Plan'&&!b.disabled);if(!plan)throw Error('Plan opt-in unavailable');plan.click();
-return {ok:!!await until(()=>plan.getAttribute('aria-pressed')==='true')};
+const permission=$$('button[aria-label]',tid('agent-composer-controls')).find(b=>['权限','Permissions'].includes(b.getAttribute('aria-label'))&&!b.disabled);if(!permission)throw Error('permission popover trigger absent');permission.click();
+const plan=await until(()=>$$('.agent-control-popover button').find(b=>txt(b)==='Plan'&&!b.disabled));if(!plan)throw Error('Plan opt-in unavailable');plan.click();
+return {ok:!!await until(()=>!$$('.agent-control-popover').length)&&!window.__phase6.events.some(e=>e.command==='send_agent_message')};
 "#).await?;
     step(app, fx, ck, ev, "first explicit send reaches native approval", json!({}), r#"
 const send=await until(()=>$$('.agent-dialogue-composer button',tid('dev-panel-agent')).find(b=>['发送','Send'].includes(txt(b))&&!b.disabled));
@@ -143,15 +141,13 @@ return {ok:!!await until(()=>document.getElementById('agent-message')?.value==='
         && owned_runs.iter().any(|run| run["id"] != first_run && run["status"] == "completed"), runs.to_string())?;
     step(app, fx, ck, ev, "explicit session end is separate from interrupt", json!({}), r#"
 const close=await until(()=>$$('.agent-dialogue-actions button',tid('dev-panel-agent')).find(b=>['结束会话','End session'].includes(txt(b))&&!b.disabled));
-if(!close)throw Error('end session unavailable');close.click();return {ok:!!await until(()=>tid('dev-resume-entry'))};
+if(!close)throw Error('end session unavailable');close.click();return {ok:!!await until(()=>tid('saved-conversation-composer'))};
 "#).await?;
     let closed = lifecycle_session(app, &sid, "closed").await?;
     require(fx, ck, ev, "explicit close retains original native thread identity", closed["native_id"] == second["native_id"], closed.to_string())?;
-    step(app, fx, ck, ev, "explicitly trust and resume saved native session without replay", json!({}), r#"
-const entry=await need('dev-resume-entry'),trust=entry.querySelector('input[type=checkbox]');if(!trust)throw Error('resume trust missing');if(!trust.checked)trust.click();
-const resume=await until(()=>$$('button',entry).find(b=>['信任并恢复会话','Trust and resume session'].includes(txt(b))&&!b.disabled));
-if(!resume)throw Error('explicit resume unavailable');resume.click();
-return {ok:!!await until(()=>!tid('dev-resume-entry')&&document.getElementById('agent-message'))};
+    step(app, fx, ck, ev, "focusing authorized saved composer resumes native session without replay", json!({"sid":sid}), r#"
+await prepareSavedConversation(A.sid);
+return {ok:!!document.getElementById('agent-message')&&!tid('saved-conversation-composer')};
 "#).await?;
     let resumed = lifecycle_session(app, &sid, "idle").await?;
     require(fx, ck, ev, "resume creates fresh generation on same thread with no active run",

@@ -1,17 +1,21 @@
 //! Provider-only desktop acceptance. Does not claim native Skill or MCP fixture coverage.
 //! The CLI acceptance driver owns native Skill/MCP resource and tool evidence.
+//! Optional DGOS_STAGE4_CLAUDE_AUTH_STYLE preserves an explicit bearer/both/x-api-key
+//! Provider override; absence retains the Provider profile's existing authentication semantics.
 use super::*;
-use dgos_agents::{capabilities::CliProviders,Engine};
+use dgos_agents::Engine;
 use dgos_providers::{ProviderManager,ProviderCredentialVault,ProviderCredentialScope,SecretValue,new_credential_ref};
 use dgos_types::ProviderConfig;
 use tokio::sync::Mutex;
-struct Seed { engine:Engine,endpoint:String,model:String,key:SecretValue }
+struct Seed { engine:Engine,endpoint:String,model:String,key:SecretValue,auth_style:Option<String> }
 struct Services(Mutex<Vec<Seed>>);
 pub(super) async fn install(app:&AppHandle,fx:&Fx)->Arc<McpManager>{
  let mut seeds=Vec::new();
  for(engine,label)in[(Engine::Codex,"CODEX"),(Engine::Claude,"CLAUDE")]{
   let take=|suffix:&str|{let name=format!("DGOS_STAGE4_{label}_{suffix}");let value=std::env::var(&name).unwrap_or_default();if suffix=="KEY"{std::env::remove_var(name);}value};
-  seeds.push(Seed{engine,endpoint:take("URL"),model:take("MODEL"),key:SecretValue::new(take("KEY")).expect("explicit stage4 key")});
+  let auth_style=if engine==Engine::Claude { std::env::var("DGOS_STAGE4_CLAUDE_AUTH_STYLE").ok() } else { None };
+  if let Some(style)=auth_style.as_deref(){assert!(matches!(style,"bearer"|"both"|"x-api-key"),"unsupported explicit stage4 Claude authentication style");}
+  seeds.push(Seed{engine,endpoint:take("URL"),model:take("MODEL"),key:SecretValue::new(take("KEY")).expect("explicit stage4 key"),auth_style});
  }
  app.manage(Services(Mutex::new(seeds)));
  Arc::new(McpManager::new(fx.db.clone()))
@@ -21,7 +25,7 @@ async fn seed(app:&AppHandle,fx:&Fx,owner:&str)->Result<Vec<Value>,String>{
  for seed in app.state::<Services>().0.lock().await.drain(..){
   let id=uuid::Uuid::new_v4().to_string();let credential=new_credential_ref();
   vault.store(&ProviderCredentialScope{user_id:owner.into(),provider_id:id.clone(),endpoint:seed.endpoint.clone(),credential_ref:credential.clone()},seed.key).await.map_err(|_|"fixture_vault_failed")?;
-  dgos_db::ProviderRepository::new(fx.db.clone()).create_with_credential_ref(id.clone(),ProviderConfig{name:format!("Stage4 {:?}",seed.engine),provider_type:if seed.engine==Engine::Codex{"openai_compatible"}else{"anthropic"}.into(),base_url:seed.endpoint,api_key:String::new(),enabled:true,config:None},owner.into(),Some(credential)).await.map_err(|_|"fixture_provider_failed")?;
+  dgos_db::ProviderRepository::new(fx.db.clone()).create_with_credential_ref(id.clone(),ProviderConfig{name:format!("Stage4 {:?}",seed.engine),provider_type:if seed.engine==Engine::Codex{"openai_compatible"}else{"anthropic"}.into(),base_url:seed.endpoint,api_key:String::new(),enabled:true,config:seed.auth_style.map(|style|json!({"auth_style":style}))},owner.into(),Some(credential)).await.map_err(|_|"fixture_provider_failed")?;
   providers.add_manual_model(&id,owner,&seed.model,None).await.map_err(|_|"fixture_model_failed")?;
   let provider=providers.get_provider(&id,owner).await.map_err(|_|"fixture_read_failed")?.ok_or("provider_missing")?;
   rows.push(json!({"engine":seed.engine,"provider_id":id,"provider_revision":provider.config_revision,"model":seed.model}));
@@ -32,11 +36,13 @@ fn write_json(path:impl AsRef<Path>,v:&Value){fs::write(path,serde_json::to_vec_
 async fn per_engine(app:&AppHandle,fx:&Fx,ck:&mut Checks,ev:&mut Vec<Value>,row:&Value)->Result<Value,String>{
  let engine=row["engine"].as_str().ok_or("engine_missing")?;let path=fx.root.join(format!("stage4-ui-{engine}"));make_repo(&path);ui_import_project(app,ck,ev,&format!("Stage4 {engine}"),&path).await;ui_new_task(app,ck,ev,&format!("Stage4 {engine}")).await;
  let selection=value(&ipc(app,"main","read_development_workspace",json!({})).await)["selection"].clone();let project=selection["project_id"].as_str().ok_or("project_missing")?;let task=selection["task_id"].as_str().ok_or("task_missing")?;
- let tab=ui(app,json!({}),r#"const t=await need('dev-review-tab-capabilities');t.focus();t.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return {ok:!!(await until(()=>t.getAttribute('data-state')==='active'))};"#).await;record(ck,ev,"Provider tab opens through DOM",ui_ok(&tab),tab.to_string());
- let configured=ui(app,row.clone(),r#"const s=await until(()=>document.querySelector('section[aria-label="项目能力"]'));if(!s)throw Error('Provider editor missing');const c=$$('[role=combobox]',s).find(e=>labelOf(e)==='智能体');if(c){c.click();(await until(()=>$$('[role=option]').find(e=>txt(e)===(A.engine==='codex'?'Codex':'Claude')))).click();}const p=await until(()=>$$('select',s).find(e=>[...e.options].some(o=>o.value===A.provider_id)));if(!p)throw Error('Provider absent');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(p,A.provider_id);p.dispatchEvent(new Event('change',{bubbles:true}));await until(()=>$$('select',s).some(e=>e.value===A.model));const b=await until(()=>$$('button',s).find(e=>txt(e)==='保存新修订'&&!e.disabled));b.click();return {ok:!!(await until(()=>txt(s).includes('已保存')))};"#).await;record(ck,ev,"explicit Provider and model saved through DOM",ui_ok(&configured),configured.to_string());
+ let configured=ui(app,row.clone(),r#"await chooseConversationModel(A.engine,'Stage4 '+(A.engine==='codex'?'Codex':'Claude'),A.model);return {ok:true};"#).await;record(ck,ev,"explicit Provider and model selected through production composer",ui_ok(&configured),configured.to_string());
+ // Grant only after route selection so automatic preparation persists that exact revision.
+ let before=ids(&sessions_of(app).await);
+ let authorized=ui(app,json!({}),r#"await authorizeConversation();return {ok:!!await until(()=>!tid('dev-project-conversation')&&document.getElementById('agent-message'))};"#).await;record(ck,ev,"agent workspace permission confirmed and native session automatically prepared",ui_ok(&authorized),authorized.to_string());
  let saved=value(&ipc(app,"main","read_development_cli_provider",json!({"projectId":project})).await);record(ck,ev,"persisted exact Provider selection",saved["configuration"]["provider"]["provider_id"]==row["provider_id"]&&saved["configuration"]["provider"]["model_id"]==row["model"],saved.to_string());
  let stale=ipc(app,"main","save_development_cli_provider",json!({"input":{"project_id":project,"expected_revision":0,"configuration":saved["configuration"]}})).await;record(ck,ev,"stale CAS refuses",!succeeded(&stale),stale.describe());
- let before=ids(&sessions_of(app).await);ui_start_session(app,ck,ev,engine).await;let sid=new_session_id(app,&before).await.ok_or("session_missing")?;
+ let sid=new_session_id(app,&before).await.ok_or("session_missing")?;
  let actual=value(&ipc(app,"main","get_development_session_configuration",json!({"sessionId":sid})).await);record(ck,ev,"session contains Provider-only snapshot",actual["format"]=="provider_bound"&&actual["snapshot"]["provider_id"]==row["provider_id"],actual.to_string());
  let first=stage2::exercise_turn(app,ck,ev,&sid,"Acknowledge this session without tools or file changes.").await;record(ck,ev,"ready then first native turn reaches terminal",first["status"]=="idle",first.to_string());
  let request=uuid::Uuid::new_v4().to_string();let sent=ipc(app,"main","send_agent_message",json!({"input":{"session_id":sid,"generation":first["generation"],"request_id":request,"text":"Use your native command tool to print STAGE4_NATIVE_APPROVAL. Request approval if required. Preserve all files."}})).await;record(ck,ev,"second turn admitted after ready",succeeded(&sent),sent.describe());
