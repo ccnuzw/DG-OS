@@ -89,7 +89,7 @@ it('restores commit and per-handoff summary drafts after tab/task changes withou
  const handoffs = ['h1', 'h2'].map(id => ({ id, owner: 'u', project_id: 'p', task_id: 't', source_session_id: 's', target_engine: 'claude', permission_epoch: 0, summary: `Prepared ${id}`, fingerprint: id, created_at: 1 }));
  invoke.mockImplementation(async command => {
   if (command === 'read_development_workspaces') return { workspaces: [{ id: 'w', kind: 'original', path: '/project' }], selected_workspace_id: 'w' };
-  if (command === 'read_development_git') return { kind: 'git', path: '/project', files: [], conflicts: [], initial_staged_paths: [], staged_diff: '', worktree_diff: '' };
+  if (command === 'read_development_project_git') return { kind: 'git', path: '/project', files: [], conflicts: [], snapshot_token: 'snapshot', merge_heads: [] };
   if (command === 'list_development_handoffs') return handoffs;
   return null;
  });
@@ -121,7 +121,7 @@ it('retains separate workspace commit drafts and confirms the removed workspace 
  invoke.mockImplementation(async (command, args) => {
   if (command === 'read_development_workspaces') return { workspaces, selected_workspace_id: selected, operations };
   if (command === 'save_development_workspaces') { selected = args.input.workspace_id; operations.push({ id: args.input.request_id, kind: 'workspace_select', status: 'succeeded' }); return { workspaces, selected_workspace_id: selected, operations }; }
-  if (command === 'read_development_git') return { kind: 'git', path: '/project', files: [], conflicts: [], initial_staged_paths: [], staged_diff: '', worktree_diff: '' };
+  if (command === 'read_development_project_git') return { kind: 'git', path: '/project', files: [], conflicts: [], snapshot_token: 'snapshot', merge_heads: [] };
   if (command === 'list_development_handoffs') return [];
   if (command === 'read_development_workspace') return { projects: [project], tasks: [], sessions: [], operations: [], selection: { project_id: 'p', task_id: 't', session_id: null } };
   return null;

@@ -82,9 +82,11 @@ V1 分两个交付批次，均属于同一功能；先完成 A，再完成 B，�
 
 ### 2.6 D136 双运行时管理增量
 
-统一管理页增加 DG-OS AI、Codex、Claude 三种使用方及受支持范围。DG-OS AI 的内容安全、账户启用和固定版本消费沿用本规格；两家 CLI 的 loose Skill 通过原生文件事务安装、更新、移除，资源与脚本原样保存但管理操作不执行。插件、managed、synced、符号链接和未知归属保持只读，不接管原生所有者。
+按 [D145](../../../06-决策记录/V7-冻结决策.md#d145-cli-agent-插件抽屉与独立扩展管理)，AI 助手页面只管理 DG-OS 资源；CLI Agent 从插件抽屉进入独立 Skills 管理层，只切换 Codex/Claude 及其范围。DG-OS AI 的内容安全、账户启用和固定版本消费沿用本规格；CLI loose Skill 通过原生文件事务安装、更新、移除，资源与脚本原样保存但管理操作不执行。插件、managed、synced、符号链接和未知归属保持只读，不接管原生所有者。
 
 原生预览必须显示准确目标、共享 OS 用户影响、资源及依赖、旧新版本与待生效条件。配置保存与会话加载独立表达；自动发现不执行 CLI、脚本或安装器。账户结束撤销旧预览，发布结果未知时核实原操作，不自动重放。范围与状态机依据 [D136 原生扩展设计](../../../04-技术架构/当前版本/D136-原生扩展统一管理技术设计.md)，新增命令依据 [接口契约 §17.6](../../../04-技术架构/当前版本/V1-接口契约.md#176-d136-原生-skillsmcp-管理-ipc)；本增量按 D136 技术任务及 B136C 分支验收，不将既有 AC 的历史证据提升为原生能力通过。
+
+CLI 管理器提供已安装、查找技能、技能来源。来源添加/显式刷新/移除与安装解耦，多 Skill 索引固定不可变提交；失败保留旧目录和时间。GitHub、宿主选择器授权的 ZIP/目录均经过安全预览，不运行脚本。正文/文件读取绑定实例修订与受限相对路径；更新按原来源获取，外部修改拒绝覆盖。依赖先静态定位，显式批准固定版本探测后仍不把版本存在当作全部依赖满足。任务范围由宿主解析实际 workspace，不偷换为项目根。
 
 ## 3. 信息架构与用户体验
 
@@ -367,6 +369,30 @@ When 查看使用记录
 
 Then 可追溯用户、场景与版本，仅记录安全摘要，无凭据和默认完整输入输出
 
+#### AC36 CLI 独立管理与工作区隔离
+
+Given CLI 会话存在未发送草稿及活动任务工作区
+
+When 从插件抽屉或输入区打开 Skills 并关闭管理层、切换平台或账户
+
+Then 不进入 AI 助手资源页、不停止会话、不丢对话草稿；操作仅对应宿主确认的实际工作区，迟到结果不串作用域
+
+#### AC37 CLI 来源、导入与固定来源更新
+
+Given 合法多 Skill GitHub 仓库、宿主选择的 ZIP/目录和已安装实例
+
+When 添加来源、显式索引、选择技能并预览确认安装，随后更新或移除
+
+Then 索引与安装分离，提交和内容哈希可追溯；移除来源不卸载资源，更新绑定来源及实例修订，外部变化拒绝覆盖，包脚本不被执行，来源失败保留并标记旧结果
+
+#### AC38 CLI 文件与依赖的受控检查
+
+Given 已发现 Skill 及依赖声明、可定位或缺失的程序
+
+When 查看文件、静态检查依赖或显式批准版本探测
+
+Then 读取限于原实例及安全相对路径，修订变化拒绝旧读；静态检查不启动程序，探测绑定程序身份、固定参数及期限，撤权/超时回收自有进程，不把未知依赖标成满足
+
 #### AC 逐项测试设计
 
 证据状态按 spec-docs-pro 词表记录：未创建 / 已创建 / 静态核验 / 本地通过 / 预发通过 / 生产通过 / 失败 / 不适用。原“批次”列的内容移入“备注”，不代表升格。
@@ -393,6 +419,9 @@ Then 可追溯用户、场景与版本，仅记录安全摘要，无凭据和默
 | AC33 | 禁用或卸载 | 后端+文件系统 | `crates/dgos-skills/tests/package_remove.rs` | `cargo test -p dgos-skills --test package_remove` | 未创建 | 批次 B |
 | AC34 | 上游更新或官方打包 | 后端+发布检查 | `crates/dgos-skills/tests/provenance.rs` | `cargo test -p dgos-skills --test provenance` | 未创建 | 批次 B |
 | AC35 | 查看使用记录 | 后端+日志检查 | `crates/dgos-skills/tests/skill_usage.rs` | `cargo test -p dgos-skills --test skill_usage` | 未创建 | 批次 A；目标文件不存在。局部用例：`bundled_catalog.rs::content_preparation_records_host_provenance_without_content_payload`、`task_flow.rs::ac35_provider_failure_has_a_task_id_and_redacted_error_not_success` |
+| AC36 | CLI 独立入口与上下文隔离 | 前端+宿主 | `tests/agent-workbench.test.tsx`、`src-tauri/src/native_extensions/tests.rs` | `npx vitest run tests/agent-workbench.test.tsx`；`cargo test -p dgos --lib native_extensions` | 已创建 | D145，证据只回写实现状态 |
+| AC37 | 多来源与原生包事务 | 文件系统+宿主 | `src-tauri/src/native_extensions/skill_library.rs`、`crates/dgos-agents/src/native_extensions/resource_tests.rs` | `cargo test -p dgos --lib native_extensions`；`cargo test -p dgos-agents native_extensions` | 已创建 | D145，真实外部来源与 fixture 分开；运行证据见实现状态 |
+| AC38 | 修订读取及显式探测 | 宿主+安全 | `src-tauri/src/native_extensions/skill_library.rs` | `cargo test -p dgos --lib native_extensions` | 已创建 | D145，运行证据只回写实现状态 |
 
 
 AC21/AC26 的 mock 用例可用于日常回归，但发布证据必须另有真实模型/来源运行记录；没有凭据时标为未执行，不能用 skip 或返回静态答案代替。新增目标测试整体证据见第 9 节。
@@ -481,3 +510,4 @@ AC21/AC26 的 mock 用例可用于日常回归，但发布证据必须另有真�
 | 2026-11-01 | 文档与代码核对：§2.4 补充当前已发布 6 个官方包的指向；§6.2 中目标文件已存在的 AC16～AC19、AC21 证据状态由“未创建”改为“已创建”，目标文件不存在的行保持“未创建”并在备注列出局部用例；§7 导语去掉“不是已实现代码”的过时表述。未改动 AC 原文与编号 | 代码核对 |
 | 2026-11-01 | 依据 D115 重定义 Batch B：离线优先的本地 `.zip` 导入、受控 GitHub 固定修订安装和显式更新；命令兼容层只解析 `npx skills add` 受控子集，不执行外部命令；同步 AC26～AC28、来源适配、安装安全与后续设计输入，AC 编号不变 | D115 |
 | 2026-11-01 | 新增 Batch B 扩展安装技术设计：确定 zip/GitHub 来源规范、受控命令解析、操作日志、预览确认、原子发布、恢复、更新、许可与测试追踪；未新增命令、migration 或错误码，FR-002 状态与 AC 证据不变 | D115 |
+| 2026-11-10 | CLI 独立入口、来源/导入/更新与依赖检查，增加 AC36～AC38 并关联原生技术设计 B145-01～04/09；AI 助手技能范围不变 | D145 |

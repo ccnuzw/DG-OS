@@ -1,4 +1,4 @@
-use super::{config, mcp, skills, Error, HostContext, OperationId, Receipt, Scope, State, Target};
+use super::{mcp, skills, Error, HostContext, OperationId, Receipt, Scope, State, Target};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(unix)]
@@ -8,7 +8,7 @@ const TTL_SECONDS: u64 = 600;
 fn now() -> Result<u64, Error> { SystemTime::now().duration_since(UNIX_EPOCH).map(|v| v.as_secs()).map_err(|_| Error::Unavailable) }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct Preview { pub receipt: Receipt, pub target: Target, pub scope: Scope, pub expires_at: u64, pub rule: Option<skills::RuleEvidence> }
+pub struct Preview { pub receipt: Receipt, pub target: Target, pub scope: Scope, pub target_path: String, pub expires_at: u64, pub rule: Option<skills::RuleEvidence> }
 
 /// Construct only after the host authorizes its account and project. Roots are
 /// pinned here; all later filesystem opens revalidate their identities.
@@ -233,7 +233,7 @@ impl NativeExtensions {
         let validation_scope = scope.clone();
         self.preview(target, scope, false, move |text| {
             mcp::validate_original(text, target, &validation_scope, project.as_deref(), &change)?;
-            let output = config::apply(text, target, &patches)?;
+            let output = mcp::apply(text, target, &validation_scope, project.as_deref(), &change, &patches)?;
             mcp::validate_edited(&output, target, &validation_scope, project.as_deref(), &change)?;
             Ok((output, None))
         })
@@ -278,7 +278,8 @@ impl NativeExtensions {
         let after = stage.read("payload")?.ok_or(Error::Unavailable)?.1;
         let expires_at = now()?.checked_add(TTL_SECONDS).ok_or(Error::Unavailable)?;
         let project = self.project_binding(&scope)?;
-        let mut anchors = self.operation_anchors(self.target_path(target, &scope, visibility)?.parent().ok_or(Error::UnsafePath)?)?;
+        let target_path = self.target_path(target, &scope, visibility)?;
+        let mut anchors = self.operation_anchors(target_path.parent().ok_or(Error::UnsafePath)?)?;
         if let Some(binding) = &project {
             if !anchors.iter().any(|(path, _)| path == &binding.root) { anchors.push((binding.root.clone(), binding.identity.clone())); }
         }
@@ -286,7 +287,7 @@ impl NativeExtensions {
         self.validate(true)?;
         self.validate_project(&journal)?;
         Self::save(&journal_dir, &journal)?;
-        Ok(Preview { receipt: journal.receipt(), target, scope, expires_at, rule: journal.rule })
+        Ok(Preview { receipt: journal.receipt(), target, scope, target_path: target_path.to_string_lossy().into_owned(), expires_at, rule: journal.rule })
     }
     #[cfg(not(unix))]
     fn preview(&self, _target: Target, _scope: Scope, _visibility: bool, _edit: impl FnOnce(&str) -> Result<(String, Option<skills::RuleEvidence>), Error>) -> Result<Preview, Error> { Err(Error::Unsupported) }

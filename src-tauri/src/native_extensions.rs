@@ -2,6 +2,8 @@
 pub mod dto;
 mod roots;
 mod index;
+pub mod skill_library;
+pub mod mcp_catalog;
 #[cfg(test)]
 mod tests;
 use dgos_agents::{native_extensions as core, AgentManager};
@@ -23,6 +25,8 @@ pub struct NativeHost {
     roots: roots::Roots,
     contexts: Mutex<HashMap<String, Arc<core::NativeExtensions>>>,
     context_init: tokio::sync::Mutex<()>,
+    skill_library: skill_library::LibraryState,
+    mcp_catalog: mcp_catalog::McpCatalogState,
 }
 struct Admitted {
     api: Arc<core::NativeExtensions>,
@@ -40,6 +44,7 @@ fn validate_selection(selection: &Selection, domain: Domain) -> Result<(), Strin
         (Scope::ProjectShared | Scope::ProjectLocal, Some(id)) if !id.is_empty() && id.len() <= 128 => {},
         _ => return Err(fail("InvalidFormat")),
     }
+    if selection.task_id.as_ref().is_some_and(|id| selection.project_id.is_none() || id.is_empty() || id.len() > 128) { return Err(fail("InvalidFormat")); }
     if selection.scope == Scope::ProjectLocal && selection.target == Target::Codex { return Err(fail("Unsupported")); }
     let _ = domain;
     Ok(())
@@ -47,7 +52,13 @@ fn validate_selection(selection: &Selection, domain: Domain) -> Result<(), Strin
 impl NativeHost {
     /// Called once with the app-private root. Does not touch native configuration.
     pub fn from_environment(resolver: Arc<SessionResolver>, private_root: PathBuf) -> Result<Self, String> {
-        Ok(Self { resolver, roots: roots::Roots::from_environment(private_root).map_err(|e| e.to_string())?, contexts: Mutex::new(HashMap::new()), context_init: tokio::sync::Mutex::new(()) })
+        Ok(Self { resolver, roots: roots::Roots::from_environment(private_root).map_err(|e| e.to_string())?, contexts: Mutex::new(HashMap::new()), context_init: tokio::sync::Mutex::new(()), skill_library: Default::default(), mcp_catalog: Default::default() })
+    }
+    /// Drain independent extension probes after the host lease is revoked. A
+    /// false result retains unconfirmed ownership rather than claiming cleanup.
+    pub async fn shutdown(&self) -> bool {
+        let (skills, mcp) = tokio::join!(self.skill_library.shutdown(), self.mcp_catalog.shutdown());
+        skills && mcp
     }
     async fn admit(&self, agents: &AgentManager, selection: Selection, domain: Domain, write: bool, permit: Arc<ActivityPermit>, ticket: &Ticket) -> Result<Admitted, String> {
         validate_selection(&selection, domain)?;
@@ -62,7 +73,11 @@ impl NativeHost {
                 _ => "storage_failed".to_owned(),
             })?;
             let activity = permit.clone();
-            let record = admission.project.clone();
+            let record = if let Some(task_id) = &selection.task_id {
+                let workspace = agents.task_project(&owner, task_id).await.map_err(|_| fail("RootChanged"))?;
+                if workspace.id != *id || workspace.archived { return Err(fail("AccessDenied")); }
+                workspace
+            } else { admission.project.clone() };
             let project = tokio::task::spawn_blocking(move || { let _activity = activity; roots::validate_project(&record) }).await.map_err(|_| fail("Unavailable"))??;
             (Some(project), Some(admission))
         } else { (None, None) };
@@ -180,17 +195,7 @@ impl NativeHost {
         drop(admitted);
         let package = match input.source {
             None => None,
-            Some(Source::Zip { bytes, subpath }) => {
-                let activity = permit.clone();
-                Some(tokio::task::spawn_blocking(move || { let _activity = activity; core::package::NativeSkillPackage::from_zip(&bytes, subpath.as_deref()).map(|p| (p, None)) }).await.map_err(|_| fail("Unavailable"))?.map_err(|e| e.to_string())?)
-            },
-            Some(Source::Github { input }) => {
-                let source = match dgos_skills::parse_source(&input).map_err(|_| fail("InvalidFormat"))? { dgos_skills::SkillSource::Github(source) => source, _ => return Err(fail("Unsupported")) };
-                let adapter = dgos_skills::GithubAdapter::new().map_err(|_| fail("Unavailable"))?;
-                let resolved = tokio::select! { _ = lease.cancelled() => return Err("session_invalid".into()), result = adapter.fetch(source) => result.map_err(|_| fail("Unavailable"))? };
-                let activity = permit.clone();
-                Some(tokio::task::spawn_blocking(move || { let _activity = activity; core::package::NativeSkillPackage::from_github(&resolved).map(|p| (p, Some(resolved.resolved_commit.clone()))) }).await.map_err(|_| fail("Unavailable"))?.map_err(|e| e.to_string())?)
-            }
+            Some(source) => Some(self.acquire_skill_package(&selection, source, permit.clone(), &ticket).await?),
         };
         let (current_owner, current_generation, current_lease) = self.resolver.native_session()?;
         if current_owner != ticket.0 || current_generation != generation || current_lease.is_cancelled() || lease.is_cancelled() { return Err("session_invalid".into()); }
@@ -201,15 +206,16 @@ impl NativeHost {
         tokio::task::spawn_blocking(move || {
             let admitted = admitted;
             let _permit = permit;
+            let target_path = admitted.api.resource_target_path(admitted.selection.target, admitted.selection.scope.clone(), &input.slug).map_err(|e| e.to_string())?.to_string_lossy().into_owned();
             let action = match (input.action, input.expected, package) {
-                (SkillAction::Install, None, Some((package, commit))) => { let source = core::ResourceSource { source_hash: package.content_hash().into(), commit }; core::ResourceAction::Install { package, source } },
-                (SkillAction::Update, Some(expected), Some((package, commit))) => { let source = core::ResourceSource { source_hash: package.content_hash().into(), commit }; core::ResourceAction::Update { expected, package, source } },
+                (SkillAction::Install, None, Some((package, source))) => core::ResourceAction::Install { package, source },
+                (SkillAction::Update, Some(expected), Some((package, source))) => core::ResourceAction::Update { expected, package, source },
                 (SkillAction::Remove, Some(expected), None) => core::ResourceAction::Remove { expected },
                 _ => return Err(fail("InvalidFormat")),
             };
             let preview = admitted.api.preview_resource(admitted.selection.target, admitted.selection.scope.clone(), &input.slug, action).map_err(|e| e.to_string())?;
             if Self::save_binding(&journal, &admitted, &preview.receipt, Domain::Skills, true).is_err() { let _ = admitted.api.cancel_resource(&preview.receipt.operation_id); return Err(fail("RecoveryRequired")); }
-            Ok(SkillPreview { receipt: preview.receipt, target: preview.target, scope: preview.scope, project_id: admitted.selection.project_id.clone(), slug: preview.slug, before_hash: preview.before_hash, after_hash: preview.after_hash, source: preview.source, resources: preview.resources, metadata: preview.metadata, impact: preview.impact, expires_at: preview.expires_at })
+            Ok(SkillPreview { receipt: preview.receipt, target: preview.target, scope: preview.scope, project_id: admitted.selection.project_id.clone(), task_id: admitted.selection.task_id.clone(), target_path, slug: preview.slug, before_hash: preview.before_hash, after_hash: preview.after_hash, source: preview.source, resources: preview.resources, metadata: preview.metadata, impact: preview.impact, expires_at: preview.expires_at })
         }).await.map_err(|_| fail("Unavailable"))?
     }
     pub async fn preview_visibility(&self, agents: &AgentManager, input: Visibility, permit: ActivityPermit, ticket: Ticket) -> Result<VisibilityPreview, String> {

@@ -20,7 +20,7 @@ pub struct SessionOptions {
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum PermissionMode { Default, ReadOnly, AcceptEdits }
+pub enum PermissionMode { Default, ReadOnly, AcceptEdits, FullAuto }
 pub const AGENT_SKILL_LIMIT: usize = 8;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -44,9 +44,10 @@ pub(crate) fn validate_discovered_skills(skills: &[AgentSkillInput], observed: &
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum CollaborationMode { Default, Plan }
+pub enum CollaborationMode { Default, Plan, Deep }
 impl CollaborationMode {
-    pub(crate) fn as_str(self) -> &'static str { match self { Self::Default => "default", Self::Plan => "plan" } }
+    pub(crate) fn as_str(self) -> &'static str { match self { Self::Default => "default", Self::Plan => "plan", Self::Deep => "deep" } }
+    pub(crate) fn planning(self) -> bool { matches!(self, Self::Plan | Self::Deep) }
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -59,6 +60,35 @@ pub struct SteeringReceipt {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct ResponsePreferences {
+    pub language: ResponseLanguage,
+    pub brevity: ResponseBrevity,
+    pub next_step_suggestions: bool,
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseLanguage { FollowInput, Zh, En }
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseBrevity { Concise, Standard, Detailed }
+impl ResponsePreferences {
+    pub(crate) fn instructions(&self) -> String {
+        let language = match self.language {
+            ResponseLanguage::FollowInput => "Match the user's input language unless the user explicitly requests another language.",
+            ResponseLanguage::Zh => "Respond in Chinese unless the user explicitly requests another language.",
+            ResponseLanguage::En => "Respond in English unless the user explicitly requests another language.",
+        };
+        let brevity = match self.brevity {
+            ResponseBrevity::Concise => "Give a direct, concise answer.",
+            ResponseBrevity::Standard => "Use normal detail appropriate to the task.",
+            ResponseBrevity::Detailed => "Give a thorough explanation with useful details.",
+        };
+        let suggestions = if self.next_step_suggestions { "Include useful next-step suggestions when appropriate." } else { "Omit unsolicited next-step suggestions." };
+        format!("Session response preferences: {language} {brevity} {suggestions}")
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct AgentTurnSettings {
     #[serde(default, deserialize_with = "nullable_effort", skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<Option<String>>,
@@ -66,9 +96,11 @@ pub struct AgentTurnSettings {
     pub permission_mode: Option<PermissionMode>,
     #[serde(default, deserialize_with = "optional_collaboration", skip_serializing_if = "Option::is_none")]
     pub collaboration_mode: Option<CollaborationMode>,
+    #[serde(default, deserialize_with = "optional_response_preferences", skip_serializing_if = "Option::is_none")]
+    pub response_preferences: Option<ResponsePreferences>,
 }
 impl AgentTurnSettings {
-    pub(crate) fn is_empty(&self) -> bool { self.reasoning_effort.is_none() && self.permission_mode.is_none() && self.collaboration_mode.is_none() }
+    pub(crate) fn is_empty(&self) -> bool { self.reasoning_effort.is_none() && self.permission_mode.is_none() && self.collaboration_mode.is_none() && self.response_preferences.is_none() }
 }
 fn nullable_effort<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Option<String>>, D::Error> {
     Option::<String>::deserialize(deserializer).map(Some)
@@ -78,6 +110,9 @@ fn optional_permission<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Res
 }
 fn optional_collaboration<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<CollaborationMode>, D::Error> {
     CollaborationMode::deserialize(deserializer).map(Some)
+}
+fn optional_response_preferences<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<ResponsePreferences>, D::Error> {
+    ResponsePreferences::deserialize(deserializer).map(Some)
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionControl<T> {
@@ -101,6 +136,8 @@ pub struct SessionControls {
     pub(crate) default_effort: Option<String>,
     #[serde(skip)]
     pub(crate) default_sandbox: Option<Value>,
+    #[serde(skip)]
+    pub(crate) response_preferences: Option<ResponsePreferences>,
 }
 impl SessionControls {
     pub fn validate(&self, settings: &AgentTurnSettings) -> Result<(), String> {
@@ -390,7 +427,7 @@ mod pending_tests {
         let permission: AgentTurnSettings = serde_json::from_value(serde_json::json!({"permission_mode":"accept_edits"})).unwrap();
         assert_eq!(permission.reasoning_effort, None);
         assert_eq!(permission.permission_mode, Some(PermissionMode::AcceptEdits));
-        for (name, expected) in [("default", CollaborationMode::Default), ("plan", CollaborationMode::Plan)] {
+        for (name, expected) in [("default", CollaborationMode::Default), ("plan", CollaborationMode::Plan), ("deep", CollaborationMode::Deep)] {
             let mode: AgentTurnSettings = serde_json::from_value(serde_json::json!({"collaboration_mode":name})).unwrap();
             assert_eq!(mode.collaboration_mode, Some(expected));
         }
@@ -399,6 +436,29 @@ mod pending_tests {
         }
         for invalid in [serde_json::json!({"permission_mode":null}), serde_json::json!({"permission_mode":"bypassPermissions"}), serde_json::json!({"reasoning_effort":2}), serde_json::json!({"always_allow":true})] {
             assert!(serde_json::from_value::<AgentTurnSettings>(invalid).is_err());
+        }
+    }
+    #[test]
+    fn response_preferences_round_trip_without_exposing_internal_session_settings() {
+        for language in ["follow_input", "zh", "en"] {
+            for brevity in ["concise", "standard", "detailed"] {
+                let value = serde_json::json!({"response_preferences":{"language":language,"brevity":brevity,"next_step_suggestions":false}});
+                let settings: AgentTurnSettings = serde_json::from_value(value.clone()).unwrap();
+                assert!(!settings.is_empty());
+                assert_eq!(serde_json::to_value(&settings).unwrap(), value);
+                assert!(settings.permission_mode.is_none() && settings.collaboration_mode.is_none() && settings.reasoning_effort.is_none());
+                let controls = SessionControls {
+                    reasoning: SessionControl { available: false, options: vec![], current: None, source: "fixture".into(), reason: None },
+                    permission: SessionControl { available: false, options: vec![], current: None, source: "fixture".into(), reason: None },
+                    collaboration: None, steering: false, bound_model: None, default_effort: None, default_sandbox: None,
+                    response_preferences: settings.response_preferences.clone(),
+                };
+                assert!(controls.validate(&settings).is_ok());
+                assert!(serde_json::to_value(controls).unwrap().get("response_preferences").is_none());
+            }
+        }
+        for preferences in [Value::Null, serde_json::json!({}), serde_json::json!({"language":"fr","brevity":"standard","next_step_suggestions":true}), serde_json::json!({"language":"en","brevity":"standard","next_step_suggestions":null}), serde_json::json!({"language":"en","brevity":"standard","next_step_suggestions":true,"permission_mode":"full_auto"})] {
+            assert!(serde_json::from_value::<AgentTurnSettings>(serde_json::json!({"response_preferences":preferences})).is_err());
         }
     }
 }

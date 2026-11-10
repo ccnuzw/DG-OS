@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Icon, Popover, Select } from '@dgos/ui';
-import { Mic } from 'lucide-react';
+import { Button, Icon, Select } from '@dgos/ui';
 import { useLocale } from '../../i18n';
 import { useChatStore } from '../../stores/chatStore';
 import type { Model, Provider } from '../../stores/providerStore';
 import { assetCall, fileBase64 } from './Attachments';
 
 type Phase = 'idle' | 'permission' | 'recording' | 'ready' | 'transcribing';
-export default function VoiceCapture({ sessionId, disabled, onBusy }: { sessionId: string; disabled: boolean; onBusy: (busy: boolean) => void }) {
+export default function VoiceCapture({ sessionId, disabled, onBusy, onClose }: { sessionId: string; disabled: boolean; onBusy: (busy: boolean) => void; onClose: () => void }) {
   const { t } = useLocale();
-  const [expanded, setExpanded] = useState(false);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [providerId, setProviderId] = useState('');
@@ -36,7 +34,7 @@ export default function VoiceCapture({ sessionId, disabled, onBusy }: { sessionI
   useEffect(() => {
     const unsubscribe = useChatStore.subscribe(state => {
       if (state.activeSessionId === sessionId && state.sessions.some(session => session.id === sessionId)) return;
-      release(); setAudio(null); changePhase('idle'); setExpanded(false);
+      release(); setAudio(null); changePhase('idle'); onClose();
     });
     return () => { unsubscribe(); release(); onBusy(false); };
   }, [sessionId]);
@@ -53,6 +51,7 @@ export default function VoiceCapture({ sessionId, disabled, onBusy }: { sessionI
       if (token === version.current) setProviders(list.filter(provider => provider.enabled && provider.credential_status === 'stored' && provider.provider_type === 'openai_compatible'));
     } catch { if (token === version.current) setError(t('voice.error')); }
   }
+  useEffect(() => { void load(); }, []);
   async function selectProvider(id: string) {
     release(); changePhase('idle'); setAudio(null); setProviderId(id); setModelId(''); setModels([]);
     const token = version.current;
@@ -102,26 +101,13 @@ export default function VoiceCapture({ sessionId, disabled, onBusy }: { sessionI
       if (token !== version.current || !useChatStore.getState().sessions.some(session => session.id === sessionId)) return;
       const state = useChatStore.getState();
       state.setDraft(sessionId, [state.sessionDrafts[sessionId], result.text].filter(Boolean).join('\n'));
-      setAudio(null); changePhase('idle'); setExpanded(false);
+      setAudio(null); changePhase('idle'); onClose();
     } catch { if (token === version.current) { setError(t('voice.unknown')); changePhase('ready'); } }
     finally { if (token === version.current) pending.current = null; }
   }
-  function changeOpen(next: boolean) {
-    setExpanded(next);
-    if (next) {
-      if (currentPhase.current === 'idle') void load();
-      return;
-    }
-    if (currentPhase.current === 'permission' || currentPhase.current === 'recording' || currentPhase.current === 'transcribing') {
-      release(); changePhase(audio ? 'ready' : 'idle');
-    }
-  }
   const locked = phase !== 'idle';
-  return <Popover label={t('voice.title')} side="top" align="start" open={expanded} onOpenChange={changeOpen} trigger={
-    <Button size="sm" variant="ghost" iconOnly className="chat-composer-icon chat-voice-trigger" data-phase={phase} disabled={disabled} aria-label={t('voice.title')} title={t('voice.title')}><Mic size={16} aria-hidden="true" /></Button>
-  } content={
-    <section aria-label={t('voice.title')} className="chat-voice-menu">
-      <header className="chat-picker-header"><strong>{t('voice.title')}</strong><Button size="xxs" variant="ghost" iconOnly aria-label={t('common.close')} title={t('common.close')} onClick={() => changeOpen(false)}><Icon name="close" size="sm" /></Button></header>
+  return <section aria-label={t('voice.title')} className="chat-voice-menu">
+      <header className="chat-picker-header"><strong>{t('voice.title')}</strong><Button size="xxs" variant="ghost" iconOnly aria-label={t('common.close')} title={t('common.close')} onClick={onClose}><Icon name="close" size="sm" /></Button></header>
       <p className="chat-picker-help">{t('voice.help')}</p>
       <Select label={t('voice.provider')} placeholder={t('voice.chooseProvider')} value={providerId} onChange={id => void selectProvider(id)} disabled={disabled || locked} options={providers.map(provider => ({ value: provider.id, label: `${provider.name} · ${new URL(provider.base_url).host}` }))} />
       <Select label={t('voice.model')} placeholder={t('voice.chooseModel')} value={modelId} onChange={setModelId} disabled={disabled || locked} options={models.map(model => ({ value: model.model_id, label: model.model_name }))} />
@@ -134,5 +120,5 @@ export default function VoiceCapture({ sessionId, disabled, onBusy }: { sessionI
       {url && <audio controls src={url} aria-label={t('voice.playback')} className="chat-voice-playback" />}
       {error && <p role="alert" className="chat-media-error">{error}</p>}
     </section>
-  } />;
+  ;
 }

@@ -10,8 +10,6 @@ import { beginResourceRead, failResourceRead, resourceView, type ResourceReadSta
 import './SkillsManagement.css';
 import { useSurfaceCloseGuard, useSurfaceStatus } from '../workspace/SurfaceContext';
 import { confirmDiscard } from '../workspace/closeCoordinator';
-import NativeManager from '../components/nativeExtensions/NativeManager';
-import { CapabilityReturn, useCapabilityEntry } from '../components/chat/RuntimeNavigation';
 
 import { skillCategoryLabel as categoryLabel } from '../i18n/skillCategories';
 
@@ -45,11 +43,6 @@ const SkillsManagement: React.FC = () => {
   } = useSkillsStore();
   const reportError = usePageError('SkillsManagement');
 
-  const capabilityEntry = useCapabilityEntry('/skills');
-  const [nativeMode, setNativeMode] = useState(capabilityEntry.runtime === 'native');
-  const nativeOpened = useRef(nativeMode);
-  if (nativeMode) nativeOpened.current = true;
-  useEffect(() => { if (capabilityEntry.runtime) setNativeMode(capabilityEntry.runtime === 'native'); }, [capabilityEntry.key]);
   const [view, setView] = useState<'browse' | 'installed'>('browse');
   const [origin, setOrigin] = useState<'all' | 'official' | 'legacy'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -263,11 +256,8 @@ const SkillsManagement: React.FC = () => {
     <main className="skills-page flex h-full min-h-0 flex-col overflow-hidden bg-surface-canvas text-ink-primary">
       <header className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-border-subtle bg-surface-canvas px-5 py-3">
         <div className="min-w-0"><h1 className="m-0 text-lg font-semibold leading-tight">{t('skills.title')}</h1><p className="m-0 mt-1 max-w-prose break-words text-sm text-ink-secondary">{t('skills.subtitle')}</p></div>
-        <div className="flex max-w-full flex-wrap items-center gap-2"><Button variant="secondary" size="xs" onClick={() => setNativeMode(true)}>{t('nativeExtensions.manageNative')}</Button><span className="text-xs text-ink-secondary" role="status">{registryOffline || registryError ? t('skills.unavailable') : t('skills.officialLocal')}</span>{(registryOffline || registryError) && <Button variant="secondary" size="xs" onClick={() => { void handleRetry(); }} disabled={loading}>{loading ? t('skills.retrying') : t('skills.retryConnection')}</Button>}</div>
+        <div className="flex max-w-full flex-wrap items-center gap-2"><span className="text-xs text-ink-secondary" role="status">{registryOffline || registryError ? t('skills.unavailable') : t('skills.officialLocal')}</span>{(registryOffline || registryError) && <Button variant="secondary" size="xs" onClick={() => { void handleRetry(); }} disabled={loading}>{loading ? t('skills.retrying') : t('skills.retryConnection')}</Button>}</div>
       </header>
-      <CapabilityReturn path="/skills" />
-      <div className={nativeMode ? 'flex min-h-0 flex-1 flex-col' : 'hidden'} hidden={!nativeMode}><Button variant="secondary" size="xs" className="self-start" onClick={() => setNativeMode(false)}>{t('nativeExtensions.backToDgos')}</Button>{nativeOpened.current && <NativeManager kind="skills" initialSelection={capabilityEntry.nativeSelection} initialSessionId={capabilityEntry.sessionId} />}</div>
-      <div className={nativeMode ? 'hidden' : 'contents'} hidden={nativeMode}>
       <div className="min-h-0 flex-1 overflow-y-auto"><div className="skills-content mx-auto flex w-full max-w-350 flex-col gap-3 px-5 py-4">
         <Tabs value={view} onValueChange={(next) => setView(next as 'browse' | 'installed')}>
           <Tabs.List aria-label={t('skills.views')} className="w-fit max-w-full flex-wrap"><Tabs.Trigger value="browse">{t('skills.browse')}</Tabs.Trigger><Tabs.Trigger value="installed">{t('skills.installedCount', { count: installedSkills.length })}</Tabs.Trigger></Tabs.List>
@@ -307,7 +297,6 @@ const SkillsManagement: React.FC = () => {
           <Tabs.Content value="installed" className="mt-3"><ResourceList state={resourceView(installedRead, installedSkills.length === 0)} label={t('skills.installed')} loadingLabel={t('skills.loadingInstalled')} errorContent={installedReadError ? <>{t('detail.installedError')}{installedReadError}</> : undefined} retry={<Button variant="secondary" size="xs" onClick={() => { void initialize(); }} disabled={installedLoading}>{t('skills.retryInstalled')}</Button>} emptyContent={<EmptyState title={t('skills.noInstalled')} action={<Button size="xs" onClick={() => setView('browse')}>{t('skills.browse')}</Button>} />}><div className="flex flex-col gap-2">{installedSkills.map(skill => <ResourceCard key={skill.id} title={skill.name} description={skill.description} status={<StatusBadge status={skill.enabled ? 'success' : 'neutral'} label={skill.enabled ? t('providerForm.enabled') : t('module.disabled')} />}><div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-ink-secondary"><span>{skill.call_type === 'content' ? 'SKILL.md' : skill.call_type.toUpperCase()}</span><span>{t('common.versionPrefix')}{skill.version}</span><span>{t('detail.installed')}{formatDate(skill.installed_at * 1000)}</span><span>{t('detail.category')}{categoryLabel(skill.manifest.category)}</span></div><div className="mt-3 flex flex-wrap items-center gap-3 border-t border-border-subtle pt-2"><Switch aria-label={t(skill.enabled ? 'skills.disableSkill' : 'skills.enableSkill', { name: skill.name })} checked={skill.enabled} disabled={skill.call_type !== 'content' && !skill.enabled} onChange={(checked) => { void handleToggle(skill.skill_id, checked); }} />{skill.call_type === 'content' && <Button variant="secondary" size="xs" onClick={() => { void handleViewDetail(skill.skill_id); }}>{t('skills.viewLatest')}</Button>}{skill.call_type === 'content' && skill.install_path.startsWith('external/') && <Button variant="danger" size="xs" onClick={() => handleUninstall(skill.skill_id, skill.name)}>{t('skills.uninstall')}</Button>}{skill.call_type !== 'content' && <StatusBadge status="warning" label={t('skills.legacyExecutionUnavailable')} />}</div></ResourceCard>)}</div></ResourceList></Tabs.Content>
         </Tabs>
       </div></div>
-      </div>
     </main>
   );
 };

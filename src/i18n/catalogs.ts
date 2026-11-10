@@ -85,6 +85,10 @@ import zhTakeover from './locales/zh-CN/takeover';
 
 import enNativeExtensions from './locales/en-US/nativeExtensions';
 import zhNativeExtensions from './locales/zh-CN/nativeExtensions';
+import enNativeSkillLibrary from './locales/en-US/nativeSkillLibrary';
+import zhNativeSkillLibrary from './locales/zh-CN/nativeSkillLibrary';
+import enNativeMcpCatalog from './locales/en-US/nativeMcpCatalog';
+import zhNativeMcpCatalog from './locales/zh-CN/nativeMcpCatalog';
 import enModelPicker from './locales/en-US/modelPicker';
 import zhModelPicker from './locales/zh-CN/modelPicker';
 import enDirectConversation from './locales/en-US/directConversation';
@@ -119,7 +123,11 @@ import enCodexOperations from './locales/en-US/codexOperations';
 import zhCodexOperations from './locales/zh-CN/codexOperations';
 import enAgentImages from './locales/en-US/agentImages';
 import zhAgentImages from './locales/zh-CN/agentImages';
+import enAgentPreferences from './locales/en-US/agentPreferences';
+import zhAgentPreferences from './locales/zh-CN/agentPreferences';
+import enAgentUsage from './locales/en-US/agentUsage';
+import zhAgentUsage from './locales/zh-CN/agentUsage';
 export const catalogs: Record<'zh-CN' | 'en-US', Record<string, string>> = {
-  'zh-CN': { ...zhDesktop, ...zhCodexOperations, ...zhAgentImages, ...zhCodexTranscript, ...zhCodexInteractions, ...zhGitPanel, ...zhFileWorkspace, ...zhCommitDraft, ...zhAgentSkills, ...zhWorkbenchFiles, ...zhWorkbenchGit, ...zhWorkbenchRuntime, ...zhWorkbenchReferences, ...zhAgentControls, ...zhAgentExecution, ...zhConversationHandoff, ...zhModelPicker, ...zhDirectConversation, ...zhNativeExtensions, ...zhWorkflow, ...zhTakeover, ...zhTaskReview, ...zhRuntimeWorkflow, ...zhWorkbenchLayout, ...zhWorkbenchNavigation, ...zhCapabilities, ...zhDirect, ...zhReview, ...zhVoice, ...zhAssets, ...zhStorage, ...zhExecution, ...zhCli, ...zhGeneration, ...zhDelivery, ...zh0, ...zh1, ...zh2, ...zh3, ...zh4, ...zh5, ...zh6, ...zh7, ...zh8, ...zh9, ...zh10, ...zh11, ...zh12, ...zh13, ...zh14, ...zh15, ...zh16, ...zh17, ...zh18, ...zh19, ...zh20, ...zh21, ...zh22, ...zh23, ...zh24 },
-  'en-US': { ...enDesktop, ...enCodexOperations, ...enAgentImages, ...enCodexTranscript, ...enCodexInteractions, ...enGitPanel, ...enFileWorkspace, ...enCommitDraft, ...enAgentSkills, ...enWorkbenchFiles, ...enWorkbenchGit, ...enWorkbenchRuntime, ...enWorkbenchReferences, ...enAgentControls, ...enAgentExecution, ...enConversationHandoff, ...enModelPicker, ...enDirectConversation, ...enNativeExtensions, ...enWorkflow, ...enTakeover, ...enTaskReview, ...enRuntimeWorkflow, ...enWorkbenchLayout, ...enWorkbenchNavigation, ...enCapabilities, ...enDirect, ...enReview, ...enVoice, ...enAssets, ...enStorage, ...enExecution, ...enCli, ...enGeneration, ...enDelivery, ...en0, ...en1, ...en2, ...en3, ...en4, ...en5, ...en6, ...en7, ...en8, ...en9, ...en10, ...en11, ...en12, ...en13, ...en14, ...en15, ...en16, ...en17, ...en18, ...en19, ...en20, ...en21, ...en22, ...en23, ...en24 },
+  'zh-CN': { ...zhNativeSkillLibrary, ...zhNativeMcpCatalog, ...zhAgentPreferences, ...zhAgentUsage, ...zhDesktop, ...zhCodexOperations, ...zhAgentImages, ...zhCodexTranscript, ...zhCodexInteractions, ...zhGitPanel, ...zhFileWorkspace, ...zhCommitDraft, ...zhAgentSkills, ...zhWorkbenchFiles, ...zhWorkbenchGit, ...zhWorkbenchRuntime, ...zhWorkbenchReferences, ...zhAgentControls, ...zhAgentExecution, ...zhConversationHandoff, ...zhModelPicker, ...zhDirectConversation, ...zhNativeExtensions, ...zhWorkflow, ...zhTakeover, ...zhTaskReview, ...zhRuntimeWorkflow, ...zhWorkbenchLayout, ...zhWorkbenchNavigation, ...zhCapabilities, ...zhDirect, ...zhReview, ...zhVoice, ...zhAssets, ...zhStorage, ...zhExecution, ...zhCli, ...zhGeneration, ...zhDelivery, ...zh0, ...zh1, ...zh2, ...zh3, ...zh4, ...zh5, ...zh6, ...zh7, ...zh8, ...zh9, ...zh10, ...zh11, ...zh12, ...zh13, ...zh14, ...zh15, ...zh16, ...zh17, ...zh18, ...zh19, ...zh20, ...zh21, ...zh22, ...zh23, ...zh24 },
+  'en-US': { ...enNativeSkillLibrary, ...enNativeMcpCatalog, ...enAgentPreferences, ...enAgentUsage, ...enDesktop, ...enCodexOperations, ...enAgentImages, ...enCodexTranscript, ...enCodexInteractions, ...enGitPanel, ...enFileWorkspace, ...enCommitDraft, ...enAgentSkills, ...enWorkbenchFiles, ...enWorkbenchGit, ...enWorkbenchRuntime, ...enWorkbenchReferences, ...enAgentControls, ...enAgentExecution, ...enConversationHandoff, ...enModelPicker, ...enDirectConversation, ...enNativeExtensions, ...enWorkflow, ...enTakeover, ...enTaskReview, ...enRuntimeWorkflow, ...enWorkbenchLayout, ...enWorkbenchNavigation, ...enCapabilities, ...enDirect, ...enReview, ...enVoice, ...enAssets, ...enStorage, ...enExecution, ...enCli, ...enGeneration, ...enDelivery, ...en0, ...en1, ...en2, ...en3, ...en4, ...en5, ...en6, ...en7, ...en8, ...en9, ...en10, ...en11, ...en12, ...en13, ...en14, ...en15, ...en16, ...en17, ...en18, ...en19, ...en20, ...en21, ...en22, ...en23, ...en24 },
 };

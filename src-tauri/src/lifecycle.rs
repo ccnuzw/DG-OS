@@ -44,17 +44,19 @@ pub(crate) async fn shutdown(app: &tauri::AppHandle) {
     let workbench = app.try_state::<dgos_workbench::WorkbenchManager>().map(|v| v.inner().clone());
     let chat = app.try_state::<dgos_workbench::ChatManager>().map(|v| v.inner().clone());
     let lan = app.try_state::<Arc<dgos_lan::LanService>>().map(|v| v.inner().clone());
+    let native = app.try_state::<crate::native_extensions::NativeHost>();
     let other_cleanup = async {
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             let lan_cleanup = async { if let Some(lan) = lan { lan.shutdown().await; } };
             let workbench_cleanup = async { match workbench { Some(workbench) => workbench.shutdown().await.is_ok(), None => true } };
             let mcp_cleanup = async { match mcp { Some(mcp) => mcp.shutdown().await.is_ok(), None => true } };
             let chat_cleanup = async { match chat { Some(chat) => chat.shutdown().await, None => true } };
-            tokio::join!(lan_cleanup, workbench_cleanup, mcp_cleanup, chat_cleanup)
+            let native_cleanup = async { match native { Some(native) => native.shutdown().await, None => true } };
+            tokio::join!(lan_cleanup, workbench_cleanup, mcp_cleanup, chat_cleanup, native_cleanup)
         }).await
     };
     match tokio::join!(other_cleanup, agent_cleanup, service_cleanup) {
-        (Ok(((), true, true, true)), true, (true, true, true)) => {}
+        (Ok(((), true, true, true, true)), true, (true, true, true)) => {}
         _ => tracing::warn!("Desktop shutdown incomplete; startup recovery will finalize interrupted audits"),
     }
 }

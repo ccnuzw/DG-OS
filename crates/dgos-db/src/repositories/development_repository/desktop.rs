@@ -9,7 +9,7 @@ pub struct DesktopState { pub revision: i64, pub value: serde_json::Value }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorkspaceTrust {
     pub path: String, pub directory_identity: String,
-    pub agent: bool, pub terminal: bool, pub service: bool, pub revision: i64,
+    pub agent: bool, pub agent_revoked: bool, pub terminal: bool, pub service: bool, pub revision: i64,
 }
 impl WorkspaceTrust {
     pub fn permits(&self, scope: &str) -> bool {
@@ -62,9 +62,10 @@ impl DevelopmentRepository {
     }
     pub async fn workspace_trust(&self, owner: &str, project: &Project) -> Result<WorkspaceTrust, String> {
         project_row(&self.db, owner, &project.id).await?;
-        let mut trust = WorkspaceTrust { path: project.path.clone(), directory_identity: project.directory_identity.clone(), agent: false, terminal: false, service: false, revision: 0 };
-        if let Some(row) = fetch_one(&self.db, "SELECT agent,terminal,service,revision FROM development_workspace_trust WHERE owner=? AND project_id=? AND path=? AND directory_identity=?", vec![v(owner),v(project.id.clone()),v(project.path.clone()),v(project.directory_identity.clone())]).await? {
+        let mut trust = WorkspaceTrust { path: project.path.clone(), directory_identity: project.directory_identity.clone(), agent: false, agent_revoked: false, terminal: false, service: false, revision: 0 };
+        if let Some(row) = fetch_one(&self.db, "SELECT agent,agent_revoked,terminal,service,revision FROM development_workspace_trust WHERE owner=? AND project_id=? AND path=? AND directory_identity=?", vec![v(owner),v(project.id.clone()),v(project.path.clone()),v(project.directory_identity.clone())]).await? {
             trust.agent = row.try_get::<i64>("", "agent").map_err(db)? != 0;
+            trust.agent_revoked = row.try_get::<i64>("", "agent_revoked").map_err(db)? != 0;
             trust.terminal = row.try_get::<i64>("", "terminal").map_err(db)? != 0;
             trust.service = row.try_get::<i64>("", "service").map_err(db)? != 0;
             trust.revision = row.try_get("", "revision").map_err(db)?;
@@ -76,15 +77,34 @@ impl DevelopmentRepository {
         live(&valid)?;
         let tx = self.db.begin().await.map_err(db)?;
         project_row(&tx, owner, &project.id).await?;
+        let denied = if scope == "agent" { ",agent_revoked" } else { "" };
         let changed = if expected == 0 {
             // Scope is an enum allow-list above, never renderer SQL.
-            execute(&tx, &format!("INSERT INTO development_workspace_trust(owner,project_id,path,directory_identity,{scope},revision) VALUES(?,?,?,?,?,1) ON CONFLICT DO NOTHING"), vec![v(owner),v(project.id.clone()),v(project.path.clone()),v(project.directory_identity.clone()),v(granted as i64)]).await?
+            let mut values = vec![v(owner),v(project.id.clone()),v(project.path.clone()),v(project.directory_identity.clone()),v(granted as i64)];
+            if scope == "agent" { values.push(v((!granted) as i64)); }
+            let marker = if scope == "agent" { ",?" } else { "" };
+            execute(&tx, &format!("INSERT INTO development_workspace_trust(owner,project_id,path,directory_identity,{scope}{denied},revision) VALUES(?,?,?,?,?{marker},1) ON CONFLICT DO NOTHING"), values).await?
         } else {
-            execute(&tx, &format!("UPDATE development_workspace_trust SET {scope}=?,revision=revision+1 WHERE owner=? AND project_id=? AND path=? AND directory_identity=? AND revision=?"), vec![v(granted as i64),v(owner),v(project.id.clone()),v(project.path.clone()),v(project.directory_identity.clone()),v(expected)]).await?
+            let mut values = vec![v(granted as i64)];
+            let marker = if scope == "agent" { values.push(v((!granted) as i64)); ",agent_revoked=?" } else { "" };
+            values.extend([v(owner),v(project.id.clone()),v(project.path.clone()),v(project.directory_identity.clone()),v(expected)]);
+            execute(&tx, &format!("UPDATE development_workspace_trust SET {scope}=?{marker},revision=revision+1 WHERE owner=? AND project_id=? AND path=? AND directory_identity=? AND revision=?"), values).await?
         };
         if changed != 1 { tx.rollback().await.map_err(db)?; return Err("workspace_trust_conflict".into()); }
         if let Err(error) = live(&valid) { tx.rollback().await.map_err(db)?; return Err(error); }
         tx.commit().await.map_err(db)?;
         self.workspace_trust(owner, project).await
+    }
+    /// Activation is an explicit host action. Reads never call this method.
+    /// The admission owner validates the selected project/task/directory first.
+    pub async fn activate_workspace_agent(&self, owner: &str, project: &Project, expected: i64, valid: impl Fn() -> bool) -> Result<WorkspaceTrust, String> {
+        live(&valid)?;
+        let trust = self.workspace_trust(owner, project).await?;
+        if expected < 0 || expected == i64::MAX { return Err("invalid_workspace_trust".into()); }
+        if trust.revision != expected { return Err("workspace_trust_conflict".into()); }
+        if trust.agent || trust.agent_revoked { live(&valid)?; return Ok(trust); }
+        // Explicit revocation and activation share the revision CAS, so a
+        // revocation racing this action cannot be overwritten.
+        self.set_workspace_trust(owner, project, expected, "agent", true, valid).await
     }
 }

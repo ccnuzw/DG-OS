@@ -9,7 +9,6 @@ import { useChatStore } from '../src/stores/chatStore';
 import { MockChannel } from './helpers/mockChannel';
 import { useWorkspaceTabs } from '../src/workspace/useWorkspaceTabs';
 import { SurfaceScope } from '../src/workspace/SurfaceContext';
-import { useCapabilityEntry } from '../src/components/chat/RuntimeNavigation';
 import { setLocaleForTesting } from '../src/i18n';
 
 import { chatBudget } from './helpers/chatBudget';
@@ -145,13 +144,30 @@ async function choose(name: string, option: string) {
   await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
 }
 
-async function pickTools(...names: RegExp[]) {
-  const toggle = screen.getByRole('button', { name: /MCP 工具（可选/ });
-  if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle);
-  for (const name of names) fireEvent.click(await screen.findByRole('checkbox', { name }));
+async function openMorePage(page: 'tools' | 'voice') {
+  if (!screen.queryByRole('dialog', { name: '更多功能' })) fireEvent.click(screen.getByRole('button', { name: '更多功能' }));
+  const panel = await screen.findByRole('dialog', { name: '更多功能' });
+  const navigation = within(panel).getByRole('navigation', { name: '更多功能' });
+  const action = within(navigation).getByRole('button', { name: page === 'tools' ? /MCP 工具（可选/ : '语音输入' });
+  if (action.getAttribute('aria-pressed') !== 'true') fireEvent.click(action);
+  return panel;
 }
 
-const pickerLabel = (selected: number) => screen.getByRole('button', { name: new RegExp(`MCP 工具（可选，已选 ${selected} / 8）`) });
+async function closePanel() {
+  fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+}
+
+async function pickTools(...names: RegExp[]) {
+  const panel = await openMorePage('tools');
+  for (const name of names) fireEvent.click(await within(panel).findByRole('checkbox', { name }));
+}
+
+async function openRetainedRun() {
+  fireEvent.click(screen.getByRole('button', { name: '执行历史' }));
+  const history = await screen.findByRole('dialog', { name: '执行历史' });
+  fireEvent.click(await within(within(history).getByRole('group', { name: '执行历史' })).findByRole('button', { name: /季度复盘/ }));
+}
 
 describe('sessions', () => {
   it.each(['Escape', 'cancel'])('returns focus to the session tab after %s without losing the conversation draft', async method => {
@@ -240,8 +256,8 @@ describe('sessions', () => {
     await choose('Provider', '服务 B');
     await choose('模型', '模型 B');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    fireEvent.click(screen.getByRole('button', { name: '会话设置' }));
-    fireEvent.change(screen.getByRole('textbox', { name: '自定义指导' }), { target: { value: 'draft guidance A' } });
+    fireEvent.click(screen.getByRole('button', { name: '回答偏好' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '自定义回答要求' }), { target: { value: 'draft guidance A' } });
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     fireEvent.click(screen.getByRole('button', { name: '会话历史' }));
     fireEvent.click(await screen.findByRole('button', { name: '会话 B' }));
@@ -283,11 +299,12 @@ describe('sessions', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: '关闭会话' }));
     const dialog = await screen.findByRole('dialog', { name: '关闭会话' });
     expect(calls('cancel_chat_generation')).toHaveLength(0);
-    expect(dialog.textContent).toContain('会保留已生成内容和输入草稿');
     fireEvent.click(within(dialog).getByRole('button', { name: '关闭会话' }));
     await waitFor(() => expect(calls('cancel_chat_generation')).toEqual([{ taskId: args.input.client_request_id }]));
-    expect(screen.queryByRole('tab', { name: '会话 A' })).toBeNull();
-    await useChatStore.getState().selectSession(session());
+    expect(screen.getByRole('tab', { name: /季度复盘/, hidden: true })).toBeTruthy();
+    emit(args.onEvent, { kind: 'done', message: message(2, 'assistant', '已保存的片段', { id: 'a1', status: 'interrupted' }) });
+    await waitFor(() => expect(screen.queryByRole('tab', { name: /季度复盘/, hidden: true })).toBeNull());
+    await act(async () => { await useChatStore.getState().selectSession(session()); });
     expect(useChatStore.getState().sessionDrafts.s1).toBe('');
     expect(useChatStore.getState().sessionViews.s1?.messages[0]?.content).toBe('keep this draft');
   });
@@ -327,20 +344,19 @@ describe('separate capability pickers', () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: '会话目标' })));
     fireEvent.click(screen.getByRole('button', { name: '选择 Skills' }));
     fireEvent.click(await within(screen.getByRole('dialog')).findByRole('button', { name: 'summary', exact: true }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    fireEvent.click(screen.getByRole('button', { name: '选择 Skills' }));
+    await waitFor(() => expect(useChatStore.getState().activeSession?.skills.map(skill => skill.skill_id)).toEqual(['summary']));
     fireEvent.click(await within(screen.getByRole('dialog')).findByRole('button', { name: 'writing', exact: true }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    fireEvent.click(screen.getByRole('button', { name: '选择 Skills' }));
-    fireEvent.click(await screen.findByRole('button', { name: '上移 writing' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(useChatStore.getState().activeSession?.skills.map(skill => skill.skill_id)).toEqual(['writing', 'summary']);
+    await waitFor(() => expect(useChatStore.getState().activeSession?.skills.map(skill => skill.skill_id)).toEqual(['summary', 'writing']));
+    fireEvent.click(screen.getByRole('button', { name: '上移 writing' }));
+    await waitFor(() => expect(useChatStore.getState().activeSession?.skills.map(skill => skill.skill_id)).toEqual(['writing', 'summary']));
+    await closePanel();
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: '选择 Skills' })));
-    fireEvent.click(screen.getByRole('button', { name: '会话设置' }));
-    fireEvent.change(screen.getByRole('textbox', { name: '自定义指导' }), { target: { value: 'Preserve sources' } });
+    fireEvent.click(screen.getByRole('button', { name: '回答偏好' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '自定义回答要求' }), { target: { value: 'Preserve sources' } });
     expect(calls('update_chat_session_target')).toHaveLength(4);
     expect(useChatStore.getState().activeSession?.model_id).toBe('chat2');
-    fireEvent.click(screen.getByRole('button', { name: '应用目标' }));
+    expect(useChatStore.getState().activeSession?.generation.instruction).toBeUndefined();
+    fireEvent.click(screen.getByRole('button', { name: '保存回答偏好' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(useChatStore.getState().activeSession?.skills.map(skill => skill.skill_id)).toEqual(['writing', 'summary']);
     expect(useChatStore.getState().activeSession?.generation.instruction).toBe('Preserve sources');
@@ -371,14 +387,14 @@ describe('separate capability pickers', () => {
   it('preserves settings after a rejected save and allows a successful retry', async () => {
     handlers.update_chat_session_target = () => fail(1006015);
     await openSession();
-    fireEvent.click(screen.getByRole('button', { name: '会话设置' }));
-    fireEvent.change(screen.getByRole('textbox', { name: '自定义指导' }), { target: { value: 'Needs retry' } });
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '应用目标' }));
+    fireEvent.click(screen.getByRole('button', { name: '回答偏好' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '自定义回答要求' }), { target: { value: 'Needs retry' } });
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '保存回答偏好' }));
     await within(screen.getByRole('dialog')).findByRole('alert');
-    expect((screen.getByRole('textbox', { name: '自定义指导' }) as HTMLTextAreaElement).value).toBe('Needs retry');
+    expect((screen.getByRole('textbox', { name: '自定义回答要求' }) as HTMLTextAreaElement).value).toBe('Needs retry');
     expect(useChatStore.getState().activeSession?.generation.instruction).toBeUndefined();
     handlers.update_chat_session_target = ({ input }) => ok(session({ generation: input.generation }));
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '应用目标' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '保存回答偏好' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(useChatStore.getState().activeSession?.generation.instruction).toBe('Needs retry');
   });
@@ -402,7 +418,7 @@ describe('separate capability pickers', () => {
     fireEvent.click(screen.getByRole('button', { name: '推理强度：高' }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '默认', exact: true }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(useChatStore.getState().activeSession?.generation.reasoning).toBeNull();
+    expect(useChatStore.getState().activeSession?.generation.reasoning).toEqual({ budget_tokens: 2048 });
   });
   it('localizes skill categories while preserving filters and saves only skills after a failed attempt', async () => {
     handlers.list_installed_skills = () => [
@@ -423,10 +439,10 @@ describe('separate capability pickers', () => {
     expect(useChatStore.getState().activeSession?.skills).toEqual([]);
     handlers.update_chat_session_target = ({ input }) => ok(session({ skills: input.skill_ids.map((id: string) => ({ skill_id: id, version_id: `${id}@1`, content_hash: 'fixture' })), generation: input.generation, no_skill_confirmed: false }));
     fireEvent.click(screen.getByRole('button', { name: '摘要', exact: true }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(useChatStore.getState().activeSession?.skills.map(skill => skill.skill_id)).toEqual(['summary']);
+    await waitFor(() => expect(useChatStore.getState().activeSession?.skills.map(skill => skill.skill_id)).toEqual(['summary']));
     expect(useChatStore.getState().activeSession?.generation).toEqual({});
     expect(useChatStore.getState().sessionTargetDrafts.s1?.generation.instruction).toBe('Keep this draft');
+    await closePanel();
     fireEvent.click(screen.getByRole('button', { name: '移除技能 摘要' }));
     await waitFor(() => expect(useChatStore.getState().activeSession?.skills).toEqual([]));
   });
@@ -929,6 +945,7 @@ describe('MCP tool turn', () => {
   const startToolTurn = async () => {
     await openSession();
     await pickTools(/read_file/);
+    await closePanel();
     typeDraft('读取合成文件');
     const resolveAck = deferSend();
     fireEvent.click(sendButton());
@@ -940,30 +957,32 @@ describe('MCP tool turn', () => {
     return { args, channel, taskId: args.input.client_request_id as string };
   };
 
-  it('shows the per-send note before any tool is opened and lists connected tools on demand', async () => {
+  it('lists tools only on request and does not authorize a call while choosing them', async () => {
     await openSession();
     expect(calls('list_mcp_servers')).toHaveLength(0);
     await pickTools(/read_file/);
     expect(calls('list_mcp_tools')).toEqual([{ serverId: 'srv1' }]);
-    expect(pickerLabel(1)).toBeTruthy();
+    expect(useChatStore.getState().sessionTools.s1).toHaveLength(1);
+    expect(calls('send_chat_message')).toHaveLength(0);
+    expect(calls('advance_chat_tool_turn')).toHaveLength(0);
   });
 
   it('selects at most 8 tools', async () => {
     handlers.list_mcp_tools = () => Array.from({ length: 9 }, (_, i) => tool(`tool_${i}`));
     await openSession();
     await pickTools(...Array.from({ length: 8 }, (_, i) => new RegExp(`tool_${i}\\b`)));
-    expect(pickerLabel(8)).toBeTruthy();
+    expect(useChatStore.getState().sessionTools.s1).toHaveLength(8);
     expect((screen.getByRole('checkbox', { name: /tool_8\b/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('a send carries the chosen tools, the proposal shows the exact arguments, and the tool choice is spent', async () => {
     const { args } = await startToolTurn();
     expect(args.input.tools).toEqual([{ server_id: 'srv1', tool_name: 'read_file', schema_hash: 'hash-read_file' }]);
-    expect(screen.getByRole('heading', { name: '确认工具调用' })).toBeTruthy();
-    expect(screen.getByText('文件服务 / read_file', { selector: 'strong' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: /文件服务.*read_file/ })).toBeTruthy();
     expect(screen.getByLabelText('工具调用参数').textContent).toBe(JSON.stringify({ path: '/synthetic/a.txt', limit: 3 }, null, 2));
     expect(screen.getByText(/剩余 \d+ 秒/)).toBeTruthy();
-    expect(pickerLabel(0)).toBeTruthy();
+    expect(useChatStore.getState().sessionTools.s1).toEqual([]);
+    expect(calls('advance_chat_tool_turn')).toHaveLength(0);
   });
 
   it.each([
@@ -976,7 +995,7 @@ describe('MCP tool turn', () => {
     await waitFor(() => expect(calls('advance_chat_tool_turn')).toHaveLength(1));
     expect(calls('advance_chat_tool_turn')[0]).toEqual({ input: { task_id: taskId, action: { type, proposal_id: 'prop1' } } });
     expect(Object.keys(calls('advance_chat_tool_turn')[0])).toEqual(['input']);
-    await waitFor(() => expect(screen.queryByRole('heading', { name: '确认工具调用' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('region', { name: /文件服务.*read_file/ })).toBeNull());
 
     emit(channel, { kind: 'done', message: message(2, 'assistant', '工具结果已整理', { id: 'a1' }) });
     await screen.findByText('工具结果已整理');
@@ -991,6 +1010,7 @@ describe('MCP tool turn', () => {
   it('an expired proposal cannot be approved or denied', async () => {
     await openSession();
     await pickTools(/read_file/);
+    await closePanel();
     typeDraft('读取');
     const resolveAck = deferSend();
     fireEvent.click(sendButton());
@@ -1008,7 +1028,7 @@ describe('MCP tool turn', () => {
     handlers.advance_chat_tool_turn = () => fail(1006017);
     fireEvent.click(screen.getByRole('button', { name: /批准本次调用/ }));
     expect((await screen.findByRole('alert')).textContent).toContain('工具确认已失效、已过期或与当前提案不符。请先停止本轮并核对结果，再检查工具选择；不得重发未知动作。');
-    expect(screen.queryByRole('heading', { name: '确认工具调用' })).toBeNull();
+    expect(screen.queryByRole('region', { name: /文件服务.*read_file/ })).toBeNull();
     expect(screen.getByText(/请先点击“停止生成”结束这一轮/)).toBeTruthy();
     expect(screen.getByRole('button', { name: '停止生成' })).toBeTruthy();
   });
@@ -1016,18 +1036,18 @@ describe('MCP tool turn', () => {
   it('1006017 on send clears the tool selection and reloads the tool list on the next open', async () => {
     await openSession();
     await pickTools(/read_file/);
-    expect(pickerLabel(1)).toBeTruthy();
+    expect(useChatStore.getState().sessionTools.s1).toHaveLength(1);
+    await closePanel();
     handlers.send_chat_message = () => fail(1006017);
     typeDraft('工具已变化');
     fireEvent.click(sendButton());
     expect((await screen.findByRole('alert')).textContent).toContain('工具确认已失效');
-    await screen.findByText('工具选择已清空。请在下方重新选择工具后再发送。');
-    expect(pickerLabel(0)).toBeTruthy();
+    expect(useChatStore.getState().sessionTools.s1).toEqual([]);
     expect(draftBox().value).toBe('工具已变化');
-    expect(calls('list_mcp_servers')).toHaveLength(2);
+    const before = calls('list_mcp_servers').length;
     await pickTools(/read_file/);
-    expect(calls('list_mcp_servers')).toHaveLength(3);
-    expect(pickerLabel(1)).toBeTruthy();
+    expect(calls('list_mcp_servers').length).toBeGreaterThan(before);
+    expect(useChatStore.getState().sessionTools.s1).toHaveLength(1);
   });
 });
 
@@ -1052,6 +1072,7 @@ describe('identity', () => {
     handlers.advance_chat_tool_turn = () => ok(true);
     await openSession();
     await pickTools(/read_file/);
+    await closePanel();
     typeDraft('带工具');
     const resolveAck = deferSend();
     fireEvent.click(sendButton());
@@ -1183,7 +1204,7 @@ describe('microphone cancellation', () => {
       handlers.list_providers = () => ok([{ id: 'voice-provider', name: 'Voice service', base_url: 'https://voice.example.invalid/v1', enabled: true, credential_status: 'stored', provider_type: 'openai_compatible' }]);
       handlers.list_models = () => ok([{ model_id: 'transcriber', model_name: 'Transcriber', model_type: 'speech-transcription' }]);
       const view = await openSession();
-      fireEvent.click(screen.getByRole('button', { name: '语音输入' }));
+      await openMorePage('voice');
       await choose('转写服务', 'Voice service · voice.example.invalid');
       await choose('转写模型', 'Transcriber');
       fireEvent.click(screen.getByRole('button', { name: '开始录音' }));
@@ -1227,7 +1248,7 @@ describe('microphone cancellation', () => {
       handlers.cancel_chat_transcription = () => ok(true);
       const view = await openSession();
       typeDraft('keep this draft');
-      fireEvent.click(screen.getByRole('button', { name: '语音输入' }));
+      await openMorePage('voice');
       await choose('转写服务', 'Voice service · voice.example.invalid');
       await choose('转写模型', 'Transcriber');
       fireEvent.click(screen.getByRole('button', { name: '开始录音' }));
@@ -1259,10 +1280,9 @@ it('returns from capability management to the same DG-OS session with message an
  function Shell() {
   const tabs = useWorkspaceTabs();
   const location = useLocation(), navigate = useNavigate();
-  const skills = useCapabilityEntry('/skills'), mcp = useCapabilityEntry('/mcp');
   return <>
    {tabs.surfaces.some(item => item.id === 'ai') && <div hidden={tabs.backgroundSurfaceId !== 'ai'}><SurfaceScope id="ai" active={tabs.activeSurfaceId === 'ai'} controller={tabs.controller}><ChatWorkbench /></SurfaceScope></div>}
-   <output data-testid="capability-path">{location.pathname}:{location.pathname === '/skills' ? skills.runtime : mcp.runtime}</output>
+   <output data-testid="capability-path">{location.pathname}</output>
    <button onClick={() => navigate(-1)}>Return to conversation</button>
   </>;
  }
@@ -1274,10 +1294,11 @@ it('returns from capability management to the same DG-OS session with message an
  const original = useChatStore.getState().activeSession;
  act(() => useChatStore.getState().setSessionTargetDraft('s1', { provider_id: 'p1', model_id: 'unapplied', skill_ids: [], no_skill: true, generation: {} }));
  const draftTarget = useChatStore.getState().sessionTargetDrafts.s1;
- for (const [trigger, path] of [['选择 Skills', '/skills'], [/MCP 工具/, '/mcp']] as const) {
-  fireEvent.click(screen.getByRole('button', { name: trigger }));
+ for (const path of ['/skills', '/mcp']) {
+  if (path === '/skills') fireEvent.click(screen.getByRole('button', { name: '选择 Skills' }));
+  else await openMorePage('tools');
   fireEvent.click(within(await screen.findByRole('dialog')).getAllByRole('link').find(link => link.getAttribute('href') === path)!);
-  await waitFor(() => expect(screen.getByTestId('capability-path').textContent).toBe(`${path}:dgos`));
+  await waitFor(() => expect(screen.getByTestId('capability-path').textContent).toBe(path));
   fireEvent.click(screen.getByRole('button', { name: 'Return to conversation' }));
   await waitFor(() => expect(draftBox()).toBe(prompt));
   if (screen.queryByRole('dialog')) {
@@ -1378,7 +1399,7 @@ describe('continuous conversation safety controls', () => {
     expect(draftBox().value).toBe('保留超预算草稿');
   });
 
-  it('shows unknown model limits and requires explicit paid-summary confirmation without inserting a normal message', async () => {
+  it('requires explicit paid-summary confirmation without inserting a normal message', async () => {
     const summary = { id: 'summary-1', source_first_seq: 1, source_last_seq: 4, source_digest: 'source-sha', content: '目标与约束', provider_id: 'p1', model_id: 'chat1', created_at: 1 };
     handlers.inspect_chat_context = () => ok(chatBudget({ model_window_tokens: null, summary }));
     handlers.summarize_chat_context = args => {
@@ -1387,12 +1408,11 @@ describe('continuous conversation safety controls', () => {
     };
     await openSession();
     typeDraft('保留摘要期间草稿');
-    fireEvent.click(screen.getByRole('button', { name: '上下文预算' }));
-    await screen.findByText('此模型的窗口未知，仍受保守宿主上限约束，不按大窗口处理。');
-    expect(screen.getByText('摘要来源：消息 1–4')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '整理会话上下文' }));
+    fireEvent.click(screen.getByRole('button', { name: /^预计上下文：/ }));
+    await waitFor(() => expect(calls('inspect_chat_context').length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole('button', { name: '整理较早对话' }));
     expect(calls('summarize_chat_context')).toHaveLength(0);
-    const confirm = await screen.findByRole('dialog', { name: '允许额外的收费模型请求？' });
+    const confirm = await screen.findByRole('dialog', { name: '整理较早对话？' });
     fireEvent.click(within(confirm).getByRole('button', { name: '允许收费摘要请求' }));
     await waitFor(() => expect(calls('summarize_chat_context')).toHaveLength(1));
     expect(calls('summarize_chat_context')[0].input).toEqual({ session_id: 's1', client_request_id: expect.stringMatching(UUID), confirmed: true });
@@ -1406,16 +1426,55 @@ describe('continuous conversation safety controls', () => {
     handlers.chat_skill_catalog = ({ input }) => ok({ items: [entry], recommendations: input.query ? [{ entry, score: 4, reasons: ['lexical_name:写作'] }] : [] });
     await openSession();
     typeDraft('写作任务');
-    fireEvent.click(screen.getByRole('button', { name: '技能建议与读取权限' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择 Skills' }));
     await screen.findByRole('checkbox', { name: /写作辅助/ });
     fireEvent.click(screen.getByRole('button', { name: '为当前草稿推荐技能' }));
-    fireEvent.click(await screen.findByRole('button', { name: '加入授权子集' }));
+    const authorize = await screen.findByRole('button', { name: '加入可选技能（不自动启用）' });
+    expect(useChatStore.getState().sessionSkillAccess.s1?.authorized_skill_refs ?? []).toEqual([]);
+    expect(calls('send_chat_message')).toHaveLength(0);
+    fireEvent.click(authorize);
     expect(useChatStore.getState().sessionSkillAccess.s1).toEqual({ skill_mode: 'manual', authorized_skill_refs: [entry.pin] });
+    fireEvent.click(screen.getByText('固定版本 1.2 与哈希'));
+    expect(screen.getByText(entry.pin.content_hash)).toBeTruthy();
     fireEvent.click(screen.getByRole('checkbox', { name: '允许按需读取技能正文和资源' }));
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    await closePanel();
     deferSend(); fireEvent.click(sendButton());
     expect((await sentArgs()).input).toMatchObject({ skill_mode: 'on_demand', authorized_skill_refs: [entry.pin] });
     expect(calls('update_chat_session_target')).toHaveLength(0);
+  });
+
+  it('locks optional skill authorization during pending preflight and releases it after rejection', async () => {
+    const entry = { pin: { skill_id: 'writing', version: '1.2', content_hash: 'immutable-hash' }, name: '写作辅助', description: '写作与检查', category: 'writing', tags: ['写作'] };
+    const pending = Promise.withResolvers<unknown>();
+    handlers.chat_skill_catalog = () => ok({ items: [entry], recommendations: [] });
+    handlers.inspect_chat_context = () => pending.promise;
+    await openSession(); typeDraft('保留待检查草稿');
+    const authorized = { skill_mode: 'on_demand' as const, authorized_skill_refs: [entry.pin] };
+    act(() => useChatStore.getState().setSkillAccess('s1', authorized));
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(useChatStore.getState().preparingSessionId).toBe('s1'));
+    const remove = screen.getByRole('button', { name: '撤销可选技能：writing' }) as HTMLButtonElement;
+    expect(remove.disabled).toBe(true);
+    fireEvent.click(remove);
+    fireEvent.click(screen.getByRole('button', { name: '选择 Skills' }));
+    const optional = await screen.findByRole('checkbox', { name: /写作辅助/ }) as HTMLButtonElement;
+    const loading = screen.getByRole('checkbox', { name: '允许按需读取技能正文和资源' }) as HTMLButtonElement;
+    expect(optional.disabled).toBe(true);
+    expect(loading.disabled).toBe(true);
+    fireEvent.click(optional);
+    fireEvent.click(loading);
+    expect(useChatStore.getState().sessionSkillAccess.s1).toEqual(authorized);
+    expect(calls('send_chat_message')).toHaveLength(0);
+    await act(async () => { pending.resolve(ok(chatBudget({ can_send: false }))); });
+    await waitFor(() => expect(useChatStore.getState().preparingSessionId).toBeNull());
+    expect(optional.disabled).toBe(false);
+    expect(loading.disabled).toBe(false);
+    await closePanel();
+    expect(remove.disabled).toBe(false);
+    fireEvent.click(remove);
+    expect(useChatStore.getState().sessionSkillAccess.s1).toEqual({ skill_mode: 'on_demand', authorized_skill_refs: [] });
+    expect(draftBox().value).toBe('保留待检查草稿');
+    expect(calls('send_chat_message')).toHaveLength(0);
   });
 
   it('does not expose approval for phase or partial tool activity, scopes phases by task and ignores late activity', async () => {
@@ -1439,17 +1498,13 @@ describe('continuous conversation safety controls', () => {
     handlers.list_chat_runs = () => ok({ items: [run] }); handlers.get_chat_run = () => ok(run);
     handlers.continue_chat_run = args => ok(ackFor(args, { assistant_message_id: 'continued-assistant' }));
     await openSession(); typeDraft('原草稿保留');
-    fireEvent.click(screen.getByRole('button', { name: '运行与检查点' }));
-    fireEvent.click(await screen.findByRole('button', { name: /source-run/ }));
-    const next = await screen.findByRole('textbox', { name: '明确的下一步动作' });
-    const steps = screen.getByRole('dialog').querySelector('.chat-run-steps');
-    expect(steps?.tagName).toBe('OL');
-    expect(steps?.querySelector('summary')?.textContent).not.toMatch(/^\d+\./);
+    await openRetainedRun();
+    const next = await screen.findByRole('textbox', { name: '接下来希望助手做什么？' });
     expect(calls('continue_chat_run')).toHaveLength(0); expect(calls('advance_chat_tool_turn')).toHaveLength(0);
     fireEvent.change(next, { target: { value: '只完成下一步，不重复写入' } });
-    expect((screen.getByRole('button', { name: '开始安全的新继续运行' }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole('checkbox', { name: '我已核对确认结果，并希望为此下一步动作创建新运行' }));
-    fireEvent.click(screen.getByRole('button', { name: '开始安全的新继续运行' }));
+    expect((screen.getByRole('button', { name: '发起新请求' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: '按此意图发起新请求，不重放之前的操作或批准。' }));
+    fireEvent.click(screen.getByRole('button', { name: '发起新请求' }));
     await waitFor(() => expect(calls('continue_chat_run')).toHaveLength(1));
     expect(calls('continue_chat_run')[0].input).toEqual({ source_task_id: 'source-run', client_request_id: expect.stringMatching(UUID), intent: '只完成下一步，不重复写入', tools: [], foundation: defaultAiFoundation() });
     expect(calls('continue_chat_run')[0].input.client_request_id).not.toBe('source-run');
@@ -1457,14 +1512,13 @@ describe('continuous conversation safety controls', () => {
   });
 
   it('blocks resend and continuation for retained unknown tool outcomes', async () => {
-    const run = retainedRun({ result_unknown: true, steps: [{ id: 'unknown-write', ordinal: 1, kind: 'tool', phase: 'tool', status: 'dispatched', dispatched: true, result_unknown: true, receipt: null, created_at: 1, updated_at: 2 }] });
+    const run = retainedRun({ result_unknown: true, steps: [{ id: 'unknown-write', ordinal: 0, kind: 'tool', phase: 'tool', status: 'dispatched', dispatched: true, result_unknown: true, receipt: null, created_at: 1, updated_at: 2 }] });
     handlers.list_chat_runs = () => ok({ items: [run] }); handlers.get_chat_run = () => ok(run);
     await openSession(); typeDraft('不重复写入');
-    fireEvent.click(screen.getByRole('button', { name: '运行与检查点' }));
-    fireEvent.click(await screen.findByRole('button', { name: /source-run/ }));
-    await screen.findByRole('textbox', { name: '明确的下一步动作' });
-    expect((screen.getByRole('button', { name: '开始安全的新继续运行' }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    await openRetainedRun();
+    await screen.findByRole('textbox', { name: '接下来希望助手做什么？' });
+    expect((screen.getByRole('button', { name: '发起新请求' }) as HTMLButtonElement).disabled).toBe(true);
+    await closePanel();
     expect(sendButton().disabled).toBe(true);
     expect(calls('continue_chat_run')).toHaveLength(0); expect(calls('send_chat_message')).toHaveLength(0);
     expect(draftBox().value).toBe('不重复写入');
@@ -1473,7 +1527,7 @@ describe('continuous conversation safety controls', () => {
   it('remembers only tool preference and rechecks the schema before the next send', async () => {
     await openSession(); await pickTools(/read_file/);
     fireEvent.click(screen.getByRole('checkbox', { name: '记住本会话的工具选择' }));
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    await closePanel();
     const resolveAck = deferSend(); typeDraft('先读取'); fireEvent.click(sendButton());
     const args = await sentArgs(); await settle(resolveAck, ackFor(args));
     expect(useChatStore.getState().sessionTools.s1).toHaveLength(1);
@@ -1485,26 +1539,26 @@ describe('continuous conversation safety controls', () => {
     expect(draftBox().value).toBe('再读取');
   });
   it('records an explicit user-reported external outcome without claiming a tool success or replaying it', async () => {
-    let run = retainedRun({ result_unknown: true, steps: [{ id: 'unknown-write', ordinal: 1, kind: 'tool', phase: 'tool', status: 'dispatched', dispatched: true, result_unknown: true, receipt: null, created_at: 1, updated_at: 2 }] });
+    let run = retainedRun({ result_unknown: true, steps: [{ id: 'unknown-write', ordinal: 0, kind: 'tool', phase: 'tool', status: 'dispatched', dispatched: true, result_unknown: true, receipt: null, created_at: 1, updated_at: 2 }] });
     handlers.list_chat_runs = () => ok({ items: [run] }); handlers.get_chat_run = () => ok(run);
     handlers.resolve_chat_run_step = ({ input }) => {
       run = { ...run, result_unknown: false, steps: [{ ...run.steps[0], status: 'manually_resolved', result_unknown: false, receipt: { source: 'user_report', outcome: input.outcome, note: input.note } }] };
       return ok(run);
     };
     await openSession(); typeDraft('保留原草稿');
-    fireEvent.click(screen.getByRole('button', { name: '运行与检查点' }));
-    fireEvent.click(await screen.findByRole('button', { name: /source-run/ }));
-    fireEvent.click(await screen.findByText('记录步骤 1 的人工外部核实'));
+    await openRetainedRun();
+    fireEvent.click(await screen.findByText('记录第 1 项操作的核查结果'));
     expect(calls('resolve_chat_run_step')).toHaveLength(0);
-    fireEvent.click(screen.getByRole('button', { name: '我已核实动作完成' }));
-    fireEvent.change(screen.getByRole('textbox', { name: '你核实结果的方式与依据' }), { target: { value: '在外部服务管理页核对唯一回执' } });
-    expect((screen.getByRole('button', { name: '保存用户核实报告' }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole('checkbox', { name: '我已核实外部结果，保存为用户报告，而非权威工具成功回执' }));
-    fireEvent.click(screen.getByRole('button', { name: '保存用户核实报告' }));
+    fireEvent.click(screen.getByRole('button', { name: '我已核查：操作已完成' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '你如何核查？请附上结果或参考记录。' }), { target: { value: '在外部服务管理页核对唯一回执' } });
+    expect((screen.getByRole('button', { name: '保存核查结果' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: '我已在此回复之外核查实际结果，并理解这只是我的报告，不是服务出具的权威回执。' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存核查结果' }));
     await waitFor(() => expect(calls('resolve_chat_run_step')).toHaveLength(1));
     expect(calls('resolve_chat_run_step')[0]).toEqual({ input: { task_id: 'source-run', step_id: 'unknown-write', confirmed: true, outcome: 'completed', note: '在外部服务管理页核对唯一回执' } });
-    await screen.findAllByText('已人工处理（用户报告）');
+    await screen.findAllByText('用户报告的结果');
     expect(calls('advance_chat_tool_turn')).toHaveLength(0); expect(calls('continue_chat_run')).toHaveLength(0);
+    await closePanel();
     expect(draftBox().value).toBe('保留原草稿');
   });
 
@@ -1528,11 +1582,10 @@ describe('continuous conversation safety controls', () => {
     handlers.continue_chat_run = args => ok(ackFor(args, { assistant_message_id: 'new-intent-assistant' }));
     await openSession(); typeDraft('不能直接重发'); expect(sendButton().disabled).toBe(true);
     expect(screen.queryByRole('button', { name: '重新生成' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '运行与检查点' }));
-    fireEvent.click(await screen.findByRole('button', { name: /source-run/ }));
-    fireEvent.change(await screen.findByRole('textbox', { name: '明确的下一步动作' }), { target: { value: '根据保留片段，执行一个新的下一步' } });
-    fireEvent.click(screen.getByRole('checkbox', { name: '我已核对确认结果，并希望为此下一步动作创建新运行' }));
-    fireEvent.click(screen.getByRole('button', { name: '开始安全的新继续运行' }));
+    await openRetainedRun();
+    fireEvent.change(await screen.findByRole('textbox', { name: '接下来希望助手做什么？' }), { target: { value: '根据保留片段，执行一个新的下一步' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: '按此意图发起新请求，不重放之前的操作或批准。' }));
+    fireEvent.click(screen.getByRole('button', { name: '发起新请求' }));
     await waitFor(() => expect(calls('continue_chat_run')).toHaveLength(1));
     expect(calls('continue_chat_run')[0].input.client_request_id).not.toBe('source-run');
     expect(useChatStore.getState().messages.find(item => item.id === 'm2')?.result_unknown).toBe(true);
@@ -1557,13 +1610,13 @@ describe('shared foundation context controls', () => {
 
   it('rejects oversized resources before reading the file or invoking import', async () => {
     await openSession();
-    fireEvent.click(screen.getByRole('button', { name: '上下文预算' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加材料' }));
     const file = new File(['too large'], 'large.md', { type: 'text/markdown' });
     Object.defineProperty(file, 'size', { value: 1024 * 1024 + 1 });
     const read = vi.spyOn(FileReader.prototype, 'readAsDataURL');
     try {
-      fireEvent.change(await screen.findByLabelText('导入上下文资料'), { target: { files: [file] } });
-      await screen.findByText('请选择不超过 1 MiB 的 UTF-8 文本或 Markdown，或不超过 8 MiB 的 PNG、JPEG、WebP 图片。');
+      fireEvent.change(await screen.findByLabelText('导入参考材料'), { target: { files: [file] } });
+      await screen.findByRole('alert');
       expect(read).not.toHaveBeenCalled();
       expect(calls('chat_import_ai_resource')).toHaveLength(0);
     } finally { read.mockRestore(); }
@@ -1572,11 +1625,11 @@ describe('shared foundation context controls', () => {
   it('does not import a file that finishes reading after its resource controls unmount', async () => {
     handlers.list_chat_sessions = () => ok({ items: [session(), session({ id: 's2', title: '另一会话' })], next_cursor: null });
     await openSession();
-    fireEvent.click(screen.getByRole('button', { name: '上下文预算' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加材料' }));
     let reader: FileReader | undefined;
     const read = vi.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(function (this: FileReader) { reader = this; });
     try {
-      fireEvent.change(await screen.findByLabelText('导入上下文资料'), { target: { files: [new File(['source'], 'source.md', { type: 'text/markdown' })] } });
+      fireEvent.change(await screen.findByLabelText('导入参考材料'), { target: { files: [new File(['source'], 'source.md', { type: 'text/markdown' })] } });
       expect(reader).toBeDefined();
       await act(async () => { await useChatStore.getState().selectSession(session({ id: 's2', title: '另一会话' })); });
       await act(async () => {
@@ -1587,35 +1640,52 @@ describe('shared foundation context controls', () => {
     } finally { read.mockRestore(); }
   });
 
-  it('imports without selection, then inspects and sends exactly the selected immutable range and schema', async () => {
-    setLocaleForTesting('zh-CN');
-    const resource = { id: 'context-1', name: 'source.md', mime: 'text/markdown', bytes_len: 12, sha256: 'immutable-context-hash', expires_at: 9999999999 };
+  it('imports without consent to send, then previews Unicode and sends only the selected immutable bytes with the schema', async () => {
+    const source = '前言\r\nA😀中e\u0301尾';
+    const bytes = new TextEncoder().encode(source);
+    const resource = { id: 'context-1', name: 'source.md', mime: 'text/markdown', bytes_len: bytes.length, sha256: 'immutable-context-hash', expires_at: 9999999999 };
     handlers.chat_import_ai_resource = () => ok(resource);
     handlers.chat_delete_ai_resource = () => ok(true);
+    handlers.preview_chat_resource = () => ok({ base64: btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join('')), mime: resource.mime, start: 0, bytes: bytes.length, total_bytes: bytes.length, truncated: false });
     await openSession(); typeDraft('使用所选资料');
-    fireEvent.click(screen.getByRole('button', { name: '上下文预算' }));
-    fireEvent.change(await screen.findByLabelText('导入上下文资料'), { target: { files: [new File(['source text!'], 'source.md', { type: 'text/markdown' })] } });
-    const include = await screen.findByRole('checkbox', { name: '提供 source.md' });
-    expect(include.getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(screen.getByRole('button', { name: '添加材料' }));
+    fireEvent.change(await screen.findByLabelText('导入参考材料'), { target: { files: [new File([source], 'source.md', { type: 'text/markdown' })] } });
+    const include = await screen.findByRole('checkbox', { name: '引用整个文件：source.md' });
+    expect(useChatStore.getState().sessionFoundation.s1?.context_refs ?? []).toEqual([]);
     expect(calls('chat_import_ai_resource')[0]).toMatchObject({ sessionId: 's1', input: { name: 'source.md', mime: 'text/markdown', base64: expect.any(String) } });
     fireEvent.click(include);
-    fireEvent.change(screen.getByLabelText('起始字节：source.md'), { target: { value: '2' } });
-    fireEvent.change(screen.getByLabelText('最大字节数：source.md'), { target: { value: '4' } });
-    fireEvent.click(screen.getByRole('combobox', { name: '提供方式：source.md' }));
-    fireEvent.click(await screen.findByRole('option', { name: '按需读取' }));
+    const whole = [{ resource_id: resource.id, sha256: resource.sha256, start: 0, max_bytes: bytes.length, mode: 'inline' }];
+    expect(useChatStore.getState().sessionFoundation.s1.context_refs).toEqual(whole);
+    fireEvent.click(screen.getByRole('button', { name: '预览并选择片段' }));
+    const preview = await screen.findByRole('textbox', { name: '在只读预览中选择文字' }) as HTMLTextAreaElement;
+    expect(calls('preview_chat_resource')).toEqual([{ input: { session_id: 's1', resource_id: resource.id, sha256: resource.sha256 } }]);
+    expect(preview.value).toBe('前言\nA😀中e\u0301尾');
+    preview.setSelectionRange(5, 9);
+    fireEvent.select(preview);
+    expect(useChatStore.getState().sessionFoundation.s1.context_refs).toEqual(whole);
+    expect(calls('send_chat_message')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: '引用所选文字' }));
+    await choose('模型如何接收这些文字', '需要时读取');
+    await closePanel();
+    fireEvent.click(screen.getByRole('button', { name: '回答偏好' }));
+    fireEvent.click(screen.getByText('高级参数与输出格式'));
     fireEvent.click(screen.getByRole('checkbox', { name: '按 JSON Schema 校验输出' }));
-    fireEvent.change(screen.getByLabelText('输出 JSON Schema'), { target: { value: '{"type":"object"}' } });
-    fireEvent.click(screen.getByRole('button', { name: '检查当前上下文' }));
-    const foundation = { ...defaultAiFoundation(), context_refs: [{ resource_id: 'context-1', sha256: resource.sha256, start: 2, max_bytes: 4, mode: 'on_demand' }], output: { kind: 'json_schema', schema: { type: 'object' } } };
-    await waitFor(() => expect(calls('inspect_chat_context').at(-1)?.input.foundation).toEqual(foundation));
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    fireEvent.change(screen.getByRole('textbox', { name: '输出 JSON Schema' }), { target: { value: '{"type":"object"}' } });
+    await closePanel();
+    const foundation = { ...defaultAiFoundation(), context_refs: [{ resource_id: 'context-1', sha256: resource.sha256, start: 9, max_bytes: 10, mode: 'on_demand' }], output: { kind: 'json_schema', schema: { type: 'object' } } };
+    await act(async () => { await useChatStore.getState().inspectContext('s1', '使用所选资料'); });
+    expect(calls('inspect_chat_context').at(-1)?.input.foundation).toEqual(foundation);
+    expect(calls('send_chat_message')).toHaveLength(0);
+    expect(calls('update_chat_session_target')).toHaveLength(0);
     const resolveAck = deferSend(); fireEvent.click(sendButton());
     const args = await sentArgs(); expect(args.input.foundation).toEqual(foundation);
     await settle(resolveAck, ackFor(args));
     emit(args.onEvent, { kind: 'done', message: message(2, 'assistant', '{}', { id: 'a1' }) });
-    fireEvent.click(screen.getByRole('button', { name: '上下文预算' }));
-    fireEvent.click(await screen.findByRole('button', { name: '删除上下文资料' }));
-    await waitFor(() => expect(screen.queryByRole('checkbox', { name: '提供 source.md' })).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: '添加材料' }));
+    fireEvent.click(screen.getByRole('button', { name: '删除托管副本…' }));
+    expect(calls('chat_delete_ai_resource')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: '删除托管副本', exact: true }));
+    await waitFor(() => expect(screen.queryByRole('checkbox', { name: '引用整个文件：source.md' })).toBeNull());
     expect(calls('chat_delete_ai_resource')[0]).toEqual({ sessionId: 's1', resourceId: 'context-1' });
     expect(useChatStore.getState().sessionFoundation.s1.context_refs).toEqual([]);
   });
@@ -1623,11 +1693,11 @@ describe('shared foundation context controls', () => {
   it('blocks invalid schema before inspect/send and clears session controls on account reset', async () => {
     setLocaleForTesting('zh-CN');
     await openSession(); typeDraft('保留草稿');
-    fireEvent.click(screen.getByRole('button', { name: '上下文预算' }));
-    fireEvent.click(await screen.findByRole('checkbox', { name: '按 JSON Schema 校验输出' }));
-    fireEvent.change(screen.getByLabelText('输出 JSON Schema'), { target: { value: '{invalid' } });
-    expect(screen.getByText('发送前请填写合法的 JSON 输出结构。')).toBeTruthy();
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: '回答偏好' }));
+    fireEvent.click(screen.getByText('高级参数与输出格式'));
+    fireEvent.click(screen.getByRole('checkbox', { name: '按 JSON Schema 校验输出' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '输出 JSON Schema' }), { target: { value: '{invalid' } });
+    await closePanel();
     const before = calls('inspect_chat_context').length;
     await act(async () => { expect(await useChatStore.getState().send('保留草稿')).toBe('rejected'); });
     expect(calls('inspect_chat_context')).toHaveLength(before);
@@ -1659,7 +1729,7 @@ describe('store-owned preflight and authoritative uncertainty', () => {
     handlers.list_chat_sessions = () => ok({ items: [session(), session({ id: 's2', title: '另一会话' })], next_cursor: null });
     await openSession();
     await pickTools(/read_file/);
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    await closePanel();
     typeDraft('只发送一次');
     const oldTools = Promise.withResolvers<unknown>();
     handlers.list_mcp_tools = () => oldTools.promise;
@@ -1710,6 +1780,40 @@ describe('store-owned preflight and authoritative uncertainty', () => {
     expect(calls('summarize_chat_context')).toHaveLength(0);
     expect(calls('get_chat_run')).toHaveLength(0);
     expect(useChatStore.getState().preparingSessionId).toBeNull();
+  });
+
+  it('locks tool consent and voice controls during store-owned preflight after Composer remount', async () => {
+    setLocaleForTesting('zh-CN');
+    const pending = Promise.withResolvers<unknown>();
+    handlers.inspect_chat_context = () => pending.promise;
+    handlers.list_chat_sessions = () => ok({ items: [session(), session({ id: 's2', title: '另一会话' })], next_cursor: null });
+    await openSession();
+    await pickTools(/read_file/); await closePanel();
+    const selected = useChatStore.getState().sessionTools.s1;
+    typeDraft('保留工具选择'); fireEvent.click(sendButton());
+    await waitFor(() => expect(useChatStore.getState().preparingSessionId).toBe('s1'));
+    await act(async () => { await useChatStore.getState().selectSession(session({ id: 's2', title: '另一会话' })); });
+    await act(async () => { await useChatStore.getState().selectSession(session()); });
+    const remove = screen.getByRole('button', { name: '移除工具 read_file' }) as HTMLButtonElement;
+    expect(remove.disabled).toBe(true); fireEvent.click(remove);
+    await openMorePage('tools');
+    const toolChoice = await screen.findByRole('checkbox', { name: /read_file/ }) as HTMLButtonElement;
+    const remember = screen.getByRole('checkbox', { name: '记住本会话的工具选择' }) as HTMLButtonElement;
+    expect(toolChoice.disabled).toBe(true); expect(remember.disabled).toBe(true);
+    fireEvent.click(toolChoice); fireEvent.click(remember);
+    expect(useChatStore.getState().sessionTools.s1).toEqual(selected);
+    expect(useChatStore.getState().sessionRememberTools.s1 ?? false).toBe(false);
+    await openMorePage('voice');
+    expect((screen.getByRole('combobox', { name: '转写服务' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('combobox', { name: '转写模型' }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { pending.resolve(ok(chatBudget({ can_send: false }))); });
+    await waitFor(() => expect(useChatStore.getState().preparingSessionId).toBeNull());
+    expect((screen.getByRole('combobox', { name: '转写服务' }) as HTMLButtonElement).disabled).toBe(false);
+    await closePanel();
+    expect(remove.disabled).toBe(false);
+    expect(draftBox().value).toBe('保留工具选择');
+    expect(calls('send_chat_message')).toHaveLength(0);
+    expect(calls('transcribe_chat_audio')).toHaveLength(0);
   });
 
   it('releases rejected and failed preflight reservations without dispatching', async () => {

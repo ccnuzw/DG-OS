@@ -3,6 +3,7 @@
 // messages (which may contain paths or tokens) never reach the screen.
 export const HOST_CODES: readonly string[] = [
   'session_invalid', 'session_not_found', 'session_not_saved', 'session_index_invalid', 'session_index_unavailable',
+  'session_not_started',
   'workspace_untrusted', 'invalid_workspace', 'workspace_changed', 'workspace_busy', 'invalid_request_id', 'cancelled',
   'takeover_stale', 'takeover_confirmation_required',
   'task_not_found', 'project_not_found', 'invalid_project', 'invalid_task', 'invalid_selection', 'project_archived', 'project_busy',

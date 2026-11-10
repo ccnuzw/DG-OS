@@ -19,6 +19,7 @@ pub(super) struct OperationsState {
     unsupported: HashSet<String>,
     incomplete: bool,
     automatic: Vec<AutomaticRun>,
+    compact_confirmed: bool,
     seen_turns: HashSet<String>,
 }
 struct AutomaticRun { run_id: String, turn_id: String, status: Option<String> }
@@ -118,6 +119,15 @@ fn continuation(reply: &Value, cursors: &mut HashSet<String>) -> Result<Option<S
 }
 
 impl CodexSession {
+    pub(crate) async fn compact_supported(&self) -> bool {
+        let view = self.view.lock().await;
+        if !self.native_available() || matches!(view.status.as_str(), "closed" | "unknown" | "starting") { return false; }
+        // Installed rust-v0.167.0 exported schema includes thread/compact/start (D136 §7).
+        // Other versions require direct successful protocol evidence, never a semver guess.
+        let verified_schema = view.cli_version.as_deref().and_then(|version| version.strip_prefix("codex-cli ")) == Some(crate::cli::codex_protocol_reference().version);
+        let turn = self.turn.lock().await;
+        !turn.operations.unsupported.contains("compact") && (verified_schema || turn.operations.compact_confirmed)
+    }
     pub(crate) async fn automatic_runs(&self) -> Vec<String> { self.turn.lock().await.operations.automatic.iter().map(|run| run.run_id.clone()).collect() }
     pub(crate) async fn automatic_run_status(&self, run_id: &str) -> Option<String> {
         self.turn.lock().await.operations.automatic.iter().find(|run| run.run_id == run_id).and_then(|run| run.status.clone())
@@ -309,14 +319,18 @@ impl CodexSession {
             view.error = None;
         }
         let result = self.operation_rpc(method, params, domain).await.and_then(|reply| {
+            if method == "thread/compact/start" && !reply.is_object() { return Err("result_unknown".into()); }
             if method == "review/start" && reply["reviewThreadId"].as_str() != expected_thread.as_deref() { Err("result_unknown".into()) } else { Ok(reply) }
         });
         let mut view = self.view.lock().await;
         let mut turn = self.turn.lock().await;
+        if method == "thread/compact/start" && result.is_ok() { turn.operations.compact_confirmed = true; }
         turn.starting = false;
         turn.deferred_bytes = 0;
         let result = if matches!(view.status.as_str(), "unknown" | "closed") { Err("result_unknown".into()) } else { result };
-        let identity = result.as_ref().ok().and_then(|reply| reply.pointer("/turn/id")).and_then(Value::as_str).filter(|id| valid_id(id)).map(str::to_owned);
+        let identity = if method == "thread/compact/start" { None } else {
+            result.as_ref().ok().and_then(|reply| reply.pointer("/turn/id")).and_then(Value::as_str).filter(|id| valid_id(id)).map(str::to_owned)
+        };
         let success = result.is_ok() && (identity.is_some() || method == "thread/compact/start");
         let mut replies = Vec::new();
         if success {
@@ -354,7 +368,10 @@ impl CodexSession {
         let root = self.snapshot().await.native_id.ok_or("session_closed")?;
         match action {
             CodexAction::Review { target } => self.operation_turn("review/start", json!({"threadId":root,"target":target,"delivery":"inline"}), run_id, "review").await?,
-            CodexAction::Compact {} => self.operation_turn("thread/compact/start", json!({"threadId":root}), run_id, "compact").await?,
+            CodexAction::Compact {} => {
+                if !self.compact_supported().await { return Err("codex_operation_unsupported".into()); }
+                self.operation_turn("thread/compact/start", json!({"threadId":root}), run_id, "compact").await?;
+            }
             CodexAction::QueueStart { submission_id } => {
                 let (rows, incomplete) = self.operation_pages("thread/queue/list", json!({"threadId":root}), "queue").await?;
                 if incomplete { return Err("codex_observation_incomplete".into()); }

@@ -4,7 +4,7 @@ import { ArrowDown, ArrowUp, Check, ChevronDown, File, GitBranch, History, List,
 import { useLocale } from '../../i18n';
 import { useDevelopment } from '../../stores/developmentStore';
 import { contextGeneration } from '../../stores/developmentSelection';
-import { deliveryRequests, dispatchDeliveryRequest, executeDevelopmentGit, forgetDeliveryRequests, previewDevelopmentGitPull, readDevelopmentGit, readDevelopmentWorkspaces, reconcileDevelopmentGit, type GitAction, type GitFile, type GitHistoryEntry, type GitOperation, type GitPullPreview, type GitReview, type WorkspaceView } from '../../stores/developmentDelivery';
+import { deliveryRequests, dispatchDeliveryRequest, executeDevelopmentGit, forgetDeliveryRequests, previewDevelopmentGitPull, readDevelopmentGit, readDevelopmentStagedDiff, readDevelopmentWorkspaces, reconcileDevelopmentGit, type GitAction, type GitFile, type GitHistoryEntry, type GitOperation, type GitPullPreview, type GitReview, type WorkspaceView } from '../../stores/developmentDelivery';
 import { readDevelopmentGitDetails, type GitDetails } from '../../stores/developmentGitDetails';
 import { inspectDevelopmentEntry, mutateDevelopmentEntry, openDevelopmentEntryDirectory, readDevelopmentProjectGit, type ProjectGitOverview } from '../../stores/developmentExplorer';
 import { useScopedDevelopmentDraft } from '../../stores/developmentDrafts';
@@ -25,7 +25,7 @@ export interface GitPanelProps {
 }
 type Overview = GitReview | ProjectGitOverview;
 type ActionStatus = GitOperation['status'] | 'cancelled' | 'stale';
-const sameReview = (a: Overview, b: Overview) => (!('review_token' in a) || 'review_token' in b && a.review_token === b.review_token) && a.path === b.path && a.kind === b.kind && a.branch === b.branch && a.head === b.head && a.staged_diff === b.staged_diff && a.worktree_diff === b.worktree_diff && JSON.stringify(a.files) === JSON.stringify(b.files) && JSON.stringify(a.conflicts) === JSON.stringify(b.conflicts);
+const sameReview = (a: Overview, b: Overview) => a.path === b.path && a.kind === b.kind && a.snapshot_token === b.snapshot_token;
 const staged = (file: GitFile) => !!file.index.trim() && file.index !== '?';
 const unstaged = (file: GitFile) => !!file.worktree.trim() || file.index === '?';
 
@@ -37,6 +37,7 @@ function ScopedGitPanel({ projectId, taskId: initialTaskId, workspacePath, ensur
   const { t, locale } = useLocale();
   const resolvedTask = useRef(initialTaskId), mounted = useRef(true), working = useRef(false), refreshPending = useRef(false), refreshTicket = useRef(0);
   const [review, setReview] = useState<Overview | null>(null), [details, setDetails] = useState<GitDetails | null>(null);
+  const reviewRef = useRef(review); reviewRef.current = review;
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null), [operation, setOperation] = useState<GitOperation | null>(null);
   const [operations, setOperations] = useState<GitOperation[]>([]), [tree, setTree] = useState(true);
   const [network, setNetwork] = useState<'push' | 'pull' | null>(null), [remote, setRemote] = useState(''), [remoteBranch, setRemoteBranch] = useState('');
@@ -56,6 +57,10 @@ function ScopedGitPanel({ projectId, taskId: initialTaskId, workspacePath, ensur
     if (pending?.status === 'pending') deleteRef.current.setValue({ operation: { ...pending, status: 'unknown' } });
   }, []);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; ++refreshTicket.current; ++historyTicket.current; ++generation.current; controller.current?.abort(); }; }, []);
+  useEffect(() => {
+    if (!controller.current) return;
+    ++generation.current; controller.current.abort(); controller.current = null; setGenerating(false);
+  }, [review?.path, review?.snapshot_token]);
   const blocked = operations.some(item => item.status === 'pending' || item.status === 'unknown') || !!deleteDraft.value.operation || !!worktreeDraft.value.operation;
   function guard() { const epoch = useDevelopment.getState().epoch, context = contextGeneration(); return () => mounted.current && epoch === useDevelopment.getState().epoch && context === contextGeneration(); }
   function receipts(workspace: WorkspaceView, task: string | null) {
@@ -74,7 +79,7 @@ function ScopedGitPanel({ projectId, taskId: initialTaskId, workspacePath, ensur
     working.current = true; setBusy(true); setError(null);
     try {
       const task = resolvedTask.current;
-      const [g, d, w] = await Promise.all([task ? readDevelopmentGit(task) : readDevelopmentProjectGit(projectId), readDevelopmentGitDetails({ project_id: projectId, task_id: task }), readDevelopmentWorkspaces({ project_id: projectId, task_id: task })]);
+      const [g, d, w] = await Promise.all([readDevelopmentProjectGit(projectId, task), readDevelopmentGitDetails({ project_id: projectId, task_id: task }), readDevelopmentWorkspaces({ project_id: projectId, task_id: task })]);
       if (!valid() || ticket !== refreshTicket.current) return;
       if (g.ok) { setReview(g.value); setPreview(null); } else setReview(null);
       setDetails(d.ok ? d.value : null);
@@ -177,14 +182,20 @@ function ScopedGitPanel({ projectId, taskId: initialTaskId, workspacePath, ensur
     if (result === 'succeeded' && push && valid()) { setPreview(null); setRemote(''); setRemoteBranch(''); setNetwork('push'); }
   }
   async function generate() {
-    if (!onGenerateMessage || !review?.staged_diff || generating) return;
-    const valid = guard(), ticket = ++generation.current, before = edits.current, message = draftRef.current.value;
+    if (!onGenerateMessage || !review?.files.some(staged) || generating || busy || blocked) return;
+    const valid = guard(), expected = review, ticket = ++generation.current, before = edits.current, message = draftRef.current.value;
     const abort = new AbortController(); controller.current = abort; setGenerating(true); setGenerationError(null);
+    const active = () => valid() && ticket === generation.current && !abort.signal.aborted;
     try {
-      const text = await onGenerateMessage(review.staged_diff, abort.signal);
-      if (valid() && ticket === generation.current && !abort.signal.aborted && before === edits.current && message === draftRef.current.value && text !== null) draftRef.current.setValue(text);
-    } catch (failure) { if (valid() && ticket === generation.current && !abort.signal.aborted) setGenerationError(failure instanceof Error ? failure.message : t('gitPanel.generation_failed')); }
-    finally { if (valid() && ticket === generation.current) setGenerating(false); }
+      const preview = await readDevelopmentStagedDiff({ project_id: projectId, task_id: resolvedTask.current });
+      if (!active()) return;
+      if (!preview.ok) { setGenerationError(errorText(preview.code)); return; }
+      if (preview.value.snapshot_token !== expected.snapshot_token || !reviewRef.current || !sameReview(expected, reviewRef.current)) { setGenerationError(errorText('git_review_stale')); return; }
+      if (before !== edits.current || message !== draftRef.current.value) return;
+      const text = await onGenerateMessage(preview.value.diff, abort.signal);
+      if (active() && before === edits.current && message === draftRef.current.value && text !== null) draftRef.current.setValue(text);
+    } catch (failure) { if (active()) setGenerationError(failure instanceof Error ? failure.message : t('gitPanel.generation_failed')); }
+    finally { if (controller.current === abort) controller.current = null; if (valid() && ticket === generation.current) setGenerating(false); }
   }
   async function prepareNetwork() {
     if (!review || !remote || !remoteBranch || working.current || blocked) return;
@@ -296,6 +307,7 @@ function ScopedGitPanel({ projectId, taskId: initialTaskId, workspacePath, ensur
   const totals = details?.files.reduce((sum, file) => ({ added: sum.added + (file.index_added ?? 0) + (file.worktree_added ?? 0), deleted: sum.deleted + (file.index_deleted ?? 0) + (file.worktree_deleted ?? 0) }), { added: 0, deleted: 0 });
   const git = review?.kind === 'git', disabled = busy || blocked;
   const networkBranches = network === 'push' ? (review?.branch ? [review.branch] : []) : details?.remote_branches[remote] ?? [];
+  const hasStaged = !!review?.files.some(staged), canCommit = hasStaged || !!review?.merge_heads.length;
   function iconButton(label: string, icon: ReactNode, action: () => void, unavailable = false) {
     return <button type="button" className="git-icon" title={label} aria-label={label} disabled={unavailable} onClick={event => { event.preventDefault(); event.stopPropagation(); action(); }}>{icon}</button>;
   }
@@ -361,8 +373,8 @@ function ScopedGitPanel({ projectId, taskId: initialTaskId, workspacePath, ensur
     <div className="git-bottom">
       <details className="git-history" open><summary><History size={14} aria-hidden="true" />{t('delivery.gitHistory')}<span className="git-count">{details ? `${details.history.length}${details.history_truncated ? '+' : ''}` : '—'}</span></summary>{details ? historyList(details.history, details.history_truncated) : <p className="git-feedback">{t('delivery.unknown')}</p>}</details>
       <section className="git-commit"><label htmlFor={`git-message-${projectId}`}>{t('delivery.commitMessage')}</label><textarea id={`git-message-${projectId}`} value={draft.value} placeholder={t('gitPanel.messagePlaceholder')} onChange={event => { ++edits.current; draft.setValue(event.target.value); }} rows={3} />
-        <div className="git-commit-tools">{generating ? <button type="button" className="git-generate" onClick={() => { ++generation.current; controller.current?.abort(); setGenerating(false); }}>{t('gitPanel.cancelGeneration')}</button> : <button type="button" className="git-generate" disabled={!onGenerateMessage || !review?.staged_diff || busy || blocked} title={t(onGenerateMessage ? 'gitPanel.generateHint' : 'gitPanel.generationUnavailable')} onClick={() => void generate()}><Sparkles size={13} aria-hidden="true" />{t('gitPanel.generate')}</button>}{draft.dirty ? <button type="button" className="git-draft-discard" onClick={() => void draft.discard()}>{t('dev.discardDraft')}</button> : null}</div>
-        <div className="git-commit-buttons"><button type="button" className="git-commit-primary" disabled={!git || disabled || !draft.value.trim() || (!review?.staged_diff && !(review && 'merge_heads' in review && review.merge_heads.length)) || !!review?.conflicts.length} onClick={() => void commit()}><Check size={14} aria-hidden="true" />{t('delivery.commit')}</button><DropdownMenu items={[{ kind: 'item', id: 'commit-push', label: t('gitPanel.commitPush'), disabled: disabled || !draft.value.trim() || !review?.staged_diff || !!review?.conflicts.length || !details?.remotes.length || !review?.branch, onSelect: () => void commit(true) }]} trigger={<button type="button" className="git-commit-menu" aria-label={t('gitPanel.commitActions')} disabled={disabled}><ChevronDown size={14} /></button>} /></div>
+        <div className="git-commit-tools">{generating ? <button type="button" className="git-generate" onClick={() => { ++generation.current; controller.current?.abort(); controller.current = null; setGenerating(false); }}>{t('gitPanel.cancelGeneration')}</button> : <button type="button" className="git-generate" disabled={!onGenerateMessage || !hasStaged || busy || blocked} title={t(onGenerateMessage ? 'gitPanel.generateHint' : 'gitPanel.generationUnavailable')} onClick={() => void generate()}><Sparkles size={13} aria-hidden="true" />{t('gitPanel.generate')}</button>}{draft.dirty ? <button type="button" className="git-draft-discard" onClick={() => void draft.discard()}>{t('dev.discardDraft')}</button> : null}</div>
+        <div className="git-commit-buttons"><button type="button" className="git-commit-primary" disabled={!git || disabled || !draft.value.trim() || !canCommit || !!review?.conflicts.length} onClick={() => void commit()}><Check size={14} aria-hidden="true" />{t('delivery.commit')}</button><DropdownMenu items={[{ kind: 'item', id: 'commit-push', label: t('gitPanel.commitPush'), disabled: !git || disabled || !draft.value.trim() || !canCommit || !!review?.conflicts.length || !details?.remotes.length || !review?.branch, onSelect: () => void commit(true) }]} trigger={<button type="button" className="git-commit-menu" aria-label={t('gitPanel.commitActions')} disabled={disabled}><ChevronDown size={14} /></button>} /></div>
       </section>
       <footer className="git-statusbar"><GitBranch size={12} aria-hidden="true" /><span title={review?.path}>{review?.branch ?? t('delivery.unknown')}</span><span title={details?.upstream ?? t('gitPanel.noUpstream')}>↑{details?.ahead ?? '—'} ↓{details?.behind ?? '—'}</span><span className="git-status-counts">{t('gitPanel.statusCounts', { modified: review?.files.filter(file => file.index !== '?' && (staged(file) || unstaged(file))).length ?? '—', untracked: review?.files.filter(file => file.index === '?').length ?? '—' })}</span></footer>
     </div>

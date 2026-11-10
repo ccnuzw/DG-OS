@@ -31,22 +31,35 @@ pub struct GitReview {
     pub common_dir: Option<String>, pub common_identity: Option<String>,
     pub branch: Option<String>, pub head: Option<String>, pub merge_heads: Vec<String>,
     pub files: Vec<GitFileStatus>, pub index: Vec<GitIndexEntry>, pub conflicts: Vec<GitIndexEntry>,
-    pub staged_diff: String, pub worktree_diff: String, pub review_token: String,
+    // Older persisted receipts have no observation token; they remain evidence,
+    // never an authority to execute a new request.
+    #[serde(default)]
+    pub snapshot_token: String,
+    pub review_token: String,
     pub initial_staged_paths: Vec<String>,
     pub file_versions: BTreeMap<String, String>,
     pub baseline_version: String,
 }
-/// Original project Git status without mutation authority or file-content requirements.
+/// Scoped Git status and observation identity, without mutation authority.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProjectGitOverview {
     pub kind: String, pub path: String, pub branch: Option<String>, pub head: Option<String>,
     pub files: Vec<GitFileStatus>, pub conflicts: Vec<GitIndexEntry>,
-    pub staged_diff: String, pub worktree_diff: String,
+    pub snapshot_token: String, pub merge_heads: Vec<String>,
 }
 struct GitStatus {
     overview: ProjectGitOverview,
     index: Vec<GitIndexEntry>,
+    common: Option<(String, String)>,
+    file_versions: BTreeMap<String, String>,
+    complete: bool,
+    hidden_index: bool,
 }
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitScopeInput { pub project_id: String, pub task_id: Option<String> }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GitStagedDiff { pub snapshot_token: String, pub diff: String }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectGitHistoryInput {
@@ -270,67 +283,66 @@ impl AgentManager {
                 let has_git = path.ancestors().any(|p| p.join(".git").symlink_metadata().is_ok());
                 if has_git || error != "git_failed" { return Err(error); }
                 crate::projects::validate_directory(project).await?;
-                return Ok(GitStatus { overview: ProjectGitOverview { kind: "directory".into(), path: project.path.clone(), branch: None, head: None, files: vec![], conflicts: vec![], staged_diff: String::new(), worktree_diff: String::new() }, index: vec![] });
+                let snapshot_token = digest(&serde_json::to_vec(&json!(["directory", project.path, project.directory_identity])).map_err(|_| "storage_failed")?);
+                return Ok(GitStatus { overview: ProjectGitOverview { kind: "directory".into(), path: project.path.clone(), branch: None, head: None, files: vec![], conflicts: vec![], snapshot_token, merge_heads: vec![] }, index: vec![], common: None, file_versions: BTreeMap::new(), complete: true, hidden_index: false });
             },
         }
         let branch = optional_ref(path, &["symbolic-ref", "--quiet", "--short", "HEAD"], lease, &self.inner.stop).await?;
         let head = optional_ref(path, &["rev-parse", "--verify", "HEAD"], lease, &self.inner.stop).await?;
         if head.as_deref().is_some_and(|h| !valid_oid(h)) { return Err("git_invalid_output".into()); }
+        let merge_heads: Vec<_> = optional_ref(path, &["rev-parse", "--verify", "MERGE_HEAD"], lease, &self.inner.stop).await?.into_iter().collect();
+        if merge_heads.iter().any(|head| !valid_oid(head)) { return Err("git_invalid_output".into()); }
+        let common = Some(git_common(&project.path).await?);
         let index = parse_index(&output(path, &["ls-files", "--stage", "-z"], lease, &self.inner.stop, false).await?)?;
-        let files = parse_status(&output(path, &["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], lease, &self.inner.stop, false).await?)?;
-        let mut display_paths = BTreeSet::new();
-        for file in &files {
-            for selected in std::iter::once(&file.path).chain(file.original_path.iter()) {
-                if !files::sensitive(selected) && !index.iter().any(|e| e.path == *selected && !matches!(e.mode.as_str(), "100644" | "100755")) { display_paths.insert(selected.as_str()); }
-            }
-        }
-        let mut diffs = Vec::new();
-        for cached in [true, false] {
-            if display_paths.is_empty() { diffs.push(String::new()); continue; }
-            let mut args = vec!["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--binary"];
-            if cached { args.push("--cached"); }
-            args.push("--"); args.extend(display_paths.iter().copied());
-            diffs.push(crate::executions::sanitize_text(&text(output(path, &args, lease, &self.inner.stop, false).await?)?));
-        }
-        let worktree_diff = diffs.pop().ok_or("git_invalid_output")?;
-        let staged_diff = diffs.pop().ok_or("git_invalid_output")?;
-        let conflicts = index.iter().filter(|e| e.stage != 0).cloned().collect();
-        crate::projects::validate_directory(project).await?;
-        Ok(GitStatus { overview: ProjectGitOverview { kind: "git".into(), path: project.path.clone(), branch, head, files, conflicts, staged_diff, worktree_diff }, index })
-    }
-    async fn git_snapshot(&self, owner: &str, task_id: &str, lease: &CancellationToken) -> Result<GitReview, String> {
-        let project = self.task_project(owner, task_id).await?;
-        let baseline_version = self.inner.repository.review_baseline(owner, task_id).await?.and_then(|v| v["fingerprint"].as_str().map(str::to_owned)).unwrap_or_default();
-        let GitStatus { overview, index } = self.git_status_at(&project, lease).await?;
-        let mut review = GitReview { task_id: task_id.into(), kind: overview.kind, path: overview.path, common_dir: None, common_identity: None, branch: overview.branch, head: overview.head, merge_heads: vec![], files: overview.files, index, conflicts: overview.conflicts, staged_diff: overview.staged_diff, worktree_diff: overview.worktree_diff, review_token: String::new(), initial_staged_paths: vec![], file_versions: BTreeMap::new(), baseline_version };
-        if review.kind == "directory" {
-            review.review_token = self.task_fingerprint(owner, task_id).await?;
-            return Ok(review);
-        }
-        let path = Path::new(&project.path);
-        let (common_dir, common_identity) = git_common(&project.path).await?;
-        review.common_dir = Some(common_dir); review.common_identity = Some(common_identity);
-        review.merge_heads = optional_ref(path, &["rev-parse", "--verify", "MERGE_HEAD"], lease, &self.inner.stop).await?.into_iter().collect();
         let flags = output(path, &["ls-files", "-v", "-z"], lease, &self.inner.stop, false).await?;
-        if flags.split(|b| *b == 0).filter(|v| !v.is_empty()).any(|v| v.first().is_some_and(|b| b.is_ascii_lowercase() || *b == b'S')) { return Err("git_index_hidden_files".into()); }
-        review.initial_staged_paths = self.initial_git_index(owner, task_id).await?.and_then(|v| v.get("staged_paths").cloned()).map(serde_json::from_value).transpose().map_err(|_| "storage_failed")?.unwrap_or_else(|| review.files.iter().filter(|f| f.index != " " && f.index != "?").map(|f| f.path.clone()).collect());
-        // Diff omits untracked contents. Include exact bounded file hashes.
-        let root = files::open_root(&project)?;
-        for entry in &review.files {
-            files::relative(&entry.path, false)?;
-            if files::sensitive(&entry.path) { return Err("git_review_incomplete".into()); }
-            let version = match files::read_at(&root, &entry.path) {
-                Ok(view) => { if view.hash.is_none() || view.reason.as_deref().is_some_and(|r| r != "file_binary") { return Err("git_review_incomplete".into()); } view.hash.unwrap() },
-                Err(error) if error == "file_not_found" => "deleted".into(),
-                Err(_) => return Err("git_review_incomplete".into()),
+        let hidden_index = flags.split(|b| *b == 0).filter(|v| !v.is_empty()).any(|v| v.first().is_some_and(|b| b.is_ascii_lowercase() || *b == b'S'));
+        let files = parse_status(&output(path, &["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], lease, &self.inner.stop, false).await?)?;
+        let root = files::open_root(project)?;
+        let mut file_versions = BTreeMap::new();
+        let mut complete = true;
+        for entry in &files {
+            check_lease(lease)?;
+            // Observation markers keep unsupported files visible, but can never
+            // authorize a mutation. Ordinary bounded files retain exact raw hashes.
+            let (mut version, observed) = if files::sensitive(&entry.path) {
+                ("unobserved:file_sensitive".into(), false)
+            } else {
+                match files::read_at(&root, &entry.path) {
+                    Ok(view) => match view.hash {
+                        Some(hash) if view.reason.as_deref().is_none_or(|r| r == "file_binary") => (hash, true),
+                        _ => (format!("unobserved:{}", view.reason.as_deref().unwrap_or("git_review_incomplete")), false),
+                    },
+                    Err(error) if error == "file_not_found" => ("deleted".into(), true),
+                    Err(error) => (format!("unobserved:{error}"), false),
+                }
             };
-            let mut version = version;
             #[cfg(unix)] if let Ok(metadata) = root.symlink_metadata(&entry.path) {
                 use cap_std::fs::MetadataExt;
                 version.push_str(&format!(":{:o}", metadata.mode()));
             }
-            review.file_versions.insert(entry.path.clone(), version);
+            complete &= observed;
+            file_versions.insert(entry.path.clone(), version);
         }
+        let conflicts = index.iter().filter(|e| e.stage != 0).cloned().collect();
+        let mut overview = ProjectGitOverview { kind: "git".into(), path: project.path.clone(), branch, head, files, conflicts, snapshot_token: String::new(), merge_heads };
+        overview.snapshot_token = digest(&serde_json::to_vec(&(&overview, &project.directory_identity, &common, &index, &flags, &file_versions)).map_err(|_| "storage_failed")?);
+        crate::projects::validate_directory(project).await?; check_lease(lease)?;
+        Ok(GitStatus { overview, index, common, file_versions, complete, hidden_index })
+    }
+    async fn git_snapshot(&self, owner: &str, task_id: &str, lease: &CancellationToken) -> Result<GitReview, String> {
+        let project = self.task_project(owner, task_id).await?;
+        let baseline_version = self.inner.repository.review_baseline(owner, task_id).await?.and_then(|v| v["fingerprint"].as_str().map(str::to_owned)).unwrap_or_default();
+        let GitStatus { overview, index, common, file_versions, complete, hidden_index } = self.git_status_at(&project, lease).await?;
+        if hidden_index { return Err("git_index_hidden_files".into()); }
+        if !complete { return Err("git_review_incomplete".into()); }
+        let (common_dir, common_identity) = match common { Some((path, identity)) => (Some(path), Some(identity)), None => (None, None) };
+        let mut review = GitReview { task_id: task_id.into(), kind: overview.kind, path: overview.path, common_dir, common_identity, branch: overview.branch, head: overview.head, merge_heads: overview.merge_heads, files: overview.files, index, conflicts: overview.conflicts, snapshot_token: overview.snapshot_token, review_token: String::new(), initial_staged_paths: vec![], file_versions, baseline_version };
+        if review.kind == "directory" {
+            review.review_token = self.task_fingerprint(owner, task_id).await?;
+            return Ok(review);
+        }
+        review.initial_staged_paths = self.initial_git_index(owner, task_id).await?.and_then(|v| v.get("staged_paths").cloned()).map(serde_json::from_value).transpose().map_err(|_| "storage_failed")?.unwrap_or_else(|| review.files.iter().filter(|f| f.index != " " && f.index != "?").map(|f| f.path.clone()).collect());
+        // Initial-stage annotations and task baselines are not Git versions.
         let mut version = review.clone(); version.initial_staged_paths.clear(); version.baseline_version.clear();
         review.review_token = digest(&serde_json::to_vec(&version).map_err(|_| "storage_failed")?);
         crate::projects::validate_directory(&project).await?;
@@ -344,9 +356,49 @@ impl AgentManager {
         let scope = input.task_id.clone();
         self.git_history_at(owner, &scope, project, input.start_oid, input.cursor, input.limit).await
     }
-    pub async fn read_development_project_git(&self, owner: &str, project_id: &str) -> Result<ProjectGitOverview, String> {
+    async fn git_scope_project(&self, owner: &str, project_id: &str, task_id: Option<&str>) -> Result<Project, String> {
+        if let Some(task) = task_id {
+            let project = self.task_project(owner, task).await?;
+            if project.id != project_id { return Err("task_not_found".into()); }
+            Ok(project)
+        } else { self.file_project(owner, project_id).await }
+    }
+    pub async fn read_development_staged_diff(&self, owner: &str, input: GitScopeInput, lease: CancellationToken) -> Result<GitStagedDiff, String> {
         let _admission = self.inner.admission.lock().await;
-        let project = self.file_project(owner, project_id).await?;
+        self.ready().await?; check_lease(&lease)?;
+        let project = self.git_scope_project(owner, &input.project_id, input.task_id.as_deref()).await?;
+        let before = self.git_status_at(&project, &lease).await?;
+        if before.overview.kind != "git" { return Err("not_git_repository".into()); }
+        if !before.overview.conflicts.is_empty() { return Err("git_unmerged".into()); }
+        if before.hidden_index { return Err("git_index_hidden_files".into()); }
+        let path = Path::new(&project.path);
+        let tree = if let Some(head) = &before.overview.head { head_tree(path, head, &lease, &self.inner.stop).await? } else { vec![] };
+        let mut authorized = before.index.clone(); authorized.extend(tree.iter().cloned());
+        let staged_paths: BTreeSet<_> = before.overview.files.iter().filter(|file| file.index != " " && file.index != "?").flat_map(|file| std::iter::once(&file.path).chain(file.original_path.iter())).collect();
+        for selected in staged_paths {
+            validate_paths(&project, std::slice::from_ref(selected), &authorized)?;
+            // Validate the staged sources, not unrelated worktree bodies. Deleted
+            // paths still require a safe, bounded HEAD blob before provider use.
+            for entry in [tree.iter().find(|entry| entry.path == *selected), before.index.iter().find(|entry| entry.path == *selected)] {
+                if let Some(bytes) = restore::raw_blob(path, entry, &lease, &self.inner.stop).await? {
+                    if bytes.contains(&0) || std::str::from_utf8(&bytes).is_err() { return Err("file_binary".into()); }
+                }
+            }
+        }
+        let mut command = safe_command(path).await?;
+        command.args(["diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", "--no-relative", "--no-indent-heuristic", "--diff-algorithm=myers", "--"]);
+        let bytes = complete(crate::projects::git_output_bounded(command, Duration::from_secs(10), &lease, &self.inner.stop, 65536).await?)?;
+        let diff = crate::executions::sanitize_text(&text(bytes)?);
+        if diff.len() > 65536 { return Err("git_output_limit".into()); }
+        let after = self.git_status_at(&project, &lease).await?;
+        if before.overview.snapshot_token != after.overview.snapshot_token { return Err("git_review_stale".into()); }
+        check_lease(&lease)?;
+        Ok(GitStagedDiff { snapshot_token: before.overview.snapshot_token, diff })
+    }
+    pub async fn read_development_project_git(&self, owner: &str, project_id: &str, task_id: Option<&str>) -> Result<ProjectGitOverview, String> {
+        let _admission = self.inner.admission.lock().await;
+        self.ready().await?;
+        let project = self.git_scope_project(owner, project_id, task_id).await?;
         Ok(self.git_status_at(&project, &CancellationToken::new()).await?.overview)
     }
     pub async fn read_development_project_git_history(&self, owner: &str, input: ProjectGitHistoryInput) -> Result<GitHistoryPage, String> {

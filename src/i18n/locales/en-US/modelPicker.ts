@@ -6,7 +6,7 @@ export default {
   'modelPicker.current': 'Current selection',
   'modelPicker.none': 'No model selected',
   'modelPicker.search': 'Find a model',
-  'modelPicker.searchHint': 'Model name, Provider connection or ID',
+  'modelPicker.searchHint': 'Search models…',
   'modelPicker.loading': 'Reading local model catalog…',
   'modelPicker.refresh': 'Refresh catalog',
   'modelPicker.readFailed': 'Could not read the model catalog. Refresh to try again; your selection has not changed.',
@@ -24,4 +24,8 @@ export default {
   'modelPicker.manageProviders': 'Provider settings',
   'modelPicker.manageCli': 'CLI settings',
   'modelPicker.boundary': 'Availability means the host supports this route and the local CLI is usable. It does not verify external service compatibility. Choosing a model does not send a message.',
+  'modelPicker.platform': 'Platform',
+  'modelPicker.provider': 'Provider connection',
+  'modelPicker.other': 'Other',
+  'modelPicker.configuredConnection': 'Configured model connection',
 } as const;

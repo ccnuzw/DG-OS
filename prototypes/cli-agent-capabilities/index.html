@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CLI Agent · Skills 与 MCP 设计</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="prototype.js" defer></script>
+</head>
+<body>
+  <header class="review-bar">
+    <a href="README.md">CLI Agent <span>能力管理设计稿</span></a>
+    <nav aria-label="设计场景">
+      <button data-scene="drawer">插件抽屉</button>
+      <button data-scene="skills">Skills 已安装</button>
+      <button data-scene="discover">查找技能</button>
+      <button data-scene="mcp">MCP 已配置</button>
+      <button data-scene="market">MCP 市场</button>
+      <button data-scene="manual">手动添加</button>
+    </nav>
+    <span class="review-note">演示数据 · 不读写原生配置</span>
+    <button id="theme" class="icon-button" aria-label="切换深浅主题" title="切换深浅主题"></button>
+  </header>
+  <div class="workspace">
+    <nav class="rail" aria-label="CLI Agent 工具">
+      <div class="app-mark" aria-label="DG-OS">D</div>
+      <div class="rail-label" data-icon="message">会话</div>
+      <div class="rail-label" data-icon="folder">文件</div>
+      <button id="drawer-toggle" class="rail-label active" aria-expanded="true" aria-controls="drawer"><span data-icon="blocks"></span>插件</button>
+    </nav>
+    <aside id="drawer" class="drawer" aria-label="CLI Agent 插件">
+      <header class="drawer-heading"><h1>插件</h1><span class="badge">CLI Agent</span></header>
+      <div class="drawer-context"><strong>DG-OS</strong><span>当前工作区</span></div>
+      <div class="native-context"><span class="engine-symbol" data-icon="spark"></span><strong>Codex</strong><span class="subtle">原生能力</span></div>
+      <section class="drawer-section">
+        <header><h2><span data-icon="blocks"></span>MCP 服务 <span id="mcp-count" class="count"></span></h2><button class="text-button" data-open="mcp">管理</button></header>
+        <div id="drawer-mcp"></div>
+        <button class="drawer-add" data-scene="manual"><span data-icon="plus"></span>添加 MCP 服务</button>
+      </section>
+      <section class="drawer-section">
+        <header><h2><span data-icon="book"></span>技能 <span id="skill-count" class="count"></span></h2><button class="text-button" data-open="skills">管理</button></header>
+        <div id="drawer-skills"></div>
+        <button class="text-button view-all" data-open="skills">查看全部技能</button>
+      </section>
+      <div class="drawer-foot">只管理 CLI 原生能力<br>Provider 沿用应用的共享配置</div>
+    </aside>
+    <main class="conversation">
+      <header class="conversation-heading"><span>CLI Agent</span><span class="slash">/</span><strong>能力管理界面设计</strong><span class="badge">Codex</span></header>
+      <div class="conversation-body"><span class="conversation-glyph" data-icon="terminal"></span><h2>让能力留在它所属的工作区</h2><p>从左侧插件抽屉管理 Skills 和 MCP。<br>关闭管理器，继续当前对话。</p><div class="quick-actions"><button data-open="skills"><span data-icon="book"></span>管理 Skills</button><button data-open="mcp"><span data-icon="blocks"></span>管理 MCP</button></div></div>
+      <div class="composer"><p>向智能体提问… <span>（@ 文件，/ 命令）</span></p><footer><span data-icon="plus"></span><span data-icon="sliders"></span><span class="composer-model">手动确认 <span class="divider"></span> 共享 Provider / 当前模型</span><span data-icon="arrow"></span></footer></div>
+      <div class="workspace-path"><span data-icon="folder"></span>DG-OS <span data-icon="branch"></span>main</div>
+    </main>
+  </div>
+  <dialog id="manager" aria-labelledby="manager-title">
+    <header class="manager-header"><div class="manager-identity"><span id="manager-icon" class="manager-icon"></span><div><h2 id="manager-title"></h2><p id="manager-subtitle"></p></div></div><nav id="manager-tabs" class="segmented" aria-label="管理视图"></nav><button class="icon-button close-manager" aria-label="关闭管理器" data-close="manager"><span data-icon="close"></span></button></header>
+    <div class="context-bar"><label>平台 <select id="engine"><option value="codex">Codex</option><option value="claude">Claude Code</option></select></label><label>范围 <select id="scope"><option value="project">当前工作区 · DG-OS</option><option value="user">用户级 · 当前系统用户</option></select></label><span id="scope-note" class="subtle"></span></div>
+    <div id="manager-content" class="manager-content"></div>
+    <footer class="manager-footer"><span id="footer-note"></span><span id="footer-count"></span></footer>
+  </dialog>
+  <dialog id="action-dialog" aria-labelledby="action-title"><header><h2 id="action-title"></h2><button class="icon-button" data-close="action" aria-label="关闭操作"><span data-icon="close"></span></button></header><div id="action-body"></div></dialog>
+  <div id="notice" class="toast" role="status" hidden></div>
+</body>
+</html>

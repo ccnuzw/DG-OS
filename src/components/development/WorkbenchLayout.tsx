@@ -4,7 +4,7 @@ import { workbenchMinimumWidth } from '../../ui/layout/layoutBudgets';
 
 export type CodeView = 'files' | 'changes' | 'capabilities' | 'delivery' | 'review';
 interface Layout {
-  drawer: 'projects' | 'files' | 'tasks' | null;
+  drawer: 'projects' | 'files' | 'tasks' | 'plugins' | null;
   drawerWidth: number;
   codeView: CodeView;
   runtimeView: 'processes' | 'runs';
@@ -20,7 +20,7 @@ function restore(): Layout {
     const value = JSON.parse(localStorage.getItem(KEY) ?? 'null');
     if (!value || typeof value !== 'object') return defaults;
     return {
-      drawer: value.drawer === 'git' ? 'files' : value.drawer === null || ['projects', 'files', 'tasks'].includes(value.drawer) ? value.drawer : defaults.drawer,
+      drawer: value.drawer === 'git' ? 'files' : value.drawer === null || ['projects', 'files', 'tasks', 'plugins'].includes(value.drawer) ? value.drawer : defaults.drawer,
       drawerWidth: Number.isFinite(value.drawerWidth) ? clamp(value.drawerWidth) : defaults.drawerWidth,
       documentWidth: Number.isFinite(value.documentWidth) ? clamp(value.documentWidth) : defaults.documentWidth,
       codeView: ['files', 'changes', 'capabilities', 'delivery', 'review'].includes(value.codeView) ? value.codeView : defaults.codeView,

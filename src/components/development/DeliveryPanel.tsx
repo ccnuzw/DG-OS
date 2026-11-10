@@ -36,8 +36,8 @@ function ScopedDeliveryPanel({ projectId, taskId: initialTaskId, ensureTask, ses
   const capabilities = useProjectCapabilities(projectId);
   const [reconcileId, setReconcileId] = useState('');
   const [workspaces, setWorkspaces] = useState<WorkspaceView | null>(null);
-  const [git, setGit] = useState<GitReview | ProjectGitOverview | null>(null);
-  const taskReview = git && 'review_token' in git ? git : null;
+  const [git, setGit] = useState<ProjectGitOverview | null>(null);
+  const [taskReview, setTaskReview] = useState<GitReview | null>(null);
   const [history, setHistory] = useState<StoredHandoff[]>([]);
   const [operation, setOperation] = useState<GitOperation | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
@@ -66,11 +66,12 @@ function ScopedDeliveryPanel({ projectId, taskId: initialTaskId, ensureTask, ses
     const n = ++ticket.current, epoch = useDevelopment.getState().epoch, generation = contextGeneration();
     setBusy(true); setError(null);
     const currentTask = resolvedTask.current;
-    const [w, g, h] = await Promise.all([readDevelopmentWorkspaces({ project_id: projectId, task_id: currentTask }), currentTask ? readDevelopmentGit(currentTask) : readDevelopmentProjectGit(projectId), mode === 'git' || !currentTask ? Promise.resolve({ ok: true as const, value: [] as StoredHandoff[] }) : listDevelopmentHandoffs(currentTask)]);
+    const [w, g, h] = await Promise.all([readDevelopmentWorkspaces({ project_id: projectId, task_id: currentTask }), readDevelopmentProjectGit(projectId, currentTask), mode === 'git' || !currentTask ? Promise.resolve({ ok: true as const, value: [] as StoredHandoff[] }) : listDevelopmentHandoffs(currentTask)]);
     if (!mounted.current || n !== ticket.current || epoch !== useDevelopment.getState().epoch || generation !== contextGeneration()) return;
     if (w.ok) setWorkspaces(w.value);
     if (g.ok) {
       setGit(g.value);
+      setTaskReview(current => current?.path === g.value.path && current.snapshot_token === g.value.snapshot_token ? current : null);
       const sameWorkspace = reviewPath.current === g.value.path;
       reviewPath.current = g.value.path;
       setSelectedPaths(rows => sameWorkspace ? rows.filter(p => g.value.files.some(file => file.path === p)) : []);
@@ -123,40 +124,41 @@ function ScopedDeliveryPanel({ projectId, taskId: initialTaskId, ensureTask, ses
     if (current) onWorkspaceChange?.(current.path);
     await refresh();
   }
-  async function act(action: GitAction | null) {
+  async function act(requested: GitAction | { kind: 'discard_selected'; paths: string[] } | null) {
     if (!git || busy || unresolved) return;
-    const valid = guard(); setBusy(true); setError(null);
-    let writeReview = taskReview;
-    let writeTask = resolvedTask.current;
-    if (!writeTask) {
-      writeTask = await ensureTask?.() ?? null;
-      if (!valid()) return;
-      if (!writeTask) { setBusy(false); return; }
+    const valid = guard(), expected = git; setBusy(true); setError(null);
+    try {
+      const writeTask = resolvedTask.current ?? await ensureTask?.() ?? null;
+      if (!writeTask || !valid()) return;
       const [review, workspace] = await Promise.all([readDevelopmentGit(writeTask), readDevelopmentWorkspaces({ project_id: projectId, task_id: writeTask })]);
       if (!valid()) return;
-      if (!review.ok || !workspace.ok) { setError(!review.ok ? review.code : !workspace.ok ? workspace.code : 'unknown'); setBusy(false); return; }
-      if (review.value.path !== git.path) { setError('git_review_stale'); setBusy(false); return; }
+      if (!review.ok || !workspace.ok) { setError(!review.ok ? review.code : !workspace.ok ? workspace.code : 'unknown'); return; }
+      if (review.value.path !== expected.path) { setError('git_review_stale'); return; }
       resolvedTask.current = writeTask;
-      setGit(review.value); setWorkspaces(workspace.value); writeReview = review.value;
-      setFullIndex(false); setIncludeExisting(false);
-      if (review.value.branch !== git.branch || review.value.head !== git.head || review.value.staged_diff !== git.staged_diff || review.value.worktree_diff !== git.worktree_diff || JSON.stringify(review.value.files) !== JSON.stringify(git.files) || JSON.stringify(review.value.conflicts) !== JSON.stringify(git.conflicts)) { setError('git_review_stale'); setBusy(false); return; }
+      setGit(review.value); setTaskReview(review.value); setWorkspaces(workspace.value);
+      if (review.value.snapshot_token !== expected.snapshot_token) { setFullIndex(false); setIncludeExisting(false); setError('git_review_stale'); return; }
       const owner = useDevelopment.getState().projects.find(item => item.id === projectId)?.owner;
       let remembered = false;
-      try { remembered = !!owner && deliveryRequests(owner).some(item => item.project_id === projectId && item.task_id === writeTask); } catch { remembered = true; }
+      try {
+        if (owner) { forgetDeliveryRequests(owner, workspace.value.operations); remembered = deliveryRequests(owner).some(item => item.project_id === projectId && item.task_id === writeTask); }
+      } catch { remembered = true; }
       if (remembered || workspace.value.operations.some(item => item.status === 'pending' || item.status === 'unknown')) { await refresh(); return; }
-      if (!action || action.kind === 'discard' || action.kind === 'pull') { setBusy(false); return; }
-      if (action.kind === 'commit' && review.value.initial_staged_paths.length && !action.confirm_preexisting_staged) { setError('git_preexisting_staged_confirmation_required'); setBusy(false); return; }
-    }
-    if (!action || !writeReview || !writeTask) { setBusy(false); return; }
-    const authority = { taskId: writeTask, reviewToken: writeReview.review_token };
-    const requestId = crypto.randomUUID();
-    setOperation({ id: requestId, project_id: projectId, task_id: authority.taskId, kind: `git_${action.kind}`, status: 'pending', workspace_id: null, request_fingerprint: '', details: {} });
-    const result = await dispatchDeliveryRequest({ id: requestId, project_id: projectId, task_id: authority.taskId, kind: `git_${action.kind}` }, () => executeDevelopmentGit({ id: requestId, task_id: authority.taskId, review_token: authority.reviewToken, action }));
-    if (action.kind === 'commit' && result.ok && result.value.status === 'succeeded') commitDraft.clear(action.message);
-    if (!valid()) return;
-    if (!result.ok) { await refresh(); if (valid()) setError(result.code); return; }
-    setOperation(result.value); await refresh();
-    if (valid() && result.value.details.error) setError(result.value.details.error);
+      if (!requested) return;
+      let action: GitAction;
+      if (requested.kind === 'discard_selected') {
+        if (!review.value.baseline_version) { setError('baseline_missing'); return; }
+        action = { kind: 'discard', baseline_version: review.value.baseline_version, files: requested.paths.map(path => ({ path, expected_hash: review.value.file_versions[path]?.split(':', 1)[0] ?? '' })), confirmed: true };
+      } else action = requested;
+      if (action.kind === 'commit' && review.value.initial_staged_paths.length && !action.confirm_preexisting_staged) { setError('git_preexisting_staged_confirmation_required'); return; }
+      const requestId = crypto.randomUUID();
+      setOperation({ id: requestId, project_id: projectId, task_id: writeTask, kind: `git_${action.kind}`, status: 'pending', workspace_id: null, request_fingerprint: '', details: {} });
+      const result = await dispatchDeliveryRequest({ id: requestId, project_id: projectId, task_id: writeTask, kind: `git_${action.kind}` }, () => executeDevelopmentGit({ id: requestId, task_id: writeTask, review_token: review.value.review_token, action }));
+      if (action.kind === 'commit' && result.ok && result.value.status === 'succeeded') commitDraft.clear(action.message);
+      if (!valid()) return;
+      if (!result.ok) { await refresh(); if (valid()) setError(result.code); return; }
+      setOperation(result.value); await refresh();
+      if (valid() && result.value.details.error) setError(result.value.details.error);
+    } finally { if (valid()) setBusy(false); }
   }
   async function reconcile() {
     if (!operation) return; const valid = guard();
@@ -211,18 +213,17 @@ function ScopedDeliveryPanel({ projectId, taskId: initialTaskId, ensureTask, ses
         <p className="m-0 break-all text-xs">{git.path}</p>
         <p className="m-0 text-xs text-ink-secondary">{t('workbenchGit.workspaceScope')}</p>
         {!taskId ? <><p className="text-xs text-ink-secondary">{t('workbenchGit.projectScope')}</p>{ensureTask ? <Button size="xs" variant="secondary" disabled={busy || unresolved} onClick={() => void act(null)}>{t('workbenchGit.enableWrites')}</Button> : null}</> : null}
-        <p className="dev-evidence-warning">{t(taskReview?.baseline_version ? 'workbenchGit.taskBaseline' : 'workbenchGit.noTaskBaseline')}</p>
+        {taskReview ? <p className="dev-evidence-warning">{t(taskReview.baseline_version ? 'workbenchGit.taskBaseline' : 'workbenchGit.noTaskBaseline')}</p> : null}
         {taskReview?.initial_staged_paths.length ? <fieldset className="dev-runtime-fields"><legend>{t('workbenchGit.existingStaged')}</legend>{taskReview.initial_staged_paths.map(p => <p key={p} className="m-0 break-all text-xs">{p}</p>)}<label className="dev-checkbox"><input type="checkbox" checked={includeExisting} onChange={e => setIncludeExisting(e.target.checked)} />{t('delivery.includeExisting')}</label></fieldset> : null}
         <GitChangesTree review={git} selected={selectedPaths} onSelect={(path, checked) => setSelectedPaths(rows => checked ? [...new Set([...rows, path])] : rows.filter(item => item !== path))} onOpenDiff={onOpenDiff} />
         {git.conflicts.length ? <section className="dev-review-stack"><p role="alert" className="dev-evidence-warning">{t('delivery.conflicts')}</p>{git.conflicts.map(entry => <p className="m-0 break-all text-xs" key={`${entry.path}:${entry.stage}`}>{entry.path} · {t('delivery.conflictStage', { stage: entry.stage })} · {entry.oid}</p>)}<p className="text-xs">{t('delivery.editConflict')}</p></section> : null}
-        <details className="dev-technical-details" open={mode === 'git' ? undefined : true}><summary>{t('workbenchGit.viewChanges')}</summary><div className="dev-review-stack"><h5 className="m-0 text-xs">{t('delivery.stagedDiff')}</h5><pre className="dev-diff" tabIndex={0} aria-label={t('delivery.stagedDiff')}>{git.staged_diff || t('delivery.emptyDiff')}</pre><h5 className="m-0 text-xs">{t('delivery.worktreeDiff')}</h5><pre className="dev-diff" tabIndex={0} aria-label={t('delivery.worktreeDiff')}>{git.worktree_diff || t('delivery.emptyDiff')}</pre></div></details>
         <div className="flex flex-wrap gap-2"><Button size="xs" disabled={busy || unresolved || !selectedPaths.length} onClick={() => void act({ kind: 'stage', paths: selectedPaths })}>{t('delivery.stage')}</Button><Button size="xs" variant="secondary" disabled={busy || unresolved || !selectedPaths.length} onClick={() => void act({ kind: 'unstage', paths: selectedPaths })}>{t('delivery.unstage')}</Button></div>
-        <div className="dev-danger-actions"><Button size="xs" variant="danger" disabled={busy || unresolved || !selectedPaths.length || !taskReview?.baseline_version} onClick={async () => { if (!taskReview) return; const valid = guard(); if (await confirmAction(t('delivery.discard'), t('delivery.discardWarning') + '\n' + selectedPaths.join('\n'), t('delivery.discardSelected')) && valid()) void act({ kind: 'discard', baseline_version: taskReview.baseline_version, files: selectedPaths.map(p => ({ path: p, expected_hash: taskReview.file_versions[p]?.split(':', 1)[0] ?? '' })), confirmed: true }); }}>{t('delivery.discard')}</Button></div>
+        <div className="dev-danger-actions"><Button size="xs" variant="danger" disabled={busy || unresolved || !selectedPaths.length || (!taskId && !ensureTask)} onClick={async () => { const valid = guard(), paths = [...selectedPaths]; if (await confirmAction(t('delivery.discard'), t('delivery.discardWarning') + '\n' + paths.join('\n'), t('delivery.discardSelected')) && valid()) void act({ kind: 'discard_selected', paths }); }}>{t('delivery.discard')}</Button></div>
         <div className="dev-git-commit-area">
-        <Input label={t('delivery.commitMessage')} value={message} onChange={e => commitDraft.setValue(e.target.value)} /><label className="dev-checkbox"><input type="checkbox" checked={fullIndex} onChange={e => setFullIndex(e.target.checked)} />{t('delivery.confirmAllIndex')}</label><Button size="xs" disabled={busy || unresolved || !message.trim() || !fullIndex || (!git.staged_diff && !taskReview?.merge_heads.length) || ((taskReview?.initial_staged_paths.length ?? 0) > 0 && !includeExisting)} onClick={() => void act({ kind: 'commit', message, confirm_full_index: fullIndex, confirm_preexisting_staged: includeExisting })}>{t('delivery.commit')}</Button>
+        <Input label={t('delivery.commitMessage')} value={message} onChange={e => commitDraft.setValue(e.target.value)} /><label className="dev-checkbox"><input type="checkbox" checked={fullIndex} onChange={e => setFullIndex(e.target.checked)} />{t('delivery.confirmAllIndex')}</label><Button size="xs" disabled={busy || unresolved || !message.trim() || !fullIndex || (!git.files.some(file => file.index.trim() !== '' && file.index !== '?') && !git.merge_heads.length) || ((taskReview?.initial_staged_paths.length ?? 0) > 0 && !includeExisting)} onClick={() => void act({ kind: 'commit', message, confirm_full_index: fullIndex, confirm_preexisting_staged: includeExisting })}>{t('delivery.commit')}</Button>
         {commitDraft.dirty ? <Button size="xs" variant="secondary" disabled={busy} onClick={() => void commitDraft.discard()}>{t('dev.discardDraft')}</Button> : null}
         </div>
-        <GitHistoryPull key={`${taskId}:${git.path}`} projectId={projectId} review={git} busy={busy} blocked={unresolved} act={act} refreshKey={refreshKey} />
+        <GitHistoryPull key={`${taskId}:${git.path}`} projectId={projectId} taskId={resolvedTask.current} review={git} busy={busy} blocked={unresolved} act={act} refreshKey={refreshKey} />
         <details className="dev-technical-details"><summary>{t('workbenchGit.repositoryActions')}</summary>
         <Input label={t('delivery.remote')} value={remote} onChange={e => setRemote(e.target.value)} /><Button size="xs" disabled={busy || unresolved || !remote} onClick={async () => { const valid = guard(); if (await confirmAction(t('delivery.push'), t('delivery.pushTrust') + '\n' + git.path + '\n' + remote + ' / ' + git.branch, t('delivery.push')) && valid()) void act({ kind: 'push', remote, trust_directory: true, trust_network: true }); }}>{t('delivery.push')}</Button>
         <Input label={t('delivery.branch')} value={branchTarget} onChange={e => setBranchTarget(e.target.value)} /><div className="flex gap-2"><Button size="xs" variant="secondary" disabled={busy || unresolved || !branchTarget} onClick={() => void act({ kind: 'switch', branch: branchTarget })}>{t('delivery.switch')}</Button><Button size="xs" variant="secondary" disabled={busy || unresolved || !branchTarget} onClick={() => void act({ kind: 'merge', branch: branchTarget })}>{t('delivery.merge')}</Button></div>

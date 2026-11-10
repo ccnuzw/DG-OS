@@ -4,7 +4,7 @@ use dgos_types::BuiltinCaller;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, WebviewWindow};
 
-fn authorize(app: &AppHandle, window: &WebviewWindow, domain: Domain, write: bool) -> Result<(dgos_db::ActivityPermit, Ticket), String> {
+pub(super) fn authorize(app: &AppHandle, window: &WebviewWindow, domain: Domain, write: bool) -> Result<(dgos_db::ActivityPermit, Ticket), String> {
     let capability = match (domain, write) { (Domain::Skills, false) => Capability::SkillsRead, (Domain::Skills, true) => Capability::SkillsManage, (Domain::Mcp, false) => Capability::McpRead, (Domain::Mcp, true) => Capability::McpManage };
     let admission = host::context(window, BuiltinCaller::Settings, capability).map_err(|_| "native_extension_AccessDenied".to_owned())?;
     let (owner, generation, _) = app.try_state::<Arc<SessionResolver>>().ok_or_else(|| "native_extension_Unavailable".to_owned())?.native_session()?;
@@ -63,7 +63,7 @@ pub async fn cancel_native_operation(app: AppHandle, window: WebviewWindow, inpu
 #[tauri::command]
 pub async fn inspect_native_operation(app: AppHandle, window: WebviewWindow, input: Operation) -> Result<Receipt, String> { operation(app, window, input, OperationAction::Inspect).await }
 
-fn session_lease(app: &AppHandle, ticket: &Ticket) -> Result<tokio_util::sync::CancellationToken, String> {
+pub(super) fn session_lease(app: &AppHandle, ticket: &Ticket) -> Result<tokio_util::sync::CancellationToken, String> {
     let (owner, generation, lease) = app.try_state::<Arc<SessionResolver>>().ok_or_else(|| "native_extension_Unavailable".to_owned())?.native_session()?;
     if owner != ticket.0 || generation != ticket.1 { return Err("session_invalid".into()); }
     Ok(lease)

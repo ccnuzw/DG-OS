@@ -31,6 +31,7 @@ const identity = (scope: CodexOperationScope) => ({ session_id: scope.sessionId,
 /** Only these typed host commands cross the renderer boundary; no native RPC or path forwarding. */
 export const codexOperationsService = {
   observe: (scope: CodexOperationScope) => invoke<CodexOperationsSnapshot>('observe_codex_operations', { input: identity(scope) }),
+  compression: (scope: CodexOperationScope) => invoke<boolean>('observe_agent_compression', { input: identity(scope) }),
   control: (input: CodexOperationRequest) => invoke<CodexOperationReceipt>('control_codex_operation', { input }),
   inspect: (scope: CodexOperationScope, requestId: string) => invoke<CodexOperationReceipt | null>('inspect_codex_operation', { input: { ...identity(scope), request_id: requestId } }),
   session: (scope: CodexOperationScope) => invoke<AgentSession>('get_agent_session', { sessionId: scope.sessionId }),

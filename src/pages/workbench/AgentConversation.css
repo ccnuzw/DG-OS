@@ -94,15 +94,15 @@
 .agent-dialogue-capabilities,
 .agent-dialogue-inspector { width: min(100%, var(--conversation-width)); margin-inline: auto; }
 .agent-dialogue-footer { align-items: center; }
-.agent-dialogue-composer { width: min(100%, var(--conversation-width)); margin-inline: auto; gap: var(--spacing-2); }
+.agent-dialogue-composer { width: 100%; margin-inline: auto; gap: var(--spacing-2); }
 .agent-composer-shell {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-2);
   min-width: 0;
-  padding: var(--spacing-2);
+  padding: var(--spacing-3) var(--spacing-4);
   border: 1px solid var(--border-control);
-  border-radius: var(--radius-lg);
+  border-radius: 1.7rem;
   background: var(--surface-panel);
   box-shadow: var(--shadow-sm);
 }

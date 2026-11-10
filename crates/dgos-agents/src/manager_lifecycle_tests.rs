@@ -102,6 +102,41 @@ async fn repeated_close_history_and_resume_release_every_heavy_generation() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn reboot_cleanup_releases_recovered_slots_without_rewriting_unknown_history() {
+    use dgos_db::sea_orm::ConnectionTrait;
+    let fixture = Fixture::new().await;
+    let id = Uuid::new_v4().to_string();
+    fixture.open(&id).await;
+    assert!(fixture.manager.close_session("alice", &id).await.unwrap());
+    fixture.cleanup_finished().await;
+    fixture.manager.inner.terminal.lock().await.clear();
+    let db = dgos_db::establish_connection(&format!("sqlite://{}?mode=rwc", fixture.root.join("metadata.sqlite").display())).await.unwrap();
+    db.execute_unprepared("UPDATE development_cli_session_bindings SET state='unknown',cleanup_state='unknown',cleanup_proof=NULL,cleanup_reason='host_restart_cleanup_unconfirmed',boot_identity='machine:previous-boot'").await.unwrap();
+    fixture.manager.restore_unsettled_slots().await.unwrap();
+    assert_eq!(fixture.manager.slot_count().await, 1);
+    assert_eq!(fixture.manager.snapshot("alice", &id).await.err().unwrap(), "cleanup_pending");
+    let repo = &fixture.manager.inner.repository;
+    assert_eq!(repo.recheck_cli_cleanup(&dgos_db::development_repository::HostBootObservation { boot_identity: "machine:previous-boot".into() }).await.unwrap(), 0);
+    fixture.manager.reconcile_inactive_slots().await;
+    assert_eq!(fixture.manager.slot_count().await, 1);
+    assert_eq!(repo.recheck_cli_cleanup(&dgos_db::development_repository::HostBootObservation { boot_identity: "machine:next-boot".into() }).await.unwrap(), 1);
+    fixture.manager.reconcile_inactive_slots().await;
+    assert_eq!(fixture.manager.slot_count().await, 0);
+    assert_eq!(fixture.manager.snapshot("alice", &id).await.unwrap().view.status, "closed");
+    let binding = repo.read_cli_session_configuration("alice", &id).await.unwrap().binding.unwrap();
+    assert_eq!(binding.state, "unknown");
+    assert_eq!(binding.cleanup_state, "stopped");
+    assert_eq!(binding.cleanup_proof.as_deref(), Some("boot_changed"));
+    fixture.manager.restore_unsettled_slots().await.unwrap();
+    assert_eq!(fixture.manager.slot_count().await, 0);
+    let fresh = Uuid::new_v4().to_string();
+    assert_eq!(fixture.open(&fresh).await.view.status, "idle");
+    assert!(fixture.manager.close_session("alice", &fresh).await.unwrap());
+    assert!(fixture.manager.shutdown().await);
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn terminal_cache_eviction_keeps_durable_history_close_and_resume() {
     let fixture = Fixture::new().await;
     let mut ids = Vec::new();
@@ -269,5 +304,28 @@ async fn stopped_generation_invalidates_only_its_child_lease_and_never_a_stale_s
     assert!(generation_lease.is_cancelled());
     assert!(!account.is_cancelled());
     assert!(fixture.manager.close_session("alice", &id).await.unwrap());
+    assert!(fixture.manager.shutdown().await);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn absent_start_reconciliation_fences_late_create_without_launching_or_sending() {
+    let fixture = Fixture::new().await;
+    let id = Uuid::new_v4().to_string();
+    let lease = CancellationToken::new();
+    assert!(fixture.manager.cancel_unstarted_session("bob", &id, &fixture.task, &lease).await.is_err());
+    let revoked = CancellationToken::new(); revoked.cancel();
+    assert_eq!(fixture.manager.cancel_unstarted_session("alice", &id, &fixture.task, &revoked).await.unwrap_err(), "session_invalid");
+    assert!(fixture.manager.cancel_unstarted_session("alice", &id, &fixture.task, &lease).await.unwrap());
+    assert!(fixture.manager.cancel_unstarted_session("alice", &id, &fixture.task, &lease).await.unwrap());
+    let options = SessionOptions { workspace: fixture.root.to_string_lossy().into_owned(), executable: Some(fixture.root.join("codex").to_string_lossy().into_owned()), resume_id: None, model: None, trust_workspace: true };
+    let create = crate::test_support::create(&fixture.manager, "alice", &fixture.task, options).await;
+    assert_eq!(fixture.manager.open_session("alice", Engine::Codex, id.clone(), create, Some(fixture.task.clone()), lease).await.err().unwrap(), "cancelled");
+    assert!(fixture.manager.list("alice").await.is_empty());
+    assert_eq!(fixture.manager.slot_count().await, 0);
+    let new_id = Uuid::new_v4().to_string();
+    assert_eq!(fixture.open(&new_id).await.view.status, "idle");
+    assert!(!fixture.manager.cancel_unstarted_session("alice", &new_id, &fixture.task, &CancellationToken::new()).await.unwrap());
+    assert_eq!(fixture.manager.snapshot("alice", &new_id).await.unwrap().view.status, "idle");
     assert!(fixture.manager.shutdown().await);
 }

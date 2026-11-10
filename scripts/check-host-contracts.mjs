@@ -7,6 +7,7 @@ import { checkReactVersions } from './react-version.mjs';
 const files = ['native_extensions', 'ai', 'provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'chat_assets', 'agents', 'development_review', 'development_explorer', 'development_runtime', 'development_takeover', 'development_capabilities', 'development_delivery', 'desktop', 'cli', 'storage', 'modules', 'module_host', 'module_capabilities', 'appearance', 'accounts', 'lan', 'locale'];
 files.push('development_commit_message');
 files.push('development_desktop');
+files.push('native_skill_library', 'native_mcp_catalog');
 // FR-010 / interface contract §14.8: the eight LAN host commands. Exact parameter lists; no user
 // id, caller, session token or access code. Every one enters through the Settings caller with
 // `Capability::LanManage`, which `allows` grants to Settings only.
@@ -145,6 +146,7 @@ const chatExactParams = new Map([
   ['resolve_chat_run_step', ['app', 'window', 'input']],
   ['chat_import_ai_resource', ['app', 'window', 'session_id', 'input']],
   ['chat_delete_ai_resource', ['app', 'window', 'session_id', 'resource_id']],
+  ['preview_chat_resource', ['app', 'window', 'input']],
 ]);
 const aiParams = new Map([
   ['module_run_ai', ['app', 'window', 'attachment_id', 'route', 'call_id', 'input', 'on_event']],
@@ -162,7 +164,7 @@ for (const file of files) {
   assert.ok(handlers.length, `${file}: no command handlers checked`);
   for (const [, name, args, body] of handlers) {
     assert.match(args, /window:\s*WebviewWindow/, `${name}: host window context is required`);
-    if (file === 'native_extensions') {
+    if (['native_extensions', 'native_skill_library', 'native_mcp_catalog'].includes(file)) {
       const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
       assert.deepEqual(names.sort(), ['app', 'input', 'window'], `${name}: native commands accept only typed business input`);
       assert.match(body, /(?:authorize\(&app, &window,|operation\(app, window, input,)/, `${name}: native host authorization required`);
@@ -366,8 +368,8 @@ for (const file of files) {
       }
       if (file === 'development_explorer') {
         const expected = name === 'read_development_session_summaries' ? ['app', 'window']
-          : name === 'read_development_project_git' ? ['app', 'window', 'project_id']
-            : ['create_development_entry', 'inspect_development_entry', 'mutate_development_entry', 'open_development_entry_directory', 'read_development_project_diff', 'read_development_project_git_history'].includes(name) ? ['app', 'window', 'input'] : null;
+          : name === 'read_development_project_git' ? ['app', 'window', 'project_id', 'task_id']
+            : ['create_development_entry', 'inspect_development_entry', 'mutate_development_entry', 'open_development_entry_directory', 'read_development_staged_diff', 'read_development_project_diff', 'read_development_project_git_history'].includes(name) ? ['app', 'window', 'input'] : null;
         assert.ok(expected, `${name}: unrecognized explorer command`);
         const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
         assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: explorer parameter allow-list`);
@@ -405,7 +407,7 @@ for (const file of files) {
       }
       if (file === 'development_desktop') {
         const expected = name === 'read_development_desktop_state' ? ['app', 'window']
-          : ['save_development_desktop_state', 'read_development_workspace_trust', 'set_development_workspace_trust', 'reply_development_exit'].includes(name) ? ['app', 'window', 'input'] : null;
+          : ['save_development_desktop_state', 'read_development_workspace_trust', 'activate_development_workspace_agent', 'set_development_workspace_trust', 'reply_development_exit'].includes(name) ? ['app', 'window', 'input'] : null;
         assert.ok(expected, `${name}: unrecognized desktop command`);
         const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
         assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: desktop parameter allow-list`);
@@ -477,7 +479,7 @@ for (const file of files) {
         if (['read_development_git_details', 'read_development_git_commit', 'read_development_git_commit_diff'].includes(name)) assert.ok(body.includes(`${name}(context.user_id(),input,lease.clone())`), `${name}: cancellable read lease`);
       }
       if (file === 'agents') {
-        const expected = ['open_agent_session', 'send_agent_message', 'steer_agent_turn', 'respond_agent_request', 'create_development_project', 'update_development_project', 'save_development_task', 'select_development_context', 'classify_agent_session', 'observe_codex_operations', 'control_codex_operation', 'inspect_codex_operation', 'read_codex_child_history'].includes(name)
+        const expected = ['open_agent_session', 'cancel_unstarted_agent_session', 'send_agent_message', 'steer_agent_turn', 'respond_agent_request', 'create_development_project', 'update_development_project', 'save_development_task', 'select_development_context', 'classify_agent_session', 'observe_codex_operations', 'observe_agent_compression', 'control_codex_operation', 'inspect_codex_operation', 'read_codex_child_history'].includes(name)
           ? ['app', 'window', 'input']
           : ['list_agent_sessions', 'read_development_workspace'].includes(name)
             ? ['app', 'window']

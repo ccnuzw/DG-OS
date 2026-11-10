@@ -89,7 +89,7 @@ function Evidence({ capturedAt, late, truncated, stale }: { capturedAt: number |
 
 function ProjectChanges({ projectId, target }: { projectId: string; target?: FileTarget | null }) {
   const { t } = useLocale();
-  const git = useRead(useCallback(() => readDevelopmentProjectGit(projectId), [projectId]));
+  const git = useRead(useCallback(() => readDevelopmentProjectGit(projectId, null), [projectId]));
   const [selected, setSelected] = useWorkbenchLocation<string | null>(`${projectId}:project-change`, null);
   useEffect(() => { if (target) setSelected(target.path); }, [target?.nonce]);
   return <div className="dev-review-stack"><div className="dev-review-toolbar"><p className="m-0 text-xs text-ink-secondary">{t('workbenchGit.projectScope')}</p><Button size="xs" variant="secondary" disabled={git.busy} onClick={() => { setSelected(null); void git.refresh(); }}>{t('review.refresh')}</Button></div><Feedback busy={git.busy} error={git.error} />

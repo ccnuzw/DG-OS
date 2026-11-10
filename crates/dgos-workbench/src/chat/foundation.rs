@@ -1,5 +1,6 @@
 use super::*;
 use crate::foundation::ResolvedContext;
+use base64::Engine as _;
 
 
 pub(super) fn foundation_fingerprint(options: &dgos_types::AiFoundationOptions) -> Result<String> {
@@ -73,6 +74,36 @@ impl ChatManager {
             .import_resource(user, &format!("chat:{session}"), &input.name, &input.mime, &bytes).await?;
         self.check_lease()?;
         Ok(resource)
+    }
+
+    pub async fn preview_chat_resource(&self, user: &str, input: dgos_types::PreviewChatResourceInput) -> Result<dgos_types::ChatResourcePreview> {
+        self.check_lease()?;
+        let session = self.repo.get_session(user, &input.session_id).await;
+        self.check_lease()?;
+        session?;
+        let loaded = dgos_db::AiContentRepository::new(self.db.clone())
+            .resource(user, &format!("chat:{}", input.session_id), &input.resource_id).await;
+        self.check_lease()?;
+        let (resource, bytes) = loaded?.ok_or(ChatError::ToolTurnInvalid)?;
+        let limit = match resource.mime.as_str() {
+            "text/plain" | "text/markdown" => 1024 * 1024,
+            "image/png" | "image/jpeg" | "image/webp" => 8 * 1024 * 1024,
+            _ => return Err(ChatError::ToolTurnInvalid),
+        };
+        if bytes.len() > limit || resource.sha256 != input.sha256
+            || format!("{:x}", Sha256::digest(&bytes)) != resource.sha256 {
+            return Err(ChatError::ToolTurnInvalid);
+        }
+        let preview = dgos_types::ChatResourcePreview {
+            base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+            mime: resource.mime,
+            start: 0,
+            bytes: bytes.len() as u32,
+            total_bytes: bytes.len() as u64,
+            truncated: false,
+        };
+        self.check_lease()?;
+        Ok(preview)
     }
 
     pub async fn delete_ai_resource(&self, user: &str, session: &str, resource: &str) -> Result<bool> {

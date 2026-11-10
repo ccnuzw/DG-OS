@@ -129,14 +129,8 @@ document.addEventListener('keydown',e=>p.keys.push({key:e.key,isTrusted:e.isTrus
 const projects=await need('dev-tool-projects');if(projects.getAttribute('aria-expanded')!=='true')projects.click();await click('dev-project-item-'+A.project);return {ok:!!await until(()=>tid('dev-project-conversation'))};
 "#).await?;
     if std::env::var_os("DGOS_CODEX_LIFECYCLE_SMOKE").is_some() { return codex_lifecycle_journey(app, fx, ck, ev, &path).await; }
-    step(app, fx, ck, ev, "select synthetic model without granting workspace authority", json!({}), r#"
-await chooseConversationModel('codex','Phase6 local protocol ONLY','fixture-model');const authorize=await until(()=>{const b=tid('direct-conversation-authorize');return b&&!b.disabled&&b});if(!authorize)throw Error('agent authorization absent');await new Promise(r=>setTimeout(r,300));const p=window.__phase6;return {ok:!p.events.some(e=>['open_agent_session','send_agent_message'].includes(e.command))};
-"#).await?;
-    step(app, fx, ck, ev, "review actual agent workspace permission before granting", json!({"path":path}), r#"
-await click('direct-conversation-authorize');const dialog=await until(()=>$$('[role=dialog],[role=alertdialog]').find(e=>txt(e).includes(A.path)&&$$('button',e).some(b=>txt(b)==='允许并记住')));return {ok:!!dialog&&!window.__phase6.events.some(e=>['open_agent_session','send_agent_message'].includes(e.command)),dialog:txt(dialog)};
-"#).await?;
-    step(app, fx, ck, ev, "confirm agent permission and automatically prepare without a message", json!({}), r#"
-await confirmWorkspaceGrant();if(!await until(()=>!tid('dev-project-conversation')&&document.getElementById('agent-message')&&!document.getElementById('agent-message').disabled))throw Error('automatic native prepare absent');await new Promise(r=>setTimeout(r,300));const p=window.__phase6;return {ok:p.events.filter(e=>e.command==='open_agent_session').length===1&&!p.events.some(e=>e.command==='send_agent_message'),events:p.events};
+    step(app, fx, ck, ev, "select model in automatically trusted workspace without an authorization prompt", json!({}), r#"
+await chooseConversationModel('codex','Phase6 local protocol ONLY','fixture-model');if(!await until(()=>!tid('dev-project-conversation')&&document.getElementById('agent-message')&&!document.getElementById('agent-message').disabled))throw Error('automatic native prepare absent');const p=window.__phase6;return {ok:p.events.filter(e=>e.command==='open_agent_session').length===1&&!p.events.some(e=>e.command==='send_agent_message')&&!tid('direct-conversation-authorize')&&!$$('[role=alertdialog]').length,events:p.events};
 "#).await?;
     let prepared = host(app, "list_agent_sessions", json!({})).await?;
     let prepared_rows = prepared.as_array().ok_or("prepared session list absent")?;

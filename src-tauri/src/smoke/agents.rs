@@ -164,7 +164,7 @@ const need = async (id, ms = 20000) => { const el = await until(() => tid(id), m
 const setInput = (f, v) => { const p = f.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(p, 'value').set.call(f, v); f.dispatchEvent(new Event('input', { bubbles: true })); };
 const fill = async (id, v) => { const el = await need(id); const f = el.matches('input,textarea') ? el : el.querySelector('input,textarea'); if (!f) throw new Error('no field in ' + id); setInput(f, v); return true; };
 const click = async (id) => { (await need(id)).click(); return true; };
-const btn = (t) => $$('button', stage6UI ? ($$('.agent-workbench')[0] || document) : document).find((b) => txt(b) === t && !b.disabled);
+const btn = (t) => $$('button', stage6UI ? ($$('.agent-workbench')[0] || document) : document).find((b) => (b.getAttribute('aria-label') || txt(b)) === t && !b.disabled);
 const items = (prefix) => $$(`[data-testid^="${prefix}"]`).map((e) => ({ id: e.getAttribute('data-testid').slice(prefix.length), text: txt(e) }));
 const itemFor = (prefix, text) => items(prefix).find((i) => i.text.includes(text));
 const isChecked = (c) => c.checked === true || c.getAttribute('aria-checked') === 'true';
@@ -178,20 +178,14 @@ const confirmWorkspaceGrant = async () => {
 };
 const chooseConversationModel = async (engine, providerName=null, modelId=null) => {
  await showConversationView();
- const trigger=await until(()=>{const b=tid('composer-model-picker-trigger');return b&&!b.disabled&&b});if(!trigger)throw Error('model picker unavailable');trigger.click();
- const dialog=await need('composer-model-picker-dialog'),name=engine==='codex'?'Codex':'Claude';
- const row=await until(()=>$$('.composer-model-picker-model',dialog).find(row=>(!providerName||row.closest('.composer-model-picker-provider')?.getAttribute('aria-label')===providerName)&&(!modelId||txt(row.querySelector('.composer-model-picker-model-copy small'))===modelId)&&[...row.querySelectorAll('.composer-model-picker-routes button')].some(b=>txt(b)===name&&!b.disabled)));
- if(!row)throw Error('Prerequisite missing: enabled Provider/model with available '+name+' route'+(modelId?' / '+modelId:''));
- const details=row.querySelector('details');if(details)details.open=true;
- const route=await until(()=>$$('.composer-model-picker-routes button',row).find(b=>txt(b)===name&&!b.disabled));if(!route)throw Error('selected model route unavailable');route.click();
+ let nextOpen=0;const dialog=await until(()=>{const d=tid('composer-model-picker-dialog');if(d)return d;const b=tid('composer-model-picker-trigger');if(b&&!b.disabled&&b.getAttribute('aria-expanded')!=='true'&&Date.now()>=nextOpen){nextOpen=Date.now()+500;b.click();}return null;});if(!dialog)throw Error('model picker unavailable');const name=engine==='codex'?'Codex':'Claude';
+ const provider=dialog.querySelector('.composer-model-picker-provider-select select');if(providerName&&provider){const option=[...provider.options].find(o=>o.textContent===providerName);if(!option)throw Error('Provider unavailable: '+providerName);provider.value=option.value;provider.dispatchEvent(new Event('change',{bubbles:true}));}
+ const advanced=dialog.querySelector('.composer-model-picker-footer details');if(advanced)advanced.open=true;
+ const route=await until(()=>$$('.composer-model-picker-routes > div',dialog).filter(row=>!modelId||txt(row.querySelector('span'))===modelId).flatMap(row=>$$('button',row)).find(b=>txt(b)===name&&!b.disabled));if(!route)throw Error('selected model route unavailable');route.click();
  if(!await until(()=>!tid('composer-model-picker-dialog')))throw Error('model selection not committed');
 };
 const authorizeConversation = async () => {
- const state=await until(()=>{const b=tid('direct-conversation-authorize');return b&&!b.disabled?b:!tid('dev-project-conversation')&&document.getElementById('agent-message')?true:null});
- if(state===true)return;
- if(state){state.click();await confirmWorkspaceGrant();return;}
- // An existing grant can prepare before the authorization button is ever rendered.
- if(!await until(()=>!tid('dev-project-conversation')&&document.getElementById('agent-message')))throw Error('authorized conversation did not automatically prepare');
+ if(!await until(()=>!tid('dev-project-conversation')&&document.getElementById('agent-message')))throw Error('automatically trusted conversation did not prepare');
 };
 const prepareSavedConversation = async sid => {
  await showConversationView();
@@ -352,70 +346,131 @@ return {ok:!!selected,name:selected?.text,path:selected?.path,pressed:selected?.
 }
 
 #[cfg(target_os = "macos")]
-async fn pick_project_directory(app: &AppHandle, path: &Path) -> bool {
+async fn inspect_visible_native_folder(window: &tauri::WebviewWindow) -> Result<Option<Option<String>>, ()> {
+    use objc2::{class, msg_send};
+    use objc2::runtime::Bool;
+    let (send, receive) = oneshot::channel();
+    if window.with_webview(move |_| unsafe {
+        let app: *mut objc2::runtime::AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let windows: *mut objc2::runtime::AnyObject = msg_send![app, windows];
+        let count: usize = msg_send![windows, count];
+        for index in 0..count {
+            let candidate: *mut objc2::runtime::AnyObject = msg_send![windows, objectAtIndex: index];
+            let is_panel: Bool = msg_send![candidate, isKindOfClass: class!(NSOpenPanel)];
+            let visible: Bool = msg_send![candidate, isVisible];
+            if !is_panel.as_bool() || !visible.as_bool() { continue; }
+            let url: *mut objc2::runtime::AnyObject = msg_send![candidate, URL];
+            if url.is_null() { let _ = send.send(Some(None)); return; }
+            let path: *mut objc2::runtime::AnyObject = msg_send![url, path];
+            let bytes: *const std::ffi::c_char = msg_send![path, UTF8String];
+            let value = (!bytes.is_null()).then(|| std::ffi::CStr::from_ptr(bytes).to_string_lossy().into_owned());
+            let _ = send.send(Some(value));
+            return;
+        }
+        let _ = send.send(None);
+    }).is_err() { return Err(()); }
+    tokio::time::timeout(Duration::from_secs(2), receive).await.map_err(|_| ())?.map_err(|_| ())
+}
+
+#[cfg(target_os = "macos")]
+async fn cancel_visible_native_folder(window: &tauri::WebviewWindow) {
     use objc2::{class, msg_send};
     use objc2::runtime::{AnyObject, Bool};
+    let _ = window.with_webview(move |_| unsafe {
+        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let windows: *mut AnyObject = msg_send![app, windows];
+        let count: usize = msg_send![windows, count];
+        for index in 0..count {
+            let panel: *mut AnyObject = msg_send![windows, objectAtIndex: index];
+            let is_panel: Bool = msg_send![panel, isKindOfClass: class!(NSOpenPanel)];
+            let visible: Bool = msg_send![panel, isVisible];
+            if is_panel.as_bool() && visible.as_bool() { let _: () = msg_send![panel, cancel: std::ptr::null_mut::<AnyObject>()]; return; }
+        }
+    });
+}
+#[cfg(target_os = "macos")]
+async fn pick_project_directory(app: &AppHandle, path: &Path) -> bool {
     let Some(window)=app.get_webview_window("main") else { return false; };
     let Ok(path)=std::fs::canonicalize(path) else { return false; };
-    // Live NSOpenPanel navigation is hosted by macOS; directoryURL is configuration-only.
-    // Target this acceptance process, then verify the selected URL before confirming.
+    // System Events keystrokes follow global focus even inside a process tell block.
+    // Refuse them without verified foreground ownership; a configured directoryURL
+    // is not proof that the remote native panel actually selected that directory.
     let navigate = r#"on run argv
 tell application "System Events"
     tell (first application process whose unix id is (item 1 of argv as integer))
         set frontmost to true
+        repeat 20 times
+            if frontmost then exit repeat
+            delay 0.1
+        end repeat
+        if not frontmost then error "native_picker_foreground_unavailable"
         keystroke "g" using {command down, shift down}
-        delay 0.5
-        keystroke "a" using command down
-        keystroke (item 2 of argv)
-        delay 1
-        key code 36
+        repeat 20 times
+            if exists text field 1 of sheet 1 of sheet 1 of window 1 then exit repeat
+            delay 0.1
+        end repeat
+        tell text field 1 of sheet 1 of sheet 1 of window 1
+            set value to (item 2 of argv)
+            perform action "AXConfirm"
+        end tell
+        repeat 20 times
+            if not (exists sheet 1 of sheet 1 of window 1) then exit repeat
+            if exists row 2 of table 1 of scroll area 1 of sheet 1 of sheet 1 of window 1 then
+                perform action "AXConfirm" of text field 1 of sheet 1 of sheet 1 of window 1
+                exit repeat
+            end if
+            delay 0.1
+        end repeat
     end tell
 end tell
 end run"#;
     tokio::time::sleep(Duration::from_millis(1500)).await;
-    let result=tokio::process::Command::new("/usr/bin/osascript")
-        .args(["-e",navigate,&std::process::id().to_string(),&path.to_string_lossy()]).output().await;
-    match result {
-        Ok(output) if output.status.success()=>{},
-        other=>{println!("INFO native folder navigation failed: {other:?}");return false;}
+    let navigation=tokio::process::Command::new("/usr/bin/osascript").args(["-e",navigate,&std::process::id().to_string(),&path.to_string_lossy()]).output().await;
+    let navigated=matches!(&navigation, Ok(output) if output.status.success());
+    let expected=path.to_string_lossy().into_owned();
+    let mut selected=None;
+    if navigated {
+        for _ in 0..30 {
+            match inspect_visible_native_folder(&window).await {
+                Ok(Some(actual)) => {
+                    selected=actual;
+                    if selected.as_deref()==Some(expected.as_str()) { break; }
+                }
+                Ok(None) | Err(()) => break,
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
-    tokio::time::sleep(Duration::from_millis(1500)).await;
+    if !navigated || selected.as_deref()!=Some(expected.as_str()) {
+        if let Some(root)=std::env::var_os("DGOS_PROJECT_ACCEPTANCE_ROOT") {
+            let diagnostic=json!({"expected":expected,"selected":selected,"navigation_succeeded":navigated,"error":navigation.as_ref().map(|output|String::from_utf8_lossy(&output.stderr).into_owned()).unwrap_or_else(|error|error.to_string()),"confirmed":false});
+            let _=fs::write(Path::new(&root).join("native-folder-failure.json"),serde_json::to_vec_pretty(&diagnostic).unwrap_or_default());
+            let _=super::capture_native(app,Path::new(&root),"native-folder-navigation-failed").await;
+        }
+        cancel_visible_native_folder(&window).await;
+        return false;
+    }
     if let Some(root)=std::env::var_os("DGOS_PROJECT_ACCEPTANCE_ROOT") {
         let _=super::capture_native(app,Path::new(&root),"native-folder-before-confirm").await;
     }
-    let expected=path.to_string_lossy().into_owned();
-    let (send,receive)=oneshot::channel();
-    if window.with_webview(move |_| unsafe {
-            let app:*mut AnyObject=msg_send![class!(NSApplication),sharedApplication];
-            let windows:*mut AnyObject=msg_send![app,windows];
-            let count:usize=msg_send![windows,count];
-            let mut panel:*mut AnyObject=std::ptr::null_mut();
-            for index in 0..count {
-                let candidate:*mut AnyObject=msg_send![windows,objectAtIndex:index];
-                let is_panel:Bool=msg_send![candidate,isKindOfClass:class!(NSOpenPanel)];
-                let visible:Bool=msg_send![candidate,isVisible];
-                if is_panel.as_bool()&&visible.as_bool(){panel=candidate;break;}
-            }
-            if panel.is_null(){println!("INFO no visible NSOpenPanel among {count} owned windows");let _=send.send(false);return;}
-                let chosen:*mut AnyObject=msg_send![panel,URL];
-                if chosen.is_null(){let _=send.send(false);return;}
-                let chosen_path:*mut AnyObject=msg_send![chosen,path];
-                let bytes:*const std::ffi::c_char=msg_send![chosen_path,UTF8String];
-                let actual=if bytes.is_null(){String::new()}else{std::ffi::CStr::from_ptr(bytes).to_string_lossy().into_owned()};
-                if actual.trim_end_matches('/')!=expected.trim_end_matches('/'){println!("INFO native selected URL remains {actual:?}; refusing wrong-directory import");let _:()=msg_send![panel,cancel:std::ptr::null_mut::<AnyObject>()];let _=send.send(false);return;}
-            let _=send.send(true);
-        }).is_err(){return false;}
-        if !receive.await.unwrap_or(false){return false;}
     let confirm=r#"on run argv
 tell application "System Events"
     tell (first application process whose unix id is (item 1 of argv as integer))
-        set frontmost to true
-        key code 36
+        if exists sheet 1 of sheet 1 of window 1 then error "native_picker_navigation_incomplete"
+        perform action "AXPress" of (value of attribute "AXDefaultButton" of sheet 1 of window 1)
     end tell
 end tell
 end run"#;
-    tokio::process::Command::new("/usr/bin/osascript")
-        .args(["-e",confirm,&std::process::id().to_string()]).status().await.is_ok_and(|s|s.success())
+    if !tokio::process::Command::new("/usr/bin/osascript").args(["-e",confirm,&std::process::id().to_string()]).status().await.is_ok_and(|s|s.success()) {
+        cancel_visible_native_folder(&window).await;
+        return false;
+    }
+    for _ in 0..30 {
+        if matches!(inspect_visible_native_folder(&window).await, Ok(None)) { return true; }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    cancel_visible_native_folder(&window).await;
+    false
 }
 
 #[cfg(not(target_os = "macos"))]

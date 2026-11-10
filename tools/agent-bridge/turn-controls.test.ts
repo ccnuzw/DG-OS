@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { ModelInfo } from '@anthropic-ai/claude-agent-sdk';
+import type { ModelInfo, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { applyTurnSettings, projectTurnControls, turnSettingsSchema, validateTurnSettings } from './turn-controls';
 
 const model: ModelInfo = { value: 'sonnet', resolvedModel: 'exact-provider-model', displayName: 'Native', description: '', supportsEffort: true, supportedEffortLevels: ['low', 'high'] };
@@ -40,7 +40,7 @@ describe('pinned Claude turn settings protocol', () => {
     const controls = projectTurnControls([model], 'sonnet', true);
     const calls: unknown[] = [];
     const native = {
-      setPermissionMode: async (mode: 'default' | 'acceptEdits') => { calls.push(mode); },
+      setPermissionMode: async (mode: PermissionMode) => { calls.push(mode); },
       applyFlagSettings: async (settings: unknown) => { calls.push(settings); },
     };
     await expect(applyTurnSettings(native, controls, { reasoning_effort: 'medium', permission_mode: 'default' })).rejects.toThrow('unsupported_reasoning_effort');
@@ -53,7 +53,7 @@ describe('pinned Claude turn settings protocol', () => {
     const controls = projectTurnControls([model], 'sonnet', true);
     const calls: unknown[] = [];
     const native = {
-      setPermissionMode: async (mode: 'default' | 'acceptEdits') => { calls.push(['permission', mode]); },
+      setPermissionMode: async (mode: PermissionMode) => { calls.push(['permission', mode]); },
       applyFlagSettings: async (settings: unknown) => { calls.push(['settings', settings]); },
     };
     await applyTurnSettings(native, controls, { reasoning_effort: 'high', permission_mode: 'accept_edits' });
@@ -80,7 +80,7 @@ describe('pinned Claude turn settings protocol', () => {
     controls.permission.current = 'accept_edits';
     const calls: unknown[] = [];
     const native = {
-      setPermissionMode: async (mode: 'default' | 'acceptEdits') => { calls.push(mode); },
+      setPermissionMode: async (mode: PermissionMode) => { calls.push(mode); },
       applyFlagSettings: async (settings: unknown) => { calls.push(settings); },
     };
     await applyTurnSettings(native, controls, {});
@@ -94,5 +94,39 @@ describe('pinned Claude turn settings protocol', () => {
     expect(calls).toEqual([{ effortLevel: null }]);
     expect(controls.permission.current).toBe('accept_edits');
     expect(controls.reasoning.reason).toBe('awaiting_native_effort');
+  });
+  test('full auto is session-local and planning takes precedence without changing effort', async () => {
+    const controls = projectTurnControls([model], 'sonnet', true);
+    const calls: unknown[] = [];
+    const native = {
+      setPermissionMode: async (mode: PermissionMode) => { calls.push(mode); },
+      applyFlagSettings: async (settings: unknown) => { calls.push(settings); },
+    };
+    await applyTurnSettings(native, controls, { permission_mode: 'full_auto' });
+    for (const collaboration_mode of ['plan', 'deep'] as const) {
+      await applyTurnSettings(native, controls, { collaboration_mode });
+      expect(controls.permission.current).toBe('full_auto');
+      expect(controls.collaboration.current).toBe(collaboration_mode);
+    }
+    await applyTurnSettings(native, controls, { collaboration_mode: 'default' });
+    expect(calls).toEqual(['bypassPermissions', 'plan', 'plan', 'bypassPermissions']);
+    expect(projectTurnControls([model], 'sonnet', true).permission.current).toBe('default');
+  });
+
+  test('response preferences remain a strict independent wire setting', async () => {
+    const response_preferences = { language: 'en', brevity: 'detailed', next_step_suggestions: false } as const;
+    const settings = turnSettingsSchema.parse({ response_preferences });
+    expect(settings).toEqual({ response_preferences });
+    const controls = projectTurnControls([model], 'sonnet', true);
+    const calls: unknown[] = [];
+    await applyTurnSettings({
+      setPermissionMode: async mode => { calls.push(mode); },
+      applyFlagSettings: async value => { calls.push(value); },
+    }, controls, settings);
+    expect(calls).toEqual([]);
+    expect(controls.permission.current).toBe('default');
+    for (const preferences of [null, {}, { ...response_preferences, language: 'fr' }, { ...response_preferences, next_step_suggestions: null }, { ...response_preferences, always_allow: true }]) {
+      expect(turnSettingsSchema.safeParse({ response_preferences: preferences }).success).toBe(false);
+    }
   });
 });

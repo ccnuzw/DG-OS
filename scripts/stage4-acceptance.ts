@@ -104,12 +104,38 @@ try {
       const id = `stage4-${engine}-proof`;
       const markers = { body: `BODY_${randomUUID()}`, resource: `RESOURCE_${randomUUID()}` };
       const description = 'Read the installed native Stage4 proof resource and invoke the configured native MCP fixture.';
-      const body = `---\nname: ${id}\ndescription: ${description}\n---\n# Stage4 native proof procedure\n\n${markers.body}\n\nUse the native Skill mechanism for this skill, then use a native file-read tool to read this whole SKILL.md and references/proof.txt on every round, even if already in context. The reference contains a public fixture value, not a credential. Invoke the configured native MCP server stage4 with exactly {"challenge": "the current user challenge", "resource": "the reference value"}. Complete the native approval flow when requested. Write the fresh returned receipt verbatim to the requested round-N.txt. Never invent a receipt or replace native MCP with HTTP, shell, or another tool.\n`;
+      const readProcedure = engine === 'codex'
+        ? 'The harness selects this installed skill with a structured native skill input. Use the native commandExecution tool (for example cat) to read this whole SKILL.md and references/proof.txt on every round, even if already in context. Codex has no separate Skill or Read tool; native commandExecution file reads are allowed, but must never replace MCP dispatch.'
+        : 'Use the native Skill mechanism for this skill, then use a native file-read tool to read this whole SKILL.md and references/proof.txt on every round, even if already in context.';
+      const approvalProcedure = engine === 'codex'
+        ? 'Complete any actual native approval request. If the CLI does not expose MCP tool approval, still invoke the configured native MCP tool to diagnose dispatch; missing approval remains a blocked acceptance criterion, not a reason to skip the diagnostic call.'
+        : 'Complete the native approval flow when requested.';
+      const body = `---\nname: ${id}\ndescription: ${description}\n---\n# Stage4 native proof procedure\n\n${markers.body}\n\n${readProcedure} The reference contains a public fixture value, not a credential. Invoke the configured native MCP server stage4 with exactly {"challenge": "the current user challenge", "resource": "the reference value"}. ${approvalProcedure} Write the fresh returned receipt verbatim to the requested round-N.txt. Never invent a receipt or replace native MCP with HTTP, shell, or another tool.\n`;
       const manifest = JSON.stringify({ schema_version: '1.0', id, name: id, description, version: '1.0.0', identity: 'stage4_local_fixture', entry: 'SKILL.md', license: 'MIT' });
       await writeFile(join(root, `${engine}-skill.zip`), zipStore([['SKILL.md', body], ['skill.json', manifest], ['LICENSE', 'MIT\n'], ['references/proof.txt', `${markers.resource}\n`]]), { mode: 0o600 });
       await writeFile(join(root, `${engine}-markers.json`), JSON.stringify(markers), { mode: 0o600 });
     }
     await writeFile(join(root, 'fixture.mjs'), fixtureSource(), { mode: 0o600 });
+  }
+  if (engines.includes('codex')) {
+    failureClass = 'codex_native_protocol_unavailable';
+    const protocolRoot = join(root, 'codex-protocol');
+    const protocolEnv = { PATH: env.PATH, HOME: env.HOME, CODEX_HOME: env.CODEX_HOME };
+    const exported = await Bun.spawn(['codex', 'app-server', 'generate-json-schema', '--experimental', '--out', protocolRoot], { env: protocolEnv, stdout: 'ignore', stderr: 'ignore' }).exited;
+    if (exported !== 0) fail(failureClass);
+    const schema = JSON.parse(await readFile(join(protocolRoot, 'ServerRequest.json'), 'utf8'));
+    const methods: unknown[] | undefined = schema.oneOf?.flatMap((variant: { properties?: { method?: { enum?: unknown[] } } }) => variant.properties?.method?.enum ?? []);
+    if (!Array.isArray(methods) || methods.length === 0 || !methods.every(method => typeof method === 'string')) fail(failureClass);
+    // These actual installed protocol requests do not grant permission to an MCP
+    // tool. In particular, sandbox permissions and elicitation are not substitutes.
+    const nonToolPermissionMethods: Record<string, true> = { 'item/commandExecution/requestApproval': true, 'item/fileChange/requestApproval': true, 'item/tool/requestUserInput': true, 'mcpServer/elicitation/request': true, 'item/permissions/requestApproval': true, 'item/tool/call': true, 'account/chatgptAuthTokens/refresh': true, 'attestation/generate': true, 'currentTime/read': true, 'applyPatchApproval': true, 'execCommandApproval': true };
+    const permissions = JSON.parse(await readFile(join(protocolRoot, 'PermissionsRequestApprovalParams.json'), 'utf8'));
+    const permissionFields = Object.keys(permissions.definitions?.RequestPermissionProfile?.properties ?? {});
+    const unsupported = methods.every(method => typeof method === 'string' && Object.hasOwn(nonToolPermissionMethods, method)) && permissionFields.length > 0 && permissionFields.every(field => field === 'fileSystem' || field === 'network');
+    const versionProcess = Bun.spawn(['codex', '--version'], { env: protocolEnv, stdout: 'pipe', stderr: 'ignore' });
+    const version = (await new Response(versionProcess.stdout).text()).trim();
+    if (await versionProcess.exited !== 0) fail(failureClass);
+    await writeFile(join(root, 'evidence/codex-native-protocol.json'), JSON.stringify({ source: 'installed_cli_generated_schema', version, server_request_methods: methods, permission_profile_fields: permissionFields, mcp_tool_approval: unsupported ? 'unsupported' : 'unverified', schema_directory: protocolRoot }), { mode: 0o600 });
   }
   console.log(`stage4 evidence=${root}`);
   failureClass = 'cargo_or_acceptance_failed';

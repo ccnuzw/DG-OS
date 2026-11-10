@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CLI Agent · 输入区交互设计</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="prototype.js" defer></script>
+</head>
+<body>
+  <header class="review-bar">
+    <a href="README.md" class="review-title">CLI Agent <span>交互设计稿</span></a>
+    <nav aria-label="参考图场景">
+      <button data-scene="permission">01 运行模式</button>
+      <button data-scene="model">02 模型</button>
+      <button data-scene="reasoning">03 推理</button>
+      <button data-scene="settings">04 偏好</button>
+      <button data-scene="usage">05 用量</button>
+      <button data-scene="rest" aria-current="true">06 默认</button>
+    </nav>
+    <span class="review-note">演示数据 · 无 CLI 调用</span>
+  </header>
+  <main class="workspace" aria-label="DG-OS 工作区">
+    <div class="workspace-heading"><span data-icon="terminal"></span><span>CLI Agent</span><span class="heading-divider">/</span><span>新对话</span></div>
+    <div class="conversation" id="conversation" aria-live="polite"></div>
+    <div class="composer-area">
+      <section class="composer" aria-label="消息输入区">
+        <div class="attachments" id="attachments" hidden></div>
+        <label class="sr-only" for="prompt">向 CLI Agent 提问</label>
+        <textarea id="prompt" rows="2" placeholder="向智能体提问…（@ 文件，/ 命令）" spellcheck="false"></textarea>
+        <div class="toolbar">
+          <div class="leading">
+            <button class="icon-button" id="attach" aria-label="添加附件" title="添加附件"><span data-icon="paperclip"></span></button>
+            <button class="icon-button" id="settings-trigger" data-panel="settings" aria-label="聊天偏好设置" title="聊天偏好设置" aria-expanded="false"><span data-icon="settings"></span></button>
+          </div>
+          <div class="trailing">
+            <button class="control mode-control" id="permission-trigger" data-panel="permission" aria-label="运行模式：手动确认" aria-expanded="false"><span id="mode-icon"></span><span id="mode-label">手动确认</span></button>
+            <div class="model-reasoning">
+              <button class="control model-control" id="model-trigger" data-panel="model" aria-label="选择 Provider 和模型" aria-expanded="false"><span data-icon="cpu"></span><span id="model-label">GPT-6.1 Sol</span></button>
+              <button class="control" id="reasoning-trigger" data-panel="reasoning" aria-label="推理强度：超高" title="推理强度：超高" aria-expanded="false"><span data-icon="brain"></span><span id="effort-label">超高</span></button>
+            </div>
+            <span class="toolbar-divider"></span>
+            <button class="icon-button" id="usage-trigger" data-panel="usage" aria-label="Token 用量" title="Token 用量" aria-expanded="false"><span class="usage-ring" id="usage-ring"></span></button>
+            <button class="icon-button send" id="send" aria-label="发送消息" title="发送 · Enter" disabled><span data-icon="arrow-up"></span></button>
+          </div>
+        </div>
+      </section>
+      <footer class="workspace-meta"><span data-icon="folder"></span><span>DG-OS</span><span data-icon="branch"></span><span class="mono">main</span></footer>
+    </div>
+  </main>
+  <div id="popover" class="popover" hidden></div>
+  <input type="file" id="file-input" multiple hidden>
+  <div id="notice" class="notice" role="status" hidden></div>
+  <dialog id="full-settings" aria-labelledby="full-settings-title">
+    <form method="dialog"><header><h2 id="full-settings-title">聊天偏好设置</h2><button class="icon-button" aria-label="关闭设置">×</button></header></form>
+    <div id="full-settings-content"></div>
+  </dialog>
+</body>
+</html>

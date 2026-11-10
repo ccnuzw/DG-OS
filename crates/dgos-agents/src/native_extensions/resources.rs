@@ -5,10 +5,28 @@ use serde::{Deserialize, Serialize};
 use super::{paths::{self, Directory, Identity}, resource_tree::{self, Tree}};
 use std::path::PathBuf;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ResourceSource { pub source_hash: String, pub commit: Option<String> }
+pub struct ResourceSource {
+    pub source_hash: String, pub commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<ResourceOrigin>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResourceOrigin {
+    pub repository: dgos_skills::GithubSource,
+    pub source_id: Option<String>,
+    pub skill_path: String,
+}
 impl ResourceSource {
     fn validate(&self) -> Result<(), Error> {
         if self.source_hash.len() != 64 || !self.source_hash.bytes().all(|b| b.is_ascii_hexdigit()) || self.commit.as_ref().is_some_and(|c| c.len() != 40 || !c.bytes().all(|b| b.is_ascii_hexdigit())) { return Err(Error::InvalidFormat); }
+        if let Some(origin) = &self.origin {
+            if !origin.skill_path.is_empty() { package::safe_path(&origin.skill_path)?; }
+            if origin.source_id.as_ref().is_some_and(|id| uuid::Uuid::parse_str(id).is_err()) { return Err(Error::InvalidFormat); }
+            let repository = &origin.repository;
+            let input = format!("https://github.com/{}/{}{}", repository.owner, repository.repo, repository.requested_ref.as_ref().map(|r| format!("/tree/{r}")).unwrap_or_default());
+            let dgos_skills::SkillSource::Github(parsed) = dgos_skills::parse_source(&input).map_err(|_| Error::InvalidFormat)? else { return Err(Error::InvalidFormat); };
+            if parsed.owner != repository.owner || parsed.repo != repository.repo || parsed.requested_ref != repository.requested_ref { return Err(Error::InvalidFormat); }
+        }
         Ok(())
     }
 }
@@ -17,7 +35,12 @@ pub struct ResourceInstance { pub id: String, pub revision: String }
 #[derive(Clone, Debug, Serialize)]
 pub struct ResourceSummary {
     pub instance: ResourceInstance, pub target: Target, pub scope: Scope, pub slug: String, pub owner: Owner,
-    pub metadata: package::Metadata, pub resources: Vec<ResourceFile>, pub source: Option<ResourceSource>, pub can_update: bool,
+    pub metadata: package::Metadata, pub resources: Vec<ResourceFile>, pub source: Option<ResourceSource>, pub source_modified: bool, pub can_update: bool,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct ResourceContent {
+    pub instance: ResourceInstance, pub path: String, pub hash: String, pub bytes: usize,
+    pub text: Option<String>, pub reason: Option<String>,
 }
 /// Packages are already bounded and validated; no renderer path is accepted.
 pub enum ResourceAction {
@@ -163,6 +186,16 @@ fn validate_payload(stage: &Directory, expected: Option<&Tree>) -> Result<(), Er
     Ok(())
 }
 impl NativeExtensions {
+    /// Host-derived destination for an install preview; never creates a root.
+    pub fn resource_target_path(&self, target: Target, scope: Scope, slug: &str) -> Result<PathBuf, Error> {
+        #[cfg(unix)] {
+            self.validate(false)?; package::slug(slug)?;
+            let root = root_path(&self.context, target, &scope)?;
+            self.validate_path(&root)?;
+            Ok(root.join(slug))
+        }
+        #[cfg(not(unix))] { let _ = (target, scope, slug); Err(Error::Unsupported) }
+    }
     /// Search reads only host-derived roots; missing roots never create directories.
     pub fn discover_resources(&self, target: Target, scope: Scope, query: &str) -> Result<ResourceDiscovery, Error> {
         #[cfg(unix)] {
@@ -266,7 +299,7 @@ impl NativeExtensions {
         Ok(ResourceInstance { id: paths::hash(&binding), revision: paths::hash(&serde_json::to_vec(tree).map_err(|_| Error::Unavailable)?) })
     }
     #[cfg(unix)]
-    fn known_source(&self, root: &Directory, target: Target, scope: &Scope, slug: &str, snapshot: &Tree) -> Result<Option<ResourceSource>, Error> {
+    fn known_source(&self, root: &Directory, target: Target, scope: &Scope, slug: &str, snapshot: &Tree) -> Result<Option<(ResourceSource, bool)>, Error> {
         let namespace = self.context.roots.journal.join("resources");
         let dir = match Directory::open(&namespace) {
             Ok(dir) => { dir.private()?; Some(dir) },
@@ -280,7 +313,10 @@ impl NativeExtensions {
                 candidates += 1; if candidates > 4096 { return Err(Error::Limit); }
                 let text = dir.read(&name)?.ok_or(Error::Conflict)?.0;
                 let Ok(record) = serde_json::from_str::<ResourceJournal>(&text) else { continue; };
-                if record.principal == paths::hash(self.context.principal.as_bytes()) && record.state == State::Committed && record.target == target && &record.scope == scope && record.slug == slug && record.parent == root.identity()? && record.after.as_ref() == Some(snapshot) { return Ok(record.source); }
+                if record.principal == paths::hash(self.context.principal.as_bytes()) && record.state == State::Committed && record.target == target && &record.scope == scope && record.slug == slug && record.parent == root.identity()? && record.after.as_ref().is_some_and(|after| after.identity == snapshot.identity) {
+                    let modified = record.after.as_ref() != Some(snapshot);
+                    return Ok(record.source.map(|source| (source, modified)));
+                }
             }
         }
         let (legacy_names, legacy_incomplete) = match Directory::open(&self.context.roots.journal) {
@@ -295,7 +331,10 @@ impl NativeExtensions {
             legacy_candidates += 1; if legacy_candidates > 4096 { return Err(Error::Limit); }
             let text = legacy.read(&name)?.ok_or(Error::Conflict)?.0;
             let Ok(record) = serde_json::from_str::<ResourceJournal>(&text) else { continue; };
-            if record.principal == paths::hash(self.context.principal.as_bytes()) && record.state == State::Committed && record.target == target && &record.scope == scope && record.slug == slug && record.parent == root.identity()? && record.after.as_ref() == Some(snapshot) { return Ok(record.source); }
+            if record.principal == paths::hash(self.context.principal.as_bytes()) && record.state == State::Committed && record.target == target && &record.scope == scope && record.slug == slug && record.parent == root.identity()? && record.after.as_ref().is_some_and(|after| after.identity == snapshot.identity) {
+                let modified = record.after.as_ref() != Some(snapshot);
+                return Ok(record.source.map(|source| (source, modified)));
+            }
         }
         Ok(None)
     }
@@ -311,13 +350,38 @@ impl NativeExtensions {
             let body = files.iter().find(|f| f.path == "SKILL.md").ok_or(Error::InvalidFormat)?;
             let metadata = package::metadata(&body.bytes)?;
             let resources = files.iter().map(|f| ResourceFile { path: f.path.clone(), bytes: f.bytes.len(), executable: f.executable, hash: paths::hash(&f.bytes) }).collect();
-            let source = self.known_source(&root, target, &scope, slug, &snapshot)?;
+            let (source, source_modified) = self.known_source(&root, target, &scope, slug, &snapshot)?.map_or((None, false), |(source, modified)| (Some(source), modified));
             let instance = self.instance(target, &scope, slug, &root, &snapshot)?;
             if tree(&root, slug)?.as_ref() != Some(&snapshot) { return Err(Error::Conflict); }
             self.validate(false)?; self.validate_path(&root_path(&self.context, target, &scope)?)?;
-            Ok(ResourceSummary { instance, target, scope, slug: slug.into(), owner, metadata, resources, can_update: owner == Owner::Loose && source.is_some(), source })
+            Ok(ResourceSummary { instance, target, scope, slug: slug.into(), owner, metadata, resources, source_modified, can_update: owner == Owner::Loose && source.is_some(), source })
         }
         #[cfg(not(unix))] { let _ = (target, scope, slug); Err(Error::Unsupported) }
+    }
+    /// Read one ordinary resource from a complete, no-link tree snapshot. The
+    /// caller must present the exact currently discovered instance and revision.
+    pub fn read_resource_file(&self, target: Target, scope: Scope, slug: &str, expected: &ResourceInstance, path: &str) -> Result<ResourceContent, Error> {
+        #[cfg(unix)] {
+            self.validate(false)?; package::slug(slug)?; package::safe_path(path)?;
+            let root = self.resource_root(target, &scope, false)?;
+            let child = root.child(slug.as_ref(), false)?;
+            let (snapshot, mut files) = resource_tree::scan(&child)?;
+            let instance = self.instance(target, &scope, slug, &root, &snapshot)?;
+            if &instance != expected { return Err(Error::Conflict); }
+            let at = files.iter().position(|file| file.path == path).ok_or(Error::NotFound)?;
+            let file = files.swap_remove(at);
+            let sensitive = path.split('/').any(|part| {
+                let part = part.to_ascii_lowercase();
+                part == ".env" || part.starts_with(".env.") || matches!(part.as_str(), "auth.json" | "credentials.json" | "secrets.json" | ".npmrc" | ".netrc") || part.ends_with(".pem") || part.ends_with(".key")
+            });
+            let (text, reason) = if sensitive { (None, Some("sensitive".into())) }
+                else if file.bytes.len() > 256 * 1024 { (None, Some("too_large".into())) }
+                else { match std::str::from_utf8(&file.bytes) { Ok(text) if !text.contains('\0') => (Some(text.to_owned()), None), _ => (None, Some("binary".into())) } };
+            if tree(&root, slug)?.as_ref() != Some(&snapshot) || self.resource_root(target, &scope, false)?.identity()? != root.identity()? { return Err(Error::Conflict); }
+            self.validate(false)?;
+            Ok(ResourceContent { instance, path: path.into(), hash: paths::hash(&file.bytes), bytes: file.bytes.len(), text, reason })
+        }
+        #[cfg(not(unix))] { let _ = (target, scope, slug, expected, path); Err(Error::Unsupported) }
     }
     pub fn scan_resource_dependencies(&self, target: Target, scope: Scope, slug: &str, environment: &dependencies::Environment) -> Result<dependencies::Report, Error> {
         let summary = self.resource_summary(target, scope, slug)?;

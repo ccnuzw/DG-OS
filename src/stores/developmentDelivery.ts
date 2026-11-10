@@ -20,9 +20,11 @@ export interface GitIndexEntry { path: string; mode: string; oid: string; stage:
 export interface GitReview {
   task_id: string; kind: 'git' | 'directory'; path: string; common_dir?: string | null; common_identity?: string | null;
   branch: string | null; head: string | null; merge_heads: string[]; files: GitFile[]; index: GitIndexEntry[];
-  conflicts: GitIndexEntry[]; staged_diff: string; worktree_diff: string; review_token: string; baseline_version: string;
+  conflicts: GitIndexEntry[]; snapshot_token: string; review_token: string; baseline_version: string;
   initial_staged_paths: string[]; file_versions: Record<string, string>;
 }
+export interface GitScopeInput { project_id: string; task_id: string | null }
+export interface GitStagedDiff { snapshot_token: string; diff: string }
 export interface GitHistoryInput { task_id: string; start_oid?: string | null; cursor?: string | null; limit: number }
 export interface GitHistoryEntry { oid: string; author: string; timestamp: number; subject: string; parents: string[] }
 export interface GitHistoryPage { anchor: string; next_cursor: string | null; commits: GitHistoryEntry[] }
@@ -50,6 +52,7 @@ async function call<T>(command: string, args: Record<string, unknown>): Promise<
 export function readDevelopmentWorkspaces(input: ReadWorkspacesInput) { return call<WorkspaceView>('read_development_workspaces', { input }); }
 export function saveDevelopmentWorkspace(input: SaveWorkspaceInput) { return call<WorkspaceView>('save_development_workspaces', { input }); }
 export function readDevelopmentGit(taskId: string) { return call<GitReview>('read_development_git', { taskId }); }
+export function readDevelopmentStagedDiff(input: GitScopeInput) { return call<GitStagedDiff>('read_development_staged_diff', { input }); }
 export function readDevelopmentGitHistory(input: GitHistoryInput) { return call<GitHistoryPage>('read_development_git_history', { input }); }
 export function previewDevelopmentGitPull(taskId: string, remote: string, branch: string) { return call<GitPullPreview>('preview_development_git_pull', { input: { task_id: taskId, remote, branch } }); }
 export function executeDevelopmentGit(input: ExecuteGitInput) { return call<GitOperation>('execute_development_git', { input }); }

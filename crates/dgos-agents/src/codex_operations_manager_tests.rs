@@ -26,6 +26,9 @@ case "$line" in
 *) printf '{"id":%s,"result":{"queuedSubmission":{"id":"queued-one"}}}\n' "$request";;
 esac;;
 *'"method":"review/start"'*) printf '%s\n' '{"method":"turn/started","params":{"threadId":"ops-thread","turn":{"id":"review-turn","status":"inProgress"}}}' '{"method":"item/completed","params":{"threadId":"ops-thread","turnId":"review-turn","item":{"id":"review-output","type":"agentMessage","text":"native review result"}}}' '{"method":"turn/completed","params":{"threadId":"ops-thread","turn":{"id":"review-turn","status":"completed","items":[]}}}'; printf '{"id":%s,"result":{"turn":{"id":"review-turn"},"reviewThreadId":"ops-thread"}}\n' "$request";;
+*'"method":"thread/compact/start"'*)
+ if [ -f malformed-compact-ack ]; then printf '{"id":%s,"result":null}\n' "$request";
+ else printf '%s\n' '{"method":"turn/started","params":{"threadId":"ops-thread","turn":{"id":"compact-turn","status":"inProgress"}}}' '{"method":"thread/tokenUsage/updated","params":{"threadId":"ops-thread","tokenUsage":{"last":{"inputTokens":12,"outputTokens":1},"total":{"inputTokens":120,"outputTokens":10},"modelContextWindow":1000}}}' '{"method":"turn/completed","params":{"threadId":"ops-thread","turn":{"id":"compact-turn","status":"completed","items":[]}}}'; printf '{"id":%s,"result":{}}\n' "$request"; fi;;
 *'"method":"thread/fork"'*) printf '{"id":%s,"result":{"thread":{"id":"fork-native","turns":[]}}}\n' "$request";;
 *'"method":"thread/queue/list"'*) printf '{"id":%s,"result":{"data":[{"id":"queued-one","input":[]}],"nextCursor":null}}\n' "$request";;
 *'"method":"thread/backgroundTerminals/list"'*) printf '{"id":%s,"result":{"data":[{"processId":"pty","command":"sleep 60"}],"nextCursor":null}}\n' "$request";;
@@ -90,6 +93,48 @@ async fn review_is_a_durable_run_even_when_terminal_precedes_ack() {
     assert_eq!(f.calls("review/start").len(), 1);
     f.finish().await;
 }
+#[tokio::test]
+async fn compact_is_generation_bound_and_never_replayed_after_native_receipt() {
+    let f = Fixture::new().await;
+    assert!(f.manager.observe_agent_compression("alice", CodexScope { session_id: f.id.clone(), generation: f.generation.clone() }).await.unwrap());
+    assert!(f.calls("thread/compact/start").is_empty());
+    let input = f.input(CodexAction::Compact {});
+    assert_eq!(f.manager.control_codex_operation("bob", input.clone()).await.unwrap_err(), "session_not_found");
+    let mut stale = input.clone(); stale.generation = Uuid::new_v4().to_string();
+    assert_eq!(f.manager.control_codex_operation("alice", stale).await.unwrap_err(), "stale_generation");
+    let receipt = f.manager.control_codex_operation("alice", input.clone()).await.unwrap();
+    assert_eq!(receipt.run_id.as_deref(), Some(input.request_id.as_str()));
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let run = f.manager.inner.repository.run("alice", &input.request_id).await.unwrap().unwrap();
+            if run.status == "completed" && f.manager.inner.run_projections.lock().await.is_empty() { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }).await.unwrap();
+    assert_eq!(f.manager.control_codex_operation("alice", input).await.unwrap().state, CodexOperationState::Applied);
+    assert_eq!(f.calls("thread/compact/start").len(), 1);
+    let view = f.manager.snapshot("alice", &f.id).await.unwrap();
+    assert!(view.view.events.iter().any(|event| event.kind == "thread/tokenUsage/updated" && event.data["tokenUsage"]["last"]["inputTokens"] == 12));
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn malformed_compact_ack_is_durable_unknown_and_never_replayed() {
+    let f = Fixture::new().await;
+    std::fs::write(f.root.join("malformed-compact-ack"), "yes").unwrap();
+    let input = f.input(CodexAction::Compact {});
+    let receipt = f.manager.control_codex_operation("alice", input.clone()).await.unwrap();
+    assert_eq!(receipt.state, CodexOperationState::Unknown);
+    assert_eq!(f.manager.control_codex_operation("alice", input.clone()).await.unwrap().state, CodexOperationState::Unknown);
+    let inspected = f.manager.inspect_codex_operation("alice", InspectCodexOperation { session_id: input.session_id, generation: input.generation, request_id: input.request_id }).await.unwrap().unwrap();
+    assert_eq!(inspected.state, CodexOperationState::Unknown);
+    assert_eq!(f.calls("thread/compact/start").len(), 1);
+    assert_eq!(f.manager.control_codex_operation("alice", f.input(CodexAction::Compact {})).await.unwrap_err(), "result_unknown");
+    let view = f.manager.snapshot("alice", &f.id).await.unwrap();
+    assert!(!view.view.events.iter().any(|event| event.kind == "thread/tokenUsage/updated"));
+    f.finish().await;
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn aborting_ipc_cannot_release_control_or_cancel_receipt_settlement() {

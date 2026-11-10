@@ -1,5 +1,5 @@
 import { t, useLocale as usePageLocale } from '../../i18n';
-import { Component, Fragment, useMemo, useState, type ReactNode } from 'react';
+import { Component, Fragment, createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 import { Lexer, type Token, type Tokens } from 'marked';
 import { common, createLowlight } from 'lowlight';
 import { openUrl } from '@tauri-apps/plugin-opener';
@@ -20,6 +20,8 @@ import './Markdown.css';
 
 const MAX_HIGHLIGHT_CHARS = 20000;
 const lowlight = createLowlight(common);
+
+export const MarkdownHighlightContext = createContext(true);
 
 const NAMED_ENTITIES: Readonly<Record<string, string>> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0' };
 
@@ -98,9 +100,10 @@ function highlight(lang: string | undefined, text: string): ReactNode[] | null {
 
 function CodeBlock({ lang, text }: { lang?: string; text: string }) {
   usePageLocale();
+  const codeHighlighting = useContext(MarkdownHighlightContext);
   const [state, copy] = useCopyFeedback();
   const label = lang?.trim().split(/\s+/)[0] ?? '';
-  const highlighted = useMemo(() => highlight(label, text), [label, text]);
+  const highlighted = useMemo(() => codeHighlighting ? highlight(label, text) : null, [label, text, codeHighlighting]);
   return (
     <div className="my-2 overflow-hidden rounded-md border border-border-subtle bg-surface-inset">
       <div className="flex items-center justify-between gap-2 border-b border-border-subtle px-3 py-1 font-sans text-xs text-ink-secondary">

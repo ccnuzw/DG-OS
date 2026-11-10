@@ -4,7 +4,7 @@
 
 ## 1. 范围与依据
 
-采用 [D127](../../06-决策记录/V7-冻结决策.md) 与 [ADR-0004](../../06-决策记录/ADR/0004-Codex与Claude独立会话适配.md)。当前只支持 Codex 和 Claude，Gemini 延后。使用本机 CLI，不随应用打包 CLI。普通 Provider 聊天不因此获得 Agent 能力。
+采用 [D127](../../06-决策记录/V7-冻结决策.md) 与 [ADR-0004](../../06-决策记录/ADR/0004-Codex与Claude独立会话适配.md)，运行绑定以[D136](../../04-技术架构/当前版本/D136-CLI能力切换技术设计.md)为准，输入、信任、模式及用量增量按[D144](../../06-决策记录/V7-冻结决策.md#d144-cli-agent-直接配置精确工作区自动信任与用量交互)。当前只支持 Codex 和 Claude，Gemini 延后。使用本机 CLI，不随应用打包 CLI。普通 Provider 聊天不因此获得 Agent 能力。
 
 - Codex：Rust 直接使用 `codex app-server --stdio`，独立处理 thread、turn、item、审批与恢复。
 - Claude：Rust 管理打包的 `dgos-claude-bridge`，官方 TypeScript Agent SDK 0.3.317 通过 `pathToClaudeCodeExecutable` 调用本机 claude。桥接程序内包含 SDK 和 JS 运行时，不包含 Claude CLI。
@@ -13,11 +13,11 @@
 
 ## 2. 运行与配置
 
-界面先选择引擎、目录、可选模型与 CLI 绝对路径，并确认工作区信任。配置加载可能在第一条消息之前执行 Hooks 或启动 MCP。Codex 默认 workspace-write/on-request；Claude 使用 Claude Code 系统提示预设、user/project/local 设置和自身权限模式。不启用 bypassPermissions。
+用户进入已打开项目的活动精确工作区后，由宿主核对账户、项目、task/workspace 与真实目录身份并幂等建立 Agent 信任；不再显示授权按钮或二次确认。手动撤销持久拒绝，显式重新启用直接授予；目录替换须重新定位，terminal/service 独立授权。选择有效 Provider/模型后自动准备，CLI 路径复用应用设置；配置加载可能在第一条消息前执行 Hooks 或启动 MCP。Codex 默认 workspace-write/on-request；Claude 使用 Claude Code 系统提示预设及 user/project/local 设置。D144 全自动仅在用户显式选择本会话后启用对应原生策略，不继承为新会话默认、不批准旧 pending；规划/深度另施加原生受限策略，映射与 Claude 非 OS 沙箱边界见[D136 §17](../../04-技术架构/当前版本/D136-CLI能力切换技术设计.md#17-d144-输入模式与原生用量增量)。
 
 CLI 优先使用显式绝对文件路径，其次 PATH、用户 `.local/bin`/`.npm-global/bin`/`.bun/bin`、`/opt/homebrew/bin`、`/usr/local/bin`。Unix 候选必须为有执行位的普通文件（允许指向有效文件的符号链接）；自动发现跳过无执行位文件，显式指定则返回 invalid_executable。实际权限、架构或解释器导致的启动失败仍由进程启动报告。不经过 shell，不接受前端 argv、环境或原始 RPC。认证由原 CLI/SDK 处理，凭据不进入前端和索引。
 
-阶段4按[D135与项目任务契约§9](V7-项目任务基础技术契约.md#9-阶段4增量契约项目级-provider-skills-mcp)提供显式项目能力：选择精确Provider/model/revision、Skill版本/hash、MCP工具/schema。默认原生模式仍可用；受管模式不改全局或项目配置，凭据仅交给受信CLI进程环境及桥接私有stdio，原生Shell/Hooks仍使用本地用户权限。实际修订快照与运行事件分开保存，prepared/connected不等于已执行。旧会话与恢复固定原修订，配置更新用于显式新建会话，撤销立即阻止后续宿主调用。
+当前新会话仅使用 DG-OS 精确 Provider/model/revision，Skills/MCP 使用 CLI 原生体系，不提供 native Provider、混合受管模式或原生账号回退。凭据仅交给受信 CLI 进程环境及桥接私有 stdio，原生 Shell/Hooks 仍使用本地用户权限；Provider 绑定快照、能力发现和实际执行分别取证。D135 阶段4及其 capability_revision=0/正数规则只作历史迁移依据，不能用于新会话准入；当前绑定与旧历史只读策略见 D136，接口及字段以[接口契约 §17.9、§17.11](../../04-技术架构/当前版本/V1-接口契约.md#179-codex-接入完善增量读取与原生-skill-输入)为准。
 
 开发和 Tauri 构建前执行 `npm run agents:build`，要求构建机有 Bun。依赖安装使用 `--omit=optional --ignore-scripts`，不拉取 SDK 自带 Claude 可执行文件。桥接产物放入资源目录 `agent-bridge/`；macOS 已有本地运行证据，其他平台的分发和进程树行为不能从该证据推断。
 
@@ -30,20 +30,22 @@ Claude 发布认证约束：按 [Agent SDK 官方概览](https://code.claude.com
 | 命令 | 输入 | 输出 |
 | --- | --- | --- |
 | `list_agent_sessions` | 无 | 当前用户会话索引 |
-| `open_agent_session` | `input: {id, engine, options, task_id?, capability_revision?}`；项目任务准入见D134，能力修订见D135 | 会话快照及可选capabilities |
-| `get_agent_session` | `sessionId` | 会话快照 |
-| `send_agent_message` | `input: {session_id, request_id, text}` | 已提交确认 |
-| `respond_agent_request` | `input: {session_id, request_id, response}` | 原生请求响应确认 |
-| `interrupt_agent_session` | `sessionId` | 中断请求确认，实际终态由事件决定 |
+| `open_agent_session` | `input` 为 tagged `create` / `resume`；精确字段见下 | 当前代次会话快照及 Provider 绑定 |
+| `get_agent_session` | `sessionId,cursor?` | 有界完整/增量快照，含 generation、controls 与 active_run |
+| `send_agent_message` | `input:{session_id,generation,request_id,text,settings?,references?,skills?,images?}` | 已提交确认；settings 真实字段见接口契约 §17.9 |
+| `respond_agent_request` | `input:{session_id,generation,request_id,response}` | 原生请求响应确认 |
+| `interrupt_agent_session` | `sessionId,generation,runId` | 目标本轮中断请求确认，实际终态由原生事件决定 |
 | `close_agent_session` | `sessionId` | 限时进程回收结果 |
 
-`engine` 为 `codex` 或 `claude`。options 包含 workspace、resume_id、executable、model、trust_workspace。renderer 不得用任意 resume_id 恢复本机其他会话；恢复只能使用宿主索引中的 DGOS id，再由宿主找到 native ID。新建 ID 与消息 request_id 必须 UUID。相同会话不能改成另一引擎。
+`engine` 为 `codex` 或 `claude`。create 为 `{intent:'create',id,engine,options,task_id,project_revision,provider}`，options 含 workspace、resume_id、executable、model、trust_workspace，Provider 为精确引用；resume 为 `{intent:'resume',session_id,trust_workspace}`。新入口传 trust_workspace=false，由宿主消费当前精确工作区有效 agent 授权。CLI 路径由宿主应用偏好解析；renderer 不得用任意 resume_id 恢复本机其他会话，恢复只接受宿主索引 DG-OS id，再由宿主找到 native ID。新建 ID 与消息 request_id 必须 UUID；相同会话不能改成另一引擎。
 
 会话快照包含 native_id、workspace、status、events、pending、error。状态为 starting/idle/running/waiting/closed/error/unknown；idle 代表可以发送下一轮，不表示进程结束。原生失败终态为 error；失联且无可靠终态为 unknown。发送未知结果不得自动重试。重复消息 ID 使用输入摘要避免同一进程内重复提交；不承诺跨重启恰好一次。
 
-`capability_revision`为0表示显式原生模式，为正数表示项目不可变修订；恢复不传则沿用原快照，传入不同值返回capability_conflict。能力快照包括revision、permission_epoch、engine、cli_version、configuration及Provider/Skills/MCP准备状态；当前原生工具事件才证明加载或执行。能力目录、配置CAS/撤销、会话快照及逐次宿主确认IPC见[阶段4契约](V7-项目任务基础技术契约.md#9-阶段4增量契约项目级-provider-skills-mcp)。
+Provider 项目配置修订为正数，Provider 自身 config_revision 允许 0，两者不得混淆。恢复沿原绑定重验 Provider、epoch、账户、目录及 CLI 身份，不接受替换配置；旧混合或历史原生会话只读，需审查摘要后新建交接。配置准备、清单发现、输入选择、正文/资源读取和工具执行分别表达，不能从 prepared/connected 推断已执行。
 
 消息最多 64 KiB UTF-8。事件单行最多 4 MiB；显示快照保留最近 2000 条、约 16 MiB 内容。历史原文仍由 CLI 保存，DGOS 只保留有界展示投影。审批 pending 独立保存，不能因显示事件淘汰而丢失。
+
+D144 的推理、响应偏好、用量及压缩沿[接口契约 §17.9](../../04-技术架构/当前版本/V1-接口契约.md#179-codex-接入完善增量读取与原生-skill-输入)。推理仅取真实离散档位，null 表示原生默认而非关闭；语言/精简/建议作为独立响应设置，不改用户 text，跟随修改/流式展示/代码高亮只作用呈现，主题复用应用外观。用量来自原生回执，未知不填零、累计不当上下文、费用实际与可靠价格预估区分。压缩复用现有类型化 compact 动作，仅在当前账户、Provider、目录、generation、空闲及能力校验后派发；原生受理不等于完成，失败/未知不改占用、不自动重发。
 
 ## 4. 生命周期、归属与持久化
 
@@ -63,7 +65,7 @@ Codex 保留命令/文件审批、工具问题和 MCP elicitation 的原生请�
 
 | 分支 | 行为 | 验证 |
 | --- | --- | --- |
-| B01 | 可信目录、UUID 与用户归属检查，再启动引擎 | 宿主契约检查、Rust 跨用户拒绝、UI 信任门禁 |
+| B01 | 宿主核实活动精确目录、UUID 与归属后自动建立未被拒绝的 Agent 信任；撤销不重授、目录替换拒绝 | 宿主自动激活/持久撤销/身份冲突测试及真实桌面；不沿用旧每会话勾选门禁 |
 | B02 | 原生握手后登记索引，失败清理进程 | 真实本机 CLI 握手 smoke |
 | B03 | 同一会话继续发送，原生事件更新显示 | Codex 真实两轮，Claude 真实多轮与恢复 |
 | B04 | 审批匹配 pending，拒绝无效与迟到响应 | Codex 协议 fixture、Claude 真实 Write 拒绝/迟到批准拒绝、UI 原生拒绝测试 |
@@ -73,7 +75,7 @@ Codex 保留命令/文件审批、工具问题和 MCP elicitation 的原生请�
 
 ## 7. 验证记录
 
-本次证据集中在此，旧单次 runner 的测试结果不作为新路径证据。
+以下保留 D127 既有切片证据，旧单次 runner 的测试结果不作为新路径证据；其中旧信任门禁、默认权限及 UI 结果不证明 D144 的自动授权、全自动、规划/深度、偏好或压缩已验证。新增实现与分级证据只维护在[V1 实现状态](../当前版本/V1-实现状态.md)，本次契约更新不提升其状态。
 
 - 本机 Codex 0.166.0、Claude Code 2.1.317：真实握手、获取 native ID、关闭、跨用户查询拒绝通过；无模型调用的启动 smoke 已运行。
 - Codex：临时工作区真实两轮上下文对话通过，关闭后恢复获得原历史；真实创建 amber.txt 并用命令读取，观察文件内容与工具事件通过。

@@ -18,7 +18,7 @@ beforeEach(() => {
  localStorage.clear(); useDevelopment.getState().reset(); useDevelopment.setState({ projects: [project] }); receipts = []; mergeHeads = [];
  invoke.mockImplementation(async (command: string) => {
   if (command === 'read_development_workspaces') return workspace();
-  if (command === 'read_development_git') return { task_id: 't', kind: 'git', path: '/task-worktree', files: [{ path: 'code.txt', index: ' ', worktree: 'M' }], conflicts: [], initial_staged_paths: [], staged_diff: '', worktree_diff: 'changed', merge_heads: mergeHeads, file_versions: {}, baseline_version: '', review_token: 'review' };
+  if (command === 'read_development_git' || command === 'read_development_project_git') return gitReview({ merge_heads: mergeHeads });
   if (command === 'list_development_handoffs') return [];
   if (command === 'read_development_workspace') return { projects: [project], tasks: [], sessions: [], operations: receipts, selection: { project_id: 'p', task_id: 't', session_id: null } };
   return null;
@@ -38,6 +38,7 @@ it('persists identity before IPC, survives disposal and receipt loss, then keeps
   return original(command, args);
  });
  const first = await show(); fireEvent.click(screen.getByRole('checkbox', { name: /code.txt/ })); fireEvent.click(screen.getByRole('button', { name: 'delivery.stage' }));
+ await act(async () => {});
  first.unmount(); await act(async () => { deferred.reject('IPC disconnected'); });
  const second = await show();
  expect(screen.getByRole('status').textContent).toContain('delivery.operation.unknown');
@@ -72,7 +73,7 @@ it('permits full-index confirmed empty-diff merges and blocks ordinary empty com
 });
 
 function gitReview(overrides: Partial<GitReview> = {}): GitReview {
- return { task_id: 't', kind: 'git', path: '/task-worktree', branch: 'main', head: 'a'.repeat(40), merge_heads: [], files: [{ path: 'code.txt', index: ' ', worktree: 'M' }], index: [], conflicts: [], staged_diff: '', worktree_diff: 'changed', review_token: 'review', baseline_version: '', initial_staged_paths: [], file_versions: {}, ...overrides };
+ return { task_id: 't', kind: 'git', path: '/task-worktree', branch: 'main', head: 'a'.repeat(40), merge_heads: [], files: [{ path: 'code.txt', index: ' ', worktree: 'M' }], index: [], conflicts: [], snapshot_token: 'snapshot', review_token: 'review', baseline_version: '', initial_staged_paths: [], file_versions: {}, ...overrides };
 }
 
 it('opens the selected Git diff without staging files or performing network operations', async () => {
@@ -86,19 +87,20 @@ it('opens the selected Git diff without staging files or performing network oper
 
 it('refreshes native completion without losing valid path selection or commit drafts or repeating actions', async () => {
  const original = invoke.getMockImplementation()!;
- let current = gitReview({ files: [{ path: 'code.txt', index: ' ', worktree: 'M' }, { path: 'gone.txt', index: ' ', worktree: 'M' }], staged_diff: 'staged' });
- invoke.mockImplementation(async (command: string, args: unknown) => command === 'read_development_git' ? current : original(command, args));
+ let current = gitReview({ files: [{ path: 'code.txt', index: 'M', worktree: 'M' }, { path: 'gone.txt', index: ' ', worktree: 'M' }] });
+ invoke.mockImplementation(async (command: string, args: unknown) => command === 'read_development_project_git' ? current : original(command, args));
  const view = render(<DeliveryPanel {...props} mode="git" refreshKey={0} />); await act(async () => {});
  fireEvent.click(screen.getByRole('checkbox', { name: 'code.txt' })); fireEvent.click(screen.getByRole('checkbox', { name: 'gone.txt' }));
  fireEvent.change(screen.getByLabelText('delivery.commitMessage'), { target: { value: 'Keep this commit draft' } });
  fireEvent.click(screen.getByRole('checkbox', { name: 'delivery.confirmAllIndex' }));
- current = gitReview({ review_token: 'after-native-turn', staged_diff: 'staged' });
+ current = gitReview({ snapshot_token: 'after-native-turn', review_token: 'after-native-turn', files: [{ path: 'code.txt', index: 'M', worktree: 'M' }] });
  view.rerender(<DeliveryPanel {...props} mode="git" refreshKey={1} />); await act(async () => {});
  expect((screen.getByRole('checkbox', { name: 'code.txt' }) as HTMLInputElement).checked).toBe(true);
  expect(screen.queryByRole('checkbox', { name: 'gone.txt' })).toBeNull();
  expect((screen.getByLabelText('delivery.commitMessage') as HTMLInputElement).value).toBe('Keep this commit draft');
  expect((screen.getByRole('checkbox', { name: 'delivery.confirmAllIndex' }) as HTMLInputElement).checked).toBe(false);
- expect(invoke.mock.calls.filter(([command]) => command === 'read_development_git')).toHaveLength(2);
+ expect(invoke.mock.calls.filter(([command]) => command === 'read_development_project_git')).toHaveLength(2);
+ expect(invoke.mock.calls.some(([command]) => command === 'read_development_git')).toBe(false);
  expect(invoke.mock.calls.some(([command]) => command === 'execute_development_git')).toBe(false);
 });
 
@@ -116,7 +118,8 @@ it('keeps native refresh read-only and queued behind an in-flight explicit stage
  await act(async () => { receipts = [receipt(id, 'succeeded')]; deferred.resolve(receipts[0]); });
  expect(invoke.mock.calls.filter(([command]) => command === 'execute_development_git')).toHaveLength(1);
  expect((screen.getByRole('button', { name: 'delivery.stage' }) as HTMLButtonElement).disabled).toBe(false);
- expect(invoke.mock.calls.filter(([command]) => command === 'read_development_git').length).toBeGreaterThan(1);
+ expect(invoke.mock.calls.filter(([command]) => command === 'read_development_git')).toHaveLength(1);
+ expect(invoke.mock.calls.filter(([command]) => command === 'read_development_project_git').length).toBeGreaterThan(1);
 });
 
 it('keeps guarded restore confirmation and sends only explicit hashed paths after approval', async () => {
@@ -129,7 +132,7 @@ it('keeps guarded restore confirmation and sends only explicit hashed paths afte
  const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(options => { options.onCancel?.(); return { id: 'confirm', close: () => {} }; });
  try {
   render(<DeliveryPanel {...props} mode="git" />); await act(async () => {});
-  expect(screen.getByText('workbenchGit.taskBaseline')).toBeTruthy();
+  expect(invoke.mock.calls.some(([command]) => command === 'read_development_git')).toBe(false);
   fireEvent.click(screen.getByRole('checkbox', { name: 'code.txt' })); fireEvent.click(screen.getByRole('button', { name: 'delivery.discard' })); await act(async () => {});
   expect(confirm.mock.calls[0][0].content).toContain('code.txt');
   expect(invoke.mock.calls.some(([command]) => command === 'execute_development_git')).toBe(false);
@@ -143,10 +146,10 @@ it('requires renewed push confirmation when task preparation observes another br
  const original = invoke.getMockImplementation()!;
  const preparation = Promise.withResolvers<string | null>();
  const ensureTask = vi.fn(() => preparation.promise);
- const overview = { kind: 'git', path: '/task-worktree', branch: 'main', head: 'a'.repeat(40), files: [{ path: 'code.txt', index: ' ', worktree: 'M' }], conflicts: [], staged_diff: '', worktree_diff: 'changed' };
+ const overview = { kind: 'git', path: '/task-worktree', branch: 'main', head: 'a'.repeat(40), files: [{ path: 'code.txt', index: ' ', worktree: 'M' }], conflicts: [], snapshot_token: 'snapshot', merge_heads: [] };
  invoke.mockImplementation(async (command: string, args: any) => {
-  if (command === 'read_development_project_git') return overview;
-  if (command === 'read_development_git') return gitReview({ branch: 'topic', review_token: 'topic-review' });
+  if (command === 'read_development_project_git') return args.taskId ? gitReview({ branch: 'topic', snapshot_token: 'topic-snapshot', review_token: 'topic-review' }) : overview;
+  if (command === 'read_development_git') return gitReview({ branch: 'topic', snapshot_token: 'topic-snapshot', review_token: 'topic-review' });
   if (command === 'execute_development_git') { receipts = [receipt(args.input.id, 'succeeded', 'git_push')]; return receipts[0]; }
   return original(command, args);
  });
@@ -164,4 +167,33 @@ it('requires renewed push confirmation when task preparation observes another br
   expect(invoke.mock.calls.find(([command]) => command === 'execute_development_git')?.[1].input.review_token).toBe('topic-review');
   expect(ensureTask).toHaveBeenCalledTimes(1);
  } finally { confirm.mockRestore(); }
+});
+
+it('uses scoped task observations for browsing and obtains strict authority only on an explicit write', async () => {
+ await show();
+ expect(invoke).toHaveBeenCalledWith('read_development_project_git', { projectId: 'p', taskId: 't' });
+ expect(invoke.mock.calls.some(([command]) => command === 'read_development_git')).toBe(false);
+ expect(screen.queryByLabelText('delivery.stagedDiff')).toBeNull();
+ expect(screen.queryByLabelText('delivery.worktreeDiff')).toBeNull();
+});
+
+it('rejects raw snapshot changes before a task write even when file statuses stay identical', async () => {
+ const original = invoke.getMockImplementation()!;
+ invoke.mockImplementation(async (command: string, args: unknown) => command === 'read_development_git' ? gitReview({ snapshot_token: 'different-raw-version', review_token: 'new-authority' }) : original(command, args));
+ await show();
+ fireEvent.click(screen.getByRole('checkbox', { name: 'code.txt' })); fireEvent.click(screen.getByRole('button', { name: 'delivery.stage' })); await act(async () => {});
+ expect(screen.getByRole('alert').textContent).toBe('dev.error.git_review_stale');
+ expect(invoke.mock.calls.some(([command]) => command === 'execute_development_git')).toBe(false);
+});
+
+it('retains task changes, selection and unsent drafts when strict authorization fails', async () => {
+ const original = invoke.getMockImplementation()!;
+ invoke.mockImplementation(async (command: string, args: unknown) => { if (command === 'read_development_git') throw 'git_review_incomplete'; return original(command, args); });
+ await show();
+ fireEvent.change(screen.getByLabelText('delivery.commitMessage'), { target: { value: 'Do not lose this draft' } });
+ fireEvent.click(screen.getByRole('checkbox', { name: 'code.txt' })); fireEvent.click(screen.getByRole('button', { name: 'delivery.stage' })); await act(async () => {});
+ expect(screen.getByRole('alert').textContent).toBe('dev.error.git_review_incomplete');
+ expect(screen.getByLabelText('delivery.commitMessage')).toHaveProperty('value', 'Do not lose this draft');
+ expect(screen.getByRole('checkbox', { name: 'code.txt' })).toHaveProperty('checked', true);
+ expect(invoke.mock.calls.some(([command]) => command === 'execute_development_git')).toBe(false);
 });

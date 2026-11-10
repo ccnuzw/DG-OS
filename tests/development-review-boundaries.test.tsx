@@ -143,7 +143,7 @@ it('submits one exact native permission decision without granting unrelated host
 it('keeps the file selected when checking it again after deselection', async () => {
  invoke.mockImplementation((cmd: string) => {
   if (cmd === 'read_development_workspaces') return Promise.resolve({ workspaces: [], selected_workspace_id: null });
-  if (cmd === 'read_development_git') return Promise.resolve({ kind: 'git', files: [{ path: 'code.txt', index: ' ', worktree: 'M' }], conflicts: [], initial_staged_paths: [], file_versions: {}, baseline_version: 'baseline' });
+  if (cmd === 'read_development_project_git') return Promise.resolve({ kind: 'git', path: '/project', files: [{ path: 'code.txt', index: ' ', worktree: 'M' }], conflicts: [], snapshot_token: 'snapshot', merge_heads: [] });
   if (cmd === 'list_development_handoffs') return Promise.resolve([]);
   return Promise.resolve(null);
  });

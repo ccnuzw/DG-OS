@@ -116,7 +116,7 @@ pub(super) fn patches(target: Target, scope: &Scope, project: Option<&str>, chan
         Change::Upsert { fields, .. } => {
             let ServerPatch { transport, program, args, url: endpoint, cwd, bearer_env, forwarded_env, header_env } = fields;
             if target == Target::Claude {
-                if !matches!(cwd, Field::Keep) || !matches!(bearer_env, Field::Keep) || !matches!(forwarded_env, Field::Keep) { return Err(Error::Unsupported); }
+                if !matches!(cwd, Field::Keep) || !matches!(bearer_env, Field::Keep) { return Err(Error::Unsupported); }
                 push(&mut output, &path, "type", transport, |t| Ok(json!(match t { Transport::Stdio => "stdio", Transport::Http => "http", Transport::Sse => "sse", Transport::WebSocket => return Err(Error::Unsupported), Transport::Unknown => return Err(Error::InvalidFormat) })))?;
             } else if !matches!(transport, Field::Keep) {
                 // Codex discriminates by command vs URL, not by a type field.
@@ -142,7 +142,15 @@ pub(super) fn patches(target: Target, scope: &Scope, project: Option<&str>, chan
                     Ok(json!(values))
                 })?;
                 patch_headers(&mut output, &path, "env_http_headers", header_env, false)?;
-            } else { patch_headers(&mut output, &path, "headers", header_env, true)?; }
+            } else {
+                push(&mut output, &path, "env", forwarded_env, |values| {
+                    let mut map = serde_json::Map::new();
+                    if values.len() > 128 { return Err(Error::Limit); }
+                    for name in values { if !env_name(&name) || map.contains_key(&name) { return Err(Error::InvalidFormat); } map.insert(name.clone(), json!(format!("${{{name}}}"))); }
+                    Ok(Value::Object(map))
+                })?;
+                patch_headers(&mut output, &path, "headers", header_env, true)?;
+            }
             if output.is_empty() { return Err(Error::InvalidFormat); }
         }
     }
@@ -360,4 +368,239 @@ pub(super) fn discover(text: &str, target: Target, scope: &Scope, project: Optio
         }
     }
     Ok(Discovery { instances, incomplete })
+}
+
+/// This host-only preimage must never be serialized or logged. Literal native
+/// credentials stay here; the renderer sees only their field/reference names.
+#[derive(Clone)]
+pub struct ProbeConfig {
+    pub projection: ConfigProjection,
+    pub environment: Vec<(String, String)>,
+    pub headers: Vec<(String, String)>,
+    pub forwarded_env: Vec<String>,
+    pub header_env: Vec<(String, String)>,
+    pub bearer_env: Option<String>,
+    pub credential_supported: bool,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct ConfigProjection {
+    pub name: String, pub transport: Transport, pub program: Option<String>,
+    pub args: Vec<String>, pub url: Option<String>, pub cwd: Option<String>,
+    pub credential_references: Vec<String>, pub redacted: bool, pub config_digest: String,
+}
+fn text_list(value: Option<&Value>) -> Result<Vec<String>, Error> {
+    match value { None => Ok(Vec::new()), Some(value) => value.as_array().ok_or(Error::InvalidFormat)?.iter().map(|v| v.as_str().map(str::to_owned).ok_or(Error::InvalidFormat)).collect() }
+}
+fn pairs(value: Option<&Value>) -> Result<Vec<(String, String)>, Error> {
+    match value { None => Ok(Vec::new()), Some(value) => value.as_object().ok_or(Error::InvalidFormat)?.iter().map(|(k,v)| Ok((k.clone(), v.as_str().ok_or(Error::InvalidFormat)?.to_owned()))).collect() }
+}
+fn reference(value: &str) -> Option<String> {
+    let name = value.strip_prefix("${")?.strip_suffix('}')?;
+    env_name(name).then(|| name.to_owned())
+}
+fn probe_node(node: &Value, name: &str, transport: Transport, digest: String, target: Target) -> Result<ProbeConfig, Error> {
+    let get = |key: &str| -> Result<Option<String>, Error> { node.get(key).map(|v| v.as_str().map(str::to_owned).ok_or(Error::InvalidFormat)).transpose() };
+    let raw_program = get("command")?; let raw_url = get("url")?; let raw_cwd = get("cwd")?; let raw_args = text_list(node.get("args"))?;
+    let safe_program = raw_program.as_ref().filter(|v| program((*v).clone()).is_ok()).cloned();
+    let safe_url = raw_url.as_ref().filter(|v| url((*v).clone()).is_ok()).cloned();
+    let safe_cwd = raw_cwd.as_ref().filter(|v| safe_text(v).is_ok()).cloned();
+    let safe_args = arguments(raw_args.clone()).is_ok() && !raw_args.iter().any(|argument| argument.contains("${"));
+    let redacted = raw_program != safe_program || raw_url != safe_url || raw_cwd != safe_cwd || !safe_args;
+    let environment = pairs(node.get("env"))?;
+    if environment.len() > 128 || environment.iter().any(|(name, _)| !env_name(name)) { return Err(Error::InvalidFormat); }
+    let mut headers = Vec::new(); let mut header_env = Vec::new();
+    let forwarded_env = text_list(node.get("env_vars"))?;
+    if forwarded_env.len() > 128 || forwarded_env.iter().any(|name| !env_name(name)) { return Err(Error::InvalidFormat); }
+    let bearer_env = get("bearer_token_env_var")?;
+    if bearer_env.as_ref().is_some_and(|name| !env_name(name)) { return Err(Error::InvalidFormat); }
+    for (name, value) in pairs(node.get(if target == Target::Codex { "env_http_headers" } else { "headers" }))? {
+        if target == Target::Codex { if !env_name(&value) { return Err(Error::InvalidFormat); } header_env.push((name, value)); }
+        else if let Some(variable) = reference(&value) { header_env.push((name, variable)); }
+        else { headers.push((name, value)); }
+    }
+    headers.extend(pairs(node.get("http_headers"))?);
+    if headers.len() + header_env.len() > 64 || headers.iter().map(|(name,_)| name).chain(header_env.iter().map(|(name,_)| name)).any(|name| name.is_empty() || name.len() > 128 || !name.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+.^_`|~-".contains(&byte))) { return Err(Error::InvalidFormat); }
+    let mut header_names = std::collections::HashSet::new();
+    for (name, _) in headers.iter().chain(header_env.iter()) { if !header_names.insert(name.to_ascii_lowercase()) { return Err(Error::InvalidFormat); } }
+    if bearer_env.is_some() && header_names.contains("authorization") { return Err(Error::InvalidFormat); }
+    let mut credential_references: Vec<String> = environment.iter().map(|(name,value)| (if target == Target::Claude { reference(value) } else { None }).map_or_else(|| format!("native env:{name}"), |variable| format!("env:{variable}"))).collect();
+    credential_references.extend(forwarded_env.iter().map(|name| format!("env:{name}")));
+    credential_references.extend(header_env.iter().map(|(header,name)| format!("header:{header} ← env:{name}")));
+    credential_references.extend(headers.iter().map(|(name,_)| format!("native header:{name}")));
+    if let Some(name) = &bearer_env { credential_references.push(format!("bearer ← env:{name}")); }
+    Ok(ProbeConfig { projection: ConfigProjection { name: name.into(), transport, program: safe_program, args: if safe_args { raw_args } else { Vec::new() }, url: safe_url, cwd: safe_cwd, credential_references, redacted, config_digest: digest }, environment, headers, forwarded_env, header_env, bearer_env, credential_supported: !["oauth", "headersHelper"].iter().any(|key| node.get(key).is_some()) })
+}
+
+/// Validates complete unsaved drafts using exactly the native writer's policy.
+pub fn probe_draft(target: Target, scope: &Scope, name: String, fields: ServerPatch) -> Result<ProbeConfig, Error> {
+    let change = Change::Upsert { name: name.clone(), fields };
+    let patches = patches(target, scope, Some("/draft"), change.clone())?;
+    let text = config::apply("", target, &patches)?;
+    validate_edited(&text, target, scope, Some("/draft"), &change)?;
+    let mut node = serde_json::Map::new();
+    for (path, value) in patches { if let Some(value) = value { node.insert(path.last().ok_or(Error::InvalidFormat)?.clone(), value); } }
+    let node = Value::Object(node);
+    let transport = match node.get("type").and_then(Value::as_str) { Some("sse") => Transport::Sse, Some("http") => Transport::Http, Some("stdio") => Transport::Stdio, _ if node.get("command").is_some() => Transport::Stdio, _ if node.get("url").is_some() => Transport::Http, _ => return Err(Error::InvalidFormat) };
+    #[cfg(unix)]
+    { let digest = super::paths::hash(&serde_json::to_vec(&node).map_err(|_| Error::InvalidFormat)?); probe_node(&node, &name, transport, digest, target) }
+    #[cfg(not(unix))]
+    { let _ = (node, name, transport); Err(Error::Unsupported) }
+}
+
+impl super::NativeExtensions {
+    pub fn probe_binding(&self, target: Target, scope: &Scope) -> Result<(), Error> {
+        #[cfg(unix)] {
+            self.validate(false)?;
+            let path = self.context.config_path(target, scope)?;
+            self.validate_path(path.parent().ok_or(Error::UnsafePath)?)
+        }
+        #[cfg(not(unix))] { let _ = (target, scope); Err(Error::Unsupported) }
+    }
+    pub fn probe_mcp_config(&self, target: Target, scope: Scope, name: &str) -> Result<ProbeConfig, Error> {
+        #[cfg(unix)] {
+            use super::paths::Directory;
+            self.validate(false)?;
+            if !valid_name(name) { return Err(Error::InvalidFormat); }
+            let path = self.context.config_path(target, &scope)?;
+            let parent = path.parent().ok_or(Error::UnsafePath)?;
+            self.validate_path(parent)?;
+            let directory = Directory::open(parent)?;
+            let (text, snapshot) = directory.read(path.file_name().and_then(|v| v.to_str()).ok_or(Error::UnsafePath)?)?.ok_or(Error::NotFound)?;
+            let discovery = discover(&text, target, &scope, self.context.roots.project.as_ref().and_then(|v| v.to_str()))?;
+            let server = discovery.instances.iter().find(|server| server.native_key == name).ok_or(Error::NotFound)?;
+            if !matches!(server.transport, Transport::Stdio | Transport::Http | Transport::Sse) { return Err(Error::Unsupported); }
+            validate_endpoint_fields(&text, target, &scope, self.context.roots.project.as_ref().and_then(|v| v.to_str()), name, server.transport)?;
+            let node = if target == Target::Claude {
+                let document = config::json_read(&text)?; let mut node = &document;
+                for key in base(&scope, self.context.roots.project.as_ref().and_then(|v| v.to_str()))? { node = node.get(&key).ok_or(Error::NotFound)?; }
+                node.get(name).ok_or(Error::NotFound)?.clone()
+            } else {
+                let document = text.parse::<toml_edit::DocumentMut>().map_err(|_| Error::InvalidFormat)?;
+                let table = document.get("mcp_servers").and_then(|v| v.get(name)).and_then(toml_edit::Item::as_table_like).ok_or(Error::NotFound)?;
+                let mut node = serde_json::Map::new();
+                for (key,item) in table.iter() {
+                    if !["command", "args", "url", "cwd", "env", "env_vars", "bearer_token_env_var", "env_http_headers", "http_headers", "oauth", "headersHelper"].contains(&key) { continue; }
+                    if matches!(key, "oauth" | "headersHelper") { node.insert(key.into(), Value::Bool(true)); continue; }
+                    if let Some(value) = item.as_str() { node.insert(key.into(), json!(value)); }
+                    else if let Some(value) = item.as_array() { node.insert(key.into(), Value::Array(value.iter().map(|value| value.as_str().map(|v| json!(v)).ok_or(Error::InvalidFormat)).collect::<Result<_,_>>()?)); }
+                    else if let Some(value) = item.as_table_like() { node.insert(key.into(), Value::Object(value.iter().map(|(k,v)| Ok((k.into(), json!(v.as_str().ok_or(Error::InvalidFormat)?)))).collect::<Result<_,Error>>()?)); }
+                    else if key == "oauth" { node.insert(key.into(), Value::Bool(true)); }
+                }
+                Value::Object(node)
+            };
+            let digest = super::paths::hash(&serde_json::to_vec(&snapshot).map_err(|_| Error::InvalidFormat)?);
+            let result = probe_node(&node, name, server.transport, digest, target)?;
+            self.validate_path(parent)?; self.validate(false)?;
+            Ok(result)
+        }
+        #[cfg(not(unix))] { let _ = (target, scope, name); Err(Error::Unsupported) }
+    }
+}
+
+#[cfg(test)]
+mod probe_boundary_tests {
+    use super::*;
+    #[test]
+    fn projection_never_returns_literal_credentials() {
+        let config = probe_node(&json!({"command":"server", "env":{"TOKEN":"secret-body"}, "headers":{"Authorization":"Bearer secret-body"}}), "server", Transport::Stdio, "digest".into(), Target::Claude).unwrap();
+        let rendered = serde_json::to_string(&config.projection).unwrap();
+        assert!(!rendered.contains("secret-body")); assert!(rendered.contains("native env:TOKEN"));
+    }
+    #[test]
+    fn unsafe_existing_arguments_are_redacted() {
+        let config = probe_node(&json!({"command":"server", "args":["--token", "secret-body"]}), "server", Transport::Stdio, "digest".into(), Target::Codex).unwrap();
+        assert!(config.projection.redacted); assert!(config.projection.args.is_empty());
+    }
+    #[test]
+    fn only_claude_env_literals_are_native_environment_references() {
+        let node = json!({"command":"server", "env":{"TOKEN":"${NATIVE_TOKEN}"}});
+        let codex = probe_node(&node, "server", Transport::Stdio, "digest".into(), Target::Codex).unwrap();
+        let claude = probe_node(&node, "server", Transport::Stdio, "digest".into(), Target::Claude).unwrap();
+        assert_eq!(codex.projection.credential_references, vec!["native env:TOKEN"]);
+        assert_eq!(claude.projection.credential_references, vec!["env:NATIVE_TOKEN"]);
+    }
+    #[test]
+    fn probes_reject_mixed_transport_fields_and_ambiguous_credentials() {
+        let fields = ServerPatch { transport: Field::Set(Transport::Http), url: Field::Set("https://example.com/mcp".into()), forwarded_env: Field::Set(vec!["TOKEN".into()]), ..Default::default() };
+        assert!(matches!(probe_draft(Target::Codex, &Scope::OsUser, "server".into(), fields), Err(Error::InvalidFormat)));
+        assert!(matches!(probe_node(&json!({"url":"https://example.com/mcp", "http_headers":{"Authorization":"native"}, "env_http_headers":{"authorization":"TOKEN"}}), "server", Transport::Http, "digest".into(), Target::Codex), Err(Error::InvalidFormat)));
+        assert!(matches!(probe_node(&json!({"url":"https://example.com/mcp", "http_headers":{"Authorization":"native"}, "bearer_token_env_var":"TOKEN"}), "server", Transport::Http, "digest".into(), Target::Codex), Err(Error::InvalidFormat)));
+    }
+}
+
+/// Merge reference edits against the locked preimage. Literal native
+/// credentials and unrelated native keys are never replaced.
+pub(super) fn apply(text: &str, target: Target, scope: &Scope, project: Option<&str>, change: &Change, patches: &[Patch]) -> Result<String, Error> {
+    if target != Target::Claude { return config::apply(text, target, patches); }
+    let Change::Upsert { name, fields } = change else { return config::apply(text, target, patches); };
+    if matches!(fields.forwarded_env, Field::Keep) && matches!(fields.header_env, Field::Keep) { return config::apply(text, target, patches); }
+    let document = if text.trim().is_empty() { json!({}) } else { config::json_read(text)? };
+    let mut server_path = base(scope, project)?; server_path.push(name.clone());
+    let mut patched = patches.to_vec();
+    for (key, changed) in [("env", !matches!(fields.forwarded_env, Field::Keep)), ("headers", !matches!(fields.header_env, Field::Keep))] {
+        if !changed { continue; }
+        let mut node = &document;
+        let mut path = server_path.clone(); path.push(key.into());
+        let empty = Value::Null;
+        for part in &path { node = node.get(part).unwrap_or(&empty); }
+        if key == "headers" {
+            if node.is_null() { continue; }
+            let values = node.as_object().ok_or(Error::InvalidFormat)?;
+            if let Field::Set(headers) = &fields.header_env {
+                for (name, _) in headers {
+                    if values.iter().any(|(existing, value)| existing.eq_ignore_ascii_case(name) && !value.as_str().is_some_and(|value| reference(value).is_some())) { return Err(Error::Conflict); }
+                }
+            }
+            // Header references are individual field patches, not a replacement
+            // map: leave every unlisted literal and reference untouched.
+            continue;
+        }
+        let mut retained = match node { Value::Null => serde_json::Map::new(), Value::Object(values) => values.iter().filter(|(_,v)| !v.as_str().is_some_and(|v| reference(v).is_some())).map(|(k,v)| (k.clone(), v.clone())).collect(), _ => return Err(Error::InvalidFormat) };
+        let (_, replacement) = patched.iter_mut().find(|(keys,_)| *keys == path).ok_or(Error::InvalidFormat)?;
+        if let Some(Value::Object(references)) = replacement {
+            for (name, value) in references.iter() {
+                if retained.contains_key(name) { return Err(Error::Conflict); }
+                retained.insert(name.clone(), value.clone());
+            }
+        }
+        *replacement = if retained.is_empty() { None } else { Some(Value::Object(retained)) };
+    }
+    config::apply(text, target, &patched)
+}
+
+#[cfg(test)]
+mod forwarding_tests {
+    use super::*;
+    #[test]
+    fn claude_forwarding_preserves_literal_credentials_and_unknown_fields() {
+        let original = r#"{"future":{"x":1},"mcpServers":{"test":{"command":"server","future":{"flag":true},"env":{"LITERAL":"host-secret","OLD":"${OLD}"}}}}"#;
+        let change = Change::Upsert { name: "test".into(), fields: ServerPatch { forwarded_env: Field::Set(vec!["NEW".into()]), ..Default::default() } };
+        let patches = patches(Target::Claude, &Scope::OsUser, None, change.clone()).unwrap();
+        let output = apply(original, Target::Claude, &Scope::OsUser, None, &change, &patches).unwrap();
+        let value: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(value["mcpServers"]["test"]["env"], json!({"LITERAL":"host-secret", "NEW":"${NEW}"}));
+        assert_eq!(value["future"]["x"], 1); assert_eq!(value["mcpServers"]["test"]["future"]["flag"], true);
+        let change = Change::Upsert { name: "test".into(), fields: ServerPatch { forwarded_env: Field::Remove, ..Default::default() } };
+        let patches = super::patches(Target::Claude, &Scope::OsUser, None, change.clone()).unwrap();
+        let output = apply(&output, Target::Claude, &Scope::OsUser, None, &change, &patches).unwrap();
+        let value: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(value["mcpServers"]["test"]["env"], json!({"LITERAL":"host-secret"}));
+    }
+    #[test]
+    fn claude_forwarding_cannot_overwrite_native_literal() {
+        let original = r#"{"mcpServers":{"test":{"command":"server","env":{"TOKEN":"native-secret"}}}}"#;
+        let change = Change::Upsert { name: "test".into(), fields: ServerPatch { forwarded_env: Field::Set(vec!["TOKEN".into()]), ..Default::default() } };
+        let patches = patches(Target::Claude, &Scope::OsUser, None, change.clone()).unwrap();
+        assert_eq!(apply(original, Target::Claude, &Scope::OsUser, None, &change, &patches).unwrap_err(), Error::Conflict);
+    }
+    #[test]
+    fn claude_header_references_preserve_literal_credentials_and_reject_case_aliases() {
+        let original = r#"{"mcpServers":{"test":{"command":"server","headers":{"Authorization":"Bearer native-secret","Old":"${OLD}"}}}}"#;
+        let change = Change::Upsert { name: "test".into(), fields: ServerPatch { header_env: Field::Set(vec![("New".into(), "NEW".into())]), ..Default::default() } };
+        let output = apply(original, Target::Claude, &Scope::OsUser, None, &change, &patches(Target::Claude, &Scope::OsUser, None, change.clone()).unwrap()).unwrap();
+        let value: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(value["mcpServers"]["test"]["headers"], json!({"Authorization":"Bearer native-secret", "Old":"${OLD}", "New":"${NEW}"}));
+        let change = Change::Upsert { name: "test".into(), fields: ServerPatch { header_env: Field::Set(vec![("authorization".into(), "TOKEN".into())]), ..Default::default() } };
+        assert_eq!(apply(original, Target::Claude, &Scope::OsUser, None, &change, &patches(Target::Claude, &Scope::OsUser, None, change.clone()).unwrap()).unwrap_err(), Error::Conflict);
+    }
 }

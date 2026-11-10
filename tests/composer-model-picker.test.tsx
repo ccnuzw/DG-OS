@@ -65,18 +65,13 @@ it.each(['codex', 'claude'] as const)('selects the exact provider, model, revisi
   expect(screen.queryByTestId('composer-model-picker-dialog')).toBeNull();
 });
 
-it('requires an explicit engine choice for a model with multiple routes and no preference', async () => {
+it('uses the available default route without an extra engine-selection step', async () => {
   host({ codex: catalog('codex', [provider()]), claude: catalog('claude', [provider({ config_revision: 23 })]) });
   const onChange = vi.fn();
   render(picker(onChange));
   await open(); await ready();
-  expect(onChange).not.toHaveBeenCalled();
   fireEvent.click(option());
-  expect(onChange).not.toHaveBeenCalled();
-  const routes = screen.getByRole('group');
-  expect(within(routes).getByRole<HTMLButtonElement>('button', { name: 'Codex', exact: true }).disabled).toBe(false);
-  fireEvent.click(within(routes).getByRole('button', { name: 'Claude', exact: true }));
-  expect(onChange).toHaveBeenCalledExactlyOnceWith({ engine: 'claude', provider: { ...binding.provider, provider_revision: 23 } });
+  expect(onChange).toHaveBeenCalledExactlyOnceWith(binding);
 });
 
 it.each(['codex', 'claude'] as const)('uses the preferred %s engine for another model on the same provider revision', async engine => {
@@ -99,8 +94,6 @@ it.each([
   render(picker(onChange, { preferred }));
   await open(); await ready();
   fireEvent.click(option());
-  expect(onChange).not.toHaveBeenCalled();
-  fireEvent.click(within(screen.getByRole('group')).getByRole('button', { name: 'Codex', exact: true }));
   expect(onChange).toHaveBeenCalledExactlyOnceWith(binding);
 });
 

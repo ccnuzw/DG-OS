@@ -12,7 +12,7 @@ vi.mock('../src/workspace/closeCoordinator', () => ({ confirmDiscard }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('../src/i18n', () => ({ useLocale: () => ({ locale: 'en-US', t: (key: string) => key }), t: (key: string) => key, formatDateTime: String }));
 const project = { id: 'p', owner: 'alice', name: 'Project', path: '/project', directory_identity: 'root', archived: false, created_at: 1, last_opened_at: null };
-const overview = { kind: 'git', path: '/project', branch: 'main', head: 'a'.repeat(40), files: [{ path: 'src/app.ts', index: ' ', worktree: 'M' }], conflicts: [], staged_diff: '', worktree_diff: 'changed' };
+const overview = { kind: 'git', path: '/project', branch: 'main', head: 'a'.repeat(40), files: [{ path: 'src/app.ts', index: ' ', worktree: 'M' }], conflicts: [], snapshot_token: 'snapshot', merge_heads: [] };
 const review = { ...overview, task_id: 't', review_token: 'task-authority', baseline_version: '', initial_staged_paths: [], file_versions: {}, merge_heads: [], index: [] };
 const workspace = { workspaces: [{ id: 'root', path: '/project', kind: 'original' }], selected_workspace_id: null, operations: [], operation: null };
 beforeEach(() => {

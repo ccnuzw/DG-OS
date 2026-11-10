@@ -17,11 +17,35 @@ pub struct Metadata {
     pub name: String, pub description: String, pub license: Option<String>,
     pub dependencies: super::dependencies::Declarations, pub dynamic_commands: bool,
 }
+#[derive(Clone)]
 pub struct NativeSkillPackage {
     pub(super) files: BTreeMap<String, PackageFile>,
     pub(super) hash: String,
     pub(super) metadata: Metadata,
     pub(super) execution_bits: BTreeMap<String, u32>,
+}
+pub struct PackageIndex {
+    pub packages: BTreeMap<String, NativeSkillPackage>,
+    pub rejected: Vec<(String, String)>,
+}
+/// App-private cache storage. A host-derived path is required; directory-fd
+/// traversal and atomic replacement use the same protections as native journals.
+#[cfg(unix)]
+pub struct HostSkillCache(super::paths::Directory);
+#[cfg(unix)]
+impl HostSkillCache {
+    pub fn open(path: &std::path::Path) -> Result<Self, Error> {
+        let directory = super::paths::Directory::ensure(path)?;
+        directory.private()?;
+        Ok(Self(directory))
+    }
+    pub fn read(&self) -> Result<Option<Vec<u8>>, Error> {
+        self.0.read_bytes("sources.json", ARCHIVE_LIMIT).map(|value| value.map(|(bytes, _)| bytes))
+    }
+    pub fn write(&self, bytes: &[u8]) -> Result<(), Error> {
+        if bytes.len() > ARCHIVE_LIMIT { return Err(Error::Limit); }
+        self.0.replace_journal("sources.json", bytes)
+    }
 }
 #[cfg(unix)]
 impl NativeSkillPackage {
@@ -128,11 +152,11 @@ impl NativeSkillPackage {
         }
         self.hash = format!("{:x}", hash.finalize());
     }
-    pub fn from_zip(bytes: &[u8], selected_subpath: Option<&str>) -> Result<Self, Error> {
+    fn archive_files(bytes: &[u8], reject_ownership: bool) -> Result<(Vec<PackageFile>, BTreeMap<String, u32>, Vec<String>), Error> {
         if bytes.len() > ARCHIVE_LIMIT { return Err(Error::Limit); }
         // No archive entry is materialized as a link. Legacy UNIX extra fields
         // may encode link targets even when the external mode looks regular.
-        if let Some(path) = selected_subpath { safe_path(path)?; }
+        // The entire archive is validated before any candidate is selected.
         let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| Error::InvalidFormat)?;
         if zip.len() > ENTRY_LIMIT * 2 { return Err(Error::Limit); }
         let mut all = Vec::new(); let mut seen = BTreeSet::new(); let mut total = 0usize; let mut count = 0;
@@ -158,7 +182,7 @@ impl NativeSkillPackage {
             if !directory && raw.ends_with('/') { return Err(Error::InvalidFormat); }
             let path = if directory { raw.strip_suffix('/').unwrap_or(&raw).to_owned() } else { raw };
             safe_path(&path)?;
-            loose_path(&path)?;
+            if reject_ownership { loose_path(&path)?; }
             if !seen.insert(path.to_ascii_lowercase()) { return Err(Error::Conflict); }
             archive_paths.insert(path.clone(), directory);
             let mode = entry.unix_mode().unwrap_or(0); let kind = mode & 0o170000;
@@ -185,6 +209,11 @@ impl NativeSkillPackage {
             }
         }
         if archive_paths.iter().any(|(path, is_directory)| !is_directory && directories.contains_key(&path.to_ascii_lowercase())) { return Err(Error::Conflict); }
+        Ok((all, modes, directories.into_values().map(str::to_owned).collect()))
+    }
+    pub fn from_zip(bytes: &[u8], selected_subpath: Option<&str>) -> Result<Self, Error> {
+        if let Some(path) = selected_subpath { safe_path(path)?; }
+        let (all, modes, _) = Self::archive_files(bytes, true)?;
         let wrapper = if !all.iter().any(|f| f.path == "SKILL.md") && all.iter().all(|f| f.path.contains('/')) { let first = all.first().and_then(|f| f.path.split('/').next()); first.filter(|p| all.iter().all(|f| f.path.starts_with(&format!("{p}/")))).map(str::to_owned) } else { None };
         let prefix = [wrapper.as_deref(), selected_subpath].into_iter().flatten().collect::<Vec<_>>().join("/");
         let mut selected_modes = BTreeMap::new();
@@ -203,4 +232,84 @@ impl NativeSkillPackage {
     pub fn content_hash(&self) -> &str { &self.hash }
     pub fn summary(&self) -> Vec<ResourceFile> { self.files.values().map(|f| ResourceFile { path: f.path.clone(), hash: format!("{:x}", Sha256::digest(&f.bytes)), bytes: f.bytes.len(), executable: f.executable }).collect() }
     pub fn metadata(&self) -> &Metadata { &self.metadata }
+    pub fn resource_counts(&self) -> (usize, usize, usize) {
+        (self.files.len(), self.files.values().filter(|file| file.path.starts_with("scripts/")).count(), self.files.values().filter(|file| file.executable).count())
+    }
+    /// Enumerate every SKILL.md package in a validated archive, not just the
+    /// repository root. Paths are relative to the single archive wrapper.
+    pub fn index_zip(bytes: &[u8]) -> Result<PackageIndex, Error> {
+        let (mut files, modes, directories) = Self::archive_files(bytes, false)?;
+        let wrapper = if !files.iter().any(|f| f.path == "SKILL.md") && files.iter().all(|f| f.path.contains('/')) {
+            files.first().and_then(|f| f.path.split('/').next()).filter(|first| files.iter().all(|f| f.path.starts_with(&format!("{first}/")))).map(str::to_owned)
+        } else { None };
+        let mut unwrapped_modes = BTreeMap::new();
+        for file in &mut files {
+            let bits = modes.get(&file.path).copied().unwrap_or(0);
+            if let Some(wrapper) = &wrapper { file.path = file.path.strip_prefix(&format!("{wrapper}/")).ok_or(Error::InvalidFormat)?.into(); }
+            unwrapped_modes.insert(file.path.clone(), bits);
+        }
+        let directories = directories.into_iter().filter_map(|path| match &wrapper { Some(wrapper) => path.strip_prefix(&format!("{wrapper}/")).map(str::to_owned), None => Some(path) }).collect();
+        Self::index_files(files, unwrapped_modes, directories)
+    }
+    #[cfg(unix)]
+    pub fn index_archive(path: &std::path::Path) -> Result<PackageIndex, Error> {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        let parent = super::paths::Directory::open(path.parent().ok_or(Error::UnsafePath)?)?;
+        let mut file = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC).open(path).map_err(|_| Error::UnsafePath)?;
+        let before = file.metadata().map_err(|_| Error::Unavailable)?;
+        if !before.is_file() || before.nlink() != 1 || before.uid() != unsafe { libc::geteuid() } { return Err(Error::UnsafePath); }
+        super::paths::no_extended_acl(&file)?;
+        if before.len() > ARCHIVE_LIMIT as u64 { return Err(Error::Limit); }
+        let mut bytes = Vec::new();
+        (&mut file).take(ARCHIVE_LIMIT as u64 + 1).read_to_end(&mut bytes).map_err(|_| Error::Unavailable)?;
+        let after = file.metadata().map_err(|_| Error::Unavailable)?;
+        let named = std::fs::symlink_metadata(path).map_err(|_| Error::Conflict)?;
+        if bytes.len() > ARCHIVE_LIMIT || bytes.len() as u64 != before.len() || before.dev() != after.dev() || before.ino() != after.ino() || before.mtime() != after.mtime() || before.mtime_nsec() != after.mtime_nsec() || named.dev() != after.dev() || named.ino() != after.ino() || super::paths::Directory::open(path.parent().ok_or(Error::UnsafePath)?)?.identity()? != parent.identity()? { return Err(Error::Conflict); }
+        Self::index_zip(&bytes)
+    }
+    #[cfg(unix)]
+    pub fn index_directory(path: &std::path::Path) -> Result<PackageIndex, Error> {
+        let root = super::paths::Directory::open(path)?;
+        let (snapshot, files) = super::resource_tree::scan(&root)?;
+        let modes = snapshot.files.iter().map(|(path, entry)| (path.clone(), entry.mode & 0o111)).collect();
+        let index = Self::index_files(files, modes, snapshot.directories.keys().cloned().collect())?;
+        if super::resource_tree::scan(&root)?.0 != snapshot || super::paths::Directory::open(path)?.identity()? != snapshot.identity { return Err(Error::Conflict); }
+        Ok(index)
+    }
+    fn index_files(files: Vec<PackageFile>, modes: BTreeMap<String, u32>, directories: Vec<String>) -> Result<PackageIndex, Error> {
+        let paths: Vec<_> = files.iter().filter_map(|file| {
+            if file.path == "SKILL.md" { Some(String::new()) } else { file.path.strip_suffix("/SKILL.md").map(str::to_owned) }
+        }).collect();
+        if paths.len() > 128 { return Err(Error::Limit); }
+        let mut groups: BTreeMap<String, Vec<PackageFile>> = paths.iter().map(|path| (path.clone(), Vec::new())).collect();
+        for mut file in files {
+            let mut destination: Option<&String> = None;
+            for path in paths.iter().filter(|path| path.is_empty() || file.path.strip_prefix(path.as_str()).is_some_and(|suffix| suffix.starts_with('/'))) {
+                if let Some(previous) = destination.replace(path) {
+                    let mut selected = file.clone();
+                    if !previous.is_empty() { selected.path = selected.path[previous.len() + 1..].into(); }
+                    groups.get_mut(previous).ok_or(Error::InvalidFormat)?.push(selected);
+                }
+            }
+            if let Some(path) = destination {
+                if !path.is_empty() { file.path = file.path[path.len() + 1..].into(); }
+                groups.get_mut(path).ok_or(Error::InvalidFormat)?.push(file);
+            }
+        }
+        let mut index = PackageIndex { packages: BTreeMap::new(), rejected: Vec::new() };
+        for (path, selected) in groups {
+            let prefix = if path.is_empty() { String::new() } else { format!("{path}/") };
+            if directories.iter().filter_map(|directory| directory.strip_prefix(&prefix)).any(|directory| loose_path(directory).is_err()) {
+                index.rejected.push((path, Error::Unsupported.to_string())); continue;
+            }
+            match Self::from_files(selected) {
+                Ok(mut package) => {
+                    package.execution_bits = package.files.keys().map(|relative| (relative.clone(), modes.get(&format!("{prefix}{relative}")).copied().unwrap_or(0))).collect();
+                    package.rehash(); index.packages.insert(path, package);
+                },
+                Err(error) => index.rejected.push((path, error.to_string())),
+            }
+        }
+        Ok(index)
+    }
 }

@@ -1,7 +1,7 @@
 use crate::{claude_session::ClaudeSession, codex_session::CodexSession, session::*};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::{HashMap, VecDeque}, path::PathBuf, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+use std::{collections::{HashMap, HashSet, VecDeque}, path::PathBuf, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -136,6 +136,8 @@ pub(crate) struct Inner {
     active: Mutex<HashMap<String, Active>>,
     pub(crate) slots: Mutex<HashMap<String, Uuid>>,
     pub(crate) admission: Arc<Mutex<()>>,
+    // An absent-start reconciliation fences delayed requests for the host lifetime.
+    cancelled_starts: Mutex<HashMap<String, HashSet<Uuid>>>,
     path: PathBuf,
     pub(crate) repository: DevelopmentRepository,
     pub(crate) stop: CancellationToken,
@@ -165,6 +167,7 @@ impl AgentManager {
                 active: Mutex::new(HashMap::new()),
                 slots: Mutex::new(HashMap::new()),
                 admission: Arc::new(Mutex::new(())),
+                cancelled_starts: Mutex::new(HashMap::new()),
                 path,
                 repository,
                 stop: CancellationToken::new(),
@@ -240,7 +243,7 @@ impl AgentManager {
                 Err(error) => return Err(error),
             };
             let settled = configuration.legacy_read_only || configuration.binding.is_some_and(|binding| {
-                matches!(binding.state.as_str(), "closed" | "revoked") && matches!(binding.cleanup_state.as_str(), "stopped" | "not_required")
+                matches!(binding.state.as_str(), "closed" | "revoked" | "unknown") && matches!(binding.cleanup_state.as_str(), "stopped" | "not_required")
             });
             if !settled { slots.insert(record.id, Uuid::new_v4()); }
         }
@@ -258,7 +261,7 @@ impl AgentManager {
     async fn slot_is_settled(&self, owner: &str, id: &str) -> bool {
         match self.inner.repository.read_cli_session_configuration(owner, id).await {
             Ok(configuration) => configuration.legacy_read_only || configuration.binding.is_some_and(|binding| {
-                matches!(binding.state.as_str(), "closed" | "revoked") && matches!(binding.cleanup_state.as_str(), "stopped" | "not_required")
+                matches!(binding.state.as_str(), "closed" | "revoked" | "unknown") && matches!(binding.cleanup_state.as_str(), "stopped" | "not_required")
             }),
             Err(error) => error == "session_not_found",
         }
@@ -278,14 +281,42 @@ impl AgentManager {
         &self, owner: &str, engine: Engine, id: String, create: crate::capabilities::SessionCreate,
         task_id: Option<String>, lease: CancellationToken,
     ) -> Result<OwnedSessionView, String> {
-        Uuid::parse_str(&id).map_err(|_| "invalid_request_id")?;
+        let request_id = Uuid::parse_str(&id).map_err(|_| "invalid_request_id")?;
         self.ready().await?;
         let _admission = self.inner.admission.lock().await;
+        if self.inner.cancelled_starts.lock().await.get(owner).is_some_and(|ids| ids.contains(&request_id)) { return Err("cancelled".into()); }
         let existing = self.inner.records.lock().await.iter().find(|record| record.id == id).cloned();
         if let Some(record) = existing {
             if record.owner != owner || !self.retryable_no_execution(owner, engine, &id, &record, &create, task_id.as_deref()).await? { return Err("session_exists".into()); }
         } else if create.options.resume_id.is_some() { return Err("session_exists".into()); }
         self.open_bound(owner, engine, id, create, task_id, lease).await
+    }
+
+    /// True proves no session was reserved and prevents this owner's delayed create
+    /// from ever using this ID in this host. Existing sessions are never stopped.
+    pub async fn cancel_unstarted_session(&self, owner: &str, id: &str, task_id: &str, lease: &CancellationToken) -> Result<bool, String> {
+        let request_id = Uuid::parse_str(id).map_err(|_| "invalid_request_id")?;
+        self.ready().await?;
+        let _admission = self.inner.admission.lock().await;
+        if self.inner.stop.is_cancelled() || lease.is_cancelled() { return Err("session_invalid".into()); }
+        self.inner.repository.task(owner, task_id).await?;
+        if let Some(record) = self.inner.records.lock().await.iter().find(|record| record.id == id) {
+            if record.owner != owner || record.task_id.as_deref() != Some(task_id) { return Err("session_not_found".into()); }
+            return Ok(false);
+        }
+        // Reservation is transactional and always precedes native process creation.
+        // A failed in-memory reload cannot turn a durable reservation into absence.
+        match self.inner.repository.read_cli_session_configuration(owner, id).await {
+            Ok(_) => return Ok(false),
+            Err(error) if error == "session_not_found" => {},
+            Err(error) => return Err(error),
+        }
+        if self.inner.slots.lock().await.contains_key(id) || self.inner.active.lock().await.contains_key(id) { return Err("cleanup_pending".into()); }
+        let mut cancelled = self.inner.cancelled_starts.lock().await;
+        if lease.is_cancelled() { return Err("session_invalid".into()); }
+        if !cancelled.get(owner).is_some_and(|ids| ids.contains(&request_id)) && cancelled.values().map(HashSet::len).sum::<usize>() >= 4096 { return Err("request_capacity".into()); }
+        cancelled.entry(owner.to_owned()).or_default().insert(request_id);
+        Ok(true)
     }
 
     async fn retryable_no_execution(&self, owner: &str, engine: Engine, id: &str, record: &SessionRecord, create: &crate::capabilities::SessionCreate, task_id: Option<&str>) -> Result<bool, String> {

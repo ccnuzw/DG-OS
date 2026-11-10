@@ -30,7 +30,7 @@ it('allows expanding and editing long text while running without automatically s
   fireEvent.change(input, { target: { value: 'Edited next message' } });
   fireEvent.click(screen.getByRole('button', { name: 'agent.collapseInput' }));
   expect(input).toHaveProperty('value', 'Edited next message');
-  expect(screen.getByRole('button', { name: 'agent.send' })).toHaveProperty('disabled', true);
+  expect(screen.getByRole('button', { name: 'agent.interrupt' })).toHaveProperty('disabled', false);
   expect(screen.getByText('agent.queueUnavailable')).toBeTruthy();
   expect(invoke.mock.calls.some(([name]) => ['send_agent_message', 'steer_agent_turn', 'control_codex_operation'].includes(name))).toBe(false);
 });
@@ -125,7 +125,7 @@ it('keeps an older-generation steering request visible and never steers again un
   invoke.mockImplementation(name => Promise.resolve(name === 'get_agent_session' ? observed : name === 'observe_codex_operations' ? { session_id: restored.id, generation: restored.generation, children: [], terminals: [], queue: [], turns: [], unsupported: ['queue_add'], incomplete: false } : null));
   function RestoredConversation() { const live = useAgentRunner(state => state.session)!; return <Conversation value={live} initial="Later draft" />; }
   render(<MemoryRouter><RestoredConversation /></MemoryRouter>);
-  expect(screen.getByRole('button', { name: 'agent.send' })).toHaveProperty('disabled', true);
+  expect(screen.getByRole('button', { name: 'agent.interrupt' })).toHaveProperty('disabled', false);
   expect(screen.getByRole('button', { name: 'codexInteractions.steer' })).toHaveProperty('disabled', true);
   fireEvent.click(screen.getByRole('button', { name: 'codexInteractions.recheck' }));
   await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === 'get_agent_session')).toBe(true));

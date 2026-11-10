@@ -24,11 +24,7 @@ impl AgentManager {
     pub async fn read_development_git_details(&self, owner: &str, input: GitDetailsInput, lease: CancellationToken) -> Result<GitDetails, String> {
         let _admission = self.inner.admission.lock().await;
         self.ready().await?; check_lease(&lease)?;
-        let project = if let Some(task) = &input.task_id {
-            let project = self.task_project(owner, task).await?;
-            if project.id != input.project_id { return Err("task_not_found".into()); }
-            project
-        } else { self.file_project(owner, &input.project_id).await? };
+        let project = self.git_scope_project(owner, &input.project_id, input.task_id.as_deref()).await?;
         let status = self.git_status_at(&project, &lease).await?;
         let mut result = GitDetails { branches: vec![], remotes: vec![], remote_branches: BTreeMap::new(), remote_push_targets: BTreeMap::new(), remote_fetch_targets: BTreeMap::new(), upstream: None, ahead: None, behind: None, files: vec![], history: vec![], history_truncated: false };
         if let Some(selected) = &input.path {
@@ -67,8 +63,6 @@ impl AgentManager {
             if counts.len() != 2 { return Err("git_invalid_output".into()); }
             result.ahead = Some(counts[0].parse().map_err(|_| "git_invalid_output")?); result.behind = Some(counts[1].parse().map_err(|_| "git_invalid_output")?);
         }
-        let staged = numstat(&output(path, &["diff", "--cached", "--numstat", "-z", "--no-ext-diff", "--no-textconv", "--no-renames", "--"], &lease, stop, false).await?)?;
-        let worktree = numstat(&output(path, &["diff", "--numstat", "-z", "--no-ext-diff", "--no-textconv", "--no-renames", "--"], &lease, stop, false).await?)?;
         let root = files::open_root(&project)?;
         let mut authorized = status.index.clone();
         if status.overview.files.iter().any(|file| file.index == "D") {
@@ -76,13 +70,41 @@ impl AgentManager {
                 authorized.extend(head_tree(path, head, &lease, stop).await?.into_iter().filter(|entry| status.overview.files.iter().any(|file| file.path == entry.path && file.index == "D")));
             }
         }
+        let mut display_paths = BTreeSet::new();
         for file in &status.overview.files {
-            // Never load protected paths or follow repository-controlled links.
-            validate_paths(&project, std::slice::from_ref(&file.path), &authorized)?;
+            if status.file_versions.get(&file.path).is_some_and(|version| version.starts_with("unobserved:")) { continue; }
+            match validate_paths(&project, std::slice::from_ref(&file.path), &authorized) {
+                Ok(()) => { display_paths.insert(file.path.as_str()); },
+                Err(error) if matches!(error.as_str(), "file_sensitive" | "file_access_denied" | "git_special_entry" | "invalid_git_paths") => {},
+                Err(error) => return Err(error),
+            }
+        }
+        let mut staged = BTreeMap::new(); let mut worktree = BTreeMap::new();
+        if !display_paths.is_empty() {
+            for (cached, stats) in [(true, &mut staged), (false, &mut worktree)] {
+                let mut args = vec!["diff", "--numstat", "-z", "--no-ext-diff", "--no-textconv", "--no-renames"];
+                if cached { args.push("--cached"); }
+                args.push("--"); args.extend(display_paths.iter().copied());
+                *stats = numstat(&output(path, &args, &lease, stop, false).await?)?;
+            }
+        }
+        for file in &status.overview.files {
+            // Unsupported rows stay visible without making ordinary stats or
+            // history unavailable. Never read a protected path's body.
+            let unavailable = || GitFileStats { path: file.path.clone(), index_added: None, index_deleted: None, worktree_added: None, worktree_deleted: None };
+            if !display_paths.contains(file.path.as_str()) {
+                result.files.push(unavailable()); continue;
+            }
             let (index_added, index_deleted) = staged.get(&file.path).copied().unwrap_or((Some(0), Some(0)));
             let (worktree_added, worktree_deleted) = if file.index == "?" {
-                let view = files::read_at(&root, &file.path)?;
-                match (view.reason.as_deref(), view.text) { (None, Some(text)) => (Some(text.lines().count() as u64), Some(0)), (Some("file_binary"), _) => (None, None), (Some(reason), _) => return Err(reason.into()), _ => return Err("git_review_incomplete".into()) }
+                match files::read_at(&root, &file.path) {
+                    Ok(view) => match (view.reason.as_deref(), view.text) {
+                        (None, Some(text)) => (Some(text.lines().count() as u64), Some(0)),
+                        _ => { result.files.push(unavailable()); continue; },
+                    },
+                    Err(error) if matches!(error.as_str(), "file_access_denied" | "file_not_found" | "file_changed") => { result.files.push(unavailable()); continue; },
+                    Err(error) => return Err(error),
+                }
             } else { worktree.get(&file.path).copied().unwrap_or((Some(0), Some(0))) };
             result.files.push(GitFileStats { path: file.path.clone(), index_added, index_deleted, worktree_added, worktree_deleted });
         }

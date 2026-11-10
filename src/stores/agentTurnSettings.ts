@@ -4,9 +4,10 @@ import { developmentDraftKey, useDevelopmentDrafts } from './developmentDrafts';
 import { useDevelopment } from './developmentStore';
 import { desktopSlot, setDesktopSlot } from './developmentDesktop';
 
-export type AgentPermissionMode = 'default' | 'read_only' | 'accept_edits';
-export type AgentCollaborationMode = 'default' | 'plan';
-export interface AgentTurnSettings { reasoning_effort?: string | null; permission_mode?: AgentPermissionMode; collaboration_mode?: AgentCollaborationMode }
+export type AgentPermissionMode = 'default' | 'read_only' | 'accept_edits' | 'full_auto';
+export type AgentCollaborationMode = 'default' | 'plan' | 'deep';
+export interface AgentResponsePreferences { language: 'follow_input' | 'zh' | 'en'; brevity: 'concise' | 'standard' | 'detailed'; next_step_suggestions: boolean }
+export interface AgentTurnSettings { reasoning_effort?: string | null; permission_mode?: AgentPermissionMode; collaboration_mode?: AgentCollaborationMode; response_preferences?: AgentResponsePreferences }
 export interface AgentControls {
   reasoning: { available: boolean; options: string[]; current: string | null; source: string; reason: string | null };
   permission: { available: boolean; options: AgentPermissionMode[]; current: AgentPermissionMode | null; source: string; reason: string | null };
@@ -27,14 +28,16 @@ export function agentDraftSettingsKey(projectId: string | null, draftId: string)
 }
 /** Proposed values only; native controls and receipts remain the applied-state authority. */
 export function agentTurnSettings(session: AgentSession): AgentTurnSettings | undefined {
-  return useDevelopmentDrafts.getState().entries[agentSettingsKey(session)]?.value as AgentTurnSettings | undefined;
+  const proposed = useDevelopmentDrafts.getState().entries[agentSettingsKey(session)]?.value as AgentTurnSettings | undefined;
+  const saved = desktopSlot<AgentDefaults | null>(`agent-session:${session.id}`, null)?.settings;
+  return proposed || saved && Object.keys(saved).length ? { ...saved, ...proposed } : undefined;
 }
 export function resolveAgentDefaults(projectId: string | null, sessionId?: string | null): ResolvedAgentDefaults {
   const session = sessionId ? desktopSlot<AgentDefaults | null>(`agent-session:${sessionId}`, null) : null;
   if (session) {
     const key = developmentDraftKey('conversation', projectId, sessionId!, 'turn-settings');
     const proposed = useDevelopmentDrafts.getState().entries[key]?.value as AgentTurnSettings | undefined;
-    return { ...session, settings: proposed ?? session.settings, source: 'session' };
+    return { ...session, settings: { ...session.settings, ...proposed }, source: 'session' };
   }
   // A legacy session with no snapshot is unknown, not today's project default.
   if (sessionId) return { configuration: null, settings: {}, source: 'none' };
@@ -47,8 +50,8 @@ export function resolveAgentDefaults(projectId: string | null, sessionId?: strin
 export function setAgentDefaults(scope: string, defaults: AgentDefaults): void {
   setDesktopSlot(defaultsKey(scope), {
     configuration: defaults.configuration ? { engine: defaults.configuration.engine, provider: { ...defaults.configuration.provider } } : null,
-    // Enlarged editing permission is a session intent, not a default for another project.
-    settings: { ...defaults.settings, ...(scope === 'application' && defaults.settings.permission_mode === 'accept_edits' ? { permission_mode: 'default' } : {}) },
+    // Full automation is explicit session authority, never a new-session default.
+    settings: { ...defaults.settings, ...(defaults.settings.permission_mode === 'full_auto' || scope === 'application' && defaults.settings.permission_mode === 'accept_edits' ? { permission_mode: 'default' } : {}) },
   });
 }
 export function rememberAgentSessionConfiguration(_projectId: string | null, sessionId: string, configuration: CliProviderConfiguration, settings: AgentTurnSettings = {}): void {
@@ -66,7 +69,7 @@ export function bindAgentDraftSettings(projectId: string | null, draftId: string
     if (state.entries[target]) return state;
     const value = state.entries[source]?.value as AgentTurnSettings | undefined;
     if (!value && !Object.keys(inherited).length) return state;
-    const entries = { ...state.entries, [target]: { kind: 'conversation' as const, value: { ...(value ?? inherited) }, baseline: {} } };
+    const entries = { ...state.entries, [target]: { kind: 'conversation' as const, value: { ...inherited, ...value }, baseline: {} } };
     if (source !== target) delete entries[source];
     return { entries };
   });

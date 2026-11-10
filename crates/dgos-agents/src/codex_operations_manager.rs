@@ -10,9 +10,31 @@ fn unknown_receipt(input: &InspectCodexOperation) -> CodexOperationReceipt {
     CodexOperationReceipt { session_id: input.session_id.clone(), generation: input.generation.clone(), request_id: input.request_id.clone(), state: CodexOperationState::Unknown, run_id: None, fork_session_id: None }
 }
 fn safe_refusal(error: &str) -> bool {
-    matches!(error, "engine_rejected" | "method_unsupported" | "codex_operation_unsupported" | "invalid_codex_operation" | "busy" | "session_busy" | "codex_child_unobserved" | "not_running" | "codex_terminal_unobserved" | "codex_queue_unobserved" | "codex_queue_empty" | "codex_queue_membership_changed" | "codex_turn_unobserved" | "codex_observation_incomplete" | "session_closed")
+    matches!(error, "engine_rejected" | "method_unsupported" | "codex_operation_unsupported" | "unsupported_operation" | "invalid_codex_operation" | "busy" | "session_busy" | "codex_child_unobserved" | "not_running" | "codex_terminal_unobserved" | "codex_queue_unobserved" | "codex_queue_empty" | "codex_queue_membership_changed" | "codex_turn_unobserved" | "codex_observation_incomplete" | "session_closed")
 }
 impl AgentManager {
+    pub async fn observe_agent_compression(&self, owner: &str, input: CodexScope) -> Result<bool, String> {
+        let admission = self.inner.admission.lock().await;
+        self.ready().await?;
+        let (_, backend) = self.owned(owner, &input.session_id).await?;
+        self.require_generation(&input.session_id, &input.generation).await?;
+        let (lease, provider) = self.session_cancellation(&input.session_id).await?;
+        drop(admission);
+        let supported = tokio::select! { biased;
+            _ = lease.cancelled() => return Err("session_closed".into()),
+            _ = provider.cancelled() => return Err("provider_revision_changed".into()),
+            result = async {
+                match backend {
+                    Backend::Codex(session) => session.compact_supported().await,
+                    Backend::Claude(session) => session.compact_supported().await,
+                }
+            } => result,
+        };
+        self.require_generation(&input.session_id, &input.generation).await?;
+        if lease.is_cancelled() { return Err("session_closed".into()); }
+        if provider.is_cancelled() { return Err("provider_revision_changed".into()); }
+        Ok(supported)
+    }
     async fn codex_scope(&self, owner: &str, id: &str, generation: &str) -> Result<(SessionRecord, CodexSession), String> {
         self.ready().await?;
         let record = self.inner.records.lock().await.iter().find(|r| r.owner == owner && r.id == id).cloned().ok_or("session_not_found")?;
@@ -80,16 +102,31 @@ impl AgentManager {
             drop(admission);
             return self.inspect_codex_operation(owner, InspectCodexOperation { session_id: input.session_id, generation: input.generation, request_id: input.request_id }).await?.ok_or_else(|| "result_unknown".into());
         }
-        let (record, session) = self.codex_scope(owner, &input.session_id, &input.generation).await?;
+        let (record, backend) = if matches!(input.action, CodexAction::Compact {}) {
+            self.ready().await?;
+            let record = self.inner.records.lock().await.iter().find(|r| r.owner == owner && r.id == input.session_id).cloned().ok_or("session_not_found")?;
+            let (_, backend) = self.owned(owner, &input.session_id).await?;
+            self.require_generation(&input.session_id, &input.generation).await?;
+            let project = self.task_project(owner, record.task_id.as_deref().ok_or("task_not_found")?).await?;
+            if project.archived { return Err("project_archived".into()); }
+            crate::projects::validate_directory(&project).await?;
+            if record.project_id.as_deref() != Some(project.id.as_str()) || record.workspace != project.path { return Err("file_access_denied".into()); }
+            (record, backend)
+        } else {
+            let (record, session) = self.codex_scope(owner, &input.session_id, &input.generation).await?;
+            (record, Backend::Codex(session))
+        };
         let control = self.session_control(&input.session_id).await?.try_lock_owned().map_err(|_| "session_busy")?;
         self.native_result_known(&input.session_id).await?;
         self.validate_handoff_target(owner, &input.session_id).await?;
-        let view = session.snapshot().await;
+        let view = backend.snapshot().await;
         // Queue editing, process termination and observed child controls may be used
         // while the parent is running. Conversation replacement cannot race a run.
         let idle_only = matches!(input.action, CodexAction::Review { .. } | CodexAction::Compact {} | CodexAction::Fork { .. } | CodexAction::Revert { .. } | CodexAction::QueueStart { .. });
         if idle_only && (view.status != "idle" || self.inner.run_projections.lock().await.keys().any(|(id, _)| id == &input.session_id)) { return Err("busy".into()); }
-        if idle_only && !session.automatic_runs().await.is_empty() { return Err("busy".into()); }
+        if let Backend::Codex(session) = &backend {
+            if idle_only && !session.automatic_runs().await.is_empty() { return Err("busy".into()); }
+        }
         if let CodexAction::Fork { new_session_id, .. } = &input.action {
             if self.inner.records.lock().await.iter().any(|r| &r.id == new_session_id) { return Err("request_conflict".into()); }
         }
@@ -107,7 +144,7 @@ impl AgentManager {
             let fingerprint = self.task_fingerprint(owner, &task_id).await?;
             Some(dgos_db::development_repository::StoredRun {
                 id: input.request_id.clone(), owner: owner.into(), session_id: Some(input.session_id.clone()), task_id,
-                project_id: record.project_id.clone().ok_or("task_not_found")?, engine: "codex".into(), source: "native_agent".into(), runtime: None,
+                project_id: record.project_id.clone().ok_or("task_not_found")?, engine: match record.engine { Engine::Codex => "codex", Engine::Claude => "claude" }.into(), source: "native_agent".into(), runtime: None,
                 status: "running".into(), started_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64,
                 finished_at: None, summary: String::new(), reason: None, events: "[]".into(), fingerprint: fingerprint.clone(), start_fingerprint: fingerprint, truncated: false, request_fingerprint: hash.clone(),
             })
@@ -125,14 +162,19 @@ impl AgentManager {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
         let manager = self.clone();
-        let watched = Backend::Codex(session.clone());
+        let watched = backend.clone();
         let key = (input.session_id.clone(), input.generation.clone());
         let owner = owner.to_owned();
         watchers.push(tokio::spawn(async move {
             let run_id = run.as_ref().map(|run| run.id.clone());
             let dispatch = async {
                 let result = if lease.is_cancelled() || provider_lease.is_cancelled() { Err("session_closed".into()) }
-                    else { session.execute_operation(input.action.clone(), input.request_id.clone()).await };
+                    else {
+                        match backend {
+                            Backend::Codex(session) => session.execute_operation(input.action.clone(), input.request_id.clone()).await,
+                            Backend::Claude(session) => session.compact(input.request_id.clone()).await.map(|()| None),
+                        }
+                    };
                 let mut receipt = CodexOperationReceipt { session_id: input.session_id.clone(), generation: input.generation.clone(), request_id: input.request_id.clone(), state: CodexOperationState::Applied, run_id, fork_session_id: None };
                 let mut error = None;
                 let mut fork_stored = false;

@@ -1,0 +1,37 @@
+/* Execution recovery is deliberately separate from the quiet reading surface. */
+.ui-modal-panel:has(.chat-activity-dialog) { width: min(calc(880rem / 14), calc(100vw - 32px)); max-width: 100%; }
+.chat-activity-dialog { display: flex; flex-direction: column; gap: var(--spacing-4); min-width: 0; }
+.chat-activity-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--spacing-2); }
+.chat-activity-list { display: flex; flex-direction: column; gap: var(--spacing-2); }
+.chat-activity-choice { display: flex; align-items: center; justify-content: space-between; gap: var(--spacing-4); width: 100%; min-height: calc(64rem / 14); height: auto; padding: var(--spacing-3); border-bottom: 1px solid var(--border-subtle); white-space: normal; text-align: left; }
+.chat-activity-choice-copy { display: flex; flex: 1; flex-direction: column; gap: var(--spacing-1); min-width: 0; overflow-wrap: anywhere; }
+.chat-activity-choice time, .chat-activity-heading time { color: var(--text-secondary); font-size: var(--font-size-xs); }
+.chat-activity-choice > span:last-child { flex: none; max-width: 40%; color: var(--text-secondary); font-size: var(--font-size-sm); }
+.chat-activity-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--spacing-2) var(--spacing-3); }
+.chat-activity-heading h3 { flex-basis: 100%; margin: 0; font-size: var(--font-size-lg); overflow-wrap: anywhere; }
+.chat-activity-heading > span { font-size: var(--font-size-sm); color: var(--text-secondary); }
+.chat-activity-section { padding-block: var(--spacing-3); border-top: 1px solid var(--border-subtle); min-width: 0; }
+.chat-activity-section h4, .chat-activity-continue h4 { margin: 0 0 var(--spacing-3); font-size: var(--font-size-sm); }
+.chat-activity-dialog summary, .chat-activity-approval-metadata summary { cursor: pointer; padding-block: var(--spacing-2); line-height: 1.5; }
+.chat-activity-dialog summary:focus-visible, .chat-activity-approval-metadata summary:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.chat-activity-dialog .chat-run-steps { gap: var(--spacing-3); font-size: var(--font-size-sm); }
+.chat-activity-dialog .chat-run-steps > li { padding-bottom: var(--spacing-2); }
+.chat-activity-dialog .chat-run-receipt { max-height: calc(400rem / 14); padding: var(--spacing-3); font-size: var(--font-size-sm); }
+.chat-activity-metadata { display: grid; gap: var(--spacing-3); margin: var(--spacing-2) 0 0; min-width: 0; font-size: var(--font-size-sm); }
+.chat-activity-metadata > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 3fr); gap: var(--spacing-3); }
+.chat-activity-metadata dt { color: var(--text-secondary); }
+.chat-activity-metadata dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.chat-activity-continue { display: flex; flex-direction: column; align-items: stretch; gap: var(--spacing-3); padding: var(--spacing-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-inset); }
+.chat-activity-continue > h4, .chat-activity-continue > p { margin: 0; }
+.chat-activity-continue > p { color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.6; }
+.chat-activity-continue > button { align-self: flex-start; }
+.chat-activity-resolution { padding: var(--spacing-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
+.chat-activity-resolution[open] > * + * { margin-top: var(--spacing-3); }
+.chat-activity-session-header { display: flex; align-items: center; justify-content: space-between; flex: none; gap: var(--spacing-3); min-width: 0; padding: var(--spacing-2) var(--spacing-4); border-bottom: 1px solid var(--border-subtle); }
+.chat-activity-session-header h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; font-size: var(--font-size-sm); font-weight: 500; color: var(--text-secondary); }
+.chat-activity-session-header > button { flex: none; }
+@media (max-width: 560px) {
+  .chat-activity-choice { align-items: flex-start; gap: var(--spacing-2); }
+  .chat-activity-metadata > div { grid-template-columns: minmax(0, 1fr); gap: var(--spacing-1); }
+  .chat-activity-continue { padding: var(--spacing-3); }
+}

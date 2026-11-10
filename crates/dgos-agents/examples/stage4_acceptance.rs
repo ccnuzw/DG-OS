@@ -20,6 +20,7 @@
 //! For no-paid AgentManager lifecycle coverage, run `bun scripts/stage4-provider-errors.ts`.
 use async_trait::async_trait;
 use dgos_agents::{capabilities::{CliProviderConfiguration, CliProviderRef, CliProviders, SaveCliProviderInput, SessionCreate, SessionConfigurationView}, native_extensions::{self, mcp::{Change as McpChange, Field as McpField, ServerPatch}, package::NativeSkillPackage, Access, HostContext, NativeExtensions, ResourceAction, ResourceSource, Scope as NativeScope, Target}, projects::{CreateProjectInput, SaveTaskInput}, AgentManager, Engine, RunRecord, SessionEvent, SessionOptions};
+use dgos_agents::session::AgentSkillInput;
 use dgos_db::{development_repository::CliProviderSnapshot, migrations::Migrator, sea_orm_migration::MigratorTrait, DevelopmentRepository, ProviderRepository};
 use dgos_providers::{new_credential_ref, ProviderCredentialScope, ProviderCredentialVault, ProviderManager, SecretValue};
 use dgos_types::{DgosError, DgosResult, ProviderConfig};
@@ -187,23 +188,27 @@ async fn run() -> Result<()> {
             if resume { require(saved.native_id.is_some() && current.view.native_id == saved.native_id, "native_session_identity_changed")?; }
             saved.native_id = current.view.native_id;
             let native_id = saved.native_id.clone().ok_or("native_session_id_missing")?;
-            let mcp_observation = agents.observe_native_session(OWNER, &saved.session, &opened.generation, dgos_agents::native_session::SessionDomain::Mcp, &CancellationToken::new()).await;
-            match mcp_observation {
-                Ok(observation) => {
-                    require(!observation.incomplete, "native_mcp_observation_incomplete")?;
-                    require(observation.mcp_servers.iter().any(|server| server.name == "stage4" && server.status == "connected" && server.tools.contains(&"stage4_receipt".to_string())), "native_mcp_tool_catalog_not_observed")?;
-                    artifact(&root.join(format!("evidence/{}-native-mcp-schema-{first}.json", label(saved.engine))), json!({"session":saved.session,"generation":opened.generation,"native_id":native_id,"observed_at":observation.observed_at,"server":"stage4","tool":"stage4_receipt","status":"connected","schema_observed":false,"tool_catalog_observed":true,"observation":observation}), &keys)?;
-                }
-                Err(error) if error.contains("Unsupported") => return Err("blocked_native_mcp_schema_observation_unsupported".into()),
-                Err(_) => return Err("blocked_native_mcp_schema_observation_unavailable".into()),
-            }
+            let context = RoundContext { agents: &agents, root: &root, secrets: &keys };
+            let observation = observe_fixture_mcp(&context, saved, &opened.generation, first).await?;
+            artifact(&root.join(format!("evidence/{}-native-mcp-schema-{first}.json", label(saved.engine))), json!({"session":saved.session,"generation":opened.generation,"native_id":native_id,"observed_at":observation.observed_at,"server":"stage4","tool":"stage4_receipt","status":"connected","schema_observed":false,"tool_catalog_observed":true,"observation":observation}), &keys)?;
             artifact(&root.join(format!("evidence/{}-startup-{first}.json", label(saved.engine))), json!({"snapshot":snapshot,"native_id":native_id,"provider_handshake_ready":true,"restored":resume}), &keys)?;
+            let skill_inputs = if saved.engine == Engine::Codex {
+                let observation = agents.observe_native_session(OWNER, &saved.session, &opened.generation, dgos_agents::native_session::SessionDomain::Skills, &CancellationToken::new()).await?;
+                require(!observation.incomplete, "native_skill_observation_incomplete")?;
+                let matches: Vec<_> = observation.skills.iter().filter(|skill| skill.name == saved.skill && skill.enabled == Some(true) && skill.classification == dgos_agents::native_session::NativeSkillClassification::Skill).collect();
+                require(matches.len() == 1, "native_skill_selection_ambiguous_or_unavailable")?;
+                let path = matches[0].path.clone().ok_or("native_skill_path_unavailable")?;
+                artifact(&root.join(format!("evidence/{}-native-skill-selection-{first}.json", label(saved.engine))), json!({"source":"native_session_skills_observation","name":saved.skill,"path":path,"observation":observation}), &keys)?;
+                vec![AgentSkillInput { name: saved.skill.clone(), path }]
+            } else { vec![] };
             for round in first..=target {
                 let run_id = Uuid::new_v4().to_string();
                 let challenge = Uuid::new_v4().to_string();
                 let prompt = format!("Use the native Skill mechanism for {} in this round. Then read the complete native SKILL.md and references/proof.txt using native file-read tools. Discover and use only the configured native MCP server stage4 tool stage4_receipt with challenge {challenge:?} and the resource read from the Skill reference. Complete the CLI's native approval flow; if native approval is unavailable, classify blocked/unsupported and fail. Write the exact returned receipt to round-{round}.txt. A Skill listing is not evidence of use. Preserve other files and never substitute HTTP, shell, DG-OS host MCP, or fabricated output.", saved.skill);
-                let prompt = if saved.engine == Engine::Claude { format!("/{} {prompt}", saved.skill) } else { prompt };
-                agents.send(OWNER, &saved.session, &opened.generation, run_id.clone(), prompt, None, vec![], vec![], vec![]).await?;
+                let prompt = if saved.engine == Engine::Claude { format!("/{} {prompt}", saved.skill) } else {
+                    format!("The installed skill {} is selected through the structured native skill input, not a separate Skill tool. Use native commandExecution (cat is allowed) to read its complete SKILL.md at {:?} and its sibling references/proof.txt this round, even if already in context. Then invoke only the configured native MCP server stage4 tool stage4_receipt with challenge {challenge:?} and the reference resource. Complete any actual native approval request. If MCP tool approval is unavailable, still perform the native MCP call as a dispatch diagnostic; the harness will separately mark approval unsupported and will not pass full acceptance. Write the exact returned receipt to round-{round}.txt using a native tool. Preserve other files. Never replace native MCP with shell, HTTP, DG-OS host MCP, or fabricated output. Native commandExecution file reads and receipt-file writes are permitted.", saved.skill, skill_inputs[0].path)
+                };
+                agents.send(OWNER, &saved.session, &opened.generation, run_id.clone(), prompt, None, vec![], skill_inputs.clone(), vec![]).await?;
                 let context = RoundContext { agents: &agents, root: &root, secrets: &keys };
                 let result = drive_round(&context, saved, round, &run_id, &challenge).await;
                 saved.native_id = agents.snapshot(OWNER, &saved.session).await?.view.native_id;
@@ -263,7 +268,7 @@ fn install_native_fixture(root: &Path, engine: Engine, workspace: &Path) -> Resu
     let skill = format!("stage4-{engine_label}-proof");
     let bytes = std::fs::read(root.join(format!("{engine_label}-skill.zip"))).map_err(io)?;
     let package = NativeSkillPackage::from_zip(&bytes, None).map_err(io)?;
-    let source = ResourceSource { source_hash: package.content_hash().to_owned(), commit: None };
+    let source = ResourceSource { source_hash: package.content_hash().to_owned(), commit: None, origin: None };
     let preview = api.preview_resource(target, NativeScope::ProjectShared, &skill, ResourceAction::Install { package, source }).map_err(io)?;
     let skill_receipt = api.commit_resource(&preview.receipt.operation_id).map_err(io)?;
     require(skill_receipt.state == NativeState::Committed, "native_skill_install_failed_or_unknown")?;
@@ -282,6 +287,38 @@ struct RoundContext<'a> {
     agents: &'a AgentManager,
     root: &'a Path,
     secrets: &'a [String],
+}
+
+async fn observe_fixture_mcp(context: &RoundContext<'_>, saved: &SavedEngine, generation: &str, round: u32) -> Result<dgos_agents::native_session::NativeSessionObservation> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        let result = context.agents.observe_native_session(OWNER, &saved.session, generation, dgos_agents::native_session::SessionDomain::Mcp, &CancellationToken::new()).await;
+        let evidence = match &result {
+            Ok(observation) => json!({"session":saved.session,"generation":generation,"attempt":attempt,"observation":observation}),
+            Err(error) => json!({"session":saved.session,"generation":generation,"attempt":attempt,"error":error}),
+        };
+        artifact(&context.root.join(format!("evidence/{}-native-mcp-observation-{round}-{attempt}.json", label(saved.engine))), evidence, context.secrets)?;
+        let observation = result.map_err(|error| if error.contains("Unsupported") { "blocked_native_mcp_schema_observation_unsupported".to_owned() } else { "blocked_native_mcp_schema_observation_unavailable".to_owned() })?;
+        let mut matches = observation.mcp_servers.iter().filter(|server| server.name == "stage4");
+        let server = matches.next();
+        require(matches.next().is_none(), "blocked_native_mcp_duplicate_server")?;
+        let waiting = match server {
+            Some(server) if matches!(server.status.as_str(), "starting" | "pending" | "notStarted") => true,
+            Some(server) if server.status == "connected" && server.tools.is_empty() => true,
+            Some(server) if server.status == "connected" => {
+                require(!observation.incomplete, "native_mcp_observation_incomplete")?;
+                require(server.tools.iter().any(|tool| tool == "stage4_receipt"), "native_mcp_tool_catalog_not_observed")?;
+                return Ok(observation);
+            }
+            Some(server) => return Err(format!("blocked_native_mcp_server_{}", server.status)),
+            None if observation.mcp_servers.is_empty() => true,
+            None => return Err("blocked_native_mcp_server_not_observed".into()),
+        };
+        require(waiting && tokio::time::Instant::now() < deadline, "blocked_native_mcp_initialization_timeout")?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 async fn drive_round(context: &RoundContext<'_>, saved: &SavedEngine, round: u32, run: &str, challenge: &str) -> Result<()> {
@@ -310,13 +347,19 @@ async fn drive_round(context: &RoundContext<'_>, saved: &SavedEngine, round: u32
                 && pending.data.get("tool_use_id").and_then(Value::as_str).is_some();
             let answer = match pending.kind.as_str() {
                 "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => json!({"decision":"accept"}),
+                // Sandbox filesystem/network grants are not MCP tool permission.
+                // The isolated workspace reads and local MCP fixture need no escalation.
+                "item/permissions/requestApproval" => json!({"permissions":{},"scope":"turn"}),
                 "mcpServer/elicitation/request" => json!({"action":"accept","content":null}),
                 "claude/toolPermission" if pending.title.starts_with("mcp__") && !mcp_approval => return Err("blocked_native_mcp_approval_identity_mismatch".into()),
                 "claude/toolPermission" if pending.title != "AskUserQuestion" => json!({"behavior":"allow"}),
-                _ => return Err(format!("blocked_native_approval_unsupported: {}", pending.kind)),
+                _ => {
+                    append(&root.join("evidence/approvals.jsonl"), json!({"boundary":"native_cli_request","engine":saved.engine,"session":saved.session,"run":run,"kind":pending.kind,"request_id":pending.id,"mcp_tool_approval":false,"approved":false,"classification":"unsupported_request"}), secrets)?;
+                    return Err(format!("blocked_native_approval_unsupported: {}", pending.kind));
+                }
             };
             agents.respond(OWNER, &saved.session, &session.generation, pending.id.clone(), answer).await?;
-            append(&root.join("evidence/approvals.jsonl"), json!({"boundary":"native_cli_permission","engine":saved.engine,"session":saved.session,"run":run,"kind":pending.kind,"request_id":pending.id,"mcp_tool_approval":mcp_approval,"approved":true}), secrets)?;
+            append(&root.join("evidence/approvals.jsonl"), json!({"boundary":"native_cli_permission","engine":saved.engine,"session":saved.session,"run":run,"kind":pending.kind,"request_id":pending.id,"mcp_tool_approval":mcp_approval,"approved":pending.kind != "item/permissions/requestApproval","category":if mcp_approval { "mcp_tool_permission" } else if pending.kind == "mcpServer/elicitation/request" { "mcp_elicitation_not_tool_permission" } else { "non_mcp_tool_permission" }}), secrets)?;
             if mcp_approval {
                 approved_mcp_requests.push(pending.id);
                 if let Some(id) = pending.data.get("tool_use_id").and_then(Value::as_str) { approved_mcp_tool_uses.insert(id.to_owned()); }
@@ -331,19 +374,26 @@ async fn drive_round(context: &RoundContext<'_>, saved: &SavedEngine, round: u32
     let receipt = receipts.first().and_then(|r| r["receipt"].as_str()).unwrap_or("");
     let read_body = read_proof(&record.events, "SKILL.md", &saved.body_marker);
     let read_resource = read_proof(&record.events, "references/proof.txt", &saved.resource_marker);
-    let mcp_result = !receipt.is_empty() && mcp_receipt_proof(&record.events, receipt, &approved_mcp_tool_uses);
+    let mcp_result = !receipt.is_empty() && mcp_receipt_proof(&record.events, receipt, challenge, &saved.resource_marker);
     let file_result = std::fs::read_to_string(root.join(format!("project-{}/round-{round}.txt", label(saved.engine)))).is_ok_and(|text| !receipt.is_empty() && text.trim() == receipt);
     let snapshot_matches = record.configuration.as_ref().is_some_and(|actual| matches!(actual, SessionConfigurationView::ProviderBound { snapshot, .. } if saved.snapshot.as_ref().is_some_and(|old| old.provider_id == snapshot.provider_id && old.provider_revision == snapshot.provider_revision && old.model_id == snapshot.model_id && old.revision == snapshot.revision)));
     let skill_invoked = saved.engine == Engine::Claude && record.events.iter().any(|event| event.kind == "message" && event.data["type"] == "assistant" && event.data["content"].as_array().is_some_and(|parts| parts.iter().any(|part| part["type"] == "tool_use" && part["name"] == "Skill" && part.pointer("/input/skill").and_then(Value::as_str) == Some(saved.skill.as_str()))));
     let schema_discovery = fixture.iter().any(|r| r["engine"].as_str() == Some(label(saved.engine)) && r["kind"] == "schema_discovery" && r["tool"] == "stage4_receipt");
     let native_mcp_approval = !approved_mcp_requests.is_empty();
+    let approval_matches_result = native_mcp_approval && !receipt.is_empty() && mcp_receipt_proof_for_tool_uses(&record.events, receipt, challenge, &saved.resource_marker, Some(&approved_mcp_tool_uses));
     // The pinned protocols do not expose an independent activation receipt.
     // A Claude Skill tool request is useful attribution, not proof of a read.
-    let proofs = json!({"completed":record.status == "completed","stream_delta_observed_before_completion":stream_observations.iter().any(|o|o["observed_while_status"] == "running" || o["observed_while_status"] == "waiting"),"skill_body_read_tool_event":read_body,"resource_read_tool_event":read_resource,"native_mcp_schema_discovery":schema_discovery,"fixture_dispatch":receipts.len() == 1,"native_mcp_approval_observed":native_mcp_approval,"receipt_in_native_mcp_tool_result":mcp_result,"receipt_written_to_project":file_result,"production_run_snapshot_matches_session":snapshot_matches});
-    let unsupported = if !native_mcp_approval { Some("blocked_native_mcp_tool_approval_unobservable") } else { None };
-    let skill_observation = json!({"independent_activation_receipt":"unsupported","structured_skill_input":"not_submitted_text_only_product_entry","explicit_native_command_submitted":saved.engine == Engine::Claude,"native_skill_tool_request_observed":skill_invoked,"body_read_observed":read_body,"resource_read_observed":read_resource});
-    artifact(&root.join(format!("evidence/{}-round-{round}.json", label(saved.engine))), json!({"execution_source":"real_native_cli_with_selected_provider","mcp_source":"native_local_stdio_fixture","engine":saved.engine,"round":round,"session":saved.session,"skill":saved.skill,"skill_observation":skill_observation,"capability_classification":unsupported,"proofs":proofs,"stream_observations":stream_observations,"fixture_receipts":receipts,"native_mcp_approval_request_ids":approved_mcp_requests,"development_run":record}), secrets)?;
-    if let Some(reason) = unsupported { return Err(reason.into()); }
+    let proofs = json!({"completed":record.status == "completed","stream_delta_observed_before_completion":stream_observations.iter().any(|o|o["observed_while_status"] == "running" || o["observed_while_status"] == "waiting"),"skill_body_read_tool_event":read_body,"resource_read_tool_event":read_resource,"native_mcp_schema_discovery":schema_discovery,"fixture_dispatch":receipts.len() == 1,"native_mcp_approval_observed":native_mcp_approval,"native_mcp_approval_matches_result":approval_matches_result,"receipt_in_native_mcp_tool_result":mcp_result,"receipt_written_to_project":file_result,"production_run_snapshot_matches_session":snapshot_matches});
+    let protocol: Option<Value> = if saved.engine == Engine::Codex { std::fs::read(root.join("evidence/codex-native-protocol.json")).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()) } else { None };
+    let approval_support = if saved.engine == Engine::Claude { "supported" } else { protocol.as_ref().and_then(|value| value["mcp_tool_approval"].as_str()).unwrap_or("unverified") };
+    let call_observed = record.events.iter().any(|event| native_mcp_call_matches(event, challenge, &saved.resource_marker));
+    let dispatch_classification = if !call_observed && receipts.is_empty() { "no_call" } else if receipts.is_empty() { "native_call_without_fixture_dispatch" } else if receipts.len() != 1 { "duplicate_fixture_dispatch" } else if !mcp_result { "fixture_dispatch_without_native_result" } else { "verified_native_dispatch_and_result" };
+    let blocked = if native_mcp_approval { None } else if approval_support == "unsupported" { Some("blocked_native_mcp_tool_approval_unsupported") } else if !call_observed && receipts.is_empty() { Some("blocked_native_mcp_not_called") } else { Some("blocked_native_mcp_tool_approval_not_observed") };
+    let structured_skill_submitted = saved.engine == Engine::Codex && record.events.iter().any(|event| event.kind == "userMessage" && event.data["skills"].as_array().is_some_and(|skills| skills.iter().any(|skill| skill["name"] == saved.skill && skill["path"].as_str().is_some_and(|path| path.ends_with("/SKILL.md")))));
+    let skill_observation = json!({"independent_activation_receipt":"unsupported","structured_skill_input_submitted":structured_skill_submitted,"explicit_native_command_submitted":saved.engine == Engine::Claude,"native_skill_tool_request_observed":skill_invoked,"native_read_mechanism":if saved.engine == Engine::Codex { "commandExecution" } else { "Read" },"body_read_observed":read_body,"resource_read_observed":read_resource});
+    let mcp_observation = json!({"tool_approval_support":approval_support,"tool_approval_observed":native_mcp_approval,"native_call_observed":call_observed,"dispatch_classification":dispatch_classification,"dispatch_and_result_verified":receipts.len() == 1 && mcp_result,"full_acceptance_passed":blocked.is_none() && proofs.as_object().is_some_and(|values|values.values().all(|v|v.as_bool() == Some(true))),"protocol_evidence":protocol});
+    artifact(&root.join(format!("evidence/{}-round-{round}.json", label(saved.engine))), json!({"execution_source":"real_native_cli_with_selected_provider","mcp_source":"native_local_stdio_fixture","engine":saved.engine,"round":round,"session":saved.session,"skill":saved.skill,"skill_observation":skill_observation,"native_mcp_observation":mcp_observation,"capability_classification":blocked,"proofs":proofs,"stream_observations":stream_observations,"fixture_receipts":receipts,"native_mcp_approval_request_ids":approved_mcp_requests,"native_mcp_approved_tool_use_ids":approved_mcp_tool_uses,"development_run":record}), secrets)?;
+    if let Some(reason) = blocked { return Err(reason.into()); }
     let all = proofs.as_object().ok_or("proof_encoding_failed")?.values().all(|v| v.as_bool() == Some(true));
     require(all, &format!("acceptance_evidence_missing: {} round {round}", label(saved.engine)))
 }
@@ -351,7 +401,7 @@ async fn drive_round(context: &RoundContext<'_>, saved: &SavedEngine, round: u32
 // prompts are never proof. Claude tool results are correlated with their tool_use id.
 fn native_tool_output_contains(event: &SessionEvent, needle: &str) -> bool {
     if event.kind == "commandExecution" { return event.data.get("exitCode").and_then(Value::as_i64) == Some(0) && event.data.get("aggregatedOutput").and_then(Value::as_str).is_some_and(|s| s.contains(needle)); }
-    if event.kind == "mcpToolCall" { return event.data.get("status").and_then(Value::as_str) == Some("completed") && event.data.get("result").is_some_and(|v| v.to_string().contains(needle)); }
+    if event.kind == "mcpToolCall" { return event.data.get("status").and_then(Value::as_str) == Some("completed") && event.data.get("error").is_none_or(Value::is_null) && event.data.get("result").is_some_and(|v| v.to_string().contains(needle)); }
     if event.kind != "message" || event.data.get("type").and_then(Value::as_str) != Some("user") { return false; }
     event.data.get("content").and_then(Value::as_array).is_some_and(|parts| parts.iter().any(|part| part["type"] == "tool_result" && part.get("is_error").and_then(Value::as_bool) != Some(true) && part.get("content").is_some_and(|v| v.to_string().contains(needle))))
 }
@@ -369,13 +419,27 @@ fn read_proof(events: &[SessionEvent], path: &str, marker: &str) -> bool {
     false
 }
 
-fn mcp_receipt_proof(events: &[SessionEvent], receipt: &str, approved_tool_uses: &HashSet<String>) -> bool {
+fn native_mcp_call_matches(event: &SessionEvent, challenge: &str, resource: &str) -> bool {
+    if matches!(event.kind.as_str(), "mcpToolCall" | "item/started") && event.data["type"] == "mcpToolCall" {
+        return event.data["server"] == "stage4" && event.data["tool"] == "stage4_receipt" && event.data["arguments"]["challenge"] == challenge && event.data["arguments"]["resource"] == resource;
+    }
+    event.kind == "message" && event.data["type"] == "assistant" && event.data["content"].as_array().is_some_and(|parts| parts.iter().any(|part| part["type"] == "tool_use" && part["name"] == "mcp__stage4__stage4_receipt" && part["input"]["challenge"] == challenge && part["input"]["resource"] == resource))
+}
+
+fn mcp_receipt_proof(events: &[SessionEvent], receipt: &str, challenge: &str, resource: &str) -> bool {
+    mcp_receipt_proof_for_tool_uses(events, receipt, challenge, resource, None)
+}
+
+// Approval correlation remains mandatory for acceptance, but is deliberately
+// separate from dispatch diagnostics so an unsupported CLI cannot appear passed.
+fn mcp_receipt_proof_for_tool_uses(events: &[SessionEvent], receipt: &str, challenge: &str, resource: &str, approved_tool_uses: Option<&HashSet<String>>) -> bool {
     for event in events {
-        if event.kind == "mcpToolCall" && event.data.get("tool").or_else(|| event.data.get("toolName")).and_then(Value::as_str) == Some("stage4_receipt") && native_tool_output_contains(event, receipt) { return true; }
+        if approved_tool_uses.is_none() && event.kind == "mcpToolCall" && native_mcp_call_matches(event, challenge, resource) && native_tool_output_contains(event, receipt) { return true; }
         if event.kind != "message" || event.data["type"] != "assistant" { continue; }
         let Some(parts) = event.data["content"].as_array() else { continue; };
-        for part in parts.iter().filter(|part| part["type"] == "tool_use" && part["name"] == "mcp__stage4__stage4_receipt" && part["id"].as_str().is_some_and(|id| approved_tool_uses.contains(id))) {
+        for part in parts.iter().filter(|part| part["type"] == "tool_use" && part["name"] == "mcp__stage4__stage4_receipt" && part["input"]["challenge"] == challenge && part["input"]["resource"] == resource) {
             let Some(id) = part["id"].as_str() else { continue; };
+            if approved_tool_uses.is_some_and(|approved| !approved.contains(id)) { continue; }
             if events.iter().any(|result| result.kind == "message" && result.data["type"] == "user" && result.data["content"].as_array().is_some_and(|parts| parts.iter().any(|part| part["type"] == "tool_result" && part["tool_use_id"] == id && part.get("is_error").and_then(Value::as_bool) != Some(true) && part.get("content").is_some_and(|v| v.to_string().contains(receipt))))) { return true; }
         }
     }
@@ -400,5 +464,40 @@ mod tests {
         assert!(!read_proof(&[request.clone(), result.clone()], "SKILL.md", "BODY_RESOURCE"));
         result.data["content"][0]["tool_use_id"] = json!("read-1");
         assert!(read_proof(&[request, result], "SKILL.md", "BODY_RESOURCE"));
+    }
+    #[test]
+    fn codex_mcp_results_require_server_arguments_and_success() {
+        let claim = event("agentMessage", json!({"text":"RECEIPT"}));
+        assert!(!native_mcp_call_matches(&claim, "challenge", "resource"));
+        assert!(!mcp_receipt_proof(&[claim], "RECEIPT", "challenge", "resource"));
+        let mut call = event("mcpToolCall", json!({"type":"mcpToolCall","server":"stage4","tool":"stage4_receipt","arguments":{"challenge":"challenge","resource":"resource"},"status":"completed","result":{"content":[{"type":"text","text":"RECEIPT"}]},"error":null}));
+        assert!(native_mcp_call_matches(&call, "challenge", "resource"));
+        assert!(mcp_receipt_proof(&[call.clone()], "RECEIPT", "challenge", "resource"));
+        assert!(!mcp_receipt_proof(&[call.clone()], "RECEIPT", "other-challenge", "resource"));
+        assert!(!mcp_receipt_proof(&[call.clone()], "RECEIPT", "challenge", "other-resource"));
+        call.data["server"] = json!("other-server");
+        assert!(!mcp_receipt_proof(&[call.clone()], "RECEIPT", "challenge", "resource"));
+        call.data["server"] = json!("stage4");
+        call.data["status"] = json!("failed");
+        assert!(!mcp_receipt_proof(&[call.clone()], "RECEIPT", "challenge", "resource"));
+        call.data["status"] = json!("completed");
+        call.data["error"] = json!({"message":"RECEIPT"});
+        assert!(!mcp_receipt_proof(&[call], "RECEIPT", "challenge", "resource"));
+    }
+
+    #[test]
+    fn claude_mcp_dispatch_is_correlated_independently_of_permission() {
+        let request = event("message", json!({"type":"assistant","content":[{"type":"tool_use","id":"mcp-1","name":"mcp__stage4__stage4_receipt","input":{"challenge":"challenge","resource":"resource"}}]}));
+        let mut result = event("message", json!({"type":"user","content":[{"type":"tool_result","tool_use_id":"other-call","content":"RECEIPT"}]}));
+        assert!(native_mcp_call_matches(&request, "challenge", "resource"));
+        assert!(!mcp_receipt_proof(&[request.clone(), result.clone()], "RECEIPT", "challenge", "resource"));
+        result.data["content"][0]["tool_use_id"] = json!("mcp-1");
+        assert!(mcp_receipt_proof(&[request.clone(), result.clone()], "RECEIPT", "challenge", "resource"));
+        let mut approved = HashSet::from(["different-tool-use".to_owned()]);
+        assert!(!mcp_receipt_proof_for_tool_uses(&[request.clone(), result.clone()], "RECEIPT", "challenge", "resource", Some(&approved)));
+        approved.insert("mcp-1".to_owned());
+        assert!(mcp_receipt_proof_for_tool_uses(&[request.clone(), result.clone()], "RECEIPT", "challenge", "resource", Some(&approved)));
+        result.data["content"][0]["is_error"] = json!(true);
+        assert!(!mcp_receipt_proof(&[request, result], "RECEIPT", "challenge", "resource"));
     }
 }

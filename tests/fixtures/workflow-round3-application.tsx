@@ -108,7 +108,7 @@ class FixtureHost {
       case 'close_development_takeover': if (this.cleanupFails) throw 'cleanup_pending'; throw new Error('Unexpected successful cleanup');
       case 'read_development_review': return { task_id: task.id, captured_at: 2, baseline_late: false, truncated: false, fingerprint: this.fingerprint, changes: [{ path: 'fixture.js', kind: 'modified', pre_existing: false, origin: 'uncertain', previewable: true }], runs_stale: false };
       case 'list_development_runs': return [];
-      case 'read_development_git': return { task_id: task.id, kind: 'directory', path: project.path, branch: null, head: null, merge_heads: [], files: [], index: [], conflicts: [], staged_diff: '', worktree_diff: '', review_token: 'fixture-review-token', baseline_version: 'fixture-baseline', initial_staged_paths: [], file_versions: {} };
+      case 'read_development_project_git': return { kind: 'directory', path: project.path, branch: null, head: null, merge_heads: [], files: [], conflicts: [], snapshot_token: 'fixture-snapshot-token' };
       case 'read_development_workspaces': return this.workspaces;
       case 'get_development_session_configuration': return { format: 'provider_bound', read_only: false, snapshot: { binding_id: 'fixture-binding', engine: 'codex', ...this.capability.configuration.provider, revision: this.capability.revision, permission_epoch: this.capability.permission_epoch } };
       case 'respond_agent_request': this.session = { ...this.session, status: 'idle', pending: [] }; return null;

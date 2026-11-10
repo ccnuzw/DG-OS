@@ -4,9 +4,10 @@
 //! DGOS_PROJECT_ACCEPTANCE_ROOT=/private/tmp/dgos-phase6-local-<unique>
 //! cargo test --offline -p dgos --features webview-smoke --test webview_smoke_agents -- --nocapture
 //! The root must not exist; other phases may intentionally execute real engines.
-//! `DGOS_CODEX_LIFECYCLE_SMOKE=1` adds configure/prepare, high reasoning/read-only
-//! settings through production popovers, explicit Plan opt-in, fixture approval
-//! denial, steering, interrupt, resend, close and resume. It uses a codex-cli
+//! `DGOS_CODEX_LIFECYCLE_SMOKE=1` adds automatic workspace trust/prepare without
+//! sending, translated high reasoning ticks with explicit dismiss, five-mode Plan
+//! selection and its native read-only overlay, fixture approval denial, steering,
+//! icon interrupt/send, close and resume. It uses a codex-cli
 //! 0.167.0 protocol fixture with model/collaboration metadata, not a real model.
 //! Real authorized Codex lifecycle (no protocol fixture; only Codex is selected):
 //! DGOS_CODEX_REAL_LIFECYCLE_SMOKE=1 DGOS_PROJECT_ACCEPTANCE_PHASE=phase6-local

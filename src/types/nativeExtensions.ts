@@ -1,16 +1,16 @@
 export type NativeTarget = 'Codex' | 'Claude';
 export type NativeScope = 'OsUser' | 'ProjectShared' | 'ProjectLocal';
-export interface NativeSelection { target: NativeTarget; scope: NativeScope; project_id: string | null }
+export interface NativeSelection { target: NativeTarget; scope: NativeScope; project_id: string | null; task_id?: string | null }
 export type NativeOwner = 'Loose' | 'Plugin' | 'Managed' | 'Synced' | 'Symlink' | 'Unknown';
 export type NativeState = 'Previewed' | 'Prepared' | 'Publishing' | 'Committed' | 'Conflict' | 'Unknown' | 'RecoveryRequired' | 'Cancelled';
 export interface NativeReceipt { operation_id: string; state: NativeState; pending_activation: boolean; recovery_material_retained: boolean }
-export interface NativePreview { receipt: NativeReceipt; target: NativeTarget; scope: NativeScope; expires_at: number; rule?: NativeSkillRuleEvidence | null }
+export interface NativePreview { receipt: NativeReceipt; target: NativeTarget; scope: NativeScope; target_path: string; expires_at: number; rule?: NativeSkillRuleEvidence | null }
 export interface NativeInstance { id: string; revision: string }
-export interface NativeSource { source_hash: string; commit: string | null }
+export interface NativeSource { source_hash: string; commit: string | null; origin?: { repository: { owner: string; repo: string; requested_ref: string | null; skill_subpath: string | null; normalized_source: string }; source_id: string | null; skill_path: string } | null }
 export interface NativeResource { path: string; hash: string; bytes: number; executable: boolean }
 export interface NativeDependencies { declared: boolean; tools: { program: string; version_requirement: string | null }[]; packages: string[]; required_tools: string[] }
 export interface NativeMetadata { name: string; description: string; license: string | null; dependencies: NativeDependencies; dynamic_commands: boolean }
-export interface NativeSkill { instance: NativeInstance; target: NativeTarget; scope: NativeScope; slug: string; owner: NativeOwner; metadata: NativeMetadata; resources: NativeResource[]; source: NativeSource | null; can_update: boolean }
+export interface NativeSkill { instance: NativeInstance; target: NativeTarget; scope: NativeScope; slug: string; owner: NativeOwner; metadata: NativeMetadata; resources: NativeResource[]; source: NativeSource | null; source_modified: boolean; can_update: boolean }
 export interface NativeReadonlyEntry { id: string; slug: string; link_path: string; target: string; resolved_target: string | null; status: 'within_authorized_root' | 'outside_authorized_root' | 'unresolved' }
 export interface NativeSkills { instances: NativeSkill[]; readonly_entries: NativeReadonlyEntry[]; missing: boolean; incomplete: boolean }
 // Session evidence is separate from NativeSkill: it carries no instance or file authorization.
@@ -28,10 +28,10 @@ export interface NativeObservedSkill {
 }
 export interface DiscoverNativeSkills extends NativeSelection { query: string }
 export interface GetNativeSkill extends NativeSelection { slug: string }
-export type NativePackage = { kind: 'zip'; bytes: number[]; subpath: string | null } | { kind: 'github'; input: string };
+export type NativePackage = { kind: 'github'; input: string } | { kind: 'picker'; handle: string; skill_path: string } | { kind: 'repository'; source_id: string; skill_path: string };
 export interface PreviewNativeSkill extends NativeSelection { action: 'install' | 'update' | 'remove'; slug: string; expected: NativeInstance | null; source: NativePackage | null }
 export interface NativeResourceImpact { native_name: string; previous_name: string | null; same_name: { scope: NativeScope; slug: string; native_name: string; owner: NativeOwner }[]; coverage: 'authorized_loose_roots'; incomplete: boolean; visibility_writable: boolean }
-export interface NativeSkillPreview extends NativeSelection { receipt: NativeReceipt; slug: string; before_hash: string | null; after_hash: string | null; source: NativeSource | null; resources: NativeResource[]; metadata: NativeMetadata | null; impact: NativeResourceImpact | null; expires_at: number }
+export interface NativeSkillPreview extends NativeSelection { receipt: NativeReceipt; target_path: string; slug: string; before_hash: string | null; after_hash: string | null; source: NativeSource | null; resources: NativeResource[]; metadata: NativeMetadata | null; impact: NativeResourceImpact | null; expires_at: number }
 export type NativeSkillRuleState = 'on' | 'name-only' | 'user-invocable-only' | 'off';
 export type NativeSkillRuleIntentState = NativeSkillRuleState | 'inherit';
 export interface NativeSkillRules { rules: { name: string; state: NativeSkillRuleState }[]; coverage: 'selected_settings_layer' }

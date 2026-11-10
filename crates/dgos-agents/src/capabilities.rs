@@ -132,7 +132,7 @@ impl CliProviders {
                 availability["reason"] = json!(cli.startup_error());
             }
             let models = self.providers.list_models(&provider.id, owner).await.map_err(|_| "provider_unavailable")?;
-            providers.push(json!({"id":provider.id,"name":provider.name,"config_revision":provider.config_revision,"enabled":provider.enabled,"availability":availability,"models":models.into_iter().filter(|m| matches!(m.model_type.as_str(), "text-generation" | "chat")).map(|m| json!({"id":m.model_id,"name":m.model_name,"model_type":m.model_type})).collect::<Vec<_>>()}));
+            providers.push(json!({"id":provider.id,"name":provider.name,"provider_type":provider.provider_type,"config_revision":provider.config_revision,"enabled":provider.enabled,"availability":availability,"models":models.into_iter().filter(|m| matches!(m.model_type.as_str(), "text-generation" | "chat")).map(|m| json!({"id":m.model_id,"name":m.model_name,"model_type":m.model_type})).collect::<Vec<_>>()}));
         }
         Ok(json!({"project_id":project_id,"engine":engine,"providers":providers,"cli":cli}))
     }

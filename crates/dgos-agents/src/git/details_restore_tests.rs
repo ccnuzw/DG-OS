@@ -118,7 +118,7 @@ async fn stale_diff_and_ordinal_never_overwrite_and_raw_secrets_survive_other_hu
     let review = manager.read_development_git("alice", &task).await.unwrap();
     let diff = manager.read_development_project_diff("alice", ProjectDiffInput { project_id: project.id, path: "code.txt".into(), source: ProjectDiffSource::Worktree }).await.unwrap();
     assert!(!diff.diff.contains("edited-private-value"));
-    assert!(!review.worktree_diff.contains("edited-private-value"));
+    assert!(!serde_json::to_string(&review).unwrap().contains("edited-private-value"));
     assert_ne!(diff.diff_hash.as_deref(), Some(digest(diff.diff.as_bytes()).as_str()));
     let unconfirmed = request(&task, &review, GitAction::RestoreHunk { path: "code.txt".into(), diff_hash: diff.diff_hash.clone().unwrap(), hunk_index: 0, confirmed: false });
     assert_eq!(manager.execute_development_git("alice", unconfirmed, CancellationToken::new()).await.unwrap_err(), "restore_confirmation_required");

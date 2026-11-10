@@ -4,7 +4,7 @@ import { createInterface } from 'node:readline';
 import { randomUUID, createHash } from 'node:crypto';
 import { projectSupportedCommands } from './native-observation';
 import { commandsSchema, modelsSchema, mcpStatusSchema, nativeCapabilities, verifiedWrites, isUnsupportedControl, resultRequestId, validateQuestionAnswers, observeActiveSkillSources, type NativeCapabilities } from './native-protocol';
-import { applyTurnSettings, projectTurnControls, turnSettingsSchema, validateTurnSettings, type TurnControls } from './turn-controls';
+import { applyTurnSettings, projectTurnControls, turnSettingsSchema, validateTurnSettings, responseInstructions, deepPlanInstructions, nativePermission, type TurnControls, type TurnSettings } from './turn-controls';
 
 const emit = (method: string, params: unknown) => process.stdout.write(JSON.stringify({ method, params }) + '\n');
 const reply = (id: unknown, result: unknown) => process.stdout.write(JSON.stringify({ id, result }) + '\n');
@@ -24,6 +24,13 @@ let wake: (() => void) | undefined;
 let turnControls: TurnControls | undefined;
 let activeRequestId: string | undefined;
 let activeLocalCommand: string | undefined;
+let queryEpoch = 0;
+let queryConfig: { workspace: string; executable: string } | undefined;
+let queryHasHistory = false;
+let queryFullAuto = false;
+let queryPreferences: TurnSettings['response_preferences'];
+let queryCollaboration: TurnSettings['collaboration_mode'] = 'default';
+let queryDrain: Promise<void> | undefined;
 const projectedMessages = new Set<string>();
 const projectedResults = new Set<string>();
 const queue: SDKUserMessage[] = [];
@@ -81,14 +88,15 @@ class BridgeFailure extends Error {
   constructor(readonly kind: string) { super(kind); }
 }
 const responseUsage = z.object({ input_tokens: z.number().nonnegative().optional(), output_tokens: z.number().nonnegative().optional(), cache_read_input_tokens: z.number().nonnegative().nullable().optional(), cache_creation_input_tokens: z.number().nonnegative().nullable().optional() });
-const modelLimits = z.record(z.string(), z.object({ contextWindow: z.number().positive().optional().catch(undefined), maxOutputTokens: z.number().positive().optional().catch(undefined) }));
-const nativeMessage = z.object({ type: z.string(), subtype: z.string().optional(), session_id: z.string().optional(), user_message_uuid: z.string().optional(), user_message_uuids: z.array(z.string()).optional(), message: z.object({ content: z.unknown(), id: z.string().optional().catch(undefined), model: z.string().optional().catch(undefined), usage: responseUsage.optional().catch(undefined) }).optional(), event: z.object({ delta: z.object({ type: z.string(), text: z.string().optional() }).passthrough().optional() }).passthrough().optional(), uuid: z.string().optional(), parent_tool_use_id: z.string().nullable().optional(), is_error: z.boolean().optional(), result: z.string().optional(), total_cost_usd: z.number().optional(), usage: z.unknown().optional(), modelUsage: modelLimits.optional().catch(undefined), model: z.string().optional(), tools: z.array(z.unknown()).optional(), tool_name: z.string().optional(), tool_use_id: z.string().optional(), elapsed_time_seconds: z.number().optional() });
+const modelLimits = z.record(z.string(), z.object({ contextWindow: z.number().positive().optional().catch(undefined), maxOutputTokens: z.number().positive().optional().catch(undefined), inputTokens: z.number().nonnegative().optional(), outputTokens: z.number().nonnegative().optional(), cacheReadInputTokens: z.number().nonnegative().optional(), cacheCreationInputTokens: z.number().nonnegative().optional(), costUSD: z.number().nonnegative().optional(), costBasis: z.enum(['list', 'managed', 'unknown']).optional(), canonicalModel: z.string().optional(), provider: z.string().optional() }));
+const nativeMessage = z.object({ type: z.string(), subtype: z.string().optional(), session_id: z.string().optional(), user_message_uuid: z.string().optional(), user_message_uuids: z.array(z.string()).optional(), message: z.object({ content: z.unknown(), id: z.string().optional().catch(undefined), model: z.string().optional().catch(undefined), usage: responseUsage.optional().catch(undefined) }).optional(), event: z.object({ delta: z.object({ type: z.string(), text: z.string().optional() }).passthrough().optional() }).passthrough().optional(), uuid: z.string().optional(), parent_tool_use_id: z.string().nullable().optional(), is_error: z.boolean().optional(), result: z.string().optional(), total_cost_usd: z.number().nonnegative().optional(), duration_ms: z.number().nonnegative().optional(), duration_api_ms: z.number().nonnegative().optional(), usage: z.unknown().optional(), modelUsage: modelLimits.optional().catch(undefined), model: z.string().optional(), tools: z.array(z.unknown()).optional(), tool_name: z.string().optional(), tool_use_id: z.string().optional(), elapsed_time_seconds: z.number().optional() });
 const resultTermination = z.object({ terminal_reason: z.string().optional() });
 const nativeDetails = z.object({ tool_use_result: z.unknown().optional(), error: z.unknown().optional(), errors: z.array(z.string()).optional() });
 const nativeApiError = z.object({ isApiErrorMessage: z.literal(true) });
 const commandSchema = z.discriminatedUnion('method', [
   z.object({ id: z.number(), method: z.literal('open'), params: z.object({ workspace: z.string(), executable: z.string(), resume_id: z.string().nullable(), provider: providerSchema }).strict() }),
   z.object({ id: z.number(), method: z.literal('send'), params: z.object({ request_id: z.string().uuid(), text: z.string(), settings: turnSettingsSchema.optional() }).strict() }),
+  z.object({ id: z.number(), method: z.literal('compression/observe'), params: z.object({}).strict() }),
   z.object({ id: z.number(), method: z.literal('respond'), params: z.object({ request_id: z.string(), response: z.object({ behavior: z.enum(['allow', 'deny']), answers: z.record(z.string(), z.string()).optional() }) }) }),
   z.object({ id: z.number(), method: z.literal('native/observe'), params: z.object({ domain: z.enum(['skills', 'mcp']) }).strict() }),
   z.object({ id: z.number(), method: z.literal('native/action'), params: z.object({ action: z.discriminatedUnion('kind', [
@@ -101,15 +109,15 @@ const commandSchema = z.discriminatedUnion('method', [
   z.object({ id: z.number(), method: z.literal('close'), params: record }),
 ]);
 type BridgeCommand = z.infer<typeof commandSchema>;
-async function* input() {
-  while (!closed) {
+async function* input(epoch: number) {
+  while (!closed && epoch === queryEpoch) {
     if (!queue.length) {
       const { promise, resolve } = Promise.withResolvers<void>();
       wake = resolve;
       await promise;
     }
     wake = undefined;
-    while (!closed && queue.length) yield queue.shift()!;
+    while (!closed && epoch === queryEpoch && queue.length) yield queue.shift()!;
   }
 }
 function controlledEnv(provider: z.infer<typeof providerSchema>): Record<string, string> {
@@ -222,7 +230,7 @@ function project(value: unknown, history = false) {
     activeRequestId = undefined;
     activeLocalCommand = undefined;
     const termination = resultTermination.safeParse(value);
-    emit('result', { subtype: message.subtype, is_error: message.is_error, result: message.is_error ? 'engine_failed' : message.result, local_command: local.success ? local.data.local_command : undefined, total_cost_usd: message.total_cost_usd, usage: message.usage, model_limits: message.modelUsage, terminal_reason: termination.success ? termination.data.terminal_reason : undefined, ...safeNativeDetails(value), ...identity });
+    emit('result', { subtype: message.subtype, is_error: message.is_error, result: message.is_error ? 'engine_failed' : message.result, local_command: local.success ? local.data.local_command : undefined, total_cost_usd: message.total_cost_usd, cost_kind: message.total_cost_usd === undefined ? undefined : 'estimated', duration_ms: message.duration_ms, duration_api_ms: message.duration_api_ms, usage: message.usage, model_limits: message.modelUsage, model_usage: message.modelUsage, terminal_reason: termination.success ? termination.data.terminal_reason : undefined, ...safeNativeDetails(value), ...identity });
   } else if (message.type === 'system' && message.subtype === 'init') {
     // The requested session identity is pinned before query(); never adopt a fallback session.
     const metadata = initMetadata.safeParse(value);
@@ -240,6 +248,62 @@ async function close() {
 }
 function safeIdentifier(value: string): string | null {
   return value.length > 0 && value.length <= 128 && /^[a-zA-Z0-9_.:@\-]+$/.test(value) ? value : null;
+}
+async function startNative(provider: z.infer<typeof providerSchema>, providerEnv: Record<string, string>, resume: boolean, settings: TurnSettings = {}) {
+  if (!queryConfig) throw new BridgeFailure('closed');
+  const epoch = ++queryEpoch;
+  const previous = agent;
+  wake?.(); previous?.close();
+  const draining = queryDrain;
+  await draining;
+  if (closed) throw new BridgeFailure('closed');
+  queryFullAuto = (settings.permission_mode ?? turnControls?.permission.current) === 'full_auto';
+  queryPreferences = settings.response_preferences ?? queryPreferences;
+  queryCollaboration = settings.collaboration_mode ?? queryCollaboration;
+  const current = query({ prompt: input(epoch), options: {
+    cwd: queryConfig.workspace,
+    pathToClaudeCodeExecutable: queryConfig.executable,
+    systemPrompt: { type: 'preset', preset: 'claude_code', append: responseInstructions(queryPreferences), snapshot: false },
+    planModeInstructions: queryCollaboration === 'deep' ? deepPlanInstructions : undefined,
+    settingSources: ['user', 'project', 'local'],
+    permissionMode: turnControls ? nativePermission(turnControls, settings) : 'default',
+    ...(queryFullAuto ? { allowDangerouslySkipPermissions: true } : {}),
+    includePartialMessages: true,
+    hooks: {
+      PreToolUse: [{ hooks: [async input => observeTurnSettings(input)] }],
+      Stop: [{ hooks: [async input => observeTurnSettings(input)] }],
+    },
+    model: provider.model,
+    env: { ...process.env, ...providerEnv },
+    stderr: () => {},
+    ...(resume ? { resume: sessionId } : { sessionId }),
+    canUseTool: async (tool, original, options) => {
+      const id = options.requestId;
+      if (!id || permissionRequestIds.has(id) || !running || !activeRequestId || epoch !== queryEpoch) return { behavior: 'deny', message: 'Invalid permission request identity' };
+      if ((queryCollaboration === 'plan' || queryCollaboration === 'deep') && !['AskUserQuestion', 'ExitPlanMode'].includes(tool)) return { behavior: 'deny', message: 'Planning mode does not authorize side effects. Select an execution mode first.' };
+      permissionRequestIds.add(id);
+      const { promise, resolve } = Promise.withResolvers<PermissionResult>();
+      let settled = false;
+      const settle = (result: PermissionResult) => { if (settled) return; settled = true; permissions.delete(id); options.signal.removeEventListener('abort', abort); emit('permission_resolved', { id }); resolve(result); };
+      const abort = () => settle({ behavior: 'deny', message: 'Request cancelled' });
+      if (options.signal.aborted || closed) { abort(); return await promise; }
+      permissions.set(id, { tool, input: original, resolve: settle });
+      options.signal.addEventListener('abort', abort, { once: true });
+      emit('permission', { id, tool, input: original, tool_use_id: options.toolUseID, agent_id: options.agentID, request_id: activeRequestId, session_id: sessionId });
+      return await promise;
+    },
+  }});
+  agent = current;
+  queryDrain = (async () => {
+    try { for await (const message of current) if (epoch === queryEpoch) project(message); }
+    catch { if (!closed && epoch === queryEpoch) emit('failure', { kind: 'engine_failed', message: 'engine_failed', request_id: activeRequestId }); }
+    finally { if (epoch === queryEpoch) { await close(); emit('closed', {}); } }
+  })();
+  void queryDrain.catch(() => {});
+  const initialized = await current.initializationResult();
+  await current.applyFlagSettings({ env: providerEnv, apiKeyHelper: '', model: provider.model });
+  providerEvidence = await verifyProvider(current, provider, providerEnv);
+  return initialized;
 }
 async function handle(command: BridgeCommand) {
   if (command.method === 'open') {
@@ -259,52 +323,12 @@ async function handle(command: BridgeCommand) {
       for (const message of history.slice(-2000)) project(message, true);
     }
     if (closed) throw new BridgeFailure('closed');
-    agent = query({ prompt: input(), options: {
-      cwd: params.workspace,
-      pathToClaudeCodeExecutable: params.executable,
-      systemPrompt: { type: 'preset', preset: 'claude_code' },
-      settingSources: ['user', 'project', 'local'],
-      permissionMode: 'default',
-      includePartialMessages: true,
-      hooks: {
-        PreToolUse: [{ hooks: [async input => observeTurnSettings(input)] }],
-        Stop: [{ hooks: [async input => observeTurnSettings(input)] }],
-      },
-      model: provider.model,
-      // Startup inherits the host's controlled env; this explicit overlay contains
-      // no argv settings. The higher flag tier is applied over private stdio below.
-      env: { ...process.env, ...providerEnv },
-      stderr: () => {},
-      ...(params.resume_id ? { resume: params.resume_id } : { sessionId }),
-      canUseTool: async (tool, original, options) => {
-        const id = options.requestId;
-        if (!id || permissionRequestIds.has(id) || !running || !activeRequestId) return { behavior: 'deny', message: 'Invalid permission request identity' };
-        permissionRequestIds.add(id);
-        const { promise, resolve } = Promise.withResolvers<PermissionResult>();
-        let settled = false;
-        const settle = (result: PermissionResult) => { if (settled) return; settled = true; permissions.delete(id); options.signal.removeEventListener('abort', abort); emit('permission_resolved', { id }); resolve(result); };
-        const abort = () => settle({ behavior: 'deny', message: 'Request cancelled' });
-        if (options.signal.aborted || closed) { abort(); return await promise; }
-        permissions.set(id, { tool, input: original, resolve: settle });
-        options.signal.addEventListener('abort', abort, { once: true });
-        emit('permission', { id, tool, input: original, tool_use_id: options.toolUseID, agent_id: options.agentID, request_id: activeRequestId, session_id: sessionId });
-        return await promise;
-      },
-    }});
-    const current = agent;
-    void (async () => {
-      try { for await (const message of current) project(message); }
-      catch { if (!closed) emit('failure', { kind: 'engine_failed', message: 'engine_failed', request_id: activeRequestId }); }
-      finally { await close(); emit('closed', {}); }
-    })();
-    const initialized = await current.initializationResult();
+    queryConfig = { workspace: params.workspace, executable: params.executable };
+    queryHasHistory = !!params.resume_id;
+    const initialized = await startNative(provider, providerEnv, queryHasHistory);
+    const current = agent!;
     optionalWritesVerified = verifiedWrites(initialized.claude_code_version);
     nativeCapabilitiesState = nativeCapabilities(current, initialized.claude_code_version);
-    if (closed) throw new BridgeFailure('closed');
-    // Null would remove the flag key and restore lower-tier helpers. Empty string
-    // disables the helper; managed policy may win, in which case readback refuses it.
-    await current.applyFlagSettings({ env: providerEnv, apiKeyHelper: '', model: provider.model });
-    providerEvidence = await verifyProvider(current, provider, providerEnv);
     if (closed) throw new BridgeFailure('closed');
     activeProvider = provider; activeProviderEnv = providerEnv;
     // Optional metadata must not invalidate a Provider-verified ordinary query.
@@ -322,6 +346,7 @@ async function handle(command: BridgeCommand) {
     turnControls = projectTurnControls(models.success ? models.data : [], provider.model, optionalWritesVerified);
     if (typeof current.setPermissionMode !== 'function') {
       turnControls.permission = { ...turnControls.permission, available: false, options: [], current: null, reason: 'native_protocol_unsupported' };
+      turnControls.collaboration = { ...turnControls.collaboration, available: false, options: [], current: null, reason: 'native_protocol_unsupported' };
     }
     opened = true;
     if (commands.success) emit('native/initialized', { commands: commands.data, status: 'observed_not_executed' });
@@ -334,6 +359,12 @@ async function handle(command: BridgeCommand) {
   if (command.method === 'close') { await close(); return {}; }
   if (!agent || closed) throw new BridgeFailure('closed');
   if (!opened) throw new BridgeFailure('not_ready');
+  if (command.method === 'compression/observe') {
+    if (!optionalWritesVerified || typeof agent.supportedCommands !== 'function') return { supported: false };
+    const commands = commandsSchema.safeParse(await agent.supportedCommands());
+    const matches = commands.success ? commands.data.filter(command => command.name === 'compact') : [];
+    return { supported: matches.length === 1 && matches[0]!.builtin === true };
+  }
   if (command.method === 'native/observe' || command.method === 'native/action') {
     if (!nativeCapabilitiesState) throw new BridgeFailure('unsupported_operation');
     if (nativeControlBusy) throw new BridgeFailure('busy');
@@ -426,7 +457,7 @@ async function handle(command: BridgeCommand) {
       if (receipts.get(params.request_id) !== fingerprint) throw new BridgeFailure('request_conflict');
       return {};
     }
-    if (running || nativeControlBusy) throw new BridgeFailure('busy');
+    if (running || nativeControlBusy || permissions.size > 0) throw new BridgeFailure('busy');
     if (receipts.size >= 1024) throw new BridgeFailure('request_capacity');
     if (!activeProvider || !activeProviderEnv) throw new BridgeFailure('closed');
     if (params.settings) {
@@ -440,7 +471,22 @@ async function handle(command: BridgeCommand) {
     try { await verifyProvider(agent, activeProvider, activeProviderEnv); }
     catch { await close(); throw new BridgeFailure('provider_verification_failed'); }
     try {
-      if (params.settings && turnControls) await applyTurnSettings(agent, turnControls, params.settings);
+      if (params.settings && turnControls) {
+        const settings = params.settings;
+        const fullAuto = (settings.permission_mode ?? turnControls.permission.current) === 'full_auto';
+        const collaboration = settings.collaboration_mode ?? queryCollaboration;
+        const preferences = settings.response_preferences ?? queryPreferences;
+        if (fullAuto !== queryFullAuto || collaboration !== queryCollaboration || JSON.stringify(preferences) !== JSON.stringify(queryPreferences)) {
+          // Startup-only SDK bypass flag is armed only after an explicit session selection.
+          // Restart the identical native session before submitting any prompt; never retry the prompt.
+          await startNative(activeProvider!, activeProviderEnv!, queryHasHistory, settings);
+          // A restarted process must retain the selected effort unless this send explicitly resets it.
+          if (settings.reasoning_effort === undefined && turnControls.reasoning.current) {
+            await agent!.applyFlagSettings({ effortLevel: turnControls.reasoning.current as Parameters<Query['applyFlagSettings']>[0]['effortLevel'] });
+          }
+        }
+        await applyTurnSettings(agent!, turnControls, settings);
+      }
     } catch {
       if (turnControls) {
         turnControls.reasoning.current = null; turnControls.reasoning.reason = 'result_unknown';
@@ -451,6 +497,7 @@ async function handle(command: BridgeCommand) {
     }
     if (closed) throw new BridgeFailure('closed');
     receipts.set(params.request_id, fingerprint);
+    queryHasHistory = true;
     activeRequestId = params.request_id;
     const commandName = /^\/([^\s]+)(?:\s|$)/.exec(params.text.trim())?.[1];
     // CLI 2.1.319 hXi() sanitizes result.local_command in its !shouldQuery branch.
@@ -467,6 +514,14 @@ async function handle(command: BridgeCommand) {
     const response = params.response;
     if (response?.behavior === 'deny') pending.resolve({ behavior: 'deny', message: 'Denied by user' });
     else if (response?.behavior === 'allow') {
+      if ((queryCollaboration === 'plan' || queryCollaboration === 'deep') && !['AskUserQuestion', 'ExitPlanMode'].includes(pending.tool)) throw new BridgeFailure('invalid_response');
+      if (pending.tool === 'ExitPlanMode' && turnControls) {
+        // This approval is the explicit plan-execution transition, never approval of other queued tools.
+        await agent.setPermissionMode(nativePermission(turnControls, { collaboration_mode: 'default' }));
+        turnControls.collaboration.current = 'default';
+        queryCollaboration = 'default';
+        emit('controls', { controls: turnControls, request_id: activeRequestId, session_id: sessionId });
+      }
       const updatedInput = { ...pending.input };
       if (pending.tool === 'AskUserQuestion') {
         if (!validateQuestionAnswers(pending.input, response.answers)) throw new BridgeFailure('invalid_response');

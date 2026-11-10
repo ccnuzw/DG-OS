@@ -1,13 +1,20 @@
-import { useEffect, useId, useRef, useState } from 'react';
-import { Button, Input, ResourceDetail, ResourceLayout, ResourceList, Select, StatusBadge } from '@dgos/ui';
+import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
+import { Button, Input, ResourceDetail, ResourceList, Select, StatusBadge, Tabs } from '@dgos/ui';
 import { t } from '../../i18n';
 import { useDevelopment } from '../../stores/developmentStore';
-import { useNativeExtensions } from '../../stores/nativeExtensions';
-import type { NativeDraft, NativeDraftField, NativeField, NativeMcpChange, NativePatchMode, NativePending, NativeResult, NativeSelection, NativeServerPatch, NativeSkillRuleIntentState } from '../../types/nativeExtensions';
+import { nativeSelectionIdentity, useNativeExtensions } from '../../stores/nativeExtensions';
+import { nativeLibraryKey, useNativeSkillLibrary } from '../../stores/nativeSkillLibrary';
+import { useNativeMcpCatalog } from '../../stores/nativeMcpCatalog';
+import type { NativeDraft, NativeDraftField, NativeField, NativeMcpChange, NativeMcpInstance, NativePatchMode, NativePending, NativeResult, NativeSelection, NativeServerPatch, NativeSkillRuleIntentState, PreviewNativeSkill } from '../../types/nativeExtensions';
 import { resourceView, type ResourceReadState } from '../../resourceState';
 import { useSurfaceCloseGuard, useSurfaceId, useSurfaceStatus } from '../../workspace/SurfaceContext';
 import { confirmDiscard } from '../../workspace/closeCoordinator';
 import NativeSessionPanel from './NativeSessionPanel';
+import { NativeSkillInspector, NativeSkillLibrary, NativeSkillVersionRecovery } from './NativeSkillLibrary';
+import NativeMcpMarket from './NativeMcpMarket';
+import NativeMcpProbe, { NativeMcpProbeRecovery } from './NativeMcpProbe';
+import { NativeManagerLifecycle, type NativeManagerGuard } from './NativeManagerLifecycle';
+import './native-manager.css';
 
 const lines = (value: string) => value.split('\n').map(item => item.trim()).filter(Boolean);
 const envName = (value: string) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
@@ -32,13 +39,15 @@ function PreviewDetails({ operation, observationsId, showObservations }: { opera
       <dt>{t('nativeExtensions.target')}</dt><dd className="m-0">{base.target}</dd>
       <dt>{t('nativeExtensions.scope')}</dt><dd className="m-0">{t(`nativeExtensions.scope.${base.scope}`)}</dd>
       <dt>{t('nativeExtensions.project')}</dt><dd className="m-0 break-all">{operation.selection.project_id ?? '—'}</dd>
-      {operation.selection.project_id && <><dt>{t('nativeExtensions.ruleProjectDirectory')}</dt><dd className="m-0 break-all">{projectPath ?? t('nativeExtensions.unknown')}</dd></>}
+      <dt>{t('nativeExtensions.actualTargetPath')}</dt><dd className="m-0 break-all">{base.target_path}</dd>
+      {operation.selection.project_id && <><dt>{t('nativeExtensions.ruleProjectDirectory')}</dt><dd className="m-0 break-all">{operation.selection.task_id ? t('nativeExtensions.taskWorkspace') : projectPath ?? t('nativeExtensions.unknown')}</dd></>}
       <dt>{t('nativeExtensions.expires')}</dt><dd className="m-0">{new Date(base.expires_at * 1000).toLocaleString()}</dd>
       <dt>{t('nativeExtensions.operationId')}</dt><dd className="m-0 break-all">{receipt.operation_id}</dd>
       <dt>{t('nativeExtensions.operationState')}</dt><dd className="m-0">{t(`nativeExtensions.state.${receipt.state}`)}</dd>
       <dt>{t('nativeExtensions.pendingActivation')}</dt><dd className="m-0">{t(receipt.pending_activation ? 'nativeExtensions.yes' : 'nativeExtensions.no')}</dd>
       <dt>{t('nativeExtensions.recoveryRetained')}</dt><dd className="m-0">{t(receipt.recovery_material_retained ? 'nativeExtensions.yes' : 'nativeExtensions.no')}</dd>
     </dl>
+    {operation.kind === 'mcp' && operation.draft && <section><h4>{t('nativeExtensions.requestedFieldChanges')}</h4><p>{t('nativeExtensions.safeFieldChangeNotice')}</p><dl>{operation.draft.name && <><dt>{t('nativeExtensions.transport')}</dt><dd>{operation.draft.transport}</dd></>}{Object.entries(operation.draft.modes).filter(([, mode]) => mode !== 'keep').map(([field, mode]) => <div key={field}><dt>{t(`nativeExtensions.${field}`)}</dt><dd>{t(`nativeExtensions.field.${mode}`)}</dd></div>)}</dl></section>}
     {'slug' in value && <>
       <p className="m-0 break-all">{value.slug}</p>
       {value.metadata && <><h4 className="m-0">{value.metadata.name}</h4><p className="m-0">{value.metadata.description}</p><p className="m-0">{t('nativeExtensions.license')}: {value.metadata.license ?? t('nativeExtensions.unknown')}</p><p className="m-0">{t('nativeExtensions.dynamicCommands')}: {t(value.metadata.dynamic_commands ? 'nativeExtensions.yes' : 'nativeExtensions.no')}</p><p className="m-0">{t('nativeExtensions.dependenciesNotChecked')}: {[...value.metadata.dependencies.tools.map(tool => [tool.program, tool.version_requirement].filter(Boolean).join(' ')), ...value.metadata.dependencies.packages, ...value.metadata.dependencies.required_tools].join(', ') || t('nativeExtensions.unknown')}</p></>}
@@ -80,64 +89,131 @@ function PreviewDetails({ operation, observationsId, showObservations }: { opera
   </section>;
 }
 
-export default function NativeManager({ kind, initialSelection, initialSessionId }: { kind: 'skills' | 'mcp'; initialSelection?: NativeSelection; initialSessionId?: string }) {
+export interface NativeManagerHandle { requestClose(): Promise<boolean> }
+export interface NativeManagerProps { kind: 'skills' | 'mcp'; initialSelection?: NativeSelection; initialSessionId?: string; onClose?: () => void }
+type ManagerTab = 'installed' | 'discover' | 'sources' | 'configured' | 'market' | 'manual';
+
+const NativeManager = forwardRef<NativeManagerHandle, NativeManagerProps>(function NativeManager({ kind, initialSelection, initialSessionId, onClose }, ref) {
   const account = useDevelopment(s => s.epoch), projects = useDevelopment(s => s.projects);
   const api = useNativeExtensions();
+  const libraryDrafts = useNativeSkillLibrary(state => state.drafts);
+  const versionRecords = useNativeSkillLibrary(state => state.versions);
+  const probeRecords = useNativeMcpCatalog(state => state.probes);
   const surfaceId = useSurfaceId(), instanceId = useId();
   const observationsRef = useRef<HTMLDivElement>(null);
+  const previewRef = useRef<HTMLElement>(null), operationRef = useRef<HTMLElement>(null);
   const observationsId = useId();
   const ownerKey = JSON.stringify([account, surfaceId ?? instanceId, kind]);
   const ownerPrefix = `[${JSON.stringify(ownerKey)},`;
   const ownedOperations = useRef(new Set<string>());
+  const ownerPrefixes = useRef(new Set<string>());
+  ownerPrefixes.current.add(ownerPrefix);
+  const managedSelections = useRef(new Set<string>());
+  const managedLibraryKeys = useRef(new Set<string>());
+  const childGuards = useRef(new Set<NativeManagerGuard>());
+  const registerGuard = useCallback((guard: NativeManagerGuard) => { childGuards.current.add(guard); return () => { childGuards.current.delete(guard); }; }, []);
+  const closing = useRef<Promise<boolean> | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [target, setTarget] = useState<'Codex' | 'Claude'>(initialSelection?.target ?? 'Codex');
   const [scope, setScope] = useState<'OsUser' | 'ProjectShared' | 'ProjectLocal'>(initialSelection?.target === 'Codex' && initialSelection.scope === 'ProjectLocal' ? 'OsUser' : initialSelection?.scope ?? 'OsUser');
   const [project, setProject] = useState<string | null>(initialSelection?.scope === 'OsUser' ? null : initialSelection?.project_id ?? null), [query, setQuery] = useState('');
-  const [views, setViews] = useState<Record<string, { creating: boolean; selected: string | null }>>({});
+  const [taskId, setTaskId] = useState<string | undefined>(initialSelection?.task_id ?? undefined);
+  const [tabs, setTabs] = useState<Record<string, ManagerTab>>({});
+  const [narrowDetails, setNarrowDetails] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [observationsOpen, setObservationsOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const rulesRef = useRef<HTMLDetailsElement>(null);
+  const [views, setViews] = useState<Record<string, { selected: string | null }>>({});
   const [messages, setMessages] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, Partial<Record<NativeDraftField, string>>>>({});
   const generation = useRef(0);
-  const entryKey = initialSelection ? JSON.stringify([initialSelection.target, initialSelection.scope, initialSelection.project_id]) : '';
+  const entryKey = initialSelection ? JSON.stringify([initialSelection.target, initialSelection.scope, initialSelection.project_id, initialSelection.task_id ?? null]) : '';
   useEffect(() => {
     if (!initialSelection) return;
     const nextScope = initialSelection.target === 'Codex' && initialSelection.scope === 'ProjectLocal' ? 'OsUser' : initialSelection.scope;
     setTarget(initialSelection.target); setScope(nextScope);
     setProject(nextScope === 'OsUser' ? null : initialSelection.project_id);
+    setTaskId(initialSelection.task_id ?? undefined);
   }, [entryKey]);
-  const selection: NativeSelection = { target, scope, project_id: scope === 'OsUser' ? null : project };
-  const selectionKey = JSON.stringify([account, target, scope, selection.project_id]);
-  const viewKey = JSON.stringify([selectionKey, kind]), view = views[viewKey];
-  const creating = view?.creating ?? false;
+  const selection: NativeSelection = { target, scope, project_id: scope === 'OsUser' ? null : project, ...(scope !== 'OsUser' && taskId ? { task_id: taskId } : {}) };
+  const selectionKey = JSON.stringify([account, target, scope, selection.project_id, selection.task_id ?? null]);
+  managedSelections.current.add(selectionKey);
+  if (kind === 'skills') managedLibraryKeys.current.add(nativeLibraryKey(selection));
+  const rootIdentity = useDevelopment(() => nativeSelectionIdentity(selection));
+  const workspaceKey = JSON.stringify([selectionKey, rootIdentity]);
+  const currentWorkspace = useRef(workspaceKey); currentWorkspace.current = workspaceKey;
+  const viewKey = JSON.stringify([workspaceKey, kind]), view = views[viewKey];
+  const tab = tabs[viewKey] ?? (kind === 'skills' ? 'installed' : 'configured');
+  const changeTab = (next: ManagerTab) => { void transition(() => { setTabs(current => ({ ...current, [viewKey]: next })); setNarrowDetails(false); }); };
+  const creating = kind === 'mcp' && tab === 'manual';
   const busy = Boolean(api.busy[selectionKey]);
   const claudeRules = kind === 'skills' && target === 'Claude';
   const resourceUnsupported = kind === 'skills' && scope === 'ProjectLocal';
-  const skillState = resourceUnsupported ? undefined : api.skills[`${selectionKey}:${query}`], mcpState = api.mcp[selectionKey];
+  const skillState = resourceUnsupported ? undefined : api.skills[`${selectionKey}:`], mcpState = api.mcp[selectionKey];
   const rulesState = api.rules[selectionKey];
   const state = kind === 'skills' ? skillState : mcpState;
-  const skills = kind === 'skills' ? skillState?.value?.instances ?? [] : [];
-  const readonlyEntries = kind === 'skills' ? skillState?.value?.readonly_entries ?? [] : [];
-  const servers = kind === 'mcp' ? mcpState?.value?.instances ?? [] : [];
+  const filter = query.trim().toLocaleLowerCase();
+  const skills = kind === 'skills' ? (skillState?.value?.instances ?? []).filter(item => [item.metadata.name, item.metadata.description, item.slug, item.source?.commit ?? '', t(`nativeExtensions.owner.${item.owner}`)].some(value => value.toLocaleLowerCase().includes(filter))) : [];
+  const readonlyEntries = kind === 'skills' ? (skillState?.value?.readonly_entries ?? []).filter(item => item.slug.toLocaleLowerCase().includes(filter)) : [];
+  const servers = kind === 'mcp' ? (mcpState?.value?.instances ?? []).filter(item => [item.native_key, item.transport, t(`nativeExtensions.owner.${item.owner}`)].some(value => value.toLocaleLowerCase().includes(filter))) : [];
+  const serverSnapshots = useRef(new Map<string, NativeMcpInstance>());
+  for (const item of mcpState?.value?.instances ?? []) serverSnapshots.current.set(JSON.stringify([workspaceKey, item.native_key]), item);
   const ids = kind === 'skills' ? skills.map(item => item.instance.id) : servers.map(item => item.native_key);
-  const chosen = view?.selected && ids.includes(view.selected) ? view.selected : ids[0] ?? null;
-  const skill = skills.find(item => item.instance.id === chosen), server = servers.find(item => item.native_key === chosen);
-  const draftKey = JSON.stringify([ownerKey, selectionKey, creating ? 'create' : chosen]);
+  const chosen = view?.selected && (ids.includes(view.selected) || kind === 'mcp' && api.drafts[JSON.stringify([ownerKey, workspaceKey, view.selected])]) ? view.selected : ids[0] ?? null;
+  const skill = skills.find(item => item.instance.id === chosen), server = servers.find(item => item.native_key === chosen) ?? (kind === 'mcp' && chosen ? serverSnapshots.current.get(JSON.stringify([workspaceKey, chosen])) : undefined);
+  const draftKey = JSON.stringify([ownerKey, workspaceKey, creating ? 'create' : chosen]);
   const draft: NativeDraft = api.drafts[draftKey] ?? emptyDraft, operation = api.pending[selectionKey];
-  const ruleDraftKey = JSON.stringify([ownerKey, selectionKey, 'claude_name_rule']);
+  const ruleDraftKey = JSON.stringify([ownerKey, workspaceKey, 'claude_name_rule']);
   const ruleDraft = api.drafts[ruleDraftKey] ?? emptyDraft;
   const ruleState = ruleDraft.visibilityState ?? 'on';
   const blocked = busy || Boolean(operation && operation.mode !== 'result');
+  useEffect(() => {
+    if (!previewOpen || !operation) return;
+    const frame = requestAnimationFrame(() => { previewRef.current?.focus(); previewRef.current?.scrollIntoView?.({ block: 'nearest' }); });
+    return () => cancelAnimationFrame(frame);
+  }, [previewOpen, operation?.receipt.operation_id, workspaceKey]);
   const validSelection = scope === 'OsUser' || projects.some(item => item.id === project && !item.archived);
-  const dirty = Object.keys(api.drafts).some(id => id.startsWith(ownerPrefix));
+  const ownsDraft = (id: string) => [...ownerPrefixes.current].some(prefix => id.startsWith(prefix));
+  const dirty = Object.keys(api.drafts).some(ownsDraft) || [...managedLibraryKeys.current].some(key => libraryDrafts[key]);
   const running = ownedOperations.current.size > 0;
+  const isBlocked = () => {
+    const current = useNativeExtensions.getState();
+    return ownedOperations.current.size > 0 || kind === 'skills' && Object.values(useNativeSkillLibrary.getState().versions).some(record => record.busy || !record.result.cleanup_confirmed) || [...managedSelections.current].some(id => current.busy[id] || current.pending[id] && current.pending[id].mode !== 'result');
+  };
+  const canClose = async () => {
+    if (isBlocked()) { message(t('nativeExtensions.closeBlocked')); return false; }
+    const drafts = Object.fromEntries(Object.entries(useNativeExtensions.getState().drafts).filter(([id]) => ownsDraft(id)));
+    const sourceDrafts = Object.fromEntries(Object.entries(useNativeSkillLibrary.getState().drafts).filter(([key]) => managedLibraryKeys.current.has(key)));
+    for (const guard of childGuards.current) if (!await guard('close')) return false;
+    if ((Object.keys(drafts).length || Object.keys(sourceDrafts).length) && !await confirmDiscard()) return false;
+    if (!mounted.current || useDevelopment.getState().epoch !== account || isBlocked()) return false;
+    const current = Object.keys(useNativeExtensions.getState().drafts).filter(ownsDraft);
+    if (current.length !== Object.keys(drafts).length) return false;
+    const currentSources = useNativeSkillLibrary.getState().drafts;
+    if (Object.entries(sourceDrafts).some(([key, draft]) => currentSources[key] !== draft) || Object.keys(currentSources).filter(key => managedLibraryKeys.current.has(key)).length !== Object.keys(sourceDrafts).length) return false;
+    if (!api.discardDrafts(drafts)) return false;
+    const remaining = { ...currentSources }; for (const key of Object.keys(sourceDrafts)) delete remaining[key];
+    useNativeSkillLibrary.setState({ drafts: remaining }); return true;
+  };
+  const collapsePreview = () => { setPreviewOpen(false); requestAnimationFrame(() => operationRef.current?.querySelector('button')?.focus()); };
+  const requestClose = () => {
+    if (operation && previewOpen) { collapsePreview(); return Promise.resolve(false); }
+    if (closing.current) return closing.current;
+    const flight = canClose().then(allowed => { if (allowed) onClose?.(); return allowed; }).finally(() => { if (closing.current === flight) closing.current = null; });
+    closing.current = flight; return flight;
+  };
+  useImperativeHandle(ref, () => ({ requestClose }));
   useSurfaceStatus({ dirty, running, runningLabel: running ? t('nativeExtensions.working') : undefined });
-  useSurfaceCloseGuard(async () => {
-    if (ownedOperations.current.size > 0) return false;
-    const drafts = Object.fromEntries(Object.entries(useNativeExtensions.getState().drafts).filter(([id]) => id.startsWith(ownerPrefix)));
-    if (!Object.keys(drafts).length) return true;
-    if (!await confirmDiscard() || useDevelopment.getState().epoch !== account || ownedOperations.current.size > 0) return false;
-    if (Object.keys(useNativeExtensions.getState().drafts).filter(id => id.startsWith(ownerPrefix)).length !== Object.keys(drafts).length) return false;
-    return api.discardDrafts(drafts);
-  });
-  useEffect(() => { ownedOperations.current.clear(); setViews({}); setMessages({}); setErrors({}); }, [account]);
+  useSurfaceCloseGuard(canClose);
+  useEffect(() => {
+    ownedOperations.current.clear(); managedSelections.current.clear(); managedSelections.current.add(selectionKey);
+    managedLibraryKeys.current.clear(); if (kind === 'skills') managedLibraryKeys.current.add(nativeLibraryKey(selection));
+    ownerPrefixes.current.clear(); ownerPrefixes.current.add(ownerPrefix);
+    serverSnapshots.current.clear();
+    setViews({}); setTabs({}); setMessages({}); setErrors({}); setPreviewOpen(false); setNarrowDetails(false); setObservationsOpen(false); setRulesOpen(false); setQuery('');
+  }, [account]);
   useEffect(() => { if (!useDevelopment.getState().loaded) void useDevelopment.getState().load(); }, []);
   const message = (text: string) => { if (useDevelopment.getState().epoch === account) setMessages(current => ({ ...current, [viewKey]: text })); };
   useEffect(() => {
@@ -145,14 +221,14 @@ export default function NativeManager({ kind, initialSelection, initialSessionId
     const seq = ++generation.current;
     const pending = claudeRules ? Promise.all([
       api.discoverSkillRules(selection),
-      ...(resourceUnsupported ? [] : [api.discoverSkills({ ...selection, query })]),
-    ]) : Promise.all([kind === 'skills' ? api.discoverSkills({ ...selection, query }) : api.discoverMcp(selection)]);
+      ...(resourceUnsupported ? [] : [api.discoverSkills({ ...selection, query: '' })]),
+    ]) : Promise.all([kind === 'skills' ? api.discoverSkills({ ...selection, query: '' }) : api.discoverMcp(selection)]);
     void pending.then(results => { const failure = results.find(result => !result.ok); if (seq === generation.current && failure && !failure.ok) message(t(`nativeExtensions.error.${failure.code}`)); });
     return () => { generation.current++; };
-  }, [selectionKey, query, kind, validSelection]);
-  const refresh = () => claudeRules ? Promise.all([api.discoverSkillRules(selection), ...(resourceUnsupported ? [] : [api.discoverSkills({ ...selection, query })])]) : kind === 'skills' ? api.discoverSkills({ ...selection, query }) : api.discoverMcp(selection);
-  const changeView = (creating: boolean, selected: string | null = chosen) => setViews(current => ({ ...current, [viewKey]: { creating, selected } }));
-  const saveDraft = (next: NativeDraft) => { api.setDraft(draftKey, next); setErrors(current => ({ ...current, [draftKey]: {} })); };
+  }, [workspaceKey, kind, validSelection]);
+  const refresh = () => claudeRules ? Promise.all([api.discoverSkillRules(selection), ...(resourceUnsupported ? [] : [api.discoverSkills({ ...selection, query: '' })])]) : kind === 'skills' ? api.discoverSkills({ ...selection, query: '' }) : api.discoverMcp(selection);
+  const changeView = (creating: boolean, selected: string | null = chosen) => { void transition(() => { setViews(current => ({ ...current, [viewKey]: { selected } })); setNarrowDetails(!creating); }); };
+  const saveDraft = (next: NativeDraft) => { api.setDraft(draftKey, next); if (!creating && chosen) setViews(current => ({ ...current, [viewKey]: { selected: chosen } })); setErrors(current => ({ ...current, [draftKey]: {} })); };
   const validate = (fields: Partial<Record<NativeDraftField, string>>) => {
     setErrors(current => ({ ...current, [draftKey]: fields }));
     if (Object.keys(fields).length) { message(t('nativeExtensions.correctFields')); return false; }
@@ -169,6 +245,7 @@ export default function NativeManager({ kind, initialSelection, initialSessionId
       if (!result.ok) { message(t(`nativeExtensions.error.${result.code}`)); return; }
       const receipt = ('preview' in result.value ? result.value.preview : result.value).receipt;
       api.setPending(selectionKey, { kind, selection, mode: 'preview', receipt, preview: result.value, draft_key: previewDraftKey, draft: snapshot, summary });
+      setPreviewOpen(true);
       message(t('nativeExtensions.previewReady'));
     } finally { ownedOperations.current.delete(selectionKey); if (useDevelopment.getState().epoch === account) api.end(selectionKey); }
   };
@@ -189,20 +266,22 @@ export default function NativeManager({ kind, initialSelection, initialSessionId
       message(receipt.state === 'Unknown' ? t('nativeExtensions.needsVerification') : receipt.state === 'Committed' && nameRule ? t('nativeExtensions.savedRefreshExplicit') : t(`nativeExtensions.state.${receipt.state}`));
       if (receipt.state === 'Committed') {
         api.clearCommittedDraft(operation);
+        if (operation.kind === 'skills' && !nameRule) setTabs(current => ({ ...current, [JSON.stringify([workspaceKey, 'skills'])]: 'installed' }));
         if (!nameRule) {
-          const read = await (operation.kind === 'skills' ? api.discoverSkills({ ...operation.selection, query }) : api.discoverMcp(operation.selection));
+          const read = await (operation.kind === 'skills' ? api.discoverSkills({ ...operation.selection, query: '' }) : api.discoverMcp(operation.selection));
           if (!read.ok) message(t('nativeExtensions.writtenReadPending'));
         }
       }
     } finally { ownedOperations.current.delete(selectionKey); if (useDevelopment.getState().epoch === account) api.end(selectionKey); }
   };
-  const previewSkill = (action: 'install' | 'update' | 'remove') => {
-    if (!validate({ ...(action === 'install' && !draft.slug.trim() ? { slug: t('nativeExtensions.required') } : {}), ...(action !== 'remove' && !draft.source.trim() ? { source: t('nativeExtensions.required') } : {}) })) return;
-    void preview(() => api.previewSkill({ ...selection, action, slug: action === 'install' ? draft.slug.trim() : skill!.slug, expected: action === 'install' ? null : skill!.instance, source: action === 'remove' ? null : { kind: 'github', input: draft.source.trim() } }), t(`nativeExtensions.skillAction.${action}`), action !== 'remove');
+  const previewSkillInput = (input: PreviewNativeSkill) => {
+    if (JSON.stringify([input.target, input.scope, input.project_id, input.task_id ?? null]) !== JSON.stringify([selection.target, selection.scope, selection.project_id, selection.task_id ?? null])) return;
+    void preview(() => api.previewSkill(input), t(`nativeExtensions.skillAction.${input.action}`), false);
   };
+  const removeSkill = () => { if (skill) previewSkillInput({ ...selection, action: 'remove', slug: skill.slug, expected: skill.instance, source: null }); };
   const saveRuleDraft = (name: string, state: NativeSkillRuleIntentState = ruleState) => {
     api.setDraft(ruleDraftKey, { ...ruleDraft, name, visibilityState: state });
-    setErrors(current => ({ ...current, [ruleDraftKey]: {} }));
+    setErrors(current => ({ ...current, [ruleDraftKey]: {} })); setRulesOpen(true); setNarrowDetails(true);
   };
   const previewRule = (state = ruleState, name = ruleDraft.name, consumesDraft = true) => {
     if (!name.trim()) {
@@ -239,7 +318,7 @@ export default function NativeManager({ kind, initialSelection, initialSessionId
     const field = <T,>(name: keyof NativeServerPatch, value: T): NativeField<T> => mode(name) === 'set' ? { kind: 'set', value } : { kind: mode(name) as 'keep' | 'remove' };
     const fields: NativeServerPatch = stdio ? {
       program: field('program', draft.program.trim()), args: field('args', draft.args === '' ? [] : draft.args.split('\n')),
-      ...(target === 'Codex' ? { cwd: field('cwd', draft.cwd.trim()), forwarded_env: field('forwarded_env', refs) } : {}),
+      forwarded_env: field('forwarded_env', refs), ...(target === 'Codex' ? { cwd: field('cwd', draft.cwd.trim()) } : {}),
     } : { url: field('url', draft.url.trim()), header_env: field('header_env', headers ?? []), ...(target === 'Codex' ? { bearer_env: field('bearer_env', draft.bearer_env.trim()) } : {}) };
     if (creating) fields.transport = { kind: 'set', value: draft.transport };
     void previewMcp({ kind: 'upsert', name: creating ? draft.name.trim() : server!.native_key, fields });
@@ -248,79 +327,106 @@ export default function NativeManager({ kind, initialSelection, initialSessionId
     const props = { label: t(`nativeExtensions.${name}`), value: draft[name], disabled: busy || (patch && mode(name as keyof NativeServerPatch) === 'remove'), error: errors[draftKey]?.[name], onChange: (event: { target: { value: string } }) => saveDraft({ ...draft, [name]: event.target.value, modes: patch ? { ...draft.modes, [name]: 'set' } : draft.modes }) };
     return <div key={name} className="flex min-w-0 flex-col gap-2">{patch && !creating && <Select label={`${t(`nativeExtensions.${name}`)}: ${t('nativeExtensions.fieldAction')}`} value={mode(name as keyof NativeServerPatch)} disabled={busy} onChange={value => saveDraft({ ...draft, modes: { ...draft.modes, [name]: value as NativePatchMode } })} options={['keep', 'set', ...(name === 'header_env' && target === 'Claude' ? [] : ['remove'])].map(value => ({ value, label: t(`nativeExtensions.field.${value}`) }))}/ >}{name === 'args' || name === 'forwarded_env' || name === 'header_env' ? <Input multiline {...props}/> : <Input {...props}/>}</div>;
   };
-  const serverInputs = (transport: string) => transport === 'Stdio' ? <>{input('program', true)}{input('args', true)}{target === 'Codex' && <>{input('cwd', true)}{input('forwarded_env', true)}</>}</> : transport === 'Http' || transport === 'Sse' ? <>{input('url', true)}{target === 'Codex' && input('bearer_env', true)}{input('header_env', true)}</> : null;
+  const serverInputs = (transport: string) => transport === 'Stdio' ? <>{input('program', true)}{input('args', true)}{target === 'Codex' && input('cwd', true)}{input('forwarded_env', true)}</> : transport === 'Http' || transport === 'Sse' ? <>{input('url', true)}{target === 'Codex' && input('bearer_env', true)}{input('header_env', true)}</> : null;
   const readState: ResourceReadState = !state ? { status: 'idle' } : state.loading && !state.value ? { status: 'loading' } : state.error && !state.value ? { status: 'error', error: t(`nativeExtensions.error.${state.error}`) } : { status: 'ready', refresh: state.stale ? { status: 'error', error: t('nativeExtensions.stale') } : { status: 'current' } };
   const projectOptions = projects.filter(item => !item.archived).map(item => ({ value: item.id, label: item.name }));
   const scopeOptions = ['OsUser', 'ProjectShared', ...(target === 'Claude' ? ['ProjectLocal'] : [])].map(value => ({ value, label: t(`nativeExtensions.scope.${value}`) }));
   const editDisabled = blocked || !validSelection;
   const resourceEditDisabled = editDisabled || resourceUnsupported;
-  return <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-surface-canvas p-3 text-ink-primary" aria-label={t(kind === 'skills' ? 'nativeExtensions.skills' : 'nativeExtensions.mcp')}>
-    <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border-subtle pb-3"><div className="min-w-0"><h2 className="m-0 text-base font-semibold">{t(kind === 'skills' ? 'nativeExtensions.skills' : 'nativeExtensions.mcp')}</h2><p className="m-0 text-sm text-ink-secondary">{t('nativeExtensions.configurationNotice')}</p></div><Button variant="secondary" disabled={busy || !validSelection} onClick={() => void refresh()}>{t('nativeExtensions.refresh')}</Button></header>
-    <div className="my-3 flex flex-wrap items-end gap-3"><Select label={t('nativeExtensions.target')} value={target} onChange={value => { setTarget(value as typeof target); if (value === 'Codex' && scope === 'ProjectLocal') { setScope('OsUser'); setProject(null); } }} options={['Codex', 'Claude'].map(value => ({ value, label: value }))}/><Select label={t('nativeExtensions.scope')} value={scope} onChange={value => { const next = value as typeof scope; setScope(next); setProject(next === 'OsUser' ? null : project ?? projectOptions[0]?.value ?? null); }} options={scopeOptions}/>{scope !== 'OsUser' && <Select label={t('nativeExtensions.project')} value={project ?? ''} onChange={setProject} options={projectOptions}/ >}{scope === 'OsUser' && <span className="text-xs text-ink-secondary">{t('nativeExtensions.sharedOs')}</span>}{kind === 'skills' && <Input label={t('nativeExtensions.search')} value={query} onChange={event => setQuery(event.target.value)}/>}</div>
-    {messages[viewKey] && <p role="status" aria-live="polite" className="text-sm text-ink-secondary">{messages[viewKey]}</p>}
-    {state?.value?.incomplete && <p className="text-sm">{t('nativeExtensions.incomplete')}</p>}
-    {claudeRules && <section aria-label={t('nativeExtensions.nameRules')} className="mb-3 flex min-w-0 flex-col gap-3 border-b border-border-subtle pb-3 text-sm">
-      <h3 className="m-0 text-base font-semibold">{t('nativeExtensions.nameRules')}</h3>
-      <p className="m-0">{t('nativeExtensions.ruleNameImpact')}</p>
-      <p className="m-0 break-all">{t('nativeExtensions.settingsLayer')}: {t(`nativeExtensions.scope.${scope}`)} · {scope === 'OsUser' ? t('nativeExtensions.ruleOsScope') : `${projects.find(item => item.id === project)?.path ?? '—'} · ${t('nativeExtensions.ruleProjectScope')}`}</p>
-      <p className="m-0 text-ink-secondary">{t('nativeExtensions.ruleLayerCoverage')}</p>
-      {rulesState?.loading && <p role="status" className="m-0">{t('nativeExtensions.loading')}</p>}
-      {rulesState?.error && <p role="alert" className="m-0">{t(`nativeExtensions.error.${rulesState.error}`)}</p>}
-      {rulesState?.stale && !rulesState.loading && <p role="status" className="m-0">{t('nativeExtensions.refreshRequired')}</p>}
-      {rulesState?.value && (rulesState.value.rules.length ? <ul className="m-0 list-none p-0">{rulesState.value.rules.map(rule => <li key={rule.name} className="flex flex-wrap items-center gap-2 border-t border-border-subtle py-2">
-        <strong className="break-all">{rule.name}</strong><span>{t(`nativeExtensions.ruleState.${rule.state}`)}</span>
-        <Button variant="secondary" disabled={editDisabled} onClick={() => saveRuleDraft(rule.name, rule.state)}>{t('nativeExtensions.editRule')}</Button>
-        <Button variant="secondary" disabled={editDisabled} onClick={() => previewRule('inherit', rule.name, false)}>{t('nativeExtensions.restoreInherit')}</Button>
-      </li>)}</ul> : <p className="m-0">{t('nativeExtensions.noNameRules')}</p>)}
-      <Input label={t('nativeExtensions.ruleName')} value={ruleDraft.name} disabled={busy} error={errors[ruleDraftKey]?.name} onChange={event => saveRuleDraft(event.target.value)}/>
-      <Select label={t('nativeExtensions.ruleState')} value={ruleState} disabled={busy} onChange={value => saveRuleDraft(ruleDraft.name, value as NativeSkillRuleIntentState)} options={ruleStates.map(value => ({ value, label: t(`nativeExtensions.ruleState.${value}`) }))}/>
-      <dl className="m-0 grid gap-2">{ruleStates.map(value => <div key={value}><dt className="font-semibold">{t(`nativeExtensions.ruleState.${value}`)}</dt><dd className="m-0">{t(`nativeExtensions.ruleMeaning.${value}`)}</dd></div>)}</dl>
-      <p className="m-0 text-ink-secondary">{t('nativeExtensions.rulePluginsExcluded')}</p>
-      <p className="m-0 text-ink-secondary">{t('nativeExtensions.rulePrecedenceWarning')}</p>
-      <p className="m-0 text-ink-secondary">{t('nativeExtensions.ruleHookWarning')}</p>
-      <Button disabled={editDisabled} onClick={() => previewRule()}>{t('nativeExtensions.previewRule')}</Button>
-    </section>}
-    {resourceUnsupported && <p className="text-sm">{t('nativeExtensions.localRulesOnly')}</p>}
-    <div className="mb-3 flex flex-wrap gap-2"><Button variant="secondary" disabled={busy || resourceUnsupported} onClick={() => changeView(!creating)}>{t(creating ? 'nativeExtensions.closeEditor' : kind === 'skills' ? 'nativeExtensions.installSkill' : 'nativeExtensions.createServer')}</Button></div>
-    {creating && <section className="mb-3 flex flex-col gap-3 border-b border-border-subtle pb-3" aria-label={t(kind === 'skills' ? 'nativeExtensions.installSkill' : 'nativeExtensions.createServer')}>
-      {kind === 'skills' ? <>{input('slug')}{input('source')}<p className="m-0 text-xs text-ink-secondary">{t('nativeExtensions.scriptsNotRun')}</p><Button disabled={resourceEditDisabled} onClick={() => previewSkill('install')}>{t('nativeExtensions.previewInstall')}</Button></> : <>{input('name')}<Select label={t('nativeExtensions.transport')} value={draft.transport} disabled={busy} onChange={value => saveDraft({ ...draft, transport: value as NativeDraft['transport'] })} options={(target === 'Codex' ? ['Stdio', 'Http'] : ['Stdio', 'Http', 'Sse']).map(value => ({ value, label: value }))}/>{serverInputs(draft.transport)}<p className="m-0 text-xs text-ink-secondary">{t('nativeExtensions.fieldKeepHint')}</p><Button disabled={editDisabled} onClick={previewServer}>{t('nativeExtensions.previewChange')}</Button></>}
-    </section>}
-    <ResourceLayout className="min-h-0 flex-1" listLabel={t('nativeExtensions.instances')} detailLabel={t('nativeExtensions.details')} list={<ResourceList state={resourceView(readState, !ids.length && !readonlyEntries.length)} label={t('nativeExtensions.instances')} loadingLabel={t('nativeExtensions.loading')} emptyContent={<p>{t('nativeExtensions.empty')}</p>} retry={<Button variant="secondary" onClick={() => void refresh()}>{t('nativeExtensions.refresh')}</Button>}>
-      {kind === 'skills' ? skills.map(item => <button key={item.instance.id} type="button" aria-pressed={!creating && item.instance.id === chosen} onClick={() => changeView(false, item.instance.id)} className="block w-full border-b border-border-subtle p-3 text-left focus-visible:outline focus-visible:outline-2"><strong>{item.metadata.name}</strong><span className="ml-2"><StatusBadge status={item.owner === 'Loose' ? 'success' : 'neutral'} label={t(`nativeExtensions.owner.${item.owner}`)}/></span></button>) : servers.map(item => <button key={item.native_key} type="button" aria-pressed={!creating && item.native_key === chosen} onClick={() => changeView(false, item.native_key)} className="block w-full border-b border-border-subtle p-3 text-left focus-visible:outline focus-visible:outline-2"><strong>{item.native_key}</strong><span className="ml-2">{item.transport}</span><span className="ml-2"><StatusBadge status={item.owner === 'Loose' ? 'success' : 'neutral'} label={t(`nativeExtensions.owner.${item.owner}`)}/></span></button>)}
-      {readonlyEntries.length > 0 && <section aria-label={t('nativeExtensions.readonlyLinks')} className="p-3 text-sm">
-        <h3 className="m-0 text-sm font-semibold">{t('nativeExtensions.readonlyLinks')}</h3>
-        <p>{t('nativeExtensions.linkReadOnly')}</p>
-        <ul className="m-0 list-none p-0">{readonlyEntries.map(entry => <li key={entry.id} className="space-y-2 border-t border-border-subtle py-3">
-          <strong className="break-all">{entry.slug}</strong><StatusBadge status="neutral" label={t('nativeExtensions.owner.Symlink')}/>
-          <dl className="m-0 space-y-1">
-            <div><dt>{t('nativeExtensions.linkPath')}</dt><dd className="m-0 break-all">{entry.link_path}</dd></div>
-            <div><dt>{t('nativeExtensions.linkTarget')}</dt><dd className="m-0 break-all">{entry.target}</dd></div>
-            {entry.status === 'within_authorized_root' && entry.resolved_target !== null && <div><dt>{t('nativeExtensions.resolvedTarget')}</dt><dd className="m-0 break-all">{entry.resolved_target}</dd></div>}
-          </dl>
-          <p className="m-0">{t(`nativeExtensions.linkStatus.${entry.status}`)}</p>
-        </li>)}</ul>
-      </section>}
-    </ResourceList>} detail={<ResourceDetail state={{ status: 'ready', empty: creating || (!skill && !server), refresh: { status: 'current' } }} label={t('nativeExtensions.details')} emptyContent={<p>{t('nativeExtensions.select')}</p>}>
-      {!creating && (kind === 'skills' ? skill && <div className="flex min-w-0 flex-col gap-3">
-        <h3 className="m-0 text-base">{skill.metadata.name}</h3><p className="m-0 text-sm">{skill.metadata.description}</p>
-        <dl className="grid grid-cols-2 gap-2 text-sm"><dt>{t('nativeExtensions.revision')}</dt><dd className="m-0 break-all">{skill.instance.revision}</dd><dt>{t('nativeExtensions.sourceHash')}</dt><dd className="m-0 break-all">{skill.source?.source_hash ?? t('nativeExtensions.unknown')}</dd><dt>{t('nativeExtensions.resources')}</dt><dd className="m-0">{skill.resources.length}</dd></dl>
-        <p className="m-0 text-sm text-ink-secondary">{t('nativeExtensions.dependenciesNotChecked')}: {skill.metadata.dependencies.tools.map(item => item.program).join(', ') || t('nativeExtensions.unknown')}</p>
-        {skill.can_update && input('source')}
-        <div className="flex flex-wrap gap-2">
-          <Button disabled={resourceEditDisabled || skill.owner !== 'Loose' || !skill.can_update} onClick={() => previewSkill('update')}>{t('nativeExtensions.update')}</Button>
-          <Button variant="danger" disabled={resourceEditDisabled || skill.owner !== 'Loose'} onClick={() => previewSkill('remove')}>{t('nativeExtensions.remove')}</Button>
-          {target === 'Codex' && [true, false].map(visible => <Button key={String(visible)} variant="secondary" disabled={resourceEditDisabled || skill.owner !== 'Loose'} onClick={() => void preview(() => api.previewVisibility({ ...selection, intent: { kind: 'codex_path', instance: skill.instance, visible } }), t(visible ? 'nativeExtensions.enableSkill' : 'nativeExtensions.disableSkill'), false)}>{t(visible ? 'nativeExtensions.enableSkill' : 'nativeExtensions.disableSkill')}</Button>)}
-          {claudeRules && skill.owner !== 'Plugin' && <Button variant="secondary" disabled={editDisabled} onClick={() => saveRuleDraft(skill.metadata.name)}>{t('nativeExtensions.useRuleName')}</Button>}
-        </div>
-        {claudeRules && <p className="m-0 text-sm text-ink-secondary">{t('nativeExtensions.ruleResourceHint')}</p>}
-        <p className="m-0 text-xs text-ink-secondary">{t('nativeExtensions.sessionUnavailable')}</p>
-      </div> : server && <div className="flex min-w-0 flex-col gap-3"><h3 className="m-0 break-all text-base">{server.native_key}</h3><p className="m-0 text-sm">{server.transport} · {t(`nativeExtensions.owner.${server.owner}`)}</p><p className="m-0 text-sm">{t('nativeExtensions.auth')}: {server.authentication.authenticated === null ? t('nativeExtensions.unknown') : t(server.authentication.authenticated ? 'nativeExtensions.yes' : 'nativeExtensions.no')}</p><p className="m-0 text-sm">{t('nativeExtensions.connection')}: {server.authentication.connected === null ? t('nativeExtensions.unknown') : t(server.authentication.connected ? 'nativeExtensions.yes' : 'nativeExtensions.no')}</p><p className="m-0 text-xs text-ink-secondary">{t('nativeExtensions.sessionUnavailable')}</p>{server.owner === 'Loose' && serverInputs(server.transport)}<p className="m-0 text-xs text-ink-secondary">{t('nativeExtensions.fieldKeepHint')}</p>{server.unknown_fields_present && <p className="m-0 text-xs text-ink-secondary">{t('nativeExtensions.unknownFieldsKept')}</p>}<div className="flex flex-wrap gap-2"><Button disabled={editDisabled || server.owner !== 'Loose' || !['Stdio', 'Http', 'Sse'].includes(server.transport) || !Object.values(draft.modes).some(value => value !== 'keep')} onClick={previewServer}>{t('nativeExtensions.previewChange')}</Button><Button variant="danger" disabled={editDisabled || server.owner !== 'Loose' || !['Stdio', 'Http', 'Sse'].includes(server.transport)} onClick={() => void previewMcp({ kind: 'remove', name: server.native_key })}>{t('nativeExtensions.remove')}</Button>{target === 'Codex' && server.enabled !== null && <Button variant="secondary" disabled={editDisabled || server.owner !== 'Loose'} onClick={() => void previewMcp({ kind: 'set_enabled', name: server.native_key, enabled: !server.enabled })}>{t('nativeExtensions.visibility')}</Button>}</div></div>)}
-    </ResourceDetail>}/>
-    {operation && <PreviewDetails operation={operation} observationsId={observationsId} showObservations={() => { observationsRef.current?.focus(); observationsRef.current?.scrollIntoView?.({ block: 'nearest' }); }}/ >}
-    {operation?.mode === 'preview' && <footer className="mt-3 flex flex-wrap gap-2 border-t border-border-subtle pt-3"><Button disabled={busy || !validSelection} onClick={() => void resolveOperation('commit')}>{t('nativeExtensions.confirm')}</Button><Button variant="secondary" disabled={busy || !validSelection} onClick={() => void resolveOperation('cancel')}>{t('nativeExtensions.cancel')}</Button></footer>}
-    {operation?.mode === 'inspect' && <footer className="mt-3 flex flex-wrap gap-2 border-t border-border-subtle pt-3"><Button variant="secondary" disabled={busy || !validSelection} onClick={() => void resolveOperation('inspect')}>{t('nativeExtensions.verify')}</Button></footer>}
-    <div id={observationsId} ref={observationsRef} tabIndex={-1} className="min-w-0 focus-visible:outline focus-visible:outline-2">
-      <NativeSessionPanel target={target} domain={kind} configSelection={selection} initialProjectId={selection.project_id ?? undefined} initialSessionId={target === initialSelection?.target && (selection.project_id === initialSelection.project_id || scope === 'OsUser') ? initialSessionId : undefined} />
+  const transition = async (apply: () => void, reason: 'context' | 'view' = 'view') => {
+    for (const guard of childGuards.current) if (!await guard(reason)) return;
+    if (mounted.current && useDevelopment.getState().epoch === account && currentWorkspace.current === workspaceKey) apply();
+  };
+  const configureMarketDraft = async (next: NativeDraft): Promise<boolean> => {
+    if (editDisabled) return false;
+    const id = JSON.stringify([ownerKey, workspaceKey, 'create']);
+    const previous = useNativeExtensions.getState().drafts[id];
+    if (previous && !await confirmDiscard()) return false;
+    if (!mounted.current || useDevelopment.getState().epoch !== account || currentWorkspace.current !== workspaceKey || useNativeExtensions.getState().drafts[id] !== previous || isBlocked()) return false;
+    api.setDraft(id, next);
+    setViews(current => ({ ...current, [viewKey]: { selected: null } }));
+    setTabs(current => ({ ...current, [viewKey]: 'manual' }));
+    setNarrowDetails(false); return true;
+  };
+  const tabsForKind: ManagerTab[] = kind === 'skills' ? ['installed', 'discover', 'sources'] : ['configured', 'market', 'manual'];
+  const showInstalled = tab === 'installed' || tab === 'configured';
+  const startServer = () => { changeView(true, null); changeTab('manual'); };
+  const showObservations = () => {
+    setObservationsOpen(true);
+    requestAnimationFrame(() => { observationsRef.current?.focus(); observationsRef.current?.scrollIntoView?.({ block: 'nearest' }); });
+  };
+  const operationActions = operation?.mode === 'preview' ? <><Button disabled={busy || !validSelection} onClick={() => void resolveOperation('commit')}>{t('nativeExtensions.confirm')}</Button><Button variant="secondary" disabled={busy || !validSelection} onClick={() => void resolveOperation('cancel')}>{t('nativeExtensions.cancel')}</Button></> : operation?.mode === 'inspect' ? <Button variant="secondary" disabled={busy || !validSelection} onClick={() => void resolveOperation('inspect')}>{t('nativeExtensions.verify')}</Button> : null;
+  return <NativeManagerLifecycle.Provider value={registerGuard}><section className="native-manager" aria-label={t(kind === 'skills' ? 'nativeExtensions.skills' : 'nativeExtensions.mcp')}>
+    <header className="native-manager-header">
+      <div><h2>{t(kind === 'skills' ? 'nativeExtensions.skills' : 'nativeExtensions.mcp')}</h2><p>{t('nativeExtensions.configurationNotice')}</p></div>
+      <div className="native-manager-actions"><Button variant="secondary" disabled={busy || !validSelection} onClick={() => void refresh()}>{t('nativeExtensions.refresh')}</Button>{onClose && <Button variant="ghost" onClick={() => void requestClose()}>{t('nativeExtensions.close')}</Button>}</div>
+    </header>
+    <div className="native-manager-context">
+      <Select label={t('nativeExtensions.target')} value={target} onChange={value => void transition(() => { setTarget(value as typeof target); setQuery(''); setNarrowDetails(false); if (value === 'Codex' && scope === 'ProjectLocal') setScope('OsUser'); }, 'context')} options={[{ value: 'Codex', label: 'Codex' }, { value: 'Claude', label: 'Claude Code' }]}/>
+      <Select label={t('nativeExtensions.scope')} value={scope} onChange={value => void transition(() => { const next = value as typeof scope; setScope(next); setQuery(''); setNarrowDetails(false); if (next !== 'OsUser' && !project) { setProject(projectOptions[0]?.value ?? null); setTaskId(undefined); } }, 'context')} options={scopeOptions}/>
+      {scope !== 'OsUser' && <Select label={t('nativeExtensions.project')} value={project ?? ''} onChange={value => void transition(() => { setProject(value); setTaskId(undefined); setQuery(''); setNarrowDetails(false); }, 'context')} options={projectOptions}/>}
+      <p className="native-manager-context-hint">{scope === 'OsUser' ? t('nativeExtensions.sharedOs') : taskId ? t('nativeExtensions.taskWorkspace') : t('nativeExtensions.projectScopeHint')}</p>
     </div>
-  </section>;
-}
+    {!validSelection && <p role="alert" className="native-manager-message">{t('nativeExtensions.error.project_not_found')}</p>}
+    {messages[viewKey] && <p role="status" aria-live="polite" className="native-manager-message">{messages[viewKey]}</p>}
+    {operation && <section ref={operationRef} className="native-manager-operation" aria-label={t('nativeExtensions.operationStatus')}><span>{operation.summary} · {t(`nativeExtensions.state.${operation.receipt.state}`)}</span><Button variant="secondary" onClick={() => previewOpen ? collapsePreview() : setPreviewOpen(true)}>{t(previewOpen ? 'nativeExtensions.hidePreview' : 'nativeExtensions.reviewPreview')}</Button>{!previewOpen && operationActions}</section>}
+    <Tabs className="native-manager-tabs" value={tab} onValueChange={value => changeTab(value as ManagerTab)}>
+      <Tabs.List aria-label={t('nativeExtensions.managementTabs')}>{tabsForKind.map(value => <Tabs.Trigger key={value} value={value} disabled={!validSelection}>{t(`nativeExtensions.tab.${value}`)}</Tabs.Trigger>)}</Tabs.List>
+      <Tabs.Content forceMount value={kind === 'skills' ? 'installed' : 'configured'} hidden={!showInstalled} className="native-manager-installed">
+        <div className="native-manager-list-toolbar"><Input id={instanceId} label={t('nativeExtensions.search')} value={query} onChange={event => setQuery(event.target.value)}/><Button disabled={resourceEditDisabled} onClick={() => kind === 'skills' ? changeTab('discover') : startServer()}>{t(kind === 'skills' ? 'nativeExtensions.installSkill' : 'nativeExtensions.createServer')}</Button></div>
+        {state?.loading && state.value && <p role="status" className="native-manager-message">{t('nativeExtensions.loading')}</p>}
+        {state?.value?.incomplete && <p role="status" className="native-manager-message">{t('nativeExtensions.incomplete')}</p>}
+        {state?.error && state.value && <p role="alert" className="native-manager-message">{t(`nativeExtensions.error.${state.error}`)} {t('nativeExtensions.stale')}</p>}
+        {resourceUnsupported && <p className="native-manager-message">{t('nativeExtensions.localRulesOnly')}</p>}
+        <div className="native-manager-split" data-details={narrowDetails}>
+          <div className="native-manager-list" aria-label={t('nativeExtensions.instances')}>
+            {!resourceUnsupported && <ResourceList state={resourceView(readState, !ids.length && !readonlyEntries.length && !state?.value?.incomplete && !state?.error && !state?.stale)} label={t('nativeExtensions.instances')} loadingLabel={t('nativeExtensions.loading')} emptyContent={<div className="native-manager-empty"><p>{t('nativeExtensions.empty')}</p>{!filter && <Button variant="secondary" disabled={resourceEditDisabled} onClick={() => kind === 'skills' ? changeTab('discover') : changeTab('market')}>{t(kind === 'skills' ? 'nativeExtensions.tab.discover' : 'nativeExtensions.browseMarket')}</Button>}</div>} retry={<Button variant="secondary" onClick={() => void refresh()}>{t('nativeExtensions.refresh')}</Button>}>
+              {kind === 'skills' ? skills.map(item => <button key={item.instance.id} type="button" aria-pressed={item.instance.id === chosen} onClick={() => changeView(false, item.instance.id)} className="native-manager-row">
+                <span className="native-manager-row-heading"><strong>{item.metadata.name}</strong><StatusBadge status="neutral" label={t(`nativeExtensions.owner.${item.owner}`)}/></span><span className="native-manager-row-description">{item.metadata.description}</span><span className="native-manager-row-meta">{t(`nativeExtensions.scope.${item.scope}`)} · {item.source?.commit ? item.source.commit.slice(0, 12) : t('nativeExtensions.sourceUnavailable')}</span><span className="native-manager-row-meta">{t('nativeExtensions.configuration')}: {t('nativeExtensions.configPresent')} · {t('nativeExtensions.sessionNotRead')}</span>
+              </button>) : servers.map(item => <button key={item.native_key} type="button" aria-pressed={item.native_key === chosen} onClick={() => changeView(false, item.native_key)} className="native-manager-row">
+                <span className="native-manager-row-heading"><strong>{item.native_key}</strong><StatusBadge status="neutral" label={t(`nativeExtensions.owner.${item.owner}`)}/></span><span className="native-manager-row-meta">{item.transport} · {t(`nativeExtensions.scope.${scope}`)}</span><span className="native-manager-row-meta">{t('nativeExtensions.configEnabled')}: {t(item.enabled === null ? 'nativeExtensions.notReported' : item.enabled ? 'nativeExtensions.yes' : 'nativeExtensions.no')}</span><span className="native-manager-row-meta">{t('nativeExtensions.sessionNotRead')} · {t('nativeExtensions.toolsCountUnknown')}</span>
+              </button>)}
+              {readonlyEntries.length > 0 && <section aria-label={t('nativeExtensions.readonlyLinks')} className="native-manager-linked"><h3>{t('nativeExtensions.readonlyLinks')}</h3><p>{t('nativeExtensions.linkReadOnly')}</p><ul>{readonlyEntries.map(entry => <li key={entry.id}><strong>{entry.slug}</strong><StatusBadge status="neutral" label={t('nativeExtensions.owner.Symlink')}/><dl><dt>{t('nativeExtensions.linkPath')}</dt><dd>{entry.link_path}</dd><dt>{t('nativeExtensions.linkTarget')}</dt><dd>{entry.target}</dd>{entry.status === 'within_authorized_root' && entry.resolved_target !== null && <><dt>{t('nativeExtensions.resolvedTarget')}</dt><dd>{entry.resolved_target}</dd></>}</dl><p>{t(`nativeExtensions.linkStatus.${entry.status}`)}</p></li>)}</ul></section>}
+            </ResourceList>}
+            {claudeRules && <Button variant="secondary" disabled={!validSelection} onClick={() => { setRulesOpen(true); setNarrowDetails(true); requestAnimationFrame(() => rulesRef.current?.querySelector('summary')?.focus()); }}>{t('nativeExtensions.nameRules')}</Button>}
+          </div>
+          <div className="native-manager-detail">
+            <div className="native-manager-back"><Button variant="secondary" onClick={() => { setNarrowDetails(false); requestAnimationFrame(() => document.getElementById(instanceId)?.focus()); }}>{t('nativeExtensions.backToList')}</Button></div>
+            <ResourceDetail state={{ status: 'ready', empty: !skill && !server, refresh: { status: 'current' } }} label={t('nativeExtensions.details')} emptyContent={<p>{t('nativeExtensions.select')}</p>}>
+              {kind === 'skills' ? skill && <div className="native-manager-detail-content">
+                <header><h3>{skill.metadata.name}</h3><p>{skill.metadata.description}</p></header>
+                <NativeSkillInspector key={JSON.stringify([workspaceKey, skill.instance.id, skill.instance.revision])} selection={selection} skill={skill} disabled={resourceEditDisabled || !showInstalled} onPreview={previewSkillInput}/>
+                <details className="native-manager-disclosure"><summary>{t('nativeExtensions.configurationRules')}</summary><p>{t('nativeExtensions.sessionUnavailable')}</p><dl><dt>{t('nativeExtensions.revision')}</dt><dd>{skill.instance.revision}</dd><dt>{t('nativeExtensions.sourceHash')}</dt><dd>{skill.source?.source_hash ?? t('nativeExtensions.unknown')}</dd></dl>{claudeRules && <p>{t('nativeExtensions.ruleResourceHint')}</p>}</details>
+                <div className="native-manager-detail-actions"><Button variant="danger" disabled={resourceEditDisabled || skill.owner !== 'Loose'} onClick={removeSkill}>{t('nativeExtensions.remove')}</Button>{target === 'Codex' && [true, false].map(visible => <Button key={String(visible)} variant="secondary" disabled={resourceEditDisabled || skill.owner !== 'Loose'} onClick={() => void preview(() => api.previewVisibility({ ...selection, intent: { kind: 'codex_path', instance: skill.instance, visible } }), t(visible ? 'nativeExtensions.enableSkill' : 'nativeExtensions.disableSkill'), false)}>{t(visible ? 'nativeExtensions.enableSkill' : 'nativeExtensions.disableSkill')}</Button>)}{claudeRules && skill.owner !== 'Plugin' && <Button variant="secondary" disabled={editDisabled} onClick={() => saveRuleDraft(skill.metadata.name)}>{t('nativeExtensions.useRuleName')}</Button>}</div>
+              </div> : server && <div className="native-manager-detail-content">
+                <header><h3>{server.native_key}</h3><p>{server.transport} · {t(`nativeExtensions.owner.${server.owner}`)} · {t(`nativeExtensions.scope.${scope}`)}</p></header>
+                <dl><dt>{t('nativeExtensions.configEnabled')}</dt><dd>{t(server.enabled === null ? 'nativeExtensions.notReported' : server.enabled ? 'nativeExtensions.yes' : 'nativeExtensions.no')}</dd><dt>{t('nativeExtensions.auth')}</dt><dd>{t(server.has_auth_configuration ? 'nativeExtensions.authConfigured' : 'nativeExtensions.notReported')}</dd><dt>{t('nativeExtensions.tokenEstimate')}</dt><dd>—</dd></dl><p>{t('nativeExtensions.sessionUnavailable')}</p>
+                <NativeMcpProbe key={JSON.stringify([workspaceKey, server.native_key])} selection={selection} serverName={server.native_key} disabled={editDisabled || !showInstalled}/>
+                <details className="native-manager-disclosure"><summary>{t('nativeExtensions.editConfiguration')}</summary>{server.owner === 'Loose' && showInstalled && serverInputs(server.transport)}<p>{t('nativeExtensions.fieldKeepHint')}</p>{server.unknown_fields_present && <p>{t('nativeExtensions.unknownFieldsKept')}</p>}<Button disabled={editDisabled || server.owner !== 'Loose' || !['Stdio', 'Http', 'Sse'].includes(server.transport) || !Object.values(draft.modes).some(value => value !== 'keep')} onClick={previewServer}>{t('nativeExtensions.previewChange')}</Button></details>
+                <div className="native-manager-detail-actions"><Button variant="danger" disabled={editDisabled || server.owner !== 'Loose' || !['Stdio', 'Http', 'Sse'].includes(server.transport)} onClick={() => void previewMcp({ kind: 'remove', name: server.native_key })}>{t('nativeExtensions.remove')}</Button>{target === 'Codex' && server.enabled !== null && <Button variant="secondary" disabled={editDisabled || server.owner !== 'Loose'} onClick={() => void previewMcp({ kind: 'set_enabled', name: server.native_key, enabled: !server.enabled })}>{t('nativeExtensions.visibility')}</Button>}</div>
+              </div>}
+            </ResourceDetail>
+            {claudeRules && <details ref={rulesRef} className="native-manager-disclosure" open={rulesOpen || resourceUnsupported} onToggle={event => setRulesOpen(event.currentTarget.open)}><summary>{t('nativeExtensions.nameRules')}</summary><section aria-label={t('nativeExtensions.nameRules')} className="native-manager-rule-editor">
+              <h3>{t('nativeExtensions.nameRules')}</h3><p>{t('nativeExtensions.ruleNameImpact')}</p><p>{t('nativeExtensions.settingsLayer')}: {t(`nativeExtensions.scope.${scope}`)} · {scope === 'OsUser' ? t('nativeExtensions.ruleOsScope') : t('nativeExtensions.ruleProjectScope')}</p><p>{t('nativeExtensions.ruleLayerCoverage')}</p>
+              {rulesState?.loading && <p role="status">{t('nativeExtensions.loading')}</p>}{rulesState?.error && <p role="alert">{t(`nativeExtensions.error.${rulesState.error}`)}</p>}{rulesState?.stale && !rulesState.loading && <p role="status">{t('nativeExtensions.refreshRequired')}</p>}
+              {rulesState?.value && (rulesState.value.rules.length ? <ul>{rulesState.value.rules.map(rule => <li key={rule.name}><strong>{rule.name}</strong> {t(`nativeExtensions.ruleState.${rule.state}`)}<div className="native-manager-actions"><Button variant="secondary" disabled={editDisabled} onClick={() => saveRuleDraft(rule.name, rule.state)}>{t('nativeExtensions.editRule')}</Button><Button variant="secondary" disabled={editDisabled} onClick={() => previewRule('inherit', rule.name, false)}>{t('nativeExtensions.restoreInherit')}</Button></div></li>)}</ul> : <p>{t('nativeExtensions.noNameRules')}</p>)}
+              <Input label={t('nativeExtensions.ruleName')} value={ruleDraft.name} disabled={busy} error={errors[ruleDraftKey]?.name} onChange={event => saveRuleDraft(event.target.value)}/><Select label={t('nativeExtensions.ruleState')} value={ruleState} disabled={busy} onChange={value => saveRuleDraft(ruleDraft.name, value as NativeSkillRuleIntentState)} options={ruleStates.map(value => ({ value, label: t(`nativeExtensions.ruleState.${value}`) }))}/><dl>{ruleStates.map(value => <div key={value}><dt>{t(`nativeExtensions.ruleState.${value}`)}</dt><dd>{t(`nativeExtensions.ruleMeaning.${value}`)}</dd></div>)}</dl><p>{t('nativeExtensions.rulePluginsExcluded')}</p><p>{t('nativeExtensions.rulePrecedenceWarning')}</p><p>{t('nativeExtensions.ruleHookWarning')}</p><Button disabled={editDisabled} onClick={() => previewRule()}>{t('nativeExtensions.previewRule')}</Button>
+            </section></details>}
+          </div>
+        </div>
+      </Tabs.Content>
+      {kind === 'skills' ? <>{(['discover', 'sources'] as const).map(value => <Tabs.Content forceMount hidden={tab !== value} key={value} value={value} className="native-manager-library"><NativeSkillLibrary selection={selection} tab={value} disabled={resourceEditDisabled || tab !== value} onPreview={previewSkillInput}/></Tabs.Content>)}</> : <>
+        <Tabs.Content forceMount hidden={tab !== 'market'} value="market" className="native-manager-library"><NativeMcpMarket selection={selection} disabled={editDisabled || tab !== 'market'} onConfigure={configureMarketDraft}/></Tabs.Content>
+        <Tabs.Content forceMount hidden={tab !== 'manual'} value="manual" className="native-manager-manual">{creating && <section aria-label={t('nativeExtensions.createServer')} className="native-manager-form">
+          <header><h3>{t('nativeExtensions.createServer')}</h3><p>{t('nativeExtensions.manualNotice')}</p></header>{input('name')}<Select label={t('nativeExtensions.transport')} value={draft.transport} disabled={busy} onChange={value => saveDraft({ ...draft, transport: value as NativeDraft['transport'] })} options={(target === 'Codex' ? ['Stdio', 'Http'] : ['Stdio', 'Http', 'Sse']).map(value => ({ value, label: value }))}/>{serverInputs(draft.transport)}<p>{t('nativeExtensions.fieldKeepHint')}</p><div className="native-manager-actions"><Button disabled={editDisabled} onClick={previewServer}>{t('nativeExtensions.previewChange')}</Button><Button variant="secondary" onClick={() => changeTab('configured')}>{t('nativeExtensions.closeEditor')}</Button></div>
+        </section>}<NativeMcpProbe key={workspaceKey} selection={selection} draft={api.drafts[JSON.stringify([ownerKey, workspaceKey, 'create'])] ?? emptyDraft} disabled={editDisabled || tab !== 'manual'}/></Tabs.Content>
+      </>}
+    </Tabs>
+    {kind === 'skills' && Object.values(versionRecords).filter(record => !record.result.cleanup_confirmed && !(showInstalled && skill?.slug === record.skill.slug && JSON.stringify([selection.target, selection.scope, selection.project_id, selection.task_id ?? null]) === JSON.stringify([record.skill.selection.target, record.skill.selection.scope, record.skill.selection.project_id, record.skill.selection.task_id ?? null]))).map(record => <NativeSkillVersionRecovery key={record.plan.plan_id} record={record} />)}
+    {kind === 'mcp' && Object.entries(probeRecords).filter(([, record]) => ['running', 'unknown'].includes(record.snapshot.state)).map(([key, record]) => <NativeMcpProbeRecovery key={key} probeKey={key} record={record} />)}
+    <details className="native-manager-session native-manager-disclosure" open={observationsOpen} onToggle={event => setObservationsOpen(event.currentTarget.open)}><summary>{t('nativeExtensions.currentSession')}</summary><div id={observationsId} ref={observationsRef} tabIndex={-1}><NativeSessionPanel target={target} domain={kind} configSelection={selection} initialProjectId={selection.project_id ?? undefined} initialSessionId={target === initialSelection?.target && (selection.project_id === initialSelection.project_id || scope === 'OsUser') && (scope === 'OsUser' || (selection.task_id ?? null) === (initialSelection.task_id ?? null)) ? initialSessionId : undefined}/></div></details>
+    {operation && previewOpen && <section ref={previewRef} tabIndex={-1} className="native-manager-preview" aria-label={t('nativeExtensions.previewLayer')}><header className="native-manager-preview-header"><h3>{t('nativeExtensions.preview')}</h3><Button variant="secondary" onClick={collapsePreview}>{t('nativeExtensions.hidePreview')}</Button></header><div className="native-manager-preview-body"><PreviewDetails operation={operation} observationsId={observationsId} showObservations={showObservations}/></div><footer className="native-manager-detail-actions">{operationActions}</footer></section>}
+  </section></NativeManagerLifecycle.Provider>;
+});
+
+export default NativeManager;

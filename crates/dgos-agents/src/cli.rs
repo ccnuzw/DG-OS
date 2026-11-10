@@ -62,17 +62,47 @@ fn finish(tool: CliTool, path: Option<String>, status: &'static str, version: Op
 }
 
 
-// Version wrappers may spawn descendants that retain stdout. Kill the dedicated
-// group on every exit, including a dropped probe future on account cancellation.
+// Version wrappers may spawn descendants that retain stdout. Keep the leader
+// unreaped until its dedicated group is signalled, including on cancellation:
+// reaping first would let the PID/PGID be recycled before cleanup uses it.
 #[cfg(unix)]
-struct ProbeGroup { pid: i32, diagnostic: ProcessDiagnostic }
+struct ProbeGroup { pid: i32, armed: bool, diagnostic: ProcessDiagnostic }
 #[cfg(unix)]
-impl Drop for ProbeGroup {
-    fn drop(&mut self) {
-        let stopped = unsafe { libc::kill(-self.pid, libc::SIGKILL) } == 0;
-        self.diagnostic.record("group_kill", Some(self.pid as u32), "requested", if stopped { "none" } else { "group_absent_or_signal_failed" });
+fn group_kill_outcome(error: Option<i32>) -> (&'static str, &'static str) {
+    match error {
+        None => ("requested", "none"),
+        Some(libc::ESRCH) => ("absent", "none"),
+        Some(_) => ("failed", "signal_failed"),
     }
 }
+
+// Darwin returns EPERM for a group containing only its exited leader. Keep
+// that leader unreaped (pinning the PGID), and require kernel proof that no
+// other group member remains. Permission failures without this proof stay failures.
+#[cfg(target_os = "macos")]
+fn group_has_only_exited_leader(leader: i32) -> bool {
+    let mut status: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    if unsafe { libc::waitid(libc::P_PID, leader as libc::id_t, &mut status, libc::WEXITED | libc::WNOHANG | libc::WNOWAIT) } != 0 || unsafe { status.si_pid() } != leader { return false; }
+    let mut pids = [0i32; 2];
+    // Unlike proc_listpids, proc_listpgrppids returns a PID count, not bytes.
+    let count = unsafe { libc::proc_listpgrppids(leader, pids.as_mut_ptr().cast(), std::mem::size_of_val(&pids) as i32) };
+    count == 1 && pids[0] == leader
+}
+#[cfg(unix)]
+impl ProbeGroup {
+    fn stop(&mut self) -> bool {
+        if !self.armed { return true; }
+        self.armed = false;
+        let error = if unsafe { libc::kill(-self.pid, libc::SIGKILL) } == 0 { None } else { Some(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) };
+        let (outcome, error_class) = group_kill_outcome(error);
+        #[cfg(target_os = "macos")]
+        let (outcome, error_class) = if error == Some(libc::EPERM) && group_has_only_exited_leader(self.pid) { ("stopped", "none") } else { (outcome, error_class) };
+        self.diagnostic.record("group_kill", Some(self.pid as u32), outcome, error_class);
+        error_class == "none"
+    }
+}
+#[cfg(unix)]
+impl Drop for ProbeGroup { fn drop(&mut self) { self.stop(); } }
 
 /// Runs `<executable> --version` with a fixed argv, stdin closed, 5 s limit and 4 KiB stdout limit.
 /// Managed installers do not exist, so the result is never `managed`.
@@ -124,7 +154,7 @@ pub async fn probe(tool: CliTool, explicit: Option<&str>) -> CliProbe {
     let pid = child.id();
     diagnostic.record("spawned", pid, "completed", "none");
     #[cfg(unix)]
-    let group = child.id().map(|pid| ProbeGroup { pid: pid as i32, diagnostic: diagnostic.clone() });
+    let mut group = child.id().map(|pid| ProbeGroup { pid: pid as i32, armed: true, diagnostic: diagnostic.clone() });
     let outcome = tokio::time::timeout(TIMEOUT, read_version(tool, &mut child, &diagnostic)).await;
     let (status, version) = match outcome {
         Ok(Ok(version)) => ("available", Some(version)),
@@ -134,7 +164,12 @@ pub async fn probe(tool: CliTool, explicit: Option<&str>) -> CliProbe {
     if status == "timeout" { diagnostic.record("deadline", pid, "failed", "timeout"); }
     let cleanup = diagnostic.phase("cleanup", pid);
     #[cfg(unix)]
-    drop(group);
+    let cleanup_error = {
+        let signalled = group.as_mut().is_some_and(ProbeGroup::stop);
+        let reaped = tokio::time::timeout(Duration::from_secs(2), child.wait()).await.is_ok_and(|result| result.is_ok());
+        (!signalled || !reaped).then_some("cleanup_pending")
+    };
+    #[cfg(not(unix))]
     let cleanup_error = if status != "available" && child.kill().await.is_err() { Some("cleanup_pending") } else { None };
     cleanup.finish(cleanup_error);
     operation.finish((status != "available").then_some(status));
@@ -169,8 +204,23 @@ async fn read_version(tool: CliTool, child: &mut Child, diagnostic: &ProcessDiag
     if bytes.len() > OUTPUT_LIMIT { read.finish(Some("output_limit")); return Err("output_limit"); }
     read.finish(None);
     let exit = diagnostic.phase("exit_wait", pid);
-    let status = child.wait().await;
-    if !status.is_ok_and(|status| status.success()) {
+    #[cfg(unix)]
+    let successful = match child.id() {
+        Some(pid) => loop {
+            let observed = {
+                let mut status: libc::siginfo_t = unsafe { std::mem::zeroed() };
+                if unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut status, libc::WEXITED | libc::WNOHANG | libc::WNOWAIT) } != 0 { Some(false) }
+                else if unsafe { status.si_pid() } != 0 { Some(status.si_code == libc::CLD_EXITED && unsafe { status.si_status() } == 0) }
+                else { None }
+            };
+            if let Some(successful) = observed { break successful; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        },
+        None => false,
+    };
+    #[cfg(not(unix))]
+    let successful = child.wait().await.is_ok_and(|status| status.success());
+    if !successful {
         exit.finish(Some("execution_failed"));
         return Err("execution_failed");
     }
@@ -190,6 +240,47 @@ async fn read_version(tool: CliTool, child: &mut Child, diagnostic: &ProcessDiag
 #[cfg(test)]
 mod tests {
     use super::CliTool;
+
+    #[cfg(unix)]
+    #[test]
+    fn group_kill_distinguishes_absence_from_signal_failure() {
+        assert_eq!(super::group_kill_outcome(None), ("requested", "none"));
+        assert_eq!(super::group_kill_outcome(Some(libc::ESRCH)), ("absent", "none"));
+        assert_eq!(super::group_kill_outcome(Some(libc::EPERM)), ("failed", "signal_failed"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn version_read_keeps_the_group_leader_waitable_until_cleanup() {
+        use std::process::Stdio;
+        use tokio::process::Command;
+        for (output, code, expected) in [
+            ("codex-cli 0.167.0", 0, Ok("codex-cli 0.167.0".to_owned())),
+            ("not-a-version", 0, Err("protocol_unsupported")),
+            ("codex-cli 0.167.0", 7, Err("execution_failed")),
+        ] {
+            let mut child = Command::new("/bin/sh")
+                .args(["-c", &format!("printf '%s\\n' '{output}'; exit {code}")])
+                .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null())
+                .kill_on_drop(true).process_group(0).spawn().unwrap();
+            let pid = child.id().unwrap();
+            let diagnostic = crate::diagnostics::ProcessDiagnostic::new("version_probe", "codex");
+            let mut group = super::ProbeGroup { pid: pid as i32, armed: true, diagnostic: diagnostic.clone() };
+            let result = tokio::time::timeout(super::TIMEOUT, super::read_version(CliTool::Codex, &mut child, &diagnostic)).await.unwrap();
+            // Both successful and rejected output must preserve ownership of the
+            // original PID until the group guard has signalled its descendants.
+            let mut status: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            let observed = unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut status, libc::WEXITED | libc::WNOHANG | libc::WNOWAIT) };
+            let owned = observed == 0 && unsafe { status.si_pid() } == pid as i32;
+            let signalled = group.stop();
+            let reaped = child.wait().await.unwrap();
+            assert_eq!(result, expected);
+            assert!(owned, "version read reaped the group leader before cleanup");
+            assert!(signalled);
+            assert!(!group.armed, "cleanup must never signal the PGID after reaping");
+            assert_eq!(reaped.code(), Some(code));
+        }
+    }
 
     #[test]
     fn version_line_must_match_the_tool_shape() {
@@ -351,6 +442,7 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         let path = root.join("credential-SENTINEL");
         for (body, expected) in [
+            ("#!/bin/sh\nprintf 'codex-cli 0.0.0\\n'\n", "available"),
             ("#!/bin/sh\nprintf 'codex-cli 0.0.0\\n'\nexec /bin/sleep 10\n", "timeout"),
             ("#!/bin/sh\nprintf 'codex-cli 0.0.0\\n'\nexec 1>&-\nexec /bin/sleep 10\n", "timeout"),
             ("#!/dgos-nonexistent-interpreter\n", "start_failed"),
@@ -366,6 +458,9 @@ mod tests {
         assert!(text.lines().any(|line| line.contains("stage=\"exit_wait\"") && line.contains("outcome=\"cancelled\"")), "{text}");
         assert!(text.contains("error_class=\"spawn_failed\""), "{text}");
         assert!(text.contains("error_class=\"protocol_unsupported\""), "{text}");
+        assert!(text.lines().any(|line| line.contains("stage=\"group_kill\"") && line.contains("outcome=\"requested\"") && line.contains("error_class=\"none\"")), "{text}");
+        assert!(text.lines().any(|line| line.contains("stage=\"cleanup\"") && line.contains("outcome=\"completed\"") && line.contains("error_class=\"none\"")), "{text}");
+        assert!(!text.contains("group_absent_or_signal_failed") && !text.contains("error_class=\"signal_failed\""), "{text}");
         assert!(text.contains("correlation_id=") && text.contains("elapsed_ms=") && text.contains("child_pid=Some("), "{text}");
         assert!(!text.contains("credential-SENTINEL") && !text.contains(&root.to_string_lossy().to_string()), "{text}");
         eprint!("{text}");

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Button, Checkbox, Input, Select, Stack } from '@dgos/ui';
 import { useLocale } from '../../i18n';
 import type { Skill } from '../../stores/skillsStore';
@@ -11,9 +12,24 @@ export function ReasoningControls({ value, onChange, disabled }: { value: Genera
     <Input label={t('generation.reasoningBudget')} type="number" min={1} step={1} value={value.reasoning?.budget_tokens ?? ''} disabled={disabled} onChange={e => patch({ reasoning: e.target.value === '' ? (value.reasoning?.effort ? { effort: value.reasoning.effort } : null) : { ...value.reasoning, budget_tokens: Number(e.target.value) } })} />
   </Stack>;
 }
-export function GenerationControls({ value, onChange, disabled, model }: { value: GenerationParameters; onChange: (value: GenerationParameters) => void; disabled?: boolean; model?: Model }) {
+export function GenerationControls({ value, onChange, disabled, model, variant, advanced }: { value: GenerationParameters; onChange: (value: GenerationParameters) => void; disabled?: boolean; model?: Model; variant?: 'chat'; advanced?: ReactNode }) {
   const { t } = useLocale();
   const patch = (next: Partial<GenerationParameters>) => onChange({ ...value, ...next });
+  if (variant === 'chat') return <Stack gap={3}>
+    <Input label={t('chat.prefInstruction')} multiline rows={4} className="type-reading" placeholder={t('chat.prefInstructionPlaceholder')} value={value.instruction ?? ''} disabled={disabled} onChange={event => patch({ instruction: event.target.value })} />
+    <p className="chat-picker-description">{t('chat.prefInstructionHelp')}</p>
+    <details className="chat-preferences-advanced">
+      <summary>{t('chat.prefAdvanced')}</summary>
+      <Stack gap={3}>
+        <Input label={t('chat.prefOutputCap')} type="number" min={1} max={Math.min(model?.max_output_tokens ?? 65536, 65536)} step={1} value={value.max_tokens ?? ''} disabled={disabled} onChange={event => patch({ max_tokens: event.target.value === '' ? null : Number(event.target.value) })} />
+        <p className="chat-picker-description">{t('chat.prefOutputCapHelp')} {model?.max_output_tokens ? t('generation.outputLimit', { count: model.max_output_tokens }) : t('generation.unknownLimit')}</p>
+        <Input label={t('generation.temperature')} type="number" min={0} max={2} step={0.1} value={value.temperature ?? ''} disabled={disabled} onChange={event => patch({ temperature: event.target.value === '' ? null : Number(event.target.value) })} />
+        {model?.capabilities?.reasoning !== 'unsupported' && <Input label={t('generation.reasoningBudget')} type="number" min={1} step={1} value={value.reasoning?.budget_tokens ?? ''} disabled={disabled} onChange={event => patch({ reasoning: event.target.value === '' ? (value.reasoning?.effort ? { effort: value.reasoning.effort } : null) : { ...value.reasoning, budget_tokens: Number(event.target.value) } })} />}
+        <p className="chat-picker-description">{t('generation.capabilityNotice')} {t('generation.reasoningCapability', { state: t(`generation.${model?.capabilities?.reasoning ?? 'unknown'}`) })}</p>
+        {advanced}
+      </Stack>
+    </details>
+  </Stack>;
   return <Stack gap={3}>
     <Select label={t('generation.length')} value={String(value.max_tokens ?? 1024)} disabled={disabled} options={[1024,4096,8192].map((tokens, index) => ({ value: String(tokens), label: t(['generation.short','generation.medium','generation.long'][index]) }))} onChange={v => patch({ max_tokens: Number(v) })} />
     <Input label={t('generation.temperature')} type="number" min={0} max={2} step={0.1} value={value.temperature ?? ''} disabled={disabled} onChange={e => patch({ temperature: e.target.value === '' ? null : Number(e.target.value) })} />

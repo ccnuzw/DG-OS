@@ -8,7 +8,7 @@ import type { CodexOperationAction, CodexOperationRequest, CodexOperationScope, 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('../src/i18n', () => ({ t: (key: string, values?: Record<string, string>) => values ? `${key}:${Object.values(values).join(',')}` : key, useLocale: () => ({ locale: 'en-US' }) }));
-const session: AgentSession = { id: 'session-a', generation: 'generation-a', engine: 'codex', native_id: 'thread-a', workspace: '/workspace', status: 'ready', events: [], pending: [], error: null };
+const session: AgentSession = { id: 'session-a', generation: 'generation-a', engine: 'codex', native_id: 'thread-a', workspace: '/workspace', status: 'idle', events: [], pending: [], error: null };
 // First-account hosts keep default-user as the native owner; the UI account key is account:<username>.
 const workspace = {
   projects: [{ id: 'project-a', owner: 'default-user', name: 'Project A', path: '/workspace', directory_identity: 'directory-a', archived: false, created_at: 1, last_opened_at: null }],
@@ -23,7 +23,7 @@ const controlCalls = () => invoke.mock.calls.filter(([command]) => command === '
 const entry = () => useCodexOperations.getState().entries[codexOperationsKey(scope)];
 beforeEach(() => {
   invoke.mockReset();
-  useAgentRunner.setState({ session, snapshots: { [session.id]: session }, selected: session.id, live: {} });
+  useAgentRunner.setState({ session, snapshots: { [session.id]: session }, selected: session.id, live: {}, busy: false, acting: false });
   useDevelopment.setState(state => ({ epoch: state.epoch + 1, workspaceOwner: 'account:alice', loaded: true, ...structuredClone(workspace) }));
   useCodexOperations.getState().reset();
   scope = { epoch: useDevelopment.getState().epoch, accountKey: 'account:alice', owner: 'default-user', projectId: 'project-a', taskId: 'task-a', sessionId: session.id, generation: session.generation };
@@ -31,6 +31,7 @@ beforeEach(() => {
   invoke.mockImplementation(async (command: string, args: { input?: CodexOperationRequest }) => {
     if (command === 'read_development_workspace') return structuredClone(workspace);
     if (command === 'observe_codex_operations') return structuredClone(snapshot);
+    if (command === 'observe_agent_compression') return true;
     if (command === 'control_codex_operation') return { session_id: session.id, generation: session.generation, request_id: args.input!.request_id, state: 'applied' };
     if (command === 'read_codex_child_history') return { thread_id: 'child-a', turns: [{ id: 'child-turn-a', status: 'completed', items: [{ id: 'message-a', type: 'agentMessage', text: 'Native child response' }] }], incomplete: false };
     if (command === 'get_agent_session') return session;
@@ -119,6 +120,7 @@ describe('Codex operations ownership and uncertainty', () => {
     let original: CodexOperationRequest;
     invoke.mockImplementation(async (command: string, args: { input: CodexOperationRequest }) => {
       if (command === 'observe_codex_operations') return snapshot;
+      if (command === 'observe_agent_compression') return true;
       if (command === 'control_codex_operation') { original = args.input; throw 'transport_lost'; }
       if (command === 'inspect_codex_operation') return { session_id: session.id, generation: session.generation, request_id: original.request_id, state: 'applied' };
       throw 'unexpected_command';
@@ -180,6 +182,15 @@ describe('Codex operations ownership and uncertainty', () => {
     deferred.resolve({ thread_id: 'child-a', turns: [{ id: 'stale-private-turn' }], incomplete: false });
     await read;
     expect(entry().histories).toEqual({});
+  });
+  it.each(['busy', 'acting'] as const)('does not dispatch compression while the runner is %s', async flag => {
+    await openPanel();
+    act(() => useAgentRunner.setState(flag === 'busy' ? { busy: true } : { acting: true }));
+    expect(screen.getByTestId('codex-compact')).toHaveProperty('disabled', true);
+    fireEvent.click(screen.getByTestId('codex-compact'));
+    expect(await useCodexOperations.getState().act(scope, { kind: 'compact' })).toBeNull();
+    expect(controlCalls()).toHaveLength(0);
+    expect(entry().pending).toBeNull();
   });
 });
 
@@ -261,6 +272,33 @@ describe('Codex native operations controls', () => {
     expect(screen.getByTestId('codex-agent-interrupt').hasAttribute('disabled')).toBe(false);
     expect(screen.getByTestId('codex-compact').hasAttribute('disabled')).toBe(false);
     expect(screen.getAllByTestId('codex-queue-start').every(button => button.hasAttribute('disabled'))).toBe(true);
+  });
+  it.each([false, null])('disables only compression when its current capability is %s', async capability => {
+    const handler = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command: string, args: { input?: CodexOperationRequest }) => {
+      if (command === 'observe_agent_compression') return capability === null ? Promise.reject('transport_lost') : Promise.resolve(capability);
+      return handler(command, args);
+    });
+    await openPanel();
+    await waitFor(() => expect(entry().reading).toBe(false));
+    expect(entry().snapshot?.unsupported).toEqual([]);
+    expect(entry().compressionSupported).toBe(capability);
+    expect(screen.getByTestId('codex-compact')).toHaveProperty('disabled', true);
+    expect(screen.getByTestId('codex-review-open')).toHaveProperty('disabled', false);
+    expect(screen.getByTestId('codex-fork')).toHaveProperty('disabled', false);
+    fireEvent.click(screen.getByTestId('codex-compact'));
+    expect(controlCalls()).toHaveLength(0);
+  });
+  it('keeps compression disabled until its capability receipt confirms support', async () => {
+    const capability = Promise.withResolvers<boolean>();
+    const handler = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command: string, args: { input?: CodexOperationRequest }) => command === 'observe_agent_compression' ? capability.promise : handler(command, args));
+    await openPanel();
+    expect(screen.getByTestId('codex-compact')).toHaveProperty('disabled', true);
+    expect(screen.getByTestId('codex-review-open')).toHaveProperty('disabled', false);
+    await act(async () => capability.resolve(true));
+    expect(screen.getByTestId('codex-compact')).toHaveProperty('disabled', false);
+    expect(controlCalls()).toHaveLength(0);
   });
   it('edits and deletes the exact native queue entry rather than sending a conversation turn', async () => {
     await openPanel();

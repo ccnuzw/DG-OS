@@ -2,7 +2,7 @@ import { t, useLocale as usePageLocale } from '../../i18n';
 import { useEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Checkbox, Input, Loading, Popover, cn } from '@dgos/ui';
-import { ArrowUp, Check, ShieldCheck, Square } from 'lucide-react';
+import { ArrowUp, Mic, MoreHorizontal, Square, Wrench, X } from 'lucide-react';
 import { MAX_MESSAGE_BYTES, MAX_TOOLS, useChatStore, utf8Bytes } from '../../stores/chatStore';
 import { ChatNotice } from './ChatNotice';
 import { FOCUS_RING } from '@dgos/ui/lib/focus';
@@ -14,8 +14,6 @@ import VoiceCapture from './VoiceCapture';
 import './conversation.css';
 import { useSurfaceActive } from '../../workspace/SurfaceContext';
 import ContextPanel from './ContextPanel';
-import SkillAccess from './SkillAccess';
-import RunInspector from './RunInspector';
 import { useDevelopment } from '../../stores/developmentStore';
 
 const LINK = cn('text-accent-default underline', FOCUS_RING);
@@ -45,7 +43,6 @@ interface ToolPickerProps {
 
 function ToolPicker({ tools, selected, disabled, onLoaded, onChange, remember, onRemember }: ToolPickerProps) {
   usePageLocale();
-  const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [query, setQuery] = useState('');
@@ -59,27 +56,22 @@ function ToolPicker({ tools, selected, disabled, onLoaded, onChange, remember, o
     setLoading(true);
     setFailed(false);
     fetchConnectedTools()
-      .then(list => { if (ticket !== version.current) return; const current = latest.current; current.onLoaded(list); current.onChange(current.selected.filter(key => list.some(tool => toolKey(tool) === key))); })
+      .then(list => { if (ticket !== version.current) return; latest.current.onLoaded(list); })
       .catch(() => { if (ticket !== version.current) return; latest.current.onLoaded([]); setFailed(true); })
       .finally(() => { if (ticket === version.current) setLoading(false); });
   };
+  useEffect(() => { load(); }, []);
 
-  return (
-    <Popover label={t('chat.permissionsTitle')} side="top" align="end" open={open} onOpenChange={next => { setOpen(next); if (next) load(); else version.current++; }} trigger={
-      <Button size="sm" variant="ghost" disabled={disabled} aria-label={t('chat.toolPicker', { count: selected.length, limit: MAX_TOOLS })} title={t('chat.permissionsTitle')} className={cn('chat-composer-permission-button', selected.length > 0 && 'chat-composer-selected')}><ShieldCheck className="size-4" aria-hidden="true" /><span>{t('chat.confirmEach')}</span>{selected.length > 0 ? <span className="chat-skill-count">{selected.length}</span> : null}</Button>
-    } content={
-        <div className="chat-tool-menu flex flex-col gap-2 text-sm">
-          <header className="chat-picker-heading"><strong>{t('chat.permissionsTitle')}</strong></header>
-          <div className="chat-permission-current"><ShieldCheck size={20} aria-hidden="true" /><div><strong>{t('chat.confirmEach')}</strong><p>{t('workbenchNavigation.hostPermissions')}</p></div><Check size={16} aria-hidden="true" /></div>
+  return <div className="chat-tool-menu flex flex-col gap-2 text-sm">
+          <header className="chat-picker-heading"><strong>{t('chat.composerToolsTitle')}</strong></header>
+          <p className="chat-picker-help">{t('chat.composerToolsHelp')}</p>
           <Input label={t('chat.searchTools')} value={query} onChange={event => setQuery(event.target.value)} />
-          <p className="m-0 text-xs text-ink-secondary">{t('chat.toolContext')}</p>
-          <p className="m-0 text-xs text-ink-secondary">{t('chat.toolsHelp')}</p>
           <Checkbox checked={remember} disabled={disabled} onChange={onRemember} label={t('chat.rememberTools')} />
-          <p className="m-0 text-xs text-ink-secondary">{t('chat.rememberToolsHelp')}</p>
+          <p className="chat-picker-help">{t('chat.composerRememberHelp')}</p>
           {loading ? <Loading label={t('chat.loadingTools')} /> : null}
           {failed ? <p className="m-0 text-xs text-ink-secondary">{t('chat.toolsFailed')}</p> : null}
           {!loading && !failed && tools?.length === 0 ? (
-            <p className="m-0 text-xs text-ink-secondary">{t('chat.noToolsBefore')}<Link to="/mcp" state={{ capabilityEntry: { runtime: 'dgos' } }} className={LINK}>{t('chat.mcp')}</Link> {t('chat.noToolsAfter')}</p>
+            <p className="m-0 text-xs text-ink-secondary">{t('chat.noToolsBefore')}<Link to="/mcp" className={LINK}>{t('chat.mcp')}</Link> {t('chat.noToolsAfter')}</p>
           ) : null}
           {tools?.filter(tool => `${tool.server_name} ${tool.tool_name} ${tool.description ?? ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).map(tool => {
             const key = toolKey(tool);
@@ -92,10 +84,8 @@ function ToolPicker({ tools, selected, disabled, onLoaded, onChange, remember, o
             );
           })}
           {tools?.length && !tools.some(tool => `${tool.server_name} ${tool.tool_name} ${tool.description ?? ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())) ? <p className="chat-picker-empty">{t('chat.noMatchingTools')}</p> : null}
-          <div className="chat-picker-footer"><Link to="/mcp" state={{ capabilityEntry: { runtime: 'dgos' } }} className={LINK}>{t('chat.mcp')}</Link><Button size="sm" variant="ghost" onClick={load} disabled={loading}>{t('chat.refreshTools')}</Button></div>
-        </div>
-    } />
-  );
+          <div className="chat-picker-footer"><Link to="/mcp" className={LINK}>{t('chat.mcp')}</Link><Button size="sm" variant="ghost" onClick={load} disabled={loading}>{t('chat.refreshTools')}</Button></div>
+        </div>;
 }
 
 export default function Composer() {
@@ -130,6 +120,9 @@ export default function Composer() {
   const [tools, setTools] = useState<ConnectedTool[] | null>(null);
   const [pickerKey, setPickerKey] = useState(0);
   const [skillRequest, setSkillRequest] = useState(0);
+  const [materialRequest, setMaterialRequest] = useState(0);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [morePage, setMorePage] = useState<'tools' | 'voice' | null>(null);
   const composing = useRef(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const form = useRef<HTMLFormElement>(null);
@@ -155,7 +148,7 @@ export default function Composer() {
     setPickerKey(key => key + 1);
   }, [actionCode, actionError, sessionId, setSessionTools]);
 
-  useEffect(() => { setTools(null); setPickerKey(key => key + 1); setAssetBusy(false); setVoiceBusy(false); }, [sessionId]);
+  useEffect(() => { setTools(null); setPickerKey(key => key + 1); setAssetBusy(false); setVoiceBusy(false); setMoreOpen(false); }, [sessionId]);
 
   const submit = async () => {
     if (!canSend || preparingRef.current || !sessionId) return;
@@ -194,11 +187,16 @@ export default function Composer() {
   if (!session) return null;
 
   return (
-    <Attachments sessionId={session.id} disabled={stale || generating || voiceBusy} onBusy={setAssetBusy}>{media =>
-    <TargetBar session={session} skillRequest={skillRequest}>{target =>
+    <Attachments sessionId={session.id} openRequest={materialRequest} disabled={stale || accountBusy || preparing || voiceBusy} onBusy={setAssetBusy}>{media =>
+    <TargetBar session={session} preparing={preparing} content={draft} skillRequest={skillRequest}>{target =>
     <form ref={form} aria-label={t('chat.sendForm')} className="chat-composer" onSubmit={event => { event.preventDefault(); void submit(); }}>
       <div className="chat-composer-body" onFocusCapture={revealComposerControl}>
-      <div className="chat-composer-context">{target.context}{media.attachments}</div>
+      <div className="chat-composer-context">{target.context}{media.attachments}{selectedTools.map(key => {
+        const tool = tools?.find(item => toolKey(item) === key);
+        let name = t('chat.composerToolsTitle');
+        try { const parts: unknown = JSON.parse(key); if (Array.isArray(parts) && typeof parts[1] === 'string') name = parts[1]; } catch { /* Unavailable selections stay removable and cannot be sent. */ }
+        return <Button key={key} type="button" size="xxs" variant="ghost" className="chat-context-chip chat-tool-chip" disabled={accountBusy || stale || preparing} title={tool ? `${tool.server_name} / ${tool.tool_name}` : name} aria-label={t('chat.composerRemoveTool', { name })} onClick={() => setSessionTools(session.id, selectedTools.filter(item => item !== key))}><Wrench size={13} aria-hidden="true" /><span>{name}</span><X size={13} aria-hidden="true" /></Button>;
+      })}</div>
       {actionError ? <ChatNotice tone="error">{actionError}</ChatNotice> : null}
       {submitError ? <ChatNotice tone="error">{submitError}</ChatNotice> : null}
       {unknown ? <ChatNotice tone="warning">{t('chat.continueBlocked')}</ChatNotice> : null}
@@ -236,18 +234,20 @@ export default function Composer() {
       </div>
       <div className="chat-composer-footer">
         <div className="chat-composer-toolbar" role="group" aria-label={t('chat.composerTools')}>
-          {media.attachmentTrigger}{target.settings}{media.contextTrigger}
-          <ContextPanel session={session} content={draft} toolKeys={selectedTools} disabled={stale || accountBusy || preparing} />
-          <SkillAccess session={session} content={draft} disabled={stale || accountBusy || preparing} />
-          <RunInspector sessionId={session.id} toolKeys={selectedTools} disabled={stale || accountBusy || preparing} />
-          {sessionId ? <VoiceCapture key={`voice:${sessionId}`} sessionId={sessionId} disabled={stale || generating || assetBusy} onBusy={setVoiceBusy} /> : null}
-          {target.skills}
+          {media.attachmentTrigger}{target.settings}{target.skills}
+          <Popover label={t('chat.composerMore')} side="top" align="start" open={moreOpen} onOpenChange={next => { setMoreOpen(next); if (next) setMorePage(null); }} trigger={<Button type="button" size="sm" variant="ghost" iconOnly aria-label={t('chat.composerMore')} title={t('chat.composerMore')} className={cn('chat-composer-more', (selectedTools.length > 0 || voiceBusy) && 'chat-composer-selected')}><MoreHorizontal size={16} aria-hidden="true" /></Button>} content={<section className="chat-more-menu" data-page={morePage ?? 'menu'}>
+            <header className="chat-picker-heading"><strong>{t('chat.composerMore')}</strong></header>
+            <nav className="chat-more-navigation" aria-label={t('chat.composerMore')}>
+              <Button type="button" size="sm" variant="ghost" className="chat-more-action" aria-label={t('chat.toolPicker', { count: selectedTools.length, limit: MAX_TOOLS })} aria-pressed={morePage === 'tools'} onClick={() => setMorePage('tools')}><Wrench size={16} aria-hidden="true" /><span>{t('chat.composerToolsTitle')}</span>{selectedTools.length ? <span>{selectedTools.length}</span> : null}</Button>
+              <Button type="button" size="sm" variant="ghost" className="chat-more-action" aria-pressed={morePage === 'voice'} onClick={() => setMorePage('voice')}><Mic size={16} aria-hidden="true" /><span>{t('chat.composerVoice')}</span></Button>
+            </nav>
+            {morePage === 'tools' ? <ToolPicker key={pickerKey} tools={tools} selected={selectedTools} disabled={accountBusy || stale || preparing} remember={rememberTools} onRemember={remember => setRememberTools(session.id, remember)} onLoaded={setTools} onChange={keys => setSessionTools(session.id, keys)} /> : null}
+            {morePage === 'voice' ? <VoiceCapture key={`voice:${session.id}`} sessionId={session.id} disabled={stale || accountBusy || preparing || assetBusy} onBusy={setVoiceBusy} onClose={() => setMoreOpen(false)} /> : null}
+          </section>} />
         </div>
         <div className="chat-composer-primary" role="group" aria-label={t('chat.composerModel')}>
-          <ToolPicker key={pickerKey} tools={tools} selected={selectedTools} disabled={generating || !session || stale}
-            remember={rememberTools} onRemember={remember => { if (sessionId) setRememberTools(sessionId, remember); }}
-            onLoaded={setTools} onChange={keys => { if (sessionId) setSessionTools(sessionId, keys); }} />
           {target.model}{target.effort}
+          <ContextPanel session={session} content={draft} toolKeys={selectedTools} disabled={stale || accountBusy || preparing} onOpenMaterials={() => setMaterialRequest(value => value + 1)} onOpenSkills={() => setSkillRequest(value => value + 1)} />
           {generating
             ? <Button key="stop" type="button" variant="danger" size="sm" iconOnly className="chat-composer-send" aria-label={t('chat.stop')} title={t('chat.stop')} loading={generation?.stopping} onClick={event => { event.preventDefault(); event.stopPropagation(); void stop(); }}><Square className="size-4" aria-hidden="true" /></Button>
             : <Button key="send" type="submit" size="sm" iconOnly className="chat-composer-send" aria-label={t('chat.send')} title={!hasTarget ? t('chat.selectProviderModel') : t('chat.send')} disabled={!canSend} loading={preparing}><ArrowUp className="size-4" aria-hidden="true" /></Button>}

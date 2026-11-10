@@ -14,8 +14,6 @@ import {
   CreateMcpServerRequest, CallMcpToolRequest, CallMcpToolResponse,
 } from '../stores/mcpStore';
 import './McpManagement.css';
-import NativeManager from '../components/nativeExtensions/NativeManager';
-import { CapabilityReturn, useCapabilityEntry } from '../components/chat/RuntimeNavigation';
 
 const emptyConfig = (): CreateMcpServerRequest => ({
   name: '', transport: 'stdio', stdio: { executable: '', args: [] },
@@ -381,11 +379,6 @@ export default function McpManagement() {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [compactView, setCompactView] = useState<'list' | 'detail'>('list');
-  const capabilityEntry = useCapabilityEntry('/mcp');
-  const [nativeMode, setNativeMode] = useState(capabilityEntry.runtime === 'native');
-  const nativeOpened = useRef(nativeMode);
-  if (nativeMode) nativeOpened.current = true;
-  useEffect(() => { if (capabilityEntry.runtime) setNativeMode(capabilityEntry.runtime === 'native'); }, [capabilityEntry.key]);
   const { root: contentRef, narrow: containerNarrow } = useLayoutBudget<HTMLDivElement>(element => {
     const rootRem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 14;
     const uiFont = parseFloat(getComputedStyle(element).getPropertyValue('--font-size-ui')) || 12;
@@ -462,15 +455,11 @@ export default function McpManagement() {
       <header className="mcp-header">
         <div className="min-w-0"><h1 className="m-0 text-lg font-semibold">{t('mcp.title')}</h1><p className={MUTED}>{t('mcp.subtitle')}</p></div>
         <div className="mcp-header-actions">
-          <Button variant="secondary" size="xs" onClick={() => setNativeMode(value => !value)}>{t(nativeMode ? 'nativeExtensions.backToDgos' : 'nativeExtensions.manageNative')}</Button>
-          {!nativeMode && <>{formOpen && !showDetail && <Button size="xs" onClick={() => setCompactView('detail')}>{t('mcp.resumeEditing')}</Button>}
+          {formOpen && !showDetail && <Button size="xs" onClick={() => setCompactView('detail')}>{t('mcp.resumeEditing')}</Button>}
           <Button size="xs" disabled={formOpen} onClick={() => { setEditing(null); setFormOpen(true); if (containerNarrow) setCompactView('detail'); }}>{t('mcp.addServer')}</Button>
-          <Button variant="secondary" size="xs" disabled={loading} onClick={() => void fetch()}>{t('mcp.refreshStatus')}</Button></>}
+          <Button variant="secondary" size="xs" disabled={loading} onClick={() => void fetch()}>{t('mcp.refreshStatus')}</Button>
         </div>
       </header>
-      <CapabilityReturn path="/mcp" />
-      <div className={nativeMode ? 'flex min-h-0 flex-1 flex-col' : 'hidden'} hidden={!nativeMode}>{nativeOpened.current && <NativeManager kind="mcp" initialSelection={capabilityEntry.nativeSelection} initialSessionId={capabilityEntry.sessionId} />}</div>
-      <div className={nativeMode ? 'hidden' : 'contents'} hidden={nativeMode}>
       {error && <div role="alert" className="rounded-lg border border-status-error bg-status-error-surface px-4 py-3 text-sm text-status-error-text wrap-anywhere">{error}</div>}
       {notice && <div role="status" className="rounded-lg border border-status-success bg-status-success-surface px-4 py-3 text-sm text-status-success-text wrap-anywhere">{notice}</div>}
       {!showList && (serversRead.status !== 'ready' || serversRead.refresh.status !== 'current') && <ResourceDetail state={resourceView(serversRead, false)} loadingLabel={t('mcp.loadingServers')} retry={<Button variant="secondary" size="sm" onClick={() => void fetch()}>{t('common.retry')}</Button>} />}
@@ -577,7 +566,6 @@ export default function McpManagement() {
         </section>
       </div>
       {tool && toolServer && <ToolDialog tool={tool} server={toolServer} onClose={() => setTool(null)} />}
-      </div>
     </div>
   </main>;
 }

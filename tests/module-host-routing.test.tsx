@@ -16,6 +16,8 @@ const bridge = vi.hoisted(() => ({
   reports: [] as Array<{ attachmentId: unknown; ticket: unknown; receipt: unknown }>,
 }));
 
+vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => undefined) }));
+
 vi.mock('@tauri-apps/api/core', () => {
   class Channel {
     onmessage: (message: unknown) => void = () => undefined;

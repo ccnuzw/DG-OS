@@ -250,8 +250,10 @@ pub(crate) fn git_command(cwd: &Path) -> Command {
         .env_remove("GIT_CONFIG_COUNT").env_remove("GIT_CONFIG_PARAMETERS").env_remove("GIT_DIR").env_remove("GIT_WORK_TREE").env_remove("GIT_INDEX_FILE").env_remove("GIT_SSH_COMMAND").env_remove("GIT_SSH");
     command
 }
-pub(crate) async fn git_output(mut command: Command, deadline: Duration, lease: &CancellationToken, stop: &CancellationToken) -> Result<(Vec<u8>, bool), String> {
-    const LIMIT: u64 = 1024 * 1024;
+pub(crate) async fn git_output(command: Command, deadline: Duration, lease: &CancellationToken, stop: &CancellationToken) -> Result<(Vec<u8>, bool), String> {
+    git_output_bounded(command, deadline, lease, stop, 1024 * 1024).await
+}
+pub(crate) async fn git_output_bounded(mut command: Command, deadline: Duration, lease: &CancellationToken, stop: &CancellationToken, limit: usize) -> Result<(Vec<u8>, bool), String> {
     command.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).kill_on_drop(true);
     #[cfg(unix)] command.process_group(0);
     let mut child = command.spawn().map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { "git_unavailable" } else { "git_failed" })?;
@@ -259,8 +261,8 @@ pub(crate) async fn git_output(mut command: Command, deadline: Duration, lease: 
     let stdout = child.stdout.take().ok_or("git_failed")?;
     let io = async {
         let mut bytes = Vec::new();
-        stdout.take(LIMIT + 1).read_to_end(&mut bytes).await.map_err(|_| "git_failed")?;
-        if bytes.len() > LIMIT as usize { return Err("git_output_limit"); }
+        stdout.take(limit as u64 + 1).read_to_end(&mut bytes).await.map_err(|_| "git_failed")?;
+        if bytes.len() > limit { return Err("git_output_limit"); }
         let status = child.wait().await.map_err(|_| "git_failed")?;
         if !status.success() { return Err("git_failed"); }
         Ok((bytes, false))

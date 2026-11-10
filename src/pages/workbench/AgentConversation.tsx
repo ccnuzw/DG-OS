@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button, Input } from '@dgos/ui';
+import { ArrowUp, Square } from 'lucide-react';
 import { useLocale } from '../../i18n';
 import { useAgentRunner, type AgentSession, type Engine, type Json, type Pending, type AgentEvent as Event } from '../../stores/agentRunnerStore';
-import Markdown from '../../components/chat/Markdown';
+import Markdown, { MarkdownHighlightContext } from '../../components/chat/Markdown';
 import ExecutionDetails, { NativeValue } from '../../components/chat/ExecutionDetails';
 import { SessionCapabilitySnapshot } from '../../components/development/CapabilitySnapshotView';
 import { contextGeneration, useContextSelection } from '../../stores/developmentSelection';
@@ -33,6 +34,7 @@ import { AgentSlashPicker } from '../../components/development/AgentSlashPicker'
 import { useCodexOperations, codexOperationsKey, emptyCodexOperations } from '../../stores/codexOperations';
 import type { CodexOperationScope } from '../../components/development/codexOperationsService';
 import { pendingAgentDraftKeys } from '../../components/development/agentPendingRequests';
+import { buffersAgentText, useAgentChatPreferences } from '../../stores/agentChatPreferences';
 
 export type AgentRuntimeAction = 'test' | 'preview' | 'build' | 'terminal';
 export type AgentMessageFocus = { runId: string; seq: number; nonce: number };
@@ -152,6 +154,7 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
   const savedSession = useDevelopment(state => state.sessions.find(item => item.id === session.id));
   const projectId = useDevelopment(state => savedSession ? savedSession.project_id : state.selection.project_id);
   const taskId = useDevelopment(state => savedSession ? savedSession.task_id : state.selection.task_id);
+  const preferences = useAgentChatPreferences({ projectId, session });
   const { generation } = useContextSelection();
   const prompt = drafts[session.id] ?? '';
   const imageOwner = agentImagesKey(projectId, session);
@@ -191,6 +194,7 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
   const focusedMessage = useRef<string | null>(null);
   const { rows, toolResults, toolNames } = useMemo(() => transcript(session.events), [session.events]);
   const runStates = useMemo(() => activityStates(session.events, session), [session.events, session.active_run, session.status]);
+  const bufferingText = useMemo(() => buffersAgentText(session, session.active_run, preferences.stream_response), [session.events, session.active_run, session.status, preferences.stream_response]);
   const referenceEvent = useMemo(() => {
     for (let index = session.events.length - 1; index >= 0; index -= 1) {
       const event = session.events[index];
@@ -207,7 +211,7 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
     if (node) node.scrollTop = follow.current ? node.scrollHeight : position?.top ?? 0;
   }, [session.id, epoch, visible, surfaceActive]);
   useEffect(() => { setInspect(false); setExpandedInput(false); setHasNewContent(false); }, [session.id, epoch]);
-  useEffect(() => { if (follow.current) latest(); else if (session.events.length) setHasNewContent(true); }, [session.events[session.events.length - 1]?.seq, visible, surfaceActive]);
+  useEffect(() => { if (follow.current) latest(); else if (session.events.length) setHasNewContent(true); }, [session.events[session.events.length - 1]?.seq, bufferingText, visible, surfaceActive]);
   useLayoutEffect(() => {
     const node = viewport.current, anchor = olderAnchor.current;
     if (!node || !anchor) return;
@@ -240,10 +244,40 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
   navigationOwner.current = { sessionId: session.id, epoch, devEpoch, generation, mounted: true };
   useEffect(() => { navigationOwner.current.mounted = true; return () => { navigationOwner.current.mounted = false; }; }, []);
   const currentOwner = () => visibleOwner.current && navigationOwner.current.mounted && navigationOwner.current.sessionId === session.id && navigationOwner.current.epoch === epoch && navigationOwner.current.devEpoch === devEpoch && navigationOwner.current.generation === generation && epoch === useAgentRunner.getState().epoch && devEpoch === useDevelopment.getState().epoch && generation === contextGeneration() && useAgentRunner.getState().selected === session.id && useAgentRunner.getState().session?.generation === session.generation;
+  const manuallyBrowsing = useRef(false);
+  const followedEditSeq = useRef(session.events[session.events.length - 1]?.seq ?? 0);
+  const [followError, setFollowError] = useState<string | null>(null);
+  const followPreferences = useRef(preferences.follow_edits);
+  followPreferences.current = preferences.follow_edits;
+  useEffect(() => {
+    const browse = (event: globalThis.Event) => {
+      if (visibleOwner.current && event.target instanceof Element && event.target.closest('.dev-document-column, .dev-navigation, .dev-commit-column, .dev-main-view-nav, .agent-output-references')) manuallyBrowsing.current = true;
+    };
+    document.addEventListener('pointerdown', browse, true);
+    document.addEventListener('keydown', browse, true);
+    document.addEventListener('wheel', browse, true);
+    return () => { document.removeEventListener('pointerdown', browse, true); document.removeEventListener('keydown', browse, true); document.removeEventListener('wheel', browse, true); };
+  }, []);
+  useEffect(() => {
+    const after = followedEditSeq.current;
+    followedEditSeq.current = session.events[session.events.length - 1]?.seq ?? after;
+    if (!preferences.follow_edits || !currentOwner() || !follow.current || manuallyBrowsing.current || !onOpenReference || !session.active_run) return;
+    for (let index = session.events.length - 1; index >= 0; index -= 1) {
+      const edit = session.events[index];
+      if (edit.seq <= after) break;
+      if (edit.run !== session.active_run || agentEventFailed(edit)) continue;
+      if (edit.kind === 'item/started' || object(edit.data).status === 'inProgress') continue;
+      if (edit.kind === 'message' && blocks(edit).some(block => object(block).type === 'tool_use' && !toolResults.has(itemKey(edit, text(object(block).id))))) continue;
+      const reference = agentOutputReferences(edit, toolNames).references.find(reference => reference.diff);
+      if (!reference) continue;
+      void Promise.resolve().then(() => { const shouldOpen = () => currentOwner() && !manuallyBrowsing.current && follow.current && followPreferences.current; if (shouldOpen()) return onOpenReference(reference, 'diff', shouldOpen); }).catch(error => { if (currentOwner() && followPreferences.current && !manuallyBrowsing.current) setFollowError(error instanceof Error ? error.message : 'unavailable'); });
+      break;
+    }
+  }, [session.events, preferences.follow_edits]);
   const inputReferences = useComposerReferences({ projectId, taskId, ownerId: session.id, disabled: !visible || busy || sending || acting || session.status !== 'idle' || Boolean(session.pending.length), isCurrent: currentOwner });
   const reason = session.persistence_error ? t('agent.storageFailed') : busy || sending || acting || imageDraft?.busy ? t('agent.sendBusy') : pendingSend ? t('directConversation.send_unknown') : pendingSteer ? t('codexInteractions.unknown') : session.pending.length || session.status === 'waiting' ? t('agent.sendWaiting') : session.status === 'running' || session.active_run ? t(session.engine === 'codex' && session.controls?.steering ? 'codexInteractions.runningHint' : 'agent.sendRunning') : session.status !== 'idle' ? t('agent.sendUnavailable') : !prompt.trim() && !inputReferences.references.length && !hasImages ? t('agent.sendEmpty') : '';
   const referenceActions: AgentReferenceActions = {
-    onOpenReference: onOpenReference ? (reference, mode) => currentOwner() ? onOpenReference(reference, mode) : undefined : undefined,
+    onOpenReference: onOpenReference ? (reference, mode) => { manuallyBrowsing.current = true; return currentOwner() ? onOpenReference(reference, mode) : undefined; } : undefined,
     onSelectRun: onSelectRun ? runId => { if (currentOwner() && session.events.some(event => event.run === runId)) onSelectRun(runId); } : undefined,
   };
   function clearPendingSend(requestId: string, requestGeneration: string) {
@@ -288,6 +322,7 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
     if (sendingRef.current || reason || !currentOwner()) return;
     const entries = useDevelopmentDrafts.getState().entries;
     if (pendingAgentDraftKeys(entries, devEpoch, projectId, session.id, 'pending-send').length || pendingAgentDraftKeys(entries, devEpoch, projectId, session.id, 'pending-steer').length) return;
+    manuallyBrowsing.current = false; setFollowError(null);
     const id = session.id;
     const sentPrompt = prompt;
     const captured = projectId ? captureConversationReferences(projectId, id) : [];
@@ -295,7 +330,7 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
     const images = session.engine === 'codex' ? captureAgentImages(imageOwner) : [];
     if (!sentPrompt.trim() && !captured.length && !images.length) return;
     const proposedSettings = agentTurnSettings(session);
-    const settings = proposedSettings ? { ...proposedSettings } : undefined;
+    const settings = { ...proposedSettings, response_preferences: { language: preferences.language, brevity: preferences.brevity, next_step_suggestions: preferences.next_step_suggestions } };
     const capture: PendingConversationSend = { requestId: crypto.randomUUID(), generation: session.generation, text: sentPrompt, references: captured, skills, images: images.map(image => ({ id: image.id })), titleEligible: emptySession };
     sendingRef.current = true; setSending(true);
     useDevelopmentDrafts.setState(state => ({ entries: { ...state.entries, [pendingSendKey]: { kind: 'conversation', value: capture, baseline: null } } }));
@@ -307,9 +342,10 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
     } finally { sendingRef.current = false; if (navigationOwner.current.mounted) setSending(false); }
   }
   return <div ref={root} className="agent-conversation-product" onFocusCapture={event => { requestFocus.current = (event.target as HTMLElement).closest('.agent-dialogue-requests') ? event.target as HTMLElement : null; }}>
+    <MarkdownHighlightContext.Provider value={preferences.code_highlighting}>
     <header className="agent-dialogue-header">
       <div className="agent-dialogue-identity"><strong>{t(`agent.engine.${session.engine}`)}</strong><span className="agent-dialogue-status" data-state={session.status}>{t(`agent.state.${session.status}`)}</span></div>
-      <div className="agent-dialogue-actions"><Button size="xs" variant="secondary" disabled={busy || interruptPending || !session.active_run || !['running', 'waiting'].includes(session.status)} onClick={() => { const current = useAgentRunner.getState().session; if (currentOwner() && current && current.active_run === session.active_run && ['running', 'waiting'].includes(current.status)) void action('interrupt_agent_session', { sessionId: session.id, generation: session.generation, runId: session.active_run }); }}>{t('agent.interrupt')}</Button><Button size="xs" variant="secondary" disabled={busy || session.status === 'closed'} onClick={() => { if (currentOwner()) void action('close_agent_session', { sessionId: session.id }); }}>{t('agent.close')}</Button></div>
+      <div className="agent-dialogue-actions"><Button size="xs" variant="secondary" disabled={busy || session.status === 'closed'} onClick={() => { if (currentOwner()) void action('close_agent_session', { sessionId: session.id }); }}>{t('agent.close')}</Button></div>
     </header>
     <div className="agent-dialogue-transcript" ref={viewport} role="region" tabIndex={0} aria-label={t('agent.messages')} onScroll={event => { if (!visibleOwner.current) return; const node = event.currentTarget; const bottom = node.scrollHeight - node.scrollTop - node.clientHeight < 64; follow.current = bottom; setAtBottom(bottom); if (devEpoch === useDevelopment.getState().epoch) useDevelopment.getState().setReading(session.id, { top: node.scrollTop, follow: bottom }); }}>
       <details className="agent-dialogue-capabilities"><summary>{t('capabilities.actual')}</summary><SessionCapabilitySnapshot key={session.id} sessionId={session.id} snapshot={session.configuration} runtime={session} /></details>
@@ -317,9 +353,9 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
       <div className="agent-dialogue-messages">
         {session.history_truncated ? <p className="text-sm text-ink-secondary">{t('agent.truncated')}</p> : null}
         {rows.length > shownRows ? <Button size="xs" variant="secondary" onClick={() => { const node = viewport.current; if (node) olderAnchor.current = { top: node.scrollTop, height: node.scrollHeight }; setShownRows(count => count + 100); }}>{t('agent.loadOlder')}</Button> : null}
-        {rows.slice(-shownRows).map(({ event, suppressText, codex }) => <EventContent key={`${session.id}:${event.seq}`} event={event} suppressText={suppressText} codex={codex} toolResults={toolResults} toolNames={toolNames} runState={runStates.get(event.run ?? '')} {...referenceActions} />)}
+        {rows.slice(-shownRows).map(({ event, suppressText, codex }) => <EventContent key={`${session.id}:${event.seq}`} event={event} suppressText={suppressText} bufferText={bufferingText && event.run === session.active_run} codex={codex} toolResults={toolResults} toolNames={toolNames} runState={runStates.get(event.run ?? '')} {...referenceActions} />)}
         {!session.events.length ? <p className="agent-dialogue-empty">{t('agent.empty')}</p> : null}
-        {session.status === 'idle' && session.events.some(event => ['result', 'turn/completed'].includes(event.kind)) && (onOpenRuntime || onOpenChanges) ? <section className="agent-dialogue-result-actions" aria-label={t('agent.resultActions')}>
+        {preferences.next_step_suggestions && session.status === 'idle' && session.events.some(event => ['result', 'turn/completed'].includes(event.kind)) && (onOpenRuntime || onOpenChanges) ? <section className="agent-dialogue-result-actions" aria-label={t('agent.resultActions')}>
           <p>{t('agent.resultBoundary')}</p>
           {onOpenChanges ? <Button size="xs" variant="secondary" onClick={() => { if (currentOwner()) onOpenChanges(); }}>{t('agent.viewChanges')}</Button> : null}
           {onOpenRuntime ? <><Button size="xs" variant="secondary" onClick={() => { if (currentOwner()) onOpenRuntime('test'); }}>{t('agent.runTests')}</Button><Button size="xs" variant="secondary" onClick={() => { if (currentOwner()) onOpenRuntime('preview'); }}>{t('agent.openPreview')}</Button></> : null}
@@ -330,6 +366,7 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
     <footer className={`agent-dialogue-footer${expandedInput ? ' agent-dialogue-footer-expanded' : ''}`}>
       {!atBottom ? <Button size="xs" variant="secondary" className="agent-dialogue-latest" onClick={latest}>{t(hasNewContent ? 'agent.newContent' : 'agent.latest')}</Button> : null}
       {interruptPending ? <p role="status">{t('agent.interruptPending')}</p> : null}
+      {followError ? <p role="alert" className="text-status-error">{errorText(followError)}</p> : null}
       {session.persistence_error ? <p role="alert" className="text-status-error">{t('agent.storageFailed')}</p> : null}
       {session.engine === 'codex' ? <CodexTurnControls hideMode key={`${epoch}:${session.id}:${session.generation}`} session={session} projectId={projectId} prompt={prompt} setDraft={setDraft} currentOwner={currentOwner} disabled={busy || !visible || !surfaceActive || Boolean(pendingSend)} /> : null}
       <div className="agent-dialogue-requests">
@@ -342,11 +379,12 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
       <div className="agent-dialogue-composer"><div className={`agent-composer-shell${expandedInput ? ' agent-composer-shell-expanded' : ''}`}>
         <AgentSlashPicker session={session} projectId={projectId} value={prompt} onChange={(value, expected) => { if (currentOwner()) setDraft(session.id, value, expected); }} inputRef={composerInput} active={visible && surfaceActive} disabled={busy || sending || acting || Boolean(pendingSend)} />
         {inputReferences.chips}{session.engine === 'codex' ? <AgentImages owner={imageOwner} active={visible && surfaceActive} disabled={busy || sending || acting || Boolean(pendingSend) || !visible || !surfaceActive || session.status !== 'idle'} /> : null}
-        <div className="agent-composer-input"><Input multiline rows={2} id="agent-message" ref={composerInput} label={t('agent.prompt')} className="type-reading" aria-describedby="agent-send-hint" value={prompt} onPaste={session.engine === 'codex' ? agentImagePaste(imageOwner, busy || sending || acting || Boolean(pendingSend) || !visible || !surfaceActive || session.status !== 'idle') : undefined} onChange={event => setDraft(session.id, inputReferences.promptChange(event.target.value, prompt, event.target.selectionStart, (event.nativeEvent as InputEvent).isComposing))} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); if (!event.repeat) void send(); } }} /></div>
+        <div className="agent-composer-input"><Input multiline rows={2} id="agent-message" ref={composerInput} label={t('agent.prompt')} placeholder={t('agentPreferences.placeholder')} className="type-reading" aria-describedby="agent-send-hint" value={prompt} onPaste={session.engine === 'codex' ? agentImagePaste(imageOwner, busy || sending || acting || Boolean(pendingSend) || !visible || !surfaceActive || session.status !== 'idle') : undefined} onChange={event => setDraft(session.id, inputReferences.promptChange(event.target.value, prompt, event.target.selectionStart, (event.nativeEvent as InputEvent).isComposing))} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); if (!event.repeat) void send(); } }} /></div>
         <div className="agent-composer-edit-actions"><small>{t('agentSkills.slash.hint')}</small><Button size="xs" variant="ghost" aria-expanded={expandedInput} onClick={() => { setExpandedInput(value => !value); composerInput.current?.focus({ preventScroll: true }); }}>{t(expandedInput ? 'agent.collapseInput' : 'agent.expandInput')}</Button></div>
-        <AgentComposerControls session={session} projectId={projectId} visible={visible} disabled={busy || sending || acting || Boolean(pendingSend)} referencePicker={inputReferences.picker} references={referenceEvent ? <AgentOutputReferences key={`${session.id}:${referenceEvent.seq}`} event={referenceEvent} toolNames={toolNames} {...referenceActions} /> : undefined} model={visible && surfaceActive && projectId && onNewConversation && emptySession ? <ComposerModelPicker projectId={projectId} value={boundConfiguration} preferred={boundConfiguration} disabled={busy || sending || acting} onChange={configuration => { if (currentOwner()) void onNewConversation(configuration); }} /> : <div className="dev-review-toolbar"><span className="text-xs">{binding ? `${binding.model_id} · ${t(`agent.engine.${session.engine}`)}` : t(`agent.engine.${session.engine}`)}</span>{onContinueModel ? <Button size="xs" variant="ghost" onClick={() => { if (currentOwner()) onContinueModel(); }}>{t('workbenchNavigation.continueModel')}</Button> : null}</div>} sendHint={reason || t('agent.sendShortcut')} send={<Button disabled={Boolean(reason)} onClick={() => void send()}>{t('agent.send')}</Button>} />
+        <AgentComposerControls session={session} projectId={projectId} visible={visible} disabled={busy || sending || acting || Boolean(pendingSend)} referencePicker={inputReferences.picker} references={referenceEvent ? <AgentOutputReferences key={`${session.id}:${referenceEvent.seq}`} event={referenceEvent} toolNames={toolNames} {...referenceActions} /> : undefined} model={visible && surfaceActive && projectId && onNewConversation && emptySession ? <ComposerModelPicker projectId={projectId} value={boundConfiguration} preferred={boundConfiguration} disabled={busy || sending || acting} onChange={configuration => { if (currentOwner()) void onNewConversation(configuration); }} /> : <div className="dev-review-toolbar"><span className="text-xs">{binding ? `${binding.model_id} · ${t(`agent.engine.${session.engine}`)}` : t(`agent.engine.${session.engine}`)}</span>{onContinueModel ? <Button size="xs" variant="ghost" onClick={() => { if (currentOwner()) onContinueModel(); }}>{t('workbenchNavigation.continueModel')}</Button> : null}</div>} sendHint={reason || t('agent.sendShortcut')} send={session.active_run && ['running', 'waiting'].includes(session.status) ? <Button iconOnly aria-label={t('agent.interrupt')} title={t('agent.interrupt')} disabled={busy || interruptPending} onClick={() => { const current = useAgentRunner.getState().session; if (currentOwner() && current && current.active_run === session.active_run && ['running', 'waiting'].includes(current.status)) void action('interrupt_agent_session', { sessionId: session.id, generation: session.generation, runId: session.active_run }); }}><Square size={16} aria-hidden="true" /></Button> : <Button iconOnly aria-label={t('agent.send')} title={t('agent.send')} disabled={Boolean(reason)} onClick={() => void send()}><ArrowUp size={18} aria-hidden="true" /></Button>} />
       </div></div>
     </footer>
+    </MarkdownHighlightContext.Provider>
   </div>;
 }
 
@@ -397,6 +435,8 @@ function ConversationQueue({ session, prompt, setDraft, currentOwner, active, di
 export function AgentSessionHistory({ sessionId, taskId, children, visible = true, focusMessage }: { sessionId: string; taskId: string; children: ReactNode; visible?: boolean; focusMessage?: AgentMessageFocus }) {
   const { t } = useLocale();
   const epoch = useDevelopment(state => state.epoch);
+  const projectId = useDevelopment(state => state.sessions.find(item => item.id === sessionId)?.project_id ?? state.selection.project_id);
+  const preferences = useAgentChatPreferences({ projectId, sessionId });
   const { generation } = useContextSelection();
   const [runs, setRuns] = useState<DevRun[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -441,6 +481,7 @@ export function AgentSessionHistory({ sessionId, taskId, children, visible = tru
     return () => { active = false; };
   }, [sessionId, taskId, epoch, generation]);
   return <div className="agent-conversation-product" data-testid="dev-session-history">
+    <MarkdownHighlightContext.Provider value={preferences.code_highlighting}>
     <div className="agent-dialogue-transcript" ref={viewport} role="region" aria-label={t('agent.messages')} tabIndex={0} onScroll={event => { if (!visibleOwner.current) return; const node = event.currentTarget; if (epoch === useDevelopment.getState().epoch) useDevelopment.getState().setReading(sessionId, { top: node.scrollTop, follow: node.scrollHeight - node.scrollTop - node.clientHeight < 64 }); }}>
       <details className="agent-dialogue-capabilities"><summary>{t('capabilities.actual')}</summary><SessionCapabilitySnapshot sessionId={sessionId} snapshot={undefined} /></details>
       {runs && runs.length > shownRuns ? <Button size="xs" variant="secondary" onClick={() => { const node = viewport.current; if (node) historyAnchor.current = { top: node.scrollTop, height: node.scrollHeight }; setShownRuns(count => count + 10); }}>{t('agent.loadOlder')}</Button> : null}
@@ -451,6 +492,7 @@ export function AgentSessionHistory({ sessionId, taskId, children, visible = tru
       })}
     </div>
     <footer className="agent-dialogue-footer">{children}</footer>
+    </MarkdownHighlightContext.Provider>
   </div>;
 }
 
@@ -477,7 +519,7 @@ function ToolBlock({ event, block, toolResults, toolNames, runState }: { event: 
   </OperationRow>;
 }
 
-export function EventContent({ event, suppressText = false, codex, toolResults = new Map<string, Json>(), toolNames = new Map<string, string>(), runState, onOpenReference, onSelectRun }: AgentReferenceActions & { event: Event; suppressText?: boolean; codex?: CodexTranscriptEntry; toolResults?: ReadonlyMap<string, Json>; toolNames?: ReadonlyMap<string, string>; runState?: ActivityState }) {
+export function EventContent({ event, suppressText = false, bufferText = false, codex, toolResults = new Map<string, Json>(), toolNames = new Map<string, string>(), runState, onOpenReference, onSelectRun }: AgentReferenceActions & { event: Event; suppressText?: boolean; bufferText?: boolean; codex?: CodexTranscriptEntry; toolResults?: ReadonlyMap<string, Json>; toolNames?: ReadonlyMap<string, string>; runState?: ActivityState }) {
   const { t } = useLocale();
   const data = object(event.data);
   const content = blocks(event);
@@ -486,7 +528,7 @@ export function EventContent({ event, suppressText = false, codex, toolResults =
   const user = isUser(event);
   const assistant = event.kind === 'agentMessage' || data.type === 'assistant';
   const dialogue = user || assistant || terminal;
-  const source = !suppressText && dialogue ? prose(event) : '';
+  const source = !suppressText && !(bufferText && !user) && dialogue ? prose(event) : '';
   const imageCount = user ? Math.max(Array.isArray(data.images) ? data.images.length : 0, content.filter(block => object(block).type === 'image').length) : 0;
   const tools = content.filter(block => { const value = object(block); return value.type === 'tool_use' || value.type === 'tool_result' && !toolNames.has(itemKey(event, text(value.tool_use_id))); });
   const command = text(data.command) || text(data.query) || text(object(data.action).query) || (Array.isArray(data.changes) ? data.changes.map(change => text(object(change).path)).filter(Boolean).join(', ') : '');
@@ -498,6 +540,7 @@ export function EventContent({ event, suppressText = false, codex, toolResults =
   const hasReferences = references.references.length > 0 || references.unresolved || Boolean(failed && event.run);
   const diagnosticReferences = references.references.some(reference => reference.source === 'diagnostic') || failed;
   const nativeProjection = codex ?? projectCodexTranscript([event]).get(event);
+  if (bufferText && nativeProjection?.kind === 'summary') return null;
   if (nativeProjection) return <article data-testid={`agent-event-${event.seq}`} data-event-seq={event.seq} data-event-run={event.run ?? ''} data-event-kind={event.kind} className="agent-dialogue-event"><CodexTranscriptContent event={event} entry={nativeProjection} inspector={value => <NativeEvent event={value} />} /></article>;
   if (isReasoningEvent(event)) return null;
   // Summary-only Codex projections above never expose raw reasoning. Unknown native
