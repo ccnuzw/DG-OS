@@ -268,6 +268,7 @@ fn validate_existing_headers(text: &str, target: Target, scope: &Scope, project:
 }
 pub(super) fn validate_edited(text: &str, target: Target, scope: &Scope, project: Option<&str>, change: &Change) -> Result<(), Error> {
     let discovery = discover(text, target, scope, project)?;
+    if discovery.incomplete { return Err(Error::Limit); }
     if let Change::Upsert { name, .. } | Change::SetEnabled { name, .. } = change {
         let instance = discovery.instances.iter().find(|v| &v.native_key == name).ok_or(Error::InvalidFormat)?;
         if instance.owner != Owner::Loose { return Err(Error::Unsupported); }

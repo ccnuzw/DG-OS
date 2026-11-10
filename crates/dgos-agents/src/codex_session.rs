@@ -12,8 +12,30 @@ use tokio::{process::Command, sync::Mutex};
 mod history;
 #[path = "codex_permissions.rs"]
 mod permissions;
+#[path = "codex_operations_session.rs"]
+mod operations;
 
 type SendReceipt = ([u8; 32], Option<Result<(), String>>);
+type SteerReceipt = ([u8; 32], Result<crate::session::SteeringReceipt, String>);
+
+fn steering_fingerprint(run_id: &str, text: &str) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update((run_id.len() as u64).to_le_bytes());
+    hash.update(run_id.as_bytes());
+    hash.update(text.as_bytes());
+    hash.finalize().into()
+}
+
+fn steering_result(request_id: String, run_id: String, expected: &str, reply: Result<Value, String>) -> Result<crate::session::SteeringReceipt, String> {
+    use crate::session::{SteeringReceipt, SteeringState};
+    let state = match reply {
+        Ok(value) if value["turnId"].as_str() == Some(expected) => SteeringState::Applied,
+        Err(error) if error == "method_unsupported" => return Err("steering_unsupported".into()),
+        Err(error) if error == "engine_rejected" => return Err(error),
+        _ => SteeringState::Unknown,
+    };
+    Ok(SteeringReceipt { request_id, run_id, state })
+}
 
 // Codex rust-v0.167.0 App Server v2: turn/start returns the turn identity;
 // notifications may precede that reply. Approval IDs exposed to callers are
@@ -26,8 +48,11 @@ struct TurnState {
     opening: bool,
     deferred: Vec<Value>,
     user_echo_pending: bool,
+    steering_echoes: usize,
     deferred_bytes: usize,
     requests: HashMap<String, NativeRequest>,
+    operations: operations::OperationsState,
+    operation_binding: bool,
 }
 
 struct NativeRequest {
@@ -42,16 +67,24 @@ pub struct CodexSession {
     wire: Transport,
     view: Arc<Mutex<SessionView>>,
     receipts: Arc<Mutex<HashMap<String, SendReceipt>>>,
+    steering_receipts: Arc<Mutex<HashMap<String, SteerReceipt>>>,
+    pending_steering: Arc<std::sync::atomic::AtomicUsize>,
     turn: Arc<Mutex<TurnState>>,
     unsupported_observations: Arc<std::sync::atomic::AtomicU8>,
+    auth_launch: Option<Arc<crate::manager::native_auth::LaunchContext>>,
 }
 impl CodexSession {
-    async fn event(&self, event: Value) {
+    async fn event(&self, mut event: Value) {
+        crate::images::redact_image_inputs(&mut event);
         let mut view = self.view.lock().await;
         let mut turn = self.turn.lock().await;
-        // Closure must invalidate an opening immediately, not wait behind its
-        // history replies; a late resume reply cannot revive a closed transport.
+        // Startup must fail promptly, but a turn ACK already received by the
+        // transport must bind queued output before closure invalidates the turn.
         if event.get("method").and_then(Value::as_str) == Some("host/closed") {
+            if turn.starting {
+                turn.deferred.push(event);
+                return;
+            }
             Self::apply_event(&mut view, &mut turn, event);
             return;
         }
@@ -78,8 +111,18 @@ impl CodexSession {
     fn apply_event(view: &mut SessionView, turn: &mut TurnState, event: Value) -> Option<Value> {
         let method = event.get("method").and_then(Value::as_str).unwrap_or("");
         let params = event.get("params").cloned().unwrap_or(Value::Null);
+        if let Some(root) = view.native_id.as_deref() { turn.operations.event(root, &event); }
+        // Compact has an empty ACK; its first native started event supplies the
+        // identity. Never bind an arbitrary item or a terminal-only stale event.
+        if turn.operation_binding && turn.id.is_none() && method == "turn/started" && Self::matches_thread(view, &params) {
+            if let Some(id) = params.pointer("/turn/id").and_then(Value::as_str).filter(|id| !id.is_empty() && id.len() <= 512 && !id.chars().any(char::is_control) && !turn.operations.has_seen_turn(id)) {
+                turn.id = Some(id.into());
+                turn.operation_binding = false;
+            }
+        }
+        if method == "turn/started" && Self::matches_thread(view, &params) { operations::bind_automatic(view, turn, &params); }
         if let Some(id) = event.get("id") {
-            if !matches!(method, "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" | "item/permissions/requestApproval" | "tool/requestUserInput" | "mcpServer/elicitation/request") {
+            if !matches!(method, "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" | "item/permissions/requestApproval" | "item/tool/requestUserInput" | "mcpServer/elicitation/request") {
                 return Some(json!({"id":id,"error":{"code":-32601,"message":"Unsupported client request"}}));
             }
             let standalone = method == "mcpServer/elicitation/request" && params.get("turnId").is_none_or(Value::is_null);
@@ -129,10 +172,17 @@ impl CodexSession {
                     "failed" => "failed",
                     _ => "unknown",
                 };
-                view.status = session.into();
+                // Session-scoped MCP elicitation is not owned by this turn. Its
+                // request remains answerable until native resolution or closure.
+                view.pending.retain(|pending| session != "unknown" && pending.kind == "mcpServer/elicitation/request" && pending.data.get("turnId").is_none_or(Value::is_null));
+                view.status = if session == "idle" && !view.pending.is_empty() { "waiting" } else { session }.into();
                 view.error = error;
-                view.pending.clear();
                 let mut terminal = params.clone();
+                if let Some(items) = terminal.pointer_mut("/turn/items").and_then(Value::as_array_mut) {
+                    for item in items.iter_mut().filter(|item| item["type"] == "reasoning") {
+                        *item = json!({"type":"reasoning","id":item.get("id"),"summary":item.get("summary")});
+                    }
+                }
                 terminal["run_status"] = json!(run);
                 terminal["native_status"] = json!(status);
                 view.push(method, (run == "failed").then(|| native_error(&params)), terminal);
@@ -147,9 +197,13 @@ impl CodexSession {
                     .map(str::to_owned),
                 json!({"itemId":params.get("itemId")}),
             ),
+            "item/reasoning/summaryTextDelta" | "item/reasoning/summaryPartAdded" => {
+                view.push(method, params.get("delta").and_then(Value::as_str).map(str::to_owned), params.clone());
+            }
             "item/started" => {
                 if let Some(item) = params.get("item").filter(|item| !matches!(item.get("type").and_then(Value::as_str), Some("userMessage" | "agentMessage"))) {
-                    view.push(method, None, item.clone());
+                    let data = if item["type"] == "reasoning" { json!({"type":"reasoning","id":item.get("id"),"summary":item.get("summary")}) } else { item.clone() };
+                    view.push(method, None, data);
                 }
             }
             "item/commandExecution/outputDelta" | "item/fileChange/outputDelta" => {
@@ -157,7 +211,11 @@ impl CodexSession {
             }
             "item/completed" => {
                 if let Some(item) = params.get("item") {
-                    Self::completed_item(view, item, &mut turn.user_echo_pending);
+                    if item["type"] == "userMessage" && !turn.user_echo_pending && turn.steering_echoes > 0 {
+                        turn.steering_echoes -= 1;
+                    } else {
+                        Self::completed_item(view, item, &mut turn.user_echo_pending);
+                    }
                 }
             }
             "turn/diff/updated" => view.push(
@@ -213,9 +271,9 @@ impl CodexSession {
             params.get("turnId").or_else(|| params.pointer("/turn/id")).and_then(Value::as_str) == Some(id)
         })
     }
-    pub async fn send(&self, request_id: String, text: String, settings: Option<crate::session::AgentTurnSettings>, skills: Vec<crate::session::AgentSkillInput>) -> Result<(), String> {
+    pub async fn send(&self, request_id: String, text: String, settings: Option<crate::session::AgentTurnSettings>, skills: Vec<crate::session::AgentSkillInput>, images: Vec<crate::images::ValidatedImage>) -> Result<(), String> {
         let settings = settings.filter(|settings| !settings.is_empty());
-        if text.trim().is_empty() || text.len() > 65536 {
+        if (text.trim().is_empty() && images.is_empty()) || text.len() > 65536 {
             return Err("invalid_prompt".into());
         }
         crate::session::validate_skill_inputs(&skills)?;
@@ -225,6 +283,7 @@ impl CodexSession {
         hash.update(text.as_bytes());
         if let Some(settings) = &settings { hash.update([0]); hash.update(serde_json::to_vec(settings).map_err(|_| "invalid_turn_settings")?); }
         if !skills.is_empty() { hash.update(b"\0DG-OS skills\0"); hash.update(serde_json::to_vec(&skills).map_err(|_| "agent_skill_invalid")?); }
+        for image in &images { hash.update(image.fingerprint()); }
         let fingerprint: [u8; 32] = hash.finalize().into();
         let mut receipts = self.receipts.lock().await;
         if let Some(old) = receipts.get(&request_id) {
@@ -251,16 +310,21 @@ impl CodexSession {
             turn.deferred_bytes = 0;
             turn.requests.retain(|_, request| request.kind == "mcpServer/elicitation/request" && request.params.get("turnId").is_none_or(Value::is_null));
             turn.user_echo_pending = true;
+            turn.steering_echoes = 0;
             view.status = "running".into();
             view.active_run = Some(request_id.clone());
             view.error = None;
-            view.push("userMessage", Some(text.clone()), if skills.is_empty() { Value::Null } else { json!({"skills":skills}) });
+            let mut data = serde_json::Map::new();
+            if !skills.is_empty() { data.insert("skills".into(), json!(skills)); }
+            if !images.is_empty() { data.insert("images".into(), json!(images.iter().map(crate::images::ValidatedImage::metadata).collect::<Vec<_>>())); }
+            view.push("userMessage", Some(text.clone()), if data.is_empty() { Value::Null } else { Value::Object(data) });
             (native, overrides)
         };
         receipts.insert(request_id.clone(), (fingerprint, None));
         drop(receipts);
-        let mut input = Vec::with_capacity(1 + skills.len());
-        input.push(json!({"type":"text","text":text}));
+        let mut input = Vec::with_capacity(1 + skills.len() + images.len());
+        if !text.trim().is_empty() { input.push(json!({"type":"text","text":text})); }
+        input.extend(images.iter().map(|image| image.native_input()));
         input.extend(skills.iter().map(|skill| json!({"type":"skill","name":skill.name,"path":skill.path})));
         let mut params = json!({"threadId":native,"input":input});
         if let Some(overrides) = overrides { params.as_object_mut().unwrap().extend(overrides); }
@@ -285,6 +349,11 @@ impl CodexSession {
                         controls.permission.current = Some(permission);
                         controls.permission.source = "codex/turn_start".into();
                         controls.permission.reason = None;
+                    }
+                    if let (Some(mode), Some(control)) = (settings.collaboration_mode, &mut controls.collaboration) {
+                        control.current = Some(mode.as_str().into());
+                        control.source = "codex/turn_start".into();
+                        control.reason = None;
                     }
                 }
                 for event in std::mem::take(&mut turn.deferred) {
@@ -345,7 +414,7 @@ impl CodexSession {
                 }) && pending.data.get("availableDecisions").and_then(Value::as_array).is_none_or(|allowed| allowed.contains(decision.unwrap_or(&Value::Null)))
                     && response.as_object().is_some_and(|object| object.len() == 1)
             }
-            "tool/requestUserInput" => response.as_object().is_some_and(|object| object.len() == 1) && response.get("answers").and_then(Value::as_object).is_some_and(|answers| {
+            "item/tool/requestUserInput" => response.as_object().is_some_and(|object| object.len() == 1) && response.get("answers").and_then(Value::as_object).is_some_and(|answers| {
                 pending.data.get("questions").and_then(Value::as_array).is_some_and(|questions| {
                     answers.iter().all(|(id, value)| {
                         questions.iter().any(|question| question.get("id").and_then(Value::as_str) == Some(id.as_str()))
@@ -362,8 +431,50 @@ impl CodexSession {
         };
         valid
     }
-    pub async fn interrupt(&self) -> Result<(), String> {
+    pub(crate) async fn steer(&self, run_id: String, request_id: String, text: String) -> Result<crate::session::SteeringReceipt, String> {
+        use crate::session::{SteeringReceipt, SteeringState};
+        if text.trim().is_empty() || text.len() > 65536 { return Err("invalid_prompt".into()); }
+        let fingerprint = steering_fingerprint(&run_id, &text);
+        let mut receipts = self.steering_receipts.lock().await;
+        if let Some((old, receipt)) = receipts.get(&request_id) {
+            return if old == &fingerprint { receipt.clone() } else { Err("request_conflict".into()) };
+        }
+        if receipts.len() >= 256 { return Err("request_capacity".into()); }
         let view = self.view.lock().await;
+        if view.controls.as_ref().is_none_or(|controls| !controls.steering) || !self.wire.native_available() { return Err("steering_unsupported".into()); }
+        let mut turn = self.turn.lock().await;
+        if view.active_run.as_deref() != Some(run_id.as_str()) || !matches!(view.status.as_str(), "running" | "waiting") || turn.starting {
+            return Err("not_running".into());
+        }
+        let native = view.native_id.clone().ok_or("session_closed")?;
+        let expected = turn.id.clone().ok_or("not_running")?;
+        // Reserve the only dispatch before IO; pending/unknown receipts are never replayed.
+        receipts.insert(request_id.clone(), (fingerprint, Ok(SteeringReceipt { request_id: request_id.clone(), run_id: run_id.clone(), state: SteeringState::Unknown })));
+        turn.steering_echoes += 1;
+        self.pending_steering.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        drop(turn);
+        drop(view);
+        drop(receipts);
+        let reply = self.wire.request("turn/steer", json!({"threadId":native,"expectedTurnId":expected,"input":[{"type":"text","text":text,"text_elements":[]}]})).await;
+        let result = steering_result(request_id.clone(), run_id.clone(), &expected, reply);
+        let mut view = self.view.lock().await;
+        if result.as_ref().err().is_some_and(|error| error == "steering_unsupported") {
+            if let Some(controls) = &mut view.controls { controls.steering = false; }
+        }
+        if let Ok(receipt) = &result {
+            if receipt.state == SteeringState::Applied {
+                view.push_run("userSteering", Some(text), json!({"requestId":request_id,"run":run_id}), Some(run_id.clone()));
+            }
+            view.push_run("steeringReceipt", None, json!({"state":receipt.state,"requestId":request_id,"run":run_id}), Some(run_id.clone()));
+        }
+        drop(view);
+        self.steering_receipts.lock().await.insert(request_id, (fingerprint, result.clone()));
+        self.pending_steering.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        result
+    }
+    pub async fn interrupt(&self, run_id: &str) -> Result<(), String> {
+        let view = self.view.lock().await;
+        if view.active_run.as_deref() != Some(run_id) || !matches!(view.status.as_str(), "running" | "waiting") { return Err("not_running".into()); }
         let native = view.native_id.clone().ok_or("closed")?;
         let turn = self.turn.lock().await.id.clone().ok_or("not_running")?;
         drop(view);
@@ -379,9 +490,19 @@ impl CodexSession {
         self.view.lock().await.snapshot_since(after)
     }
     pub(crate) fn native_available(&self) -> bool { self.wire.native_available() }
+    pub(crate) fn auth_launch(&self) -> Option<Arc<crate::manager::native_auth::LaunchContext>> {
+        self.native_available().then(|| self.auth_launch.clone()).flatten()
+    }
+    pub(crate) async fn steering_settled(&self, after: u64) -> bool {
+        let view = self.view.lock().await;
+        self.pending_steering.load(std::sync::atomic::Ordering::Acquire) == 0
+            && view.events.last().is_none_or(|event| event.seq <= after)
+    }
     pub(crate) fn native_capabilities(&self) -> crate::native_session::NativeSessionCapabilities {
         let mut capabilities = crate::native_session::NativeSessionCapabilities {
-            native_auth_guidance: Some(crate::native_session::NativeAuthGuidance::installed(crate::Engine::Codex)),
+            native_auth_guidance: self.auth_launch().is_none().then(|| crate::native_session::NativeAuthGuidance::installed(crate::Engine::Codex)),
+            native_login: cfg!(unix) && self.auth_launch().is_some(),
+            native_logout: cfg!(unix) && self.auth_launch().is_some(),
             mcp_control_guidance: Some(crate::native_session::NativeMcpControlGuidance::codex()),
             ..Default::default()
         };
@@ -390,6 +511,8 @@ impl CodexSession {
             capabilities.observe_skills = unsupported & 1 == 0;
             capabilities.observe_mcp = unsupported & 2 == 0;
             capabilities.reload_skills = capabilities.observe_skills;
+            capabilities.native_login &= capabilities.observe_mcp;
+            capabilities.native_logout &= capabilities.observe_mcp;
         }
         capabilities
     }
@@ -423,15 +546,17 @@ impl CodexSession {
                 let thread = view.native_id.ok_or("session_closed")?;
                 let mut cursor = Value::Null;
                 let mut cursors = std::collections::HashSet::new();
+                let mut finished = false;
                 for _ in 0..4 {
                     let result = self.observe_request("mcpServerStatus/list", json!({"threadId":thread,"detail":"toolsAndAuthOnly","limit":64,"cursor":cursor}), 2).await?;
                     native::mcp(result["data"].as_array().ok_or("native_extension_InvalidFormat")?, true, &mut out);
-                    if result.get("nextCursor").is_some_and(Value::is_null) { return Ok(out); }
-                    let Some(next) = result["nextCursor"].as_str() else { out.incomplete = true; return Ok(out); };
-                    if next.is_empty() || next.len() > 4096 || !cursors.insert(next.to_owned()) { out.incomplete = true; return Ok(out); }
+                    if result.get("nextCursor").is_some_and(Value::is_null) { finished = true; break; }
+                    let Some(next) = result["nextCursor"].as_str() else { out.incomplete = true; break; };
+                    if next.is_empty() || next.len() > 4096 || !cursors.insert(next.to_owned()) { out.incomplete = true; break; }
                     cursor = json!(next);
                 }
-                out.incomplete = true;
+                out.incomplete |= !finished;
+                native::mcp_call_evidence(&self.snapshot().await.events, &mut out);
             }
         }
         Ok(out)
@@ -464,6 +589,14 @@ impl CodexSession {
         for name in ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORGANIZATION", "OPENAI_PROJECT", "AZURE_OPENAI_API_KEY", "CODEX_API_KEY"] { command.env_remove(name); }
         command.envs(&launch.env);
         for value in &launch.codex_overrides { command.arg("-c").arg(value); }
+        let mut auth_env: std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString> = std::env::vars_os().filter(|(key, _)| {
+            let key = key.to_string_lossy();
+            !key.starts_with("DGOS_PROVIDER_") && !key.starts_with("OPENAI_") && !key.starts_with("AZURE_OPENAI_") && key != "CODEX_API_KEY"
+        }).collect();
+        // MCP auth CLI uses the trusted executable/workspace and ambient config,
+        // never the project's injected model-provider credential environment.
+        auth_env.insert("NO_COLOR".into(), "1".into());
+        let auth_launch = Arc::new(crate::manager::native_auth::LaunchContext { executable: executable.into(), workspace: options.workspace.clone(), env: auth_env });
         let process_lease = launch.lease.clone();
         let (wire, mut events) = providers.with_cli_spawn(&launch.lease, &launch.launch, |_| {
             Ok(Transport::spawn(command, process_lease.cancellation_token(), diagnostic, process_lease.clone()))
@@ -476,14 +609,20 @@ impl CodexSession {
                 view
             })),
             receipts: Arc::default(),
+            steering_receipts: Arc::default(),
+            pending_steering: Arc::default(),
             turn: Arc::new(Mutex::new(TurnState { opening: true, ..Default::default() })),
             unsupported_observations: Arc::default(),
+            auth_launch: Some(auth_launch),
         };
         let reader = session.clone();
         tokio::spawn(async move {
+            // Transport drops the sender before reaping. Drain accepted events
+            // in order; cancellation must not overtake output already received.
             while let Some(event) = events.recv().await {
                 reader.event(event).await;
             }
+            reader.event(json!({"method":"host/closed"})).await;
         });
         let setup = async {
             session.wire.startup_request("handshake_initialize", "initialize", json!({"clientInfo":{"name":"dgos","version":"0.1.0"},"capabilities":{"experimentalApi":true}})).await?;
@@ -495,9 +634,10 @@ impl CodexSession {
             if let Some(id) = &options.resume_id {
                 params["threadId"] = json!(id);
                 params["excludeTurns"] = json!(true);
-                params["initialTurnsPage"] = json!({"limit":128,"sortDirection":"desc","itemsView":"full"});
+                params["initialTurnsPage"] = json!({"limit":128,"sortDirection":"desc","itemsView":"notLoaded"});
             }
-            let result = session.wire.startup_request("handshake_thread", method, params).await?;
+            let mut result = session.wire.startup_request("handshake_thread", method, params).await?;
+            crate::images::redact_image_inputs(&mut result);
             if result.get("model").and_then(Value::as_str) != Some(launch.model.as_str()) || result.get("modelProvider").and_then(Value::as_str) != Some("dgos_project") { return Err("provider_incompatible".into()); }
             providers.validate_cli_lease(&launch.lease).await.map_err(|_| "provider_revision_changed")?;
             let id = result.pointer("/thread/id").and_then(Value::as_str).ok_or("invalid_output")?;
@@ -515,11 +655,15 @@ impl CodexSession {
                 cursor = listed.get("nextCursor").cloned().unwrap_or(Value::Null);
                 if cursor.is_null() { break; }
             }
+            // Optional experimental metadata must never prevent a usable session.
+            let modes = tokio::time::timeout(std::time::Duration::from_secs(2), session.wire.startup_request("handshake_collaboration", "collaborationMode/list", json!({}))).await.ok().and_then(Result::ok);
             {
                 let mut view = session.view.lock().await;
                 if view.status != "starting" || !session.wire.native_available() { return Err("result_unknown".into()); }
                 view.native_id = Some(id.into());
-                view.controls = Some(codex_controls(&result, model.as_ref()));
+                let mut controls = codex_controls(&result, model.as_ref());
+                controls.collaboration = collaboration_control(modes.as_ref());
+                view.controls = Some(controls);
             }
             session.restore_history(id, &result).await;
             // Hydration can await multiple replies. Reconfirm the exact lease
@@ -572,11 +716,17 @@ impl CodexSession {
                 break;
             }
             match reply {
-                Ok(Ok(result)) => history.page(&mut view, &page, &result),
+                Ok(Ok(mut result)) => {
+                    crate::images::redact_image_inputs(&mut result);
+                    history.page(&mut view, &page, &result);
+                },
                 _ => view.history_truncated = true,
             }
         }
-        history.finish(&mut *self.view.lock().await);
+        let mut view = self.view.lock().await;
+        history.finish(&mut view);
+        let mut turn = self.turn.lock().await;
+        for event in &view.events { turn.operations.item(thread, thread, &event.data); }
     }
     fn completed_item(view: &mut SessionView, item: &Value, echo: &mut bool) {
         if item.get("type").and_then(Value::as_str) != Some("userMessage") || !std::mem::take(echo) {
@@ -585,8 +735,8 @@ impl CodexSession {
     }
     fn item(view: &mut SessionView, item: &Value) {
         let kind = item.get("type").and_then(Value::as_str).unwrap_or("item");
-        let text = item.get("text").and_then(Value::as_str).map(str::to_owned);
-        let data = item.clone();
+        let text = (kind != "reasoning").then(|| item.get("text").and_then(Value::as_str).map(str::to_owned)).flatten();
+        let data = if kind == "reasoning" { json!({"type":"reasoning","id":item.get("id"),"summary":item.get("summary")}) } else { item.clone() };
         view.push(kind, text, data);
     }
 }
@@ -612,9 +762,25 @@ fn codex_controls(result: &Value, model: Option<&Value>) -> crate::session::Sess
             current: permission_available.then_some(PermissionMode::Default), source: "codex/thread".into(),
             reason: (!permission_available).then(|| "native_policy_unavailable".into()),
         },
+        collaboration: None,
+        steering: true,
+        bound_model: result["model"].as_str().map(str::to_owned),
         default_effort,
         default_sandbox: permission_available.then(|| result["sandbox"].clone()),
     }
+}
+
+fn collaboration_control(listed: Option<&Value>) -> Option<crate::session::SessionControl<String>> {
+    let rows = listed?.get("data")?.as_array()?;
+    let options: Vec<String> = ["default", "plan"].into_iter()
+        .filter(|mode| rows.iter().any(|row| row["mode"].as_str() == Some(*mode)))
+        .map(str::to_owned).collect();
+    if options.is_empty() { return None; }
+    Some(crate::session::SessionControl {
+        // A preset catalog does not report the active mode of a resumed thread.
+        available: true, current: None,
+        options, source: "codex/collaboration_mode_list".into(), reason: None,
+    })
 }
 
 fn turn_overrides(controls: Option<&crate::session::SessionControls>, settings: Option<&crate::session::AgentTurnSettings>) -> Result<Option<serde_json::Map<String, Value>>, String> {
@@ -636,6 +802,19 @@ fn turn_overrides(controls: Option<&crate::session::SessionControls>, settings: 
             PermissionMode::ReadOnly => json!({"type":"readOnly","networkAccess":false}),
             PermissionMode::AcceptEdits => return Err("unsupported_permission_mode".into()),
         });
+    }
+    let mode = settings.collaboration_mode.or_else(|| controls.collaboration.as_ref()?.current.as_deref().and_then(|mode| match mode {
+        "default" => Some(crate::session::CollaborationMode::Default), "plan" => Some(crate::session::CollaborationMode::Plan), _ => None,
+    }));
+    if let Some(mode) = mode {
+        let effort = match &settings.reasoning_effort {
+            Some(effort) => effort.as_ref().or(controls.default_effort.as_ref()),
+            None => controls.reasoning.current.as_ref().or(controls.default_effort.as_ref()),
+        };
+        params.insert("collaborationMode".into(), json!({"mode":mode,"settings":{
+            "model":controls.bound_model.as_deref().ok_or("unsupported_collaboration_mode")?,
+            "reasoning_effort":effort,"developer_instructions":null
+        }}));
     }
     Ok(Some(params))
 }
@@ -692,27 +871,77 @@ mod tests {
         let model = json!({"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"}]});
         let controls = codex_controls(&original, Some(&model));
         assert!(turn_overrides(Some(&controls), None).unwrap().is_none());
-        let empty = AgentTurnSettings { reasoning_effort: None, permission_mode: None };
+        let empty = AgentTurnSettings { reasoning_effort: None, permission_mode: None, collaboration_mode: None };
         assert!(turn_overrides(None, Some(&empty)).unwrap().is_none());
-        let permission_only = turn_overrides(Some(&controls), Some(&AgentTurnSettings { reasoning_effort: None, permission_mode: Some(PermissionMode::ReadOnly) })).unwrap().unwrap();
+        let permission_only = turn_overrides(Some(&controls), Some(&AgentTurnSettings { reasoning_effort: None, permission_mode: Some(PermissionMode::ReadOnly), collaboration_mode: None })).unwrap().unwrap();
         assert!(!permission_only.contains_key("effort"));
-        let settings = AgentTurnSettings { reasoning_effort: Some(None), permission_mode: Some(PermissionMode::Default) };
+        let settings = AgentTurnSettings { reasoning_effort: Some(None), permission_mode: Some(PermissionMode::Default), collaboration_mode: None };
         let params = turn_overrides(Some(&controls), Some(&settings)).unwrap().unwrap();
         assert_eq!(params["effort"], "medium");
         assert_eq!(params["sandboxPolicy"], original["sandbox"]);
         assert_eq!(params["approvalPolicy"], "on-request");
         for settings in [
-            AgentTurnSettings { reasoning_effort: Some(Some("xhigh".into())), permission_mode: Some(PermissionMode::Default) },
-            AgentTurnSettings { reasoning_effort: None, permission_mode: Some(PermissionMode::AcceptEdits) },
+            AgentTurnSettings { reasoning_effort: Some(Some("xhigh".into())), permission_mode: Some(PermissionMode::Default), collaboration_mode: None },
+            AgentTurnSettings { reasoning_effort: None, permission_mode: Some(PermissionMode::AcceptEdits), collaboration_mode: None },
         ] { assert!(turn_overrides(Some(&controls), Some(&settings)).is_err()); }
         let unavailable = codex_controls(&original, None);
         assert!(!unavailable.reasoning.available);
-        assert!(turn_overrides(Some(&unavailable), Some(&AgentTurnSettings { reasoning_effort: Some(Some("low".into())), permission_mode: None })).is_err());
+        assert!(turn_overrides(Some(&unavailable), Some(&AgentTurnSettings { reasoning_effort: Some(Some("low".into())), permission_mode: None, collaboration_mode: None })).is_err());
         let unsafe_policy = codex_controls(&json!({"approvalPolicy":"never","sandbox":{"type":"dangerFullAccess"}}), Some(&model));
         assert!(!unsafe_policy.permission.available);
-        let effort_only = turn_overrides(Some(&unsafe_policy), Some(&AgentTurnSettings { reasoning_effort: Some(Some("low".into())), permission_mode: None })).unwrap().unwrap();
+        let effort_only = turn_overrides(Some(&unsafe_policy), Some(&AgentTurnSettings { reasoning_effort: Some(Some("low".into())), permission_mode: None, collaboration_mode: None })).unwrap().unwrap();
         assert!(!effort_only.contains_key("approvalPolicy"));
         assert!(!effort_only.contains_key("sandboxPolicy"));
+    }
+
+    #[test]
+    fn collaboration_modes_use_bound_model_builtin_instructions_and_selected_effort() {
+        use crate::session::{AgentTurnSettings, CollaborationMode};
+        let native = json!({"model":"bound-model","reasoningEffort":"medium","approvalPolicy":"on-request","sandbox":{"type":"workspaceWrite"}});
+        let model = json!({"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"}]});
+        let mut controls = codex_controls(&native, Some(&model));
+        assert!(collaboration_control(None).is_none());
+        assert!(collaboration_control(Some(&json!({"data":[]}))).is_none());
+        let mut settings = AgentTurnSettings { reasoning_effort: None, permission_mode: None, collaboration_mode: Some(CollaborationMode::Plan) };
+        assert_eq!(turn_overrides(Some(&controls), Some(&settings)).unwrap_err(), "unsupported_collaboration_mode");
+        controls.collaboration = collaboration_control(Some(&json!({"data":[{"mode":"default","model":"injected"},{"mode":"plan","model":"other-model","reasoning_effort":"high"}]})));
+        assert!(controls.collaboration.as_ref().unwrap().current.is_none());
+        let params = turn_overrides(Some(&controls), Some(&settings)).unwrap().unwrap();
+        assert_eq!(params["collaborationMode"], json!({"mode":"plan","settings":{"model":"bound-model","reasoning_effort":"medium","developer_instructions":null}}));
+        assert!(!params.contains_key("sandboxPolicy"));
+        assert!(!params.contains_key("approvalPolicy"));
+        settings.reasoning_effort = Some(Some("low".into()));
+        assert_eq!(turn_overrides(Some(&controls), Some(&settings)).unwrap().unwrap()["collaborationMode"]["settings"]["reasoning_effort"], "low");
+        settings.reasoning_effort = Some(None);
+        assert_eq!(turn_overrides(Some(&controls), Some(&settings)).unwrap().unwrap()["collaborationMode"]["settings"]["reasoning_effort"], "medium");
+    }
+
+    #[test]
+    fn steering_results_never_turn_ambiguity_into_success_or_run_failure() {
+        use crate::session::SteeringState;
+        assert_eq!(steering_result("request".into(), "run".into(), "turn", Ok(json!({"turnId":"turn"}))).unwrap().state, SteeringState::Applied);
+        for reply in [Ok(json!({"turnId":"different"})), Ok(json!({})), Err("result_unknown".into()), Err("connection_lost".into())] {
+            assert_eq!(steering_result("request".into(), "run".into(), "turn", reply).unwrap().state, SteeringState::Unknown);
+        }
+        assert_eq!(steering_result("request".into(), "run".into(), "turn", Err("engine_rejected".into())).unwrap_err(), "engine_rejected");
+        assert_eq!(steering_result("request".into(), "run".into(), "turn", Err("method_unsupported".into())).unwrap_err(), "steering_unsupported");
+        assert_ne!(steering_fingerprint("run-a", "text"), steering_fingerprint("run-b", "text"));
+        assert_ne!(steering_fingerprint("run", "text"), steering_fingerprint("run", "changed"));
+    }
+
+    #[test]
+    fn live_reasoning_forwards_summary_only_and_rejects_stale_turns() {
+        let (mut view, mut turn) = running();
+        for method in ["item/reasoning/summaryPartAdded", "item/reasoning/summaryTextDelta", "item/reasoning/textDelta"] {
+            CodexSession::apply_event(&mut view, &mut turn, json!({"method":method,"params":{"threadId":"thread","turnId":"second-turn","itemId":"thought","summaryIndex":0,"delta":"summary"}}));
+        }
+        assert_eq!(view.events.len(), 2);
+        CodexSession::apply_event(&mut view, &mut turn, json!({"method":"item/reasoning/summaryTextDelta","params":{"threadId":"thread","turnId":"old-turn","delta":"stale"}}));
+        assert_eq!(view.events.len(), 2);
+        CodexSession::apply_event(&mut view, &mut turn, json!({"method":"item/completed","params":{"threadId":"thread","turnId":"second-turn","item":{"id":"thought","type":"reasoning","summary":["safe summary"],"content":["private raw"]}}}));
+        assert_eq!(view.events.last().unwrap().data, json!({"id":"thought","type":"reasoning","summary":["safe summary"]}));
+        CodexSession::apply_event(&mut view, &mut turn, json!({"method":"turn/completed","params":{"threadId":"thread","turn":{"id":"second-turn","status":"completed","items":[{"id":"thought","type":"reasoning","summary":["safe summary"],"content":["private raw"]}]}}}));
+        assert_eq!(view.events.last().unwrap().data["turn"]["items"][0], json!({"id":"thought","type":"reasoning","summary":["safe summary"]}));
     }
 
     #[test]
@@ -796,8 +1025,43 @@ mod tests {
     }
 
     #[test]
+    fn native_question_enters_pending_and_expires_with_its_turn() {
+        let (mut view, mut turn) = running();
+        let request = json!({"id":71,"method":"item/tool/requestUserInput","params":{"threadId":"thread","turnId":"second-turn","itemId":"question","isBlocking":true,"questions":[{"id":"choice","header":"Scope","question":"Which module?","options":[{"label":"Core","description":"Core module"}]}]}});
+        assert!(CodexSession::apply_event(&mut view, &mut turn, request).is_none());
+        assert_eq!(view.pending[0].kind, "item/tool/requestUserInput");
+        assert_eq!(view.status, "waiting");
+        assert!(CodexSession::valid_response(&view.pending[0], &json!({"answers":{"choice":{"answers":["Core"]}}})));
+        CodexSession::apply_event(&mut view, &mut turn, json!({"method":"turn/completed","params":{"threadId":"thread","turn":{"id":"second-turn","status":"completed"}}}));
+        assert!(view.pending.is_empty());
+        let stale = CodexSession::apply_event(&mut view, &mut turn, json!({"id":72,"method":"item/tool/requestUserInput","params":{"threadId":"thread","turnId":"second-turn","questions":[]}}));
+        assert_eq!(stale.unwrap()["error"]["code"], -32600);
+    }
+
+    #[test]
+    fn turn_completion_does_not_expire_session_scoped_mcp_elicitation() {
+        let (mut view, mut turn) = running();
+        for (id, method, params) in [
+            (71, "item/tool/requestUserInput", json!({"threadId":"thread","turnId":"second-turn","questions":[]})),
+            (72, "mcpServer/elicitation/request", json!({"threadId":"thread","serverName":"fixture","turnId":null})),
+        ] {
+            assert!(CodexSession::apply_event(&mut view, &mut turn, json!({"id":id,"method":method,"params":params})).is_none());
+        }
+        let elicitation = view.pending[1].id.clone();
+        CodexSession::apply_event(&mut view, &mut turn, json!({"method":"turn/completed","params":{"threadId":"thread","turn":{"id":"second-turn","status":"completed"}}}));
+        assert_eq!(view.pending.len(), 1);
+        assert_eq!(view.pending[0].id, elicitation);
+        assert_eq!(view.status, "waiting");
+        assert!(view.active_run.is_none());
+        assert_eq!(view.terminal_run.as_ref().unwrap().status, "completed");
+        CodexSession::apply_event(&mut view, &mut turn, json!({"method":"serverRequest/resolved","params":{"threadId":"thread","requestId":72}}));
+        assert!(view.pending.is_empty());
+        assert_eq!(view.status, "idle");
+    }
+
+    #[test]
     fn user_input_preserves_partial_or_cancel_answers_and_rejects_replacement_fields() {
-        let pending = PendingRequest { id: "request".into(), kind: "tool/requestUserInput".into(), title: String::new(), data: json!({"questions":[{"id":"a"},{"id":"b"}]}) };
+        let pending = PendingRequest { id: "request".into(), kind: "item/tool/requestUserInput".into(), title: String::new(), data: json!({"questions":[{"id":"a"},{"id":"b"}]}) };
         assert!(CodexSession::valid_response(&pending, &json!({"answers":{}})));
         assert!(!CodexSession::valid_response(&pending, &json!({"answers":{"a":{"answers":["yes"]},"other":{"answers":["no"]}}})));
         assert!(!CodexSession::valid_response(&pending, &json!({"answers":{"a":{"answers":["yes"],"command":"replacement"},"b":{"answers":[]}}})));

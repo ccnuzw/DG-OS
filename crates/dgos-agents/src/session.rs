@@ -42,6 +42,21 @@ pub(crate) fn validate_discovered_skills(skills: &[AgentSkillInput], observed: &
     }
     Ok(())
 }
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CollaborationMode { Default, Plan }
+impl CollaborationMode {
+    pub(crate) fn as_str(self) -> &'static str { match self { Self::Default => "default", Self::Plan => "plan" } }
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SteeringState { Applied, Unknown }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SteeringReceipt {
+    pub request_id: String,
+    pub run_id: String,
+    pub state: SteeringState,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AgentTurnSettings {
@@ -49,15 +64,20 @@ pub struct AgentTurnSettings {
     pub reasoning_effort: Option<Option<String>>,
     #[serde(default, deserialize_with = "optional_permission", skip_serializing_if = "Option::is_none")]
     pub permission_mode: Option<PermissionMode>,
+    #[serde(default, deserialize_with = "optional_collaboration", skip_serializing_if = "Option::is_none")]
+    pub collaboration_mode: Option<CollaborationMode>,
 }
 impl AgentTurnSettings {
-    pub(crate) fn is_empty(&self) -> bool { self.reasoning_effort.is_none() && self.permission_mode.is_none() }
+    pub(crate) fn is_empty(&self) -> bool { self.reasoning_effort.is_none() && self.permission_mode.is_none() && self.collaboration_mode.is_none() }
 }
 fn nullable_effort<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Option<String>>, D::Error> {
     Option::<String>::deserialize(deserializer).map(Some)
 }
 fn optional_permission<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<PermissionMode>, D::Error> {
     PermissionMode::deserialize(deserializer).map(Some)
+}
+fn optional_collaboration<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<CollaborationMode>, D::Error> {
+    CollaborationMode::deserialize(deserializer).map(Some)
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionControl<T> {
@@ -71,6 +91,12 @@ pub struct SessionControl<T> {
 pub struct SessionControls {
     pub reasoning: SessionControl<String>,
     pub permission: SessionControl<PermissionMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collaboration: Option<SessionControl<String>>,
+    #[serde(default)]
+    pub steering: bool,
+    #[serde(skip)]
+    pub(crate) bound_model: Option<String>,
     #[serde(skip)]
     pub(crate) default_effort: Option<String>,
     #[serde(skip)]
@@ -88,6 +114,11 @@ impl SessionControls {
                 return Err("unsupported_permission_mode".into());
             }
         }
+        if let Some(mode) = settings.collaboration_mode {
+            if self.collaboration.as_ref().is_none_or(|control| !control.available || !control.options.iter().any(|option| option == mode.as_str())) {
+                return Err("unsupported_collaboration_mode".into());
+            }
+        }
         Ok(())
     }
     pub fn uncertain(&mut self) {
@@ -95,6 +126,8 @@ impl SessionControls {
         self.reasoning.reason = Some("result_unknown".into());
         self.permission.current = None;
         self.permission.reason = Some("result_unknown".into());
+        if let Some(control) = &mut self.collaboration { control.current = None; control.reason = Some("result_unknown".into()); }
+        self.steering = false;
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +158,11 @@ pub struct EventSync {
     pub after_seq: u64,
     pub first_seq: u64,
 }
+#[derive(Debug, Clone)]
+pub(crate) struct RunTerminal {
+    pub run_id: String,
+    pub status: String,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionView {
     pub native_id: Option<String>,
@@ -133,6 +171,8 @@ pub struct SessionView {
     pub events: Vec<SessionEvent>,
     pub pending: Vec<PendingRequest>,
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persistence_error: Option<String>,
     #[serde(default)]
     pub history_truncated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -141,8 +181,12 @@ pub struct SessionView {
     pub cli_version: Option<String>,
     #[serde(skip)]
     retained_bytes: usize,
-    #[serde(skip)]
+    // Public observation for run-bound controls; persisted JSON cannot revive execution.
+    #[serde(skip_deserializing)]
     pub active_run: Option<String>,
+    // The next run is admitted only after this terminal has been durably consumed.
+    #[serde(skip)]
+    pub(crate) terminal_run: Option<RunTerminal>,
 }
 impl SessionView {
     pub fn new(workspace: String) -> Self {
@@ -153,11 +197,13 @@ impl SessionView {
             events: vec![],
             pending: vec![],
             error: None,
+            persistence_error: None,
             history_truncated: false,
             controls: None,
             cli_version: None,
             retained_bytes: 0,
             active_run: None,
+            terminal_run: None,
         }
     }
     /// Live histories are append-only after initialization. Reset whenever the
@@ -176,11 +222,13 @@ impl SessionView {
             events: self.events[start..].to_vec(),
             pending: self.pending.clone(),
             error: self.error.clone(),
+            persistence_error: self.persistence_error.clone(),
             history_truncated: self.history_truncated,
             controls: self.controls.clone(),
             cli_version: self.cli_version.clone(),
             retained_bytes: 0,
             active_run: self.active_run.clone(),
+            terminal_run: self.terminal_run.clone(),
         };
         (view, EventSync { reset: !append, after_seq, first_seq: first })
     }
@@ -195,7 +243,14 @@ impl SessionView {
     pub fn push(&mut self, kind: &str, text: Option<String>, data: Value) {
         self.push_run(kind, text, data, self.active_run.clone());
     }
-    pub fn push_run(&mut self, kind: &str, text: Option<String>, data: Value, run: Option<String>) {
+    pub fn push_run(&mut self, kind: &str, text: Option<String>, mut data: Value, run: Option<String>) {
+        crate::images::redact_image_inputs(&mut data);
+        let text = text.map(|text| { let mut value = Value::String(text); crate::images::redact_image_inputs(&mut value); match value { Value::String(text) => text, _ => "[image redacted]".into() } });
+        if let (Some(run_id), Some(status)) = (run.as_ref(), data.get("run_status").and_then(Value::as_str)) {
+            if matches!(status, "completed" | "failed" | "cancelled" | "unknown") {
+                self.terminal_run = Some(RunTerminal { run_id: run_id.clone(), status: status.into() });
+            }
+        }
         let seq = self.events.last().map_or(1, |event| event.seq + 1);
         let size = |event: &SessionEvent| {
             event.text.as_ref().map_or(0, String::len) + json_size(&event.data)
@@ -216,7 +271,9 @@ impl SessionView {
             run,
         });
     }
-    pub(crate) fn replace_history_event(&mut self, seq: u64, kind: &str, text: Option<String>, data: Value) -> bool {
+    pub(crate) fn replace_history_event(&mut self, seq: u64, kind: &str, text: Option<String>, mut data: Value) -> bool {
+        crate::images::redact_image_inputs(&mut data);
+        let text = text.map(|text| { let mut value = Value::String(text); crate::images::redact_image_inputs(&mut value); match value { Value::String(text) => text, _ => "[image redacted]".into() } });
         let Some(event) = self.events.iter_mut().find(|event| event.seq == seq) else { return false; };
         let old = event.text.as_ref().map_or(0, String::len) + json_size(&event.data);
         let incoming = text.as_ref().map_or(0, String::len) + json_size(&data);
@@ -333,6 +390,13 @@ mod pending_tests {
         let permission: AgentTurnSettings = serde_json::from_value(serde_json::json!({"permission_mode":"accept_edits"})).unwrap();
         assert_eq!(permission.reasoning_effort, None);
         assert_eq!(permission.permission_mode, Some(PermissionMode::AcceptEdits));
+        for (name, expected) in [("default", CollaborationMode::Default), ("plan", CollaborationMode::Plan)] {
+            let mode: AgentTurnSettings = serde_json::from_value(serde_json::json!({"collaboration_mode":name})).unwrap();
+            assert_eq!(mode.collaboration_mode, Some(expected));
+        }
+        for value in [Value::Null, serde_json::json!("read_only"), serde_json::json!({"mode":"plan","settings":{"model":"injected"}})] {
+            assert!(serde_json::from_value::<AgentTurnSettings>(serde_json::json!({"collaboration_mode":value})).is_err());
+        }
         for invalid in [serde_json::json!({"permission_mode":null}), serde_json::json!({"permission_mode":"bypassPermissions"}), serde_json::json!({"reasoning_effort":2}), serde_json::json!({"always_allow":true})] {
             assert!(serde_json::from_value::<AgentTurnSettings>(invalid).is_err());
         }

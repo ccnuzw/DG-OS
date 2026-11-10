@@ -1,0 +1,18 @@
+export default {
+  'codexInteractions.title': 'Codex turn controls',
+  'codexInteractions.mode': 'Collaboration mode',
+  'codexInteractions.default': 'Default',
+  'codexInteractions.plan': 'Plan',
+  'codexInteractions.unavailable': 'Native mode unavailable or unconfirmed',
+  'codexInteractions.modeBoundary': 'The next turn uses the built-in Codex mode and bound model. Plan is not a read-only sandbox and does not replace tool approval.',
+  'codexInteractions.applied': 'Confirmed by native runtime',
+  'codexInteractions.nextTurn': 'Selected for the next turn; not yet confirmed.',
+  'codexInteractions.steer': 'Add to current turn',
+  'codexInteractions.sending': 'Adding…',
+  'codexInteractions.steerBoundary': 'Adds only the composer text, not attachments, selected Skills, or next-turn settings.',
+  'codexInteractions.runningHint': 'Running: add text to this turn, or wait for completion or stop before starting a new turn.',
+  'codexInteractions.steerUnavailable': 'This native session cannot accept steering. Stop it before sending another turn.',
+  'codexInteractions.unknown': 'Steering outcome is unconfirmed. The draft is retained and will not be resent automatically. Turn completion does not prove it was rejected.',
+  'codexInteractions.recheck': 'Check steering outcome',
+  'codexInteractions.rejected': 'Steering was not accepted. Your draft is retained. Check the current turn and session capabilities.',
+};

@@ -1,6 +1,9 @@
 use super::*;
 
 pub fn run_agents() {
+    if super::phase6_local::real_codex_enabled() {
+        assert!(std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| phase == "phase6-local"), "real Codex requires isolated phase6-local");
+    }
     let root = std::env::var_os("DGOS_PROJECT_ACCEPTANCE_ROOT").map(PathBuf::from).unwrap_or_else(|| std::env::temp_dir().join(format!("dgos-project-desktop-{}", uuid::Uuid::new_v4())));
     if std::env::var("DGOS_PROJECT_ACCEPTANCE_PHASE").is_ok_and(|phase| phase == "phase6-local") {
         super::phase6_local::isolate(&root);
@@ -92,14 +95,19 @@ pub fn run_agents() {
             commands::open_development_external,
             commands::open_development_project_external,
             commands::read_development_cli_provider, commands::save_development_cli_provider,
+            commands::generate_development_commit_message, commands::cancel_development_commit_message,
             commands::revoke_development_cli_provider, commands::read_development_cli_provider_catalog,
             commands::get_development_session_configuration,
             commands::read_development_workspaces, commands::save_development_workspaces,
             commands::read_development_git, commands::execute_development_git, commands::reconcile_development_git,
+            commands::read_development_git_details,
+            commands::read_development_git_commit, commands::read_development_git_commit_diff,
             commands::preview_development_git_pull, commands::read_development_git_history,
             commands::prepare_development_handoff, commands::list_development_handoffs, commands::accept_development_handoff,
             commands::list_agent_sessions, commands::open_agent_session, commands::get_agent_session,
-            commands::send_agent_message, commands::respond_agent_request, commands::interrupt_agent_session,
+            commands::send_agent_message, commands::steer_agent_turn, commands::respond_agent_request, commands::interrupt_agent_session,
+            commands::observe_codex_operations, commands::control_codex_operation,
+            commands::inspect_codex_operation, commands::read_codex_child_history,
             commands::close_agent_session, super::super::smoke_report,
             ];
             handler(invoke)

@@ -8,7 +8,7 @@ const TTL_SECONDS: u64 = 600;
 fn now() -> Result<u64, Error> { SystemTime::now().duration_since(UNIX_EPOCH).map(|v| v.as_secs()).map_err(|_| Error::Unavailable) }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct Preview { pub receipt: Receipt, pub target: Target, pub scope: Scope, pub expires_at: u64 }
+pub struct Preview { pub receipt: Receipt, pub target: Target, pub scope: Scope, pub expires_at: u64, pub rule: Option<skills::RuleEvidence> }
 
 /// Construct only after the host authorizes its account and project. Roots are
 /// pinned here; all later filesystem opens revalidate their identities.
@@ -38,6 +38,8 @@ struct Journal {
     #[serde(default)]
     project: Option<ProjectBinding>,
     visibility: bool,
+    #[serde(default)]
+    rule: Option<skills::RuleEvidence>,
     filename: String,
     anchors: Vec<(std::path::PathBuf, Identity)>,
     parent: Identity,
@@ -198,6 +200,23 @@ impl NativeExtensions {
         }
         #[cfg(not(unix))] { let _ = (target, scope); Err(Error::Unsupported) }
     }
+    /// Reads only rules explicitly stored in the selected Claude settings layer.
+    pub fn discover_skill_rules(&self, target: Target, scope: Scope) -> Result<skills::Rules, Error> {
+        if target != Target::Claude { return Err(Error::Unsupported); }
+        #[cfg(unix)] {
+            self.validate(false)?;
+            let original = match self.parent(target, &scope, true, false) {
+                Ok((parent, filename)) => parent.read(&filename)?,
+                Err(Error::NotFound) => None,
+                Err(error) => return Err(error),
+            };
+            if original.as_ref().is_some_and(|v| v.0.is_empty()) { return Err(Error::InvalidFormat); }
+            let rules = skills::read_rules(original.as_ref().map_or("", |v| v.0.as_str()))?;
+            self.validate(false)?;
+            Ok(skills::Rules { rules, coverage: "selected_settings_layer" })
+        }
+        #[cfg(not(unix))] { let _ = scope; Err(Error::Unsupported) }
+    }
     pub fn discover_skills(&self, target: Target, scope: Scope) -> Result<skills::Discovery, Error> {
         #[cfg(unix)] {
             self.validate(false)?;
@@ -216,7 +235,7 @@ impl NativeExtensions {
             mcp::validate_original(text, target, &validation_scope, project.as_deref(), &change)?;
             let output = config::apply(text, target, &patches)?;
             mcp::validate_edited(&output, target, &validation_scope, project.as_deref(), &change)?;
-            Ok(output)
+            Ok((output, None))
         })
     }
     pub fn preview_skill_visibility(&self, target: Target, scope: Scope, change: skills::VisibilityChange) -> Result<Preview, Error> {
@@ -237,7 +256,7 @@ impl NativeExtensions {
         Ok(super::RecoveryMaterial { directory: self.target_path(journal.target, &journal.scope, journal.visibility)?.parent().ok_or(Error::UnsafePath)?.join(".dgos-native-recovery").join(id.as_str()) })
     }
     #[cfg(unix)]
-    fn preview(&self, target: Target, scope: Scope, visibility: bool, edit: impl FnOnce(&str) -> Result<String, Error>) -> Result<Preview, Error> {
+    fn preview(&self, target: Target, scope: Scope, visibility: bool, edit: impl FnOnce(&str) -> Result<(String, Option<skills::RuleEvidence>), Error>) -> Result<Preview, Error> {
         if !cfg!(target_os = "macos") { return Err(Error::Unsupported); }
         let _gate = self.context.gate.lock().map_err(|_| Error::Unavailable)?;
         self.validate(true)?;
@@ -249,7 +268,7 @@ impl NativeExtensions {
         if before.as_ref().is_some_and(|v| v.1.mode & 0o022 != 0) { return Err(Error::AccessDenied); }
         if target == Target::Claude && before.as_ref().is_some_and(|v| v.0.is_empty()) { return Err(Error::InvalidFormat); }
         let text = before.as_ref().map_or("", |v| v.0.as_str());
-        let output = edit(text)?;
+        let (output, rule) = edit(text)?;
         let id = OperationId(uuid::Uuid::new_v4().to_string());
         let stage = Self::stage(&parent, &id, true)?;
         // Configuration recovery material may contain existing native secrets.
@@ -263,18 +282,22 @@ impl NativeExtensions {
         if let Some(binding) = &project {
             if !anchors.iter().any(|(path, _)| path == &binding.root) { anchors.push((binding.root.clone(), binding.identity.clone())); }
         }
-        let journal = Journal { version: 1, id, principal_hash: super::paths::hash(self.context.principal.as_bytes()), lease_hash: super::paths::hash(self.context.lease_id.as_bytes()), target, scope: scope.clone(), project, visibility, filename, anchors, parent: parent.identity()?, before: before.map(|v| v.1), after, expires_at, state: State::Previewed, retained: true };
+        let journal = Journal { version: 1, id, principal_hash: super::paths::hash(self.context.principal.as_bytes()), lease_hash: super::paths::hash(self.context.lease_id.as_bytes()), target, scope: scope.clone(), project, visibility, rule, filename, anchors, parent: parent.identity()?, before: before.map(|v| v.1), after, expires_at, state: State::Previewed, retained: true };
         self.validate(true)?;
         self.validate_project(&journal)?;
         Self::save(&journal_dir, &journal)?;
-        Ok(Preview { receipt: journal.receipt(), target, scope, expires_at })
+        Ok(Preview { receipt: journal.receipt(), target, scope, expires_at, rule: journal.rule })
     }
     #[cfg(not(unix))]
-    fn preview(&self, _target: Target, _scope: Scope, _visibility: bool, _edit: impl FnOnce(&str) -> Result<String, Error>) -> Result<Preview, Error> { Err(Error::Unsupported) }
+    fn preview(&self, _target: Target, _scope: Scope, _visibility: bool, _edit: impl FnOnce(&str) -> Result<(String, Option<skills::RuleEvidence>), Error>) -> Result<Preview, Error> { Err(Error::Unsupported) }
     fn preview_visibility(&self, target: Target, scope: Scope, change: skills::VisibilityChange) -> Result<Preview, Error> {
-        self.preview(target, scope, true, move |text| match target {
-            Target::Codex => skills::edit_codex_visibility(text, &change),
-            Target::Claude => skills::edit_claude_visibility(text, &change),
+        let evidence_scope = scope.clone();
+        self.preview(target, scope, true, move |text| {
+            let output = match target {
+                Target::Codex => skills::edit_codex_visibility(text, &change)?,
+                Target::Claude => skills::edit_claude_visibility(text, &change)?,
+            };
+            Ok((output, skills::rule_evidence(text, evidence_scope, &change)?))
         })
     }
     pub fn commit(&self, id: &OperationId) -> Result<Receipt, Error> {
@@ -285,17 +308,32 @@ impl NativeExtensions {
             let dir = self.journal_dir()?; let _journal_lock = dir.lock()?;
             let mut journal = self.load(&dir, id)?;
             if journal.lease_hash != super::paths::hash(self.context.lease_id.as_bytes()) { return Err(Error::AccessDenied); }
+            // Only D142 name-rule previews can publish Claude settings changes.
+            // Historical journals have no versioned rule evidence and stay rejected.
+            if journal.visibility && journal.target == Target::Claude {
+                let rule = journal.rule.as_ref().ok_or(Error::Unsupported)?;
+                if rule.evidence_version != 1 || rule.scope != journal.scope || !rule.current_and_future || !rule.plugins_excluded || !rule.config_change_hook_possible || rule.higher_precedence != "not_evaluated" { return Err(Error::Unsupported); }
+                skills::validate_name(&rule.name)?;
+            }
             let (parent, filename) = self.parent(journal.target, &journal.scope, journal.visibility, false)?; let _target_lock = parent.lock()?;
             if parent.identity()? != journal.parent || filename != journal.filename { return Err(Error::RootChanged); }
             if journal.state != State::Previewed && journal.state != State::Prepared { return self.inspect_locked(&dir, &mut journal, &parent, &filename); }
             if now()? > journal.expires_at { return Err(Error::Expired); }
-            let current = parent.read(&filename)?.map(|v| v.1);
-            if current != journal.before {
+            let current = parent.read(&filename)?;
+            if current.as_ref().map(|v| &v.1) != journal.before.as_ref() {
                 journal.state = State::Conflict; Self::save(&dir, &journal)?; return Ok(journal.receipt());
             }
             parent.writable_owner()?;
             let stage = Self::stage(&parent, id, false)?;
-            if stage.read("payload")?.map(|v| v.1) != Some(journal.after.clone()) { return Err(Error::Conflict); }
+            let payload = stage.read("payload")?.ok_or(Error::Conflict)?;
+            if payload.1 != journal.after { return Err(Error::Conflict); }
+            if let Some(rule) = &journal.rule {
+                if !journal.visibility || journal.target != Target::Claude { return Err(Error::Unsupported); }
+                let original = current.as_ref().map_or("", |v| v.0.as_str());
+                let change = skills::VisibilityChange::ClaudeName { name: rule.name.clone(), state: rule.state };
+                if skills::rule_evidence(original, journal.scope.clone(), &change)?.as_ref() != Some(rule)
+                    || skills::edit_claude_visibility(original, &change)? != payload.0 { return Err(Error::Conflict); }
+            }
             journal.state = State::Prepared; Self::save(&dir, &journal)?;
             self.validate(true)?;
             self.validate_project(&journal)?;

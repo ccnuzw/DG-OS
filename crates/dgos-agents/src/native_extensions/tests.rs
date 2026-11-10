@@ -205,15 +205,79 @@ fn process_lock_blocks_an_independent_descriptor() {
 }
 
 #[test]
-fn claude_skill_visibility_uses_settings_and_preserves_mcp_file() {
+fn claude_name_rules_support_four_states_inheritance_and_config_cas() {
+    use skills::{RuleState, VisibilityChange};
     let fixture = Fixture::new(); let api = fixture.api();
     fs::write(&fixture.roots.claude_user_file, "{\"mcpServers\":{}}").unwrap();
-    let p = api.preview_skill_visibility(Target::Claude, Scope::ProjectLocal, skills::VisibilityChange { selector: "fixture".into(), visible: false }).unwrap();
-    assert_eq!(api.commit(&p.receipt.operation_id).unwrap().state, State::Committed);
-    let settings: serde_json::Value = serde_json::from_slice(&fs::read(fixture.roots.project.as_ref().unwrap().join(".claude/settings.local.json")).unwrap()).unwrap();
-    assert_eq!(settings["skillOverrides"]["fixture"], "off");
+    let path = fixture.roots.project.as_ref().unwrap().join(".claude/settings.local.json");
+    assert!(api.discover_skill_rules(Target::Claude, Scope::ProjectLocal).unwrap().rules.is_empty());
+    for state in [RuleState::On, RuleState::NameOnly, RuleState::UserInvocableOnly, RuleState::Off] {
+        let preview = api.preview_skill_visibility(Target::Claude, Scope::ProjectLocal, VisibilityChange::ClaudeName { name: "absent:fixture".into(), state }).unwrap();
+        let evidence = preview.rule.as_ref().unwrap();
+        assert_eq!(evidence.evidence_version, 1);
+        assert!(evidence.current_and_future && evidence.plugins_excluded && evidence.config_change_hook_possible);
+        assert_eq!(api.commit(&preview.receipt.operation_id).unwrap().state, State::Committed);
+        let rules = api.discover_skill_rules(Target::Claude, Scope::ProjectLocal).unwrap();
+        assert_eq!(rules.rules[0].name, "absent:fixture");
+        assert_eq!(rules.rules[0].state, state);
+    }
+    let change = || VisibilityChange::ClaudeName { name: "absent:fixture".into(), state: RuleState::Inherit };
+    let cancelled = api.preview_skill_visibility(Target::Claude, Scope::ProjectLocal, change()).unwrap();
+    assert_eq!(cancelled.rule.as_ref().unwrap().previous, Some(RuleState::Off));
+    assert_eq!(api.cancel(&cancelled.receipt.operation_id).unwrap().state, State::Cancelled);
+    assert_eq!(api.discover_skill_rules(Target::Claude, Scope::ProjectLocal).unwrap().rules[0].state, RuleState::Off);
+    let conflict = api.preview_skill_visibility(Target::Claude, Scope::ProjectLocal, change()).unwrap();
+    fs::write(&path, "{\"skillOverrides\":{\"absent:fixture\":\"on\"},\"external\":true}").unwrap();
+    assert_eq!(api.commit(&conflict.receipt.operation_id).unwrap().state, State::Conflict);
+    let inherit = api.preview_skill_visibility(Target::Claude, Scope::ProjectLocal, change()).unwrap();
+    assert_eq!(api.commit(&inherit.receipt.operation_id).unwrap().state, State::Committed);
+    assert!(api.discover_skill_rules(Target::Claude, Scope::ProjectLocal).unwrap().rules.is_empty());
+    assert!(fs::read_to_string(path).unwrap().contains("\"external\":true"));
     assert_eq!(fs::read_to_string(&fixture.roots.claude_user_file).unwrap(), "{\"mcpServers\":{}}");
-    assert_eq!(skills::edit_claude_visibility("{}", &skills::VisibilityChange { selector: "plugin:fixture".into(), visible: false }).unwrap_err(), Error::Unsupported);
+    let old = api.preview_skill_visibility(Target::Claude, Scope::OsUser, change()).unwrap();
+    fixture.alter_journal(&old.receipt.operation_id, "rule", serde_json::Value::Null);
+    assert_eq!(api.commit(&old.receipt.operation_id).unwrap_err(), Error::Unsupported);
+    let unknown = api.preview_skill_visibility(Target::Claude, Scope::OsUser, change()).unwrap();
+    let mut evidence = serde_json::to_value(unknown.rule.unwrap()).unwrap(); evidence["evidence_version"] = serde_json::json!(2);
+    fixture.alter_journal(&unknown.receipt.operation_id, "rule", evidence);
+    assert_eq!(api.commit(&unknown.receipt.operation_id).unwrap_err(), Error::Unsupported);
+}
+
+#[test]
+fn claude_rule_editor_preserves_unrelated_bytes_and_rejects_ambiguous_settings() {
+    use skills::{RuleState, VisibilityChange};
+    let change = |state| VisibilityChange::ClaudeName { name: "fixture".into(), state };
+    let original = "{\n  \"unknown\" : [ 1, 2 ], \"skillOverrides\": { \"other\":\"name-only\", \"fixture\" : \"off\" }, \"secret\":\"untouched\"\n}\n";
+    let output = skills::edit_claude_visibility(original, &change(RuleState::On)).unwrap();
+    assert_eq!(output, original.replacen("\"off\"", "\"on\"", 1));
+    let removed = skills::edit_claude_visibility(original, &change(RuleState::Inherit)).unwrap();
+    assert!(removed.contains("\"unknown\" : [ 1, 2 ]") && removed.contains("\"secret\":\"untouched\""));
+    assert_eq!(skills::read_rules(&removed).unwrap()[0].name, "other");
+    for invalid in [r#"{"skillOverrides":false}"#, r#"{"skillOverrides":{"x":true}}"#, r#"{"skillOverrides":{"x":"inherit"}}"#, r#"{"skillOverrides":{"x":"bad"}}"#, r#"{"skillOverrides":{"x":"on","x":"off"}}"#, r#"{"unknown":1,"unknown":2}"#] {
+        assert_eq!(skills::edit_claude_visibility(invalid, &change(RuleState::On)).unwrap_err(), Error::InvalidFormat);
+    }
+    assert_eq!(skills::edit_claude_visibility("{}", &VisibilityChange::ClaudeName { name: " fixture".into(), state: RuleState::On }).unwrap_err(), Error::InvalidFormat);
+}
+
+#[test]
+fn claude_rule_layers_are_separate_from_mcp_and_resource_roots() {
+    let fixture = Fixture::new(); let api = fixture.api();
+    let project = fixture.roots.project.as_ref().unwrap();
+    for (scope, state, path) in [
+        (Scope::OsUser, skills::RuleState::On, fixture.roots.claude_home.join("settings.json")),
+        (Scope::ProjectShared, skills::RuleState::NameOnly, project.join(".claude/settings.json")),
+        (Scope::ProjectLocal, skills::RuleState::Off, project.join(".claude/settings.local.json")),
+    ] {
+        let preview = api.preview_skill_visibility(Target::Claude, scope.clone(), skills::VisibilityChange::ClaudeName { name: "same".into(), state }).unwrap();
+        assert_eq!(preview.rule.as_ref().unwrap().scope, scope);
+        assert_eq!(preview.rule.as_ref().unwrap().previous, None);
+        assert_eq!(api.commit(&preview.receipt.operation_id).unwrap().state, State::Committed);
+        assert_eq!(skills::read_rules(&fs::read_to_string(path).unwrap()).unwrap()[0].state, state);
+    }
+    assert!(!fixture.roots.claude_user_file.exists());
+    assert_eq!(api.discover_resources(Target::Claude, Scope::ProjectLocal, "").unwrap_err(), Error::Unsupported);
+    assert_eq!(api.preview_skill_visibility(Target::Codex, Scope::OsUser, skills::VisibilityChange::ClaudeName { name: "same".into(), state: skills::RuleState::Off }).unwrap_err(), Error::InvalidFormat);
+    assert_eq!(api.preview_skill_visibility(Target::Claude, Scope::OsUser, skills::VisibilityChange::CodexPath { selector: "/same/SKILL.md".into(), visible: false }).unwrap_err(), Error::InvalidFormat);
 }
 
 #[test]
@@ -258,10 +322,10 @@ fn environment_header_edit_preserves_existing_secret_headers() {
 #[test]
 fn codex_visibility_changes_only_the_exact_skill_entry() {
     let original = "unknown = 'keep'\n[[skills.config]]\npath = '/skills/first/SKILL.md'\nenabled = true # first\nopaque = 'keep-first'\n[[skills.config]]\npath = '/skills/second/SKILL.md'\nenabled = true # second\n";
-    let output = skills::edit_codex_visibility(original, &skills::VisibilityChange { selector: "/skills/first/SKILL.md".into(), visible: false }).unwrap();
+    let output = skills::edit_codex_visibility(original, &skills::VisibilityChange::CodexPath { selector: "/skills/first/SKILL.md".into(), visible: false }).unwrap();
     assert_eq!(output, original.replacen("enabled = true # first", "enabled = false # first", 1));
     let duplicate = format!("{original}[[skills.config]]\npath = '/skills/first/SKILL.md'\nenabled = true\n");
-    assert_eq!(skills::edit_codex_visibility(&duplicate, &skills::VisibilityChange { selector: "/skills/first/SKILL.md".into(), visible: false }).unwrap_err(), Error::Conflict);
+    assert_eq!(skills::edit_codex_visibility(&duplicate, &skills::VisibilityChange::CodexPath { selector: "/skills/first/SKILL.md".into(), visible: false }).unwrap_err(), Error::Conflict);
 }
 
 #[test]

@@ -9,6 +9,18 @@ impl Fixture {
         let root = std::env::temp_dir().join(format!("dgos-native-session-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&root).unwrap();
         crate::test_support::codex_fixture(&root.join("codex"), &r##"
+if [ "${1-}" = mcp ]; then
+  [ -z "${DGOS_PROVIDER_KEY-}" ] || exit 55
+  printf '%s\n' "$@" > auth-argv
+  if [ "${2-}" = logout ]; then printf x >> oauth-logouts; exit 0; fi
+  printf x >> oauth-logins
+  printf '%s' "$$" > oauth-pid
+  printf '%s\n' 'https://example.test/authorize?state=fixture&redirect_uri=http%3A%2F%2Flocalhost%3A18999%2Fcallback'
+  printf '%s' 'Paste the complete redirect URL: '
+  IFS= read -r callback
+  printf x > callback-received
+  exit 0
+fi
 while IFS= read -r line; do
 request=${line#*\"id\":}; request=${request%%,*}
 printf '%s\n' "$line" >> protocol
@@ -28,7 +40,9 @@ CONFIG_REPLY
  if [ -f duplicate ]; then printf '{"id":%s,"result":{"data":[{"skills":[{"name":"fixture","enabled":true,"path":"/fixture/plugin/skills/fixture/SKILL.md","scope":"repo"},{"name":"fixture","enabled":true,"path":"/fixture/plugin/skills/fixture/SKILL.md","scope":"user"}],"errors":[]}]}}\n' "$request"; continue; fi
  if [ -f malformed ]; then printf '{"id":%s,"result":{"data":null}}\n' "$request";
  else printf '{"id":%s,"result":{"data":[{"cwd":"private","skills":[{"name":"fixture","enabled":true,"description":"secret-SENTINEL","path":"/fixture/plugin/skills/fixture/SKILL.md","scope":"repo","pluginId":"fixture@marketplace"}],"errors":[]}]}}\n' "$request"; fi;;
-*'"method":"mcpServerStatus/list"'*) printf '{"id":%s,"result":{"data":[{"name":"fixture","runtimeStatus":"authenticationRequired","authStatus":"notLoggedIn","tools":{"echo":{"description":"secret-SENTINEL","inputSchema":{"secret":"secret-SENTINEL"}}},"httpOrigin":"https://secret-SENTINEL","config":{"env":{"TOKEN":"secret-SENTINEL"}}}],"nextCursor":"repeat"}}\n' "$request";;
+*'"method":"mcpServerStatus/list"'*)
+ if [ -f oauth-ready ]; then printf '{"id":%s,"result":{"data":[{"name":"fixture","runtimeStatus":"authenticationRequired","authStatus":"notLoggedIn","tools":{},"toolsError":null,"pluginId":null}],"nextCursor":null}}\n' "$request";
+ else printf '{"id":%s,"result":{"data":[{"name":"fixture","runtimeStatus":"authenticationRequired","authStatus":"notLoggedIn","tools":{"echo":{"description":"secret-SENTINEL","inputSchema":{"secret":"secret-SENTINEL"}}},"httpOrigin":"https://secret-SENTINEL","config":{"env":{"TOKEN":"secret-SENTINEL"}}}],"nextCursor":"repeat"}}\n' "$request"; fi;;
 *'"method":"turn/start"'*) printf '{"id":%s,"result":{"turn":{"id":"skill-turn"}}}\n' "$request";;
 esac
 done
@@ -71,7 +85,7 @@ async fn missing_optional_skill_method_disables_only_skills_and_keeps_session_us
     let observed = std::fs::read_to_string(fixture.root.join("protocol")).unwrap();
     assert_eq!(fixture.manager.observe_native_session("alice", &fixture.id, &handle.generation, SessionDomain::Skills, &fixture.lease).await.unwrap_err(), "native_extension_Unsupported");
     assert_eq!(std::fs::read_to_string(fixture.root.join("protocol")).unwrap(), observed);
-    fixture.manager.send("alice", &fixture.id, &handle.generation, uuid::Uuid::new_v4().to_string(), "plain message".into(), None, vec![], vec![]).await.unwrap();
+    fixture.manager.send("alice", &fixture.id, &handle.generation, uuid::Uuid::new_v4().to_string(), "plain message".into(), None, vec![], vec![], vec![]).await.unwrap();
     assert!(std::fs::read_to_string(fixture.root.join("protocol")).unwrap().contains("turn/start"));
     fixture.finish().await;
 }
@@ -93,7 +107,7 @@ async fn reload_before_observation_of_missing_skill_method_keeps_plain_send_usab
     assert_eq!(std::fs::read_to_string(fixture.root.join("protocol")).unwrap(), protocol);
     assert!(!fixture.root.join("reloads").exists());
     assert_eq!(fixture.manager.snapshot("alice", &fixture.id).await.unwrap().view.status, "idle");
-    fixture.manager.send("alice", &fixture.id, &handle.generation, uuid::Uuid::new_v4().to_string(), "plain message".into(), None, vec![], vec![]).await.unwrap();
+    fixture.manager.send("alice", &fixture.id, &handle.generation, uuid::Uuid::new_v4().to_string(), "plain message".into(), None, vec![], vec![], vec![]).await.unwrap();
     assert!(std::fs::read_to_string(fixture.root.join("protocol")).unwrap().contains("turn/start"));
     fixture.finish().await;
 }
@@ -111,7 +125,7 @@ async fn blocked_skill_send_allows_other_session_admission_and_revocation_cancel
         let create = crate::test_support::create(&fixture.manager, "alice", &task, options).await;
         std::fs::write(fixture.root.join("block"), "").unwrap();
         let request = uuid::Uuid::new_v4().to_string();
-        let operation = fixture.manager.send("alice", &fixture.id, &handle.generation, request.clone(), "Use this skill".into(), None, vec![], vec![crate::session::AgentSkillInput { name: "fixture".into(), path: "/fixture/plugin/skills/fixture/SKILL.md".into() }]);
+        let operation = fixture.manager.send("alice", &fixture.id, &handle.generation, request.clone(), "Use this skill".into(), None, vec![], vec![crate::session::AgentSkillInput { name: "fixture".into(), path: "/fixture/plugin/skills/fixture/SKILL.md".into() }], vec![]);
         tokio::pin!(operation);
         tokio::select! {
             result = &mut operation => panic!("skill send completed before fixture release: {result:?}"),
@@ -157,12 +171,13 @@ async fn native_controls_are_bounded_owned_generation_bound_and_never_replay() {
     assert!(mcp.mcp_servers[0].tools.is_empty(), "auth-required must not retain a stale tool catalog");
     assert!(!mcp.mcp_servers[0].schema_observed);
     assert!(!serde_json::to_string(&mcp).unwrap().contains("secret-SENTINEL"));
-    assert!(!handle.capabilities.native_login && !handle.capabilities.native_logout && !handle.capabilities.reconnect_mcp && !handle.capabilities.toggle_mcp);
+    assert!(handle.capabilities.native_login && handle.capabilities.native_logout);
+    assert!(!handle.capabilities.reconnect_mcp && !handle.capabilities.toggle_mcp);
     let guidance = handle.capabilities.mcp_control_guidance.as_ref().unwrap();
     assert_eq!(guidance.verified_version, crate::cli::codex_protocol_reference().version);
     assert_eq!(guidance.reason, "missing_session_scoped_mcp_control_contract");
     assert_eq!(guidance.inspect_argv, ["codex", "mcp", "get", "<NAME>"]);
-    assert_eq!(handle.capabilities.native_auth_guidance.as_ref().unwrap().reason, "missing_mcp_login_cancel_and_logout_contract");
+    assert!(handle.capabilities.native_auth_guidance.is_none());
     for action in [
         NativeSessionAction::ReconnectMcp { server_name: "fixture".into() },
         NativeSessionAction::ToggleMcp { server_name: "fixture".into(), enabled: true },
@@ -211,7 +226,7 @@ async fn unknown_native_result_blocks_new_controls_and_turns_but_allows_read_and
     assert_eq!(fixture.inspect(&handle, &request).await.unwrap().unwrap().state, NativeActionState::Unknown);
     assert!(fixture.inspect(&handle, &uuid::Uuid::new_v4().to_string()).await.unwrap().is_none());
     assert_eq!(fixture.action(&handle, &uuid::Uuid::new_v4().to_string()).await.unwrap_err(), "result_unknown");
-    assert_eq!(fixture.manager.send("alice", &fixture.id, &handle.generation, uuid::Uuid::new_v4().to_string(), "must not dispatch".into(), None, vec![], vec![]).await.unwrap_err(), "result_unknown");
+    assert_eq!(fixture.manager.send("alice", &fixture.id, &handle.generation, uuid::Uuid::new_v4().to_string(), "must not dispatch".into(), None, vec![], vec![], vec![]).await.unwrap_err(), "result_unknown");
     assert_eq!(std::fs::read(fixture.root.join("reloads")).unwrap(), b"x");
     assert!(fixture.manager.observe_native_session("alice", &fixture.id, &handle.generation, SessionDomain::Mcp, &fixture.lease).await.is_ok());
     assert!(fixture.manager.close_session("alice", &fixture.id).await.unwrap());
@@ -233,7 +248,7 @@ async fn cancelled_control_never_replays_or_blocks_admission_and_late_results_ar
         }) => { entered.expect("fixture never entered native control"); },
     }
     assert_eq!(fixture.manager.close_session("alice", &fixture.id).await.unwrap_err(), "session_busy");
-    assert_eq!(fixture.manager.send("alice", &fixture.id, &handle.generation, uuid::Uuid::new_v4().to_string(), "must not dispatch".into(), None, vec![], vec![]).await.unwrap_err(), "session_busy");
+    assert_eq!(fixture.manager.send("alice", &fixture.id, &handle.generation, uuid::Uuid::new_v4().to_string(), "must not dispatch".into(), None, vec![], vec![], vec![]).await.unwrap_err(), "session_busy");
     assert_eq!(fixture.manager.native_session_action("alice", &fixture.id, &handle.generation, &request, NativeSessionAction::ReloadSkills {}, &fixture.lease).await.unwrap().state, NativeActionState::Unknown);
     assert_eq!(fixture.inspect(&handle, &request).await.unwrap().unwrap().state, NativeActionState::Unknown);
     let other = CancellationToken::new();
@@ -301,27 +316,145 @@ async fn explicit_skills_are_revalidated_fingerprinted_and_sent_as_native_inputs
     let skill = AgentSkillInput { name: "fixture".into(), path: "/fixture/plugin/skills/fixture/SKILL.md".into() };
     for (selection, expected) in [(vec![AgentSkillInput { path: "/forged/SKILL.md".into(), ..skill.clone() }], "agent_skill_unavailable"), (vec![skill.clone(); 9], "agent_skill_limit"), (vec![skill.clone(); 2], "agent_skill_invalid")] {
         let request = uuid::Uuid::new_v4().to_string();
-        assert_eq!(fixture.manager.send("alice", &fixture.id, &generation, request.clone(), "Use this skill".into(), None, vec![], selection).await.unwrap_err(), expected);
+        assert_eq!(fixture.manager.send("alice", &fixture.id, &generation, request.clone(), "Use this skill".into(), None, vec![], selection, vec![]).await.unwrap_err(), expected);
         assert!(fixture.manager.inner.repository.run("alice", &request).await.unwrap().is_none());
     }
     for (marker, expected) in [("disabled", "agent_skill_unavailable"), ("duplicate", "agent_skill_unavailable"), ("missing-errors", "agent_skills_unavailable")] {
         std::fs::write(fixture.root.join(marker), "").unwrap();
         let request = uuid::Uuid::new_v4().to_string();
-        assert_eq!(fixture.manager.send("alice", &fixture.id, &generation, request.clone(), "Use this skill".into(), None, vec![], vec![skill.clone()]).await.unwrap_err(), expected);
+        assert_eq!(fixture.manager.send("alice", &fixture.id, &generation, request.clone(), "Use this skill".into(), None, vec![], vec![skill.clone()], vec![]).await.unwrap_err(), expected);
         assert!(fixture.manager.inner.repository.run("alice", &request).await.unwrap().is_none());
         std::fs::remove_file(fixture.root.join(marker)).unwrap();
     }
-    assert_eq!(fixture.manager.send("alice", &fixture.id, "stale", uuid::Uuid::new_v4().to_string(), "Use this skill".into(), None, vec![], vec![skill.clone()]).await.unwrap_err(), "stale_generation");
+    assert_eq!(fixture.manager.send("alice", &fixture.id, "stale", uuid::Uuid::new_v4().to_string(), "Use this skill".into(), None, vec![], vec![skill.clone()], vec![]).await.unwrap_err(), "stale_generation");
     let request = uuid::Uuid::new_v4().to_string();
-    fixture.manager.send("alice", &fixture.id, &generation, request.clone(), "Use this skill".into(), None, vec![], vec![skill.clone()]).await.unwrap();
+    fixture.manager.send("alice", &fixture.id, &generation, request.clone(), "Use this skill".into(), None, vec![], vec![skill.clone()], vec![]).await.unwrap();
     std::fs::write(fixture.root.join("disabled"), "").unwrap();
-    fixture.manager.send("alice", &fixture.id, &generation, request.clone(), "Use this skill".into(), None, vec![], vec![skill.clone()]).await.unwrap();
-    assert_eq!(fixture.manager.send("alice", &fixture.id, &generation, request.clone(), "Use this skill".into(), None, vec![], vec![]).await.unwrap_err(), "request_conflict");
+    fixture.manager.send("alice", &fixture.id, &generation, request.clone(), "Use this skill".into(), None, vec![], vec![skill.clone()], vec![]).await.unwrap();
+    assert_eq!(fixture.manager.send("alice", &fixture.id, &generation, request.clone(), "Use this skill".into(), None, vec![], vec![], vec![]).await.unwrap_err(), "request_conflict");
     let (_, crate::manager::Backend::Codex(backend)) = fixture.manager.owned("alice", &fixture.id).await.unwrap() else { panic!("expected Codex"); };
-    assert_eq!(backend.send(request, "Use this skill".into(), None, vec![]).await.unwrap_err(), "request_conflict");
+    assert_eq!(backend.send(request, "Use this skill".into(), None, vec![], vec![]).await.unwrap_err(), "request_conflict");
     let protocol: Vec<serde_json::Value> = std::fs::read_to_string(fixture.root.join("protocol")).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
     let sends: Vec<_> = protocol.iter().filter(|value| value["method"] == "turn/start").collect();
     assert_eq!(sends.len(), 1);
     assert_eq!(sends[0]["params"]["input"], serde_json::json!([{"type":"text","text":"Use this skill"},{"type":"skill","name":skill.name,"path":skill.path}]));
+    fixture.finish().await;
+}
+
+#[tokio::test]
+async fn codex_auth_is_owned_cancellable_and_separate_from_conversation_records() {
+    let fixture = Fixture::open().await;
+    std::fs::write(fixture.root.join("oauth-ready"), "").unwrap();
+    let handle = fixture.handle().await;
+    let input = StartNativeAuth { session_id: fixture.id.clone(), generation: handle.generation.clone(), request_id: uuid::Uuid::new_v4().to_string(), server_name: "fixture".into(), kind: NativeAuthKind::Login };
+    let request = NativeAuthRequest { session_id: input.session_id.clone(), generation: input.generation.clone(), request_id: input.request_id.clone() };
+    assert!(fixture.manager.start_native_auth("bob", input.clone(), &fixture.lease).await.is_err());
+    let mut stale = input.clone(); stale.generation = uuid::Uuid::new_v4().to_string();
+    assert!(fixture.manager.start_native_auth("alice", stale, &fixture.lease).await.is_err());
+    let before = fixture.manager.snapshot("alice", &fixture.id).await.unwrap().view.events.len();
+    fixture.manager.start_native_auth("alice", input.clone(), &fixture.lease).await.unwrap();
+    let waiting = tokio::time::timeout(Duration::from_secs(5), async {
+        loop { let state = fixture.manager.read_native_auth("alice", request.clone(), &fixture.lease).await.unwrap(); if state.state == "waiting_callback" { break state; } tokio::time::sleep(Duration::from_millis(10)).await; }
+    }).await.unwrap();
+    assert!(waiting.authorization_url.is_some() && waiting.callback_required);
+    assert_eq!(std::fs::read_to_string(fixture.root.join("auth-argv")).unwrap(), "mcp\nlogin\nfixture\n--no-browser\n");
+    let mut changed = input.clone(); changed.kind = NativeAuthKind::Logout;
+    assert!(fixture.manager.start_native_auth("alice", changed, &fixture.lease).await.is_err());
+    let mut old_request = request.clone(); old_request.generation = uuid::Uuid::new_v4().to_string();
+    assert!(fixture.manager.read_native_auth("alice", old_request, &fixture.lease).await.is_err());
+    fixture.manager.start_native_auth("alice", input, &fixture.lease).await.unwrap();
+    assert_eq!(std::fs::read(fixture.root.join("oauth-logins")).unwrap(), b"x", "same request never spawns twice");
+    let stopped = fixture.manager.cancel_native_auth("alice", request.clone(), &fixture.lease).await.unwrap();
+    assert_eq!(stopped.state, "stopped"); assert_eq!(stopped.credential_outcome, "unknown");
+    assert!(stopped.authorization_url.is_none() && !stopped.callback_required);
+    assert!(!fixture.root.join("callback-received").exists());
+    assert!(fixture.manager.submit_native_auth_callback("alice", NativeAuthCallback { session_id: request.session_id, generation: request.generation, request_id: request.request_id, callback_url: "http://localhost:18999/callback?state=fixture&code=late".into() }, &fixture.lease).await.is_err());
+    let after = fixture.manager.snapshot("alice", &fixture.id).await.unwrap();
+    assert_eq!(after.view.events.len(), before);
+    assert!(!serde_json::to_string(&after).unwrap().contains("example.test/authorize"));
+    assert_eq!(after.view.status, "idle");
+    fixture.finish().await;
+}
+
+#[tokio::test]
+async fn codex_auth_callback_and_logout_report_command_completion_not_live_activation() {
+    let fixture = Fixture::open().await;
+    std::fs::write(fixture.root.join("oauth-ready"), "").unwrap();
+    let handle = fixture.handle().await;
+    for kind in [NativeAuthKind::Login, NativeAuthKind::Logout] {
+        let input = StartNativeAuth { session_id: fixture.id.clone(), generation: handle.generation.clone(), request_id: uuid::Uuid::new_v4().to_string(), server_name: "fixture".into(), kind };
+        let request = NativeAuthRequest { session_id: input.session_id.clone(), generation: input.generation.clone(), request_id: input.request_id.clone() };
+        fixture.manager.start_native_auth("alice", input.clone(), &fixture.lease).await.unwrap();
+        if kind == NativeAuthKind::Login {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while fixture.manager.read_native_auth("alice", request.clone(), &fixture.lease).await.unwrap().state != "waiting_callback" { tokio::time::sleep(Duration::from_millis(10)).await; }
+            }).await.unwrap();
+            let callback = NativeAuthCallback { session_id: input.session_id, generation: input.generation, request_id: input.request_id, callback_url: "http://localhost:18999/callback?state=fixture&code=private-CALLBACK".into() };
+            fixture.manager.submit_native_auth_callback("alice", callback, &fixture.lease).await.unwrap();
+        }
+        let result = tokio::time::timeout(Duration::from_secs(5), async {
+            loop { let state = fixture.manager.read_native_auth("alice", request.clone(), &fixture.lease).await.unwrap(); if state.state == "succeeded" { break state; } tokio::time::sleep(Duration::from_millis(10)).await; }
+        }).await.unwrap();
+        assert_eq!(result.credential_outcome, "confirmed");
+        assert!(result.authorization_url.is_none() && !result.callback_required);
+    }
+    assert_eq!(std::fs::read(fixture.root.join("oauth-logouts")).unwrap(), b"x");
+    let snapshot = fixture.manager.snapshot("alice", &fixture.id).await.unwrap();
+    assert!(!serde_json::to_string(&snapshot).unwrap().contains("private-CALLBACK"));
+    let observed = fixture.manager.observe_native_session("alice", &fixture.id, &handle.generation, SessionDomain::Mcp, &fixture.lease).await.unwrap();
+    assert_eq!(observed.mcp_servers[0].status, "authenticationRequired", "CLI command success cannot fabricate a connection");
+    fixture.finish().await;
+}
+
+#[tokio::test]
+async fn backend_exit_cancels_own_generation_and_reaps_waiting_oauth_process() {
+    let fixture = Fixture::open().await;
+    std::fs::write(fixture.root.join("oauth-ready"), "").unwrap();
+    let handle = fixture.handle().await;
+    let (generation_lease, _) = fixture.manager.session_cancellation(&fixture.id).await.unwrap();
+    let input = StartNativeAuth { session_id: fixture.id.clone(), generation: handle.generation.clone(), request_id: uuid::Uuid::new_v4().to_string(), server_name: "fixture".into(), kind: NativeAuthKind::Login };
+    let request = NativeAuthRequest { session_id: input.session_id.clone(), generation: input.generation.clone(), request_id: input.request_id.clone() };
+    fixture.manager.start_native_auth("alice", input, &fixture.lease).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while fixture.manager.read_native_auth("alice", request.clone(), &fixture.lease).await.unwrap().state != "waiting_callback" { tokio::time::sleep(Duration::from_millis(10)).await; }
+    }).await.unwrap();
+    let pid = std::fs::read_to_string(fixture.root.join("oauth-pid")).unwrap().parse::<i32>().unwrap();
+    assert_eq!(unsafe { libc::kill(pid, 0) }, 0, "OAuth process must be alive before backend exit");
+    std::fs::write(fixture.root.join("disconnect"), "").unwrap();
+    assert!(fixture.manager.observe_native_session("alice", &fixture.id, &handle.generation, SessionDomain::Skills, &fixture.lease).await.is_err());
+    tokio::time::timeout(Duration::from_secs(5), generation_lease.cancelled()).await.unwrap();
+    assert!(!fixture.lease.is_cancelled(), "generation exit must not revoke the account");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if unsafe { libc::kill(pid, 0) } < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) { break; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.unwrap();
+    assert!(!fixture.root.join("callback-received").exists());
+    assert!(fixture.manager.submit_native_auth_callback("alice", NativeAuthCallback { session_id: request.session_id, generation: request.generation, request_id: request.request_id, callback_url: "http://localhost:18999/callback?state=fixture&code=late".into() }, &fixture.lease).await.is_err());
+    fixture.finish().await;
+}
+
+#[tokio::test]
+async fn resume_drains_old_generation_oauth_before_publishing_a_new_generation() {
+    let fixture = Fixture::open().await;
+    std::fs::write(fixture.root.join("oauth-ready"), "").unwrap();
+    let handle = fixture.handle().await;
+    let input = StartNativeAuth { session_id: fixture.id.clone(), generation: handle.generation.clone(), request_id: uuid::Uuid::new_v4().to_string(), server_name: "fixture".into(), kind: NativeAuthKind::Login };
+    let request = NativeAuthRequest { session_id: input.session_id.clone(), generation: input.generation.clone(), request_id: input.request_id.clone() };
+    fixture.manager.start_native_auth("alice", input, &fixture.lease).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while fixture.manager.read_native_auth("alice", request.clone(), &fixture.lease).await.unwrap().state != "waiting_callback" { tokio::time::sleep(Duration::from_millis(10)).await; }
+    }).await.unwrap();
+    let pid = std::fs::read_to_string(fixture.root.join("oauth-pid")).unwrap().parse::<i32>().unwrap();
+    let (old_lease, _) = fixture.manager.session_cancellation(&fixture.id).await.unwrap();
+    let resumed = fixture.manager.resume_session("alice", &fixture.id, true, fixture.lease.clone()).await.unwrap();
+    assert_ne!(resumed.generation, handle.generation);
+    assert!(old_lease.is_cancelled());
+    assert!(!fixture.lease.is_cancelled());
+    assert!(unsafe { libc::kill(pid, 0) } < 0);
+    assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+    assert!(!fixture.root.join("callback-received").exists());
+    assert!(fixture.manager.submit_native_auth_callback("alice", NativeAuthCallback { session_id: request.session_id, generation: request.generation, request_id: request.request_id, callback_url: "http://localhost:18999/callback?state=fixture&code=late".into() }, &fixture.lease).await.is_err());
     fixture.finish().await;
 }

@@ -67,6 +67,18 @@ async fn isolated_service_serializes_same_key_cache_insertion() {
         let inspected = host.operation(&agents, Operation { operation_id: id }, OperationAction::Inspect, Domain::Mcp, permits.admit().unwrap(), ticket.clone()).await.unwrap();
         assert_eq!(inspected.state, core::State::Committed);
     }
+    let rules_selection = Selection { target: Target::Claude, scope: Scope::OsUser, project_id: None };
+    assert!(host.discover_skill_rules(&agents, rules_selection.clone(), permits.admit().unwrap(), ticket.clone()).await.unwrap().rules.is_empty());
+    let preview = host.preview_visibility(&agents, Visibility {
+        target: Target::Claude, scope: Scope::OsUser, project_id: None,
+        intent: VisibilityIntent::ClaudeName { name: "future:skill".into(), state: core::skills::RuleState::NameOnly },
+    }, permits.admit().unwrap(), ticket.clone()).await.unwrap();
+    assert!(preview.affected.is_empty());
+    assert_eq!(preview.coverage, "current_observations_only");
+    assert_eq!(preview.rule.as_ref().unwrap().name, "future:skill");
+    assert_eq!(host.operation(&agents, Operation { operation_id: preview.preview.receipt.operation_id.as_str().into() }, OperationAction::Commit, Domain::Skills, permits.admit().unwrap(), ticket.clone()).await.unwrap().state, core::State::Committed);
+    let rules = host.discover_skill_rules(&agents, rules_selection, permits.admit().unwrap(), ticket.clone()).await.unwrap();
+    assert_eq!(rules.rules[0].state, core::skills::RuleState::NameOnly);
     for name in ["old-project", "new-project"] {
         std::fs::create_dir_all(root.join(name).join(".codex")).unwrap();
         std::fs::write(root.join(name).join(".codex/config.toml"), format!("[mcp_servers.{name}]\ncommand = '/usr/bin/true'\n")).unwrap();
@@ -74,6 +86,15 @@ async fn isolated_service_serializes_same_key_cache_insertion() {
     let project = agents.create_project(&ticket.0, dgos_agents::projects::CreateProjectInput {
         kind: "import".into(), name: "Relocation".into(), path: root.join("old-project").to_string_lossy().into_owned(), source: None,
     }, tokio_util::sync::CancellationToken::new()).await.unwrap();
+    let local = Selection { target: Target::Claude, scope: Scope::ProjectLocal, project_id: Some(project.id.clone()) };
+    assert!(host.discover_skill_rules(&agents, local, permits.admit().unwrap(), ticket.clone()).await.unwrap().rules.is_empty());
+    let local_preview = host.preview_visibility(&agents, Visibility {
+        target: Target::Claude, scope: Scope::ProjectLocal, project_id: Some(project.id.clone()),
+        intent: VisibilityIntent::ClaudeName { name: "no-instance".into(), state: core::skills::RuleState::Off },
+    }, permits.admit().unwrap(), ticket.clone()).await.unwrap();
+    assert_eq!(host.operation(&agents, Operation { operation_id: local_preview.preview.receipt.operation_id.as_str().into() }, OperationAction::Cancel, Domain::Skills, permits.admit().unwrap(), ticket.clone()).await.unwrap().state, core::State::Cancelled);
+    let denied = host.discover_skills(&agents, DiscoverSkills { target: Target::Claude, scope: Scope::ProjectLocal, project_id: Some(project.id.clone()), query: String::new() }, permits.admit().unwrap(), ticket.clone()).await.unwrap_err();
+    assert_eq!(denied, "native_extension_Unsupported");
     let selection = Selection { target: Target::Codex, scope: Scope::ProjectShared, project_id: Some(project.id.clone()) };
     let old = host.discover_mcp(&agents, selection.clone(), permits.admit().unwrap(), ticket.clone()).await.unwrap();
     assert_eq!(old.instances[0].native_key, "old-project");
@@ -92,4 +113,15 @@ async fn isolated_service_serializes_same_key_cache_insertion() {
     assert_eq!(rejected.unwrap_err(), "session_invalid");
     assert_eq!(std::fs::read(root.join("codex/config.toml")).unwrap(), before);
     assert!(agents.shutdown().await);
+}
+
+#[test]
+fn visibility_dto_requires_matching_discriminated_intent_and_four_states() {
+    let input: Visibility = serde_json::from_value(serde_json::json!({"target":"Claude","scope":"ProjectLocal","project_id":"project-a","intent":{"kind":"claude_name","name":"missing:skill","state":"inherit"}})).unwrap();
+    assert!(matches!(input.intent, VisibilityIntent::ClaudeName { state: core::skills::RuleState::Inherit, .. }));
+    for input in [
+        serde_json::json!({"target":"Claude","scope":"OsUser","project_id":null,"instance":{"id":"x","revision":"y"},"visible":false}),
+        serde_json::json!({"target":"Claude","scope":"OsUser","project_id":null,"intent":{"kind":"claude_name","name":"x","state":false}}),
+        serde_json::json!({"target":"Claude","scope":"OsUser","project_id":null,"intent":{"kind":"claude_name","name":"x","state":"bad"}}),
+    ] { assert!(serde_json::from_value::<Visibility>(input).is_err()); }
 }

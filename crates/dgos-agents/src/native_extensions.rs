@@ -13,7 +13,7 @@ pub mod dependencies;
 #[cfg(unix)]
 mod resource_tree;
 mod resources;
-pub use resources::{ResourceAction, ResourceDiscovery, ResourceInstance, ResourceLink, ResourceLinkStatus, ResourcePreview, ResourceSource, ResourceSummary};
+pub use resources::{ResourceAction, ResourceDiscovery, ResourceImpact, ResourceInstance, ResourceLink, ResourceLinkStatus, ResourceNameMatch, ResourcePreview, ResourceSource, ResourceSummary};
 #[cfg(all(test, target_os = "macos"))]
 mod resource_tests;
 

@@ -2,16 +2,18 @@
 //!
 //! Prerequisites: Rust/Cargo, Bun, node, installed codex and claude CLIs, and the built
 //! tools/agent-bridge binary (npm run agents:build). Bootstrap requires explicit
-//! DGOS_STAGE4_{CODEX,CLAUDE}_{URL,KEY,MODEL}; subprocess native config roots are isolated.
+//! DGOS_STAGE4_{CODEX,CLAUDE}_{URL,KEY,MODEL} for selected engines; native config roots are isolated.
 //! Run from the repository root:
 //!   bun scripts/stage4-acceptance.ts
 //! Restart, using the artifact directory printed by the first invocation:
 //!   bun scripts/stage4-acceptance.ts --resume /tmp/dgos-stage4-<id>
+//! Select just Claude with `--engine claude` in the Bun entry; keep that selection on resume.
+//! Direct Rust invocation selects with DGOS_STAGE4_ENGINE=claude|codex|both (default both).
 //! Or, with DGOS_STAGE4_{CODEX,CLAUDE}_{URL,KEY,MODEL} in the process environment,
 //! CODEX_HOME/CLAUDE_CONFIG_DIR pointing at this artifact's isolated directories:
 //!   cargo run -p dgos-agents --example stage4_acceptance -- --root <artifact-dir>
-//! First invocation makes two real turns per engine; --resume makes the third turn
-//! in each SAME native session and checks its saved Provider snapshot. Evidence:
+//! First invocation makes one opening turn and two capability turns per selected engine;
+//! --resume makes the third capability turn in each SAME native session. Evidence:
 //! state.json, evidence/<engine>-round-<n>.json, evidence/<engine>-startup-<n>.json,
 //! evidence/approvals.jsonl, fixture-observations.jsonl, acceptance.sqlite.
 //! All MCP output is a local fixture. All native CLI/model turns are real provider calls.
@@ -76,7 +78,13 @@ async fn run() -> Result<()> {
     for (name, subdir) in [("CODEX_HOME", "codex-home"), ("CLAUDE_CONFIG_DIR", "claude-home")] {
         require(PathBuf::from(env(name)?).canonicalize().map_err(io)? == root.join(subdir).canonicalize().map_err(io)?, "native_config_not_isolated")?;
     }
-    let keys = [env("DGOS_STAGE4_CODEX_KEY")?, env("DGOS_STAGE4_CLAUDE_KEY")?];
+    let engines = match std::env::var("DGOS_STAGE4_ENGINE").as_deref() {
+        Ok("claude") => vec![Engine::Claude],
+        Ok("codex") => vec![Engine::Codex],
+        Ok("both") | Err(_) => vec![Engine::Codex, Engine::Claude],
+        _ => return Err("invalid_engine".into()),
+    };
+    let keys = engines.iter().map(|engine| env(&format!("DGOS_STAGE4_{}_KEY", label(*engine).to_uppercase()))).collect::<Result<Vec<_>>>()?;
     for name in ["DGOS_STAGE4_CODEX_KEY", "DGOS_STAGE4_CLAUDE_KEY", "OPENAI_API_KEY", "OPENAI_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "DGOS_PROVIDER_KEY", "DGOS_MCP_BEARER"] { std::env::remove_var(name); }
     let isolated_home = root.join("home");
     std::fs::create_dir_all(&isolated_home).map_err(io)?;
@@ -96,7 +104,7 @@ async fn run() -> Result<()> {
     if resume { require(state.schema_version == 2, "resume_artifact_incompatible_legacy_format")?; }
     let execution = async {
         if !resume {
-            for (index, engine) in [Engine::Codex, Engine::Claude].into_iter().enumerate() {
+            for (index, engine) in engines.iter().copied().enumerate() {
                 let prefix = format!("DGOS_STAGE4_{}", label(engine).to_uppercase());
                 let endpoint = env(&format!("{prefix}_URL"))?;
                 let model = env(&format!("{prefix}_MODEL"))?;
@@ -121,7 +129,7 @@ async fn run() -> Result<()> {
             }
             artifact(&state_path, serde_json::to_value(&state).map_err(io)?, &keys)?;
         } else {
-            require(state.engines.len() == 2, "resume_requires_both_engines")?;
+            require(state.engines.len() == engines.len() && state.engines.iter().zip(&engines).all(|(saved, engine)| saved.engine == *engine), "resume_engine_selection_mismatch")?;
             for (index, saved) in state.engines.iter().enumerate() {
                 if saved.blocked.is_some() { continue; }
                 require((2..=3).contains(&saved.completed_rounds), "resume_requires_completed_first_two_rounds")?;
@@ -156,7 +164,7 @@ async fn run() -> Result<()> {
             }
             if !resume {
                 let opening_run = Uuid::new_v4().to_string();
-                agents.send(OWNER, &saved.session, &opened.generation, opening_run.clone(), "Acknowledge this new project session. Do not call tools. A separate next user turn will request the capability acceptance procedure.".into(), None, vec![], vec![]).await?;
+                agents.send(OWNER, &saved.session, &opened.generation, opening_run.clone(), "Acknowledge this new project session. Do not call tools. A separate next user turn will request the capability acceptance procedure.".into(), None, vec![], vec![], vec![]).await?;
                 let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
                 let opening = loop {
                     let runs = agents.list_development_runs(OWNER, &saved.task).await?;
@@ -186,13 +194,14 @@ async fn run() -> Result<()> {
                 let run_id = Uuid::new_v4().to_string();
                 let challenge = Uuid::new_v4().to_string();
                 let prompt = format!("Use the native Skill mechanism for {} in this round. Then read the complete native SKILL.md and references/proof.txt using native file-read tools. Discover and use only the configured native MCP server stage4 tool stage4_receipt with challenge {challenge:?} and the resource read from the Skill reference. Complete the CLI's native approval flow; if native approval is unavailable, classify blocked/unsupported and fail. Write the exact returned receipt to round-{round}.txt. A Skill listing is not evidence of use. Preserve other files and never substitute HTTP, shell, DG-OS host MCP, or fabricated output.", saved.skill);
-                agents.send(OWNER, &saved.session, &opened.generation, run_id.clone(), prompt, None, vec![], vec![]).await?;
+                let prompt = if saved.engine == Engine::Claude { format!("/{} {prompt}", saved.skill) } else { prompt };
+                agents.send(OWNER, &saved.session, &opened.generation, run_id.clone(), prompt, None, vec![], vec![], vec![]).await?;
                 let context = RoundContext { agents: &agents, root: &root, secrets: &keys };
                 let result = drive_round(&context, saved, round, &run_id, &challenge).await;
                 saved.native_id = agents.snapshot(OWNER, &saved.session).await?.view.native_id;
                 if let Err(error) = &result {
                     artifact(&root.join(format!("evidence/{}-round-{round}-failure.json", label(saved.engine))), json!({"error":error,"session":agents.snapshot(OWNER, &saved.session).await.ok(),"development_runs":agents.list_development_runs(OWNER, &saved.task).await.ok()}), &keys)?;
-                    let _ = agents.interrupt(OWNER, &saved.session).await;
+                    let _ = agents.interrupt(OWNER, &saved.session, &opened.generation, &run_id).await;
                 }
                 result?;
                 saved.completed_rounds = round;
@@ -207,7 +216,11 @@ async fn run() -> Result<()> {
                 let engine = label(state.engines[index].engine);
                 state.engines[index].blocked = Some(error.clone());
                 engine_failures.push(format!("{engine}:{error}"));
-                let _ = agents.interrupt(OWNER, &state.engines[index].session).await;
+                if let Ok(active) = agents.snapshot(OWNER, &state.engines[index].session).await {
+                    if let Some(run) = active.view.active_run.as_deref() {
+                        let _ = agents.interrupt(OWNER, &active.id, &active.generation, run).await;
+                    }
+                }
                 let _ = agents.close_session(OWNER, &state.engines[index].session).await;
             }
             artifact(&state_path, serde_json::to_value(&state).map_err(io)?, &keys)?;
@@ -320,7 +333,7 @@ async fn drive_round(context: &RoundContext<'_>, saved: &SavedEngine, round: u32
     // A Claude Skill tool request is useful attribution, not proof of a read.
     let proofs = json!({"completed":record.status == "completed","stream_delta_observed_before_completion":stream_observations.iter().any(|o|o["observed_while_status"] == "running" || o["observed_while_status"] == "waiting"),"skill_body_read_tool_event":read_body,"resource_read_tool_event":read_resource,"native_mcp_schema_discovery":schema_discovery,"fixture_dispatch":receipts.len() == 1,"native_mcp_approval_observed":native_mcp_approval,"receipt_in_native_mcp_tool_result":mcp_result,"receipt_written_to_project":file_result,"production_run_snapshot_matches_session":snapshot_matches});
     let unsupported = if !native_mcp_approval { Some("blocked_native_mcp_tool_approval_unobservable") } else { None };
-    let skill_observation = json!({"independent_activation_receipt":"unsupported","structured_skill_input":"not_submitted_text_only_product_entry","native_skill_tool_request_observed":skill_invoked,"body_read_observed":read_body,"resource_read_observed":read_resource});
+    let skill_observation = json!({"independent_activation_receipt":"unsupported","structured_skill_input":"not_submitted_text_only_product_entry","explicit_native_command_submitted":saved.engine == Engine::Claude,"native_skill_tool_request_observed":skill_invoked,"body_read_observed":read_body,"resource_read_observed":read_resource});
     artifact(&root.join(format!("evidence/{}-round-{round}.json", label(saved.engine))), json!({"execution_source":"real_native_cli_with_selected_provider","mcp_source":"native_local_stdio_fixture","engine":saved.engine,"round":round,"session":saved.session,"skill":saved.skill,"skill_observation":skill_observation,"capability_classification":unsupported,"proofs":proofs,"stream_observations":stream_observations,"fixture_receipts":receipts,"native_mcp_approval_request_ids":approved_mcp_requests,"development_run":record}), secrets)?;
     if let Some(reason) = unsupported { return Err(reason.into()); }
     let all = proofs.as_object().ok_or("proof_encoding_failed")?.values().all(|v| v.as_bool() == Some(true));

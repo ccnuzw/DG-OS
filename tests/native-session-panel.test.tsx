@@ -5,6 +5,7 @@ import { useDevelopment } from '../src/stores/developmentStore';
 import { useAgentRunner } from '../src/stores/agentRunnerStore';
 import type { NativeObservedSkill } from '../src/types/nativeExtensions';
 import { CapabilitySnapshotView } from '../src/components/development/CapabilitySnapshotView';
+import { useNativeExtensions } from '../src/stores/nativeExtensions';
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('../src/i18n', () => ({ t: (key: string) => key, useLocale: () => ({ locale: 'en-US', t: (key: string) => key }) }));
@@ -200,6 +201,28 @@ it('distinguishes explicit Claude builtins from unknown command origins and expo
   expect(invoke.mock.calls.map(([command]) => command)).toEqual(['list_native_sessions', 'observe_native_session']);
 });
 
+it('shows Claude active source evidence with separate coverage and no file or visibility authority', async () => {
+  const claude = { ...handle, engine: 'claude' };
+  const active: NativeObservedSkill = { name: 'apps/web:deploy', enabled: null, classification: 'skill', builtin: false, aliases: ['deploy'], source: 'plugin', plugin_name: 'fixture', path: '/native/deploy/SKILL.md', scope: null, plugin_id: 'fixture@marketplace' };
+  invoke.mockImplementation(async (command: string) => command === 'list_native_sessions' ? [claude] : { ...claude, domain: 'skills', observed_at: 1, skills: [active, { ...active, name: 'source-only', source: 'project', path: null, plugin_id: null, plugin_name: null }], mcp_servers: [], incomplete: false, source_incomplete: true });
+  render(<NativeSessionPanel target="Claude" domain="skills" initialProjectId="project-a" initialSessionId={handle.session_id} />);
+  await act(async () => {});
+  fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.observeSession' }));
+  await screen.findByText(active.path!);
+  expect(screen.getByText('plugin', { exact: true })).toBeTruthy();
+  expect(screen.getByText('project', { exact: true })).toBeTruthy();
+  expect(screen.getByText(active.plugin_id!)).toBeTruthy();
+  expect(screen.getByText(active.plugin_name!)).toBeTruthy();
+  expect(screen.getByText('nativeExtensions.activeSourceCoverage')).toBeTruthy();
+  expect(screen.getByText('nativeExtensions.observedReadOnly')).toBeTruthy();
+  expect(screen.queryByText('nativeExtensions.incomplete')).toBeNull();
+  expect(screen.queryByRole('link')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'nativeExtensions.enableSkill' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'nativeExtensions.visibility' })).toBeNull();
+  fireEvent.click(screen.getByText(active.path!));
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual(['list_native_sessions', 'observe_native_session']);
+});
+
 it.each(['managed', 'plugin', 'sdk', null, 'user', 'project', 'local', 'incomplete', 'duplicate', 'unknown-status'] as const)('offers MCP controls only for a complete unambiguous independently admitted native source (%s)', async source => {
   const current = { ...handle, engine: 'claude', capabilities: { ...caps, observe_mcp: true, reconnect_mcp: true, toggle_mcp: true } };
   const server = { name: 'server', status: source === 'unknown-status' ? 'unknown' : 'connected', auth_status: null, source: source === 'incomplete' || source === 'duplicate' || source === 'unknown-status' ? 'user' : source, scope: null, tools: ['echo'], schema_observed: false };
@@ -217,12 +240,12 @@ it.each(['managed', 'plugin', 'sdk', null, 'user', 'project', 'local', 'incomple
 
 it('shows supported observation and precise Codex MCP exclusions without offering a mutation', async () => {
   const current = { ...handle, capabilities: { ...caps, observe_mcp: true, reconnect_mcp: false, toggle_mcp: false, native_login: false, native_logout: false,
-    native_auth_guidance: { verified_version: '0.167.0', reason: 'missing_mcp_login_cancel_and_logout_contract', login_argv: ['codex', 'mcp', 'login', '<NAME>'], logout_argv: ['codex', 'mcp', 'logout', '<NAME>'] },
+    native_auth_guidance: { verified_version: '0.167.0', reason: 'isolated_auth_process_unavailable', login_argv: ['codex', 'mcp', 'login', '<NAME>'], logout_argv: ['codex', 'mcp', 'logout', '<NAME>'] },
     mcp_control_guidance: { verified_version: '0.167.0', reason: 'missing_session_scoped_mcp_control_contract', inspect_argv: ['codex', 'mcp', 'get', '<NAME>'] } } };
   invoke.mockImplementation(async (command: string) => command === 'list_native_sessions' ? [current] : { ...current, domain: 'mcp', observed_at: 1, skills: [], mcp_servers: [{ name: 'fixture', status: 'connected', auth_status: 'oAuth', source: null, scope: null, tools: ['echo'], schema_observed: false }], incomplete: false });
   render(<NativeSessionPanel target="Codex" domain="mcp" initialProjectId="project-a" initialSessionId={handle.session_id} />);
   await act(async () => {});
-  expect(screen.getByText('nativeExtensions.guidance.missing_mcp_login_cancel_and_logout_contract')).toBeTruthy();
+  expect(screen.getByText('nativeExtensions.guidance.isolated_auth_process_unavailable')).toBeTruthy();
   expect(screen.getByText('nativeExtensions.guidance.missing_session_scoped_mcp_control_contract')).toBeTruthy();
   expect(screen.getByText('codex mcp login <NAME>')).toBeTruthy();
   expect(screen.getByText('codex mcp logout <NAME>')).toBeTruthy();
@@ -261,4 +284,42 @@ it('separates pinned provider configuration, actual runtime context, and native 
   expect(screen.queryByText('/actual/session-workspace')).toBeNull();
   expect(screen.queryByText('codex-cli 0.167.0')).toBeNull();
   expect(screen.getAllByText('capabilities.notRecorded')).toHaveLength(2);
+});
+
+it.each(['oauth', 'plugin', 'bearer', 'unknown-runtime', 'incomplete', 'duplicate'] as const)('admits only unambiguous Codex OAuth controls without claiming configuration provenance (%s)', async scenario => {
+  const current = { ...handle, capabilities: { ...caps, observe_mcp: true, native_login: true, native_logout: true } };
+  const server = { name: 'fixture', status: scenario === 'unknown-runtime' ? 'unknown' : 'authenticationRequired', auth_status: scenario === 'bearer' ? 'bearerToken' : 'notLoggedIn', source: scenario === 'plugin' ? 'plugin' : null, scope: null, plugin_id: scenario === 'plugin' ? 'fixture@marketplace' : null, tools: [], schema_observed: false, last_call: null };
+  invoke.mockImplementation(async (command: string) => command === 'list_native_sessions' ? [current] : { ...current, domain: 'mcp', observed_at: 1, skills: [], mcp_servers: scenario === 'duplicate' ? [server, server] : [server], incomplete: scenario === 'incomplete', source_incomplete: false });
+  render(<NativeSessionPanel target="Codex" domain="mcp" initialProjectId="project-a" initialSessionId={handle.session_id} />);
+  await act(async () => {});
+  expect(screen.getByRole('button', { name: 'nativeExtensions.auth.login' }).hasAttribute('disabled')).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.observeSession' }));
+  await screen.findByText('nativeExtensions.mcpObservedViaCodex');
+  expect(screen.getByRole('button', { name: 'nativeExtensions.auth.login' }).hasAttribute('disabled')).toBe(scenario !== 'oauth');
+  expect(screen.queryByRole('button', { name: 'nativeExtensions.reconnect' })).toBeNull();
+  expect(screen.getAllByText(/nativeExtensions.toolOutcome.unobserved/).length).toBeGreaterThan(0);
+  expect(invoke.mock.calls.some(([command]) => command === 'start_native_auth' || command === 'native_session_action')).toBe(false);
+});
+
+it('compares fresh file names without granting effective identity and keeps actual call evidence separate', async () => {
+  const configSelection = { target: 'Codex' as const, scope: 'ProjectShared' as const, project_id: 'project-a' };
+  const key = JSON.stringify([useDevelopment.getState().epoch, configSelection.target, configSelection.scope, configSelection.project_id]);
+  const authentication = { configured: true, credential_present: null, authenticated: null, connected: null, approved: null, active_session: null, login: 'Unsupported' as const, logout: 'Unsupported' as const, delete_credentials: 'Unsupported' as const };
+  const instances = ['fixture', 'not-discovered'].map(native_key => ({ native_key, transport: 'Http' as const, enabled: true, has_auth_configuration: false, unknown_fields_present: false, owner: 'Loose' as const, authentication }));
+  useNativeExtensions.setState({ mcp: { [key]: { value: { instances, incomplete: false }, loading: false, error: null, stale: false } } });
+  const current = { ...handle, capabilities: { ...caps, observe_mcp: true } };
+  const observed = { ...current, domain: 'mcp', observed_at: 1, skills: [], mcp_servers: [{ name: 'fixture', status: 'connected', auth_status: 'oAuth', source: null, scope: null, tools: ['echo'], schema_observed: false, plugin_id: null, last_call: { tool: 'echo', status: 'failed', event_seq: 7 } }], incomplete: false };
+  invoke.mockImplementation(async (command: string) => command === 'list_native_sessions' ? [current] : observed);
+  render(<NativeSessionPanel target="Codex" domain="mcp" configSelection={configSelection} initialProjectId="project-a" initialSessionId={handle.session_id} />);
+  await act(async () => {});
+  fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.observeSession' }));
+  await screen.findByRole('region', { name: 'nativeExtensions.configComparison' });
+  expect(screen.getByText(/fixture · nativeExtensions.configuredFile · nativeExtensions.discoveredSameName/)).toBeTruthy();
+  expect(screen.getByText(/not-discovered · nativeExtensions.configuredFile · nativeExtensions.notObservedInSession/)).toBeTruthy();
+  expect(screen.getByText('nativeExtensions.configComparisonNotice')).toBeTruthy();
+  expect(screen.getByText(/echo · nativeExtensions.toolOutcome.failed/)).toBeTruthy();
+  expect(screen.queryByText(/nativeExtensions.toolOutcome.completed/)).toBeNull();
+  act(() => useNativeExtensions.setState(state => ({ mcp: { ...state.mcp, [key]: { ...state.mcp[key], stale: true } } })));
+  expect(screen.queryByText(/nativeExtensions.discoveredSameName/)).toBeNull();
+  expect(screen.getByText('nativeExtensions.configComparisonUnavailable')).toBeTruthy();
 });

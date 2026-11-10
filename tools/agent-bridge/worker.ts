@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createInterface } from 'node:readline';
 import { randomUUID, createHash } from 'node:crypto';
 import { projectSupportedCommands } from './native-observation';
+import { commandsSchema, modelsSchema, mcpStatusSchema, nativeCapabilities, verifiedWrites, isUnsupportedControl, resultRequestId, validateQuestionAnswers, observeActiveSkillSources, type NativeCapabilities } from './native-protocol';
 import { applyTurnSettings, projectTurnControls, turnSettingsSchema, validateTurnSettings, type TurnControls } from './turn-controls';
 
 const emit = (method: string, params: unknown) => process.stdout.write(JSON.stringify({ method, params }) + '\n');
@@ -16,11 +17,13 @@ let opened = false;
 let providerEvidence: ProviderEvidence | undefined;
 let activeProvider: z.infer<typeof providerSchema> | undefined;
 let activeProviderEnv: Record<string, string> | undefined;
-let nativeProtocolSupported = false;
+let optionalWritesVerified = false;
+let nativeCapabilitiesState: NativeCapabilities | undefined;
 let nativeControlBusy = false;
 let wake: (() => void) | undefined;
 let turnControls: TurnControls | undefined;
 let activeRequestId: string | undefined;
+let activeLocalCommand: string | undefined;
 const projectedMessages = new Set<string>();
 const projectedResults = new Set<string>();
 const queue: SDKUserMessage[] = [];
@@ -28,7 +31,6 @@ const receipts = new Map<string, string>();
 const permissionRequestIds = new Set<string>();
 const permissions = new Map<string, { tool: string; input: Record<string, unknown>; resolve: (result: PermissionResult) => void }>();
 const record = z.record(z.string(), z.unknown());
-const commandMetadata = z.object({ name: z.string(), description: z.string().optional(), argumentHint: z.string().optional(), builtin: z.boolean().optional() });
 const initMetadata = z.object({ slash_commands: z.array(z.string()).optional(), skills: z.array(z.string()).optional(), mcp_servers: z.array(z.object({ name: z.string(), status: z.string(), source: z.string().optional() })).optional(), plugins: z.array(z.object({ name: z.string(), path: z.string(), version: z.string().optional() })).optional() });
 // Only the host's private stdio accepts provider credentials. Never serialize this object.
 const routeDisableKeys = [
@@ -95,7 +97,8 @@ const commandSchema = z.discriminatedUnion('method', [
     z.object({ kind: z.literal('reconnect_mcp'), server_name: z.string().max(128) }).strict(),
     z.object({ kind: z.literal('toggle_mcp'), server_name: z.string().max(128), enabled: z.boolean() }).strict(),
   ]) }).strict() }),
-  z.object({ id: z.number(), method: z.enum(['interrupt', 'close']), params: record }),
+  z.object({ id: z.number(), method: z.literal('interrupt'), params: z.object({ request_id: z.string().uuid() }).strict() }),
+  z.object({ id: z.number(), method: z.literal('close'), params: record }),
 ]);
 type BridgeCommand = z.infer<typeof commandSchema>;
 async function* input() {
@@ -122,7 +125,7 @@ async function verifyProvider(current: Query, provider: z.infer<typeof providerS
   // SDK 0.3.317 implements this private-stdio control but omits its public TS signature.
   // CLI get_settings returns effective, sources and the actual running applied.model.
   const controls = current as Query & { getSettings?: () => Promise<unknown> };
-  if (typeof controls.getSettings !== 'function') throw new BridgeFailure('provider_verification_failed');
+  if (typeof controls.getSettings !== 'function' || typeof current.reinitialize !== 'function') throw new BridgeFailure('provider_verification_failed');
   const settings = settingsSchema.safeParse(await controls.getSettings());
   if (!settings.success) throw new BridgeFailure('provider_verification_failed');
   const { effective, sources, applied } = settings.data;
@@ -172,8 +175,9 @@ function project(value: unknown, history = false) {
     void close();
     return;
   }
-  const echoed = message.user_message_uuids ?? (message.user_message_uuid ? [message.user_message_uuid] : []);
-  const requestId = !history && activeRequestId && (echoed.includes(activeRequestId) || (!echoed.length && message.type !== 'result')) ? activeRequestId : undefined;
+  const echoed = [...(message.user_message_uuids ?? []), ...(message.user_message_uuid ? [message.user_message_uuid] : [])];
+  const local = z.object({ local_command: z.string().optional() }).safeParse(value);
+  const requestId = history ? undefined : resultRequestId({ ...message, local_command: local.success ? local.data.local_command : undefined }, activeRequestId, activeLocalCommand, optionalWritesVerified);
   const identity = { session_id: message.session_id ?? sessionId, uuid: message.uuid,
     user_message_uuid: message.user_message_uuid, user_message_uuids: message.user_message_uuids,
     request_id: requestId, history };
@@ -193,6 +197,12 @@ function project(value: unknown, history = false) {
       return failed.success ? { ...failed.data, content: 'engine_failed' } : block;
     }) : content;
     emit('message', { type: message.type, content: safeContent, parent_tool_use_id: message.parent_tool_use_id, model: message.message?.model, usage: message.type === 'assistant' ? message.message?.usage : undefined, native_message_id: message.message?.id, usage_source: message.type === 'assistant' && message.message?.usage ? 'native_response' : undefined, ...details, ...identity });
+  } else if (message.type === 'system' && message.subtype === 'local_command_output') {
+    const output = z.object({ content: z.string() }).safeParse(value);
+    const key = message.uuid ? `${identity.session_id}:${message.uuid}` : undefined;
+    if (!output.success || key && projectedMessages.has(key)) return;
+    if (key) projectedMessages.add(key);
+    emit('message', { type: 'assistant', content: output.data.content, native_subtype: 'local_command_output', ...identity });
   } else if (message.type === 'stream_event') {
     const delta = message.event?.delta;
     if (delta?.type === 'text_delta') emit('text_delta', { text: delta.text, parent_tool_use_id: message.parent_tool_use_id, ...identity });
@@ -208,9 +218,11 @@ function project(value: unknown, history = false) {
       return;
     }
     running = false;
+    for (const permission of permissions.values()) permission.resolve({ behavior: 'deny', message: 'Turn completed' });
     activeRequestId = undefined;
+    activeLocalCommand = undefined;
     const termination = resultTermination.safeParse(value);
-    emit('result', { subtype: message.subtype, is_error: message.is_error, result: message.is_error ? 'engine_failed' : message.result, total_cost_usd: message.total_cost_usd, usage: message.usage, model_limits: message.modelUsage, terminal_reason: termination.success ? termination.data.terminal_reason : undefined, ...safeNativeDetails(value), ...identity });
+    emit('result', { subtype: message.subtype, is_error: message.is_error, result: message.is_error ? 'engine_failed' : message.result, local_command: local.success ? local.data.local_command : undefined, total_cost_usd: message.total_cost_usd, usage: message.usage, model_limits: message.modelUsage, terminal_reason: termination.success ? termination.data.terminal_reason : undefined, ...safeNativeDetails(value), ...identity });
   } else if (message.type === 'system' && message.subtype === 'init') {
     // The requested session identity is pinned before query(); never adopt a fallback session.
     const metadata = initMetadata.safeParse(value);
@@ -221,6 +233,7 @@ function project(value: unknown, history = false) {
 }
 async function close() {
   closed = true; opened = false; running = false; activeRequestId = undefined; queue.length = 0; wake?.();
+  activeLocalCommand = undefined;
   activeProvider = undefined; activeProviderEnv = undefined;
   for (const permission of permissions.values()) permission.resolve({ behavior: 'deny', message: 'Session closed' });
   permissions.clear(); agent?.close();
@@ -238,9 +251,9 @@ async function handle(command: BridgeCommand) {
     try {
     sessionId = params.resume_id || sessionId;
     if (params.resume_id) {
-      const history = await getSessionMessages(params.resume_id, { dir: params.workspace });
-      // The pinned SDK returns [] for a missing transcript. Do not let query()
-      // silently turn an unavailable history into a fresh running session.
+      // SDK 0.3.317 parses the complete local transcript before limit/offset;
+      // retain the latest-window semantics rather than page/reparse it repeatedly.
+      const history = await getSessionMessages(params.resume_id, { dir: params.workspace, includeSystemMessages: true });
       if (!history.length) throw new BridgeFailure('resume_history_unavailable');
       emit('history', { truncated: history.length > 2000 });
       for (const message of history.slice(-2000)) project(message, true);
@@ -265,7 +278,7 @@ async function handle(command: BridgeCommand) {
       ...(params.resume_id ? { resume: params.resume_id } : { sessionId }),
       canUseTool: async (tool, original, options) => {
         const id = options.requestId;
-        if (!id || permissionRequestIds.has(id)) return { behavior: 'deny', message: 'Invalid permission request identity' };
+        if (!id || permissionRequestIds.has(id) || !running || !activeRequestId) return { behavior: 'deny', message: 'Invalid permission request identity' };
         permissionRequestIds.add(id);
         const { promise, resolve } = Promise.withResolvers<PermissionResult>();
         let settled = false;
@@ -285,8 +298,8 @@ async function handle(command: BridgeCommand) {
       finally { await close(); emit('closed', {}); }
     })();
     const initialized = await current.initializationResult();
-    // This adapter is pinned to the installed SDK and actual responding CLI.
-    nativeProtocolSupported = initialized.claude_code_version === '2.1.319';
+    optionalWritesVerified = verifiedWrites(initialized.claude_code_version);
+    nativeCapabilitiesState = nativeCapabilities(current, initialized.claude_code_version);
     if (closed) throw new BridgeFailure('closed');
     // Null would remove the flag key and restore lower-tier helpers. Empty string
     // disables the helper; managed policy may win, in which case readback refuses it.
@@ -294,10 +307,25 @@ async function handle(command: BridgeCommand) {
     providerEvidence = await verifyProvider(current, provider, providerEnv);
     if (closed) throw new BridgeFailure('closed');
     activeProvider = provider; activeProviderEnv = providerEnv;
-    turnControls = projectTurnControls(await current.supportedModels().catch(() => []), provider.model, nativeProtocolSupported);
+    // Optional metadata must not invalidate a Provider-verified ordinary query.
+    const commands = commandsSchema.safeParse(initialized.commands);
+    if (!commands.success) emit('native/unavailable', { domain: 'skills', kind: 'native_invalid_format' });
+    if (nativeCapabilitiesState.observe_mcp) {
+      try {
+        if (!mcpStatusSchema.safeParse(await current.mcpServerStatus()).success) emit('native/unavailable', { domain: 'mcp', kind: 'native_invalid_format' });
+      } catch (error) {
+        if (isUnsupportedControl(error, 'mcp_status')) nativeCapabilitiesState.observe_mcp = false;
+        emit('native/unavailable', { domain: 'mcp', kind: isUnsupportedControl(error, 'mcp_status') ? 'unsupported_operation' : 'operation_failed' });
+      }
+    }
+    const models = modelsSchema.safeParse(initialized.models);
+    turnControls = projectTurnControls(models.success ? models.data : [], provider.model, optionalWritesVerified);
+    if (typeof current.setPermissionMode !== 'function') {
+      turnControls.permission = { ...turnControls.permission, available: false, options: [], current: null, reason: 'native_protocol_unsupported' };
+    }
     opened = true;
-    emit('native/initialized', { commands: z.array(commandMetadata).parse(initialized.commands), status: 'observed_not_executed' });
-    return { session_id: sessionId, provider_evidence: providerEvidence, native_protocol_supported: nativeProtocolSupported, controls: turnControls };
+    if (commands.success) emit('native/initialized', { commands: commands.data, status: 'observed_not_executed' });
+    return { session_id: sessionId, provider_evidence: providerEvidence, native_capabilities: nativeCapabilitiesState, verified_write_protocol: optionalWritesVerified, controls: turnControls };
     } catch (error) {
       await close();
       throw error instanceof BridgeFailure ? error : new BridgeFailure('provider_load_failed');
@@ -307,17 +335,25 @@ async function handle(command: BridgeCommand) {
   if (!agent || closed) throw new BridgeFailure('closed');
   if (!opened) throw new BridgeFailure('not_ready');
   if (command.method === 'native/observe' || command.method === 'native/action') {
-    if (!nativeProtocolSupported) throw new BridgeFailure('unsupported_operation');
+    if (!nativeCapabilitiesState) throw new BridgeFailure('unsupported_operation');
     if (nativeControlBusy) throw new BridgeFailure('busy');
     nativeControlBusy = true;
+    let attemptedCapability: keyof NativeCapabilities = command.method === 'native/observe' ? command.params.domain === 'skills' ? 'observe_skills' : 'observe_mcp' : command.params.action.kind;
     try {
       if (command.method === 'native/observe') {
         if (command.params.domain === 'skills') {
-          const commands = await agent.supportedCommands();
+          if (!nativeCapabilitiesState.observe_skills) throw new BridgeFailure('unsupported_operation');
+          const commands = commandsSchema.safeParse(await agent.supportedCommands());
           if (closed) throw new BridgeFailure('closed');
-          return projectSupportedCommands(commands);
+          if (!commands.success) throw new BridgeFailure('native_invalid_format');
+          const observation = await observeActiveSkillSources(agent, commands.data, projectSupportedCommands(commands.data));
+          if (closed) throw new BridgeFailure('closed');
+          return observation;
         }
-        const servers = await agent.mcpServerStatus();
+        if (!nativeCapabilitiesState.observe_mcp) throw new BridgeFailure('unsupported_operation');
+        const parsed = mcpStatusSchema.safeParse(await agent.mcpServerStatus());
+        if (!parsed.success) throw new BridgeFailure('native_invalid_format');
+        const servers = parsed.data;
         if (closed) throw new BridgeFailure('closed');
         return { servers: servers.slice(0, 256).map(value => ({
           name: safeIdentifier(value.name), status: value.status,
@@ -329,11 +365,21 @@ async function handle(command: BridgeCommand) {
       if (running || permissions.size > 0) throw new BridgeFailure('busy');
       const action = command.params.action;
       if (action.kind === 'reload_skills') {
+        if (!nativeCapabilitiesState.reload_skills) throw new BridgeFailure('unsupported_operation');
+        if (!nativeCapabilitiesState.observe_skills) throw new BridgeFailure('unsupported_operation');
+        attemptedCapability = 'observe_skills';
+        if (!commandsSchema.safeParse(await agent.supportedCommands()).success) throw new BridgeFailure('native_invalid_format');
+        attemptedCapability = 'reload_skills';
         const result = await agent.reloadSkills();
         if (closed) throw new BridgeFailure('closed');
         return { state: Array.isArray(result.skills) ? 'applied' : 'unknown' };
       }
       if (action.kind === 'reload_plugins') {
+        if (!nativeCapabilitiesState.reload_plugins) throw new BridgeFailure('unsupported_operation');
+        if (!nativeCapabilitiesState.observe_skills) throw new BridgeFailure('unsupported_operation');
+        attemptedCapability = 'observe_skills';
+        if (!commandsSchema.safeParse(await agent.supportedCommands()).success) throw new BridgeFailure('native_invalid_format');
+        attemptedCapability = 'reload_plugins';
         const result = await agent.reloadPlugins({ holdOnCacheImpact: action.hold_on_cache_impact });
         if (closed) throw new BridgeFailure('closed');
         if (result.error_count !== 0) return { state: 'unknown' };
@@ -342,17 +388,32 @@ async function handle(command: BridgeCommand) {
         return { state: result.held ? 'held' : 'applied' };
       }
       if (safeIdentifier(action.server_name) !== action.server_name) throw new BridgeFailure('invalid_request');
-      const servers = await agent.mcpServerStatus();
+      if (!nativeCapabilitiesState[action.kind] || !nativeCapabilitiesState.observe_mcp) throw new BridgeFailure('unsupported_operation');
+      attemptedCapability = 'observe_mcp';
+      const parsed = mcpStatusSchema.safeParse(await agent.mcpServerStatus());
+      if (!parsed.success) throw new BridgeFailure('native_invalid_format');
+      const servers = parsed.data;
       if (closed) throw new BridgeFailure('closed');
       const matches = servers.filter(value => value.name === action.server_name);
       if (matches.length !== 1) throw new BridgeFailure('unsupported_operation');
       const server = matches[0];
       // Never infer loose ownership from a display name or mutate managed/plugin resources.
       if (!['user','project','local'].includes(server.source || '')) throw new BridgeFailure('unsupported_operation');
+      attemptedCapability = action.kind;
       if (action.kind === 'reconnect_mcp') await agent.reconnectMcpServer(action.server_name);
       else await agent.toggleMcpServer(action.server_name, action.enabled);
       if (closed) throw new BridgeFailure('closed');
       return { state: 'applied' };
+    } catch (error) {
+      const capability = attemptedCapability;
+      const subtype = { observe_skills: 'initialize', observe_mcp: 'mcp_status', reload_skills: 'reload_skills', reload_plugins: 'reload_plugins', reconnect_mcp: 'mcp_reconnect', toggle_mcp: 'mcp_toggle' }[capability];
+      if (isUnsupportedControl(error, subtype)) {
+        nativeCapabilitiesState[capability] = false;
+        if (capability === 'observe_skills') nativeCapabilitiesState.reload_skills = false;
+        emit('native/capabilities', nativeCapabilitiesState);
+        throw new BridgeFailure('unsupported_operation');
+      }
+      throw error;
     } finally { nativeControlBusy = false; }
   }
   if (command.method === 'send') {
@@ -391,6 +452,9 @@ async function handle(command: BridgeCommand) {
     if (closed) throw new BridgeFailure('closed');
     receipts.set(params.request_id, fingerprint);
     activeRequestId = params.request_id;
+    const commandName = /^\/([^\s]+)(?:\s|$)/.exec(params.text.trim())?.[1];
+    // CLI 2.1.319 hXi() sanitizes result.local_command in its !shouldQuery branch.
+    activeLocalCommand = commandName?.toLowerCase().replace(/[^a-z]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 64).replace(/_+$/, '') || (commandName ? 'custom' : undefined);
     // commandSchema has already validated the host request ID as a UUID.
     queue.push({ type: 'user', message: { role: 'user', content: params.text }, parent_tool_use_id: null, session_id: sessionId, uuid: params.request_id as SDKUserMessage['uuid'], origin: { kind: 'human' } });
     if (turnControls) emit('controls', { controls: turnControls, request_id: activeRequestId, session_id: sessionId });
@@ -404,17 +468,18 @@ async function handle(command: BridgeCommand) {
     if (response?.behavior === 'deny') pending.resolve({ behavior: 'deny', message: 'Denied by user' });
     else if (response?.behavior === 'allow') {
       const updatedInput = { ...pending.input };
-      if (response.answers) {
-        if (pending.tool !== 'AskUserQuestion') throw new BridgeFailure('invalid_response');
-        const questions = z.array(z.object({ question: z.string() }).passthrough()).safeParse(pending.input.questions);
-        if (!questions.success || Object.keys(response.answers).some(key => !questions.data.some(question => question.question === key))) throw new BridgeFailure('invalid_response');
+      if (pending.tool === 'AskUserQuestion') {
+        if (!validateQuestionAnswers(pending.input, response.answers)) throw new BridgeFailure('invalid_response');
         updatedInput.answers = response.answers;
-      }
+      } else if (response.answers) throw new BridgeFailure('invalid_response');
       pending.resolve({ behavior: 'allow', updatedInput });
     } else throw new BridgeFailure('invalid_response');
     return {};
   }
-  if (command.method === 'interrupt') { await agent.interrupt(); return {}; }
+  if (command.method === 'interrupt') {
+    if (!running || activeRequestId !== command.params.request_id) throw new BridgeFailure('not_running');
+    await agent.interrupt(); return {};
+  }
   throw new BridgeFailure('unsupported_operation');
 }
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -431,7 +496,7 @@ lines.on('line', line => {
   }, error => {
     const kind = error instanceof BridgeFailure ? error.kind : 'operation_failed';
     if (message.method === 'open') emit('failure', { kind, message: kind });
-    process.stdout.write(JSON.stringify({ id: message.id, error: { code: -32000, message: kind } }) + '\n');
+    process.stdout.write(JSON.stringify({ id: message.id, error: { code: kind === 'unsupported_operation' ? -32601 : -32000, message: kind } }) + '\n');
   });
 });
 lines.on('close', () => { void close(); });

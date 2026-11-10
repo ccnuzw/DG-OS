@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-// Run from DG-OS root with DGOS_STAGE4_{CODEX,CLAUDE}_{URL,KEY,MODEL}: bun scripts/stage4-acceptance.ts
-// Restart: bun scripts/stage4-acceptance.ts --resume /tmp/dgos-stage4-<id>
-// Requires Bun, Rust/Cargo, node, codex, claude and npm run agents:build.
+// Run both engines with DGOS_STAGE4_{CODEX,CLAUDE}_{URL,KEY,MODEL}, or select --engine claude|codex.
+// Restart with the same --engine selection and --resume /tmp/dgos-stage4-<id>.
+// Requires Bun, Rust/Cargo, node, selected CLIs and the Claude bridge when selected.
 // --desktop runs the visible production WebView acceptance instead of the Rust round-trip.
 // Provider values must be supplied explicitly; no native configuration is read.
 // Keys exist only in this process and the Rust child environment; never on disk/argv.
@@ -13,9 +13,15 @@ import { randomUUID } from 'node:crypto';
 const fail = (message: string): never => { throw new Error(message); };
 const text = (value: unknown): string | undefined => typeof value === 'string' && value.trim() ? value.trim() : undefined;
 const args = process.argv.slice(2);
+const engineIndex = args.indexOf('--engine');
+const selectedEngine = engineIndex >= 0 ? args[engineIndex + 1] : 'both';
+if (!['both', 'claude', 'codex'].includes(selectedEngine ?? '')) fail('invalid_engine');
+if (engineIndex >= 0) args.splice(engineIndex, 2);
+const engines = selectedEngine === 'both' ? ['codex', 'claude'] : [selectedEngine];
 const desktop = args[0] === '--desktop';
 if (desktop) args.shift();
-if (!(args.length === 0 || (args.length === 2 && args[0] === '--resume'))) fail('usage: bun scripts/stage4-acceptance.ts [--desktop | --resume <artifact-dir>]');
+if (desktop && selectedEngine !== 'both') fail('desktop_engine_selection_not_supported');
+if (!(args.length === 0 || (args.length === 2 && args[0] === '--resume'))) fail('usage: bun scripts/stage4-acceptance.ts [--engine claude|codex|both] [--desktop | --resume <artifact-dir>]');
 const resume = args.length !== 0;
 const root = resume ? resolve(args[1]) : await mkdtemp(join(tmpdir(), 'dgos-stage4-'));
 const repository = process.cwd();
@@ -35,20 +41,34 @@ try {
   const claudeKey = text(process.env.DGOS_STAGE4_CLAUDE_KEY);
   const claudeUrl = text(process.env.DGOS_STAGE4_CLAUDE_URL);
   const claudeModel = text(process.env.DGOS_STAGE4_CLAUDE_MODEL);
-  if (!codexKey || !codexUrl || !codexModel || !claudeKey || !claudeUrl || !claudeModel) fail(failureClass);
+  const configured = { codex: { key: codexKey, url: codexUrl, model: codexModel }, claude: { key: claudeKey, url: claudeUrl, model: claudeModel } };
+  for (const engine of engines) {
+    const provider = configured[engine as keyof typeof configured];
+    if (!provider.key || !provider.url || !provider.model) fail(failureClass);
+    const url = new URL(provider.url);
+    if (url.username || url.password || url.search || url.hash || !['http:', 'https:'].includes(url.protocol)) fail('provider_endpoint_invalid');
+  }
   if (desktop && resume) fail('desktop_resume_not_supported');
-  for (const raw of [codexUrl, claudeUrl]) { const url = new URL(raw); if (url.username || url.password || url.search || url.hash || !['http:', 'https:'].includes(url.protocol)) fail('provider_endpoint_invalid'); }
   const env: Record<string, string | undefined> = { ...process.env,
+    CARGO_HOME: process.env.CARGO_HOME ?? join(process.env.HOME ?? fail('host_home_missing'), '.cargo'),
+    RUSTUP_HOME: process.env.RUSTUP_HOME ?? join(process.env.HOME ?? fail('host_home_missing'), '.rustup'),
     HOME: join(root, 'home'), CODEX_HOME: join(root, 'codex-home'), CLAUDE_CONFIG_DIR: join(root, 'claude-home'),
     DGOS_STAGE4_CODEX_URL: codexUrl, DGOS_STAGE4_CODEX_MODEL: codexModel, DGOS_STAGE4_CODEX_KEY: codexKey,
     DGOS_STAGE4_CLAUDE_URL: claudeUrl, DGOS_STAGE4_CLAUDE_MODEL: claudeModel, DGOS_STAGE4_CLAUDE_KEY: claudeKey,
     DGOS_CLAUDE_BRIDGE: process.env.DGOS_CLAUDE_BRIDGE ?? join(repository, 'tools/agent-bridge/bin/dgos-claude-bridge'), RUST_LOG: 'off',
+    DGOS_STAGE4_ENGINE: selectedEngine,
   };
   for (const name of ['OPENAI_API_KEY', 'OPENAI_AUTH_TOKEN', 'OPENAI_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_API_KEY', 'DGOS_PROVIDER_KEY', 'DGOS_MCP_BEARER']) delete env[name];
-  failureClass = 'bridge_binary_missing_run_npm_run_agents_build';
-  await access(env.DGOS_CLAUDE_BRIDGE!);
+  for (const engine of ['codex', 'claude']) {
+    if (engines.includes(engine)) continue;
+    for (const field of ['URL', 'MODEL', 'KEY']) delete env[`DGOS_STAGE4_${engine.toUpperCase()}_${field}`];
+  }
+  if (engines.includes('claude')) {
+    failureClass = 'bridge_binary_missing_run_npm_run_agents_build';
+    await access(env.DGOS_CLAUDE_BRIDGE!);
+  }
   if (!resume) {
-    for (const engine of ['codex', 'claude']) {
+    for (const engine of engines) {
       const id = `stage4-${engine}-proof`;
       const markers = { body: `BODY_${randomUUID()}`, resource: `RESOURCE_${randomUUID()}` };
       const description = 'Read the installed native Stage4 proof resource and invoke the configured native MCP fixture.';
@@ -66,7 +86,7 @@ try {
   const child = Bun.spawn(command, { cwd: repository, env, stdin: 'inherit', stdout: 'inherit', stderr: 'inherit' });
   const code = await child.exited;
   process.exitCode = code;
-  if (code === 0 && !resume && !desktop) console.log(`restart: bun scripts/stage4-acceptance.ts --resume ${root}`);
+  if (code === 0 && !resume && !desktop) console.log(`restart: bun scripts/stage4-acceptance.ts --engine ${selectedEngine} --resume ${root}`);
 } catch {
   // Never stringify native configuration errors, command objects, or provider keys.
   console.error(`stage4 bootstrap failed: ${failureClass}; artifact=${root}`);

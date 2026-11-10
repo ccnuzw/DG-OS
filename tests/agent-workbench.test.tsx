@@ -1,5 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Modal } from '@dgos/ui';
+import * as chatAttachments from '../src/components/chat/Attachments';
+import { addAgentImages, agentImagesKey, captureAgentImages, useAgentImages } from '../src/stores/agentImages';
 import AgentWorkbench from '../src/pages/workbench/AgentWorkbench';
 import { AgentConversation, EventContent, Request } from '../src/pages/workbench/AgentConversation';
 import { useAgentRunner, type AgentSession } from '../src/stores/agentRunnerStore';
@@ -9,7 +12,7 @@ import { useDevelopmentRuntime, type DevelopmentProcess } from '../src/stores/de
 import { SurfaceScope } from '../src/workspace/SurfaceContext';
 import { createWorkspaceController } from '../src/workspace/controller';
 import type { CliProviderRevision } from '../src/stores/developmentCapabilities';
-import { useDevelopmentDrafts } from '../src/stores/developmentDrafts';
+import { developmentDraftKey, useDevelopmentDrafts } from '../src/stores/developmentDrafts';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { useWorkspaceTabs } from '../src/workspace/useWorkspaceTabs';
 import { useCapabilityEntry } from '../src/components/chat/RuntimeNavigation';
@@ -42,7 +45,7 @@ function install(override: (command: string, args?: { input?: unknown; sessionId
   if (command === 'read_development_cli_provider') return providerRevision;
   if (command === 'read_development_cli_provider_catalog') return { project_id: 'p1', engine: 'codex', providers: [{ id: 'provider1', name: 'Provider One', enabled: true, config_revision: 3, availability: { available: true, reason: null }, models: [{ id: 'model1', name: 'Model One', model_type: 'chat' }] }] };
   if (command === 'get_development_session_configuration') return { format: 'provider_bound', read_only: false, snapshot: { binding_id: 'binding1', engine: 'codex', ...providerRevision.configuration.provider, revision: 4, permission_epoch: 2 } };
-  if (command === 'read_development_git') return { task_id: 't1', kind: 'directory', branch: null, head: null, conflicts: [] };
+  if (command === 'read_development_git') return { task_id: 't1', kind: 'directory', branch: null, head: null, files: [], conflicts: [], staged_diff: '', worktree_diff: '', initial_staged_paths: [], file_versions: {}, baseline_version: '' };
   if (command === 'list_development_processes') return [];
   if (command === 'read_development_session_summaries') return [];
   if (command === 'read_development_project_git') return { kind: 'directory', branch: null, head: null, files: [], conflicts: [], staged_diff: '', worktree_diff: '' };
@@ -112,6 +115,60 @@ describe('agent sessions', () => {
   fireEvent.click(await screen.findByRole('button', { name: 'agent.deny' }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('respond_agent_request', { input: { session_id: session.id, generation: session.generation, request_id: 'approval', response: { behavior: 'deny' } } }));
  });
+});
+
+it('keeps stop usable during a stalled send and waits for the native terminal before clearing stop pending', async () => {
+ const receipt = Promise.withResolvers<null>();
+ let native: AgentSession = { ...session, engine: 'codex' };
+ install(command => {
+  if (command === 'open_agent_session' || command === 'get_agent_session') return native;
+  if (command === 'send_agent_message') { native = { ...native, status: 'running', active_run: 'stalled-run' }; return receipt.promise; }
+  return undefined;
+ });
+ render(<AgentWorkbench />); await start();
+ fireEvent.change(screen.getByLabelText('agent.prompt'), { target: { value: 'Send once, keep this until acknowledgement' } });
+ fireEvent.click(screen.getByRole('button', { name: 'agent.send' }));
+ await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === 'send_agent_message')).toHaveLength(1));
+ await act(async () => { await useAgentRunner.getState().attach(session.id); });
+ expect(useAgentRunner.getState().acting).toBe(true);
+ const stop = screen.getByRole<HTMLButtonElement>('button', { name: 'agent.interrupt' });
+ expect(stop.disabled).toBe(false);
+ fireEvent.click(stop); fireEvent.click(stop);
+ await waitFor(() => expect(invoke).toHaveBeenCalledWith('interrupt_agent_session', { sessionId: session.id, generation: session.generation, runId: 'stalled-run' }));
+ await screen.findByText('agent.interruptPending');
+ expect(screen.getByText('agent.state.running')).toBeTruthy();
+ expect(stop.disabled).toBe(true);
+ expect(screen.getByRole<HTMLButtonElement>('button', { name: 'agent.close' }).disabled).toBe(false);
+ expect(screen.getByLabelText('agent.prompt')).toHaveProperty('value', 'Send once, keep this until acknowledgement');
+ native = { ...native, status: 'idle', active_run: null, events: [{ seq: 1, kind: 'turn/completed', text: null, run: 'stalled-run', data: { run_status: 'cancelled' } }] };
+ await act(async () => { await useAgentRunner.getState().attach(session.id); });
+ expect(screen.queryByText('agent.interruptPending')).toBeNull();
+ expect(screen.getByText('agent.state.idle')).toBeTruthy();
+ await act(async () => receipt.resolve(null));
+ expect(invoke.mock.calls.filter(([name]) => name === 'interrupt_agent_session')).toHaveLength(1);
+ expect(invoke.mock.calls.filter(([name]) => name === 'send_agent_message')).toHaveLength(1);
+});
+
+it('shows a separate storage warning without native failure and keeps stop and close available', async () => {
+ let native: AgentSession = { ...session, engine: 'codex', status: 'running', active_run: 'run', persistence_error: 'storage_failed' };
+ install(command => command === 'open_agent_session' || command === 'get_agent_session' ? native : undefined);
+ render(<AgentWorkbench />); await start('running');
+ expect(screen.getAllByText('agent.storageFailed').length).toBeGreaterThan(0);
+ expect(screen.getByText('agent.state.running')).toBeTruthy();
+ expect(screen.queryByText('agent.failure')).toBeNull();
+ expect(screen.getByRole<HTMLButtonElement>('button', { name: 'agent.interrupt' }).disabled).toBe(false);
+ expect(screen.getByRole<HTMLButtonElement>('button', { name: 'agent.close' }).disabled).toBe(false);
+ native = { ...native, status: 'idle', active_run: null };
+ await act(async () => { await useAgentRunner.getState().attach(session.id); });
+ fireEvent.change(screen.getByLabelText('agent.prompt'), { target: { value: 'Keep my next draft' } });
+ expect(screen.getByRole<HTMLButtonElement>('button', { name: 'agent.send' }).disabled).toBe(true);
+ fireEvent.keyDown(screen.getByLabelText('agent.prompt'), { key: 'Enter', ctrlKey: true });
+ expect(invoke.mock.calls.some(([name]) => name === 'send_agent_message')).toBe(false);
+ native = { ...native, persistence_error: null };
+ await act(async () => { await useAgentRunner.getState().attach(session.id); });
+ expect(screen.queryByText('agent.storageFailed')).toBeNull();
+ expect(screen.getByLabelText('agent.prompt')).toHaveProperty('value', 'Keep my next draft');
+ expect(screen.getByRole<HTMLButtonElement>('button', { name: 'agent.send' }).disabled).toBe(false);
 });
 
 it('starts from a taskless project through the task drawer without losing the draft or duplicating admission', async () => {
@@ -451,6 +508,7 @@ it.each(['codex', 'claude'] as const)('keeps the %s session through terminal obs
  expect(invoke.mock.calls.filter(([command]) => command === 'open_agent_session')).toHaveLength(1);
 });
 
+
 it.each(['accept', 'decline', 'cancel'])('shows native command context and sends the exact Codex %s decision', async decision => {
  const native = { id: 'decision', kind: 'item/commandExecution/requestApproval', title: 'native', data: { command: 'echo reviewed-command', cwd: '/tmp/reviewed-directory', reason: 'Native permission reason', availableDecisions: ['accept', 'decline', 'cancel'] } };
  install(command => command === 'open_agent_session' || command === 'get_agent_session' ? { ...session, status: 'waiting', pending: [native] } : undefined);
@@ -531,7 +589,6 @@ it('keeps permission expansion scoped and cannot approve an unknown replacement 
  const response = Promise.withResolvers<unknown>();
  install(command => command === 'respond_agent_request' ? response.promise : command === 'get_agent_session' || command === 'open_agent_session' ? waiting : undefined);
  fireEvent.click(screen.getByRole('button', { name: 'agent.allowTurn' }));
- expect(screen.queryByRole('button', { name: 'agent.allowSession' })).toBeNull();
  expect(invoke.mock.calls.filter(([command]) => command === 'respond_agent_request')).toEqual([['respond_agent_request', { input: { session_id: session.id, generation: session.generation, request_id: native.id, response: { permissions, scope: 'turn' } } }]]);
  await act(async () => { useAgentRunner.setState({ session: { ...waiting, status: 'unknown', generation: 'replacement' } }); response.resolve(null); });
  expect(screen.queryByRole('button', { name: 'agent.allowTurn' })).toBeNull();
@@ -539,15 +596,13 @@ it('keeps permission expansion scoped and cannot approve an unknown replacement 
  expect(useAgentRunner.getState().session?.generation).toBe('replacement');
 });
 
-it('never offers session or permanent approval decisions', async () => {
+it('offers only native-listed decisions and preserves the selected session scope', async () => {
  const submit = vi.fn(async () => true);
- render(<Request engine="codex" sessionId="session" generation="generation" pending={{ id: 'specific-request', kind: 'item/commandExecution/requestApproval', title: 'native', data: { command: 'echo reviewed', availableDecisions: ['acceptForSession', { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['echo'] } }, 'decline'] } }} submit={submit} />);
- expect(screen.getByText('specific-request')).toBeTruthy();
- expect(screen.getByText('generation', { exact: true })).toBeTruthy();
- expect(screen.queryByRole('button', { name: 'agent.allowSession' })).toBeNull();
+ render(<Request engine="codex" sessionId="session" generation="generation" pending={{ id: 'specific-request', kind: 'item/commandExecution/requestApproval', title: 'native', data: { command: 'echo reviewed', availableDecisions: ['acceptForSession', 'decline'] } }} submit={submit} />);
  expect(screen.queryByRole('button', { name: 'agent.allow', exact: true })).toBeNull();
- fireEvent.click(screen.getByRole('button', { name: 'agent.deny' }));
- await waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith({ decision: 'decline' }));
+ expect(screen.queryByRole('button', { name: 'agent.applyPolicy' })).toBeNull();
+ fireEvent.click(screen.getByRole('button', { name: 'agent.allowSession' }));
+ await waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith({ decision: 'acceptForSession' }));
 });
 
 it('does not treat a future terminal reason as success or failure', () => {
@@ -588,4 +643,190 @@ it('keeps a reply unread while the conversation is hidden behind runtime tools',
  expect(useAgentRunner.getState().unread[session.id]).toBe(true);
  fireEvent.click(screen.getByRole('button', { name: 'workbenchFiles.conversation' }));
  await waitFor(() => expect(useAgentRunner.getState().unread[session.id]).toBe(false));
+});
+
+it('shows confirmed supplementary text as user dialogue and never mistakes a steering receipt for a reply', () => {
+ render(<><EventContent event={{ seq: 1, run: 'active-run', kind: 'userSteering', text: 'Also keep the public API unchanged.', data: { requestId: 'request', run: 'active-run' } }} /><EventContent event={{ seq: 2, run: 'active-run', kind: 'steeringReceipt', text: 'Native receipt, not an answer', data: { requestId: 'request' } }} /></>);
+ expect(screen.getByText('agent.you')).toBeTruthy();
+ expect(screen.getByText('Also keep the public API unchanged.')).toBeTruthy();
+ expect(screen.queryByText('agent.assistant')).toBeNull();
+ expect(screen.queryByText('Native receipt, not an answer')).toBeNull();
+});
+
+it('never routes raw reasoning through the failed-operation text fallback', () => {
+ const view = render(<EventContent event={{ seq: 1, run: 'run', kind: 'item/reasoning/textDelta', text: 'PRIVATE RAW REASONING', data: { itemId: 'r', error: 'native error', status: 'failed' } }} />);
+ expect(view.container.textContent).toBe('');
+});
+
+it('opens immutable commit details between tools and the mounted conversation, then restores its draft, scroll and focus', async () => {
+ const oid = 'a'.repeat(40);
+ install(command => {
+  if (command === 'read_development_git') return { task_id: 't1', kind: 'git', path: '/tmp/project', branch: 'main', head: oid, files: [], conflicts: [], staged_diff: '', worktree_diff: '', initial_staged_paths: [], file_versions: {}, baseline_version: '' };
+  if (command === 'read_development_git_details') return { branches: ['main'], remotes: [], remote_branches: {}, remote_push_targets: {}, remote_fetch_targets: {}, upstream: null, ahead: null, behind: null, files: [], history: [{ oid, subject: 'Inspect immutable history', author: 'Alice', timestamp: 1700000000, parents: [] }], history_truncated: false };
+  if (command === 'read_development_git_commit') return { oid, author: 'Alice', author_email: 'alice@example.test', timestamp: 1700000000, message: 'Inspect immutable history\n\nComplete historical body', parents: [], files: [], truncated: false };
+  return undefined;
+ });
+ render(<AgentWorkbench />); await start();
+ const composer = screen.getByLabelText('agent.prompt'); fireEvent.change(composer, { target: { value: 'Unsent conversation draft survives commit inspection' } });
+ const conversation = screen.getByTestId('dev-panel-agent'); conversation.scrollTop = 73;
+ fireEvent.click(screen.getByTestId('dev-tool-files')); fireEvent.click(screen.getByRole('button', { name: 'workbenchNavigation.git', exact: true })); await act(async () => {});
+ const row = screen.getByRole('button', { name: /Inspect immutable history/ }); row.focus(); fireEvent.click(row); await act(async () => {});
+ const detail = screen.getByTestId('git-commit-detail'); expect(within(detail).getByText('Complete historical body')).toBeTruthy();
+ expect(screen.getByTestId('dev-panel-agent')).toBe(conversation); expect(conversation.scrollTop).toBe(73); expect(composer).toHaveProperty('value', 'Unsent conversation draft survives commit inspection');
+ const column = screen.getByTestId('dev-commit-column'); expect(column.previousElementSibling?.id).toBe('dev-navigation'); expect(column.nextElementSibling?.tagName).toBe('MAIN');
+ fireEvent.click(screen.getByTestId('git-commit-close')); await waitFor(() => expect(screen.queryByTestId('git-commit-detail')).toBeNull());
+ await waitFor(() => expect(document.activeElement).toBe(row));
+ expect(screen.getByLabelText('agent.prompt')).toBe(composer); expect(composer).toHaveProperty('value', 'Unsent conversation draft survives commit inspection'); expect(conversation.scrollTop).toBe(73);
+ expect(invoke).toHaveBeenCalledWith('read_development_git_commit', { input: { project_id: 'p1', task_id: 't1', oid } });
+ expect(invoke.mock.calls.some(([command]) => command === 'execute_development_git' || command === 'create_development_task')).toBe(false);
+});
+
+const tabImageFile = () => new File(['local-image-bytes'], 'tab.png', { type: 'image/png' });
+
+it.each([
+ { taskless: false, text: 'Inspect the selected image' },
+ { taskless: false, text: '' },
+ { taskless: true, text: 'Inspect the selected image' },
+ { taskless: true, text: '' },
+])('hands prepared images to the session before the real parent transition (taskless=$taskless, text="$text")', async ({ taskless, text }) => {
+ const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+ const selecting = Promise.withResolvers<null>();
+ const accepted = Promise.withResolvers<null>();
+ const state = { ...workspace, tasks: taskless ? [] : [...workspace.tasks], sessions: [] as { id: string; owner: string; project_id: string; task_id: string; engine: string; native_id: string; workspace: string; model: null; executable: null }[], selection: { project_id: 'p1', task_id: taskless ? null as string | null : 't1', session_id: null as string | null } };
+ let native = { ...session };
+ install((command, args) => {
+  const input = args?.input as Record<string, any>;
+  if (command === 'read_development_workspace') return structuredClone(state);
+  if (command === 'select_development_context') { state.selection = input as typeof state.selection; return selecting.promise; }
+  if (command === 'save_development_task') { const task = { ...workspace.tasks[0], ...input, id: 'image-task' }; state.tasks.push(task); return task; }
+  if (command === 'open_agent_session') {
+   native = { ...session, id: input.id };
+   state.sessions.push({ id: input.id, owner: 'u', project_id: 'p1', task_id: input.task_id, engine: input.engine, native_id: 'native', workspace: '/tmp/project', model: null, executable: null });
+   return native;
+  }
+  if (command === 'get_agent_session') return native;
+  if (command === 'send_agent_message') return accepted.promise;
+  return undefined;
+ });
+ vi.spyOn(chatAttachments, 'fileBase64').mockResolvedValue(png);
+ render(<AgentWorkbench />);
+ await waitFor(() => expect(screen.getByTestId('direct-conversation-trust')).toHaveProperty('disabled', false));
+ const tabId = useDevelopment.getState().activeTabId!;
+ const source = agentImagesKey('p1', tabId);
+ fireEvent.change(screen.getByLabelText('agent.prompt'), { target: { value: text } });
+ fireEvent.change(screen.getByTestId('agent-image-picker'), { target: { files: [tabImageFile()] } });
+ await screen.findByTestId('agent-image-preview-0');
+ const captured = captureAgentImages(source);
+ expect(captured).toHaveLength(1);
+ fireEvent.click(screen.getByTestId('direct-conversation-trust'));
+ await waitFor(() => expect(screen.getByTestId('direct-conversation-prepare')).toHaveProperty('disabled', false));
+ fireEvent.click(screen.getByTestId('direct-conversation-prepare'));
+ await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === 'select_development_context')).toHaveLength(1));
+ const target = agentImagesKey('p1', native);
+ // Production chooseContext has already unmounted ProjectConversation while its
+ // selection receipt is pending. The live-session owner must already hold bytes.
+ await waitFor(() => expect(screen.queryByTestId('dev-project-conversation')).toBeNull());
+ expect(captureAgentImages(source)).toEqual([]);
+ expect(captureAgentImages(target)).toEqual(captured);
+ expect(useDevelopmentDrafts.getState().entries[target]).toBeDefined();
+ expect(invoke.mock.calls.some(([command]) => command === 'send_agent_message')).toBe(false);
+ await act(async () => { selecting.resolve(null); });
+ await screen.findByRole('button', { name: 'agent.send' });
+ expect(useDevelopment.getState().activeTabId).toBe(tabId);
+ expect(screen.getByLabelText('agent.prompt')).toHaveProperty('value', text);
+ expect(screen.getByTestId('agent-image-preview-0')).toBeTruthy();
+ fireEvent.click(screen.getByRole('button', { name: 'agent.send' }));
+ await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === 'send_agent_message')).toHaveLength(1));
+ expect(invoke.mock.calls.find(([command]) => command === 'send_agent_message')![1].input).toMatchObject({ session_id: native.id, generation: native.generation, text, images: [{ mime: 'image/png', base64: png }] });
+ expect(captureAgentImages(target)).toEqual(captured);
+ await act(async () => { accepted.resolve(null); });
+ await waitFor(() => expect(captureAgentImages(target)).toEqual([]));
+ expect(useDevelopmentDrafts.getState().entries[target]).toBeUndefined();
+ expect(invoke.mock.calls.filter(([command]) => command === 'open_agent_session')).toHaveLength(1);
+ expect(invoke.mock.calls.filter(([command]) => command === 'save_development_task')).toHaveLength(taskless ? 1 : 0);
+});
+
+it.each(['draft', 'session'] as const)('confirms image-only %s tab discard and clears only the approved image owner', async kind => {
+ install(); render(<AgentWorkbench />);
+ await screen.findByTestId('direct-conversation-send');
+ if (kind === 'session') await start();
+ const tab = useDevelopment.getState().tabs.find(item => item.id === useDevelopment.getState().activeTabId)!;
+ const owner = agentImagesKey('p1', kind === 'session' ? { id: session.id, generation: session.generation } : tab.id);
+ const otherOwner = agentImagesKey('p1', 'another-unsent-tab');
+ await act(async () => { await addAgentImages(owner, [tabImageFile()]); await addAgentImages(otherOwner, [tabImageFile()]); });
+ const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(options => { options.onCancel?.(); return { id: 'image-close', close: () => {} }; });
+ fireEvent.keyDown(screen.getByTestId(`conversation-tab-${tab.id}`), { key: 'Delete' });
+ await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+ expect(useDevelopment.getState().tabs.some(item => item.id === tab.id)).toBe(true);
+ expect(captureAgentImages(owner)).toHaveLength(1);
+ expect(useDevelopmentDrafts.getState().entries[owner]).toBeDefined();
+ confirm.mockImplementation(options => { options.onConfirm?.(); return { id: 'image-close', close: () => {} }; });
+ await act(async () => { fireEvent.keyDown(screen.getByTestId(`conversation-tab-${tab.id}`), { key: 'Delete' }); });
+ await waitFor(() => expect(useDevelopment.getState().tabs.some(item => item.id === tab.id)).toBe(false));
+ expect(useAgentImages.getState().drafts[owner]).toBeUndefined();
+ expect(useDevelopmentDrafts.getState().entries[owner]).toBeUndefined();
+ expect(captureAgentImages(otherOwner)).toHaveLength(1);
+ expect(invoke.mock.calls.some(([command]) => command === 'send_agent_message' || command === 'close_agent_session')).toBe(false);
+});
+
+it('confirms and cancels an image import when closing its draft without allowing a late read to recreate it', async () => {
+ install(); render(<AgentWorkbench />); await screen.findByTestId('direct-conversation-send');
+ const tab = useDevelopment.getState().tabs.find(item => item.id === useDevelopment.getState().activeTabId)!;
+ const owner = agentImagesKey('p1', tab.id);
+ const read = Promise.withResolvers<string>();
+ vi.spyOn(chatAttachments, 'fileBase64').mockReturnValueOnce(read.promise);
+ let importing!: Promise<void>;
+ act(() => { importing = addAgentImages(owner, [tabImageFile()]); });
+ expect(useAgentImages.getState().drafts[owner].busy).toBe(true);
+ const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(options => { options.onConfirm?.(); return { id: 'image-close', close: () => {} }; });
+ await act(async () => { fireEvent.keyDown(screen.getByTestId(`conversation-tab-${tab.id}`), { key: 'Delete' }); });
+ await waitFor(() => expect(useDevelopment.getState().tabs.some(item => item.id === tab.id)).toBe(false));
+ expect(confirm).toHaveBeenCalledTimes(1);
+ await act(async () => { read.resolve('aW1hZ2U='); await importing; });
+ expect(useAgentImages.getState().drafts[owner]).toBeUndefined();
+ expect(useDevelopmentDrafts.getState().entries[owner]).toBeUndefined();
+});
+
+it('retains images added while a tab discard confirmation is open', async () => {
+ install(); render(<AgentWorkbench />); await screen.findByTestId('direct-conversation-send');
+ const tab = useDevelopment.getState().tabs.find(item => item.id === useDevelopment.getState().activeTabId)!;
+ const owner = agentImagesKey('p1', tab.id);
+ await act(async () => { await addAgentImages(owner, [tabImageFile()]); });
+ const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(() => ({ id: 'image-close', close: () => {} }));
+ fireEvent.keyDown(screen.getByTestId(`conversation-tab-${tab.id}`), { key: 'Delete' });
+ await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+ await act(async () => { await addAgentImages(owner, [tabImageFile()]); confirm.mock.calls[0][0].onConfirm?.(); });
+ expect(useDevelopment.getState().tabs.some(item => item.id === tab.id)).toBe(true);
+ expect(captureAgentImages(owner)).toHaveLength(2);
+});
+
+it('keeps an unknown session image send protected from tab discard', async () => {
+ install(); render(<AgentWorkbench />); await start();
+ const tab = useDevelopment.getState().tabs.find(item => item.id === useDevelopment.getState().activeTabId)!;
+ const owner = agentImagesKey('p1', { id: session.id, generation: session.generation });
+ await act(async () => { await addAgentImages(owner, [tabImageFile()]); });
+ const key = developmentDraftKey('conversation', 'p1', session.id, session.generation, 'pending-send');
+ act(() => useDevelopmentDrafts.setState(state => ({ entries: { ...state.entries, [key]: { kind: 'conversation', value: { requestId: 'unconfirmed-request', generation: session.generation, text: '', references: [], skills: [], imageOwner: owner, images: captureAgentImages(owner).map(image => ({ id: image.id })) }, baseline: null } } })));
+ const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(options => { options.onConfirm?.(); return { id: 'image-close', close: () => {} }; });
+ await act(async () => { fireEvent.keyDown(screen.getByTestId(`conversation-tab-${tab.id}`), { key: 'Delete' }); });
+ expect(confirm).not.toHaveBeenCalled();
+ expect(useDevelopment.getState().tabs.some(item => item.id === tab.id)).toBe(true);
+ expect(captureAgentImages(owner)).toHaveLength(1);
+ expect(useDevelopmentDrafts.getState().entries[key]).toBeDefined();
+});
+
+it('blocks normal resend and tab discard while steering has no authoritative receipt', async () => {
+ install(); render(<AgentWorkbench />); await start();
+ const tab = useDevelopment.getState().tabs.find(item => item.id === useDevelopment.getState().activeTabId)!;
+ fireEvent.change(screen.getByLabelText('agent.prompt'), { target: { value: 'Unconfirmed additional instruction' } });
+ const key = developmentDraftKey('conversation', 'p1', session.id, session.generation, 'pending-steer');
+ act(() => useDevelopmentDrafts.setState(state => ({ entries: { ...state.entries, [key]: { kind: 'conversation', value: { requestId: 'steer-request', runId: 'previous-run', text: 'Unconfirmed additional instruction' }, baseline: null } } })));
+ expect(screen.getByRole('button', { name: 'agent.send' })).toHaveProperty('disabled', true);
+ fireEvent.click(screen.getByRole('button', { name: 'agent.send' }));
+ const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(options => { options.onConfirm?.(); return { id: 'steer-close', close: () => {} }; });
+ await act(async () => { fireEvent.keyDown(screen.getByTestId(`conversation-tab-${tab.id}`), { key: 'Delete' }); });
+ expect(confirm).not.toHaveBeenCalled();
+ expect(useDevelopment.getState().tabs.some(item => item.id === tab.id)).toBe(true);
+ expect(useDevelopmentDrafts.getState().entries[key]).toBeDefined();
+ expect(invoke.mock.calls.some(([command]) => command === 'send_agent_message')).toBe(false);
 });

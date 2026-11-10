@@ -67,6 +67,16 @@ it('keeps Claude context to the latest main-agent response and exact same-run mo
   expect(agentContextUsage(value).used).toBeNull();
 });
 
+it('does not invent a Claude context limit without a run identity or label overflow as an estimate', () => {
+  const value: AgentSession = { ...session(), engine: 'claude', events: [
+    { seq: 1, kind: 'message', text: null, data: { type: 'assistant', model: 'm', usage_source: 'native_response', usage: { input_tokens: 4, output_tokens: 2 } } },
+    { seq: 2, kind: 'result', text: null, data: { model_limits: { m: { contextWindow: 1000 } } } },
+  ] };
+  expect(agentContextUsage(value)).toMatchObject({ used: 6, limit: null, kind: 'estimated' });
+  value.events[0].data = { type: 'assistant', model: 'm', usage_source: 'native_response', usage: { input_tokens: Number.MAX_SAFE_INTEGER, output_tokens: 1 } };
+  expect(agentContextUsage(value)).toMatchObject({ used: null, limit: null, kind: 'unavailable' });
+});
+
 it('returns to the original tab without creating a runtime and refuses a closed origin', async () => {
   const first = useDevelopment.getState().newTab('project-one');
   const second = useDevelopment.getState().newTab('project-two');

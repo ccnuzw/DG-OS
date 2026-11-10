@@ -1,12 +1,43 @@
 use crate::{claude_session::ClaudeSession, codex_session::CodexSession, session::*};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+use std::{collections::{HashMap, VecDeque}, path::PathBuf, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use dgos_db::development_repository::{DevelopmentRepository, StoredAgentSession};
 use dgos_db::{ActivityPermit, MaintenanceGate};
+
+#[path = "codex_interactions.rs"]
+mod codex_interactions;
+#[path = "manager_lifecycle.rs"]
+mod lifecycle;
+#[path = "native_auth.rs"]
+pub(crate) mod native_auth;
+#[path = "codex_operations_manager.rs"]
+mod codex_operations;
+#[path = "codex_queue_supervision.rs"]
+mod codex_queue_supervision;
+
+const TERMINAL_SESSION_LIMIT: usize = 16;
+const TERMINAL_EVENT_BYTES: usize = 256 * 1024;
+
+struct TerminalSession {
+    id: String,
+    generation: Uuid,
+    view: SessionView,
+}
+
+struct RetainedCleanup {
+    slot: Uuid,
+    _owner: String,
+    _id: String,
+    _binding: Option<dgos_db::development_repository::OpeningBinding>,
+    _lease: Option<Arc<dgos_providers::CliProviderLease>>,
+    _backend: Option<Backend>,
+    _child: Option<crate::transport::Transport>,
+    _permit: ActivityPermit,
+}
 
 #[derive(Clone)]
 pub(crate) enum Backend {
@@ -79,6 +110,7 @@ pub struct OwnedSessionView {
 struct Active {
     backend: Backend,
     lease: CancellationToken,
+    account_lease: CancellationToken,
     generation: Uuid,
     provider_lease: Arc<dgos_providers::CliProviderLease>,
     binding: dgos_db::development_repository::OpeningBinding,
@@ -86,10 +118,17 @@ struct Active {
     control: Arc<Mutex<()>>,
     native_uncertain: Arc<std::sync::atomic::AtomicBool>,
     slot: Uuid,
+    cleanup_settled: bool,
+    _permit: ActivityPermit,
 }
 #[derive(Clone)]
 pub struct AgentManager {
     pub(crate) inner: Arc<Inner>,
+}
+/// A submitted native run stays reserved until its durable terminal projection settles.
+pub(crate) struct RunProjection {
+    pub(crate) run_id: String,
+    pub(crate) persistence_failed: bool,
 }
 pub(crate) struct Inner {
     records: Mutex<Vec<SessionRecord>>,
@@ -101,11 +140,15 @@ pub(crate) struct Inner {
     pub(crate) repository: DevelopmentRepository,
     pub(crate) stop: CancellationToken,
     pub(crate) gate: MaintenanceGate,
-    /// Permits whose backend failed to close. Kept so VACUUM stays blocked while the child may still run.
-    retained: Mutex<Vec<ActivityPermit>>,
+    /// Failed cleanup keeps its owned resources and admission until proof is available.
+    retained: Mutex<Vec<RetainedCleanup>>,
+    terminal: Mutex<VecDeque<TerminalSession>>,
     pub(crate) watchers: Mutex<Vec<tokio::task::JoinHandle<bool>>>,
-    cleanup_watchers: std::sync::Mutex<Vec<tokio::task::JoinHandle<bool>>>,
+    pub(crate) run_projections: Mutex<HashMap<(String, String), RunProjection>>,
+    supervision_failed: std::sync::atomic::AtomicBool,
+    cleanup_watchers: Mutex<Vec<tokio::task::JoinHandle<bool>>>,
     pub(crate) host: Mutex<HashMap<String, Arc<crate::runtime::HostProcess>>>,
+    native_auth: Mutex<HashMap<String, Arc<native_auth::Operation>>>,
     #[cfg(test)]
     pub(crate) fail_takeover_close: std::sync::atomic::AtomicBool,
     pub(crate) providers: crate::capabilities::CliProviders,
@@ -128,9 +171,13 @@ impl AgentManager {
                 load_error: Mutex::new(Some("session_index_unavailable".into())),
                 gate,
                 retained: Mutex::new(Vec::new()),
+                terminal: Mutex::new(VecDeque::new()),
                 watchers: Mutex::new(Vec::new()),
-                cleanup_watchers: std::sync::Mutex::new(Vec::new()),
+                run_projections: Mutex::new(HashMap::new()),
+                supervision_failed: std::sync::atomic::AtomicBool::new(false),
+                cleanup_watchers: Mutex::new(Vec::new()),
                 host: Mutex::new(HashMap::new()),
+                native_auth: Mutex::new(HashMap::new()),
                 #[cfg(test)]
                 fail_takeover_close: std::sync::atomic::AtomicBool::new(false),
                 providers,
@@ -160,6 +207,7 @@ impl AgentManager {
         result
     }
     pub(crate) async fn ready(&self) -> Result<(), String> {
+        self.reap_completed_tasks().await;
         if let Some(error) = self.inner.load_error.lock().await.clone() { return Err(error); }
         if self.inner.stop.is_cancelled() { return Err("cancelled".into()); }
         Ok(())
@@ -216,6 +264,7 @@ impl AgentManager {
         }
     }
     pub async fn list(&self, owner: &str) -> Vec<SessionRecord> {
+        self.reap_completed_tasks().await;
         self.inner
             .records
             .lock()
@@ -261,7 +310,10 @@ impl AgentManager {
         Ok(binding.request_digest.as_deref() == Some(digest.as_str()) && snapshot.provider_id == create.provider.provider_id && snapshot.model_id == create.provider.model_id && snapshot.provider_revision == create.provider.provider_revision)
     }
 
-    async fn occupied_slots(&self) -> usize { self.slot_count().await }
+    async fn occupied_slots(&self) -> usize {
+        self.reconcile_inactive_slots().await;
+        self.slot_count().await
+    }
 
     pub async fn resume_session(&self, owner: &str, id: &str, trust_workspace: bool, lease: CancellationToken) -> Result<OwnedSessionView, String> {
         if !trust_workspace { return Err("workspace_untrusted".into()); }
@@ -270,16 +322,18 @@ impl AgentManager {
         let record = self.list(owner).await.into_iter().find(|r| r.id == id).ok_or("session_not_found")?;
         let configuration = self.inner.providers.read_session(owner, id).await?;
         let crate::capabilities::SessionConfigurationView::ProviderBound { snapshot, .. } = configuration else { return Err("legacy_session_read_only".into()); };
-        let old = self.inner.active.lock().await.get(id).map(|active| (active.backend.clone(), active.binding.clone(), active.slot));
-        if let Some((backend, binding, slot)) = old {
-            let control = self.session_control(id).await?;
+        let old = self.inner.active.lock().await.get(id).map(|active| (active.backend.clone(), active.binding.clone(), active.slot, active.control.clone()));
+        if let Some((backend, binding, slot, control)) = old {
             let _control = control.try_lock().map_err(|_| "session_busy")?;
+            if !self.stop_native_auth(Some(owner), Some(id)).await { return Err("cleanup_pending".into()); }
             let reaped = backend.close().await;
             self.inner.providers.cleanup(owner, id, &binding, reaped, true).await?;
             if !reaped { return Err("cleanup_pending".into()); }
-            self.release_slot(id, slot).await;
+            self.mark_cleanup_settled(id, slot).await;
+            self.retire_settled_session(id).await;
+            if self.inner.active.lock().await.contains_key(id) { return Err("cleanup_pending".into()); }
         }
-        self.inner.active.lock().await.remove(id);
+        if !self.slot_is_settled(owner, id).await { return Err("cleanup_pending".into()); }
         let create = crate::capabilities::SessionCreate {
             options: SessionOptions { workspace: record.workspace, resume_id: Some(record.native_id.ok_or("session_not_saved")?), executable: record.executable, model: record.model, trust_workspace: true },
             project_revision: snapshot.revision,
@@ -308,7 +362,11 @@ impl AgentManager {
         let launch = match service.prepare(owner, &id, &task_id, &project, engine, &options, create.project_revision, create.provider, &lease).await {
             Ok(launch) => launch,
             Err(error) => {
-                if self.slot_is_settled(owner, &id).await { self.release_slot(&id, slot).await; }
+                if self.slot_is_settled(owner, &id).await {
+                    self.release_slot(&id, slot).await;
+                } else {
+                    self.inner.retained.lock().await.push(RetainedCleanup { slot, _owner: owner.into(), _id: id.clone(), _binding: None, _lease: None, _backend: None, _child: None, _permit: permit });
+                }
                 let _ = self.reload_records().await;
                 return Err(error);
             }
@@ -333,16 +391,20 @@ impl AgentManager {
                 if let Some(child) = failure.child {
                     // A spawned child is potentially executed until its owned exit is confirmed.
                     let reaped = child.stopped();
-                    self.hold_failed_open(owner.into(), id.clone(), child, permit, launch.binding.clone(), slot);
+                    self.hold_failed_open(owner.into(), id.clone(), child, permit, launch.lease.clone(), launch.binding.clone(), slot).await;
                     let cleanup_persisted = service.cleanup(owner, &id, &launch.binding, reaped, true).await.is_ok();
                     if !reaped || !cleanup_persisted {
                         let _ = self.reload_records().await;
                         return Err("cleanup_pending".into());
                     }
+                    self.inner.retained.lock().await.retain(|entry| entry.slot != slot);
                     self.release_slot(&id, slot).await;
                 } else {
                     // No transport means spawn never completed; this is the only no_execution path.
-                    if service.cleanup(owner, &id, &launch.binding, true, false).await.is_err() { return Err("cleanup_pending".into()); }
+                    if service.cleanup(owner, &id, &launch.binding, true, false).await.is_err() {
+                        self.inner.retained.lock().await.push(RetainedCleanup { slot, _owner: owner.into(), _id: id.clone(), _binding: Some(launch.binding.clone()), _lease: Some(launch.lease.clone()), _backend: None, _child: None, _permit: permit });
+                        return Err("cleanup_pending".into());
+                    }
                     drop(permit);
                     self.release_slot(&id, slot).await;
                 }
@@ -361,21 +423,21 @@ impl AgentManager {
         if let Err(error) = activated {
             launch.lease.cancel();
             let reaped = backend.close().await;
-            let cleanup_persisted = if reaped {
-                let persisted = service.cleanup(owner, &id, &launch.binding, true, true).await.is_ok();
+            let cleanup_persisted = service.cleanup(owner, &id, &launch.binding, reaped, true).await.is_ok();
+            if reaped && cleanup_persisted {
                 drop(permit);
-                persisted
             } else {
-                self.hold_bound(owner.into(), id.clone(), backend, permit, launch.binding.clone(), slot);
-                service.cleanup(owner, &id, &launch.binding, false, true).await.is_ok()
-            };
+                self.hold_bound(owner.into(), id.clone(), backend, Some(permit), launch.lease.clone(), launch.binding.clone(), slot).await;
+            }
             if self.reload_records().await.is_err() || !reaped || !cleanup_persisted { return Err("cleanup_pending".into()); }
             self.release_slot(&id, slot).await;
             return Err(error);
         }
-        self.hold_bound(owner.into(), id.clone(), backend.clone(), permit, launch.binding.clone(), slot);
         let generation = Uuid::new_v4();
-        self.inner.active.lock().await.insert(id.clone(), Active { backend, lease, generation, provider_lease, binding: launch.binding.clone(), native_receipts: Arc::default(), control: Arc::default(), native_uncertain: Arc::default(), slot });
+        self.inner.terminal.lock().await.retain(|entry| entry.id != id);
+        self.inner.active.lock().await.insert(id.clone(), Active { backend: backend.clone(), lease: lease.child_token(), account_lease: lease, generation, provider_lease, binding: launch.binding.clone(), native_receipts: Arc::default(), control: Arc::default(), native_uncertain: Arc::default(), slot, cleanup_settled: false, _permit: permit });
+        self.start_codex_automatic_supervisor(owner, &id, &generation.to_string()).await;
+        self.hold_bound(owner.into(), id.clone(), backend, None, launch.lease.clone(), launch.binding.clone(), slot).await;
         Ok(OwnedSessionView { id, engine, generation: generation.to_string(), view, event_sync: None, configuration: crate::capabilities::SessionConfigurationView::ProviderBound { snapshot: launch.snapshot, read_only: false } })
     }
     pub(crate) async fn workspace_available(&self, workspace: &str, except: Option<&str>) -> Result<(), String> {
@@ -433,16 +495,40 @@ impl AgentManager {
         self.snapshot_since(owner, id, None).await
     }
     pub async fn snapshot_since(&self, owner: &str, id: &str, cursor: Option<SessionCursor>) -> Result<OwnedSessionView, String> {
-        let (engine, _) = self.owned_backend(owner, id).await?;
-        let (backend, generation) = {
-            let active = self.inner.active.lock().await;
-            let entry = active.get(id).ok_or("session_closed")?;
-            (entry.backend.clone(), entry.generation)
+        self.reap_completed_tasks().await;
+        if self.inner.stop.is_cancelled() { return Err("session_closed".into()); }
+        let record = self.inner.records.lock().await.iter().find(|record| record.owner == owner && record.id == id).cloned().ok_or("session_not_found")?;
+        let engine = record.engine;
+        // A stopped generation can still own an unsettled durable projection.
+        // Its cancelled execution lease must not hide read-only terminal/error state.
+        let current = self.inner.active.lock().await.get(id).map(|entry| (entry.backend.clone(), entry.generation, entry.account_lease.is_cancelled()));
+        let (mut view, event_sync, generation) = if let Some((backend, generation, revoked)) = current {
+            if revoked { return Err("session_closed".into()); }
+            let after = cursor.filter(|cursor| cursor.generation == generation.to_string()).map(|cursor| cursor.after_seq);
+            let (view, sync) = backend.snapshot_since(after).await;
+            (view, sync, generation)
+        } else {
+            if !self.slot_is_settled(owner, id).await { return Err("cleanup_pending".into()); }
+            let terminal = self.inner.terminal.lock().await;
+            if let Some(entry) = terminal.iter().find(|entry| entry.id == id) {
+                let after = cursor.filter(|cursor| cursor.generation == entry.generation.to_string()).map(|cursor| cursor.after_seq);
+                let (view, sync) = entry.view.snapshot_since(after);
+                (view, sync, entry.generation)
+            } else {
+                drop(terminal);
+                let mut view = SessionView::new(record.workspace);
+                view.status = "closed".into();
+                view.native_id = record.native_id;
+                view.history_truncated = true;
+                let (view, sync) = view.snapshot_since(None);
+                (view, sync, Uuid::nil())
+            }
         };
-        let after = cursor.filter(|cursor| cursor.generation == generation.to_string()).map(|cursor| cursor.after_seq);
-        let (view, event_sync) = backend.snapshot_since(after).await;
+        if self.inner.run_projections.lock().await.get(&(id.to_owned(), generation.to_string())).is_some_and(|state| state.persistence_failed) {
+            view.persistence_error = Some("storage_failed".into());
+        }
         let configuration = self.inner.providers.read_session(owner, id).await?;
-        self.owned_backend(owner, id).await?;
+        if generation == Uuid::nil() && !self.slot_is_settled(owner, id).await { return Err("cleanup_pending".into()); }
         self.require_generation(id, &generation.to_string()).await?;
         Ok(OwnedSessionView {
             id: id.into(),
@@ -455,7 +541,15 @@ impl AgentManager {
     }
     pub(crate) async fn require_generation(&self, id: &str, generation: &str) -> Result<(), String> {
         let expected = Uuid::parse_str(generation).map_err(|_| "stale_generation")?;
-        let current = self.inner.active.lock().await.get(id).map(|active| active.generation).ok_or("session_closed")?;
+        let current = if let Some(current) = self.inner.active.lock().await.get(id).map(|active| active.generation) {
+            current
+        } else {
+            match self.inner.terminal.lock().await.iter().find(|entry| entry.id == id).map(|entry| entry.generation) {
+                Some(generation) => generation,
+                None if expected == Uuid::nil() => Uuid::nil(),
+                None => return Err("session_closed".into()),
+            }
+        };
         if current != expected { return Err("stale_generation".into()); }
         Ok(())
     }
@@ -483,21 +577,36 @@ impl AgentManager {
             Backend::Claude(s) => s.respond(request_id, response).await,
         }
     }
-    pub async fn interrupt(&self, owner: &str, id: &str) -> Result<(), String> {
+    pub async fn interrupt(&self, owner: &str, id: &str, generation: &str, run_id: &str) -> Result<(), String> {
+        let admission = self.inner.admission.lock().await;
+        self.ready().await?;
         let (_, backend) = self.owned(owner, id).await?;
+        self.require_generation(id, generation).await?;
+        // Backends atomically match this run while capturing the native identity.
+        // Neither a delayed click nor an old generation may target the next turn.
+        drop(admission);
         match backend {
-            Backend::Codex(s) => s.interrupt().await,
-            Backend::Claude(s) => s.interrupt().await,
+            Backend::Codex(s) => s.interrupt(run_id).await,
+            Backend::Claude(s) => s.interrupt(run_id).await,
         }
     }
     pub async fn close_session(&self, owner: &str, id: &str) -> Result<bool, String> {
-        let (_, backend) = self.owned_backend(owner, id).await?;
-        let control = self.session_control(id).await?;
+        let _admission = self.inner.admission.lock().await;
+        self.reap_completed_tasks().await;
+        self.reconcile_inactive_slots().await;
+        let record = self.inner.records.lock().await.iter().find(|record| record.owner == owner && record.id == id).cloned().ok_or("session_not_found")?;
+        let current = self.inner.active.lock().await.get(id).map(|entry| (entry.backend.clone(), entry.control.clone(), entry.binding.clone(), entry.slot));
+        let Some((backend, control, binding, slot)) = current else {
+            return if self.slot_is_settled(&record.owner, id).await { Ok(true) } else { Err("cleanup_pending".into()) };
+        };
         let _control = control.try_lock().map_err(|_| "session_busy")?;
-        let (binding, slot) = self.inner.active.lock().await.get(id).map(|entry| (entry.binding.clone(), entry.slot)).ok_or("session_closed")?;
+        if !self.stop_native_auth(Some(owner), Some(id)).await { return Err("cleanup_pending".into()); }
         let reaped = backend.close().await;
         self.inner.providers.cleanup(owner, id, &binding, reaped, true).await?;
-        if reaped { self.release_slot(id, slot).await; }
+        if reaped {
+            self.mark_cleanup_settled(id, slot).await;
+            self.retire_settled_session(id).await;
+        }
         Ok(reaped)
     }
     /// Same close lifecycle, with authority rechecked after capability cleanup and just
@@ -509,35 +618,46 @@ impl AgentManager {
         if self.inner.repository.capability_epoch(owner, project_id).await? != epoch { return Err("capability_revoked".into()); }
         self.ready().await?;
         if lease.is_cancelled() { return Err("session_invalid".into()); }
+        if !self.stop_native_auth(Some(owner), Some(id)).await { return Err("cleanup_pending".into()); }
         Ok(backend.close().await)
     }
-    fn hold_failed_open(&self, owner: String, id: String, child: crate::transport::Transport, permit: ActivityPermit, binding: dgos_db::development_repository::OpeningBinding, slot: Uuid) {
-        let inner = self.inner.clone();
+    async fn hold_failed_open(&self, owner: String, id: String, child: crate::transport::Transport, permit: ActivityPermit, provider_lease: Arc<dgos_providers::CliProviderLease>, binding: dgos_db::development_repository::OpeningBinding, slot: Uuid) {
+        self.inner.retained.lock().await.push(RetainedCleanup { slot, _owner: owner.clone(), _id: id.clone(), _binding: Some(binding.clone()), _lease: Some(provider_lease), _backend: None, _child: Some(child.clone()), _permit: permit });
+        let manager = self.clone();
         let watcher = tokio::spawn(async move {
             let reaped = child.wait_stopped().await;
-            let persisted = inner.providers.cleanup(&owner, &id, &binding, reaped, true).await.is_ok();
-            if reaped { drop(permit); } else { inner.retained.lock().await.push(permit); }
+            let persisted = manager.inner.providers.cleanup(&owner, &id, &binding, reaped, true).await.is_ok();
             if reaped && persisted {
-                let mut slots = inner.slots.lock().await;
-                if slots.get(&id) == Some(&slot) { slots.remove(&id); }
+                manager.inner.retained.lock().await.retain(|entry| entry.slot != slot);
+                manager.release_slot(&id, slot).await;
             }
             reaped && persisted
         });
-        self.inner.cleanup_watchers.lock().unwrap_or_else(|e| e.into_inner()).push(watcher);
+        self.inner.cleanup_watchers.lock().await.push(watcher);
     }
-    fn hold_bound(&self, owner: String, id: String, backend: Backend, permit: ActivityPermit, binding: dgos_db::development_repository::OpeningBinding, slot: Uuid) {
-        let inner = self.inner.clone();
+    async fn hold_bound(&self, owner: String, id: String, backend: Backend, permit: Option<ActivityPermit>, provider_lease: Arc<dgos_providers::CliProviderLease>, binding: dgos_db::development_repository::OpeningBinding, slot: Uuid) {
+        let unregistered = permit.is_some();
+        if let Some(permit) = permit {
+            self.inner.retained.lock().await.push(RetainedCleanup { slot, _owner: owner.clone(), _id: id.clone(), _binding: Some(binding.clone()), _lease: Some(provider_lease), _backend: Some(backend.clone()), _child: None, _permit: permit });
+        }
+        let manager = self.clone();
         let watcher = tokio::spawn(async move {
             let reaped = backend.wait_stopped().await;
-            let persisted = inner.providers.cleanup(&owner, &id, &binding, reaped, true).await.is_ok();
-            if reaped { drop(permit); } else { inner.retained.lock().await.push(permit); }
+            // The active lease is a generation child, never the shared account
+            // token. A stale cleanup watcher cannot cancel a resumed generation.
+            manager.cancel_stopped_generation(&id, slot).await;
+            let persisted = manager.inner.providers.cleanup(&owner, &id, &binding, reaped, true).await.is_ok();
             if reaped && persisted {
-                let mut slots = inner.slots.lock().await;
-                if slots.get(&id) == Some(&slot) { slots.remove(&id); }
+                manager.mark_cleanup_settled(&id, slot).await;
+                manager.retire_settled_session(&id).await;
+                if unregistered {
+                    manager.inner.retained.lock().await.retain(|entry| entry.slot != slot);
+                    manager.release_slot(&id, slot).await;
+                }
             }
             reaped && persisted
         });
-        self.inner.cleanup_watchers.lock().unwrap_or_else(|e| e.into_inner()).push(watcher);
+        self.inner.cleanup_watchers.lock().await.push(watcher);
     }
     pub fn close(&self) {
         self.inner.stop.cancel();
@@ -547,17 +667,22 @@ impl AgentManager {
         let ids: Vec<_> = self.list(owner).await.into_iter().map(|record| record.id).collect();
         let entries: Vec<_> = {
             let active = self.inner.active.lock().await;
-            ids.iter().filter_map(|id| active.get(id).map(|entry| (id.clone(), entry.lease.clone(), entry.backend.clone()))).collect()
+            ids.iter().filter_map(|id| active.get(id).map(|entry| (id.clone(), entry.lease.clone(), entry.backend.clone(), entry.binding.clone(), entry.slot))).collect()
         };
         let mut settled = true;
-        for (id, lease, backend) in entries {
+        for (id, lease, backend, binding, slot) in entries {
             lease.cancel();
-            if backend.close().await {
-                self.inner.active.lock().await.remove(&id);
+            let reaped = backend.close().await;
+            let persisted = self.inner.providers.cleanup(owner, &id, &binding, reaped, true).await.is_ok();
+            if reaped && persisted {
+                self.mark_cleanup_settled(&id, slot).await;
+                self.retire_settled_session(&id).await;
             } else {
                 settled = false;
             }
+            settled &= !self.inner.active.lock().await.contains_key(&id);
         }
+        settled &= self.stop_native_auth(Some(owner), None).await;
         settled &= self.stop_host_processes(Some(owner)).await;
         settled
     }
@@ -565,7 +690,7 @@ impl AgentManager {
         self.close();
         self.inner.providers.cancel_all();
         // A connecting or resuming child is not in active yet. Its cancellation and
-        // cleanup must finish before draining active or reporting shutdown success.
+        // cleanup must finish before reporting shutdown success.
         let Ok(_admission) = tokio::time::timeout(
             std::time::Duration::from_secs(8), self.inner.admission.lock(),
         ).await else { return false; };
@@ -574,31 +699,61 @@ impl AgentManager {
             .active
             .lock()
             .await
-            .drain()
-            .map(|(_, a)| a)
+            .iter()
+            .map(|(id, entry)| (id.clone(), entry.lease.clone(), entry.backend.clone(), entry.binding.clone(), entry.slot))
             .collect();
-        for entry in &entries {
-            entry.lease.cancel();
-        }
+        for (_, lease, _, _, _) in &entries { lease.cancel(); }
         let mut ok = true;
+        ok &= self.stop_native_auth(None, None).await;
         ok &= self.stop_host_processes(None).await;
-        for entry in entries {
-            ok &= entry.backend.close().await;
+        for (id, _, backend, binding, slot) in entries {
+            let owner = self.inner.records.lock().await.iter().find(|record| record.id == id).map(|record| record.owner.clone());
+            let reaped = backend.close().await;
+            let persisted = if let Some(owner) = owner { self.inner.providers.cleanup(&owner, &id, &binding, reaped, true).await.is_ok() } else { false };
+            if reaped && persisted {
+                self.mark_cleanup_settled(&id, slot).await;
+                self.retire_settled_session(&id).await;
+            }
+            ok &= reaped && persisted;
         }
         drop(_admission);
         let watchers = std::mem::take(&mut *self.inner.watchers.lock().await);
-        for watcher in watchers {
-            ok &= matches!(tokio::time::timeout(std::time::Duration::from_secs(15), watcher).await, Ok(Ok(true)));
-        }
-        let cleanup = std::mem::take(&mut *self.inner.cleanup_watchers.lock().unwrap_or_else(|e| e.into_inner()));
-        for mut watcher in cleanup {
-            if let Ok(result) = tokio::time::timeout(std::time::Duration::from_secs(8), &mut watcher).await {
-                ok &= matches!(result, Ok(true));
-            } else {
-                self.inner.cleanup_watchers.lock().unwrap_or_else(|e| e.into_inner()).push(watcher);
-                ok = false;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        for mut watcher in watchers {
+            match tokio::time::timeout_at(deadline, &mut watcher).await {
+                Ok(Ok(true)) => {},
+                Ok(_) => {
+                    self.inner.supervision_failed.store(true, std::sync::atomic::Ordering::Release);
+                    ok = false;
+                },
+                Err(_) => {
+                    // Timeout must not detach the only owner of an unsettled projection.
+                    self.inner.watchers.lock().await.push(watcher);
+                    ok = false;
+                },
             }
         }
+        ok &= self.inner.run_projections.lock().await.is_empty();
+        ok &= !self.inner.supervision_failed.load(std::sync::atomic::Ordering::Acquire);
+        let cleanup = std::mem::take(&mut *self.inner.cleanup_watchers.lock().await);
+        for mut watcher in cleanup {
+            match tokio::time::timeout_at(deadline, &mut watcher).await {
+                Ok(Ok(true)) => {},
+                Ok(_) => {
+                    self.inner.supervision_failed.store(true, std::sync::atomic::Ordering::Release);
+                    ok = false;
+                },
+                Err(_) => {
+                    self.inner.cleanup_watchers.lock().await.push(watcher);
+                    ok = false;
+                },
+            }
+        }
+        ok &= self.inner.active.lock().await.is_empty();
+        ok &= self.inner.retained.lock().await.is_empty();
+        self.reconcile_inactive_slots().await;
+        ok &= self.inner.slots.lock().await.is_empty();
+        ok &= !self.inner.supervision_failed.load(std::sync::atomic::Ordering::Acquire);
         ok &= self.inner.providers.shutdown().await;
         ok
     }
@@ -613,6 +768,19 @@ impl Backend {
     }
 }
 impl AgentManager {
+    pub(crate) async fn reap_watchers(&self, watchers: &mut Vec<tokio::task::JoinHandle<bool>>) {
+        let mut index = 0;
+        while index < watchers.len() {
+            if watchers[index].is_finished() {
+                let watcher = watchers.swap_remove(index);
+                if !matches!(watcher.await, Ok(true)) {
+                    self.inner.supervision_failed.store(true, std::sync::atomic::Ordering::Release);
+                }
+            } else {
+                index += 1;
+            }
+        }
+    }
     pub(crate) async fn session_control(&self, id: &str) -> Result<Arc<Mutex<()>>, String> {
         self.inner.active.lock().await.get(id).map(|entry| entry.control.clone()).ok_or_else(|| "session_closed".into())
     }
@@ -674,7 +842,8 @@ impl AgentManager {
         let _admission = self.admit_native_extensions(lease).await?;
         self.native_owned(owner, id, Some(generation), lease).await?;
         Ok(crate::native_session::NativeSessionObservation { session_id: id.into(), generation: generation.into(), engine: record.engine,
-            observed_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis().min(i64::MAX as u128) as i64, domain, capabilities: backend.native_capabilities(), skills: projection.skills, mcp_servers: projection.mcp_servers, incomplete: projection.incomplete })
+            observed_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis().min(i64::MAX as u128) as i64, domain, capabilities: backend.native_capabilities(), skills: projection.skills, mcp_servers: projection.mcp_servers, incomplete: projection.incomplete, source_incomplete: projection.source_incomplete,
+            skill_candidates: projection.skill_candidates, skill_candidates_incomplete: projection.skill_candidates_incomplete })
     }
     /// Reads the reserved receipt only; never takes the control lock or dispatches IO.
     pub async fn inspect_native_session_request(&self, owner: &str, id: &str, generation: &str, request_id: &str, domain: crate::native_session::SessionDomain, lease: &CancellationToken) -> Result<Option<crate::native_session::NativeSessionReceipt>, String> {
@@ -703,7 +872,8 @@ impl AgentManager {
         let capabilities = backend.native_capabilities();
         let supported = match &action { Action::ReloadSkills {} => capabilities.reload_skills, Action::ReloadPlugins { .. } => capabilities.reload_plugins,
             Action::ReconnectMcp { .. } => capabilities.reconnect_mcp, Action::ToggleMcp { .. } => capabilities.toggle_mcp,
-            Action::NativeLogin { .. } => capabilities.native_login, Action::NativeLogout { .. } => capabilities.native_logout };
+            // Auth has its own supervised cancellable lifecycle, never generic receipts.
+            Action::NativeLogin { .. } | Action::NativeLogout { .. } => false };
         if !supported { return Err("native_extension_Unsupported".into()); }
         self.native_result_known(id).await?;
         if !matches!(backend.snapshot().await.status.as_str(), "idle" | "error") { return Err("session_busy".into()); }
@@ -726,9 +896,9 @@ impl AgentManager {
         let state = tokio::select! { biased; _ = lease.cancelled() => return Err("session_invalid".into()), result = execute => result };
         let _admission = self.admit_native_extensions(lease).await?;
         self.native_owned(owner, id, Some(generation), lease).await?;
-        // Codex's explicit method-not-found proves this reload never executed.
+        // Explicit method rejection proves the optional operation never executed.
         // Other write errors remain unknown and cannot be replayed.
-        if matches!((&backend, &action), (Backend::Codex(_), Action::ReloadSkills {})) && state.as_ref().is_err_and(|error| error == "native_extension_Unsupported") {
+        if (matches!((&backend, &action), (Backend::Codex(_), Action::ReloadSkills {})) || matches!(&backend, Backend::Claude(_))) && state.as_ref().is_err_and(|error| error == "native_extension_Unsupported") {
             receipts.lock().await.remove(request_id);
             self.inner.active.lock().await.get(id).ok_or("session_closed")?.native_uncertain.store(false, std::sync::atomic::Ordering::Release);
             return Err("native_extension_Unsupported".into());

@@ -21,6 +21,8 @@ pub mod handoffs;
 pub mod takeover;
 pub mod native_extensions;
 pub mod native_session;
+pub mod codex_operations;
+pub mod images;
 pub use git::{GitHistoryEntry, GitHistoryInput, GitHistoryPage};
 pub use manager::{AgentManager, OwnedSessionView, SessionRecord};
 pub use projects::NativeProjectAdmission;

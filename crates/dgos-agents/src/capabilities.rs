@@ -201,9 +201,9 @@ impl CliProviders {
     }
 
     pub(crate) async fn cleanup(&self, owner: &str, session: &str, binding: &OpeningBinding, reaped: bool, executed: bool) -> Result<(), String> {
-        if reaped { self.bindings.lock().unwrap_or_else(|e| e.into_inner()).remove(&binding.binding_id); }
         self.repository.record_cli_cleanup(owner, session, &binding.binding_id, &binding.host_instance_id,
             &dgos_db::development_repository::CleanupObservation { binding_id: binding.binding_id.clone(), state: if reaped { "closed" } else { "unknown" }.into(), proof: if !reaped { "" } else if executed { "owned_exit" } else { "no_execution" }.into(), reason: (!reaped).then(|| "cleanup_pending".into()) }).await?;
+        if reaped { self.bindings.lock().unwrap_or_else(|e| e.into_inner()).remove(&binding.binding_id); }
         Ok(())
     }
 

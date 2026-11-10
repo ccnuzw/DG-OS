@@ -53,9 +53,10 @@ impl AgentManager {
         Ok(records)
     }
 
-    pub async fn send(&self, owner: &str, id: &str, generation: &str, request_id: String, text: String, settings: Option<crate::session::AgentTurnSettings>, references: Vec<crate::references::ConversationReference>, skills: Vec<crate::session::AgentSkillInput>) -> Result<(), String> {
+    pub async fn send(&self, owner: &str, id: &str, generation: &str, request_id: String, text: String, settings: Option<crate::session::AgentTurnSettings>, references: Vec<crate::references::ConversationReference>, skills: Vec<crate::session::AgentSkillInput>, images: Vec<crate::images::ImageInput>) -> Result<(), String> {
         uuid::Uuid::parse_str(&request_id).map_err(|_| "invalid_request_id")?;
-        if (text.trim().is_empty() && references.is_empty()) || text.len()>65536 { return Err("invalid_prompt".into()); }
+        let images = crate::images::validate_images(&images)?;
+        if (text.trim().is_empty() && references.is_empty() && images.is_empty()) || text.len()>65536 { return Err("invalid_prompt".into()); }
         if references.len() > crate::references::REFERENCE_COUNT_LIMIT { return Err("reference_limit".into()); }
         for reference in &references { crate::references::validate(reference)?; }
         crate::session::validate_skill_inputs(&skills)?;
@@ -76,10 +77,15 @@ impl AgentManager {
             request_hash.update(b"\0DG-OS skills\0");
             request_hash.update(serde_json::to_vec(&skills).map_err(|_| "agent_skill_invalid")?);
         }
+        if !images.is_empty() {
+            request_hash.update(b"\0DG-OS images\0");
+            for image in &images { request_hash.update(image.fingerprint().as_bytes()); }
+        }
         let request_fingerprint = format!("{:x}", request_hash.finalize());
         let mut admission=self.inner.admission.lock().await;
         self.ready().await?;
         let record=self.list(owner).await.into_iter().find(|r|r.id==id).ok_or("session_not_found")?;
+        if !images.is_empty() && record.engine != Engine::Codex { return Err("agent_images_unsupported".into()); }
         if let Some(old)=self.inner.repository.run(owner,&request_id).await? {
             if old.session_id.as_deref()!=Some(id) || old.request_fingerprint!=request_fingerprint { return Err("request_conflict".into()); }
             // A persisted receipt never grants permission to resend after a crash.
@@ -94,10 +100,16 @@ impl AgentManager {
         let (_,backend)=self.owned(owner,id).await?;
         self.require_generation(id, generation).await?;
         let control = self.session_control(id).await?;
-        let _control = control.try_lock().map_err(|_| "session_busy")?;
+        let control = control.try_lock_owned().map_err(|_| "session_busy")?;
+        if let Some(state) = self.inner.run_projections.lock().await.iter().find_map(|((session, _), state)| (session == id).then_some(state)) {
+            return Err(if state.persistence_failed { "storage_failed" } else { "busy" }.into());
+        }
         self.native_result_known(id).await?;
         self.validate_handoff_target(owner,id).await?;
         let view = backend.snapshot().await;
+        if let Backend::Codex(session) = &backend {
+            if !session.automatic_runs().await.is_empty() { return Err("busy".into()); }
+        }
         if view.status != "idle" { return Err("busy".into()); }
         if let Some(settings) = &settings {
             view.controls.as_ref().ok_or("turn_controls_unavailable")?.validate(settings)?;
@@ -132,6 +144,9 @@ impl AgentManager {
             self.native_result_known(id).await?;
             self.validate_handoff_target(owner,id).await?;
             if current_backend.snapshot().await.status != "idle" { return Err("busy".into()); }
+            if let Backend::Codex(session) = &current_backend {
+                if !session.automatic_runs().await.is_empty() { return Err("busy".into()); }
+            }
             crate::session::validate_discovered_skills(&skills, &observed)?;
         }
         let text = self.resolve_conversation_references(owner, &record, text, references).await?;
@@ -141,21 +156,43 @@ impl AgentManager {
         let run=StoredRun { id:request_id.clone(),owner:owner.into(),session_id:Some(id.into()),task_id,project_id,engine:match record.engine { Engine::Codex=>"codex",Engine::Claude=>"claude" }.into(),source:"native_agent".into(),runtime:None,status:"running".into(),started_at:now(),finished_at:None,summary:String::new(),reason:None,events:"[]".into(),fingerprint:fingerprint.clone(),start_fingerprint:fingerprint,truncated:false,request_fingerprint };
         let configuration = self.inner.providers.read_session(owner, id).await?;
         let crate::capabilities::SessionConfigurationView::ProviderBound { snapshot, .. } = configuration else { return Err("legacy_session_read_only".into()); };
+        // Take registration locks before durable admission: no cancellation point may
+        // separate a successful receipt from installing its tracked supervisor.
+        let mut watchers = self.inner.watchers.lock().await;
+        self.reap_watchers(&mut watchers).await;
+        let mut projections = self.inner.run_projections.lock().await;
         self.inner.repository.begin_cli_run(&run, &snapshot).await?;
-        let (result_tx,result_rx)=tokio::sync::oneshot::channel();
-        let manager=self.clone();
-        let watched=backend.clone();
-        let handle=tokio::spawn(async move { watch(manager,watched,run,result_rx).await });
-        { let mut watchers=self.inner.watchers.lock().await; watchers.retain(|h|!h.is_finished()); watchers.push(handle); }
+        let key = (id.to_owned(), generation.to_owned());
+        projections.insert(key.clone(), crate::manager::RunProjection { run_id: run.id.clone(), persistence_failed: false });
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+        let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+        let manager = self.clone();
+        let watched = backend.clone();
+        let handle = tokio::spawn(async move {
+            let dispatch = async move {
+                // The caller owns only result_rx. Aborting it cannot cancel native
+                // acknowledgement processing or release this session's control early.
+                let result = match backend {
+                    Backend::Codex(s) => s.send(request_id, text, settings, skills, images).await,
+                    Backend::Claude(s) => s.send(request_id, text, settings).await,
+                };
+                drop(control);
+                let _ = accepted_tx.send(result.clone());
+                let _ = result_tx.send(result);
+            };
+            let (_, settled) = tokio::join!(dispatch, watch(manager, watched, run, accepted_rx, key));
+            settled
+        });
+        watchers.push(handle);
+        drop(projections);
+        drop(watchers);
         // No manager admission is held while waiting for a native CLI acknowledgement.
         drop(admission);
-        let result=match backend { Backend::Codex(s)=>s.send(request_id,text,settings,skills).await,Backend::Claude(s)=>s.send(request_id,text,settings).await };
-        let _=result_tx.send(result.clone());
-        result
+        result_rx.await.unwrap_or_else(|_| Err("result_unknown".into()))
     }
 }
 
-async fn watch(manager: AgentManager, backend: Backend, mut run: StoredRun, mut accepted: tokio::sync::oneshot::Receiver<Result<(),String>>) -> bool {
+pub(crate) async fn watch(manager: AgentManager, backend: Backend, mut run: StoredRun, mut accepted: tokio::sync::oneshot::Receiver<Result<(),String>>, key: (String, String)) -> bool {
     let mut events:Vec<SessionEvent>=Vec::new();
     let mut bytes=2usize;
     let mut last=0;
@@ -164,6 +201,9 @@ async fn watch(manager: AgentManager, backend: Backend, mut run: StoredRun, mut 
     let mut send_error=None;
     let mut checkpoint_seq=0;
     let mut checkpoint_status=String::new();
+    let mut checkpoint_failed = false;
+    let mut retry_at = tokio::time::Instant::now();
+    let mut backoff = Duration::from_millis(250);
     loop {
         if !receipt_done {
             match accepted.try_recv() {
@@ -174,7 +214,10 @@ async fn watch(manager: AgentManager, backend: Backend, mut run: StoredRun, mut 
         }
         let view=backend.snapshot().await;
         if last>0 && view.events.first().is_some_and(|e|e.seq>last+1) { run.truncated=true; }
-        let mut terminal=None;
+        let mut terminal = view.terminal_run.as_ref().filter(|terminal| terminal.run_id == run.id).map(|terminal| terminal.status.clone());
+        if terminal.is_none() {
+            if let Backend::Codex(session) = &backend { terminal = session.automatic_run_status(&run.id).await; }
+        }
         for event in view.events.iter().filter(|e|e.seq>last && e.run.as_deref()==Some(run.id.as_str())) {
             started=true;
             if let Some(status)=event.data.get("run_status").and_then(Value::as_str).filter(|s|matches!(*s,"completed"|"failed"|"cancelled"|"unknown")) { terminal=Some(status.to_owned()); }
@@ -209,23 +252,93 @@ async fn watch(manager: AgentManager, backend: Backend, mut run: StoredRun, mut 
             } else if manager.inner.stop.is_cancelled() { terminal=Some("unknown".into());run.reason=Some("shutdown".into()); }
         }
         if let Some(status)=terminal {
+            // The native terminal may precede a steer acknowledgement. Keep this
+            // run reserved until its supervised input receipt and confirmed text
+            // have entered the transcript, then consume them in the next snapshot.
+            if let Backend::Codex(session) = &backend {
+                if !session.steering_settled(last).await {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                    continue;
+                }
+            }
             run.status=status;
             run.finished_at=Some(now());
             run.fingerprint=match manager.task_fingerprint(&run.owner,&run.task_id).await { Ok(value)=>value,Err(_)=>{run.truncated=true;String::new()} };
             if run.status=="failed" && run.reason.is_none() { run.reason=view.error.as_deref().map(sanitize_text).or_else(||Some("engine_failed".into())); }
             run.reason=run.reason.map(|text|bounded(&text,4096));
-            run.events=match serde_json::to_string(&events) { Ok(value)=>value,Err(_)=>return false };
-            let task_status=if run.status=="completed" || run.status=="cancelled" {"review"} else {"blocked"};
-            return manager.inner.repository.finish_run(&run.owner,&run,Some(task_status)).await.is_ok();
+            run.events = match serde_json::to_string(&events) {
+                Ok(value) => value,
+                Err(_) => { projection_failed(&manager, &key, &run.id, true).await; return false; },
+            };
+            // Freeze the exact terminal, timestamp, fingerprint and transcript once.
+            // Retry only this idempotent DB projection, never the native request.
+            return finish_projection(&manager, &key, &run).await;
         }
         run.status=if view.status=="waiting" {"waiting"} else {"running"}.into();
-        if checkpoint_seq!=last || checkpoint_status!=run.status {
-            run.events=match serde_json::to_string(&events) { Ok(value)=>value,Err(_)=>return false };
-            if manager.inner.repository.checkpoint_run(&run).await.is_err() { return false; }
-            checkpoint_seq=last;
-            checkpoint_status=run.status.clone();
+        if (checkpoint_seq!=last || checkpoint_status!=run.status) && tokio::time::Instant::now() >= retry_at {
+            run.events = match serde_json::to_string(&events) {
+                Ok(value) => value,
+                Err(_) => { projection_failed(&manager, &key, &run.id, true).await; return false; },
+            };
+            if manager.inner.repository.checkpoint_run(&run).await.is_ok() {
+                checkpoint_seq=last;
+                checkpoint_status=run.status.clone();
+                if checkpoint_failed {
+                    projection_failed(&manager, &key, &run.id, false).await;
+                    checkpoint_failed = false;
+                }
+                backoff = Duration::from_millis(250);
+            } else {
+                if !checkpoint_failed {
+                    projection_failed(&manager, &key, &run.id, true).await;
+                    checkpoint_failed = true;
+                }
+                retry_at = tokio::time::Instant::now() + backoff;
+                backoff = (backoff * 2).min(Duration::from_secs(2));
+            }
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+async fn projection_failed(manager: &AgentManager, key: &(String, String), run_id: &str, failed: bool) {
+    if let Some(state) = manager.inner.run_projections.lock().await.get_mut(key).filter(|state| state.run_id == run_id) {
+        state.persistence_failed = failed;
+    }
+}
+
+async fn finish_projection(manager: &AgentManager, key: &(String, String), run: &StoredRun) -> bool {
+    let task_status = if matches!(run.status.as_str(), "completed" | "cancelled") { "review" } else { "blocked" };
+    let mut backoff = Duration::from_millis(250);
+    let mut failure_published = false;
+    loop {
+        let settled = match manager.inner.repository.finish_run(&run.owner, run, Some(task_status)).await {
+            Ok(true) => true,
+            // A commit acknowledgement can be lost. A no-op is success only if
+            // durable storage already contains this exact observed terminal.
+            Ok(false) => manager.inner.repository.run(&run.owner, &run.id).await.ok().flatten().is_some_and(|stored| {
+                stored.status == run.status && stored.finished_at == run.finished_at
+                    && stored.summary == run.summary && stored.reason == run.reason
+                    && stored.events == run.events && stored.fingerprint == run.fingerprint
+                    && stored.truncated == run.truncated
+            }),
+            Err(_) => false,
+        };
+        if settled {
+            let mut projections = manager.inner.run_projections.lock().await;
+            if projections.get(key).is_some_and(|state| state.run_id == run.id) { projections.remove(key); }
+            drop(projections);
+            manager.retire_settled_session(&key.0).await;
+            return true;
+        }
+        if !failure_published {
+            projection_failed(manager, key, &run.id, true).await;
+            failure_published = true;
+        }
+        // Shutdown waits a bounded interval and retains our handle on timeout;
+        // unresolved truth must remain owned and can still reconcile afterward.
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(Duration::from_secs(2));
     }
 }
 

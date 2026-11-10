@@ -45,4 +45,11 @@ export default {
   "agentControls.scope.unknown.default": "尚未取得原生权限状态。",
   "agentControls.scope.unknown.read_only": "尚未取得原生权限状态。",
   "agentControls.scope.unknown.accept_edits": "尚未取得原生权限状态。",
+  "agentControls.reason.native_protocol_unsupported": "当前 CLI 的设置协议尚未确认；已有对话仍可按原生默认继续。",
+  "agentControls.reason.bound_model_metadata_unavailable": "原生模型目录没有提供当前模型的可靠推理档位。",
+  "agentControls.reason.bound_model_metadata_ambiguous": "原生目录对当前模型返回了冲突的推理能力；为避免使用错误档位，暂不开放调整。",
+  "agentControls.reason.native_current_unobserved": "可选档位已确认，当前实际强度尚未被原生事件报告。",
+  "agentControls.reason.awaiting_native_effort": "设置已送达，正在等待原生事件确认实际强度；原生策略可能调整该值。",
+  "agentControls.reason.result_unknown": "设置结果尚未确认，请先核实会话状态；不会自动重复应用。",
+  "agentControls.reason.unavailable": "当前原生会话没有提供足够信息，暂不能确认或调整此设置。",
 } as const;

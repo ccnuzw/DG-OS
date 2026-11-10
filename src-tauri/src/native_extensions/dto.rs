@@ -24,8 +24,14 @@ pub struct PreviewSkill { pub target: Target, pub scope: Scope, pub project_id: 
 impl PreviewSkill { pub fn selection(&self) -> Selection { Selection { target: self.target, scope: self.scope.clone(), project_id: self.project_id.clone() } } }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Visibility { pub target: Target, pub scope: Scope, pub project_id: Option<String>, pub instance: ResourceInstance, pub visible: bool }
+pub struct Visibility { pub target: Target, pub scope: Scope, pub project_id: Option<String>, pub intent: VisibilityIntent }
 impl Visibility { pub fn selection(&self) -> Selection { Selection { target: self.target, scope: self.scope.clone(), project_id: self.project_id.clone() } } }
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum VisibilityIntent {
+    CodexPath { instance: ResourceInstance, visible: bool },
+    ClaudeName { name: String, state: core::skills::RuleState },
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Operation { pub operation_id: String }
@@ -54,11 +60,11 @@ impl McpChange { pub fn map(self) -> core::mcp::Change { match self { Self::Upse
 pub struct PreviewMcp { pub target: Target, pub scope: Scope, pub project_id: Option<String>, pub change: McpChange }
 impl PreviewMcp { pub fn selection(&self) -> Selection { Selection { target: self.target, scope: self.scope.clone(), project_id: self.project_id.clone() } } }
 #[derive(Serialize)]
-pub struct SkillPreview { pub receipt: Receipt, pub target: Target, pub scope: Scope, pub project_id: Option<String>, pub slug: String, pub before_hash: Option<String>, pub after_hash: Option<String>, pub source: Option<core::ResourceSource>, pub resources: Vec<core::package::ResourceFile>, pub metadata: Option<core::package::Metadata>, pub expires_at: u64 }
+pub struct SkillPreview { pub receipt: Receipt, pub target: Target, pub scope: Scope, pub project_id: Option<String>, pub slug: String, pub before_hash: Option<String>, pub after_hash: Option<String>, pub source: Option<core::ResourceSource>, pub resources: Vec<core::package::ResourceFile>, pub metadata: Option<core::package::Metadata>, pub impact: Option<core::ResourceImpact>, pub expires_at: u64 }
 #[derive(Serialize)]
 pub struct VisibilityEffect { pub selection: Selection, pub instance: ResourceInstance, pub slug: String }
 #[derive(Serialize)]
-pub struct VisibilityPreview { pub preview: core::Preview, pub affected: Vec<VisibilityEffect>, pub coverage: String }
+pub struct VisibilityPreview { pub preview: core::Preview, pub affected: Vec<VisibilityEffect>, pub coverage: String, pub observation_coverage: String, pub rule: Option<core::skills::RuleEvidence> }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ListNativeSessions { pub project_id: String, pub domain: dgos_agents::native_session::SessionDomain }
