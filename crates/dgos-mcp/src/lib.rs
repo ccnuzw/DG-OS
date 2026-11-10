@@ -6,6 +6,7 @@ mod manager;
 mod policy;
 mod protocol;
 mod transport;
+pub mod probe;
 
 #[cfg(test)]
 mod transport_tests;

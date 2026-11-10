@@ -303,7 +303,7 @@ it.each(['oauth', 'plugin', 'bearer', 'unknown-runtime', 'incomplete', 'duplicat
 
 it('compares fresh file names without granting effective identity and keeps actual call evidence separate', async () => {
   const configSelection = { target: 'Codex' as const, scope: 'ProjectShared' as const, project_id: 'project-a' };
-  const key = JSON.stringify([useDevelopment.getState().epoch, configSelection.target, configSelection.scope, configSelection.project_id]);
+  const key = JSON.stringify([useDevelopment.getState().epoch, configSelection.target, configSelection.scope, configSelection.project_id, null]);
   const authentication = { configured: true, credential_present: null, authenticated: null, connected: null, approved: null, active_session: null, login: 'Unsupported' as const, logout: 'Unsupported' as const, delete_credentials: 'Unsupported' as const };
   const instances = ['fixture', 'not-discovered'].map(native_key => ({ native_key, transport: 'Http' as const, enabled: true, has_auth_configuration: false, unknown_fields_present: false, owner: 'Loose' as const, authentication }));
   useNativeExtensions.setState({ mcp: { [key]: { value: { instances, incomplete: false }, loading: false, error: null, stale: false } } });

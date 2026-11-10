@@ -3,29 +3,29 @@ use serde::{Deserialize, Serialize};
 pub use core::{Receipt, ResourceInstance, Scope, Target};
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct Selection { pub target: Target, pub scope: Scope, pub project_id: Option<String> }
+pub struct Selection { pub target: Target, pub scope: Scope, pub project_id: Option<String>, #[serde(default)] pub task_id: Option<String> }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DiscoverSkills { pub target: Target, pub scope: Scope, pub project_id: Option<String>, pub query: String }
-impl DiscoverSkills { pub fn selection(&self) -> Selection { Selection { target: self.target, scope: self.scope.clone(), project_id: self.project_id.clone() } } }
+pub struct DiscoverSkills { pub target: Target, pub scope: Scope, pub project_id: Option<String>, #[serde(default)] pub task_id: Option<String>, pub query: String }
+impl DiscoverSkills { pub fn selection(&self) -> Selection { Selection { target: self.target, scope: self.scope.clone(), project_id: self.project_id.clone(), task_id: self.task_id.clone() } } }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct GetSkill { pub target: Target, pub scope: Scope, pub project_id: Option<String>, pub slug: String }
-impl GetSkill { pub fn selection(&self) -> Selection { Selection { target: self.target, scope: self.scope.clone(), project_id: self.project_id.clone() } } }
+pub struct GetSkill { pub target: Target, pub scope: Scope, pub project_id: Option<String>, #[serde(default)] pub task_id: Option<String>, pub slug: String }
+impl GetSkill { pub fn selection(&self) -> Selection { Selection { target: self.target, scope: self.scope.clone(), project_id: self.project_id.clone(), task_id: self.task_id.clone() } } }
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum Source { Zip { bytes: Vec<u8>, subpath: Option<String> }, Github { input: String } }
+pub enum Source { Github { input: String }, Picker { handle: String, skill_path: String }, Repository { source_id: String, skill_path: String } }
 #[derive(Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SkillAction { Install, Update, Remove }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PreviewSkill { pub target: Target, pub scope: Scope, pub project_id: Option<String>, pub action: SkillAction, pub slug: String, pub expected: Option<ResourceInstance>, pub source: Option<Source> }
-impl PreviewSkill { pub fn selection(&self) -> Selection { Selection { target: self.target, scope: self.scope.clone(), project_id: self.project_id.clone() } } }
+pub struct PreviewSkill { pub target: Target, pub scope: Scope, pub project_id: Option<String>, #[serde(default)] pub task_id: Option<String>, pub action: SkillAction, pub slug: String, pub expected: Option<ResourceInstance>, pub source: Option<Source> }
+impl PreviewSkill { pub fn selection(&self) -> Selection { Selection { target: self.target, scope: self.scope.clone(), project_id: self.project_id.clone(), task_id: self.task_id.clone() } } }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Visibility { pub target: Target, pub scope: Scope, pub project_id: Option<String>, pub intent: VisibilityIntent }
-impl Visibility { pub fn selection(&self) -> Selection { Selection { target: self.target, scope: self.scope.clone(), project_id: self.project_id.clone() } } }
+pub struct Visibility { pub target: Target, pub scope: Scope, pub project_id: Option<String>, #[serde(default)] pub task_id: Option<String>, pub intent: VisibilityIntent }
+impl Visibility { pub fn selection(&self) -> Selection { Selection { target: self.target, scope: self.scope.clone(), project_id: self.project_id.clone(), task_id: self.task_id.clone() } } }
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VisibilityIntent {
@@ -57,10 +57,10 @@ pub enum McpChange { Upsert { name: String, fields: ServerPatch }, Remove { name
 impl McpChange { pub fn map(self) -> core::mcp::Change { match self { Self::Upsert { name, fields } => core::mcp::Change::Upsert { name, fields: fields.map() }, Self::Remove { name } => core::mcp::Change::Remove { name }, Self::SetEnabled { name, enabled } => core::mcp::Change::SetEnabled { name, enabled } } } }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PreviewMcp { pub target: Target, pub scope: Scope, pub project_id: Option<String>, pub change: McpChange }
-impl PreviewMcp { pub fn selection(&self) -> Selection { Selection { target: self.target, scope: self.scope.clone(), project_id: self.project_id.clone() } } }
+pub struct PreviewMcp { pub target: Target, pub scope: Scope, pub project_id: Option<String>, #[serde(default)] pub task_id: Option<String>, pub change: McpChange }
+impl PreviewMcp { pub fn selection(&self) -> Selection { Selection { target: self.target, scope: self.scope.clone(), project_id: self.project_id.clone(), task_id: self.task_id.clone() } } }
 #[derive(Serialize)]
-pub struct SkillPreview { pub receipt: Receipt, pub target: Target, pub scope: Scope, pub project_id: Option<String>, pub slug: String, pub before_hash: Option<String>, pub after_hash: Option<String>, pub source: Option<core::ResourceSource>, pub resources: Vec<core::package::ResourceFile>, pub metadata: Option<core::package::Metadata>, pub impact: Option<core::ResourceImpact>, pub expires_at: u64 }
+pub struct SkillPreview { pub receipt: Receipt, pub target: Target, pub scope: Scope, pub project_id: Option<String>, pub task_id: Option<String>, pub target_path: String, pub slug: String, pub before_hash: Option<String>, pub after_hash: Option<String>, pub source: Option<core::ResourceSource>, pub resources: Vec<core::package::ResourceFile>, pub metadata: Option<core::package::Metadata>, pub impact: Option<core::ResourceImpact>, pub expires_at: u64 }
 #[derive(Serialize)]
 pub struct VisibilityEffect { pub selection: Selection, pub instance: ResourceInstance, pub slug: String }
 #[derive(Serialize)]

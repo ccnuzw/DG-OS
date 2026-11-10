@@ -314,9 +314,8 @@ fn environment_header_edit_preserves_existing_secret_headers() {
     let p = api.preview_mcp(Target::Claude, Scope::OsUser, patch).unwrap();
     assert_eq!(api.commit(&p.receipt.operation_id).unwrap().state, State::Committed);
     let output = fs::read_to_string(&fixture.roots.claude_user_file).unwrap();
-    assert!(output.contains(r#""Authorization":"private-fixture-sentinel","X-Existing":"unchanged""#));
     let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
-    assert_eq!(parsed["mcpServers"]["fixture"]["headers"]["X-New"], "${FIXTURE_HEADER}");
+    assert_eq!(parsed["mcpServers"]["fixture"]["headers"], serde_json::json!({"Authorization":"private-fixture-sentinel", "X-Existing":"unchanged", "X-New":"${FIXTURE_HEADER}"}));
 }
 
 #[test]

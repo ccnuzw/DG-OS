@@ -10,7 +10,7 @@ use std::{
     path::Path,
     process::Stdio,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex as StdMutex, OnceLock,
     },
 };
@@ -55,6 +55,10 @@ pub(crate) fn validate_http_url_with_consent(url: &str, allow_insecure_http: boo
 
 impl Session {
     pub async fn stdio(executable: &str, args: &[String], cwd: Option<&str>) -> Result<Self> {
+        Self::stdio_with_env(executable, args, cwd, &[])
+    }
+
+    pub(crate) fn stdio_with_env(executable: &str, args: &[String], cwd: Option<&str>, environment: &[(String, String)]) -> Result<Self> {
         validate_executable(executable)?;
         if cwd.is_some_and(|dir| !Path::new(dir).is_dir()) {
             return Err(McpError::InvalidConfig("stdio cwd does not exist".into()));
@@ -66,6 +70,8 @@ impl Session {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
+        #[cfg(unix)]
+        command.process_group(0);
         // Do not expose provider tokens or other host secrets inherited from the app.
         command.env_clear();
         for name in [
@@ -81,6 +87,7 @@ impl Session {
                 command.env(name, value);
             }
         }
+        for (name, value) in environment { command.env(name, value); }
         if let Some(dir) = cwd {
             command.current_dir(dir);
         }
@@ -168,6 +175,8 @@ impl Session {
             reader_pending.lock().unwrap().clear();
         });
         Ok(Self::Stdio(StdioSession {
+            process_group: child.id(),
+            process_group_signal_pending: AtomicBool::new(true),
             child: Mutex::new(child),
             outbound,
             writer,
@@ -191,6 +200,7 @@ impl Session {
         validate_http_url_with_consent(&url, allow_insecure_http)?;
         Ok(Self::Http(HttpSession {
             allow_insecure_http,
+            allow_legacy_fallback: true,
             url,
             client,
             session_id: Mutex::new(None),
@@ -198,6 +208,12 @@ impl Session {
             negotiated: Arc::new(OnceLock::new()),
             legacy: Mutex::new(None),
         }))
+    }
+
+    pub(crate) fn probe_http(url: String, client: Client) -> Result<Self> {
+        let mut session = Self::http_with_consent(url, client, None, false)?;
+        if let Self::Http(http) = &mut session { http.allow_legacy_fallback = false; }
+        Ok(session)
     }
 
     pub fn complete_initialize(&self, result: Value) -> Result<()> {
@@ -244,12 +260,71 @@ impl Session {
         }
     }
 
+    /// Independent probes need evidence of cleanup, not a best-effort close.
+    pub(crate) async fn close_confirmed(&self) -> bool {
+        match self {
+            Self::Stdio(session) => {
+                session.reader.abort(); session.writer.abort();
+                session.pending.lock().unwrap().clear();
+                let mut child = session.child.lock().await;
+                #[cfg(unix)]
+                if session.process_group_signal_pending.swap(false, Ordering::AcqRel) {
+                    if let Some(pid) = session.process_group { unsafe { libc::kill(-(pid as i32), libc::SIGKILL); } }
+                }
+                match child.try_wait() {
+                    Ok(Some(_)) => {},
+                    Ok(None) => {
+                        #[cfg(not(unix))]
+                        if child.start_kill().is_err() { return false; }
+                        if child.wait().await.is_err() { return false; }
+                    },
+                    Err(_) => return false,
+                }
+                #[cfg(unix)]
+                if let Some(pid) = session.process_group {
+                    loop {
+                        if unsafe { libc::kill(-(pid as i32), 0) } == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) { break; }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                }
+                while !session.reader.is_finished() || !session.writer.is_finished() { tokio::task::yield_now().await; }
+                true
+            }
+            Self::Http(session) => {
+                let legacy = session.legacy.lock().await.clone();
+                if let Some(legacy) = legacy {
+                    if !legacy.close_confirmed().await { return false; }
+                    session.legacy.lock().await.take();
+                    return true;
+                }
+                let Some(id) = session.session_id.lock().await.clone() else { return true; };
+                let mut request = session.client.delete(&session.url).header("Mcp-Session-Id", &id);
+                if let Some(protocol) = session.negotiated.get() { request = request.header("MCP-Protocol-Version", &protocol.version); }
+                if let Some(token) = &session.bearer { request = request.bearer_auth(token.expose()); }
+                let confirmed = matches!(request.send().await, Ok(response) if response.status().is_success() || response.status().as_u16() == 404);
+                if confirmed { let mut current = session.session_id.lock().await; if current.as_deref() == Some(id.as_str()) { *current = None; } }
+                confirmed
+            }
+        }
+    }
+
+    pub(crate) async fn select_legacy_sse(&self) -> Result<()> {
+        let Self::Http(session) = self else { return Err(McpError::InvalidConfig("SSE requires HTTP".into())); };
+        let legacy = LegacySseSession::connect(&session.url, session.client.clone(), session.bearer.clone(), session.negotiated.clone(), false).await?;
+        *session.legacy.lock().await = Some(Arc::new(legacy));
+        Ok(())
+    }
+
     pub async fn close(&self) {
         match self {
             Self::Stdio(session) => {
                 session.reader.abort();
                 session.writer.abort();
                 session.pending.lock().unwrap().clear();
+                #[cfg(unix)]
+                if session.process_group_signal_pending.swap(false, Ordering::AcqRel) {
+                    if let Some(pid) = session.process_group { unsafe { libc::kill(-(pid as i32), libc::SIGKILL); } }
+                }
                 let _ = session.child.lock().await.kill().await;
             }
             Self::Http(session) => {
@@ -304,6 +379,8 @@ pub(crate) fn validate_executable(executable: &str) -> Result<()> {
 
 pub struct StdioSession {
     child: Mutex<Child>,
+    process_group: Option<u32>,
+    process_group_signal_pending: AtomicBool,
     outbound: mpsc::Sender<Outbound>,
     writer: JoinHandle<()>,
     pending: Pending,
@@ -347,6 +424,10 @@ impl Drop for PendingGuard {
 }
 impl Drop for StdioSession {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        if self.process_group_signal_pending.swap(false, Ordering::AcqRel) {
+            if let Some(pid) = self.process_group { unsafe { libc::kill(-(pid as i32), libc::SIGKILL); } }
+        }
         self.reader.abort();
         self.writer.abort();
         self.pending.lock().unwrap().clear();
@@ -392,6 +473,7 @@ impl StdioSession {
 
 pub struct HttpSession {
     allow_insecure_http: bool,
+    allow_legacy_fallback: bool,
     url: String,
     client: Client,
     session_id: Mutex<Option<String>>,
@@ -453,7 +535,7 @@ impl HttpSession {
             let initialize = serde_json::to_value(payload).ok().is_some_and(|value| {
                 value.get("method").and_then(Value::as_str) == Some("initialize")
             });
-            if initialize && matches!(response.status().as_u16(), 400 | 404 | 405) {
+            if self.allow_legacy_fallback && initialize && matches!(response.status().as_u16(), 400 | 404 | 405) {
                 drop(response);
                 let legacy = Arc::new(
                     LegacySseSession::connect(
@@ -649,5 +731,19 @@ mod shutdown_tests {
             )
             .await
             .is_err());
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn confirmed_cleanup_never_signals_a_recycled_group_on_inspect_or_drop() {
+        let mut session = Session::stdio_with_env("/bin/sleep", &["30".into()], None, &[]).unwrap();
+        assert!(tokio::time::timeout(Duration::from_secs(2), session.close_confirmed()).await.unwrap());
+        let mut unrelated = Command::new("/bin/sleep").arg("30").process_group(0).kill_on_drop(true).spawn().unwrap();
+        // Deterministically model the OS reusing the original numeric group ID.
+        let Session::Stdio(child) = &mut session else { unreachable!() };
+        child.process_group = unrelated.id();
+        assert!(tokio::time::timeout(Duration::from_millis(20), session.close_confirmed()).await.is_err());
+        drop(session);
+        assert!(unrelated.try_wait().unwrap().is_none());
+        unrelated.kill().await.unwrap();
     }
 }

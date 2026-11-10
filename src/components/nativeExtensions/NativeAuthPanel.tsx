@@ -5,14 +5,17 @@ import { t } from '../../i18n';
 import { useDevelopment } from '../../stores/developmentStore';
 import type { NativeAuthKind, NativeAuthRequest, NativeAuthSnapshot } from '../../types/nativeAuth';
 import { nativeError } from '../../stores/nativeExtensions';
+import { useNativeManagerGuard } from './NativeManagerLifecycle';
 
 // Only operation identity survives a remount. URLs and callback values never enter a store.
 const requests = new Map<string, NativeAuthRequest>();
+const unresolved = new Set<string>();
+export function hasPendingNativeAuthentication(sessionKey: string): boolean { return unresolved.has(sessionKey); }
 const listeners = new Set<() => void>();
 let revision = 0;
 const notify = () => { revision++; listeners.forEach(listener => listener()); };
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
-useDevelopment.subscribe((next, previous) => { if (next.epoch !== previous.epoch) { requests.clear(); notify(); } });
+useDevelopment.subscribe((next, previous) => { if (next.epoch !== previous.epoch) { requests.clear(); unresolved.clear(); notify(); } });
 const ended = (state: string) => ['succeeded', 'failed', 'stopped', 'auth_unknown'].includes(state);
 
 export default function NativeAuthPanel({ session, servers, disabled }: {
@@ -36,6 +39,7 @@ export default function NativeAuthPanel({ session, servers, disabled }: {
     if (value.session_id !== input.session_id || value.generation !== input.generation || value.request_id !== input.request_id) throw new Error('mismatched auth operation');
     if (current.current !== key || useDevelopment.getState().epoch !== epoch) return;
     if (requests.get(key)?.request_id !== input.request_id) return;
+    if (ended(value.state) && value.state !== 'auth_unknown') unresolved.delete(key);
     setSnapshot(value); if (!value.callback_required) setCallback('');
   };
   useEffect(() => { setMessage(''); setBusy(false); }, [key]);
@@ -61,14 +65,14 @@ export default function NativeAuthPanel({ session, servers, disabled }: {
     if (busy || disabled || !selected || (request && (!snapshot || !ended(snapshot.state) || snapshot.state === 'auth_unknown'))) return;
     const input = { ...session, request_id: crypto.randomUUID() };
     interactionRevision.current++;
-    requests.set(key, input); notify(); setBusy(true); setSnapshot(null); setCallback(''); setMessage('');
+    requests.set(key, input); unresolved.add(key); notify(); setBusy(true); setSnapshot(null); setCallback(''); setMessage('');
     try { accept(await invoke<NativeAuthSnapshot>('start_native_auth', { input: { ...input, server_name: selected, kind } }), input); notify(); }
     catch (error) {
       if (current.current === key) {
         // These explicit admission refusals occur before an operation/process
         // exists. Lost responses and unclassified failures remain inspect-only.
         const refused = typeof error === 'string' && ['session_busy', 'native_extension_Unsupported', 'native_extension_InvalidFormat', 'invalid_request_id', 'request_capacity', 'maintenance_active'].includes(error);
-        if (refused && useDevelopment.getState().epoch === epoch && requests.get(key) === input) { requests.delete(key); notify(); }
+        if (refused && useDevelopment.getState().epoch === epoch && requests.get(key) === input) { requests.delete(key); unresolved.delete(key); notify(); }
         setMessage(refused ? t(`nativeExtensions.error.${nativeError(error)}`) : t('nativeExtensions.auth.startFailed'));
       }
     }
@@ -97,6 +101,10 @@ export default function NativeAuthPanel({ session, servers, disabled }: {
   };
   const running = !!request && (!snapshot || !ended(snapshot.state));
   const blocked = running || snapshot?.state === 'auth_unknown';
+  useNativeManagerGuard(() => {
+    if (!busy && !blocked) return true;
+    setMessage(t('nativeExtensions.closeBlocked')); return false;
+  });
   return <section className="flex min-w-0 flex-col gap-2 border-t border-border-subtle pt-3 text-sm" aria-label={t('nativeExtensions.auth.title')}>
     <h4 className="m-0 text-sm font-medium">{t('nativeExtensions.auth.title')}</h4>
     <p className="m-0 text-ink-secondary">{t('nativeExtensions.auth.scope')}</p>

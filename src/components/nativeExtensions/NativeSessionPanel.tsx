@@ -7,7 +7,8 @@ import { nativeError, useNativeExtensions } from '../../stores/nativeExtensions'
 import { useAgentRunner } from '../../stores/agentRunnerStore';
 import type { NativeObservedSkill, NativeSelection } from '../../types/nativeExtensions';
 import { hostCode } from '../../stores/hostError';
-import NativeAuthPanel from './NativeAuthPanel';
+import NativeAuthPanel, { hasPendingNativeAuthentication } from './NativeAuthPanel';
+import { useNativeManagerGuard } from './NativeManagerLifecycle';
 
 type Domain = 'skills' | 'mcp';
 interface Capabilities { observe_skills: boolean; observe_mcp: boolean; reload_skills: boolean; reload_plugins: boolean; reconnect_mcp: boolean; toggle_mcp: boolean; native_login: boolean; native_logout: boolean; native_auth_guidance: null | { verified_version: string; reason: string; login_argv: string[]; logout_argv: string[] }; mcp_control_guidance?: null | { verified_version: string; reason: string; inspect_argv: string[] } }
@@ -29,7 +30,7 @@ export default function NativeSessionPanel({ target, domain, initialProjectId, i
   const projects = useDevelopment(state => state.projects);
   useSyncExternalStore(subscribe, () => revision);
   const runnerSession = useAgentRunner(state => state.session);
-  const configKey = configSelection ? JSON.stringify([epoch, configSelection.target, configSelection.scope, configSelection.project_id]) : '';
+  const configKey = configSelection ? JSON.stringify([epoch, configSelection.target, configSelection.scope, configSelection.project_id, configSelection.task_id ?? null]) : '';
   const fileState = useNativeExtensions(state => state.mcp[configKey]);
   const [project, setProject] = useState(initialProjectId ?? '');
   const [handles, setHandles] = useState<Handle[]>([]);
@@ -41,6 +42,7 @@ export default function NativeSessionPanel({ target, domain, initialProjectId, i
   const [refreshKey, setRefreshKey] = useState(0);
   const generation = useRef(0);
   const inFlight = useRef(false);
+  const managedHandles = useRef(new Set<string>());
   const entryKey = JSON.stringify([initialProjectId, initialSessionId]);
   const requested = useRef({ project: initialProjectId, session: initialSessionId, epoch });
   useEffect(() => {
@@ -53,10 +55,16 @@ export default function NativeSessionPanel({ target, domain, initialProjectId, i
   const [observationContext, setObservationContext] = useState('');
   const handle = handlesContext === contextKey ? handles.find(item => item.session_id === selected) : undefined;
   const handleKey = handle ? JSON.stringify([epoch, handle.session_id, handle.generation]) : '';
+  if (handleKey) managedHandles.current.add(handleKey);
   const blocked = uncertain.has(handleKey);
   const unavailable = runnerSession?.id === selected && (runnerSession.generation !== handle?.generation || runnerSession.status === 'closed' || runnerSession.status === 'unknown' || runnerSession.status === 'starting');
+  useNativeManagerGuard(() => {
+    if (!inFlight.current && ![...managedHandles.current].some(key => uncertain.has(key) || hasPendingNativeAuthentication(key))) return true;
+    setMessage(t('nativeExtensions.closeBlocked')); return false;
+  });
   const visibleObservation = !unavailable && observationContext === contextKey && observation?.session_id === handle?.session_id && observation?.generation === handle?.generation ? observation : null;
-  const comparableConfig = configSelection?.target === target && (configSelection.scope === 'OsUser' || configSelection.project_id === projectId) && fileState?.value && !fileState.stale && !fileState.loading && !fileState.error ? fileState.value : null;
+  // Project equality does not establish task-workspace identity for a native session.
+  const comparableConfig = !configSelection?.task_id && configSelection?.target === target && (configSelection.scope === 'OsUser' || configSelection.project_id === projectId) && fileState?.value && !fileState.stale && !fileState.loading && !fileState.error ? fileState.value : null;
   useEffect(() => {
     if (!unavailable) return;
     generation.current++; setObservation(null); setBusy(false); inFlight.current = false;

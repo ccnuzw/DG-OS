@@ -152,6 +152,12 @@ impl LegacySseSession {
         self.reader.abort();
         self.pending.lock().unwrap().clear();
     }
+
+    pub(crate) async fn close_confirmed(&self) -> bool {
+        self.close();
+        while !self.reader.is_finished() { tokio::task::yield_now().await; }
+        true
+    }
 }
 
 impl Drop for LegacySseSession {
@@ -276,5 +282,19 @@ mod tests {
         ] {
             assert!(legacy_endpoint(&plaintext, value).is_err());
         }
+    }
+    #[tokio::test]
+    async fn confirmed_close_waits_for_owned_reader_resources_to_drop() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct Resource(Arc<AtomicBool>);
+        impl Drop for Resource { fn drop(&mut self) { self.0.store(true, Ordering::Release); } }
+        let released = Arc::new(AtomicBool::new(false)); let resource = released.clone();
+        let (started, ready) = oneshot::channel();
+        let reader = tokio::spawn(async move { let _resource = Resource(resource); let _ = started.send(()); std::future::pending::<()>().await; });
+        ready.await.unwrap();
+        let session = LegacySseSession { sender: Sender { client: Client::new(), endpoint: Url::parse("https://example.com/messages").unwrap(), bearer: None, negotiated: Arc::new(OnceLock::new()) }, pending: Arc::new(Mutex::new(HashMap::new())), reader };
+        assert!(session.close_confirmed().await);
+        assert!(released.load(Ordering::Acquire));
+        assert!(session.close_confirmed().await);
     }
 }

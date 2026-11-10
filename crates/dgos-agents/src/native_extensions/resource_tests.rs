@@ -26,7 +26,7 @@ fn pkg(label: &str) -> NativeSkillPackage {
         PackageFile { path: "scripts/never-run.sh".into(), bytes: b"#!/bin/sh\necho forbidden > execution-marker\n".to_vec(), executable: true },
     ]).unwrap()
 }
-fn source(p: &NativeSkillPackage) -> ResourceSource { ResourceSource { source_hash: p.content_hash().into(), commit: Some("a".repeat(40)) } }
+fn source(p: &NativeSkillPackage) -> ResourceSource { ResourceSource { source_hash: p.content_hash().into(), commit: Some("a".repeat(40)), origin: None } }
 
 #[test]
 fn unrelated_journal_entries_do_not_consume_resource_history_budget() {
@@ -113,11 +113,21 @@ fn first_use_missing_roots_are_read_only_and_independent() {
 fn resource_external_edits_root_replacements_and_revocation_reject_commit() {
     let f = Fixture::new(); let api = f.api(); f.install(&api, Target::Codex, Scope::OsUser);
     let s = api.resource_summary(Target::Codex, Scope::OsUser, "fixture").unwrap();
-    let p = api.preview_resource(Target::Codex, Scope::OsUser, "fixture", ResourceAction::Remove { expected: s.instance }).unwrap();
+    let p = api.preview_resource(Target::Codex, Scope::OsUser, "fixture", ResourceAction::Remove { expected: s.instance.clone() }).unwrap();
     fs::write(f.skill().join("references/file.bin"), b"external").unwrap();
     assert_eq!(api.commit_resource(&p.receipt.operation_id).unwrap().state, State::Conflict);
-    let s = api.resource_summary(Target::Codex, Scope::OsUser, "fixture").unwrap(); assert!(!s.can_update);
-    let p = api.preview_resource(Target::Codex, Scope::OsUser, "fixture", ResourceAction::Remove { expected: s.instance }).unwrap();
+    let changed = api.resource_summary(Target::Codex, Scope::OsUser, "fixture").unwrap();
+    assert!(changed.can_update && changed.source_modified);
+    assert_eq!(changed.source, s.source);
+    assert_ne!(changed.instance.revision, s.instance.revision);
+    let package = pkg("incoming"); let source = source(&package);
+    assert_eq!(api.preview_resource(Target::Codex, Scope::OsUser, "fixture", ResourceAction::Update { expected: s.instance, package, source }).unwrap_err(), Error::Conflict);
+    let preserved = api.resource_summary(Target::Codex, Scope::OsUser, "fixture").unwrap();
+    assert_eq!(preserved.instance, changed.instance);
+    assert_eq!(preserved.source, changed.source);
+    assert!(preserved.source_modified);
+    assert_eq!(fs::read(f.skill().join("references/file.bin")).unwrap(), b"external");
+    let p = api.preview_resource(Target::Codex, Scope::OsUser, "fixture", ResourceAction::Remove { expected: changed.instance }).unwrap();
     f.context.revoke().unwrap(); assert_eq!(api.commit_resource(&p.receipt.operation_id).unwrap_err(), Error::AccessDenied);
     assert_eq!(fs::read(f.skill().join("references/file.bin")).unwrap(), b"external");
 }
@@ -278,7 +288,7 @@ fn local_packages_reject_hardlinks_symlinks_and_special_files() {
 #[test]
 fn source_binding_expiry_and_account_boundaries_prevent_resource_publication() {
     let f = Fixture::new(); let api = f.api(); let package = pkg("first");
-    let wrong = ResourceSource { source_hash: "0".repeat(64), commit: None };
+    let wrong = ResourceSource { source_hash: "0".repeat(64), commit: None, origin: None };
     assert_eq!(api.preview_resource(Target::Codex, Scope::OsUser, "fixture", ResourceAction::Install { package, source: wrong }).unwrap_err(), Error::Conflict);
     let package = pkg("first"); let source = source(&package);
     let p = api.preview_resource(Target::Codex, Scope::OsUser, "fixture", ResourceAction::Install { package, source }).unwrap();
@@ -571,4 +581,91 @@ fn claude_update_previews_both_declared_names_without_claiming_visibility() {
     assert!(impact.incomplete); // A linked instance's metadata was not read.
     assert!(!impact.visibility_writable);
     assert!(fs::read_to_string(f.root.join(".claude/skills/fixture/SKILL.md")).unwrap().contains("name: fixture"));
+}
+
+#[test]
+fn repository_index_finds_multiple_skills_without_running_scripts() {
+    let bytes = archive(&[
+        ("repository-commit/README.md", b"repository documentation"),
+        ("repository-commit/skills/first/SKILL.md", b"---\nname: first\n---\nbody\n"),
+        ("repository-commit/skills/first/scripts/never-run.sh", b"#!/bin/sh\nexit 97\n"),
+        ("repository-commit/skills/second/SKILL.md", b"---\nname: second\ndependencies:\n  tools: [git]\n---\nbody\n"),
+        ("repository-commit/skills/bad/SKILL.md", b"not front matter"),
+    ]);
+    let index = NativeSkillPackage::index_zip(&bytes).unwrap();
+    assert_eq!(index.packages.keys().map(String::as_str).collect::<Vec<_>>(), vec!["skills/first", "skills/second"]);
+    assert_eq!(index.packages["skills/first"].summary().len(), 2);
+    assert_eq!(index.packages["skills/second"].metadata().dependencies.tools[0].program, "git");
+    assert_eq!(index.rejected[0].0, "skills/bad");
+    let unsafe_archive = archive(&[("repo/skills/first/SKILL.md", b"---\nname: first\n---\nbody"), ("repo/outside/../escape", b"denied")]);
+    assert!(NativeSkillPackage::index_zip(&unsafe_archive).is_err());
+}
+
+#[test]
+fn indexed_packages_keep_nested_skill_resources_intact() {
+    let bytes = archive(&[
+        ("repo/SKILL.md", b"---\nname: outer\n---\nbody"),
+        ("repo/templates/child/SKILL.md", b"---\nname: child\n---\nbody"),
+        ("repo/templates/child/example.txt", b"supporting resource"),
+    ]);
+    let index = NativeSkillPackage::index_zip(&bytes).unwrap();
+    let outer = &index.packages[""];
+    assert_eq!(outer.summary().len(), 3);
+    assert!(outer.summary().iter().any(|file| file.path == "templates/child/SKILL.md"));
+    assert_eq!(outer.content_hash(), NativeSkillPackage::from_zip(&bytes, None).unwrap().content_hash());
+    assert_eq!(index.packages["templates/child"].summary().len(), 2);
+}
+
+#[test]
+fn directory_index_rejects_links_and_preserves_execution_bits() {
+    let f = Fixture::new(); let root = f.root.join("picker");
+    fs::create_dir_all(root.join("one/scripts")).unwrap(); fs::create_dir_all(root.join("two")).unwrap();
+    fs::write(root.join("one/SKILL.md"), b"---\nname: one\n---\nbody").unwrap();
+    fs::write(root.join("two/SKILL.md"), b"---\nname: two\n---\nbody").unwrap();
+    fs::write(root.join("one/scripts/never-run"), b"#!/bin/sh\nexit 98").unwrap();
+    fs::set_permissions(root.join("one/scripts/never-run"), fs::Permissions::from_mode(0o710)).unwrap();
+    let index = NativeSkillPackage::index_directory(&root).unwrap();
+    assert_eq!(index.packages.len(), 2);
+    assert!(index.packages["one"].summary().iter().any(|file| file.path == "scripts/never-run" && file.executable));
+    symlink(f.root.join("outside"), root.join("two/link")).unwrap();
+    assert!(NativeSkillPackage::index_directory(&root).is_err());
+}
+
+#[test]
+fn installed_content_is_instance_bound_bounded_and_link_safe() {
+    let f = Fixture::new(); let api = f.api();
+    let package = NativeSkillPackage::from_files(vec![
+        PackageFile { path: "SKILL.md".into(), bytes: b"---\nname: fixture\n---\n<script>not executable</script>".to_vec(), executable: false },
+        PackageFile { path: ".env".into(), bytes: b"KEY=private-fixture".to_vec(), executable: false },
+        PackageFile { path: "large.txt".into(), bytes: vec![b'x'; 256 * 1024 + 1], executable: false },
+        PackageFile { path: "binary.dat".into(), bytes: vec![0, 255], executable: false },
+    ]).unwrap();
+    let source = source(&package);
+    let preview = api.preview_resource(Target::Codex, Scope::OsUser, "fixture", ResourceAction::Install { package, source }).unwrap();
+    api.commit_resource(&preview.receipt.operation_id).unwrap();
+    let summary = api.resource_summary(Target::Codex, Scope::OsUser, "fixture").unwrap();
+    let read = |path| api.read_resource_file(Target::Codex, Scope::OsUser, "fixture", &summary.instance, path);
+    assert!(read("SKILL.md").unwrap().text.unwrap().contains("<script>not executable</script>"));
+    assert_eq!(read(".env").unwrap().reason.as_deref(), Some("sensitive"));
+    assert_eq!(read("large.txt").unwrap().reason.as_deref(), Some("too_large"));
+    assert_eq!(read("binary.dat").unwrap().reason.as_deref(), Some("binary"));
+    for path in ["../escape", "/etc/passwd", "scripts/../../escape"] { assert!(read(path).is_err()); }
+    let foreign = ResourceInstance { id: "0".repeat(64), revision: summary.instance.revision.clone() };
+    assert_eq!(api.read_resource_file(Target::Codex, Scope::OsUser, "fixture", &foreign, "SKILL.md").unwrap_err(), Error::Conflict);
+    fs::write(f.skill().join("SKILL.md"), b"---\nname: fixture\n---\nexternal edit").unwrap();
+    assert_eq!(read("SKILL.md").unwrap_err(), Error::Conflict);
+    let changed = api.resource_summary(Target::Codex, Scope::OsUser, "fixture").unwrap();
+    assert!(changed.source_modified && changed.source.is_some());
+    fs::remove_file(f.skill().join("binary.dat")).unwrap();
+    symlink(f.root.join("outside"), f.skill().join("binary.dat")).unwrap();
+    assert!(api.read_resource_file(Target::Codex, Scope::OsUser, "fixture", &changed.instance, "SKILL.md").is_err());
+}
+
+#[test]
+fn preview_target_projection_is_read_only_and_uses_trusted_project_root() {
+    let f = Fixture::new(); let api = f.api();
+    assert_eq!(api.resource_target_path(Target::Codex, Scope::OsUser, "new").unwrap(), f.root.join(".agents/skills/new"));
+    assert_eq!(api.resource_target_path(Target::Claude, Scope::ProjectShared, "new").unwrap(), f.root.join(".claude/skills/new"));
+    assert!(!f.root.join(".agents").exists()); assert!(!f.root.join(".claude").exists());
+    assert!(api.resource_target_path(Target::Codex, Scope::OsUser, "../escape").is_err());
 }
