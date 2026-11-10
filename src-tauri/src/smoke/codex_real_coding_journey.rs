@@ -76,7 +76,7 @@ return {ok:!!await until(()=>!document.body.contains(button)||button.disabled)};
 
 async fn coding_send(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut Vec<Value>, name: &str, text: &str) -> Journey<()> {
     real_step(app, fx, ck, ev, name, json!({"text":text}), r#"
-setInput(document.getElementById('agent-message'),A.text);const send=await until(()=>$$('.agent-dialogue-composer button',tid('dev-panel-agent')).find(b=>['发送','Send'].includes(txt(b))&&!b.disabled));if(!send)throw Error('explicit send absent');send.click();return {ok:!!await until(()=>document.getElementById('agent-message')?.value==='')};
+setInput(document.getElementById('agent-message'),A.text);const send=await until(()=>$$('.agent-control-send button[aria-label]',tid('dev-panel-agent')).find(b=>['发送','Send'].includes(b.getAttribute('aria-label'))&&!b.disabled));if(!send)throw Error('explicit send absent');send.click();return {ok:!!await until(()=>document.getElementById('agent-message')?.value==='')};
 "#).await?;
     Ok(())
 }
@@ -114,11 +114,11 @@ async fn real_coding_journey(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: &mut
     real_step(app, fx, ck, ev, "real coding observes production IPC without substituting responses", json!({"project":project["id"],"model":settings.model}), r#"
 const original=window.fetch;window.__realCodex={original,events:[]};window.fetch=function(url,options,...rest){const command=String(url).split('/').at(-1);let args={};try{args=JSON.parse(options?.body||'{}')}catch{}window.__realCodex.events.push({command,action:args.input?.action?.kind,request_id:args.input?.request_id,image_count:args.input?.images?.length,text_empty:args.input?.text===''});return original.call(this,url,options,...rest)};
 const projects=await need('dev-tool-projects');if(projects.getAttribute('aria-expanded')!=='true')projects.click();await click('dev-project-item-'+A.project);await need('dev-project-conversation');
-await chooseConversationModel('codex','Authorized real coding acceptance',A.model);const authorize=await until(()=>{const b=tid('direct-conversation-authorize');return b&&!b.disabled&&b});return {ok:!!authorize&&!window.__realCodex.events.some(e=>['open_agent_session','send_agent_message'].includes(e.command))};
+await chooseConversationModel('codex','Authorized real coding acceptance',A.model);await authorizeConversation();return {ok:!!await until(()=>!tid('dev-project-conversation')&&document.getElementById('agent-message')&&!document.getElementById('agent-message').disabled)&&window.__realCodex.events.filter(e=>e.command==='open_agent_session').length===1&&!window.__realCodex.events.some(e=>e.command==='send_agent_message')&&!tid('direct-conversation-authorize')&&!$$('[role=alertdialog]').length};
 "#).await?;
     if operations { real_image_draft_checks(app, fx, ck, ev).await?; }
-    real_step(app, fx, ck, ev, "real coding directory confirmation auto-prepares without sending", json!({}), r#"
-await click('direct-conversation-authorize');if(window.__realCodex.events.some(e=>['open_agent_session','send_agent_message'].includes(e.command)))throw Error('native session opened before authorization');await confirmWorkspaceGrant();return {ok:!!await until(()=>!tid('dev-project-conversation')&&document.getElementById('agent-message'))&&!window.__realCodex.events.some(e=>e.command==='send_agent_message')};
+    real_step(app, fx, ck, ev, "real coding automatically prepares trusted workspace without sending", json!({}), r#"
+return {ok:!tid('dev-project-conversation')&&!!document.getElementById('agent-message')&&!document.getElementById('agent-message').disabled&&window.__realCodex.events.filter(e=>e.command==='open_agent_session').length===1&&!window.__realCodex.events.some(e=>e.command==='send_agent_message')&&!tid('direct-conversation-authorize')&&!$$('[role=alertdialog]').length};
 "#).await?;
     let sessions = real_host(app, "list_agent_sessions", json!({})).await?;
     let rows = sessions.as_array().ok_or("session rows absent")?;
@@ -155,7 +155,7 @@ await click('direct-conversation-authorize');if(window.__realCodex.events.some(e
     real_require(fx, ck, ev, "real coding terminal outcome persists in one durable run", coding_runs.len() == 1 && coding_runs[0]["status"] == "completed" && coding_runs[0]["finished_at"].is_number(), json!({"durable_runs":coding_runs.len(),"status":"completed"}))?;
     if operations {
         real_save(fx, "image-history-before-close", &coding_image_history_summary(&completed));
-        real_step(app, fx, ck, ev, "first-send image survives prepare and reaches actual native dispatch before close", json!({}), "const sends=window.__realCodex.events.filter(e=>e.command==='send_agent_message');return {ok:sends.length===1&&sends[0].image_count===1&&!tid('agent-image-preview-0')};").await?;
+        real_step(app, fx, ck, ev, "prepared composer first-send image reaches actual native dispatch before close", json!({}), "const sends=window.__realCodex.events.filter(e=>e.command==='send_agent_message');return {ok:sends.length===1&&sends[0].image_count===1&&!tid('agent-image-preview-0')};").await?;
     }
     coding_close_resume(app, fx, ck, ev, &sid, &marker, approvals).await?;
     if operations {

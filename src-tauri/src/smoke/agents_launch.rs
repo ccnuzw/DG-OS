@@ -88,6 +88,7 @@ pub fn run_agents() {
             commands::inspect_development_entry, commands::mutate_development_entry,
             commands::open_development_entry_directory,
             commands::read_development_project_git, commands::read_development_project_diff,
+            commands::read_development_staged_diff,
             commands::read_development_project_git_history,
             commands::save_development_file, commands::read_development_commands, commands::save_development_commands,
             commands::start_development_process, commands::read_development_process, commands::list_development_processes,
@@ -96,6 +97,7 @@ pub fn run_agents() {
             commands::open_development_project_external,
             commands::read_development_desktop_state, commands::save_development_desktop_state,
             commands::read_development_workspace_trust, commands::set_development_workspace_trust,
+            commands::activate_development_workspace_agent,
             commands::reply_development_exit,
             commands::read_development_cli_provider, commands::save_development_cli_provider,
             commands::generate_development_commit_message, commands::cancel_development_commit_message,
@@ -110,6 +112,7 @@ pub fn run_agents() {
             commands::list_agent_sessions, commands::open_agent_session, commands::get_agent_session,
             commands::send_agent_message, commands::steer_agent_turn, commands::respond_agent_request, commands::interrupt_agent_session,
             commands::observe_codex_operations, commands::control_codex_operation,
+            commands::observe_agent_compression,
             commands::inspect_codex_operation, commands::read_codex_child_history,
             commands::close_agent_session, super::super::smoke_report,
             ];

@@ -166,7 +166,7 @@ const closed=!!await until(()=>!dialog(),15000);return {ok:closed};
     let view = real_host(app, "get_agent_session", json!({"sessionId":sid})).await?;
     if view["active_run"].is_string() {
         real_step(app, fx, ck, ev, "explicitly interrupt active native parent before independent operation", json!({}), r#"
-const stop=await until(()=>$$('.agent-dialogue-actions button',tid('dev-panel-agent')).find(b=>['停止本次执行','Stop this turn'].includes(txt(b))&&!b.disabled));if(!stop)throw Error('native interrupt unavailable');stop.click();return {ok:true};
+const stop=await until(()=>$$('.agent-control-send button[aria-label]',tid('dev-panel-agent')).find(b=>['停止本次执行','Stop this turn'].includes(b.getAttribute('aria-label'))&&!b.disabled));if(!stop)throw Error('native interrupt unavailable');stop.click();return {ok:true};
 "#).await?;
     }
     coding_wait(app, sid, 60, marker, approvals, |view| view["status"] == "idle" && view["active_run"].is_null()).await?;

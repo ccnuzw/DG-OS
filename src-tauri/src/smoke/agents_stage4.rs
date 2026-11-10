@@ -34,7 +34,9 @@ async fn seed(app:&AppHandle,fx:&Fx,owner:&str)->Result<Vec<Value>,String>{
 }
 fn write_json(path:impl AsRef<Path>,v:&Value){fs::write(path,serde_json::to_vec_pretty(v).unwrap()).expect("stage4 evidence");}
 async fn per_engine(app:&AppHandle,fx:&Fx,ck:&mut Checks,ev:&mut Vec<Value>,row:&Value)->Result<Value,String>{
- let engine=row["engine"].as_str().ok_or("engine_missing")?;let path=fx.root.join(format!("stage4-ui-{engine}"));make_repo(&path);ui_import_project(app,ck,ev,&format!("Stage4 {engine}"),&path).await;ui_new_task(app,ck,ev,&format!("Stage4 {engine}")).await;
+ let engine=row["engine"].as_str().ok_or("engine_missing")?;let path=fx.root.join(format!("stage4-ui-{engine}"));make_repo(&path);
+ if !ui_import_project(app,ck,ev,&format!("Stage4 {engine}"),&path).await{return Err("native_project_import_failed".into());}
+ if !ui_new_task(app,ck,ev,&format!("Stage4 {engine}")).await{return Err("task_creation_failed".into());}
  let selection=value(&ipc(app,"main","read_development_workspace",json!({})).await)["selection"].clone();let project=selection["project_id"].as_str().ok_or("project_missing")?;let task=selection["task_id"].as_str().ok_or("task_missing")?;
  let configured=ui(app,row.clone(),r#"await chooseConversationModel(A.engine,'Stage4 '+(A.engine==='codex'?'Codex':'Claude'),A.model);return {ok:true};"#).await;record(ck,ev,"explicit Provider and model selected through production composer",ui_ok(&configured),configured.to_string());
  // Grant only after route selection so automatic preparation persists that exact revision.

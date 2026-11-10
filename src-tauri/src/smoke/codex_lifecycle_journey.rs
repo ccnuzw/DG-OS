@@ -27,22 +27,17 @@ async fn codex_lifecycle_journey(app: &AppHandle, fx: &Fx, ck: &mut Checks, ev: 
     save(fx, "codex-lifecycle-provenance", &json!({
         "evidence":"local protocol fixture only, not real-model acceptance", "native_cli":false,
         "model_calls":0, "approved_commands_executed":0, "vault":"MemoryCredentialVault",
-        "scenario":["configure before first send","prepare without dispatch","reasoning high","read-only sandbox","Plan opt-in","approval response (denial)","steer","interrupt","send again","end session","resume without replay"],
+        "scenario":["configure before first send","automatic exact-workspace trust and prepare without dispatch","translated high reasoning tick","Plan native read-only overlay","approval response (denial)","steer","interrupt","send again","end session","resume without replay"],
         "real_model_blockers":["explicit DGOS_STAGE4_CODEX_URL/KEY/MODEL required for a separate real-provider run", "local protocol receipts cannot establish external CLI/model behavior"]
     }));
-    step(app, fx, ck, ev, "first-send model selection and trust do not dispatch", json!({"draft":FIRST}), r#"
-await click('composer-model-picker-trigger');
-const dialog=await need('composer-model-picker-dialog');
-const option=await until(()=>$$('.composer-model-picker-option',dialog).find(e=>txt(e).includes('fixture-model')&&!e.disabled));
-if(!option)throw Error('synthetic model missing');option.click();
-if(!await until(()=>!tid('composer-model-picker-dialog')))throw Error('model selection not committed');
+    step(app, fx, ck, ev, "model selection in automatically trusted workspace does not send", json!({"draft":FIRST}), r#"
 setInput(document.getElementById('agent-message'),A.draft);
-await click('direct-conversation-authorize');
-return {ok:!!await until(()=>$$('[role=dialog] button').find(b=>['允许并记住','Allow and remember'].includes(txt(b))))&&!window.__phase6.events.some(e=>['open_agent_session','send_agent_message'].includes(e.command))};
+await chooseConversationModel('codex','Phase6 local protocol ONLY','fixture-model');
+return {ok:!window.__phase6.events.some(e=>e.command==='send_agent_message')&&!tid('direct-conversation-authorize')&&!$$('[role=alertdialog]').length};
 "#).await?;
-    step(app, fx, ck, ev, "confirmed directory authorization auto-prepares without dispatch and transfers latest draft", json!({"draft":FIRST}), r#"
-await confirmWorkspaceGrant();
-return {ok:!!await until(()=>!tid('dev-project-conversation')&&document.getElementById('agent-message')?.value===A.draft)&&!window.__phase6.events.some(e=>e.command==='send_agent_message')};
+    step(app, fx, ck, ev, "automatic workspace trust prepares without dispatch and transfers latest draft", json!({"draft":FIRST}), r#"
+await authorizeConversation();
+return {ok:!!await until(()=>!tid('dev-project-conversation')&&document.getElementById('agent-message')?.value===A.draft&&!document.getElementById('agent-message').disabled)&&window.__phase6.events.filter(e=>e.command==='open_agent_session').length===1&&!window.__phase6.events.some(e=>e.command==='send_agent_message')&&!tid('direct-conversation-authorize')&&!$$('[role=alertdialog]').length};
 "#).await?;
     let sessions = host(app, "list_agent_sessions", json!({})).await?;
     let rows = sessions.as_array().ok_or("session list absent")?;
@@ -57,30 +52,28 @@ return {ok:!!await until(()=>!tid('dev-project-conversation')&&document.getEleme
         prepared["controls"]["steering"] == true
         && prepared["controls"]["collaboration"]["available"] == true
         && prepared["controls"]["collaboration"]["options"].as_array().is_some_and(|modes| modes.iter().any(|mode| mode == "plan")), prepared["controls"].to_string())?;
-    step(app, fx, ck, ev, "select high reasoning and read-only through production popovers before first dispatch", json!({}), r#"
-const trigger=labels=>$$('button[aria-label]',tid('agent-composer-controls')).find(b=>labels.includes(b.getAttribute('aria-label'))&&!b.disabled);
-const reasoning=trigger(['推理强度','Reasoning']);if(!reasoning)throw Error('reasoning popover trigger absent');reasoning.click();
-const high=await until(()=>$$('.agent-control-popover button').find(b=>txt(b)==='high'&&!b.disabled));if(!high)throw Error('high reasoning unavailable');high.click();
-if(!await until(()=>!$$('.agent-control-popover').length))throw Error('reasoning selection did not close');
-const permission=trigger(['权限','Permissions']);if(!permission)throw Error('permission popover trigger absent');permission.click();
-const readOnly=await until(()=>$$('.agent-control-popover button').find(b=>['只读沙箱','Read-only sandbox'].includes(txt(b))&&!b.disabled));if(!readOnly)throw Error('read-only option unavailable');readOnly.click();
-if(!await until(()=>!$$('.agent-control-popover').length))throw Error('permission selection did not close');
-return {ok:!!await until(()=>txt(trigger(['推理强度','Reasoning'])).includes('high')&&['只读沙箱','Read-only sandbox'].some(label=>txt(trigger(['权限','Permissions'])).includes(label)))&&!window.__phase6.events.some(e=>e.command==='send_agent_message')};
+    step(app, fx, ck, ev, "select translated high reasoning tick and explicitly dismiss before first dispatch", json!({}), r#"
+const reasoning=$$('button[aria-label]',tid('agent-composer-controls')).find(b=>['推理强度','Reasoning'].includes(b.getAttribute('aria-label'))&&!b.disabled);if(!reasoning)throw Error('reasoning popover trigger absent');reasoning.click();
+const high=await until(()=>$$('.agent-reasoning-ticks button').find(b=>['高','High'].includes(txt(b))&&!b.disabled));if(!high)throw Error('high reasoning unavailable');high.click();
+if(!await until(()=>high.getAttribute('aria-pressed')==='true'&&$$('.agent-control-popover-reasoning').length))throw Error('reasoning selection did not remain open');
+reasoning.click();
+return {ok:!!await until(()=>!$$('.agent-control-popover').length&&['高','High'].some(label=>txt(reasoning).includes(label)))&&!window.__phase6.events.some(e=>e.command==='send_agent_message')};
 "#).await?;
-    step(app, fx, ck, ev, "explicitly select Plan before first model dispatch", json!({}), r#"
-const permission=$$('button[aria-label]',tid('agent-composer-controls')).find(b=>['权限','Permissions'].includes(b.getAttribute('aria-label'))&&!b.disabled);if(!permission)throw Error('permission popover trigger absent');permission.click();
-const plan=await until(()=>$$('.agent-control-popover button').find(b=>txt(b)==='Plan'&&!b.disabled));if(!plan)throw Error('Plan opt-in unavailable');plan.click();
-return {ok:!!await until(()=>!$$('.agent-control-popover').length)&&!window.__phase6.events.some(e=>e.command==='send_agent_message')};
+    step(app, fx, ck, ev, "explicitly select Plan from five run modes before first model dispatch", json!({}), r#"
+const mode=$$('button[aria-label]',tid('agent-composer-controls')).find(b=>['运行模式','Run mode'].includes(b.getAttribute('aria-label'))&&!b.disabled);if(!mode)throw Error('run mode popover trigger absent');mode.click();
+const options=await until(()=>$$('.agent-mode-option').length===5&&$$('.agent-mode-option'));if(!options)throw Error('five run modes absent');
+const plan=options.find(b=>['规划','Plan'].includes(txt(b.querySelector('strong')))&&!b.disabled);if(!plan)throw Error('Plan opt-in unavailable');plan.click();
+return {ok:!!await until(()=>!$$('.agent-control-popover').length&&['规划','Plan'].some(label=>txt(mode).includes(label)))&&!window.__phase6.events.some(e=>e.command==='send_agent_message')};
 "#).await?;
     step(app, fx, ck, ev, "first explicit send reaches native approval", json!({}), r#"
-const send=await until(()=>$$('.agent-dialogue-composer button',tid('dev-panel-agent')).find(b=>['发送','Send'].includes(txt(b))&&!b.disabled));
+const send=await until(()=>$$('.agent-control-send button[aria-label]',tid('dev-panel-agent')).find(b=>['发送','Send'].includes(b.getAttribute('aria-label'))&&!b.disabled));
 if(!send)throw Error('first explicit send unavailable');send.click();
 return {ok:!!await until(()=>$$('.agent-dialogue-requests section',tid('dev-panel-agent')).find(e=>txt(e).includes('SYNTHETIC PROTOCOL ONLY')))};
 "#).await?;
     let waiting = lifecycle_session(app, &sid, "waiting").await?;
     let first_run = waiting["active_run"].as_str().ok_or("first run absent")?.to_owned();
     let pending = waiting["pending"].as_array().ok_or("pending list absent")?;
-    require(fx, ck, ev, "native approval is bound to first turn with exact high, read-only and Plan wire settings",
+    require(fx, ck, ev, "native approval is bound to first turn with exact high reasoning and Plan read-only wire policy",
         pending.len() == 1 && pending[0]["kind"] == "item/commandExecution/requestApproval"
         && pending[0]["data"]["turnId"] == "lifecycle-turn-1"
         && lifecycle_protocol(path)?.iter().any(|request| {
@@ -99,7 +92,7 @@ if(!deny)throw Error('synthetic denial action absent');deny.click();
 return {ok:!!await until(()=>!$$('.agent-dialogue-requests section',tid('dev-panel-agent')).length&&txt(tid('dev-panel-agent')).includes('SYNTHETIC PROTOCOL ONLY: denial received'))};
 "#).await?;
     let running = lifecycle_session(app, &sid, "running").await?;
-    require(fx, ck, ev, "approval response (denial) preserves original active run without permission elevation", running["active_run"] == first_run && running["pending"].as_array().is_some_and(Vec::is_empty) && running["controls"]["permission"]["current"] == "read_only" && running["events"].as_array().is_some_and(|events| events.iter().any(|event| event["text"].as_str().is_some_and(|text| text.contains("SYNTHETIC PROTOCOL ONLY: denial received")))), running.to_string())?;
+    require(fx, ck, ev, "approval denial preserves original active run and selected default permission under Plan read-only overlay", running["active_run"] == first_run && running["pending"].as_array().is_some_and(Vec::is_empty) && running["controls"]["permission"]["current"] == "default" && running["controls"]["collaboration"]["current"] == "plan" && running["events"].as_array().is_some_and(|events| events.iter().any(|event| event["text"].as_str().is_some_and(|text| text.contains("SYNTHETIC PROTOCOL ONLY: denial received")))), running.to_string())?;
     step(app, fx, ck, ev, "steer active turn once and acknowledge only exact receipt", json!({"steer":STEER}), r#"
 setInput(document.getElementById('agent-message'),A.steer);
 const steer=await until(()=>$$('button',tid('dev-panel-agent')).find(b=>['追加到本次执行','Add to current turn'].includes(txt(b))&&!b.disabled));
@@ -110,7 +103,7 @@ return {ok:!!await until(()=>document.getElementById('agent-message')?.value==='
     require(fx, ck, ev, "steering stays on first run with one positive native receipt",
         steered["active_run"] == first_run && steered["events"].as_array().is_some_and(|events| events.iter().filter(|event| event["kind"] == "userSteering" && event["run"] == first_run && event["text"] == STEER).count() == 1), steered.to_string())?;
     step(app, fx, ck, ev, "interrupt the original active turn explicitly", json!({}), r#"
-const stop=await until(()=>$$('.agent-dialogue-actions button',tid('dev-panel-agent')).find(b=>['停止本次执行','Stop this turn'].includes(txt(b))&&!b.disabled));
+const stop=await until(()=>$$('.agent-control-send button[aria-label]',tid('dev-panel-agent')).find(b=>['停止本次执行','Stop this turn'].includes(b.getAttribute('aria-label'))&&!b.disabled));
 if(!stop)throw Error('interrupt unavailable');stop.click();return {ok:true};
 "#).await?;
     let interrupted = lifecycle_session(app, &sid, "idle").await?;
@@ -118,7 +111,7 @@ if(!stop)throw Error('interrupt unavailable');stop.click();return {ok:true};
         interrupted["active_run"].is_null() && interrupted["events"].as_array().is_some_and(|events| events.iter().any(|event| event["run"] == first_run && event["data"]["run_status"] == "cancelled")), interrupted.to_string())?;
     step(app, fx, ck, ev, "send again only after explicit confirmed interrupt", json!({"text":SECOND}), r#"
 setInput(document.getElementById('agent-message'),A.text);
-const send=await until(()=>$$('.agent-dialogue-composer button',tid('dev-panel-agent')).find(b=>['发送','Send'].includes(txt(b))&&!b.disabled));
+const send=await until(()=>$$('.agent-control-send button[aria-label]',tid('dev-panel-agent')).find(b=>['发送','Send'].includes(b.getAttribute('aria-label'))&&!b.disabled));
 if(!send)throw Error('second explicit send unavailable');send.click();
 return {ok:!!await until(()=>document.getElementById('agent-message')?.value==='')};
 "#).await?;

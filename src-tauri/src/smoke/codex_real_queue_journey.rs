@@ -37,7 +37,7 @@ const row=await until(()=>$$('li[data-submission-id]').find(e=>e.dataset.submiss
     let running = real_host(app, "get_agent_session", json!({"sessionId":sid})).await?;
     real_require(fx, ck, ev, "queue deletion removes exact entry while original parent stays active", deleted["queue"].as_array().is_some_and(|rows| rows.len() == 1 && rows[0]["id"] == b) && running["active_run"] == parent_run, json!({"remaining_entries":1,"original_parent_active":true}))?;
     real_step(app, fx, ck, ev, "explicitly interrupt bounded native parent after queue CRUD", json!({}), r#"
-const stop=await until(()=>$$('.agent-dialogue-actions button',tid('dev-panel-agent')).find(b=>['停止本次执行','Stop this turn'].includes(txt(b))&&!b.disabled));if(!stop)throw Error('native parent interrupt absent');stop.click();return {ok:true};
+const stop=await until(()=>$$('.agent-control-send button[aria-label]',tid('dev-panel-agent')).find(b=>['停止本次执行','Stop this turn'].includes(b.getAttribute('aria-label'))&&!b.disabled));if(!stop)throw Error('native parent interrupt absent');stop.click();return {ok:true};
 "#).await?;
     coding_wait(app, sid, 180, marker, approvals, |view| view["status"] == "idle" && view["active_run"].is_null()).await?;
     let pending = real_operations_snapshot(app, sid).await?;
