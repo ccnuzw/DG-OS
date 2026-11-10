@@ -2,6 +2,7 @@ import { extractErrorCode } from '@dgos/ui';
 import { invoke } from '@tauri-apps/api/core';
 import { t } from '../i18n';
 import { suspendAppearanceLayoutScale } from '../ui/appearance';
+import { flushDesktopState } from '../stores/developmentDesktop';
 
 // V1-FR-008 local accounts: typed wrappers for the six host commands. The host decides who is signed in; no
 // command takes a user id, token or account id, and the renderer keeps none (D087). A failed command rejects with
@@ -52,6 +53,7 @@ function isUnregistered(command: string, error: unknown): boolean {
 class AccountsUnavailable extends Error {}
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (['sign_out', 'delete_account'].includes(command) && !await flushDesktopState()) throw new AccountCommandError(null, 'desktop_state_unsaved');
   const resume=['create_account','sign_in','sign_out','delete_account'].includes(command)?suspendAppearanceLayoutScale():()=>{};
   try {return await invokeAccount<T>(command,args);}finally{resume();}
 }

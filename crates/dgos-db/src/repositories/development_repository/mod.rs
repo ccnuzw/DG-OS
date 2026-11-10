@@ -7,6 +7,10 @@ mod executions;
 mod cutover;
 mod sessions;
 mod runtime;
+mod desktop;
+pub use desktop::{DesktopState, WorkspaceTrust};
+#[cfg(test)]
+mod desktop_tests;
 mod capabilities;
 mod codex_operations;
 pub use codex_operations::CodexOperationJournal;

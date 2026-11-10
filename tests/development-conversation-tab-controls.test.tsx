@@ -38,7 +38,7 @@ it('stops a sequential close batch at the retained draft and never touches execu
   expect(useAgentRunner.getState()).toBe(runner);
 });
 
-it('awaits each close and stops after a later draft confirmation is cancelled', async () => {
+it('awaits each close, retains hidden drafts, and stops when a later tab remains open', async () => {
   const pending = Promise.withResolvers<void>();
   const close = vi.fn(async (tab: ConversationTab) => {
     if (tab.id === 'draft') { await pending.promise; useDevelopment.getState().closeTab(tab.id); }
@@ -49,7 +49,11 @@ it('awaits each close and stops after a later draft confirmation is cancelled', 
   expect(close.mock.calls.map(([tab]) => tab.id)).toEqual(['draft']);
   await act(async () => { pending.resolve(); });
   expect(close.mock.calls.map(([tab]) => tab.id)).toEqual(['draft', 'saved']);
-  expect(useDevelopment.getState().tabs.map(tab => tab.id)).toEqual(['saved', 'last']);
+  expect(useDevelopment.getState().tabs.filter(tab => !tab.hidden).map(tab => tab.id)).toEqual(['saved', 'last']);
+  expect(useDevelopment.getState().tabs.find(tab => tab.id === 'draft')?.hidden).toBe(true);
+  expect(screen.queryByTestId('conversation-tab-draft')).toBeNull();
+  act(() => { useDevelopment.getState().activateTab('draft'); });
+  expect(screen.getByTestId('conversation-tab-draft')).toBeTruthy();
 });
 
 it('closes only tabs to the right, in order, and disables empty targets', async () => {

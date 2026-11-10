@@ -10,7 +10,7 @@ export interface AgentEvent { seq: number; kind: string; text: string | null; da
 export interface AgentSkillInput { name: string; path: string }
 interface EventSync { reset: boolean; after_seq: number; first_seq: number }
 export interface AgentSession { id: string; generation: string; engine: Engine; native_id: string | null; workspace: string; status: string; events: AgentEvent[]; pending: Pending[]; error: string | null; persistence_error?: string | null; history_truncated?: boolean; active_run?: string | null; configuration?: SessionConfigurationView | null; controls?: AgentControls; cli_version?: string | null; event_sync?: EventSync }
-export type AgentOpenInput = { intent: 'create'; id: string; engine: Engine; task_id: string; project_revision: number; provider: { provider_id: string; model_id: string; provider_revision: number }; options: { workspace: string; resume_id: null; executable: null; model: null; trust_workspace: true } } | { intent: 'resume'; session_id: string; trust_workspace: boolean };
+export type AgentOpenInput = { intent: 'create'; id: string; engine: Engine; task_id: string; project_revision: number; provider: { provider_id: string; model_id: string; provider_revision: number }; options: { workspace: string; resume_id: null; executable: null; model: null; trust_workspace: boolean } } | { intent: 'resume'; session_id: string; trust_workspace: boolean };
 /** Host runtimes this account started or attached to in the current epoch, keyed by session id, with the last status seen. Closed runtimes are removed. */
 export type LiveSessions = { [id: string]: string };
 

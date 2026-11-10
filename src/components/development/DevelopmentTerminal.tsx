@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button } from '@dgos/ui';
+import { Button, Input } from '@dgos/ui';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -8,6 +8,7 @@ import { useDevelopment } from '../../stores/developmentStore';
 import { contextGeneration, useContextSelection } from '../../stores/developmentSelection';
 import { processActive, resizeDevelopmentTerminal, writeDevelopmentTerminal, useRuntimeProcessView, type DevelopmentProcess } from '../../stores/developmentRuntime';
 import { useSurfaceActive, useSurfaceVisible } from '../../workspace/SurfaceContext';
+import { useWorkspaceTrust } from '../../stores/developmentTrust';
 
 type TerminalFeedback = { owner: string; resize: string | null; resizing: boolean };
 
@@ -27,6 +28,10 @@ export function DevelopmentTerminal({ process, panelVisible = true }: { process:
   const surfaceVisible = useSurfaceVisible();
   const active = surfaceActive && panelVisible;
   const visible = surfaceVisible && panelVisible;
+  const trust = useWorkspaceTrust(process.project_id, process.task_id, active);
+  const [search, setSearch] = useState('');
+  const [utilityStatus, setUtilityStatus] = useState<string | null>(null);
+  const searchCursor = useRef<{ row: number; column: number } | null>(null);
   const epoch = useDevelopment(state => state.epoch);
   const { generation, pending } = useContextSelection();
   const { view, setView } = useRuntimeProcessView(process);
@@ -43,7 +48,7 @@ export function DevelopmentTerminal({ process, panelVisible = true }: { process:
   }, [owner]);
   const retryResize = useRef<(() => void) | null>(null);
   const interactive = useRef(active);
-  interactive.current = visible && active && !pending && hostTerminal;
+  interactive.current = visible && active && !pending && hostTerminal && Boolean(trust.value?.terminal) && !view.inputError;
   const fitter = useRef<FitAddon | null>(null);
   const sized = useRef<{ rows: number; cols: number } | null>(null);
   const resizeFlight = useRef<Promise<void> | null>(null);
@@ -81,7 +86,7 @@ export function DevelopmentTerminal({ process, panelVisible = true }: { process:
         if (!valid() || document.hidden || !interactive.current || !processActive(current.current)) return;
         const result = await writeDevelopmentTerminal(process.id, data);
         // An unacknowledged write may already have reached the PTY. Never replay it.
-        if (valid() && !result.ok) setView({ inputError: result.code });
+        if (valid() && !result.ok) { interactive.current = false; setView({ inputError: result.code }); }
       });
     });
     const updateAppearance = () => {
@@ -223,8 +228,8 @@ export function DevelopmentTerminal({ process, panelVisible = true }: { process:
     };
   }, [owner, epoch, generation, process.id, visible, pending, running, updateFeedback]);
   useEffect(() => {
-    if (terminal.current) terminal.current.options.disableStdin = document.hidden || !visible || !active || pending;
-  }, [visible, active, pending, owner]);
+    if (terminal.current) terminal.current.options.disableStdin = document.hidden || !interactive.current;
+  }, [visible, active, pending, owner, trust.value?.terminal, view.inputError]);
   useEffect(() => {
     const instance = terminal.current;
     if (!instance) return;
@@ -240,9 +245,62 @@ export function DevelopmentTerminal({ process, panelVisible = true }: { process:
     else { instance.reset(); restoreOutput.current?.(displayed); }
     output.current = displayed;
   }, [process.output, view.clearOffset, owner]);
+  function findOutput(backward = false) {
+    const instance = terminal.current;
+    if (!instance || !search) return;
+    const buffer = instance.buffer.active;
+    const matches: { row: number; column: number; length: number }[] = [];
+    const needle = search.toLocaleLowerCase();
+    for (let row = 0; row < buffer.length; row++) {
+      const line = buffer.getLine(row);
+      if (!line) continue;
+      const text = line.translateToString(true).toLocaleLowerCase();
+      for (let offset = text.indexOf(needle); offset >= 0; offset = text.indexOf(needle, offset + Math.max(1, needle.length))) {
+        let chars = 0; let column = 0; let end = 0;
+        for (let cell = 0; cell < line.length; cell++) {
+          const value = line.getCell(cell);
+          if (!value || value.getWidth() === 0) continue;
+          if (chars < offset) column = cell + value.getWidth();
+          if (chars < offset + needle.length) end = cell + value.getWidth();
+          chars += Math.max(1, value.getChars().length);
+        }
+        matches.push({ row, column, length: Math.max(1, end - column) });
+      }
+    }
+    if (!matches.length) { setUtilityStatus('runtimeWorkflow.noMatches'); return; }
+    const cursor = searchCursor.current;
+    const next = backward
+      ? [...matches].reverse().find(match => !cursor || match.row < cursor.row || match.row === cursor.row && match.column < cursor.column) ?? matches[matches.length - 1]
+      : matches.find(match => !cursor || match.row > cursor.row || match.row === cursor.row && match.column > cursor.column) ?? matches[0];
+    instance.select(next.column, next.row, next.length); instance.scrollToLine(next.row);
+    searchCursor.current = next; setUtilityStatus(null);
+  }
+  async function copyOutput() {
+    const instance = terminal.current;
+    if (!instance) return;
+    const selection = instance.getSelection();
+    const buffer = instance.buffer.active;
+    const lines: string[] = [];
+    if (!selection) for (let row = 0; row < buffer.length; row++) lines.push(buffer.getLine(row)?.translateToString(true) ?? '');
+    try { await navigator.clipboard.writeText(selection || lines.join('\n')); setUtilityStatus('runtimeWorkflow.copied'); }
+    catch { setUtilityStatus('runtimeWorkflow.clipboardFailed'); }
+  }
+  async function pasteInput() {
+    const instance = terminal.current;
+    const pastingOwner = owner;
+    try {
+      const text = await navigator.clipboard.readText();
+      if (currentOwner.current !== pastingOwner || !interactive.current || !processActive(current.current)) return;
+      instance?.paste(text); instance?.focus(); setUtilityStatus(null);
+    } catch { setUtilityStatus('runtimeWorkflow.clipboardFailed'); }
+  }
   return <div className="dev-review-stack">
     <p className="m-0 text-xs text-ink-secondary">{t('direct.terminalHint')}</p>
     <div className="dev-review-toolbar"><Button size="xs" variant="secondary" data-testid="dev-terminal-clear" disabled={!visible || !active || pending} onClick={() => setView({ clearOffset: process.output.length })}>{t('workbenchRuntime.clearDisplay')}</Button><span className="text-xs text-ink-secondary">{t('workbenchRuntime.clearHint')}</span></div>
+    <div className="dev-review-toolbar"><Button size="xs" variant="secondary" disabled={!visible || !active || pending} onClick={() => void copyOutput()}>{t('runtimeWorkflow.copyOutput')}</Button><Button size="xs" variant="secondary" disabled={!interactive.current || !running} onClick={() => void pasteInput()}>{t('runtimeWorkflow.paste')}</Button><Input type="search" label={t('runtimeWorkflow.searchOutput')} value={search} onChange={event => { setSearch(event.target.value); searchCursor.current = null; }} onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); findOutput(event.shiftKey); } }} /><Button size="xs" variant="ghost" disabled={!search} onClick={() => findOutput(true)}>{t('runtimeWorkflow.previousMatch')}</Button><Button size="xs" variant="ghost" disabled={!search} onClick={() => findOutput()}>{t('runtimeWorkflow.nextMatch')}</Button></div>
+    {utilityStatus ? <p role={utilityStatus === 'runtimeWorkflow.clipboardFailed' ? 'alert' : 'status'} className="m-0 text-xs">{t(utilityStatus)}</p> : null}
+    {!trust.value?.terminal ? <div className="dev-review-toolbar"><span className="text-xs">{t('runtimeWorkflow.terminalPermission')}</span><Button size="xs" variant="secondary" disabled={!active || trust.loading} onClick={() => { void trust.grant('terminal'); }}>{t('runtimeWorkflow.authorize')}</Button></div> : null}
+    {trust.error ? <p role="alert" className="text-xs">{t('runtimeWorkflow.trustFailed')}</p> : null}
     {viewFeedback?.resize ? <div className="dev-review-stack" data-testid="dev-terminal-size-feedback" aria-busy={viewFeedback.resizing}>
       <p role={viewFeedback.resize === 'terminal_starting' ? 'status' : 'alert'} className="m-0 text-xs dev-evidence-warning">{t(viewFeedback.resize === 'terminal_starting' ? 'direct.terminalViewStarting' : 'direct.terminalResizeFailed')}</p>
       <Button size="xs" variant="secondary" disabled={!visible || !active || pending || !running || viewFeedback.resizing} onClick={() => retryResize.current?.()}>{t('direct.terminalRetrySize')}</Button>

@@ -135,6 +135,22 @@ done
 
 #[cfg(unix)]
 #[tokio::test]
+async fn exhausted_request_ids_fail_closed_without_wrapping() {
+    let fixture = Fixture::new(r#"
+while IFS= read -r line; do
+printf '%s\n' '{"id":18446744073709551614,"result":"last-reply"}'
+done
+"#).await;
+    fixture.wire.next.store(u64::MAX - 1, Ordering::Relaxed);
+    assert_eq!(fixture.wire.request("last", json!({})).await.unwrap(), "last-reply");
+    assert_eq!(fixture.wire.request("exhausted", json!({})).await.unwrap_err(), "closed");
+    assert_eq!(fixture.wire.next.load(Ordering::Relaxed), u64::MAX);
+    assert!(fixture.wire.pending.lock().unwrap().replies.is_empty());
+    fixture.finish().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn dropped_requests_release_pending_and_late_replies_are_discarded() {
     let mut fixture = Fixture::new(r#"
 while IFS= read -r line; do
@@ -181,7 +197,7 @@ async fn pending_registration_is_bounded_and_dropped_queued_writes_release_it() 
     poll_pending(replacement.as_mut()).await;
     assert_eq!(wire.pending.lock().unwrap().replies.len(), MAX_PENDING);
     assert_eq!(wire.request("over-limit", json!({})).await.unwrap_err(), "connection_lost");
-    assert!(wire.connection_lost().is_cancelled());
+    assert!(wire.connection_lost.is_cancelled());
     assert!(wire.pending.lock().unwrap().replies.is_empty());
     drop(replacement);
     drop(requests);
@@ -203,7 +219,7 @@ done
     let wire = fixture.wire.clone();
     let request = wire.request("overflow", json!({}));
     assert_eq!(tokio::time::timeout(Duration::from_secs(3), request).await.unwrap().unwrap_err(), "connection_lost");
-    assert!(wire.connection_lost().is_cancelled());
+    assert!(wire.connection_lost.is_cancelled());
     assert!(!wire.native_available());
     assert!(wire.pending.lock().unwrap().replies.is_empty());
     assert_eq!(fixture.events.len(), EVENT_CAPACITY);
@@ -226,7 +242,7 @@ done
     let mut request = Box::pin(wire.request("hold", json!({})));
     fixture.held(request.as_mut()).await;
     wire.write(json!({"method":"lose"})).await.unwrap();
-    tokio::time::timeout(Duration::from_millis(250), wire.connection_lost().cancelled()).await.unwrap();
+    tokio::time::timeout(Duration::from_millis(250), wire.connection_lost.cancelled()).await.unwrap();
     assert!(!wire.native_available());
     assert!(!wire.stopped());
     assert!(!wire.finished.is_cancelled());
@@ -250,7 +266,7 @@ async fn malformed_input_and_writer_failure_signal_loss_without_waiting_for_reap
         }
         let error = tokio::time::timeout(Duration::from_secs(3), fixture.wire.request("probe", json!({}))).await.unwrap().unwrap_err();
         assert!(matches!(error.as_str(), "connection_lost" | "closed"));
-        assert!(fixture.wire.connection_lost().is_cancelled());
+        assert!(fixture.wire.connection_lost.is_cancelled());
         assert!(!fixture.wire.native_available());
         assert!(!fixture.wire.stopped());
         assert!(fixture.wire.pending.lock().unwrap().replies.is_empty());
@@ -266,7 +282,7 @@ async fn stopping_immediately_invalidates_native_availability_and_fails_pending(
     let mut request = Box::pin(wire.request("hold", json!({})));
     fixture.held(request.as_mut()).await;
     wire.stop.cancel();
-    assert!(wire.connection_lost().is_cancelled());
+    assert!(wire.connection_lost.is_cancelled());
     assert!(!wire.native_available());
     assert_eq!(tokio::time::timeout(Duration::from_millis(250), request).await.unwrap().unwrap_err(), "connection_lost");
     fixture.finish().await;

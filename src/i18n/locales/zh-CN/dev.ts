@@ -157,4 +157,9 @@ export default {
   'dev.error.invalid_prompt': '指令为空或超过原生输入限制。',
   'dev.error.not_running': '目标执行已结束或不再是当前回合。',
   'dev.error.engine_rejected': '原生引擎拒绝了此操作。',
+  'dev.error.desktop_state_conflict': '工作现场已被更新，请重新读取并合并后保存。',
+  'dev.error.desktop_state_limit': '工作现场超过保存上限。请移除不需要的附件后重试。',
+  'dev.error.invalid_desktop_state': '工作现场无法安全保存，当前输入仍保留。',
+  'dev.error.workspace_trust_conflict': '目录授权已变化，请重新核对授权。',
+  'dev.error.invalid_workspace_trust': '目录授权范围或版本无效，请刷新后重试。',
 } as const;

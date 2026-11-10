@@ -4,20 +4,29 @@ import { formatDateTime, useLocale } from '../../i18n';
 import { useDevelopment } from '../../stores/developmentStore';
 import { contextGeneration, useContextSelection } from '../../stores/developmentSelection';
 import { useSurfaceActive } from '../../workspace/SurfaceContext';
+import { useWorkspaceTrust } from '../../stores/developmentTrust';
+import { useDesktopSlot } from '../../stores/developmentDesktop';
+import { commandIntent, matchingService, runtimeCall, runtimeOutputExcerpt, type RuntimeIntent, type ReadinessInput } from '../../stores/developmentRuntime';
 import { readDevelopmentCommands, readDevelopmentProcess, submitRuntimeOperation, retryRuntimeOperation, runtimeOperationBlocked, openDevelopmentExternal, processActive, useRuntimeDraft, useRuntimeProcessView, useDevelopmentRuntime, type CommandCatalog, type DevelopmentCommand, type DevelopmentProcess, type StartProcessInput } from '../../stores/developmentRuntime';
 import { confirmAction, errorText as developmentErrorText } from './shared';
 import { beginResourceRead, failResourceRead, resourceView, type ResourceReadState } from '../../resourceState';
 import { ManualTakeover } from './ManualTakeover';
 const DevelopmentTerminal = lazy(() => import('./DevelopmentTerminal').then(module => ({ default: module.DevelopmentTerminal })));
 
+const emptyRuntimePreferences: { choices: Partial<Record<RuntimeIntent, string>>; readiness: Record<string, ReadinessInput> } = { choices: {}, readiness: {} };
+
 function RuntimeOutput({ process, disabled }: { process: DevelopmentProcess; disabled: boolean }) {
   const { t } = useLocale();
   const { view, setView } = useRuntimeProcessView(process);
+  const [query, setQuery] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   const output = process.output.slice(view.clearOffset ?? 0);
-  return <div className="dev-review-stack"><div className="dev-review-toolbar"><Button size="xs" variant="secondary" data-testid="dev-output-clear" disabled={disabled} onClick={() => setView({ clearOffset: process.output.length })}>{t('workbenchRuntime.clearDisplay')}</Button><span className="text-xs text-ink-secondary">{t('workbenchRuntime.clearHint')}</span></div><pre className="dev-diff" tabIndex={0} aria-label={t('direct.output')}>{output || t(view.clearOffset ? 'workbenchRuntime.displayCleared' : 'direct.noOutput')}</pre></div>;
+  const lines = query ? output.split('\n').filter(line => line.toLocaleLowerCase().includes(query.toLocaleLowerCase())).join('\n') : output;
+  return <div className="dev-review-stack"><div className="dev-review-toolbar"><Button size="xs" variant="secondary" data-testid="dev-output-clear" disabled={disabled} onClick={() => setView({ clearOffset: process.output.length })}>{t('workbenchRuntime.clearDisplay')}</Button><Button size="xs" variant="secondary" disabled={disabled || !output} onClick={async () => { setCopyError(false); try { await navigator.clipboard.writeText(lines); setCopied(true); } catch { setCopyError(true); } }}>{t(copied ? 'runtimeWorkflow.copied' : 'runtimeWorkflow.copyOutput')}</Button><span className="text-xs text-ink-secondary">{t('workbenchRuntime.clearHint')}</span></div><Input label={t('runtimeWorkflow.searchOutput')} type="search" value={query} onChange={event => { setQuery(event.target.value); setCopied(false); }} />{copyError ? <p role="alert">{t('runtimeWorkflow.clipboardFailed')}</p> : null}<pre className="dev-diff" tabIndex={0} aria-label={t('direct.output')}>{lines || t(query ? 'runtimeWorkflow.noMatches' : view.clearOffset ? 'workbenchRuntime.displayCleared' : 'direct.noOutput')}</pre></div>;
 }
 
-export function DevelopmentRuntime({ projectId, taskId, visible = true }: { projectId: string; taskId: string; visible?: boolean }) {
+export function DevelopmentRuntime({ projectId, taskId, visible = true, onUseOutput, requestedAction }: { projectId: string; taskId: string; visible?: boolean; onUseOutput?: (text: string) => void; requestedAction?: { kind: 'test' | 'preview' | 'build' | 'terminal'; nonce: number } }) {
   const { t } = useLocale();
   const errorText = (code: string) => code === 'storage_failed' ? t('direct.operation.storageUnavailable') : code === 'unknown' ? t('direct.operation.receiptUnavailable') : developmentErrorText(code);
   const runtime = useDevelopmentRuntime();
@@ -27,6 +36,11 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
   const context = useContextSelection();
   const owner = JSON.stringify([epoch, context.generation, projectId, taskId]);
   const project = useDevelopment(state => state.projects.find(item => item.id === projectId));
+  const trust = useWorkspaceTrust(projectId, taskId, surfaceActive);
+  const [preferences, setPreferences] = useDesktopSlot(`runtime:${projectId}:${taskId}`, emptyRuntimePreferences);
+  const [outputDraft, setOutputDraft] = useState<{ processId: string; text: string } | null>(null);
+  const launchFlight = useRef(false);
+  const restartFlight = useRef(false);
   const selected = runtime.taskId === taskId && runtime.processes.some(process => process.id === runtime.selected && process.project_id === projectId && process.task_id === taskId && process.source !== 'native_agent') ? runtime.selected : null;
   const retainedDetail = selected ? runtime.details[JSON.stringify([epoch, projectId, taskId, selected])] ?? null : null;
   const [catalog, setCatalog] = useState<CommandCatalog>({ commands: [], discovered: [] });
@@ -44,7 +58,6 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
   const setPort = (value: typeof port) => setField('port', value);
   const setProbePath = (value: typeof probePath) => setField('probePath', value);
   const setTimeoutValue = (value: typeof timeout) => setField('timeout', value);
-  const [trusted, setTrusted] = useState(false);
   const [externalAction, setExternalAction] = useState<'preview' | 'editor' | null>(null);
   const externalFlight = useRef(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +67,6 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
   const draftRevision = useRef(0);
   const currentOwner = useRef('');
   const appliedReceipts = useRef(new Set(runtime.operations.filter(operation => operation.phase === 'succeeded' || operation.phase === 'failed').map(operation => operation.id)));
-  const trustErrorId = useId();
   const envErrorId = useId();
   const [detailSnapshot, setDetail] = useState<DevelopmentProcess | null>(retainedDetail);
   const [detailRead, setDetailRead] = useState<ResourceReadState>(retainedDetail ? { status: 'ready', refresh: { status: 'stale' } } : { status: 'idle' });
@@ -79,12 +91,11 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
     setCatalog({ commands: [], discovered: [] }); setDetail(null); setError(null); setExternalAction(null); setValidation(null);
     ++draftRevision.current;
     for (const operation of useDevelopmentRuntime.getState().operations) if (operation.phase === 'succeeded' || operation.phase === 'failed') appliedReceipts.current.add(operation.id);
-    setTrusted(false);
     setConfigurationOpen(false); setTakeoverReleased(null);
+    setOutputDraft(null);
     catalogOwner.current = owner;
     setCatalogRead({ status: 'idle' }); setDetailRead({ status: 'idle' });
   }, [projectId, taskId, epoch, context.generation]);
-  useEffect(() => { setTrusted(false); }, [cwd]);
   useEffect(() => {
     if (surfaceActive) return;
     const stale = (state: ResourceReadState): ResourceReadState => state.status === 'ready' && state.refresh.status === 'current' ? { ...state, refresh: { status: 'stale' } } : state;
@@ -160,12 +171,12 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
     return () => window.clearInterval(timer);
   }, [surfaceActive, refreshDetail, context.pending]);
   async function load(command: DevelopmentCommand | null) {
-    if (context.pending) return;
+    if (context.pending) return false;
     const loadingOwner = owner;
     const key = JSON.stringify([epoch, projectId, taskId]);
     const before = useDevelopmentRuntime.getState().drafts[key];
-    if (before?.dirty && !await confirmAction(t('dev.discardDraft'), t('dev.discardDraft.command'), t('dev.discardDraft'))) return;
-    if (currentOwner.current !== loadingOwner || epoch !== useDevelopment.getState().epoch || before !== useDevelopmentRuntime.getState().drafts[key]) return;
+    if (before?.dirty && !await confirmAction(t('dev.discardDraft'), t('dev.discardDraft.command'), t('dev.discardDraft'))) return false;
+    if (currentOwner.current !== loadingOwner || epoch !== useDevelopment.getState().epoch || before !== useDevelopmentRuntime.getState().drafts[key]) return false;
     ++draftRevision.current;
     setCommandId(command && catalog.commands.some(item => item.id === command.id) ? command.id : null);
     setName(command?.name ?? ''); setProgram(command?.program ?? ''); setArgs([...(command?.args ?? [])]); setCwd(command?.cwd ?? '');
@@ -173,6 +184,7 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
     setField('dirty', false);
     setValidation(null);
     if (!command) setConfigurationOpen(true);
+    return true;
   }
   async function refreshHistory() {
     const generation = contextGeneration();
@@ -194,9 +206,9 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
     }
     if (action === 'start' || action === 'save' || action === 'terminal') {
       setValidation(action);
-      const invalidConfiguration = action === 'terminal' ? !cwdValid || !envValid : !configValid || action === 'save' && (!name.trim() || name.length > 200 || catalogRead.status !== 'ready') || action === 'start' && kind === 'service' && !readinessValid;
+      const invalidConfiguration = action === 'terminal' ? false : !configValid || action === 'save' && (!name.trim() || name.length > 200 || catalogRead.status !== 'ready') || action === 'start' && kind === 'service' && !readinessValid;
       if (invalidConfiguration) setConfigurationOpen(true);
-      if (invalidConfiguration || action !== 'save' && !trusted) return;
+      if (invalidConfiguration) return;
     }
     if (runtimeOperationBlocked(useDevelopmentRuntime.getState().operations, projectId, taskId, action === 'terminal' ? 'start' : action)) return;
     if (action === 'save') ++catalogVersion.current;
@@ -208,7 +220,11 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
       const result = await submitRuntimeOperation({ action, projectId, taskId, command, commands: [...catalog.commands.filter(item => item.id !== command.id), command] });
       if (valid() && result?.phase === 'succeeded' && revision === draftRevision.current) setCommandId(command.id);
     } else if (action === 'start' || action === 'terminal') {
-      await submitRuntimeOperation({ action: 'start', projectId, taskId, input: { id: crypto.randomUUID(), task_id: taskId, kind: action === 'terminal' ? 'terminal' : kind, program: action === 'terminal' ? '/bin/sh' : program, args: action === 'terminal' ? [] : [...args], cwd, env_refs, trust_workspace: trusted, verification: action === 'start' && kind === 'command' && verification, readiness: action === 'start' && kind === 'service' ? { port: Number(port), path: probePath, timeout_ms: Number(timeout) } : null } });
+      if (action === 'start' && kind === 'service') {
+        const command = catalog.commands.concat(catalog.discovered).find(item => item.program === program && JSON.stringify(item.args) === JSON.stringify(args) && item.cwd === cwd);
+        if (command) setPreferences({ ...preferences, readiness: { ...preferences.readiness, [command.id]: { port: Number(port), path: probePath, timeout_ms: Number(timeout) } } });
+      }
+      await launch({ id: crypto.randomUUID(), task_id: taskId, kind: action === 'terminal' ? 'terminal' : kind, program: action === 'terminal' ? '/bin/sh' : program, args: action === 'terminal' ? [] : [...args], cwd: action === 'terminal' ? '' : cwd, env_refs: action === 'terminal' ? {} : env_refs, trust_workspace: false, verification: action === 'start' && kind === 'command' && verification, readiness: action === 'start' && kind === 'service' ? { port: Number(port), path: probePath, timeout_ms: Number(timeout) } : null });
     } else if (selected) {
       const result = await submitRuntimeOperation({ action, projectId, taskId, processId: selected });
       if (valid() && result?.process && useDevelopmentRuntime.getState().selected === selected) {
@@ -234,7 +250,59 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
   const latestOperation = operations[operations.length - 1];
   const busyOperation = latestOperation?.phase === 'failed' && latestOperation.error === 'workspace_busy' ? latestOperation : null;
   const services = runtime.taskId === taskId ? runtime.processes.filter(process => process.kind === 'service') : [];
-  return <section className="dev-review-stack" aria-label={t('direct.title')} data-testid="dev-development-runtime">
+  const commands = [...catalog.commands, ...catalog.discovered];
+  async function launch(input: StartProcessInput) {
+    if (launchFlight.current || context.pending) return;
+    const submittingOwner = owner;
+    launchFlight.current = true;
+    try {
+      const scope = input.kind === 'service' ? 'service' : 'terminal';
+      if (!trust.value?.[scope] && !await trust.grant(scope)) return;
+      if (currentOwner.current !== submittingOwner) return;
+      if (input.kind === 'service') {
+        const workspace = await runtimeCall<{ path: string }>('read_development_workspace_trust', { input: { project_id: projectId, task_id: taskId } });
+        if (currentOwner.current !== submittingOwner) return;
+        if (!workspace.ok) { setError(workspace.code); return; }
+        await useDevelopmentRuntime.getState().refresh(taskId, true);
+        if (currentOwner.current !== submittingOwner) return;
+        const state = useDevelopmentRuntime.getState();
+        if (state.read.status !== 'ready' || state.read.refresh.status !== 'current') { setError('unknown'); return; }
+        const expectedCwd = `${workspace.value.path.replace(/\/$/, '')}${input.cwd ? `/${input.cwd}` : ''}`;
+        const existing = matchingService(state.processes, taskId, input.program, input.args, expectedCwd);
+        if (existing) { runtime.select(existing.id); return; }
+      }
+      await submitRuntimeOperation({ action: 'start', projectId, taskId, input });
+    } finally { launchFlight.current = false; }
+  }
+  async function runCommand(command: DevelopmentCommand, intent: RuntimeIntent) {
+    const existing = intent === 'preview' ? matchingService(useDevelopmentRuntime.getState().processes, taskId, command.program, command.args, `${(trust.value?.path ?? project?.path ?? '').replace(/\/$/, '')}${command.cwd ? `/${command.cwd}` : ''}`) : null;
+    if (existing) { runtime.select(existing.id); return; }
+    const readiness = preferences.readiness[command.id];
+    if (intent === 'preview' && !readiness) {
+      if (!await load(command)) return;
+      setKind('service'); setConfigurationOpen(true); setValidation('start');
+      return;
+    }
+    await launch({ id: crypto.randomUUID(), task_id: taskId, kind: intent === 'preview' ? 'service' : 'command', program: command.program, args: command.args, cwd: command.cwd, env_refs: command.env_refs, trust_workspace: false, verification: intent === 'test' || intent === 'build', readiness: intent === 'preview' ? readiness : null });
+  }
+  async function restartService(process: DevelopmentProcess) {
+    if (launchFlight.current || restartFlight.current || startBlocked || ['unknown', 'cleanup_pending'].includes(process.status)) return;
+    const command = commands.find(item => item.program === process.program && JSON.stringify(item.args) === JSON.stringify(process.args) && `${(trust.value?.path ?? project?.path ?? '').replace(/\/$/, '')}${item.cwd ? `/${item.cwd}` : ''}` === process.cwd);
+    if (!command || !preferences.readiness[command.id]) { setConfigurationOpen(true); return; }
+    const restartingOwner = owner;
+    restartFlight.current = true;
+    try {
+      if (!await confirmAction(t('runtimeWorkflow.restart'), t('runtimeWorkflow.restartConfirm'), t('runtimeWorkflow.restart'))) return;
+      if (currentOwner.current !== restartingOwner) return;
+      const stopped = await submitRuntimeOperation({ action: 'stop', projectId, taskId, processId: process.id });
+      if (currentOwner.current !== restartingOwner || stopped?.phase !== 'succeeded') return;
+      // A fresh read must confirm cleanup before a new request can exist.
+      const confirmed = await readDevelopmentProcess(process.id);
+      if (currentOwner.current === restartingOwner && confirmed.ok && !processActive(confirmed.value)) await runCommand(command, 'preview');
+    } finally { restartFlight.current = false; }
+  }
+  return <section className="dev-runtime dev-review-stack" aria-label={t('runtimeWorkflow.actions')} data-testid="dev-development-runtime">
+    {requestedAction ? <p role="status" className="dev-evidence-warning" key={requestedAction.nonce}>{t('runtimeWorkflow.requested', { action: t(requestedAction.kind === 'terminal' ? 'runtimeWorkflow.openTerminal' : `runtimeWorkflow.${requestedAction.kind}`) })}</p> : null}
     <dl className="dev-review-stack text-xs" data-testid="dev-runtime-context"><div><dt>{t('workbenchRuntime.project')}</dt><dd className="m-0 break-all"><span>{project?.name ?? projectId}</span>{project?.path ? <span className="block text-ink-secondary">{project.path}</span> : null}</dd></div><div><dt>{t('workbenchRuntime.directory')}</dt><dd className="m-0 break-all">{detail ? detail.cwd || '.' : t('workbenchRuntime.taskDirectory')}</dd></div><div><dt>{t('workbenchRuntime.status')}</dt><dd className="m-0">{detail ? t(`direct.status.${detail.status}`) : t('workbenchRuntime.noProcess')}</dd></div></dl>
     <p className="m-0 text-xs text-ink-secondary">{t('workbenchRuntime.lifecycle')}</p>
     {operations.length ? <section className="dev-review-stack" aria-label={t('direct.operation.receipts')} data-testid="dev-runtime-receipts">{operations.map(operation => <div key={operation.id} className="dev-review-stack">
@@ -253,6 +321,19 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
     <div className="dev-command-catalog"><label className="dev-field">{t('direct.savedCommands')}<select value={commandId ?? ''} onChange={event => { void load(catalog.commands.find(item => item.id === event.target.value) ?? null); }}><option value="">{t('direct.newCommand')}</option>{catalog.commands.map(command => <option key={command.id} value={command.id}>{command.name}</option>)}</select></label>
       <label className="dev-field">{t('direct.discovered')}<select value="" onChange={event => { const command = catalog.discovered.find(item => item.id === event.target.value); if (command) load(command); }}><option value="">{t('direct.chooseDiscovered')}</option>{catalog.discovered.map(command => <option key={command.id} value={command.id}>{command.name}</option>)}</select></label></div>
     </ResourceDetail>
+    <section className="dev-runtime-actions" aria-label={t('runtimeWorkflow.actions')}>
+      {(['preview', 'test', 'build', 'run'] as const).map(intent => {
+        const available = commands.filter(command => (preferences.readiness[command.id] ? 'preview' : commandIntent(command)) === intent);
+        if (!available.length) return null;
+        const chosen = available.find(command => command.id === preferences.choices[intent]) ?? (available.length === 1 ? available[0] : null);
+        return <div className="dev-runtime-action" data-requested={requestedAction?.kind === intent || undefined} key={intent}>
+          {available.length > 1 ? <label className="dev-field">{t(`runtimeWorkflow.${intent}`)}<select value={chosen?.id ?? ''} onChange={event => setPreferences({ ...preferences, choices: { ...preferences.choices, [intent]: event.target.value } })}><option value="">{t('runtimeWorkflow.chooseScript')}</option>{available.map(command => <option key={command.id} value={command.id}>{command.name}{command.cwd ? ` (${command.cwd})` : ''}</option>)}</select></label> : <span className="text-xs">{available[0].name}</span>}
+          <Button size="sm" variant="secondary" disabled={!chosen || context.pending || startBlocked || trust.loading} onClick={() => { if (chosen) void runCommand(chosen, intent); }}>{t(`runtimeWorkflow.${intent}`)}</Button>
+          {chosen ? <details className="dev-technical-details"><summary>{t('runtimeWorkflow.showCommand')}</summary><code>{JSON.stringify([chosen.program, ...chosen.args])}</code><p className="m-0">{chosen.cwd || trust.value?.path || project?.path}</p></details> : null}
+        </div>;
+      })}
+      {!commands.length && catalogRead.status === 'ready' ? <div className="dev-review-stack"><p className="text-xs">{t('runtimeWorkflow.noScripts')}</p><div className="dev-review-toolbar"><Button size="xs" variant="secondary" onClick={() => setConfigurationOpen(true)}>{t('runtimeWorkflow.configuration')}</Button>{onUseOutput ? <Button size="xs" variant="secondary" onClick={() => onUseOutput(t('runtimeWorkflow.helpPrompt'))}>{t('runtimeWorkflow.askAgent')}</Button> : null}</div></div> : null}
+    </section>
     <p className="m-0 text-xs text-ink-secondary">{t('direct.discoveryHint')}</p>
     <p className="m-0 break-all text-xs" data-testid="dev-runtime-draft-summary">{program ? JSON.stringify([program, ...args]) : t('runtimeWorkflow.chooseCommand')} · {t('review.cwd')}: {cwd || '.'}</p>
     <form className="dev-form" noValidate onChangeCapture={() => { ++draftRevision.current; }} onClickCapture={event => { if ((event.target as HTMLElement).closest('button[type="button"]')) ++draftRevision.current; }} onSubmit={event => { event.preventDefault(); void execute('start'); }}>
@@ -271,8 +352,8 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
       <Button size="xs" type="button" variant="secondary" disabled={context.pending || saveBlocked} onClick={() => void execute('save')}>{t(operations.some(operation => operation.action === 'save' && ['pending', 'confirming'].includes(operation.phase)) ? 'direct.savingCommand' : 'direct.saveCommand')}</Button>
       {validation === 'save' && catalogRead.status !== 'ready' ? <p role="alert" className="m-0 text-xs text-status-error">{t('direct.validation.catalog')}</p> : null}
       </div></details>
-      <label className="dev-checkbox"><input type="checkbox" data-testid="dev-process-trust" aria-invalid={(validation === 'start' || validation === 'terminal') && !trusted || undefined} aria-describedby={(validation === 'start' || validation === 'terminal') && !trusted ? trustErrorId : undefined} checked={trusted} onChange={event => setTrusted(event.target.checked)} />{t('direct.trust')}</label>
-      {(validation === 'start' || validation === 'terminal') && !trusted ? <p id={trustErrorId} role="alert" className="m-0 text-xs text-status-error">{t('direct.validation.trust')}</p> : null}
+      <details className="dev-technical-details"><summary>{t('runtimeWorkflow.permissions')}</summary><p className="text-xs break-all">{trust.value?.path || project?.path}</p>{(['terminal', 'service'] as const).map(scope => <div className="dev-review-toolbar" key={scope}><span className="text-xs">{t(`runtimeWorkflow.trust.${scope}`)}</span><Button size="xs" variant="secondary" disabled={trust.loading || context.pending} onClick={() => { void (trust.value?.[scope] ? trust.revoke(scope) : trust.grant(scope)); }}>{t(trust.value?.[scope] ? 'runtimeWorkflow.revoke' : 'runtimeWorkflow.authorize')}</Button></div>)}</details>
+      {trust.error ? <p role="alert" className="text-xs text-status-error">{developmentErrorText(trust.error)}</p> : null}
       <div className="flex flex-wrap gap-2"><Button size="xs" type="submit" data-testid="dev-process-start" disabled={context.pending || startBlocked}>{t(operations.some(operation => operation.action === 'start' && ['pending', 'confirming'].includes(operation.phase)) ? 'direct.startingProcess' : 'direct.start')}</Button><Button size="xs" type="button" variant="secondary" data-testid="dev-open-terminal" disabled={context.pending || startBlocked} onClick={() => void execute('terminal')}>{t('runtimeWorkflow.openTerminal')}</Button></div>
       <p className="m-0 text-xs text-ink-secondary">{t('runtimeWorkflow.terminalHint')}</p>
     </form>
@@ -288,8 +369,11 @@ export function DevelopmentRuntime({ projectId, taskId, visible = true }: { proj
       {detail.reason ? <p role="status" className="dev-evidence-warning">{errorText(detail.reason)}</p> : null}
       {detail.truncated ? <p role="status" className="dev-evidence-warning">{t('direct.outputTruncated')}</p> : null}
       {detail.kind === 'terminal' && detail.source === 'host_terminal' ? <Suspense fallback={<p role="status" className="text-xs">{t('review.loading')}</p>}><DevelopmentTerminal key={detail.id} process={detail} panelVisible={visible} /></Suspense> : <RuntimeOutput process={detail} disabled={!surfaceActive || context.pending} />}
-      <section className="dev-review-stack" aria-label={t('direct.verification')}><strong className="text-xs">{t('direct.verification')}: {t(`direct.verification.${detail.verification_status}`)}</strong><details className="dev-technical-details"><summary>{t('agent.details')}</summary><p>{t('direct.startFingerprint')}: {detail.start_fingerprint || t('direct.pending')}</p><p>{t('direct.currentFingerprint')}: {detail.fingerprint || t('direct.pending')}</p></details><p className="m-0 text-xs text-ink-secondary">{t('direct.observationHint')}</p>{!detail.verification_complete && detail.verification_status !== 'not_requested' ? <p className="dev-evidence-warning">{t('direct.verification.incomplete')}</p> : null}{detail.mutation_observed ? <p className="dev-evidence-warning">{t('direct.verification.changed')}</p> : null}</section>
+      {detail.verification_status !== 'not_requested' ? <section className="dev-review-stack" aria-label={t('direct.verification')}><strong className="text-xs">{t('direct.verification')}: {t(`direct.verification.${detail.verification_status}`)}</strong><details className="dev-technical-details"><summary>{t('agent.details')}</summary><p>{t('direct.startFingerprint')}: {detail.start_fingerprint || t('direct.pending')}</p><p>{t('direct.currentFingerprint')}: {detail.fingerprint || t('direct.pending')}</p><p className="m-0">{t('direct.observationHint')}</p></details>{!detail.verification_complete ? <p className="dev-evidence-warning">{t('direct.verification.incomplete')}</p> : null}{detail.mutation_observed ? <p className="dev-evidence-warning">{t('direct.verification.changed')}</p> : null}</section> : null}
       <div className="flex flex-wrap gap-2"><Button size="xs" variant="danger" data-testid="dev-process-stop" disabled={context.pending || stopBlocked || !processActive(detail)} onClick={() => void execute('stop')}>{t(operations.some(operation => operation.action === 'stop' && operation.targetId === detail.id && ['pending', 'confirming'].includes(operation.phase)) ? 'direct.stoppingProcess' : 'direct.stop')}</Button>{detail.kind === 'service' ? <Button size="xs" variant="secondary" data-testid="dev-service-preview" disabled={externalAction !== null || detail.status !== 'ready' || !detail.preview_url} onClick={() => void execute('preview')}>{t(externalAction === 'preview' ? 'direct.openingPreview' : 'direct.preview')}</Button> : null}</div>
+      {detail.kind === 'service' ? <div className="dev-review-toolbar">{detail.preview_url && detail.status === 'ready' ? <span className="text-xs break-all">{detail.preview_url}</span> : null}<Button size="xs" variant="secondary" disabled={context.pending || startBlocked || ['unknown', 'cleanup_pending'].includes(detail.status) || !commands.some(command => command.program === detail.program && JSON.stringify(command.args) === JSON.stringify(detail.args) && preferences.readiness[command.id])} onClick={() => void restartService(detail)}>{t('runtimeWorkflow.restart')}</Button>{detail.status === 'unknown' || detail.status === 'cleanup_pending' ? <Button size="xs" variant="secondary" onClick={() => void refreshDetail()}>{t('direct.operation.confirm')}</Button> : null}</div> : null}
+      {onUseOutput && (detail.status === 'failed' || detail.exit_code !== null && detail.exit_code !== 0) ? <Button size="xs" variant="secondary" disabled={!surfaceActive || context.pending} onClick={() => setOutputDraft({ processId: detail.id, text: runtimeOutputExcerpt(detail) })}>{t('runtimeWorkflow.reviewOutput')}</Button> : null}
+      {outputDraft?.processId === detail.id ? <section className="dev-review-stack" aria-label={t('runtimeWorkflow.reviewOutput')}><p className="text-xs">{t('runtimeWorkflow.outputPrivacy')}</p><label className="dev-field">{t('runtimeWorkflow.outputDraft')}<textarea rows={8} maxLength={12000} value={outputDraft.text} onChange={event => setOutputDraft({ processId: detail.id, text: event.target.value })} /></label><div className="dev-review-toolbar"><Button size="xs" disabled={!surfaceActive || context.pending || !outputDraft.text.trim()} onClick={() => { onUseOutput?.(outputDraft.text.slice(0, 12000)); setOutputDraft(null); }}>{t('runtimeWorkflow.useOutput')}</Button><Button size="xs" variant="ghost" onClick={() => setOutputDraft(null)}>{t('runtimeWorkflow.cancel')}</Button></div></section> : null}
       </article> : null}
       </ResourceDetail> : null}
     </section>

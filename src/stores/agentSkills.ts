@@ -2,7 +2,7 @@ import type { AgentSession, AgentSkillInput } from './agentRunnerStore';
 import { developmentDraftKey, useDevelopmentDrafts } from './developmentDrafts';
 
 export type CapturedAgentSkill = { id: string; skill: AgentSkillInput };
-export const agentSkillsKey = (projectId: string | null, session: Pick<AgentSession, 'id' | 'generation'>) => developmentDraftKey('conversation', projectId, session.id, session.generation, 'skills');
+export const agentSkillsKey = (projectId: string | null, session: Pick<AgentSession, 'id' | 'generation'>) => developmentDraftKey('conversation', projectId, session.id, 'skills');
 export function captureAgentSkills(projectId: string | null, session: Pick<AgentSession, 'id' | 'generation'>): CapturedAgentSkill[] {
   return (useDevelopmentDrafts.getState().entries[agentSkillsKey(projectId, session)]?.value as CapturedAgentSkill[] | undefined) ?? [];
 }

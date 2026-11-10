@@ -23,4 +23,13 @@ export default {
   'agentSkills.commands.addToDraft': 'Add to message draft',
   'agentSkills.commands.aliasOf': 'Alias of {name}',
   'agentSkills.commands.changed': 'The native command list changed. Review the refreshed names and choose again.',
+  'agentSkills.commands.disabled': 'This native command is disabled.',
+  'agentSkills.slash.title': 'Native skills and commands',
+  'agentSkills.slash.keyboard': '↑ ↓ select · Enter / Tab add · Esc dismiss',
+  'agentSkills.slash.preparing': 'Select a model and wait for native preparation. No capability list is guessed.',
+  'agentSkills.slash.unavailable': 'Native selection is available when this session is idle. Your draft is unchanged.',
+  'agentSkills.slash.empty': 'No verified invocable skills or commands match this search.',
+  'agentSkills.slash.skillDescription': 'Add a structured native Skill reference to the next explicit message.',
+  'agentSkills.slash.unknownSource': 'Reported by the native CLI; file origin unconfirmed',
+  'agentSkills.slash.hint': 'Type / at the start for native skills and commands',
 } as const;

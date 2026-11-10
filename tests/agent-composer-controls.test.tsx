@@ -14,7 +14,7 @@ afterEach(() => { cleanup(); useDevelopment.getState().reset(); useAgentRunner.g
 const session = (id = 'one'): AgentSession => ({ id, generation: `generation-${id}`, engine: 'codex', native_id: id, workspace: '/fixture', status: 'idle', pending: [], events: [], error: null, controls: { reasoning: { available: true, options: ['low', 'high'], current: 'low', source: 'model/list', reason: null }, permission: { available: true, options: ['read_only', 'default'], current: 'read_only', source: 'turn/start', reason: null } } });
 function select(value: AgentSession) { useAgentRunner.setState({ session: value, selected: value.id }); useDevelopment.setState({ selection: { project_id: 'project', task_id: 'task', session_id: value.id } }); }
 const controls = (value: AgentSession) => <MemoryRouter><AgentComposerControls projectId="project" session={value} model={<span>Bound model</span>} /></MemoryRouter>;
-it('requires explicit privilege expansion and isolates next-turn intent from other sessions and generations', () => {
+it('requires explicit privilege expansion, retains session intent across restore, and isolates other sessions', () => {
   const first = session(); select(first); const view = render(controls(first));
   fireEvent.click(screen.getByRole('button', { name: 'agentControls.permission' }));
   fireEvent.click(screen.getByRole('button', { name: 'agentControls.permission.default' }));
@@ -31,7 +31,7 @@ it('requires explicit privilege expansion and isolates next-turn intent from oth
   fireEvent.click(screen.getByRole('button', { name: 'agentControls.reasoning' }));
   fireEvent.click(screen.getByRole('button', { name: 'high', exact: true }));
   expect(agentTurnSettings(first)).toEqual({ reasoning_effort: 'high', permission_mode: 'default' });
-  expect(agentTurnSettings({ ...first, generation: 'replacement' })).toBeUndefined();
+  expect(agentTurnSettings({ ...first, generation: 'replacement' })).toEqual({ reasoning_effort: 'high', permission_mode: 'default' });
   act(() => useDevelopment.getState().reset());
   expect(agentTurnSettings(first)).toBeUndefined();
 });
@@ -77,7 +77,7 @@ it('does not invent a Claude context limit without a run identity or label overf
   expect(agentContextUsage(value)).toMatchObject({ used: null, limit: null, kind: 'unavailable' });
 });
 
-it('returns to the original tab without creating a runtime and refuses a closed origin', async () => {
+it('returns to the original tab without creating a runtime and refuses a removed saved origin', async () => {
   const first = useDevelopment.getState().newTab('project-one');
   const second = useDevelopment.getState().newTab('project-two');
   useDevelopment.setState({ selection: { project_id: second.projectId, task_id: null, session_id: null } });
@@ -90,7 +90,9 @@ it('returns to the original tab without creating a runtime and refuses a closed 
   expect(useDevelopment.getState().selection.project_id).toBe('project-one');
   expect(useAgentRunner.getState().live).toEqual({});
   view.unmount();
+  useDevelopment.getState().bindTab(first.id, { id: 'saved-origin', owner: 'owner', project_id: first.projectId, task_id: null, engine: 'codex', native_id: 'native-origin', workspace: '/fixture', executable: null, model: null });
   useDevelopment.getState().closeTab(first.id);
+  expect(useDevelopment.getState().tabs.some(tab => tab.id === first.id)).toBe(false);
   render(<MemoryRouter initialEntries={[{ pathname: '/skills', state }]}><ReturnSurface /></MemoryRouter>);
   expect(screen.getByRole('button', { name: 'agentControls.returnConversation' })).toHaveProperty('disabled', true);
   expect(useDevelopment.getState().activeTabId).toBe(second.id);
@@ -124,4 +126,33 @@ it('merges a reasoning edit into latest sparse draft intent instead of overwriti
     fireEvent.click(high);
   });
   expect(agentTurnSettings(value)).toEqual({ reasoning_effort: 'high', permission_mode: 'read_only' });
+});
+
+it('groups verified task approach and execution permissions without coupling reasoning or claiming Plan is read-only', () => {
+  const value = session();
+  value.controls!.collaboration = { available: true, options: ['default', 'plan'], current: 'default', source: 'turn/start', reason: null };
+  select(value); render(controls(value));
+  expect(screen.queryByRole('button', { name: 'agentSkills.title' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'agentControls.permission' }));
+  const tasks = within(screen.getByRole('group', { name: 'agentControls.taskMode' }));
+  expect(screen.getByRole('group', { name: 'agentControls.permission' })).toBeTruthy();
+  fireEvent.click(tasks.getByRole('button', { name: 'codexInteractions.plan' }));
+  expect(agentTurnSettings(value)).toEqual({ collaboration_mode: 'plan' });
+  expect(value.controls!.permission.current).toBe('read_only');
+  expect(value.controls!.reasoning.current).toBe('low');
+});
+
+it('returns to a recoverable hidden draft without starting or resuming a native runtime', async () => {
+  const origin = useDevelopment.getState().newTab('project-one');
+  const other = useDevelopment.getState().newTab('project-two');
+  useDevelopment.getState().closeTab(origin.id);
+  expect(useDevelopment.getState().tabs.find(tab => tab.id === origin.id)?.hidden).toBe(true);
+  expect(useDevelopment.getState().activeTabId).toBe(other.id);
+  const state = { capabilityEntry: { runtime: 'native', selection: { target: 'Codex', scope: 'ProjectShared', project_id: origin.projectId }, returnTabId: origin.id, epoch: useDevelopment.getState().epoch } };
+  render(<MemoryRouter initialEntries={[{ pathname: '/skills', state }]}><CapabilityReturn path="/skills" /></MemoryRouter>);
+  fireEvent.click(screen.getByRole('button', { name: 'agentControls.returnConversation' }));
+  await waitFor(() => expect(useDevelopment.getState().activeTabId).toBe(origin.id));
+  expect(useDevelopment.getState().tabs.find(tab => tab.id === origin.id)?.hidden).toBe(false);
+  expect(useDevelopment.getState().selection.project_id).toBe(origin.projectId);
+  expect(useAgentRunner.getState().live).toEqual({});
 });

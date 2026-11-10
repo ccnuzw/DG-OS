@@ -7,7 +7,7 @@ pub(super) async fn close_ui(app:&AppHandle,ck:&mut Checks,ev:&mut Vec<Value>,si
  let mut closed=false; for _ in 0..100 { let v=ipc(app,"main","get_agent_session",json!({"sessionId":sid})).await; if value(&v)["status"]=="closed" {closed=true;break;} tokio::time::sleep(Duration::from_millis(100)).await; }
  record(ck,ev,"UI close confirmed by host",closed,sid);
 }
-pub(super) async fn pick_engine(app:&AppHandle,name:&str)->Value { ui(app,json!({"name":name}),r#"const c=$$('[role=combobox]').find(e=>labelOf(e)==='智能体');if(!c)throw Error('engine control');c.click();const o=await until(()=>$$('[role=option]').find(e=>txt(e)===A.name));if(!o)throw Error('engine option');o.click();return {ok:true};"#).await }
+pub(super) async fn pick_engine(app:&AppHandle,name:&str)->Value { ui(app,json!({"engine":if name=="Codex"{"codex"}else{"claude"}}),r#"await chooseConversationModel(A.engine);return {ok:true};"#).await }
 
 pub(super) async fn scenario(app:AppHandle,loaded:bool){
  let fx=app.state::<Fx>().inner().clone();let mut ck=Checks::default();let mut ev=vec![];
@@ -42,7 +42,7 @@ pub(super) async fn scenario(app:AppHandle,loaded:bool){
    let sid=s["id"].as_str().unwrap();let goal=s["goal"].as_str().unwrap();let engine=s["engine"].as_str().unwrap();
    let row=ws["sessions"].as_array().unwrap().iter().find(|r|r["id"]==sid);record(&mut ck,&mut ev,&format!("{engine} association survives process restart"),row.is_some_and(|r|r["task_id"]==s["task"]&&r["project_id"]==first["project"]),format!("{row:?}"));
    ui_select_task(&app,&mut ck,&mut ev,goal).await;
-   let reply=ui(&app,json!({"sid":sid}),r#"const trust=await need('dev-trust');if(!trust.checked)trust.click();const row=await need('dev-session-item-'+A.sid);const b=await until(()=>{const b=row.querySelector('button');return b&&!b.disabled&&b});if(!b)throw Error('resume disabled');b.click();const composer=await until(()=>document.getElementById('agent-message'));return {ok:!!composer};"#).await;
+   let reply=ui(&app,json!({"sid":sid}),r#"await prepareSavedConversation(A.sid);return {ok:true};"#).await;
    record(&mut ck,&mut ev,&format!("{engine} explicit UI restore"),ui_ok(&reply),reply.to_string());
    let v=ipc(&app,"main","get_agent_session",json!({"sessionId":sid})).await;record(&mut ck,&mut ev,&format!("{engine} native id unchanged"),value(&v)["native_id"]==s["native_id"],v.describe());
    let seq=last_seq(&app,sid).await;ui_send(&app,&mut ck,&mut ev,RECALL).await;let r=await_reply(&app,sid,RECALL,s["token"].as_str().unwrap(),seq).await;record(&mut ck,&mut ev,&format!("{engine} recalls pre-exit token"),r.is_ok(),format!("{r:?}"));close_ui(&app,&mut ck,&mut ev,sid).await;
@@ -62,9 +62,9 @@ pub(super) async fn scenario(app:AppHandle,loaded:bool){
   let mut rows=vec![];
   for engine in ENGINES {
    let goal=format!("Verify {engine} session");ui_new_task(&app,&mut ck,&mut ev,&goal).await;let task=selected(&app).await["task_id"].clone();
-   let name=if engine=="codex"{"Codex"}else{"Claude"};let r=pick_engine(&app,name).await;record(&mut ck,&mut ev,&format!("choose {name}"),ui_ok(&r),r.to_string());
    let before=ids(&sessions_of(&app).await);ui_start_session(&app,&mut ck,&mut ev,engine).await;
    let Some(sid)=new_session_id(&app,&before).await else {record(&mut ck,&mut ev,"new session persisted",false,engine);continue;};
+   let chosen=ipc(&app,"main","get_agent_session",json!({"sessionId":sid})).await;record(&mut ck,&mut ev,&format!("choose {engine} production model route"),value(&chosen)["engine"]==engine,chosen.describe());
    let code=token("DGOS");let prompt=format!("Remember the exact code {code}. Reply with only that code. Do not use tools.");let seq=last_seq(&app,&sid).await;ui_send(&app,&mut ck,&mut ev,&prompt).await;
    let result=await_reply(&app,&sid,&prompt,&code,seq).await;record(&mut ck,&mut ev,&format!("{engine} real model reply"),result.is_ok(),format!("{result:?}"));
    let v=ipc(&app,"main","get_agent_session",json!({"sessionId":sid})).await;
@@ -73,7 +73,7 @@ pub(super) async fn scenario(app:AppHandle,loaded:bool){
    let r=ui(&app,json!({}),r#"await click('dev-task-new');return {ok:true};"#).await;record(&mut ck,&mut ev,"switch task without closing runtime",ui_ok(&r),r.to_string());
    let still=ipc(&app,"main","get_agent_session",json!({"sessionId":sid})).await;record(&mut ck,&mut ev,"switched runtime remains alive",succeeded(&still)&&value(&still)["status"]!="closed",still.describe());
    ui_select_task(&app,&mut ck,&mut ev,&goal).await;
-   let r=ui(&app,json!({"sid":sid}),r#"const row=await need('dev-session-item-'+A.sid);row.querySelector('button').click();const composer=await until(()=>document.getElementById('agent-message'));return {ok:!!composer};"#).await;record(&mut ck,&mut ev,"reattach existing runtime through UI",ui_ok(&r),r.to_string());
+   let r=ui(&app,json!({"sid":sid}),r#"const row=await need('dev-session-item-'+A.sid);if(row.disabled)throw Error('session select unavailable');row.click();const composer=await until(()=>tid('dev-session-item-'+A.sid)?.getAttribute('aria-pressed')==='true'&&document.getElementById('agent-message'));return {ok:!!composer};"#).await;record(&mut ck,&mut ev,"reattach existing runtime through UI",ui_ok(&r),r.to_string());
    close_ui(&app,&mut ck,&mut ev,&sid).await;
   }
   // A second ordinary directory exercises project switching, then return to the saved selection.
@@ -92,12 +92,8 @@ async fn close_boundary(app:&AppHandle,fx:&Fx,ck:&mut Checks,ev:&mut Vec<Value>)
  if !ui_import_project(app,ck,ev,"Close boundary",&path).await || !ui_new_task(app,ck,ev,"Close initial Agent connection").await {return;}
  let before=ids(&sessions_of(app).await);
  let start=ui(app,json!({}),r#"
-const trust=await need('dev-trust');
-const box=trust.matches('input,[role=checkbox]')?trust:trust.querySelector('input,[role=checkbox]')||trust;
-if(!isChecked(box))box.click();
-const start=await until(()=>{const b=tid('dev-session-new-codex');return b&&!b.disabled&&b;});
-if(!start)return {ok:false,error:'new session disabled',trusted:isChecked(box),cwd:txt(tid('dev-session-cwd')),alerts:$$('[role=alert]').map(txt),panel:txt(tid('dev-session-list'))};
-start.click();
+await chooseConversationModel('codex');
+await authorizeConversation();
 const tab=()=>document.querySelector('[data-workspace-tab="cli-agent"]');
 const state=await until(()=>tab()?.querySelector('.workspace-running-dot')?'pending':document.getElementById('agent-message')?'ready':null);
 if(!state)throw Error('no pending connection or conversation');

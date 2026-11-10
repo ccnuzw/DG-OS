@@ -1,3 +1,5 @@
+mod development_desktop;
+pub use development_desktop::*;
 mod native_extensions;
 pub use native_extensions::*;
 mod ai;

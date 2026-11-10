@@ -45,3 +45,4 @@
   .agent-control-leading, .agent-control-trailing { flex-wrap: wrap; }
   .agent-control-model { max-width: 7rem; }
 }
+.agent-control-popover .agent-control-group-heading { border-top: 1px solid var(--border-subtle); padding-top: var(--spacing-3); margin-top: var(--spacing-1); }

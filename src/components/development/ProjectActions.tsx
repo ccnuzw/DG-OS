@@ -1,17 +1,20 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Button, DropdownMenu, Input, Modal, toast, type MenuItem } from '@dgos/ui';
 import { Ellipsis } from 'lucide-react';
 import { useLocale } from '../../i18n';
 import { useDevelopment, type Project } from '../../stores/developmentStore';
 import { useAgentRunner } from '../../stores/agentRunnerStore';
+import { useWorkspaceTrust } from '../../stores/developmentTrust';
 import { confirmAction, errorText } from './shared';
 import { removeDevelopmentProject } from './removeProject';
 
-export function ProjectActions({ project, disabled, onRefresh, onFiles }: { project: Project; disabled: boolean; onRefresh: (projectId: string) => Promise<void>; onFiles: (projectId: string) => Promise<void> }) {
+export function ProjectActions({ project, disabled, onRefresh, onFiles, onGoals }: { project: Project; disabled: boolean; onRefresh: (projectId: string) => Promise<void>; onFiles: (projectId: string) => Promise<void>; onGoals?: (projectId: string) => void }) {
   const { t } = useLocale();
   const pinned = useDevelopment(state => state.pinnedProjectIds.includes(project.id));
   const epoch = useDevelopment(state => state.epoch);
+  const trust = useWorkspaceTrust(project.id, null);
+  useEffect(() => { if (trust.error) toast.error(errorText(trust.error)); }, [trust.error]);
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -51,8 +54,9 @@ export function ProjectActions({ project, disabled, onRefresh, onFiles }: { proj
     item('rename', 'workbenchNavigation.renameProject', 'edit', async () => { setName(project.name); setRenameOpen(true); }),
     item('pin', pinned ? 'workbenchNavigation.unpin' : 'workbenchNavigation.pin', 'pin', async () => useDevelopment.getState().setProjectPinned(project.id, !pinned)),
     item('files', 'workbenchNavigation.files', 'file', () => onFiles(project.id)),
+    ...(onGoals ? [item('goals', 'desktop.goals', 'check', async () => onGoals(project.id))] : []),
     { kind: 'separator' },
-    item('terminal', 'workbenchNavigation.openTerminal', 'terminal', () => invoke('open_development_project_external', { input: { project_id: project.id, target: 'terminal' } })),
+    item('terminal', 'workbenchNavigation.openTerminal', 'terminal', async () => { if (await trust.grant('terminal') && current()) await invoke('open_development_project_external', { input: { project_id: project.id, target: 'terminal' } }); }),
     item('reveal', 'workbenchNavigation.revealProject', 'folder-open', () => invoke('open_development_project_external', { input: { project_id: project.id, target: 'reveal' } })),
     item('copy', 'workbenchNavigation.copyPath', 'copy', async () => { try { await navigator.clipboard.writeText(project.path); if (current()) toast.success(t('workbenchNavigation.pathCopied')); } catch { if (current()) toast.error(t('workbenchNavigation.copyFailed')); } }),
     { kind: 'separator' },

@@ -51,6 +51,14 @@
 .dev-terminal { min-width: 0; height: 22rem; overflow: hidden; padding: var(--spacing-2); background: var(--surface-code); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
 .dev-terminal:focus-within { border-color: var(--border-focus); }
 @container (max-width: 600px) { .dev-comparison, .dev-command-catalog { grid-template-columns: minmax(0, 1fr); } .dev-structured-row { flex-wrap: wrap; } }
+.dev-runtime-actions { display: flex; flex-wrap: wrap; gap: var(--spacing-3); min-width: 0; padding-block: var(--spacing-2); }
+.dev-runtime-action { display: grid; align-content: start; gap: var(--spacing-2); flex: 1 1 11rem; min-width: 0; padding-inline-start: var(--spacing-3); border-inline-start: 2px solid var(--border-subtle); }
+.dev-runtime-action[data-requested='true'] { border-inline-start-color: var(--border-focus); }
+.dev-runtime-action > button { justify-self: start; white-space: normal; min-height: 2rem; height: auto; }
+.dev-runtime-configuration > summary { cursor: pointer; font-size: var(--font-size-xs); padding-block: var(--spacing-2); }
+.dev-runtime-configuration > div { padding-block: var(--spacing-2); }
+.dev-runtime .dev-field textarea { width: 100%; min-width: 0; resize: vertical; padding: var(--spacing-2); color: var(--text-code); background: var(--surface-code); border: 1px solid var(--border-control); border-radius: var(--radius-md); font: var(--font-size-code)/var(--line-height-code) var(--font-family-code); }
+.dev-runtime .dev-field textarea:focus-visible { outline: 1px solid var(--border-focus); outline-offset: -1px; }
 .agent-workbench.dev-workspace { display: flex; flex-direction: column; gap: 0; overflow: hidden; padding: 0; }
 .dev-workspace-error { margin: 0; padding: var(--spacing-2) var(--spacing-4); border-bottom: 1px solid var(--border-subtle); }
 .dev-workspace-body { flex: 1; display: grid; min-height: 0; }

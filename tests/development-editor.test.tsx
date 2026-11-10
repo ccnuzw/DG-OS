@@ -18,7 +18,7 @@ function installFiles() {
     return Promise.resolve(null);
   });
 }
-it('retains independent file drafts through filtering and cancelled context changes', async () => {
+it('retains independent file drafts through filtering and project changes without asking to discard', async () => {
   installFiles(); confirmDiscard.mockResolvedValue(false);
   render(<ProjectReview projectId="p" taskId="t" />);
   fireEvent.click(await screen.findByTestId('dev-file-item-a.ts'));
@@ -30,11 +30,12 @@ it('retains independent file drafts through filtering and cancelled context chan
   fireEvent.click(screen.getByTestId('dev-file-item-a.ts'));
   await waitFor(() => expect((screen.getByTestId('dev-file-editor') as HTMLTextAreaElement).value).toBe('draft a'));
   fireEvent.change(screen.getByTestId('dev-file-search'), { target: { value: 'b' } });
-  await act(async () => { expect((await chooseContext({ project_id: 'other', task_id: null, session_id: null })).ok).toBe(false); });
+  await act(async () => { expect((await chooseContext({ project_id: 'other', task_id: null, session_id: null })).ok).toBe(true); });
   expect((screen.getByTestId('dev-file-editor') as HTMLTextAreaElement).value).toBe('draft a');
   expect(useDevelopmentEditor.getState().documents[documentId('p', 't', 'b.ts')].draft).toBe('draft b');
   expect((screen.getByTestId('dev-file-search') as HTMLInputElement).value).toBe('b');
-  expect(invoke.mock.calls.some(([command]) => command === 'select_development_context')).toBe(false);
+  expect(invoke.mock.calls.some(([command]) => command === 'select_development_context')).toBe(true);
+  expect(confirmDiscard).not.toHaveBeenCalled();
 });
 it('keeps the same file editor and draft mounted while reviewing changes', async () => {
   installFiles();
@@ -231,16 +232,16 @@ it('settles an inactive save without replacing newer typing or another file draf
   expect(useDevelopmentEditor.getState().draft).toBe('draft b');
 });
 
-it('blocks context changes while a file save is in flight', async () => {
+it('allows context changes while an independent file save remains tracked', async () => {
   installFiles();
   await useDevelopmentEditor.getState().open('p', 't', 'a.ts');
   useDevelopmentEditor.getState().edit('saving draft');
   const pending = Promise.withResolvers<unknown>();
-  invoke.mockReturnValue(pending.promise);
+  invoke.mockImplementation((command: string) => command === 'save_development_file' ? pending.promise : Promise.resolve(null));
   const saving = useDevelopmentEditor.getState().save();
-  expect(await chooseContext({ project_id: 'other', task_id: null, session_id: null })).toEqual({ ok: false, code: 'cancelled' });
+  expect(await chooseContext({ project_id: 'other', task_id: null, session_id: null })).toEqual({ ok: true, value: null });
   expect(useDevelopmentEditor.getState().saving).toBe(true);
-  expect(invoke.mock.calls.some(([command]) => command === 'select_development_context')).toBe(false);
+  expect(invoke.mock.calls.some(([command]) => command === 'select_development_context')).toBe(true);
   pending.resolve({ path: 'a.ts', text: 'saving draft', hash: 'saved-hash', size: 12, reason: null });
   await saving;
   expect(useDevelopmentEditor.getState().file?.hash).toBe('saved-hash');

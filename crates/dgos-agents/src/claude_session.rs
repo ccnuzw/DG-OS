@@ -116,7 +116,19 @@ impl ClaudeSession {
                         if let Ok(controls) = serde_json::from_value::<crate::session::SessionControls>(params["controls"].clone()) { view.controls = Some(controls); }
                     }
                     "native/initialized" => view.push(method, None, params),
-                    "native/capabilities" => { reader.native_capability_bits.fetch_update(std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Acquire, |bits| Some((bits & 64) | capability_bits(&params))).ok(); }
+                    "native/capabilities" => {
+                        use std::sync::atomic::Ordering;
+                        let capabilities = capability_bits(&params);
+                        let mut bits = reader.native_capability_bits.load(Ordering::Acquire);
+                        loop {
+                            match reader.native_capability_bits.compare_exchange_weak(
+                                bits, (bits & 64) | capabilities, Ordering::AcqRel, Ordering::Acquire,
+                            ) {
+                                Ok(_) => break,
+                                Err(current) => bits = current,
+                            }
+                        }
+                    }
                     "native/unavailable" => view.push(method, None, params),
                     "text_delta" => {
                         let run = event_run(&view, &params);

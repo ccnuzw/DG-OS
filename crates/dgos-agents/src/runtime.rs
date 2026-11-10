@@ -37,6 +37,7 @@ pub struct ProcessSnapshot {
 }
 pub(crate) struct HostProcess {
     pub owner:String,pub project_id:String,pub workspace:String,
+    directory_identity:String,service_coexist:bool,
     state:Mutex<ProcessSnapshot>,cancel:CancellationToken,done:Notify,
     terminal:StdMutex<Option<std::fs::File>>,
     retained_permit:StdMutex<Option<dgos_db::ActivityPermit>>,
@@ -61,6 +62,26 @@ fn process_view(run:StoredRun)->Result<ProcessSnapshot,String> {
 impl AgentManager {
     pub(crate) async fn host_workspace_available(&self,path:&str)->Result<(),String> {
         if self.inner.host.lock().await.values().any(|p|p.workspace==path) {Err("workspace_busy".into())} else {Ok(())}
+    }
+    /// Only the explicitly granted, same-account/project service scope relaxes
+    /// native-vs-host admission. Unknown cleanup and arbitrary Shell never do.
+    pub(crate) async fn agent_host_workspace_available(&self,owner:&str,project:&dgos_db::development_repository::Project)->Result<(),String> {
+        let processes:Vec<_>=self.inner.host.lock().await.values().filter(|p|p.workspace==project.path).cloned().collect();
+        if processes.is_empty(){return Ok(());}
+        let granted=self.inner.repository.workspace_trust(owner,project).await?.service;
+        for process in processes {
+            let state=process.state.lock().await;
+            if !granted || !process.service_coexist || process.owner!=owner || process.project_id!=project.id || process.directory_identity!=project.directory_identity || state.kind!="service" || !matches!(state.status.as_str(),"starting"|"ready"|"running") || process.cancel.is_cancelled() {return Err("workspace_busy".into());}
+        }
+        Ok(())
+    }
+    pub(crate) async fn revoke_directory_processes(&self,owner:&str,project_id:&str,path:&str,scope:&str)->Result<(),String> {
+        let processes:Vec<_>=self.inner.host.lock().await.iter().filter(|(_,p)|p.owner==owner && p.project_id==project_id && p.workspace==path).map(|(id,p)|(id.clone(),p.clone())).collect();
+        let mut ids=Vec::new();
+        for (id,p) in processes {let service=p.state.lock().await.kind=="service";if (scope=="service")==service {p.cancel.cancel();ids.push(id);}}
+        let mut clean=true;
+        for id in ids {let view=self.stop_development_process(owner,&id).await?;clean &= view.finished_at.is_some() && !matches!(view.status.as_str(),"cleanup_pending"|"unknown") && !self.inner.host.lock().await.contains_key(&id);}
+        if clean {Ok(())}else{Err("cleanup_pending".into())}
     }
     /// Caller already holds admission. Saves remain permitted during host execution.
     pub(crate) async fn mark_development_mutation(&self,path:&str) {
@@ -101,17 +122,21 @@ impl AgentManager {
         if let Some(old)=self.inner.repository.run(owner,&input.id).await? {
             if old.engine!="host" || old.request_fingerprint!=request_fingerprint {return Err("request_conflict".into());}return self.read_development_process(owner,&input.id).await;
         }
-        if !input.trust_workspace {return Err("workspace_untrusted".into());}
         if !matches!(input.kind.as_str(),"terminal"|"command"|"service") || (input.verification && input.kind!="command") || (input.kind=="service")!=input.readiness.is_some() {return Err("invalid_command".into());}
         if let Some(r)=&input.readiness {if r.port==0 || !r.path.starts_with('/') || r.path.starts_with("//") || r.path.len()>2048 || r.path.chars().any(|c|c.is_control() || c==' ' || c=='#') || !(100..=120000).contains(&r.timeout_ms) {return Err("invalid_readiness".into());}}
         let task=self.inner.repository.task(owner,&input.task_id).await?;let project=self.task_project(owner,&input.task_id).await?;
         if project.archived {return Err("project_archived".into());}
+        let scope=if input.kind=="service" {"service"}else{"terminal"};
+        self.require_workspace_trust(owner,&project,scope,input.trust_workspace).await?;
+        let service_coexist=input.kind=="service" && self.inner.repository.workspace_trust(owner,&project).await?.service;
         if let Some(id)=&input.native_run_id {let native=self.inner.repository.run(owner,id).await?.ok_or("run_not_found")?;if native.source!="native_agent" || native.task_id!=input.task_id {return Err("run_not_found".into());}}
-        self.workspace_available(&project.path,None).await?;
+        self.workspace_available_with_service(&project.path,None,if service_coexist {Some((owner,project.id.as_str()))}else{None}).await?;
         if self.inner.host.lock().await.len()>=16 {return Err("process_capacity".into());}
         let permit=self.inner.gate.admit().map_err(|_|"maintenance_active")?;
         self.capture_task_baseline(owner,&input.task_id).await?;
         let (fingerprint,complete)=self.verification_snapshot(owner,&input.task_id).await?;
+        crate::projects::validate_directory(&project).await?;
+        if lease.is_cancelled() || self.inner.stop.is_cancelled(){return Err("session_invalid".into());}
         let state=ProcessSnapshot{id:input.id.clone(),project_id:project.id.clone(),task_id:task.id.clone(),kind:input.kind.clone(),source:format!("host_{}",input.kind),status:if input.kind=="service" {"starting"} else {"running"}.into(),output:String::new(),truncated:false,exit_code:None,reason:None,started_at:now(),finished_at:None,program:input.program.clone(),args:input.args.clone(),cwd:input.cwd.clone(),fingerprint:fingerprint.clone(),start_fingerprint:fingerprint.clone(),verification_status:if input.verification {"running"} else {"not_requested"}.into(),verification_complete:complete,mutation_observed:false,preview_url:None,native_run_id:input.native_run_id.clone()};
         let run=StoredRun{id:input.id.clone(),owner:owner.into(),session_id:None,task_id:task.id,project_id:project.id.clone(),engine:"host".into(),source:state.source.clone(),status:"running".into(),started_at:state.started_at,finished_at:None,summary:String::new(),reason:None,events:"[]".into(),fingerprint:fingerprint.clone(),start_fingerprint:fingerprint,truncated:false,request_fingerprint,runtime:Some(serde_json::to_string(&state).map_err(|_|"storage_failed")?)};
         // Reserve registration before the durable receipt. Once start_run commits,
@@ -120,7 +145,7 @@ impl AgentManager {
         self.reap_watchers(&mut watchers).await;
         let mut host=self.inner.host.lock().await;
         self.inner.repository.start_run(&run).await?;
-        let process=Arc::new(HostProcess{owner:owner.into(),project_id:project.id.clone(),workspace:project.path.clone(),state:Mutex::new(state),cancel:lease.child_token(),done:Notify::new(),terminal:StdMutex::new(None),retained_permit:StdMutex::new(Some(permit))});
+        let process=Arc::new(HostProcess{owner:owner.into(),project_id:project.id.clone(),workspace:project.path.clone(),directory_identity:project.directory_identity.clone(),service_coexist,state:Mutex::new(state),cancel:lease.child_token(),done:Notify::new(),terminal:StdMutex::new(None),retained_permit:StdMutex::new(Some(permit))});
         host.insert(input.id.clone(),process.clone());
         let manager=self.clone();let watched=process.clone();
         let handle=tokio::spawn(async move {supervise(manager,watched,input,project,run).await});

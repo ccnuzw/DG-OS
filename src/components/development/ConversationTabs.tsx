@@ -27,6 +27,7 @@ export function ConversationTabs({ onSelect, onClose, onReveal, busy }: Conversa
   busyRef.current = busy;
   const viewport = useRef<HTMLDivElement>(null);
   const { epoch, workspaceOwner } = workspace;
+  const visibleTabs = workspace.tabs.filter(tab => !tab.hidden);
   const current = () => mounted.current && useDevelopment.getState().epoch === epoch && useDevelopment.getState().workspaceOwner === workspaceOwner;
   const blocked = busy || closing;
   const title = (tab: ConversationTab) => tab.title || (tab.sessionId ? workspace.sessionNames[tab.sessionId] || workspace.tasks.find(task => task.id === tab.taskId)?.goal : '') || t('workbenchNavigation.blank');
@@ -54,10 +55,10 @@ export function ConversationTabs({ onSelect, onClose, onReveal, busy }: Conversa
       for (const tab of tabs) {
         if (!current() || lock.current !== ticket) break;
         const latest = useDevelopment.getState().tabs.find(item => item.id === tab.id);
-        if (!latest) continue;
+        if (!latest || latest.hidden) continue;
         await onClose(latest);
-        // A retained tab means the draft confirmation was cancelled or its state is unknown.
-        if (!current() || useDevelopment.getState().tabs.some(item => item.id === tab.id)) break;
+        // A still-visible tab means saving failed or the close was cancelled.
+        if (!current() || useDevelopment.getState().tabs.some(item => item.id === tab.id && !item.hidden)) break;
       }
     } catch (error) {
       if (current()) toast.error(errorText(typeof error === 'string' ? error : 'unknown'));
@@ -89,14 +90,14 @@ export function ConversationTabs({ onSelect, onClose, onReveal, busy }: Conversa
     catch (error) { if (current()) toast.error(errorText(typeof error === 'string' ? error : 'unknown')); }
   }
   function menu(tab: ConversationTab): MenuItem[] {
-    const index = workspace.tabs.findIndex(item => item.id === tab.id);
-    const others = workspace.tabs.filter(item => item.id !== tab.id);
-    const right = workspace.tabs.slice(index + 1);
+    const index = visibleTabs.findIndex(item => item.id === tab.id);
+    const others = visibleTabs.filter(item => item.id !== tab.id);
+    const right = visibleTabs.slice(index + 1);
     return [
       { kind: 'item', id: 'close', label: t('workbenchNavigation.closeTab'), icon: 'close', shortcut: 'Delete', disabled: blocked, onSelect: () => void close([tab]) },
       { kind: 'item', id: 'close-others', label: t('workbenchNavigation.closeOtherTabs'), disabled: blocked || !others.length, onSelect: () => void close(others) },
       { kind: 'item', id: 'close-right', label: t('workbenchNavigation.closeTabsRight'), disabled: blocked || !right.length, onSelect: () => void close(right) },
-      { kind: 'item', id: 'close-all', label: t('workbenchNavigation.closeAllTabs'), disabled: blocked || !workspace.tabs.length, onSelect: () => void close(workspace.tabs) },
+      { kind: 'item', id: 'close-all', label: t('workbenchNavigation.closeAllTabs'), disabled: blocked || !visibleTabs.length, onSelect: () => void close(visibleTabs) },
       { kind: 'separator' },
       { kind: 'item', id: 'reveal', label: t('workbenchNavigation.revealConversation'), icon: 'folder-open', disabled: blocked || !onReveal, onSelect: () => void reveal(tab) },
       { kind: 'item', id: 'rename', label: t('workbenchNavigation.renameTab'), icon: 'pencil', shortcut: 'F2', disabled: blocked, onSelect: () => rename(tab) },
@@ -109,7 +110,7 @@ export function ConversationTabs({ onSelect, onClose, onReveal, busy }: Conversa
     <div ref={viewport} className="dev-conversation-tablist workbench-tablist" role="tablist" aria-label={t('workbenchNavigation.sessionTabs')} onKeyDown={event => {
       const target = event.target;
       if (!(target instanceof HTMLElement) || target.getAttribute('role') !== 'tab') return;
-      const index = workspace.tabs.findIndex(tab => `conversation-tab-${tab.id}` === target.id);
+      const index = visibleTabs.findIndex(tab => `conversation-tab-${tab.id}` === target.id);
       if (index < 0) return;
       if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') {
         event.preventDefault();
@@ -117,12 +118,12 @@ export function ConversationTabs({ onSelect, onClose, onReveal, busy }: Conversa
         target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: bounds.left, clientY: bounds.bottom }));
         return;
       }
-      const next = event.key === 'ArrowRight' ? (index + 1) % workspace.tabs.length : event.key === 'ArrowLeft' ? (index + workspace.tabs.length - 1) % workspace.tabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? workspace.tabs.length - 1 : -1;
-      if (next >= 0) { event.preventDefault(); if (!blocked) { onSelect(workspace.tabs[next]); event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus(); } }
-      if (event.key === 'Delete' && !blocked) { event.preventDefault(); void close([workspace.tabs[index]]); }
-      if (event.key === 'F2' && !blocked) { event.preventDefault(); rename(workspace.tabs[index]); }
+      const next = event.key === 'ArrowRight' ? (index + 1) % visibleTabs.length : event.key === 'ArrowLeft' ? (index + visibleTabs.length - 1) % visibleTabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? visibleTabs.length - 1 : -1;
+      if (next >= 0) { event.preventDefault(); if (!blocked) { onSelect(visibleTabs[next]); event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus(); } }
+      if (event.key === 'Delete' && !blocked) { event.preventDefault(); void close([visibleTabs[index]]); }
+      if (event.key === 'F2' && !blocked) { event.preventDefault(); rename(visibleTabs[index]); }
     }}>
-      {workspace.tabs.map(tab => {
+      {visibleTabs.map(tab => {
         const name = title(tab);
         const project = workspace.projects.find(project => project.id === tab.projectId)?.name ?? t('dev.error.project_not_found');
         const snapshot = tab.sessionId ? runner.snapshots[tab.sessionId] : null;

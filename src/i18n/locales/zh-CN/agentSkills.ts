@@ -23,4 +23,13 @@ export default {
   'agentSkills.commands.addToDraft': '加入消息草稿',
   'agentSkills.commands.aliasOf': '{name} 的别名',
   'agentSkills.commands.changed': '原生命令清单已变化，请查看刷新后的名称并重新选择。',
+  'agentSkills.commands.disabled': '此原生命令已禁用。',
+  'agentSkills.slash.title': '原生技能与命令',
+  'agentSkills.slash.keyboard': '↑ ↓ 选择 · Enter / Tab 加入 · Esc 收起',
+  'agentSkills.slash.preparing': '选择模型并等待原生准备完成；不会猜测技能或命令清单。',
+  'agentSkills.slash.unavailable': '会话空闲后才能选择原生能力；草稿未改变。',
+  'agentSkills.slash.empty': '没有与搜索匹配且已核实可显式调用的技能或命令。',
+  'agentSkills.slash.skillDescription': '将结构化原生 Skill 引用加入下一条显式发送的消息。',
+  'agentSkills.slash.unknownSource': '原生 CLI 已报告，文件来源尚未确认',
+  'agentSkills.slash.hint': '行首输入 / 选择原生技能或命令',
 } as const;

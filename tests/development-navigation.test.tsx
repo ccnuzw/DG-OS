@@ -5,10 +5,11 @@ import { useDevelopment, type DevelopmentSession, type Project } from '../src/st
 import { useAgentRunner } from '../src/stores/agentRunnerStore';
 import { chooseContext, contextGeneration } from '../src/stores/developmentSelection';
 
-const { invoke, picker } = vi.hoisted(() => ({ invoke: vi.fn(), picker: vi.fn() }));
+const { invoke, picker, grant } = vi.hoisted(() => ({ invoke: vi.fn(), picker: vi.fn(), grant: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: picker }));
 vi.mock('@tauri-apps/api/path', () => ({ basename: async (path: string) => path.split('/').pop(), join: async (...parts: string[]) => parts.join('/') }));
+vi.mock('../src/stores/developmentTrust', () => ({ useWorkspaceTrust: () => ({ grant, error: null, loading: false, value: null }) }));
 vi.mock('../src/i18n', () => ({ useLocale: () => ({ locale: 'en-US', t: (key: string, variables?: Record<string, unknown>) => variables?.count === undefined ? key : `${key}:${variables.count}` }), t: (key: string) => key, formatDateTime: (date: Date) => date.toISOString() }));
 
 const project: Project = { id: 'p', owner: 'alice', name: 'Workbench', path: '/workbench', directory_identity: 'd', archived: false, created_at: 1, last_opened_at: 1 };
@@ -17,6 +18,7 @@ const callbacks = { onSelect: vi.fn(), onNewConversation: vi.fn(), onSelectProje
 
 beforeEach(() => {
   vi.useFakeTimers();
+  grant.mockResolvedValue(true);
   useDevelopment.setState({ projects: [project], sessions, tasks: [], operations: [], selection: { project_id: 'p', task_id: null, session_id: 's7' }, sessionNames: Object.fromEntries(sessions.map((session, index) => [session.id, `Conversation ${index}`])), tabs: [], activeTabId: null, workspaceOwner: 'alice' });
   invoke.mockImplementation(async (command: string) => {
     if (command === 'read_development_session_summaries') return sessions.map((session, index) => ({ session_id: session.id, preview: `Message preview ${index}`, last_activity_at: 1_700_000_000 - index * 60 }));
@@ -262,4 +264,109 @@ it('reveals an unsent draft and unclassified session without changing the active
   expect(document.activeElement).toBe(screen.getByTestId('dev-session-item-loose'));
   expect(callbacks.onSelect).not.toHaveBeenCalled();
   expect(callbacks.onSelectDraft).not.toHaveBeenCalled();
+});
+
+it('searches saved user and assistant messages, excluding summaries and tool output, and locates exact evidence', async () => {
+  useDevelopment.setState({ sessions: sessions.map(session => ({ ...session, task_id: 'task' })) });
+  invoke.mockImplementation(async (command: string) => {
+    if (command === 'read_development_session_summaries') return [];
+    if (command === 'list_development_runs') return [
+      { id: 'run-user', task_id: 'task', session_id: 's6', engine: 'codex', truncated: true, summary: 'not the matching source', events: [{ seq: 7, kind: 'userMessage', text: 'Historical needle request', data: null, run: 'run-user' }] },
+      { id: 'run-assistant', task_id: 'task', session_id: 's5', engine: 'claude', truncated: false, summary: '', events: [{ seq: 9, kind: 'message', text: null, data: { type: 'assistant', content: [{ type: 'text', text: 'Historical needle answer' }] }, run: 'run-assistant' }] },
+      { id: 'run-tool', task_id: 'task', session_id: 's0', engine: 'codex', truncated: false, summary: 'Historical needle summary', events: [{ seq: 10, kind: 'commandExecution', text: 'Historical needle tool', data: null, run: 'run-tool' }] },
+    ];
+    throw new Error(command);
+  });
+  render(<ProjectSessionTree busy={false} {...callbacks} />);
+  fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Historical needle' } });
+  expect(screen.getByText('workbenchNavigation.searchingMessages')).toBeTruthy();
+  await act(async () => { await vi.advanceTimersByTimeAsync(260); });
+  expect(invoke.mock.calls.filter(([command]) => command === 'list_development_runs')).toEqual([['list_development_runs', { taskId: 'task' }]]);
+  expect(screen.getByText('Historical needle request')).toBeTruthy();
+  expect(screen.getByText('Historical needle answer')).toBeTruthy();
+  expect(screen.getByText('workbenchNavigation.messageSearchTruncated')).toBeTruthy();
+  expect(screen.queryByTestId('dev-session-item-s0')).toBeNull();
+  fireEvent.click(screen.getByTestId('dev-session-item-s6'));
+  expect(callbacks.onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 's6' }), { sessionId: 's6', runId: 'run-user', seq: 7, text: 'Historical needle request' });
+  expect(invoke.mock.calls.some(([command]) => /open_agent|send_agent/.test(command))).toBe(false);
+});
+
+it('discards an old message search response after the query changes', async () => {
+  useDevelopment.setState({ sessions: sessions.map(session => ({ ...session, task_id: 'task' })) });
+  const pending = Promise.withResolvers<unknown>();
+  let reads = 0;
+  invoke.mockImplementation(async (command: string) => {
+    if (command === 'read_development_session_summaries') return [];
+    if (command === 'list_development_runs') return ++reads === 1 ? pending.promise : [];
+    throw new Error(command);
+  });
+  render(<ProjectSessionTree busy={false} {...callbacks} />);
+  fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'old needle' } });
+  await act(async () => { await vi.advanceTimersByTimeAsync(260); });
+  fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'new needle' } });
+  await act(async () => { await vi.advanceTimersByTimeAsync(260); });
+  await act(async () => { pending.resolve([{ id: 'old-run', task_id: 'task', session_id: 's6', engine: 'codex', truncated: false, events: [{ seq: 2, kind: 'userMessage', text: 'old needle', data: null, run: 'old-run' }] }]); });
+  expect(screen.queryByText('old needle')).toBeNull();
+  expect(screen.queryByTestId('dev-session-item-s6')).toBeNull();
+  expect(screen.getByText('workbenchNavigation.messageSearchScope')).toBeTruthy();
+});
+
+it('cancels queued message search and reports unavailable durable history honestly', async () => {
+  const view = render(<ProjectSessionTree busy={false} {...callbacks} />);
+  fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'needle' } });
+  await act(async () => { await vi.advanceTimersByTimeAsync(260); });
+  expect(screen.getByText('workbenchNavigation.messageSearchUnavailable:8')).toBeTruthy();
+  useDevelopment.setState({ sessions: sessions.map(session => ({ ...session, task_id: 'task' })) });
+  fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'another needle' } });
+  view.unmount();
+  await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+  expect(invoke.mock.calls.some(([command]) => command === 'list_development_runs')).toBe(false);
+});
+
+it('keeps closed drafts recoverable without mixing them into open drafts', () => {
+  const draft = { id: 'closed-draft', projectId: 'p', taskId: null, sessionId: null, title: 'Recover me', hidden: true };
+  useDevelopment.setState({ tabs: [draft], activeTabId: null });
+  render(<ProjectSessionTree busy={false} {...callbacks} />);
+  expect(screen.queryByTestId('dev-draft-item-closed-draft')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: /workbenchNavigation.closedDrafts/ }));
+  fireEvent.click(screen.getByTestId('dev-closed-draft-closed-draft'));
+  expect(callbacks.onSelectDraft).toHaveBeenCalledWith(draft);
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it('offers task management in project actions without selecting or executing a conversation', async () => {
+  const onGoals = vi.fn();
+  render(<ProjectSessionTree busy={false} {...callbacks} onGoals={onGoals} />);
+  fireEvent.pointerDown(screen.getByRole('button', { name: 'workbenchNavigation.manageProject: Workbench' }), { button: 0, ctrlKey: false });
+  fireEvent.click(screen.getByRole('menuitem', { name: 'desktop.goals' }));
+  await act(async () => {});
+  expect(onGoals).toHaveBeenCalledWith('p');
+  expect(callbacks.onSelect).not.toHaveBeenCalled();
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it('requires the terminal workspace grant before opening an external terminal', async () => {
+  grant.mockResolvedValue(false);
+  render(<ProjectSessionTree busy={false} {...callbacks} />);
+  fireEvent.pointerDown(screen.getByRole('button', { name: 'workbenchNavigation.manageProject: Workbench' }), { button: 0, ctrlKey: false });
+  fireEvent.click(screen.getByRole('menuitem', { name: 'workbenchNavigation.openTerminal' }));
+  await act(async () => {});
+  expect(grant).toHaveBeenCalledWith('terminal');
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it('opens a granted external terminal and leaves file-manager reveal outside execution authorization', async () => {
+  invoke.mockResolvedValue(undefined);
+  render(<ProjectSessionTree busy={false} {...callbacks} />);
+  const manage = screen.getByRole('button', { name: 'workbenchNavigation.manageProject: Workbench' });
+  fireEvent.pointerDown(manage, { button: 0, ctrlKey: false });
+  fireEvent.click(screen.getByRole('menuitem', { name: 'workbenchNavigation.openTerminal' }));
+  await act(async () => {});
+  expect(grant).toHaveBeenCalledTimes(1);
+  expect(invoke).toHaveBeenCalledWith('open_development_project_external', { input: { project_id: 'p', target: 'terminal' } });
+  fireEvent.pointerDown(manage, { button: 0, ctrlKey: false });
+  fireEvent.click(screen.getByRole('menuitem', { name: 'workbenchNavigation.revealProject' }));
+  await act(async () => {});
+  expect(grant).toHaveBeenCalledTimes(1);
+  expect(invoke).toHaveBeenCalledWith('open_development_project_external', { input: { project_id: 'p', target: 'reveal' } });
 });

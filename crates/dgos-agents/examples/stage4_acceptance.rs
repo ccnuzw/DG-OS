@@ -108,11 +108,19 @@ async fn run() -> Result<()> {
                 let prefix = format!("DGOS_STAGE4_{}", label(engine).to_uppercase());
                 let endpoint = env(&format!("{prefix}_URL"))?;
                 let model = env(&format!("{prefix}_MODEL"))?;
+                let config = if engine == Engine::Claude {
+                    match std::env::var("DGOS_STAGE4_CLAUDE_AUTH_STYLE") {
+                        Ok(style) if matches!(style.as_str(), "bearer" | "both" | "x-api-key") => Some(serde_json::json!({ "auth_style": style })),
+                        Ok(_) => return Err("invalid_claude_auth_style".into()),
+                        Err(std::env::VarError::NotPresent) => None,
+                        Err(_) => return Err("invalid_claude_auth_style".into()),
+                    }
+                } else { None };
                 let id = Uuid::new_v4().to_string();
                 let credential_ref = new_credential_ref();
                 vault.store(&ProviderCredentialScope { user_id: OWNER.into(), provider_id: id.clone(), endpoint: endpoint.clone(), credential_ref: credential_ref.clone() }, SecretValue::new(keys[index].clone()).map_err(io)?).await.map_err(io)?;
                 // Same metadata-only repository + vault seed as provider tests. No key in DB.
-                ProviderRepository::new(db.clone()).create_with_credential_ref(id.clone(), ProviderConfig { name: format!("Stage4 {} real", label(engine)), provider_type: if engine == Engine::Codex { "openai_compatible" } else { "anthropic" }.into(), base_url: endpoint.clone(), api_key: String::new(), enabled: true, config: None }, OWNER.into(), Some(credential_ref)).await.map_err(io)?;
+                ProviderRepository::new(db.clone()).create_with_credential_ref(id.clone(), ProviderConfig { name: format!("Stage4 {} real", label(engine)), provider_type: if engine == Engine::Codex { "openai_compatible" } else { "anthropic" }.into(), base_url: endpoint.clone(), api_key: String::new(), enabled: true, config }, OWNER.into(), Some(credential_ref)).await.map_err(io)?;
                 providers.add_manual_model(&id, OWNER, &model, None).await.map_err(io)?;
                 let provider_revision = providers.get_provider(&id, OWNER).await.map_err(io)?.ok_or("provider_missing")?.config_revision;
                 let workspace = root.join(format!("project-{}", label(engine)));

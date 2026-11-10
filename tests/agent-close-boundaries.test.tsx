@@ -7,7 +7,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('../src/i18n', () => ({ t: (key: string) => key }));
 afterEach(() => { useAgentRunner.getState().reset(); invoke.mockReset(); vi.useRealTimers(); });
 const session = (id: string): AgentSession => ({ id, generation: `generation-${id}`, engine: 'codex', native_id: id, workspace: '/tmp/project', status: 'idle', events: [], pending: [], error: null });
-const input: AgentOpenInput = { intent: 'create', id: 'new', engine: 'codex', task_id: 'task', project_revision: 1, provider: { provider_id: 'provider', model_id: 'model', provider_revision: 0 }, options: { workspace: '/tmp/project', resume_id: null, executable: null, model: null, trust_workspace: true } };
+const input: AgentOpenInput = { intent: 'create', id: 'new', engine: 'codex', task_id: 'task', project_revision: 1, provider: { provider_id: 'provider', model_id: 'model', provider_revision: 0 }, options: { workspace: '/tmp/project', resume_id: null, executable: null, model: null, trust_workspace: false } };
 
 it('hides a connecting projection immediately and tracks its late same-account open without selecting it', async () => {
   const opened = Promise.withResolvers<AgentSession>();
@@ -25,6 +25,27 @@ it('hides a connecting projection immediately and tracks its late same-account o
   expect(useAgentRunner.getState().snapshots.new).toEqual(session('new'));
   expect(useAgentRunner.getState().unread.new).toBe(true);
   expect(invoke.mock.calls.some(([command]) => command === 'close_agent_session' || command === 'interrupt_agent_session')).toBe(false);
+});
+
+it('never adopts a late open into a different account after the workbench closes', async () => {
+  const opened = Promise.withResolvers<AgentSession>();
+  invoke.mockImplementation(async (command: string) => { if (command === 'open_agent_session') return opened.promise; throw new Error(command); });
+  const opening = useAgentRunner.getState().open(input);
+  expect(await prepareAgentClose()).toBe(true);
+  useAgentRunner.getState().reset();
+  const nextAccountEpoch = useAgentRunner.getState().epoch;
+  opened.resolve(session('new'));
+  await opening;
+  expect(useAgentRunner.getState()).toMatchObject({ epoch: nextAccountEpoch, session: null, selected: null, live: {}, snapshots: {}, unread: {}, busy: false, acting: false });
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual(['open_agent_session']);
+});
+
+it('preserves unknown runtime ownership and its unresolved requests when hiding the workbench', async () => {
+  const unknown = { ...session('runtime'), status: 'unknown', pending: [{ id: 'unresolved', kind: 'native-unknown', title: 'Unresolved native request', data: null }] };
+  useAgentRunner.setState({ session: unknown, selected: unknown.id, live: { runtime: 'unknown' }, snapshots: { runtime: unknown }, unread: { runtime: true } });
+  expect(await prepareAgentClose()).toBe(true);
+  expect(useAgentRunner.getState()).toMatchObject({ session: null, selected: null, live: { runtime: 'unknown' }, snapshots: { runtime: unknown }, unread: { runtime: true } });
+  expect(invoke).not.toHaveBeenCalled();
 });
 
 it('does not wait for an open acknowledgement or a terminal runtime when hiding the surface', async () => {

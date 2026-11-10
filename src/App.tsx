@@ -25,6 +25,7 @@ import './modules/provider-console.css';
 import { useDesktopPreferences } from './workspace/desktopPreferences';
 import { useLayoutBudget } from './ui/layout/useLayoutBudget';
 import { shellMinimumWidth } from './ui/layout/layoutBudgets';
+import { useDevelopmentExit } from './workspace/useDevelopmentExit';
 const SkillsManagement = lazy(() => import("./pages/SkillsManagement"));
 const Workbench = lazy(() => import("./components/chat/ChatWorkbench"));
 const SingleTask = lazy(() => import('./pages/workbench/SingleTaskWorkbench'));
@@ -52,6 +53,7 @@ export function NotFoundRoute() {
 
 function App() {
   const { t } = useLocale();
+  useDevelopmentExit();
   const location = useLocation();
   const navigate = useNavigate();
   const tabs = useWorkspaceTabs();
@@ -127,7 +129,7 @@ function App() {
           return <div key={surface.id} hidden={!active} inert={!active || tabs.settingsOpen || state.launcher.open || toolsOpen} className="h-full min-h-0 overflow-auto" data-workspace-surface={surface.id} data-app-layout={surface.kind === 'app' ? entries.find(entry => entry.moduleId === surface.moduleId)?.layout : undefined}>
             <SurfaceScope id={surface.id} visible={active} active={active && !tabs.settingsOpen && !state.launcher.open && !toolsOpen} controller={controller}>
               <Suspense fallback={<div role="status">{t('common.loading')}</div>}>
-                {surface.kind === 'ai' ? <Workbench /> : surface.kind === 'resource' ? surface.id === '/skills' ? <SkillsManagement /> : <McpManagement /> : surface.kind === 'task' ? surface.id === 'single-task' ? <SingleTask /> : <Agent /> : <ModuleSurface surface={surface} available={entries.some(entry => entry.moduleId === surface.moduleId && appUsable(entry))} />}
+                {surface.kind === 'ai' ? <Workbench /> : surface.kind === 'resource' ? surface.id === '/skills' ? <SkillsManagement /> : <McpManagement /> : surface.kind === 'task' ? surface.id === 'single-task' ? <SingleTask /> : <Agent onActivate={() => { setToolsOpen(false); activateSurface(surface.id); }} /> : <ModuleSurface surface={surface} available={entries.some(entry => entry.moduleId === surface.moduleId && appUsable(entry))} />}
               </Suspense>
             </SurfaceScope>
           </div>;

@@ -125,3 +125,15 @@
   .agent-composer-input textarea { scroll-behavior: auto; }
 }
 .agent-composer-trust { align-self: flex-start; margin-inline: var(--spacing-2); color: var(--text-secondary); font-size: var(--font-size-xs); }
+.agent-composer-edit-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--spacing-2); }
+.agent-composer-edit-actions small, .agent-next-draft-note { margin: 0; color: var(--text-secondary); font-size: var(--font-size-xs); }
+.agent-dialogue-footer-expanded { max-height: 85%; }
+.agent-composer-shell-expanded .agent-composer-input textarea { min-height: min(24rem, 40vh); max-height: 50vh; }
+.agent-dialogue-result-actions { display: flex; flex-wrap: wrap; gap: var(--spacing-2); border-top: 1px solid var(--border-subtle); padding-top: var(--spacing-3); }
+.agent-dialogue-result-actions p { flex-basis: 100%; margin: 0; font-size: var(--font-size-xs); color: var(--text-secondary); }
+.agent-conversation-queue { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-2); min-width: 0; width: min(100%, var(--conversation-width)); font-size: var(--font-size-xs); }
+.agent-conversation-queue p { margin: 0; }
+.agent-conversation-queue details, .agent-conversation-queue > div { flex-basis: 100%; min-width: 0; }
+.agent-conversation-queue ol { max-height: 10rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-next-draft-note { width: min(100%, var(--conversation-width)); }
+[data-event-seq] { scroll-margin-block: var(--spacing-3); }

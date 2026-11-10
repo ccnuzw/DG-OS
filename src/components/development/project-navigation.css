@@ -36,6 +36,11 @@
 .dev-tree-disclosure[aria-expanded='true'] > svg { transform: rotate(90deg); }
 .dev-project-session-tree [hidden] { display: none !important; }
 .dev-project-session-tree button:focus-visible, .dev-project-session-tree input:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.dev-tree-search-feedback { padding: var(--spacing-2); border-inline-start: 2px solid var(--border-focus); color: var(--text-secondary); font-size: var(--font-size-xs); line-height: 1.5; }
+.dev-tree-search-feedback p { margin: 0; }
+.dev-tree-search-feedback p + p { margin-block-start: var(--spacing-1); }
+.dev-tree-session-main > small.dev-tree-message-match { white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.dev-tree-match-label { color: var(--status-info-text); font-size: var(--font-size-xs); line-height: 1.4; }
 .dev-project-manager { min-width: 0; }
 @media (pointer: coarse) {
   .dev-tree-project-row { grid-template-columns: 2.75rem minmax(0, 1fr) 2.75rem 2.75rem; }

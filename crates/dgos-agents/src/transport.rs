@@ -109,9 +109,6 @@ impl Transport {
     pub(crate) fn native_available(&self) -> bool {
         !self.stop.is_cancelled() && !self.connection_lost.is_cancelled() && !self.input.is_closed()
     }
-    pub(crate) fn connection_lost(&self) -> CancellationToken {
-        self.connection_lost.clone()
-    }
     pub(crate) fn stopped(&self) -> bool {
         self.finished.is_cancelled() && self.reaped.load(Ordering::Acquire)
     }
@@ -313,8 +310,14 @@ impl Transport {
         if !self.native_available() {
             return Err("closed".into());
         }
-        let id = self.next.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-            .map_err(|_| "closed")?;
+        let mut id = self.next.load(Ordering::Relaxed);
+        loop {
+            let next = id.checked_add(1).ok_or("closed")?;
+            match self.next.compare_exchange_weak(id, next, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => break,
+                Err(current) => id = current,
+            }
+        }
         let (tx, rx) = oneshot::channel();
         let registration = {
             let mut pending = self.pending.lock().unwrap();

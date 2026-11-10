@@ -6,11 +6,14 @@ import { hostCode } from './hostError';
 import { confirmDiscard } from '../workspace/closeCoordinator';
 import { t } from '../i18n';
 import { useDevelopmentDrafts } from './developmentDrafts';
+import { desktopSlot, onDesktopStateRestored, rebaseDesktopKey, setDesktopSlot } from './developmentDesktop';
 
 export interface EditorDocument {
   id: string; projectId: string; taskId: string | null; workspacePath: string; path: string;
   file: DevFileView | null; draft: string; disk: DevFileView | null;
   busy: boolean; saving: boolean; error: string | null; revision: number;
+  /** Cached baseline must be revalidated before an explicit disk save. */
+  restored?: boolean;
 }
 export interface DocumentTab { id: string; projectId: string; taskId: string | null; workspacePath: string; path: string; mode: 'file' | 'diff'; source: 'task' | 'index' | 'worktree'; line?: number }
 const empty = { projectId: null, taskId: null, path: null, file: null, draft: '', disk: null, busy: false, saving: false, error: null };
@@ -44,21 +47,30 @@ export const useDevelopmentEditor = create<EditorState>((set, get) => {
     async open(projectId, taskId, path, workspacePath = '', reload = false) {
       if (developmentEditorMutationAffects(projectId, taskId, path)) return;
       const id = documentId(projectId, taskId, path, workspacePath);
-      if (get().documents[id] && !reload) { set(activate(id)); return; }
+      const previous = get().documents[id];
+      if (previous && !reload && !previous.restored) { set(activate(id)); return; }
+      if (previous?.busy) { set(activate(id)); return; }
       const revision = ++sequence, epoch = useDevelopment.getState().epoch;
-      const document: EditorDocument = { id, projectId, taskId, workspacePath, path, file: null, draft: '', disk: null, busy: true, saving: false, error: null, revision };
+      const document: EditorDocument = previous && !reload
+        ? { ...previous, busy: true, revision }
+        : { id, projectId, taskId, workspacePath, path, file: null, draft: '', disk: null, busy: true, saving: false, error: null, revision };
       const documents = { ...get().documents, [id]: document };
       set({ documents, ...activate(id, documents) });
       const result = await readDevelopmentFile({ project_id: projectId, task_id: taskId, path });
       if (epoch !== useDevelopment.getState().epoch || get().documents[id]?.revision !== revision) return;
-      update(id, result.ok ? { file: result.value, draft: result.value.text ?? '', busy: false } : { error: result.code, busy: false });
+      if (!result.ok) { update(id, { error: result.code, busy: false }); return; }
+      const current = get().documents[id];
+      if (previous && !reload && documentDirty(current)) {
+        if (previous.file?.hash !== result.value.hash) update(id, { disk: result.value, error: 'file_changed', busy: false, restored: false });
+        else update(id, { file: result.value, draft: current.draft, disk: null, error: null, busy: false, restored: false });
+      } else update(id, { file: result.value, draft: result.value.text ?? '', disk: null, error: null, busy: false, restored: false });
     },
     edit(draft, id = get().activeId ?? '') { update(id, { draft }); },
     async save(id = get().activeId ?? '') {
       const document = get().documents[id];
       if (!document) return;
       const { projectId, taskId, path, file, draft, saving, revision } = document;
-      if (!taskId || !file?.hash || file.text === null || saving || document.error === 'file_changed' || developmentEditorMutationAffects(projectId, taskId, path)) return;
+      if (!taskId || !file?.hash || file.text === null || saving || document.restored || document.busy || document.error === 'file_changed' || developmentEditorMutationAffects(projectId, taskId, path)) return;
       const epoch = useDevelopment.getState().epoch;
       const valid = () => epoch === useDevelopment.getState().epoch && get().documents[id]?.revision === revision;
       update(id, { saving: true, error: null });
@@ -169,3 +181,33 @@ export function remapDevelopmentDocuments(projectId: string, taskId: string | nu
   });
 }
 useDevelopment.subscribe((state, previous) => { if (state.epoch !== previous.epoch) useDevelopmentEditor.getState().reset(); });
+
+onDesktopStateRestored(() => {
+  const saved = desktopSlot<{ documents?: EditorDocument[]; tabs?: DocumentTab[]; activeId?: string | null; activeTabs?: Record<string, string> }>('editor', {});
+  const epoch = useDevelopment.getState().epoch;
+  const documents: Record<string, EditorDocument> = {};
+  for (const value of saved.documents ?? []) {
+    if (!value || typeof value.projectId !== 'string' || typeof value.path !== 'string' || typeof value.workspacePath !== 'string' || typeof value.draft !== 'string' || !(value.taskId === null || typeof value.taskId === 'string')) continue;
+    const id = documentId(value.projectId, value.taskId, value.path, value.workspacePath);
+    documents[id] = { ...value, id, busy: false, saving: false, restored: true, revision: ++sequence };
+  }
+  const tabIds = new Map<string, string>();
+  const tabs = (saved.tabs ?? []).filter(tab => tab && typeof tab.projectId === 'string' && typeof tab.path === 'string' && typeof tab.workspacePath === 'string' && ['file', 'diff'].includes(tab.mode)).map(tab => {
+    const id = `${documentId(tab.projectId, tab.taskId, tab.path, tab.workspacePath)}:${tab.mode}`;
+    tabIds.set(tab.id, id); return { ...tab, id };
+  });
+  const activeId = saved.activeId ? rebaseDesktopKey(saved.activeId, epoch) : null;
+  const activeTabs = Object.fromEntries(Object.entries(saved.activeTabs ?? {}).flatMap(([scope, id]) => {
+    const rebased = rebaseDesktopKey(scope, epoch), tab = tabIds.get(id);
+    return rebased && tab ? [[rebased, tab]] : [];
+  }));
+  useDevelopmentEditor.setState(state => {
+    const merged = { ...documents, ...state.documents };
+    const active = state.activeId ?? (activeId && merged[activeId] ? activeId : null);
+    return { documents: merged, tabs: [...tabs.filter(tab => !state.tabs.some(existing => existing.id === tab.id)), ...state.tabs], activeTabs: { ...activeTabs, ...state.activeTabs }, activeId: active, ...(active ? merged[active] : {}) };
+  });
+});
+useDevelopmentEditor.subscribe((state, previous) => {
+  if (state.documents === previous.documents && state.tabs === previous.tabs && state.activeTabs === previous.activeTabs && state.activeId === previous.activeId) return;
+  setDesktopSlot('editor', { documents: Object.values(state.documents), tabs: state.tabs, activeId: state.activeId, activeTabs: state.activeTabs });
+});

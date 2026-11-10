@@ -4,7 +4,7 @@ import { ImagePlus, X } from 'lucide-react';
 import { useLocale } from '../../i18n';
 import { addAgentImages, removeAgentImage, useAgentImages } from '../../stores/agentImages';
 
-/** Volatile, explicitly selected byte inputs; never accepts paths or remote URLs. */
+/** Explicitly selected private draft bytes; never accepts paths or remote URLs. */
 export function AgentImages({ owner, disabled = false, active = true }: { owner: string; disabled?: boolean; active?: boolean }) {
   const { t } = useLocale();
   const picker = useRef<HTMLInputElement>(null);

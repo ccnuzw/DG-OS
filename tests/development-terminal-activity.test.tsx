@@ -12,14 +12,28 @@ interface TerminalDouble {
   rows: number; cols: number; options: Record<string, unknown>; chunks: string[]; resets: number; disposed: boolean;
   refreshes: Array<[number, number]>; resizeCalls: Array<[number, number]>; rendered: string; accessible: string; focus: Mock;
   data: (value: string) => void; key: () => boolean;
+  selections: Array<[number, number, number]>; scrolls: number[];
 }
-const harness = vi.hoisted(() => ({ invoke: vi.fn(), instances: [] as TerminalDouble[], observers: [] as Array<{ connected: boolean; callback: () => void }>, width: 640, height: 320, cols: 80, rows: 24, fits: 0, metrics: true, measurable: true, deferRestore: false, restored: [] as Array<() => void> }));
+const harness = vi.hoisted(() => ({ invoke: vi.fn(), instances: [] as TerminalDouble[], observers: [] as Array<{ connected: boolean; callback: () => void }>, width: 640, height: 320, cols: 80, rows: 24, fits: 0, metrics: true, measurable: true, deferRestore: false, restored: [] as Array<() => void>, trusted: true }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: harness.invoke }));
 vi.mock('../src/i18n', () => ({ useLocale: () => ({ t: (key: string) => key }) }));
+vi.mock('../src/stores/developmentTrust', () => ({ useWorkspaceTrust: () => ({ value: { terminal: harness.trusted }, loading: false, error: null, grant: vi.fn(), refresh: vi.fn() }) }));
 vi.mock('@xterm/xterm', () => ({ Terminal: class {
   rows = 24; cols = 80; options: Record<string, unknown>; chunks: string[] = []; resets = 0; disposed = false;
   refreshes: Array<[number, number]> = []; resizeCalls: Array<[number, number]> = []; rendered = ''; accessible = ''; focus = vi.fn();
   data: (data: string) => void = () => {}; key: () => boolean = () => true;
+  selections: Array<[number, number, number]> = []; scrolls: number[] = [];
+  get buffer() {
+    const lines = this.chunks.join('').split(/\r?\n/);
+    return { active: { length: lines.length, getLine: (row: number) => {
+      const text = lines[row] ?? '';
+      return { length: text.length, translateToString: () => text, getCell: (column: number) => ({ getWidth: () => 1, getChars: () => text[column] }) };
+    } } };
+  }
+  select(column: number, row: number, length: number) { this.selections.push([column, row, length]); }
+  scrollToLine(row: number) { this.scrolls.push(row); }
+  getSelection() { return ''; }
+  paste(text: string) { this.data(text); }
   constructor(options: Record<string, unknown>) { this.options = options; this.rows = Number(options.rows ?? 24); this.cols = Number(options.cols ?? 80); harness.instances.push(this); }
   loadAddon() {} open() {} write(value: string, callback?: () => void) { this.chunks.push(value); if (callback) { if (harness.deferRestore) harness.restored.push(callback); else callback(); } } reset() { this.resets++; }
   resize(cols: number, rows: number) { this.resizeCalls.push([cols, rows]); this.cols = cols; this.rows = rows; if (harness.measurable) harness.metrics = true; }
@@ -46,6 +60,7 @@ beforeEach(() => {
   useDevelopmentRuntime.setState({ taskId: 't', selected: 'pty', processes: [process()], operations: [] });
   harness.width = 640; harness.height = 320; harness.cols = 80; harness.rows = 24; harness.fits = 0; harness.metrics = true; harness.measurable = true;
   harness.deferRestore = false; harness.restored.length = 0;
+  harness.trusted = true;
   harness.invoke.mockResolvedValue(null);
   vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => harness.width);
@@ -386,6 +401,31 @@ it('keeps an unknown-write warning across remount without replaying it through c
   fireEvent.click(screen.getByTestId('dev-terminal-clear')); await advance();
   expect(screen.getByTestId('dev-terminal-input-feedback')).toBeTruthy();
   expect(calls('write_development_terminal')).toHaveLength(1);
+});
+
+it('searches the public terminal buffer and copies output without writing to the PTY', async () => {
+  const clipboard = { writeText: vi.fn().mockResolvedValue(undefined), readText: vi.fn().mockResolvedValue('fresh paste') };
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: clipboard });
+  const view = show(); await advance(); const instance = harness.instances[0];
+  await view.update(true, true, process('one\r\none again\r\n'));
+  fireEvent.change(screen.getByRole('searchbox', { name: 'runtimeWorkflow.searchOutput' }), { target: { value: 'one' } });
+  fireEvent.click(screen.getByRole('button', { name: 'runtimeWorkflow.nextMatch' }));
+  fireEvent.click(screen.getByRole('button', { name: 'runtimeWorkflow.nextMatch' }));
+  expect(instance.selections).toEqual([[0, 0, 3], [0, 1, 3]]);
+  fireEvent.click(screen.getByRole('button', { name: 'runtimeWorkflow.copyOutput' })); await advance();
+  expect(clipboard.writeText).toHaveBeenCalledWith('one\none again\n');
+  expect(calls('write_development_terminal')).toHaveLength(0);
+  fireEvent.click(screen.getByRole('button', { name: 'runtimeWorkflow.paste' })); await advance();
+  expect(calls('write_development_terminal').map(([, args]) => args.input.data)).toEqual(['fresh paste']);
+});
+
+it('blocks fresh terminal input immediately after workspace shell permission is revoked', async () => {
+  const view = show(); await advance(); const instance = harness.instances[0];
+  instance.data('before\r'); await advance();
+  harness.trusted = false; await view.update();
+  instance.data('after\r'); await advance();
+  expect(calls('write_development_terminal').map(([, args]) => args.input.data)).toEqual(['before\r']);
+  expect(instance.options.disableStdin).toBe(true);
 });
 
 it('treats parent panel collapse independently of surface activity and never makes native output interactive', async () => {

@@ -3,6 +3,7 @@ import { useDevelopmentRuntime } from './developmentRuntime';
 import { useDevelopment } from './developmentStore';
 import { confirmAction } from '../components/development/shared';
 import { t } from '../i18n';
+import { desktopSlot, onDesktopStateRestored, rebaseDesktopKey, setDesktopSlot } from './developmentDesktop';
 
 type DraftKind = 'task' | 'capabilities' | 'commit' | 'handoff' | 'delivery' | 'conversation';
 interface Draft { kind: DraftKind; value: unknown; baseline: unknown }
@@ -53,4 +54,36 @@ export async function guardWorkbenchDrafts(projectId?: string) {
 }
 useDevelopment.subscribe((state, previous) => {
   if (state.epoch !== previous.epoch) useDevelopmentDrafts.getState().clear();
+});
+
+// The first tuple member is a renderer lifetime, never an account identity. Rebase
+// it on hydration; leave native generations and unknown request identities intact.
+function recoveredDraftValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(recoveredDraftValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key,
+    ['preparing', 'busy', 'saving'].includes(key) ? false
+      : key === 'status' && entry === 'pending' ? 'unknown' : recoveredDraftValue(entry),
+  ]));
+}
+onDesktopStateRestored(() => {
+  const saved = desktopSlot<{ entries?: Record<string, Draft>; handoffs?: Record<string, string> }>('drafts', {});
+  const epoch = useDevelopment.getState().epoch;
+  const entries: Record<string, Draft> = {};
+  for (const [key, entry] of Object.entries(saved.entries ?? {})) {
+    const rebased = rebaseDesktopKey(key, epoch);
+    if (!rebased || !entry || !['task', 'capabilities', 'commit', 'handoff', 'delivery', 'conversation'].includes(entry.kind)) continue;
+    entries[rebased] = { kind: entry.kind, value: recoveredDraftValue(entry.value), baseline: recoveredDraftValue(entry.baseline) };
+    const scope: unknown[] = JSON.parse(rebased);
+    const value = entries[rebased].value;
+    if (entry.kind === 'task' && scope[scope.length - 1] === 'workspace-preparation' && value && typeof value === 'object' && 'phase' in value && value.phase === 'pending') entries[rebased].value = { ...value, phase: 'unknown' };
+  }
+  const handoffs = Object.fromEntries(Object.entries(saved.handoffs ?? {}).flatMap(([key, id]) => {
+    const rebased = rebaseDesktopKey(key, epoch);
+    return rebased && typeof id === 'string' ? [[rebased, id]] : [];
+  }));
+  useDevelopmentDrafts.setState(state => ({ entries: { ...entries, ...state.entries }, handoffs: { ...handoffs, ...state.handoffs } }));
+});
+useDevelopmentDrafts.subscribe((state, previous) => {
+  if (state.entries !== previous.entries || state.handoffs !== previous.handoffs) setDesktopSlot('drafts', { entries: state.entries, handoffs: state.handoffs });
 });

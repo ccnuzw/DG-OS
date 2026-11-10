@@ -62,7 +62,7 @@ impl AgentManager {
         Ok(())
     }
     pub async fn accept_development_handoff(&self,owner:&str,input:AcceptHandoffInput,lease:CancellationToken)->Result<AcceptedHandoff,String> {
-        if !input.confirmed || !input.options.trust_workspace {return Err("workspace_untrusted".into());}
+        if !input.confirmed {return Err("workspace_untrusted".into());}
         if input.options.resume_id.is_some() || input.project_revision<=0 || input.summary.trim().is_empty() || input.summary.len()>65536 {return Err("invalid_handoff".into());}
         // Reject secret-bearing edits instead of silently transferring unreviewed text.
         if crate::executions::sanitize_text(&input.summary)!=input.summary{return Err("secret_argument_denied".into());}
@@ -73,7 +73,8 @@ impl AgentManager {
             if handoff.target_session_id.is_some(){return Err("handoff_already_accepted".into());}
             if self.inner.repository.capability_epoch(owner,&handoff.project_id).await?!=handoff.permission_epoch{return Err("capability_revoked".into());}
             let project=self.task_project(owner,&handoff.task_id).await?;
-            self.workspace_available(&project.path,None).await?;self.host_workspace_available(&project.path).await?;
+            self.require_workspace_trust(owner,&project,"agent",input.options.trust_workspace).await?;
+            self.workspace_available(&project.path,None).await?;self.agent_host_workspace_available(owner,&project).await?;
             if self.task_fingerprint(owner,&handoff.task_id).await?!=handoff.fingerprint{return Err("handoff_stale".into());}
             let engine=match handoff.target_engine.as_str(){"codex"=>Engine::Codex,"claude"=>Engine::Claude,_=>return Err("invalid_handoff".into())};
             let revision=self.inner.repository.cli_provider_revision(owner,&handoff.project_id,Some(input.project_revision)).await?.ok_or("provider_required")?;

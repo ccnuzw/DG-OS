@@ -6,11 +6,11 @@ export default {
   'agentImages.reading': 'Reading images…',
   'agentImages.size': '{kib} KiB',
   'agentImages.limits': 'PNG, JPEG or WebP. Up to 4 images; 2 MiB each and in total. You can also paste an image.',
-  'agentImages.privacy': 'The selected image is sent to the configured Codex provider. DG-OS stores only image metadata in conversation history; previews are not retained after sending.',
+  'agentImages.privacy': 'Unsent images are saved in private account storage for up to 7 days (4 MiB across drafts). Sending forwards the selected images to the configured Codex provider; DG-OS history keeps metadata only and removes sent previews.',
   'agentImages.history': 'Image inputs: {count}',
   'agentImages.historyPrivacy': 'Image contents and links are not retained in history. Resuming does not resend images.',
   'agentImages.error.limits': 'Image limit exceeded. Use up to 4 images, 2 MiB each and in total; remove images from other drafts if needed.',
   'agentImages.error.type': 'Choose PNG, JPEG or WebP image files. Image links and filesystem paths are not accepted as images.',
   'agentImages.error.read': 'The image could not be read. Choose or paste it again.',
-  'agentImages.error.expired': 'Unsent image previews expired after one hour. Choose the images again before sending.',
+  'agentImages.error.expired': 'These unsent images expired after 7 days. Your text is retained; choose the images again before sending.',
 } as const;
