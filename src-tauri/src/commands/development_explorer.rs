@@ -1,6 +1,6 @@
 //! Owner-scoped explorer APIs. Read-only Git projections never authorize a write.
 use crate::{host::{self, Capability}, session::SessionResolver};
-use dgos_agents::{AgentManager, explorer::SessionSummary, files::{CreateEntryInput, CreatedEntry, InspectEntryInput, InspectedEntry, MutateEntryInput}, git::{ProjectGitOverview, ProjectDiffInput, ProjectGitHistoryInput, GitHistoryPage}, review::FileDiff};
+use dgos_agents::{AgentManager, explorer::SessionSummary, files::{CreateEntryInput, CreatedEntry, InspectEntryInput, InspectedEntry, MutateEntryInput}, git::{ProjectGitOverview, ProjectDiffInput, ProjectGitHistoryInput, GitHistoryPage, GitScopeInput, GitStagedDiff}, review::FileDiff};
 use dgos_types::BuiltinCaller;
 use std::sync::Arc;
 use tauri::{Manager, WebviewWindow};
@@ -55,11 +55,20 @@ pub async fn open_development_entry_directory(app: tauri::AppHandle, window: Web
     Ok(())
 }
 #[tauri::command]
-pub async fn read_development_project_git(app: tauri::AppHandle, window: WebviewWindow, project_id: String) -> Result<ProjectGitOverview, String> {
+pub async fn read_development_project_git(app: tauri::AppHandle, window: WebviewWindow, project_id: String, task_id: Option<String>) -> Result<ProjectGitOverview, String> {
     let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
     let (session, lease) = app.state::<Arc<SessionResolver>>().agent_session().map_err(|e| e.to_string())?;
     if session.user_id() != context.user_id() || lease.is_cancelled() { return Err("session_invalid".into()); }
-    let result = app.state::<AgentManager>().read_development_project_git(context.user_id(), &project_id).await;
+    let result = app.state::<AgentManager>().read_development_project_git(context.user_id(), &project_id, task_id.as_deref()).await;
+    if lease.is_cancelled() { return Err("session_invalid".into()); }
+    result
+}
+#[tauri::command]
+pub async fn read_development_staged_diff(app: tauri::AppHandle, window: WebviewWindow, input: GitScopeInput) -> Result<GitStagedDiff, String> {
+    let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
+    let (session, lease) = app.state::<Arc<SessionResolver>>().agent_session().map_err(|e| e.to_string())?;
+    if session.user_id() != context.user_id() || lease.is_cancelled() { return Err("session_invalid".into()); }
+    let result = app.state::<AgentManager>().read_development_staged_diff(context.user_id(), input, lease.clone()).await;
     if lease.is_cancelled() { return Err("session_invalid".into()); }
     result
 }

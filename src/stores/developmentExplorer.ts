@@ -9,8 +9,8 @@ import type { DevDiff } from './developmentReview';
 export interface SessionSummary { session_id: string; preview: string | null; last_activity_at: number | null }
 export interface CreateEntryInput { project_id: string; task_id?: string | null; path: string; kind: 'file' | 'directory'; trust_directory: boolean }
 export interface CreatedEntry { path: string; kind: 'file' | 'directory' }
-/** Read-only original-workspace data: deliberately carries no task review token. */
-export type ProjectGitOverview = Pick<GitReview, 'kind' | 'path' | 'branch' | 'head' | 'files' | 'conflicts' | 'staged_diff' | 'worktree_diff'>;
+/** Read-only workspace observation: deliberately carries no task review token. */
+export type ProjectGitOverview = Pick<GitReview, 'kind' | 'path' | 'branch' | 'head' | 'merge_heads' | 'files' | 'conflicts' | 'snapshot_token'>;
 export interface ProjectDiffInput { project_id: string; path: string; source: 'index' | 'worktree' }
 export interface ProjectGitHistoryInput { project_id: string; start_oid?: string | null; cursor?: string | null; limit: number }
 
@@ -85,8 +85,8 @@ export function mutateDevelopmentEntry(input: MutateEntryInput): Promise<Outcome
 export function openDevelopmentEntryDirectory(input: EntryInput): Promise<Outcome<void>> {
   return call('open_development_entry_directory', { input });
 }
-export function readDevelopmentProjectGit(projectId: string): Promise<Outcome<ProjectGitOverview>> {
-  return call('read_development_project_git', { projectId });
+export function readDevelopmentProjectGit(projectId: string, taskId: string | null): Promise<Outcome<ProjectGitOverview>> {
+  return call('read_development_project_git', { projectId, taskId });
 }
 export function readDevelopmentProjectDiff(input: ProjectDiffInput): Promise<Outcome<DevDiff>> {
   return call('read_development_project_diff', { input });

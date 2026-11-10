@@ -6,19 +6,22 @@ import { useCommitMessageGenerator } from '../src/components/development/CommitM
 import { useDevelopment } from '../src/stores/developmentStore';
 import { useDevelopmentDrafts } from '../src/stores/developmentDrafts';
 import { developmentEditorMutationAffects } from '../src/stores/developmentEditor';
+import { chooseContext } from '../src/stores/developmentSelection';
 import type { ExecuteGitInput, GitReview } from '../src/stores/developmentDelivery';
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('../src/i18n', () => ({ useLocale: () => ({ locale: 'en-US', t: (key: string) => key }), t: (key: string) => key }));
 const project = { id: 'p', owner: 'alice', name: 'Project', path: '/workspace', directory_identity: 'dir', archived: false, created_at: 1, last_opened_at: null };
 const props = { projectId: 'p', taskId: 't', workspacePath: '/workspace', sessions: [], live: {} };
-const base = (): GitReview => ({ task_id: 't', kind: 'git', path: '/workspace', branch: 'main', head: 'a'.repeat(40), files: [{ path: 'src/file.ts', index: 'M', worktree: 'M' }], index: [], conflicts: [], staged_diff: 'staged changes', worktree_diff: 'working changes', review_token: 'review', initial_staged_paths: [], merge_heads: [], baseline_version: '', file_versions: {} });
+const base = (): GitReview => ({ task_id: 't', kind: 'git', path: '/workspace', branch: 'main', head: 'a'.repeat(40), files: [{ path: 'src/file.ts', index: 'M', worktree: 'M' }], index: [], conflicts: [], snapshot_token: 'snapshot', review_token: 'review', initial_staged_paths: [], merge_heads: [], baseline_version: '', file_versions: {} });
 let review: GitReview;
 let receipts: unknown[];
 beforeEach(() => {
   localStorage.clear(); useDevelopment.getState().reset(); useDevelopment.setState({ projects: [project] }); review = base(); receipts = [];
   invoke.mockImplementation(async (command: string, args: { input: ExecuteGitInput }) => {
-    if (command === 'read_development_git' || command === 'read_development_project_git') return review;
+    if (command === 'read_development_project_git') return { kind: review.kind, path: review.path, branch: review.branch, head: review.head, merge_heads: review.merge_heads, files: review.files, conflicts: review.conflicts, snapshot_token: review.snapshot_token };
+    if (command === 'read_development_git') return review;
+    if (command === 'read_development_staged_diff') return { snapshot_token: review.snapshot_token, diff: 'staged changes' };
     if (command === 'read_development_git_details') return { branches: ['main', 'topic'], remotes: ['origin'], remote_branches: { origin: ['main', 'topic'] }, remote_push_targets: { origin: ['https://example.test/push.git'] }, remote_fetch_targets: { origin: ['https://example.test/fetch.git'] }, upstream: 'origin/main', ahead: 1, behind: 0, files: [{ path: 'src/file.ts', index_added: 2, index_deleted: 1, worktree_added: 3, worktree_deleted: 0 }], history: [], history_truncated: false };
     if (command === 'read_development_workspaces') return { workspaces: [], selected_workspace_id: null, operation: null, operations: receipts };
     if (command === 'execute_development_git') { const receipt = { id: args.input.id, kind: `git_${args.input.action.kind}`, status: 'succeeded', project_id: 'p', task_id: 't', workspace_id: null, request_fingerprint: '', details: {} }; receipts = [receipt]; return receipt; }
@@ -44,7 +47,7 @@ it('opens diffs, refreshes, and browses remote choices without sending, staging,
 });
 it('rejects stale stage actions after reloading the Git review', async () => {
   render(<GitPanel {...props} />); await act(async () => {});
-  review = { ...review, branch: 'topic', review_token: 'changed' };
+  review = { ...review, branch: 'topic', snapshot_token: 'changed-snapshot', review_token: 'changed' };
   fireEvent.click(screen.getByRole('button', { name: 'gitPanel.stageAll' })); await act(async () => {});
   expect(mutations()).toEqual([]); expect(screen.getByRole('alert')).toBeTruthy();
 });
@@ -64,11 +67,13 @@ it('protects edits made during generation and cancels the actual request', async
   const generate = vi.fn((_diff: string, _signal: AbortSignal) => pending.promise);
   render(<GitPanel {...props} taskId={null} onGenerateMessage={generate} />); await act(async () => {});
   fireEvent.click(screen.getByRole('button', { name: 'gitPanel.generate' }));
+  await act(async () => {});
   fireEvent.change(screen.getByLabelText('delivery.commitMessage'), { target: { value: 'My own message' } });
   await act(async () => { pending.resolve('Generated message'); });
   expect((screen.getByLabelText('delivery.commitMessage') as HTMLTextAreaElement).value).toBe('My own message');
   const cancelled = Promise.withResolvers<string | null>(); generate.mockImplementation(() => cancelled.promise);
   fireEvent.click(screen.getByRole('button', { name: 'gitPanel.generate' }));
+  await act(async () => {});
   fireEvent.click(screen.getByRole('button', { name: 'gitPanel.cancelGeneration' }));
   expect(generate.mock.calls[1][1].aborted).toBe(true);
   await act(async () => { cancelled.resolve('Cancelled message'); });
@@ -139,9 +144,9 @@ it('opens a path-history commit in the adjacent inspector and closes the history
   expect(onSelectCommit.mock.calls[0][0]).toBe(oid); expect(onSelectCommit.mock.calls[0][2]).toBe('/workspace'); expect(screen.queryByRole('dialog', { name: 'gitPanel.pathHistory' })).toBeNull(); expect(mutations()).toEqual([]);
 });
 
-it('rejects a changed raw review even when redacted diffs and file statuses are identical', async () => {
+it('rejects a changed raw snapshot even when file statuses and visible content are identical', async () => {
   render(<GitPanel {...props} />); await act(async () => {});
-  review = { ...review, review_token: 'different-raw-bytes', file_versions: { 'src/file.ts': 'changed-hash' } };
+  review = { ...review, snapshot_token: 'different-raw-bytes', review_token: 'different-authority', file_versions: { 'src/file.ts': 'changed-hash' } };
   fireEvent.click(screen.getByRole('button', { name: 'gitPanel.stageAll' })); await act(async () => {});
   expect(mutations()).toEqual([]);
   expect(screen.getByRole('alert')).toBeTruthy();
@@ -162,4 +167,99 @@ it('invalidates an old commit disclosure when project props change during provid
   expect(completed).toHaveBeenCalledWith(null);
   expect(screen.queryByRole('dialog', { name: 'commitDraft.title' })).toBeNull();
   expect(invoke.mock.calls.some(([command]) => command === 'generate_development_commit_message')).toBe(false);
+});
+
+it('browses task Git through its scoped observation without strict reviews or staged previews', async () => {
+  render(<GitPanel {...props} />); await act(async () => {});
+  expect(invoke).toHaveBeenCalledWith('read_development_project_git', { projectId: 'p', taskId: 't' });
+  expect(invoke.mock.calls.some(([command]) => command === 'read_development_git' || command === 'read_development_staged_diff')).toBe(false);
+  expect(screen.getAllByRole('button', { name: 'file.ts' })).toHaveLength(2);
+});
+
+it('uses a newly fetched strict token only after matching the displayed snapshot', async () => {
+  render(<GitPanel {...props} />); await act(async () => {});
+  review = { ...review, review_token: 'new-strict-authority' };
+  fireEvent.click(screen.getByRole('button', { name: 'gitPanel.stageAll' })); await act(async () => {});
+  expect(mutations()).toHaveLength(1);
+  expect(mutations()[0][1].input.review_token).toBe('new-strict-authority');
+});
+
+it('keeps the visible list and commit draft when a strict write review is incomplete', async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: unknown) => { if (command === 'read_development_git') throw 'git_review_incomplete'; return original(command, args); });
+  render(<GitPanel {...props} />); await act(async () => {});
+  fireEvent.change(screen.getByLabelText('delivery.commitMessage'), { target: { value: 'Unsent local draft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'gitPanel.stageAll' })); await act(async () => {});
+  expect(screen.getByRole('alert').textContent).toBe('dev.error.git_review_incomplete');
+  expect(screen.getAllByRole('button', { name: 'file.ts' })).toHaveLength(2);
+  expect(screen.getByLabelText('delivery.commitMessage')).toHaveProperty('value', 'Unsent local draft');
+  expect(mutations()).toEqual([]);
+});
+
+it('loads only the staged preview on an explicit generation click', async () => {
+  const generate = vi.fn().mockResolvedValue('Generated from staged changes');
+  render(<GitPanel {...props} onGenerateMessage={generate} />); await act(async () => {});
+  expect(invoke.mock.calls.some(([command]) => command === 'read_development_staged_diff')).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: 'gitPanel.generate' })); await act(async () => {});
+  expect(invoke).toHaveBeenCalledWith('read_development_staged_diff', { input: { project_id: 'p', task_id: 't' } });
+  expect(generate).toHaveBeenCalledExactlyOnceWith('staged changes', expect.any(AbortSignal));
+  expect(screen.getByLabelText('delivery.commitMessage')).toHaveProperty('value', 'Generated from staged changes');
+  expect(invoke.mock.calls.some(([command]) => command === 'read_development_git')).toBe(false);
+});
+
+it.each(['git_output_limit', 'git_review_incomplete'])('keeps %s local to generation without clearing the draft or list', async failure => {
+  const original = invoke.getMockImplementation()!, generate = vi.fn();
+  invoke.mockImplementation(async (command: string, args: unknown) => { if (command === 'read_development_staged_diff') throw failure; return original(command, args); });
+  render(<GitPanel {...props} onGenerateMessage={generate} />); await act(async () => {});
+  fireEvent.change(screen.getByLabelText('delivery.commitMessage'), { target: { value: 'Keep this unsent draft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'gitPanel.generate' })); await act(async () => {});
+  expect(screen.getByRole('alert').textContent).toBe(`dev.error.${failure}`);
+  expect(screen.getByLabelText('delivery.commitMessage')).toHaveProperty('value', 'Keep this unsent draft');
+  expect(screen.getAllByRole('button', { name: 'file.ts' })).toHaveLength(2);
+  expect(screen.getByRole('button', { name: 'gitPanel.stageAll' })).not.toHaveProperty('disabled', true);
+  expect(generate).not.toHaveBeenCalled(); expect(mutations()).toEqual([]);
+});
+
+it('refuses to send a staged preview from a different snapshot', async () => {
+  const original = invoke.getMockImplementation()!, generate = vi.fn();
+  invoke.mockImplementation(async (command: string, args: unknown) => command === 'read_development_staged_diff' ? { snapshot_token: 'changed-raw-index', diff: 'new staged bytes' } : original(command, args));
+  render(<GitPanel {...props} onGenerateMessage={generate} />); await act(async () => {});
+  fireEvent.click(screen.getByRole('button', { name: 'gitPanel.generate' })); await act(async () => {});
+  expect(screen.getByRole('alert').textContent).toBe('dev.error.git_review_stale');
+  expect(generate).not.toHaveBeenCalled(); expect(mutations()).toEqual([]);
+});
+
+it.each(['cancel', 'context', 'workspace'])('never calls the generator after %s invalidates a pending preview', async invalidation => {
+  const original = invoke.getMockImplementation()!, generate = vi.fn(), preview = Promise.withResolvers<unknown>();
+  invoke.mockImplementation(async (command: string, args: unknown) => command === 'read_development_staged_diff' ? preview.promise : command === 'select_development_context' ? null : original(command, args));
+  const view = render(<GitPanel {...props} onGenerateMessage={generate} />); await act(async () => {});
+  fireEvent.change(screen.getByLabelText('delivery.commitMessage'), { target: { value: 'Draft survives a late preview' } });
+  fireEvent.click(screen.getByRole('button', { name: 'gitPanel.generate' }));
+  if (invalidation === 'cancel') fireEvent.click(screen.getByRole('button', { name: 'gitPanel.cancelGeneration' }));
+  else if (invalidation === 'context') await act(async () => { await chooseContext({ project_id: 'other-project', task_id: null, session_id: null }); });
+  else { view.rerender(<GitPanel {...props} workspacePath="/different-workspace" onGenerateMessage={generate} />); await act(async () => {}); }
+  await act(async () => { preview.resolve({ snapshot_token: 'snapshot', diff: 'late staged patch' }); });
+  expect(generate).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.some(([command]) => command === 'generate_development_commit_message')).toBe(false);
+  if (invalidation !== 'workspace') expect(screen.getByLabelText('delivery.commitMessage')).toHaveProperty('value', 'Draft survives a late preview');
+});
+
+it('preserves merge-only commit enablement without inventing a staged patch', async () => {
+  review = { ...review, files: [], merge_heads: ['merge-head'] };
+  render(<GitPanel {...props} onGenerateMessage={vi.fn()} />); await act(async () => {});
+  fireEvent.change(screen.getByLabelText('delivery.commitMessage'), { target: { value: 'Finish merge' } });
+  expect(screen.getByRole('button', { name: 'delivery.commit' })).not.toHaveProperty('disabled', true);
+  expect(screen.getByRole('button', { name: 'gitPanel.generate' })).toHaveProperty('disabled', true);
+  expect(invoke.mock.calls.some(([command]) => command === 'read_development_staged_diff')).toBe(false);
+});
+
+it('keeps provider failures local after a successful staged preview', async () => {
+  const generate = vi.fn().mockRejectedValue(Error('Provider generation failed'));
+  render(<GitPanel {...props} onGenerateMessage={generate} />); await act(async () => {});
+  fireEvent.change(screen.getByLabelText('delivery.commitMessage'), { target: { value: 'Existing commit message' } });
+  fireEvent.click(screen.getByRole('button', { name: 'gitPanel.generate' })); await act(async () => {});
+  expect(screen.getByRole('alert').textContent).toBe('Provider generation failed');
+  expect(screen.getByLabelText('delivery.commitMessage')).toHaveProperty('value', 'Existing commit message');
+  expect(screen.getAllByRole('button', { name: 'file.ts' })).toHaveLength(2);
+  expect(mutations()).toEqual([]);
 });

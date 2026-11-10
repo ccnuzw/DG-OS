@@ -80,7 +80,7 @@ async fn project_git_reads_preserve_head_index_worktree_and_create_no_tasks_or_t
     std::fs::write(code.join("literal[1].txt"), "worktree\n").unwrap();
     let (manager, project) = fixture.manager_project().await;
     let before_head = git(&code, &["rev-parse", "HEAD"]); let before_index = std::fs::read(code.join(".git/index")).unwrap();
-    let overview = manager.read_development_project_git("alice", &project).await.unwrap();
+    let overview = manager.read_development_project_git("alice", &project, None).await.unwrap();
     assert_eq!(overview.branch.as_deref(), Some("main")); assert!(overview.files.iter().any(|file| file.path == "literal[1].txt"));
     let serialized = serde_json::to_value(&overview).unwrap(); assert!(serialized.get("review_token").is_none() && serialized.get("task_id").is_none());
     for (source, before, after) in [(ProjectDiffSource::Index, "base\n", "staged\n"), (ProjectDiffSource::Worktree, "staged\n", "worktree\n")] {
@@ -91,7 +91,7 @@ async fn project_git_reads_preserve_head_index_worktree_and_create_no_tasks_or_t
     assert_eq!(first.entries[0].subject, "second");
     let next = manager.read_development_project_git_history("alice", ProjectGitHistoryInput { project_id: project.clone(), start_oid: Some(first.start_oid), cursor: first.next_cursor, limit: 1 }).await.unwrap();
     assert_eq!(next.entries[0].subject, "base");
-    assert!(manager.read_development_project_git("bob", &project).await.is_err());
+    assert!(manager.read_development_project_git("bob", &project, None).await.is_err());
     assert_eq!(git(&code, &["rev-parse", "HEAD"]), before_head); assert_eq!(std::fs::read(code.join(".git/index")).unwrap(), before_index);
     assert_eq!(std::fs::read_to_string(code.join("literal[1].txt")).unwrap(), "worktree\n");
     assert!(manager.inner.repository.workspace("alice").await.unwrap().tasks.is_empty()); assert!(manager.shutdown().await);
@@ -113,9 +113,9 @@ async fn project_git_overview_and_history_remain_available_with_blocked_untracke
     }
     let (manager, project) = fixture.manager_project().await;
     let before_head = git(&code, &["rev-parse", "HEAD"]); let before_index = std::fs::read(code.join(".git/index")).unwrap();
-    let overview = manager.read_development_project_git("alice", &project).await.unwrap();
+    let overview = manager.read_development_project_git("alice", &project, None).await.unwrap();
     assert_eq!(overview.kind, "git"); assert_eq!(overview.branch.as_deref(), Some("main")); assert_eq!(overview.head.as_deref(), Some(before_head.as_str()));
-    assert!(overview.staged_diff.contains("+staged")); assert!(overview.worktree_diff.contains("+worktree"));
+    assert!(!overview.snapshot_token.is_empty());
     let mut blocked = vec![".env", "binary.dat", "large.txt"];
     #[cfg(unix)] blocked.push("link.txt");
     for path in &blocked {
@@ -124,7 +124,7 @@ async fn project_git_overview_and_history_remain_available_with_blocked_untracke
         assert!(manager.read_development_project_diff("alice", ProjectDiffInput { project_id: project.clone(), path: (*path).into(), source: ProjectDiffSource::Worktree }).await.is_err());
     }
     let serialized = serde_json::to_value(&overview).unwrap();
-    for field in ["task_id", "review_token", "file_versions", "baseline_version"] { assert!(serialized.get(field).is_none()); }
+    for field in ["task_id", "review_token", "file_versions", "baseline_version", "staged_diff", "worktree_diff"] { assert!(serialized.get(field).is_none()); }
     let serialized = serialized.to_string(); assert!(!serialized.contains("must-not-preview"));
     let history = manager.read_development_project_git_history("alice", ProjectGitHistoryInput { project_id: project, start_oid: None, cursor: None, limit: 10 }).await.unwrap();
     assert_eq!(history.entries.len(), 1); assert_eq!(history.entries[0].oid, before_head); assert_eq!(history.entries[0].subject, "base");
@@ -173,9 +173,9 @@ async fn task_git_review_still_requires_complete_versions_for_every_changed_file
 #[tokio::test]
 async fn project_directory_and_unborn_git_have_truthful_empty_views() {
     let fixture = Fixture::new(); let (manager, project) = fixture.manager_project().await;
-    assert_eq!(manager.read_development_project_git("alice", &project).await.unwrap().kind, "directory");
+    assert_eq!(manager.read_development_project_git("alice", &project, None).await.unwrap().kind, "directory");
     git(&fixture.code(), &["init", "-b", "main"]);
-    let review = manager.read_development_project_git("alice", &project).await.unwrap(); assert!(review.head.is_none());
+    let review = manager.read_development_project_git("alice", &project, None).await.unwrap(); assert!(review.head.is_none());
     let page = manager.read_development_project_git_history("alice", ProjectGitHistoryInput { project_id: project, start_oid: None, cursor: None, limit: 10 }).await.unwrap();
     assert!(page.entries.is_empty()); assert!(manager.shutdown().await);
 }
@@ -193,7 +193,13 @@ async fn project_git_ignores_task_workspace_bindings() {
     manager.inner.repository.insert_workspace(&workspace).await.unwrap();
     manager.inner.repository.bind_task_workspace("alice", &task.id, &workspace.id).await.unwrap();
     assert_eq!(manager.read_development_git("alice", &task.id).await.unwrap().branch.as_deref(), Some("isolated"));
-    assert_eq!(manager.read_development_project_git("alice", &project).await.unwrap().branch.as_deref(), Some("original"));
+    assert_eq!(manager.read_development_project_git("alice", &project, None).await.unwrap().branch.as_deref(), Some("original"));
+    let scoped = manager.read_development_project_git("alice", &project, Some(&task.id)).await.unwrap();
+    assert_eq!(scoped.branch.as_deref(), Some("isolated"));
+    assert_eq!(scoped.path, workspace.path);
+    assert_eq!(scoped.snapshot_token, manager.read_development_git("alice", &task.id).await.unwrap().snapshot_token);
+    assert_eq!(manager.read_development_project_git("alice", "different-project", Some(&task.id)).await.unwrap_err(), "task_not_found");
+    assert!(manager.read_development_project_git("bob", &project, Some(&task.id)).await.is_err());
     assert!(manager.shutdown().await);
 }
 

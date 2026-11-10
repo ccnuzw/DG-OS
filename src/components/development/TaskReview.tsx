@@ -4,7 +4,8 @@ import { useLocale } from '../../i18n';
 import { useDevelopment, type DevelopmentTask, type Outcome, type ProjectOperation } from '../../stores/developmentStore';
 import { contextGeneration, useContextSelection } from '../../stores/developmentSelection';
 import { listDevelopmentRuns, readDevelopmentReview, type DevReview, type DevRun } from '../../stores/developmentReview';
-import { deliveryRequests, readDevelopmentGit, readDevelopmentWorkspaces, type GitReview, type WorkspaceView } from '../../stores/developmentDelivery';
+import { deliveryRequests, readDevelopmentWorkspaces, type WorkspaceView } from '../../stores/developmentDelivery';
+import { readDevelopmentProjectGit, type ProjectGitOverview } from '../../stores/developmentExplorer';
 import { processActive, runtimeCall, useDevelopmentRuntime, type DevelopmentProcess, type RuntimeOperation } from '../../stores/developmentRuntime';
 import { developmentDraftKey, useDevelopmentDrafts, useScopedDevelopmentDraft } from '../../stores/developmentDrafts';
 import { errorText } from './shared';
@@ -21,7 +22,7 @@ interface Snapshot {
   task: DevelopmentTask;
   review: DevReview;
   runs: DevRun[];
-  git: GitReview;
+  git: ProjectGitOverview;
   workspaces: WorkspaceView;
   processes: DevelopmentProcess[];
   projectOperations: ProjectOperation[];
@@ -49,14 +50,14 @@ function latestVerification(snapshot: Snapshot): DevelopmentProcess | undefined 
 }
 function evidenceKey(snapshot: Snapshot): string {
   return JSON.stringify({ task: snapshot.task, fingerprint: snapshot.review.fingerprint, truncated: snapshot.review.truncated,
-    baseline: snapshot.review.captured_at, late: snapshot.review.baseline_late, git: snapshot.git.review_token,
+    baseline: snapshot.review.captured_at, late: snapshot.review.baseline_late, git: snapshot.git.snapshot_token,
     workspace: snapshot.workspaces.selected_workspace_id,
     processes: snapshot.processes.map(process => [process.id, process.status, process.verification_status, process.start_fingerprint, process.fingerprint, process.verification_complete, process.mutation_observed, process.exit_code, process.reason, process.finished_at]),
     runs: snapshot.runs.map(run => [run.id, run.status, run.fingerprint]) });
 }
 async function readSnapshot(projectId: string, taskId: string): Promise<Outcome<Snapshot>> {
   const [review, runs, git, workspaces, processes] = await Promise.all([
-    readDevelopmentReview(taskId), listDevelopmentRuns(taskId), readDevelopmentGit(taskId),
+    readDevelopmentReview(taskId), listDevelopmentRuns(taskId), readDevelopmentProjectGit(projectId, taskId),
     readDevelopmentWorkspaces({ project_id: projectId, task_id: taskId }),
     runtimeCall<DevelopmentProcess[]>('list_development_processes', { taskId }),
   ]);
@@ -69,7 +70,7 @@ async function readSnapshot(projectId: string, taskId: string): Promise<Outcome<
   if (!processes.ok) return processes;
   const task = metadata.value.tasks.find(item => item.id === taskId && item.project_id === projectId);
   if (!task) return { ok: false, code: 'task_not_found' };
-  if (review.value.task_id !== taskId || git.value.task_id !== taskId || runs.value.some(run => run.task_id !== taskId) || processes.value.some(process => process.task_id !== taskId || process.project_id !== projectId)) return { ok: false, code: 'unknown' };
+  if (review.value.task_id !== taskId || runs.value.some(run => run.task_id !== taskId) || processes.value.some(process => process.task_id !== taskId || process.project_id !== projectId)) return { ok: false, code: 'unknown' };
   return { ok: true, value: { task, review: review.value, runs: runs.value, git: git.value, workspaces: workspaces.value, processes: processes.value, projectOperations: metadata.value.operations.filter(operation => operation.project_id === projectId) } };
 }
 function unresolved(snapshot: Snapshot, operations: RuntimeOperation[], epoch: number) {

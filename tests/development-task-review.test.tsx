@@ -28,7 +28,7 @@ function process(overrides: Partial<DevelopmentProcess> = {}): DevelopmentProces
 beforeEach(() => {
   task = { id: 'task', owner: project.owner, project_id: project.id, goal: 'Review task', requirements: 'Keep original requirements', status: 'review', created_at: 1 };
   review = { task_id: task.id, captured_at: 2, baseline_late: false, truncated: false, fingerprint: 'current', changes: [{ path: 'code.ts', kind: 'modified', pre_existing: false, origin: 'uncertain', previewable: true }], runs_stale: false };
-  git = { task_id: task.id, kind: 'git', path: project.path, branch: 'main', head: 'head', merge_heads: [], files: [], index: [], conflicts: [], staged_diff: '', worktree_diff: '', review_token: 'git-current', baseline_version: 'baseline', initial_staged_paths: [], file_versions: {} };
+  git = { task_id: task.id, kind: 'git', path: project.path, branch: 'main', head: 'head', merge_heads: [], files: [], index: [], conflicts: [], snapshot_token: 'git-current', review_token: 'git-current', baseline_version: 'baseline', initial_staged_paths: [], file_versions: {} };
   workspaces = { workspaces: [], selected_workspace_id: null, operation: null, operations: [] };
   processes = [];
   failSave = false;
@@ -37,7 +37,7 @@ beforeEach(() => {
     if (command === 'read_development_workspace') return { projects: [project], tasks: [task], sessions: [], operations: [], selection: { project_id: project.id, task_id: task.id, session_id: null } };
     if (command === 'read_development_review') return structuredClone(review);
     if (command === 'list_development_runs') return [];
-    if (command === 'read_development_git') return structuredClone(git);
+    if (command === 'read_development_project_git') return structuredClone(git);
     if (command === 'read_development_workspaces') return structuredClone(workspaces);
     if (command === 'list_development_processes') return structuredClone(processes);
     if (command === 'save_development_task') { if (failSave) throw 'storage_failed'; task = { ...task, ...args?.input }; return task; }

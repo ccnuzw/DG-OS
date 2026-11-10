@@ -6,6 +6,8 @@ mod pull;
 mod details_restore;
 #[path = "commit_tests.rs"]
 mod commit_details;
+#[path = "loading_tests.rs"]
+mod loading;
 
 struct Fixture { root: PathBuf, path: PathBuf }
 impl Fixture {
@@ -128,6 +130,9 @@ async fn restart_reconciliation_reads_index_without_replaying_mutation() {
     let project = manager.task_project("alice", &task).await.unwrap();
     let mut details = json!({"request":input,"before":review,"initial_index":{"entries":review.index,"staged_paths":[]}});
     manager.prepare_git_action("alice", &project, &input, &review, &mut details, &CancellationToken::new()).await.unwrap();
+    // Pre-cutover receipts contain patch fields, but no read-only snapshot token.
+    details["before"].as_object_mut().unwrap().remove("snapshot_token");
+    details["before"]["staged_diff"] = json!(""); details["before"]["worktree_diff"] = json!("legacy patch");
     manager.inner.repository.start_git_operation("alice", &GitOperationIntent {
         id: &input.id,
         project_id: &project.id,
@@ -238,13 +243,13 @@ async fn empty_index_finishes_pending_merge_with_exact_parents_but_rejects_ordin
     let main = git(&fixture.path, &["rev-parse", "HEAD"]);
     let (manager, task) = fixture.manager_task().await;
     let review = manager.read_development_git("alice", &task).await.unwrap();
-    assert!(review.staged_diff.is_empty()); assert!(review.merge_heads.is_empty());
+    assert!(!review.files.iter().any(|file| file.index != " " && file.index != "?")); assert!(review.merge_heads.is_empty());
     let denied = request(&task, &review, GitAction::Commit { message: "empty".into(), confirm_full_index: true, confirm_preexisting_staged: true });
     assert_eq!(manager.execute_development_git("alice", denied, CancellationToken::new()).await.unwrap_err(), "git_empty_commit");
     assert_eq!(git(&fixture.path, &["rev-parse", "HEAD"]), main);
     assert_eq!(execute(&manager, &task, GitAction::Merge { branch: "topic".into() }).await["status"], "succeeded");
     let review = manager.read_development_git("alice", &task).await.unwrap();
-    assert!(review.staged_diff.is_empty()); assert!(review.conflicts.is_empty()); assert_eq!(review.merge_heads, vec![topic.clone()]);
+    assert!(!review.files.iter().any(|file| file.index != " " && file.index != "?")); assert!(review.conflicts.is_empty()); assert_eq!(review.merge_heads, vec![topic.clone()]);
     let denied = request(&task, &review, GitAction::Commit { message: "finish merge".into(), confirm_full_index: false, confirm_preexisting_staged: true });
     assert_eq!(manager.execute_development_git("alice", denied, CancellationToken::new()).await.unwrap_err(), "git_full_index_confirmation_required");
     let input = request(&task, &review, GitAction::Commit { message: "finish merge".into(), confirm_full_index: true, confirm_preexisting_staged: false });

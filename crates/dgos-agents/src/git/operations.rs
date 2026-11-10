@@ -45,7 +45,7 @@ impl AgentManager {
                 if details["initial_index"]["staged_paths"].as_array().is_some_and(|a| !a.is_empty()) && !confirm_preexisting_staged { return Err("git_preexisting_staged_confirmation_required".into()); }
                 if message.trim().is_empty() || message.len() > 16 * 1024 || message.chars().any(|c| c == '\0' || (c.is_control() && c != '\n' && c != '\t')) { return Err("invalid_commit_message".into()); }
                 if !before.conflicts.is_empty() { return Err("git_unmerged".into()); }
-                if before.staged_diff.is_empty() && before.merge_heads.is_empty() { return Err("git_empty_commit".into()); }
+                if !before.files.iter().any(|file| file.index != " " && file.index != "?") && before.merge_heads.is_empty() { return Err("git_empty_commit".into()); }
                 details["expected_index"] = json!(sorted(before.index.clone()));
             },
             GitAction::Push { remote, trust_directory, trust_network } => {
