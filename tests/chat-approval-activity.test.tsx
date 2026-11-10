@@ -1,3 +1,4 @@
+import { chatBudget } from './helpers/chatBudget';
 import { Profiler } from 'react';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { invoke } from '@tauri-apps/api/core';
@@ -40,6 +41,7 @@ beforeEach(async () => {
     switch (command) {
       case 'list_chat_sessions': return ok({ items: sessions, next_cursor: null });
       case 'list_chat_messages': return ok({ items: [], next_before_seq: null });
+      case 'inspect_chat_context': return ok(chatBudget());
       case 'send_chat_message': {
         const { input } = args as { input: { client_request_id: string } };
         return ok({ task_id: input.client_request_id, user_message_id: 'u1', assistant_message_id: 'a1', dropped_turns: 0, replayed: false });

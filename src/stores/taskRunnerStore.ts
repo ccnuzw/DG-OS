@@ -9,9 +9,9 @@ export interface TaskRecord {
   skills: { skill_id: string; version_id: string; content_hash: string }[];
   tools?: { server_id: string; tool_name: string; schema_hash: string }[];
 }
-export interface TaskOutcome { record: TaskRecord; content?: string; audit_warning?: boolean }
+export interface TaskOutcome { record: TaskRecord; content?: string; audit_warning?: boolean; dispatched?: boolean; result_unknown?: boolean; usage_unknown?: boolean }
 export interface ToolProposal { id: string; server_id: string; server_name: string; tool_name: string; schema_hash: string; arguments: unknown; expires_at: number }
-export interface ToolTaskUpdate extends TaskOutcome { phase: string; proposal?: ToolProposal }
+export interface ToolTaskUpdate extends TaskOutcome { phase: string; proposal?: ToolProposal; dispatched: boolean; result_unknown: boolean; usage_unknown: boolean }
 export interface TaskInput { provider_id: string; model_id: string; prompt: string; skill_ids: string[]; generation: GenerationParameters; allow_without_skill: boolean }
 export interface TaskTool { server_id: string; tool_name: string; schema_hash: string }
 export interface TaskRunnerState {
@@ -41,7 +41,7 @@ export const useTaskRunner = create<TaskRunnerState>((set, get) => {
     if (terminal) terminalSeen = true;
     set({ outcome, toolTask: 'phase' in outcome ? outcome as ToolTaskUpdate : null, taskId: terminal ? null : outcome.record.task.id,
       running: terminal ? false : get().running, resultUnknown: false,
-      error: outcome.record.task.status !== 'running' && outcome.record.task.status !== 'succeeded' ? `${t('workbench.taskFailedPrefix', { status: outcome.record.task.status, code: outcome.record.task.error_code || 'unknown_error' })} ${t(['mcp_1003005', 'mcp_1003006', 'mcp_1003016'].includes(outcome.record.task.error_code ?? '') ? 'workbench.toolUnknownResult' : outcome.record.task.error_code === 'mcp_audit_warning' ? 'workbench.toolAuditIncomplete' : 'workbench.noSkillRetry')} ${t('workbench.externalCancellationWarning')}` : null });
+      error: outcome.record.task.status !== 'running' && outcome.record.task.status !== 'succeeded' ? `${t('workbench.taskFailedPrefix', { status: outcome.record.task.status, code: outcome.record.task.error_code || 'unknown_error' })} ${t(outcome.result_unknown || ['mcp_1003005', 'mcp_1003006', 'mcp_1003016'].includes(outcome.record.task.error_code ?? '') ? 'workbench.toolUnknownResult' : outcome.audit_warning || outcome.record.task.error_code === 'mcp_audit_warning' ? 'workbench.toolAuditIncomplete' : 'workbench.noSkillRetry')} ${t('workbench.externalCancellationWarning')}` : null });
   };
   return {
     epoch: 0, taskId: null, kind: null, running: false, cancelPending: false, resultUnknown: false, error: null, outcome: null, toolTask: null,

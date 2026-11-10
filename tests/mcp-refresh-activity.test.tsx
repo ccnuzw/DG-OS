@@ -267,7 +267,7 @@ it('does not start any presentation request until an initially inactive surface 
 
 it('keeps StrictMode replay ownership live so selected snapshots and resume refreshes still run', async () => {
   const controller = createWorkspaceController();
-  const tree = (active: boolean) => <StrictMode><SurfaceScope id="mcp" active={active} controller={controller}><McpManagement /></SurfaceScope></StrictMode>;
+  const tree = (active: boolean) => <StrictMode><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><SurfaceScope id="mcp" active={active} controller={controller}><McpManagement /></SurfaceScope></MemoryRouter></StrictMode>;
   const view = render(tree(true));
   await flush();
   expect(calls('list_mcp_servers')).toBe(1);

@@ -13,6 +13,10 @@ import Attachments from './Attachments';
 import VoiceCapture from './VoiceCapture';
 import './conversation.css';
 import { useSurfaceActive } from '../../workspace/SurfaceContext';
+import ContextPanel from './ContextPanel';
+import SkillAccess from './SkillAccess';
+import RunInspector from './RunInspector';
+import { useDevelopment } from '../../stores/developmentStore';
 
 const LINK = cn('text-accent-default underline', FOCUS_RING);
 
@@ -35,9 +39,11 @@ interface ToolPickerProps {
   disabled: boolean;
   onLoaded: (tools: ConnectedTool[]) => void;
   onChange: (keys: string[]) => void;
+  remember: boolean;
+  onRemember: (remember: boolean) => void;
 }
 
-function ToolPicker({ tools, selected, disabled, onLoaded, onChange }: ToolPickerProps) {
+function ToolPicker({ tools, selected, disabled, onLoaded, onChange, remember, onRemember }: ToolPickerProps) {
   usePageLocale();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -68,6 +74,8 @@ function ToolPicker({ tools, selected, disabled, onLoaded, onChange }: ToolPicke
           <Input label={t('chat.searchTools')} value={query} onChange={event => setQuery(event.target.value)} />
           <p className="m-0 text-xs text-ink-secondary">{t('chat.toolContext')}</p>
           <p className="m-0 text-xs text-ink-secondary">{t('chat.toolsHelp')}</p>
+          <Checkbox checked={remember} disabled={disabled} onChange={onRemember} label={t('chat.rememberTools')} />
+          <p className="m-0 text-xs text-ink-secondary">{t('chat.rememberToolsHelp')}</p>
           {loading ? <Loading label={t('chat.loadingTools')} /> : null}
           {failed ? <p className="m-0 text-xs text-ink-secondary">{t('chat.toolsFailed')}</p> : null}
           {!loading && !failed && tools?.length === 0 ? (
@@ -99,10 +107,19 @@ export default function Composer() {
   const generation = useChatStore(state => state.generation);
   const actionError = useChatStore(state => state.actionError);
   const actionCode = useChatStore(state => state.actionCode);
-  const lastSent = useChatStore(state => state.lastSent);
   const draft = useChatStore(state => sessionId ? state.sessionDrafts[sessionId] ?? '' : '');
   const selectedTools = useChatStore(state => sessionId ? state.sessionTools[sessionId] ?? [] : []);
+  const rememberTools = useChatStore(state => sessionId ? state.sessionRememberTools[sessionId] ?? false : false);
+  const setRememberTools = useChatStore(state => state.setRememberTools);
+  const unknown = useChatStore(state => !!sessionId && (state.sessionUnknown[sessionId] || state.messages.some(message => message.result_unknown || !!message.audit_warning)));
+  const accountBusy = useChatStore(state => state.preparingSessionId !== null || Object.keys(state.generations).length > 0);
+  const [preparing, setPreparing] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const preparingRef = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const assets = useChatStore(state => sessionId ? state.sessionAssets[sessionId] : undefined);
+  const hasContext = useChatStore(state => !!sessionId && !!state.sessionFoundation[sessionId]?.context_refs.length);
   const [assetBusy, setAssetBusy] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const setDraft = useChatStore(state => state.setDraft);
@@ -116,20 +133,14 @@ export default function Composer() {
   const composing = useRef(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const form = useRef<HTMLFormElement>(null);
-  const seenSent = useRef(lastSent.seq);
   const wasGenerating = useRef(false);
 
   const generating = generation !== null;
   const hasTarget = !!session?.provider_id && !!session?.model_id;
   const bytes = utf8Bytes(draft);
   const tooLong = bytes > MAX_MESSAGE_BYTES;
-  const canSend = !!session && !stale && !generating && !assetBusy && !voiceBusy && hasTarget && (draft.trim().length > 0 || !!assets?.length) && !tooLong;
+  const canSend = !!session && !stale && !accountBusy && !unknown && !preparing && !assetBusy && !voiceBusy && hasTarget && (draft.trim().length > 0 || !!assets?.length || hasContext) && !tooLong;
 
-  useEffect(() => {
-    if (lastSent.seq === seenSent.current) return;
-    seenSent.current = lastSent.seq;
-    if (lastSent.sessionId) { setDraft(lastSent.sessionId, ''); setSessionTools(lastSent.sessionId, []); }
-  }, [lastSent, sessionId, setDraft, setSessionTools]);
 
   useEffect(() => {
     const focused = document.activeElement;
@@ -146,12 +157,22 @@ export default function Composer() {
 
   useEffect(() => { setTools(null); setPickerKey(key => key + 1); setAssetBusy(false); setVoiceBusy(false); }, [sessionId]);
 
-  const submit = () => {
-    if (!canSend) return;
-    const chosen = selectedTools
-      .map(key => tools?.find(tool => toolKey(tool) === key))
-      .filter((tool): tool is ConnectedTool => !!tool);
-    void send(draft, chosen.map(tool => ({ server_id: tool.server_id, tool_name: tool.tool_name, schema_hash: tool.schema_hash })));
+  const submit = async () => {
+    if (!canSend || preparingRef.current || !sessionId) return;
+    const owner = sessionId;
+    const account = useDevelopment.getState().epoch;
+    preparingRef.current = true;
+    setPreparing(true);
+    setSubmitError(null);
+    try {
+      const available = selectedTools.length ? await fetchConnectedTools() : [];
+      if (!mounted.current || useChatStore.getState().activeSessionId !== owner || useDevelopment.getState().epoch !== account) return;
+      const chosen = selectedTools.map(key => available.find(tool => toolKey(tool) === key));
+      if (chosen.some(tool => !tool)) { setSubmitError(t('chat.toolsChanged')); return; }
+      setTools(available);
+      await send(draft, chosen.filter((tool): tool is ConnectedTool => !!tool).map(tool => ({ server_id: tool.server_id, tool_name: tool.tool_name, schema_hash: tool.schema_hash })));
+    } catch { if (mounted.current && useChatStore.getState().activeSessionId === owner && useDevelopment.getState().epoch === account) setSubmitError(t('chat.toolsFailed')); }
+    finally { preparingRef.current = false; if (mounted.current) setPreparing(false); }
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -167,7 +188,7 @@ export default function Composer() {
       return;
     }
     event.preventDefault();
-    submit();
+    void submit();
   };
 
   if (!session) return null;
@@ -175,10 +196,12 @@ export default function Composer() {
   return (
     <Attachments sessionId={session.id} disabled={stale || generating || voiceBusy} onBusy={setAssetBusy}>{media =>
     <TargetBar session={session} skillRequest={skillRequest}>{target =>
-    <form ref={form} aria-label={t('chat.sendForm')} className="chat-composer" onSubmit={event => { event.preventDefault(); submit(); }}>
+    <form ref={form} aria-label={t('chat.sendForm')} className="chat-composer" onSubmit={event => { event.preventDefault(); void submit(); }}>
       <div className="chat-composer-body" onFocusCapture={revealComposerControl}>
       <div className="chat-composer-context">{target.context}{media.attachments}</div>
       {actionError ? <ChatNotice tone="error">{actionError}</ChatNotice> : null}
+      {submitError ? <ChatNotice tone="error">{submitError}</ChatNotice> : null}
+      {unknown ? <ChatNotice tone="warning">{t('chat.continueBlocked')}</ChatNotice> : null}
       {actionCode === 1006013 && !generating ? (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-ink-secondary">{t('chat.skillUnavailable')}</span>
@@ -214,16 +237,20 @@ export default function Composer() {
       <div className="chat-composer-footer">
         <div className="chat-composer-toolbar" role="group" aria-label={t('chat.composerTools')}>
           {media.attachmentTrigger}{target.settings}{media.contextTrigger}
+          <ContextPanel session={session} content={draft} toolKeys={selectedTools} disabled={stale || accountBusy || preparing} />
+          <SkillAccess session={session} content={draft} disabled={stale || accountBusy || preparing} />
+          <RunInspector sessionId={session.id} toolKeys={selectedTools} disabled={stale || accountBusy || preparing} />
           {sessionId ? <VoiceCapture key={`voice:${sessionId}`} sessionId={sessionId} disabled={stale || generating || assetBusy} onBusy={setVoiceBusy} /> : null}
           {target.skills}
         </div>
         <div className="chat-composer-primary" role="group" aria-label={t('chat.composerModel')}>
           <ToolPicker key={pickerKey} tools={tools} selected={selectedTools} disabled={generating || !session || stale}
+            remember={rememberTools} onRemember={remember => { if (sessionId) setRememberTools(sessionId, remember); }}
             onLoaded={setTools} onChange={keys => { if (sessionId) setSessionTools(sessionId, keys); }} />
           {target.model}{target.effort}
           {generating
-            ? <Button variant="danger" size="sm" iconOnly className="chat-composer-send" aria-label={t('chat.stop')} title={t('chat.stop')} loading={generation?.stopping} onClick={() => void stop()}><Square className="size-4" aria-hidden="true" /></Button>
-            : <Button type="submit" size="sm" iconOnly className="chat-composer-send" aria-label={t('chat.send')} title={!hasTarget ? t('chat.selectProviderModel') : t('chat.send')} disabled={!canSend}><ArrowUp className="size-4" aria-hidden="true" /></Button>}
+            ? <Button key="stop" type="button" variant="danger" size="sm" iconOnly className="chat-composer-send" aria-label={t('chat.stop')} title={t('chat.stop')} loading={generation?.stopping} onClick={event => { event.preventDefault(); event.stopPropagation(); void stop(); }}><Square className="size-4" aria-hidden="true" /></Button>
+            : <Button key="send" type="submit" size="sm" iconOnly className="chat-composer-send" aria-label={t('chat.send')} title={!hasTarget ? t('chat.selectProviderModel') : t('chat.send')} disabled={!canSend} loading={preparing}><ArrowUp className="size-4" aria-hidden="true" /></Button>}
         </div>
       </div>
     </form>

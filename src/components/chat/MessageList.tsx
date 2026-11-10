@@ -9,6 +9,7 @@ import { COPY_TEXT, useCopyFeedback } from './clipboard';
 import Markdown from './Markdown';
 import { AssetPreview } from './Attachments';
 import { useSurfaceActive } from '../../workspace/SurfaceContext';
+import RunSteps, { chatPhaseText } from './RunSteps';
 
 const BOTTOM_FOLLOW_THRESHOLD = 2;
 
@@ -30,6 +31,7 @@ function Badge({ tone, children }: { tone: 'warning' | 'error' | 'info'; childre
 function MessageItem({ message, regenerateId, dropped }: { message: ChatMessage; regenerateId: string | null; dropped: number }) {
   usePageLocale();
   const regenerate = useChatStore(state => state.regenerate);
+  const evidence = useChatStore(state => state.terminalEvidence[message.id]);
   const [copyState, copy] = useCopyFeedback();
   const assistant = message.role === 'assistant';
   const errorText = message.status === 'completed' ? null : messageErrorText(message.error_code);
@@ -59,6 +61,8 @@ function MessageItem({ message, regenerateId, dropped }: { message: ChatMessage;
         {assistant && message.finish_reason === 'length' ? <p className="mt-2 mb-0 text-xs text-status-warning-text">{t('chat.truncated')}</p> : null}
         {errorText ? <p className="mt-2 mb-0 text-xs text-status-error-text">{errorText}</p> : null}
         {assistant && message.result_unknown ? <p className="mt-2 mb-0 text-xs text-status-warning-text">{t('chat.unknownResult')}</p> : null}
+        {assistant && (evidence || message.dispatched !== undefined) ? <p className="mt-2 mb-0 text-xs text-ink-secondary">{t((message.dispatched ?? evidence?.dispatched) ? 'chat.dispatched' : 'chat.notDispatched')}</p> : null}
+        {assistant && (message.audit_warning || evidence?.audit_warning) ? <ChatNotice tone="warning">{t('chat.auditWarning')}</ChatNotice> : null}
         {assistant && message.status !== 'generating' ? (
           <footer className="chat-message-actions">
             <Button size="xs" variant="ghost" iconOnly className="chat-copy-button" aria-label={t('chat.copy')} title={t('chat.copy')} onClick={() => copy(message.content)} disabled={!message.content}>
@@ -136,7 +140,7 @@ const PHASE_TEXT: Readonly<Record<Generation['phase'], string>> = {
 function StreamingBubble({ generation }: { generation: Generation }) {
   usePageLocale();
   const [showReasoning, setShowReasoning] = useState(false);
-  const status = generation.stopping ? t('chat.stopping') : generation.toolsMode && generation.phase === 'running' ? t('chat.waitingToolsModel') : t(PHASE_TEXT[generation.phase]);
+  const status = generation.stopping ? t('chat.stopping') : generation.hostPhase ? chatPhaseText(generation.hostPhase) : generation.toolsMode && generation.phase === 'running' ? t('chat.waitingToolsModel') : t(PHASE_TEXT[generation.phase]);
   return (
     <li>
       <article aria-label={t('chat.streamingAria')} aria-busy="true" className="chat-message chat-assistant-message">
@@ -145,6 +149,8 @@ function StreamingBubble({ generation }: { generation: Generation }) {
           <strong>{t('chat.assistant')}</strong>
           <Loading size="sm" label={status} aria-hidden="true" aria-live="off" />
         </header>
+        {generation.kind === 'summary' ? <p className="text-xs text-ink-secondary">{t('chat.summarizing')}</p> : null}
+        {generation.activities?.length ? <details><summary>{t('chat.executionActivity')}</summary><RunSteps steps={generation.activities} /></details> : null}
         {generation.text ? <Markdown source={generation.text} /> : null}
         {generation.reasoning ? (
           <div className="mt-2">
@@ -173,6 +179,7 @@ export default function MessageList() {
   const error = useChatStore(state => state.messagesError);
   const stale = useChatStore(state => state.activeStale);
   const dropped = useChatStore(state => state.droppedTurns);
+  const unknown = useChatStore(state => !!activeId && state.sessionUnknown[activeId]);
   const loadOlder = useChatStore(state => state.loadOlderMessages);
   const loadLatest = useChatStore(state => state.loadLatestMessages);
 
@@ -181,7 +188,7 @@ export default function MessageList() {
   // The reply that is being generated is shown by the bubble, not by a persisted placeholder.
   const visible = messages.filter(message => message.id !== hidden && message.id !== live?.assistantMessageId);
   const last = visible[visible.length - 1];
-  const regenerateId = !live && !trimmed && !stale && last?.role === 'assistant' && last.status !== 'generating' ? last.id : null;
+  const regenerateId = !live && !trimmed && !stale && !unknown && !messages.some(message => message.result_unknown || !!message.audit_warning) && last?.role === 'assistant' && last.status !== 'generating' ? last.id : null;
   const pairedUser = visible[visible.length - 2];
 
   const container = useRef<HTMLDivElement>(null);
@@ -266,7 +273,7 @@ export default function MessageList() {
 
   return (
     <>
-    <p role="status" className="sr-only">{active && live ? (live.stopping ? t('chat.stopping') : t(PHASE_TEXT[live.phase])) : ''}</p>
+    <p role="status" className="sr-only">{active && live ? (live.stopping ? t('chat.stopping') : live.hostPhase ? chatPhaseText(live.hostPhase) : t(PHASE_TEXT[live.phase])) : ''}</p>
     <div className="chat-timeline">
     <div ref={container} onScroll={onScroll} className="chat-message-scroll" role="region" aria-label={t('chat.messages')} aria-busy={loading}>
       <div className="chat-reading-column flex flex-col gap-3">
@@ -298,7 +305,7 @@ export default function MessageList() {
     </div>
       {awayFromBottom ? <div className="chat-jump-latest"><Button size="sm" variant="secondary" onClick={backToBottom}>{t('chat.backToBottom')}</Button></div> : null}
     </div>
-    {live?.proposal ? <div className="chat-approval chat-reading-column"><ToolProposalCard proposal={live.proposal} busy={live.proposalBusy} /></div> : null}
+    {live?.proposal ? <div className="chat-approval chat-reading-column"><ToolProposalCard proposal={live.proposal} busy={live.proposalBusy || live.stopping} /></div> : null}
     </>
   );
 }

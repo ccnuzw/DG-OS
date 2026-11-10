@@ -1,7 +1,7 @@
 export default {
   "skills.uninstall": "卸载",
   "skills.sourceFormats": "URL / ZIP",
-  "skills.added": "Skill 已添加到我的 Skills。请在 AI 工作台中明确选择它来执行任务。",
+  "skills.added": "Skill 已添加到我的 Skills。请在 AI 助手中明确选择它来执行任务。",
   "skills.addFailed": "无法添加 Skill：{error}",
   "skills.adding": "正在添加…",
   "skills.addToMySkills": "添加到我的 Skills",

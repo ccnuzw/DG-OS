@@ -77,7 +77,7 @@ async function chooseTransport(label: string) {
 }
 
 it('persists explicit remote plaintext consent and resets it whenever the endpoint changes', async () => {
-  render(<McpManagement />);
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>);
   await screen.findByText('Alpha');
   fireEvent.click(screen.getByRole('button', { name: 'Add MCP server' }));
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Remote' } });
@@ -121,7 +121,7 @@ async function inspector() {
 }
 
 it('loads only selected server tools and supports keyboard-operable selection', async () => {
-  render(<McpManagement />);
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>);
   await select();
   expect(screen.getByRole('button', { name: 'Select Alpha' }).getAttribute('aria-pressed')).toBe('true');
   await screen.findByText('a-connected');
@@ -134,7 +134,7 @@ it('loads only selected server tools and supports keyboard-operable selection', 
 });
 
 it('preserves spaces in argv and does not connect a saved server automatically', async () => {
-  render(<McpManagement />);
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>);
   await screen.findByText('Alpha');
   fireEvent.click(screen.getByRole('button', { name: 'Add MCP server' }));
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Local' } });
@@ -149,7 +149,7 @@ it('preserves spaces in argv and does not connect a saved server automatically',
 });
 
 it('allows incomplete argv editing but rejects malformed JSON without saving', async () => {
-  render(<McpManagement />);
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>);
   await screen.findByText('Alpha');
   fireEvent.click(screen.getByRole('button', { name: 'Add MCP server' }));
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Local' } });
@@ -161,7 +161,7 @@ it('allows incomplete argv editing but rejects malformed JSON without saving', a
 });
 
 it('edits the clicked server rather than the previously selected server and persists auto-connect', async () => {
-  render(<McpManagement />);
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>);
   await select('Beta');
   fireEvent.click(screen.getByRole('button', { name: 'Edit Alpha' }));
   await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
@@ -184,7 +184,7 @@ it('requires explicit review and confirmation and sends exactly the reviewed par
   let resolve!: (value: unknown) => void;
   const handler = mocked.getMockImplementation()!;
   mocked.mockImplementation((command, args) => command === 'confirm_mcp_tool' ? new Promise(r => { resolve = r; }) : handler(command, args));
-  render(<McpManagement />);
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>);
   const dialog = await inspector();
   expect(within(dialog).getByText('Input schema')).toBeTruthy();
   expect(dialog.contains(document.activeElement)).toBe(true);
@@ -205,7 +205,7 @@ it('requires explicit review and confirmation and sends exactly the reviewed par
 });
 
 it('closing an inspector without consent does not call tools and restores focus', async () => {
-  render(<McpManagement />); const dialog = await inspector();
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>); const dialog = await inspector();
   fireEvent.click(dialog.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!);
   expect(screen.queryByRole('dialog')).toBeNull();
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Inspect / call' })));
@@ -215,7 +215,7 @@ it('closing an inspector without consent does not call tools and restores focus'
 it('shows reported tool errors and audit warnings without retrying a completed side effect', async () => {
   const handler = mocked.getMockImplementation()!;
   mocked.mockImplementation((command, args) => command === 'call_mcp_tool' ? Promise.resolve({ is_error: true, content: 'external failure', audit_warning: true, duration_ms: 12, usage_log_id: 7 }) : handler(command, args));
-  render(<McpManagement />); const dialog = await inspector();
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>); const dialog = await inspector();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Review tool call', exact: true }));
   fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm and call tool' }));
   await within(dialog).findByText('Tool reported an error');
@@ -224,7 +224,7 @@ it('shows reported tool errors and audit warnings without retrying a completed s
 });
 
 it('keeps credentials separate from configs and clears the password field after submission', async () => {
-  render(<McpManagement />); await select('Beta');
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>); await select('Beta');
   const password = screen.getByLabelText('Bearer token') as HTMLInputElement;
   fireEvent.change(password, { target: { value: 'synthetic-ui-token' } });
   fireEvent.click(screen.getByRole('button', { name: 'Store token' }));
@@ -236,7 +236,7 @@ it('keeps credentials separate from configs and clears the password field after 
 });
 
 it('refreshes tools through discovery rather than only reading the previous snapshot', async () => {
-  render(<McpManagement />); await select();
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>); await select();
   fireEvent.click(screen.getByRole('button', { name: 'Refresh tools' }));
   await waitFor(() => expect(mocked).toHaveBeenCalledWith('refresh_mcp_tools', { serverId: 'a' }));
 });
@@ -245,7 +245,7 @@ it('cancels while confirmation is pending without dispatching the tool', async (
   let confirm!: (value: string) => void;
   const handler = mocked.getMockImplementation()!;
   mocked.mockImplementation((command, args) => command === 'confirm_mcp_tool' ? new Promise(resolve => { confirm = resolve; }) : handler(command, args));
-  render(<McpManagement />); const dialog = await inspector();
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>); const dialog = await inspector();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Review tool call', exact: true }));
   fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm and call tool' }));
   fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel call' }));
@@ -258,7 +258,7 @@ it('cancels the exact in-flight call without waiting for the per-server call loc
   let finish!: (value: unknown) => void;
   const handler = mocked.getMockImplementation()!;
   mocked.mockImplementation((command, args) => command === 'call_mcp_tool' ? new Promise(resolve => { finish = resolve; }) : handler(command, args));
-  render(<McpManagement />); const dialog = await inspector();
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>); const dialog = await inspector();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Review tool call', exact: true }));
   fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm and call tool' }));
   await waitFor(() => expect(mocked.mock.calls.some(([name]) => name === 'call_mcp_tool')).toBe(true));
@@ -283,7 +283,7 @@ it('keeps a call running when cancellation fails and does not pretend that it st
     if (command === 'cancel_mcp_tool') return Promise.reject(new Error('Native cancellation unavailable'));
     return handler(command, args);
   });
-  render(<McpManagement />); const dialog = await inspector();
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>); const dialog = await inspector();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Review tool call', exact: true }));
   fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm and call tool' }));
   await waitFor(() => expect(mocked.mock.calls.some(([name]) => name === 'call_mcp_tool')).toBe(true));
@@ -459,7 +459,7 @@ it('toggles a server through its switch and reflects the host result', async () 
   mocked.mockImplementation((command, args) => command === 'toggle_mcp_server'
     ? Promise.resolve({ ...servers[0], enabled: (args as { enabled: boolean }).enabled })
     : handler(command, args));
-  render(<McpManagement />);
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>);
   const toggle = await screen.findByRole('switch', { name: 'Enable Alpha' });
   expect(toggle.getAttribute('aria-checked')).toBe('true');
   fireEvent.click(toggle);
@@ -502,7 +502,7 @@ it('D111 keeps repeated status-poll failures inline: no Toast after 30 s of fail
 
 // D112: URL fields use inputMode="url"; Input keeps its four types.
 it('D112 marks the MCP Server URL input inputmode="url" without giving it type="url"', async () => {
-  render(<McpManagement />);
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>);
   await screen.findByText('Alpha');
   fireEvent.click(screen.getByRole('button', { name: 'Add MCP server' }));
   await chooseTransport('HTTP endpoint');
@@ -515,7 +515,7 @@ it('retries a failed configuration read without saving an empty configuration', 
   const first = Promise.withResolvers<unknown>();
   const handler = mocked.getMockImplementation()!;
   mocked.mockImplementation((command, args) => command === 'get_mcp_server_config' ? first.promise : handler(command, args));
-  render(<McpManagement />);
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>);
   fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
   expect(screen.getByText('Loading configuration…')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Save changes' }).hasAttribute('disabled')).toBe(true);
@@ -532,7 +532,7 @@ it('retries a failed configuration read without saving an empty configuration', 
 
 it('preserves the selected server and configuration draft while status refreshes slowly and fails', async () => {
   const handler = mocked.getMockImplementation()!;
-  render(<McpManagement />); await select();
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>); await select();
   fireEvent.click(screen.getByRole('button', { name: 'Edit Alpha' }));
   await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Unsaved Alpha' } });
@@ -553,7 +553,7 @@ it('does not replace another configuration draft with a slow read from the previ
   const slow = Promise.withResolvers<unknown>();
   const handler = mocked.getMockImplementation()!;
   mocked.mockImplementation((command, args) => command === 'get_mcp_server_config' && args && typeof args === 'object' && 'serverId' in args && args.serverId === 'a' ? slow.promise : handler(command, args));
-  render(<McpManagement />);
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>);
   fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
   expect(screen.getByText('Loading configuration…')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -569,7 +569,7 @@ it('drops a slow configuration failure after the account changes', async () => {
   const slow = Promise.withResolvers<unknown>();
   const handler = mocked.getMockImplementation()!;
   mocked.mockImplementation((command, args) => command === 'get_mcp_server_config' ? slow.promise : handler(command, args));
-  render(<McpManagement />);
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>);
   fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
   expect(screen.getByText('Loading configuration…')).toBeTruthy();
   mocked.mockImplementation(handler);
@@ -583,7 +583,7 @@ it('drops a slow configuration failure after the account changes', async () => {
 });
 
 it('keeps invalid argument feedback attached to the draft field and sends no save', async () => {
-  render(<McpManagement />);
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>);
   fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
   await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
   const args = screen.getByLabelText(/^Arguments/);
@@ -600,7 +600,7 @@ it('retains a rejected configuration draft and synchronously rejects a second sa
   const save = Promise.withResolvers<unknown>();
   const handler = mocked.getMockImplementation()!;
   mocked.mockImplementation((command, args) => command === 'update_mcp_server' ? save.promise : handler(command, args));
-  render(<McpManagement />);
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>);
   fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
   await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Retained draft' } });
@@ -640,7 +640,7 @@ it('keeps a confirmed save after a failed tool read and retries only the saved s
     if (command === 'list_mcp_tools' && failTools) return Promise.reject('saved tools unavailable');
     return handler(command, args);
   });
-  render(<McpManagement />); await select();
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><McpManagement /></MemoryRouter>); await select();
   fireEvent.click(screen.getByRole('button', { name: 'Edit Alpha' }));
   await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Saved Alpha' } });
@@ -662,7 +662,7 @@ it('keeps a confirmed save after a failed tool read and retries only the saved s
 
 it('shares one discard decision between repeated draft cancellation and the surface close guard', async () => {
   const controller = createWorkspaceController();
-  render(<SurfaceScope id="mcp" active controller={controller}><McpManagement /><ModalHost /></SurfaceScope>);
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><SurfaceScope id="mcp" active controller={controller}><McpManagement /><ModalHost /></SurfaceScope></MemoryRouter>);
   fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
   await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
   expect(controller.getSurfaceStatuses().mcp.dirty).toBe(false);
@@ -691,7 +691,7 @@ it('vetoes surface close while configuration saving is in flight', async () => {
   const handler = mocked.getMockImplementation()!;
   mocked.mockImplementation((command, args) => command === 'update_mcp_server' ? save.promise : handler(command, args));
   const controller = createWorkspaceController();
-  render(<SurfaceScope id="mcp" active controller={controller}><McpManagement /></SurfaceScope>);
+  render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><SurfaceScope id="mcp" active controller={controller}><McpManagement /></SurfaceScope></MemoryRouter>);
   fireEvent.click(await screen.findByRole('button', { name: 'Edit Alpha' }));
   await waitFor(() => expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Alpha'));
   fireEvent.submit(screen.getByRole('form', { name: 'Server configuration' }));

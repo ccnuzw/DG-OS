@@ -1,4 +1,5 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { chatBudget } from './helpers/chatBudget';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -34,6 +35,7 @@ beforeEach(async () => {
   vi.mocked(invoke).mockImplementation(async (command, args) => {
     switch (command) {
       case 'list_chat_sessions': return ok({ items: sessions, next_cursor: null });
+      case 'inspect_chat_context': return ok(chatBudget());
       case 'list_chat_messages': {
         const { input } = args as { input: { session_id: string } };
         return ok({ items: [message(input.session_id, `历史消息 ${input.session_id}`)], next_before_seq: null });
@@ -45,7 +47,7 @@ beforeEach(async () => {
         return await promise;
       }
       case 'list_providers': return ok([{ id: 'p1', name: '合成服务', enabled: true, credential_status: 'stored' }]);
-      case 'list_models': return ok([{ id: 'm1', model_id: 'chat1', provider_id: 'p1', model_name: '对话模型', model_type: 'chat' }]);
+      case 'list_models': return ok([{ id: 'm1', model_id: 'chat1', provider_id: 'p1', model_name: '对话模型', model_type: 'text-generation' }]);
       case 'list_installed_skills': return [];
       default: throw new Error(`Unexpected command: ${command}`);
     }
@@ -64,7 +66,7 @@ async function selectSession(index: number) {
 }
 
 async function acceptSend() {
-  expect(acknowledge).toBeTypeOf('function');
+  await waitFor(() => expect(acknowledge).toBeTypeOf('function'));
   await act(async () => {
     acknowledge!({ task_id: '', user_message_id: 'u1', assistant_message_id: 'a1', dropped_turns: 0, replayed: false });
   });
@@ -192,6 +194,7 @@ describe('chat composer completion focus and send ownership', () => {
     const view = mountComposer();
     fireEvent.change(view.input, { target: { value: '发送给 s1' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(acknowledge).toBeTypeOf('function'));
     await selectSession(1);
     fireEvent.change(view.input, { target: { value: '留给 s2 的草稿' } });
     await acceptSend();

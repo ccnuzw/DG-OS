@@ -157,13 +157,13 @@ function mockTools() {
   mocked.mockImplementation(async (command, args) => {
     if (command === 'list_mcp_servers') return [{ id: 'server-1', name: 'Local tools', enabled: true, status: 'ready' }, { id: 'offline', enabled: true, status: 'error' }];
     if (command === 'list_mcp_tools') return [selectedTool, { ...selectedTool, tool_name: 'unselected' }];
-    if (command === 'start_workbench_tool_task') return { record: toolRecord, phase: 'ready' };
+    if (command === 'start_workbench_tool_task') return { record: toolRecord, phase: 'ready', dispatched: false, result_unknown: false, usage_unknown: true };
     if (command === 'advance_workbench_tool_task') {
       const action = args?.action as { type: string };
-      if (action.type === 'run_model') return { record: toolRecord, phase: 'awaiting_confirmation', proposal };
-      return { record: { ...toolRecord, task: { ...toolRecord.task, status: action.type === 'approve' ? 'succeeded' : 'failed', error_code: action.type === 'deny' ? 'tool_denied' : undefined } }, phase: 'finished', content: action.type === 'approve' ? 'Tool-assisted answer' : undefined };
+      if (action.type === 'run_model') return { record: toolRecord, phase: 'awaiting_confirmation', proposal, dispatched: true, result_unknown: false, usage_unknown: false };
+      return { record: { ...toolRecord, task: { ...toolRecord.task, status: action.type === 'approve' ? 'succeeded' : 'failed', error_code: action.type === 'deny' ? 'tool_denied' : undefined } }, phase: 'finished', content: action.type === 'approve' ? 'Tool-assisted answer' : undefined, dispatched: true, result_unknown: false, usage_unknown: false };
     }
-    if (command === 'cancel_workbench_tool_task') return { record: { ...toolRecord, task: { ...toolRecord.task, status: 'failed', error_code: 'task_cancelled' } }, phase: 'finished' };
+    if (command === 'cancel_workbench_tool_task') return { record: { ...toolRecord, task: { ...toolRecord.task, status: 'failed', error_code: 'task_cancelled' } }, phase: 'finished', dispatched: true, result_unknown: false, usage_unknown: false };
     return handler(command, args);
   });
 }
@@ -203,11 +203,12 @@ it('MCP unknown external result is explicit and never presented as success', asy
   const handler = mocked.getMockImplementation()!;
   mocked.mockImplementation((command, args) => command === 'advance_workbench_tool_task'
     && (args?.action as { type: string }).type === 'approve'
-    ? Promise.resolve({ record: { ...toolRecord, task: { ...toolRecord.task, status: 'failed', error_code: 'mcp_1003005' } }, phase: 'finished' })
+    ? Promise.resolve({ record: { ...toolRecord, task: { ...toolRecord.task, status: 'failed', error_code: 'task_cancelled' } }, phase: 'finished', dispatched: true, result_unknown: true, usage_unknown: true })
     : handler(command, args));
   fireEvent.click(screen.getByRole('button', { name: 'Approve this call once' }));
   await screen.findByRole('alert');
   expect(screen.getByText(/external tool result is unknown; do not retry automatically/i)).toBeTruthy();
+  expect(screen.getByText(/Dispatched; cancellation does not undo external actions/).textContent).toContain('Usage unknown');
   expect(screen.queryByText('Tool-assisted answer')).toBeNull();
 });
 

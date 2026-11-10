@@ -10,7 +10,7 @@ interface FieldExtras {
 }
 
 // FR-005 controls plus the semantic search field used by V2 page patterns.
-export type InputType = 'text' | 'password' | 'email' | 'number' | 'search';
+export type InputType = 'text' | 'password' | 'email' | 'number' | 'search' | 'date';
 
 export type SingleLineInputProps = Omit<DomProps<'input'>, 'type'> &
   FieldExtras &

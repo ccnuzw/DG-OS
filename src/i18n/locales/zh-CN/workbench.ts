@@ -72,7 +72,7 @@ export default {
   "workbench.taskNotCompleted": "任务未完成：{error}。未发送备用请求。再次提交前请检查任务历史。",
   "workbench.taskNotRunning": "任务已不再运行。请查看任务历史的最终状态。",
   "workbench.timeoutTask": "任务超时。",
-  "workbench.title": "AI 工作台",
+  "workbench.title": "AI 助手",
   "workbench.tokenCount": "{count} tokens",
   "workbench.toolAuditIncomplete": "工具可能已经执行，但审计未完成；不要自动重试。",
   "workbench.toolCount": "{selected} / {limit}",

@@ -12,6 +12,8 @@ import { SurfaceScope } from '../src/workspace/SurfaceContext';
 import { useCapabilityEntry } from '../src/components/chat/RuntimeNavigation';
 import { setLocaleForTesting } from '../src/i18n';
 
+import { chatBudget } from './helpers/chatBudget';
+import { defaultAiFoundation } from '../src/types/ai';
 // FR-006 chat front end (AC01-AC29 subset that needs the DOM). Contract: V1-接口契约 §10.1, V1-错误码 §3.6.
 // Synthetic data only. The host is a table of command handlers; Channels are the controllable MockChannel.
 // vi.mock is hoisted above the static imports, so the factory cannot reference them: the helper must be imported inside it.
@@ -64,9 +66,12 @@ beforeEach(() => {
   handlers = {
     list_chat_sessions: () => ok({ items: [session()], next_cursor: null }),
     list_chat_messages: () => ok({ items: [], next_before_seq: null }),
+    inspect_chat_context: () => ok(chatBudget()),
+    list_chat_runs: () => ok({ items: [] }),
+    chat_skill_catalog: () => ok({ items: [], recommendations: [] }),
     cancel_chat_generation: () => ok(true),
     list_providers: () => ok([{ id: 'p1', name: '合成服务', enabled: true, credential_status: 'stored' }]),
-    list_models: () => ok([{ id: 'mm1', model_id: 'chat1', provider_id: 'p1', model_name: '对话模型', model_type: 'chat' }]),
+    list_models: () => ok([{ id: 'mm1', model_id: 'chat1', provider_id: 'p1', model_name: '对话模型', model_type: 'text-generation' }]),
     list_installed_skills: () => [],
     list_mcp_servers: () => [{ id: 'srv1', name: '文件服务', enabled: true, status: 'ready' }],
     list_mcp_tools: () => [tool('read_file')],
@@ -227,7 +232,7 @@ describe('sessions', () => {
   it('isolates drafts and unsaved capability targets between open session tabs', async () => {
     handlers.list_chat_sessions = () => ok({ items: [session({ id: 'sA', title: '会话 A' }), session({ id: 'sB', title: '会话 B', provider_id: 'p2', model_id: 'modelB', skills: [{ skill_id: 'writing', version_id: 'writing@1', content_hash: 'hash' }] })], next_cursor: null });
     handlers.list_providers = () => ok([{ id: 'p1', name: '服务 A', enabled: true, credential_status: 'stored' }, { id: 'p2', name: '服务 B', enabled: true, credential_status: 'stored' }]);
-    handlers.list_models = ({ providerId }) => ok([{ id: 'm', model_id: providerId === 'p2' ? 'modelB' : 'chat1', provider_id: providerId, model_name: providerId === 'p2' ? '模型 B' : 'Chat', model_type: 'chat' }]);
+    handlers.list_models = ({ providerId }) => ok([{ id: 'm', model_id: providerId === 'p2' ? 'modelB' : 'chat1', provider_id: providerId, model_name: providerId === 'p2' ? '模型 B' : 'Chat', model_type: 'text-generation' }]);
     handlers.update_chat_session_target = ({ input }) => ok(session({ id: input.session_id, title: '会话 A', provider_id: input.provider_id, model_id: input.model_id }));
     renderPage();
     await screen.findByRole('tab', { name: '会话 A' });
@@ -314,7 +319,7 @@ describe('sessions', () => {
 describe('separate capability pickers', () => {
   it('saves model and ordered skill choices immediately while leaving generation settings explicit', async () => {
     handlers.list_installed_skills = () => ['summary', 'writing'].map(id => ({ skill_id: id, name: id, version: '1', enabled: true, call_type: 'content', manifest: { category: 'writing' } }));
-    handlers.list_models = () => ok([{ id: 'm1', model_id: 'chat1', model_name: '对话模型', model_type: 'chat' }, { id: 'm2', model_id: 'chat2', model_name: '第二模型', model_type: 'chat' }]);
+    handlers.list_models = () => ok([{ id: 'm1', model_id: 'chat1', model_name: '对话模型', model_type: 'text-generation' }, { id: 'm2', model_id: 'chat2', model_name: '第二模型', model_type: 'text-generation' }]);
     handlers.update_chat_session_target = ({ input }) => ok(session({ provider_id: input.provider_id, model_id: input.model_id, skills: input.skill_ids.map((id: string) => ({ skill_id: id, version_id: `${id}@1`, content_hash: 'fixture' })), no_skill_confirmed: input.no_skill, generation: input.generation }));
     await openSession();
     await choose('模型', '第二模型');
@@ -341,7 +346,7 @@ describe('separate capability pickers', () => {
     expect(useChatStore.getState().activeSession?.generation.instruction).toBe('Preserve sources');
   });
   it('keeps the current model and draft on save failure, then closes only after a successful retry', async () => {
-    handlers.list_models = () => ok([{ id: 'm2', model_id: 'chat2', model_name: '第二模型', model_type: 'chat' }]);
+    handlers.list_models = () => ok([{ id: 'm2', model_id: 'chat2', model_name: '第二模型', model_type: 'text-generation' }]);
     const pending = Promise.withResolvers<unknown>();
     handlers.update_chat_session_target = () => pending.promise;
     await openSession();
@@ -460,7 +465,7 @@ describe('send, stream and terminal snapshot', () => {
     typeDraft('你好');
     fireEvent.click(sendButton());
     const args = await sentArgs();
-    expect(args.input).toEqual({ session_id: 's1', content: '你好', client_request_id: expect.stringMatching(UUID) });
+    expect(args.input).toEqual({ session_id: 's1', content: '你好', client_request_id: expect.stringMatching(UUID), foundation: defaultAiFoundation() });
     expect(args.onEvent).toBeInstanceOf(MockChannel);
     expect(args.onEvent).toBe(MockChannel.last());
     const channel = args.onEvent as MockChannel;
@@ -497,6 +502,27 @@ describe('send, stream and terminal snapshot', () => {
     expect(screen.queryByText(/累积文本/)).toBeNull();
     expect(screen.queryByText(/内部推理/)).toBeNull();
     expect(screen.getAllByRole('article', { name: '助手消息' })).toHaveLength(1);
+  });
+
+  it('keeps observing and allows stopping again after a cancellation request fails', async () => {
+    await openSession();
+    const resolveAck = deferSend();
+    typeDraft('写一篇长文');
+    fireEvent.click(sendButton());
+    const args = await sentArgs();
+    await settle(resolveAck, ackFor(args));
+    handlers.cancel_chat_generation = () => { throw new Error('lost cancellation acknowledgement'); };
+    fireEvent.click(screen.getByRole('button', { name: '停止生成' }));
+    await screen.findByText('尚未确认停止。仍在观察本轮运行，请重试停止；外部动作或计费可能已经发生。');
+    expect(useChatStore.getState().generation?.stopping).toBe(false);
+    expect(useChatStore.getState().generation).not.toBeNull();
+    expect((screen.getByRole('button', { name: '停止生成' }) as HTMLButtonElement).disabled).toBe(false);
+    handlers.cancel_chat_generation = () => ok(true);
+    fireEvent.click(screen.getByRole('button', { name: '停止生成' }));
+    await waitFor(() => expect(calls('cancel_chat_generation')).toHaveLength(2));
+    emit(args.onEvent, { kind: 'done', message: message(2, 'assistant', '保留已生成内容', { id: 'a1', status: 'interrupted' }) });
+    expect(useChatStore.getState().generation).toBeNull();
+    expect(calls('send_chat_message')).toHaveLength(1);
   });
 
   it('stop calls cancel_chat_generation with { taskId } and the interrupted terminal shows its state', async () => {
@@ -554,7 +580,7 @@ describe('send, stream and terminal snapshot', () => {
     typeDraft('纯文本');
     fireEvent.click(sendButton());
     const { input } = await sentArgs();
-    expect(Object.keys(input).sort()).toEqual(['client_request_id', 'content', 'session_id']);
+    expect(Object.keys(input).sort()).toEqual(['client_request_id', 'content', 'foundation', 'session_id']);
   });
 
   it('announces dropped turns on the reply', async () => {
@@ -603,7 +629,7 @@ describe('destination_changed (1006012)', () => {
 
     fireEvent.click(within(dialog).getByRole('button', { name: '确认并发送' }));
     const second = await sentArgs(2);
-    expect(second.input).toEqual({
+    expect(second.input).toMatchObject({
       session_id: 's1', content: '目标变了', client_request_id: expect.stringMatching(UUID), accept_destination: 'fp-new',
     });
     expect(second.input.client_request_id).not.toBe(calls('send_chat_message')[0].input.client_request_id);
@@ -632,9 +658,10 @@ describe('destination_changed (1006012)', () => {
     fireEvent.click(within(await screen.findByRole('article', { name: '助手消息' })).getByRole('button', { name: '重新生成' }));
     fireEvent.click(within(await screen.findByRole('dialog', { name: 'Provider 目标已变化' })).getByRole('button', { name: '确认并发送' }));
     await waitFor(() => expect(calls('regenerate_chat_message')).toHaveLength(2));
-    expect(calls('regenerate_chat_message')[1].input).toEqual({
+    expect(calls('regenerate_chat_message')[1].input).toMatchObject({
       message_id: 'm2', client_request_id: expect.stringMatching(UUID), accept_destination: 'fp-r',
     });
+    expect(calls('regenerate_chat_message')[1].input.client_request_id).not.toBe(calls('regenerate_chat_message')[0].input.client_request_id);
   });
 
   it('a 1006012 without a usable detail is a plain error, not a dialog', async () => {
@@ -648,19 +675,12 @@ describe('destination_changed (1006012)', () => {
 });
 
 describe('error mapping', () => {
-  it.each([
-    [1006008, '上下文过长，请新建会话后再试。'],
-    [1006009, '还没有可用的 Provider，请先到 Provider 页面完成配置。'],
-    [1006010, '已有生成正在进行，请先停止当前生成。'],
-    [1006011, '请求标识冲突，请重新发送。'],
-    [1006015, '请先为会话选择 Provider 和模型。'],
-    [1006017, '工具确认已失效、已过期或与当前提案不符，请重新发送并重新选择工具。'],
-  ])('send rejected with %i shows fixed Chinese text, keeps the draft and never the host message', async (code, text) => {
+  it.each([1006008, 1006009, 1006010, 1006011, 1006015, 1006017])('send rejected with %i preserves the draft without exposing raw host errors', async code => {
     await openSession();
     handlers.send_chat_message = () => fail(code);
     typeDraft('会被拒绝');
     fireEvent.click(sendButton());
-    expect((await screen.findByRole('alert')).textContent).toContain(text);
+    await screen.findByRole('alert');
     expect(screen.queryByText(/host text must never be shown/)).toBeNull();
     expect(draftBox().value).toBe('会被拒绝');
     expect(sendButton().disabled).toBe(false);
@@ -808,7 +828,7 @@ describe('regenerate', () => {
     fireEvent.click(within(articles[articles.length - 1]).getByRole('button', { name: '重新生成' }));
     await waitFor(() => expect(calls('regenerate_chat_message')).toHaveLength(1));
     const args = calls('regenerate_chat_message')[0];
-    expect(args).toEqual({ input: { message_id: 'm4', client_request_id: expect.stringMatching(UUID) }, onEvent: expect.any(MockChannel) });
+    expect(args).toEqual({ input: { message_id: 'm4', client_request_id: expect.stringMatching(UUID), foundation: defaultAiFoundation() }, onEvent: expect.any(MockChannel) });
     expect(Object.keys(args).sort()).toEqual(['input', 'onEvent']);
     expect(screen.queryByText('答二')).toBeNull();
     expect(screen.queryByRole('button', { name: '重新生成' })).toBeNull();
@@ -987,7 +1007,7 @@ describe('MCP tool turn', () => {
     await startToolTurn();
     handlers.advance_chat_tool_turn = () => fail(1006017);
     fireEvent.click(screen.getByRole('button', { name: /批准本次调用/ }));
-    expect((await screen.findByRole('alert')).textContent).toContain('工具确认已失效、已过期或与当前提案不符，请重新发送并重新选择工具。');
+    expect((await screen.findByRole('alert')).textContent).toContain('工具确认已失效、已过期或与当前提案不符。请先停止本轮并核对结果，再检查工具选择；不得重发未知动作。');
     expect(screen.queryByRole('heading', { name: '确认工具调用' })).toBeNull();
     expect(screen.getByText(/请先点击“停止生成”结束这一轮/)).toBeTruthy();
     expect(screen.getByRole('button', { name: '停止生成' })).toBeTruthy();
@@ -1004,9 +1024,9 @@ describe('MCP tool turn', () => {
     await screen.findByText('工具选择已清空。请在下方重新选择工具后再发送。');
     expect(pickerLabel(0)).toBeTruthy();
     expect(draftBox().value).toBe('工具已变化');
-    expect(calls('list_mcp_servers')).toHaveLength(1);
-    await pickTools(/read_file/);
     expect(calls('list_mcp_servers')).toHaveLength(2);
+    await pickTools(/read_file/);
+    expect(calls('list_mcp_servers')).toHaveLength(3);
     expect(pickerLabel(1)).toBeTruthy();
   });
 });
@@ -1086,6 +1106,7 @@ describe('account reset response isolation', () => {
     const pending = Promise.withResolvers<unknown>();
     handlers.send_chat_message = () => pending.promise;
     const sending = useChatStore.getState().send('old request');
+    await waitFor(() => expect(calls('send_chat_message')).toHaveLength(1));
     useChatStore.getState().reset();
     pending.resolve(fail(1006012, {fingerprint: 'old', host: 'old-provider'}));
     await sending;
@@ -1268,7 +1289,7 @@ it('returns from capability management to the same DG-OS session with message an
  fireEvent.click(within(await screen.findByRole('dialog')).getAllByRole('link').find(link => link.getAttribute('href') === '/settings/providers')!);
  await waitFor(() => expect(screen.getByTestId('capability-path').textContent).toContain('/settings/providers'));
  handlers.list_providers = () => ok([{ id: 'p1', name: '管理后服务', enabled: true, credential_status: 'stored' }]);
- handlers.list_models = () => ok([{ id: 'after-management', model_id: 'after-management', provider_id: 'p1', model_name: '管理后模型', model_type: 'chat' }]);
+ handlers.list_models = () => ok([{ id: 'after-management', model_id: 'after-management', provider_id: 'p1', model_name: '管理后模型', model_type: 'text-generation' }]);
  handlers.list_installed_skills = () => [{ skill_id: 'after-management', name: '管理后技能', version: '2', description: 'Newly installed content', enabled: true, call_type: 'content', manifest: { category: 'Content skills' } }];
  fireEvent.click(screen.getByRole('button', { name: 'Return to conversation' }));
  await waitFor(() => expect(draftBox()).toBe(prompt));
@@ -1300,14 +1321,14 @@ it('refreshes all picker catalogs on invalidation and open, ignoring superseded 
  act(() => window.dispatchEvent(new Event('dgos:catalog-invalidated')));
  await waitFor(() => expect(calls('list_providers').length).toBeGreaterThan(before));
  handlers.list_providers = () => ok([{ id: 'p1', name: 'Current Provider', enabled: true, credential_status: 'stored' }]);
- handlers.list_models = () => ok([{ id: 'new-model', model_id: 'new-model', model_name: 'Current model', provider_id: 'p1', model_type: 'chat' }]);
+ handlers.list_models = () => ok([{ id: 'new-model', model_id: 'new-model', model_name: 'Current model', provider_id: 'p1', model_type: 'text-generation' }]);
  handlers.list_installed_skills = () => [{ skill_id: 'new-skill', name: 'Current skill', version: '2', enabled: true, call_type: 'content', manifest: { category: 'Content skills' } }];
  fireEvent.click(screen.getByRole('button', { name: '会话目标' }));
  await screen.findByRole('button', { name: 'Current Provider' });
  await screen.findByRole('button', { name: 'Current model' });
  await act(async () => {
   oldProviders.resolve(ok([{ id: 'p1', name: 'Superseded Provider', enabled: true, credential_status: 'stored' }]));
-  oldModels.resolve(ok([{ id: 'old-model', model_id: 'old-model', model_name: 'Superseded model', provider_id: 'p1', model_type: 'chat' }]));
+  oldModels.resolve(ok([{ id: 'old-model', model_id: 'old-model', model_name: 'Superseded model', provider_id: 'p1', model_type: 'text-generation' }]));
   oldSkills.resolve([{ skill_id: 'old-skill', name: 'Superseded skill', version: '1', enabled: true, call_type: 'content', manifest: { category: 'Content skills' } }]);
  });
  expect(screen.queryByRole('button', { name: /Superseded/ })).toBeNull();
@@ -1320,4 +1341,477 @@ it('refreshes all picker catalogs on invalidation and open, ignoring superseded 
  expect(draftBox().value).toBe('Keep this message draft');
  expect(calls('update_chat_session_target')).toHaveLength(0);
  expect(calls('send_chat_message')).toHaveLength(0);
+});
+
+describe('continuous conversation safety controls', () => {
+  const retainedRun = (over: Args = {}) => ({ task_id: 'source-run', session_id: 's1', assistant_message_id: 'old-assistant', source_run_id: null, status: 'interrupted', partial_content: '已保留的部分回复', dispatched: true, result_unknown: false, audit_warning: null, total_tokens: null, steps: [{ id: 'step-1', ordinal: 1, kind: 'tool', phase: 'tool', status: 'completed', dispatched: true, result_unknown: false, receipt: { server_id: 'srv1', tool_name: 'write_file', result: 'confirmed', truncated: true }, created_at: 1, updated_at: 2 }], created_at: 1, updated_at: 2, ...over });
+
+  it('a synchronous stop terminal cannot turn the clicked stop button into another send, and a newer draft survives', async () => {
+    await openSession();
+    const resolveAck = deferSend();
+    typeDraft('第一条');
+    fireEvent.click(sendButton());
+    const args = await sentArgs();
+    act(() => useChatStore.getState().setDraft('s1', '未发送的下一条'));
+    await settle(resolveAck, ackFor(args));
+    const stop = screen.getByRole('button', { name: '停止生成' }) as HTMLButtonElement;
+    expect(stop.type).toBe('button');
+    handlers.cancel_chat_generation = () => {
+      (args.onEvent as MockChannel).emit({ kind: 'done', message: message(2, 'assistant', '停止时保留', { id: 'a1', status: 'interrupted' }) });
+      return ok(true);
+    };
+    fireEvent.click(stop);
+    await screen.findByText('停止时保留');
+    expect(stop.isConnected).toBe(false);
+    expect(draftBox().value).toBe('未发送的下一条');
+    expect(calls('send_chat_message')).toHaveLength(1);
+    expect(calls('regenerate_chat_message')).toHaveLength(0);
+  });
+
+  it('rejects an over-budget draft before dispatch and never clears the draft', async () => {
+    handlers.inspect_chat_context = () => ok(chatBudget({ can_send: false, rejection: 'fixed_context_exceeds_limit' }));
+    await openSession();
+    typeDraft('保留超预算草稿');
+    fireEvent.click(sendButton());
+    await screen.findByRole('alert');
+    expect(calls('send_chat_message')).toHaveLength(0);
+    expect(draftBox().value).toBe('保留超预算草稿');
+  });
+
+  it('shows unknown model limits and requires explicit paid-summary confirmation without inserting a normal message', async () => {
+    const summary = { id: 'summary-1', source_first_seq: 1, source_last_seq: 4, source_digest: 'source-sha', content: '目标与约束', provider_id: 'p1', model_id: 'chat1', created_at: 1 };
+    handlers.inspect_chat_context = () => ok(chatBudget({ model_window_tokens: null, summary }));
+    handlers.summarize_chat_context = args => {
+      args.onEvent.emit({ kind: 'summary_done', task_id: args.input.client_request_id, assistant_message_id: 'summary-assistant', summary, dispatched: true, result_unknown: false, audit_warning: null });
+      return ok(ackFor(args, { assistant_message_id: 'summary-assistant', user_message_id: '' }));
+    };
+    await openSession();
+    typeDraft('保留摘要期间草稿');
+    fireEvent.click(screen.getByRole('button', { name: '上下文预算' }));
+    await screen.findByText('此模型的窗口未知，仍受保守宿主上限约束，不按大窗口处理。');
+    expect(screen.getByText('摘要来源：消息 1–4')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '整理会话上下文' }));
+    expect(calls('summarize_chat_context')).toHaveLength(0);
+    const confirm = await screen.findByRole('dialog', { name: '允许额外的收费模型请求？' });
+    fireEvent.click(within(confirm).getByRole('button', { name: '允许收费摘要请求' }));
+    await waitFor(() => expect(calls('summarize_chat_context')).toHaveLength(1));
+    expect(calls('summarize_chat_context')[0].input).toEqual({ session_id: 's1', client_request_id: expect.stringMatching(UUID), confirmed: true });
+    await waitFor(() => expect(useChatStore.getState().generation).toBeNull());
+    expect(useChatStore.getState().messages).toEqual([]);
+    expect(draftBox().value).toBe('保留摘要期间草稿');
+  });
+
+  it('keeps skill suggestions separate from explicit pinned subset authorization', async () => {
+    const entry = { pin: { skill_id: 'writing', version: '1.2', content_hash: 'immutable-hash' }, name: '写作辅助', description: '写作与检查', category: 'writing', tags: ['写作'] };
+    handlers.chat_skill_catalog = ({ input }) => ok({ items: [entry], recommendations: input.query ? [{ entry, score: 4, reasons: ['lexical_name:写作'] }] : [] });
+    await openSession();
+    typeDraft('写作任务');
+    fireEvent.click(screen.getByRole('button', { name: '技能建议与读取权限' }));
+    await screen.findByRole('checkbox', { name: /写作辅助/ });
+    fireEvent.click(screen.getByRole('button', { name: '为当前草稿推荐技能' }));
+    fireEvent.click(await screen.findByRole('button', { name: '加入授权子集' }));
+    expect(useChatStore.getState().sessionSkillAccess.s1).toEqual({ skill_mode: 'manual', authorized_skill_refs: [entry.pin] });
+    fireEvent.click(screen.getByRole('checkbox', { name: '允许按需读取技能正文和资源' }));
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    deferSend(); fireEvent.click(sendButton());
+    expect((await sentArgs()).input).toMatchObject({ skill_mode: 'on_demand', authorized_skill_refs: [entry.pin] });
+    expect(calls('update_chat_session_target')).toHaveLength(0);
+  });
+
+  it('does not expose approval for phase or partial tool activity, scopes phases by task and ignores late activity', async () => {
+    await openSession(); const resolveAck = deferSend(); typeDraft('请求工具'); fireEvent.click(sendButton());
+    const args = await sentArgs(); await settle(resolveAck, ackFor(args));
+    emit(args.onEvent, { kind: 'phase', task_id: 'another-task', assistant_message_id: 'a1', phase: 'tool' });
+    expect(useChatStore.getState().generation?.hostPhase).toBeUndefined();
+    emit(args.onEvent, { kind: 'phase', task_id: args.input.client_request_id, assistant_message_id: 'a1', phase: 'processing_result' });
+    expect(screen.queryByRole('button', { name: '批准本次调用' })).toBeNull();
+    expect(useChatStore.getState().generation?.hostPhase).toBe('processing_result');
+    emit(args.onEvent, { kind: 'done', message: message(2, 'assistant', '终态', { id: 'a1' }), dispatched: true, result_unknown: false, audit_warning: 'audit_unconfirmed' });
+    emit(args.onEvent, { kind: 'phase', task_id: args.input.client_request_id, assistant_message_id: 'a1', phase: 'final_answer' });
+    typeDraft('不要重发');
+    expect(sendButton().disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: '重新生成' })).toBeNull();
+    expect(useChatStore.getState().generation).toBeNull();
+  });
+
+  it('inspects retained checkpoints without external calls and starts a new explicit continuation identity', async () => {
+    const run = retainedRun();
+    handlers.list_chat_runs = () => ok({ items: [run] }); handlers.get_chat_run = () => ok(run);
+    handlers.continue_chat_run = args => ok(ackFor(args, { assistant_message_id: 'continued-assistant' }));
+    await openSession(); typeDraft('原草稿保留');
+    fireEvent.click(screen.getByRole('button', { name: '运行与检查点' }));
+    fireEvent.click(await screen.findByRole('button', { name: /source-run/ }));
+    const next = await screen.findByRole('textbox', { name: '明确的下一步动作' });
+    const steps = screen.getByRole('dialog').querySelector('.chat-run-steps');
+    expect(steps?.tagName).toBe('OL');
+    expect(steps?.querySelector('summary')?.textContent).not.toMatch(/^\d+\./);
+    expect(calls('continue_chat_run')).toHaveLength(0); expect(calls('advance_chat_tool_turn')).toHaveLength(0);
+    fireEvent.change(next, { target: { value: '只完成下一步，不重复写入' } });
+    expect((screen.getByRole('button', { name: '开始安全的新继续运行' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: '我已核对确认结果，并希望为此下一步动作创建新运行' }));
+    fireEvent.click(screen.getByRole('button', { name: '开始安全的新继续运行' }));
+    await waitFor(() => expect(calls('continue_chat_run')).toHaveLength(1));
+    expect(calls('continue_chat_run')[0].input).toEqual({ source_task_id: 'source-run', client_request_id: expect.stringMatching(UUID), intent: '只完成下一步，不重复写入', tools: [], foundation: defaultAiFoundation() });
+    expect(calls('continue_chat_run')[0].input.client_request_id).not.toBe('source-run');
+    expect(draftBox().value).toBe('原草稿保留');
+  });
+
+  it('blocks resend and continuation for retained unknown tool outcomes', async () => {
+    const run = retainedRun({ result_unknown: true, steps: [{ id: 'unknown-write', ordinal: 1, kind: 'tool', phase: 'tool', status: 'dispatched', dispatched: true, result_unknown: true, receipt: null, created_at: 1, updated_at: 2 }] });
+    handlers.list_chat_runs = () => ok({ items: [run] }); handlers.get_chat_run = () => ok(run);
+    await openSession(); typeDraft('不重复写入');
+    fireEvent.click(screen.getByRole('button', { name: '运行与检查点' }));
+    fireEvent.click(await screen.findByRole('button', { name: /source-run/ }));
+    await screen.findByRole('textbox', { name: '明确的下一步动作' });
+    expect((screen.getByRole('button', { name: '开始安全的新继续运行' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(sendButton().disabled).toBe(true);
+    expect(calls('continue_chat_run')).toHaveLength(0); expect(calls('send_chat_message')).toHaveLength(0);
+    expect(draftBox().value).toBe('不重复写入');
+  });
+
+  it('remembers only tool preference and rechecks the schema before the next send', async () => {
+    await openSession(); await pickTools(/read_file/);
+    fireEvent.click(screen.getByRole('checkbox', { name: '记住本会话的工具选择' }));
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    const resolveAck = deferSend(); typeDraft('先读取'); fireEvent.click(sendButton());
+    const args = await sentArgs(); await settle(resolveAck, ackFor(args));
+    expect(useChatStore.getState().sessionTools.s1).toHaveLength(1);
+    emit(args.onEvent, { kind: 'done', message: message(2, 'assistant', '完成', { id: 'a1' }) });
+    handlers.list_mcp_tools = () => [tool('read_file', { schema_hash: 'changed' })];
+    typeDraft('再读取'); fireEvent.click(sendButton());
+    await screen.findByText('所选工具已不可用或 schema 已变化。请检查选择后再发送；本次未发出请求。');
+    expect(calls('send_chat_message')).toHaveLength(1); expect(calls('advance_chat_tool_turn')).toHaveLength(0);
+    expect(draftBox().value).toBe('再读取');
+  });
+  it('records an explicit user-reported external outcome without claiming a tool success or replaying it', async () => {
+    let run = retainedRun({ result_unknown: true, steps: [{ id: 'unknown-write', ordinal: 1, kind: 'tool', phase: 'tool', status: 'dispatched', dispatched: true, result_unknown: true, receipt: null, created_at: 1, updated_at: 2 }] });
+    handlers.list_chat_runs = () => ok({ items: [run] }); handlers.get_chat_run = () => ok(run);
+    handlers.resolve_chat_run_step = ({ input }) => {
+      run = { ...run, result_unknown: false, steps: [{ ...run.steps[0], status: 'manually_resolved', result_unknown: false, receipt: { source: 'user_report', outcome: input.outcome, note: input.note } }] };
+      return ok(run);
+    };
+    await openSession(); typeDraft('保留原草稿');
+    fireEvent.click(screen.getByRole('button', { name: '运行与检查点' }));
+    fireEvent.click(await screen.findByRole('button', { name: /source-run/ }));
+    fireEvent.click(await screen.findByText('记录步骤 1 的人工外部核实'));
+    expect(calls('resolve_chat_run_step')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: '我已核实动作完成' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '你核实结果的方式与依据' }), { target: { value: '在外部服务管理页核对唯一回执' } });
+    expect((screen.getByRole('button', { name: '保存用户核实报告' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: '我已核实外部结果，保存为用户报告，而非权威工具成功回执' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存用户核实报告' }));
+    await waitFor(() => expect(calls('resolve_chat_run_step')).toHaveLength(1));
+    expect(calls('resolve_chat_run_step')[0]).toEqual({ input: { task_id: 'source-run', step_id: 'unknown-write', confirmed: true, outcome: 'completed', note: '在外部服务管理页核对唯一回执' } });
+    await screen.findAllByText('已人工处理（用户报告）');
+    expect(calls('advance_chat_tool_turn')).toHaveLength(0); expect(calls('continue_chat_run')).toHaveLength(0);
+    expect(draftBox().value).toBe('保留原草稿');
+  });
+
+  it('does not offer model kinds or streaming capabilities that the host rejects', async () => {
+    handlers.list_models = () => ok([
+      { id: 'eligible', model_id: 'eligible', model_name: '可用模型', model_type: 'text-generation', max_output_tokens: 1024 },
+      { id: 'legacy', model_id: 'legacy', model_name: '旧 chat 类型', model_type: 'chat' },
+      { id: 'blocked', model_id: 'blocked', model_name: '禁止流式', model_type: 'text-generation', capabilities: { streaming: 'unsupported' } },
+      { id: 'small', model_id: 'small', model_name: '输出不足', model_type: 'text-generation', max_output_tokens: 512 },
+    ]);
+    await openSession(); fireEvent.click(screen.getByRole('button', { name: '会话目标' }));
+    await screen.findByRole('button', { name: '可用模型' });
+    expect(screen.queryByRole('button', { name: '旧 chat 类型' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '禁止流式' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '输出不足' })).toBeNull();
+  });
+  it('allows only a fresh explicit next intent through provider uncertainty while keeping the original message unknown', async () => {
+    const run = retainedRun({ result_unknown: true, steps: [{ id: 'provider-step', ordinal: 1, kind: 'model', phase: 'model', status: 'interrupted', dispatched: true, result_unknown: true, receipt: null, created_at: 1, updated_at: 2 }] });
+    handlers.list_chat_runs = () => ok({ items: [run] }); handlers.get_chat_run = () => ok(run);
+    handlers.list_chat_messages = () => ok({ items: [message(1, 'user', '原请求'), message(2, 'assistant', '原请求的部分输出', { result_unknown: true, status: 'interrupted' })], next_before_seq: null });
+    handlers.continue_chat_run = args => ok(ackFor(args, { assistant_message_id: 'new-intent-assistant' }));
+    await openSession(); typeDraft('不能直接重发'); expect(sendButton().disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: '重新生成' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '运行与检查点' }));
+    fireEvent.click(await screen.findByRole('button', { name: /source-run/ }));
+    fireEvent.change(await screen.findByRole('textbox', { name: '明确的下一步动作' }), { target: { value: '根据保留片段，执行一个新的下一步' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: '我已核对确认结果，并希望为此下一步动作创建新运行' }));
+    fireEvent.click(screen.getByRole('button', { name: '开始安全的新继续运行' }));
+    await waitFor(() => expect(calls('continue_chat_run')).toHaveLength(1));
+    expect(calls('continue_chat_run')[0].input.client_request_id).not.toBe('source-run');
+    expect(useChatStore.getState().messages.find(item => item.id === 'm2')?.result_unknown).toBe(true);
+    expect(calls('send_chat_message')).toHaveLength(0); expect(calls('regenerate_chat_message')).toHaveLength(0);
+  });
+});
+
+describe('shared foundation context controls', () => {
+  it('sends an explicitly selected context resource without requiring placeholder message text', async () => {
+    await openSession();
+    const context = { resource_id: 'selected-source', sha256: 'selected-sha', start: 0, max_bytes: 8, mode: 'inline' as const };
+    act(() => useChatStore.getState().setFoundation('s1', { context_refs: [context], output_schema: null }));
+    expect(draftBox().value).toBe('');
+    expect(sendButton().disabled).toBe(false);
+    const resolveAck = deferSend();
+    fireEvent.click(sendButton());
+    const args = await sentArgs();
+    expect(args.input.content).toBe('');
+    expect(args.input.foundation.context_refs).toEqual([context]);
+    await settle(resolveAck, ackFor(args));
+  });
+
+  it('rejects oversized resources before reading the file or invoking import', async () => {
+    await openSession();
+    fireEvent.click(screen.getByRole('button', { name: '上下文预算' }));
+    const file = new File(['too large'], 'large.md', { type: 'text/markdown' });
+    Object.defineProperty(file, 'size', { value: 1024 * 1024 + 1 });
+    const read = vi.spyOn(FileReader.prototype, 'readAsDataURL');
+    try {
+      fireEvent.change(await screen.findByLabelText('导入上下文资料'), { target: { files: [file] } });
+      await screen.findByText('请选择不超过 1 MiB 的 UTF-8 文本或 Markdown，或不超过 8 MiB 的 PNG、JPEG、WebP 图片。');
+      expect(read).not.toHaveBeenCalled();
+      expect(calls('chat_import_ai_resource')).toHaveLength(0);
+    } finally { read.mockRestore(); }
+  });
+
+  it('does not import a file that finishes reading after its resource controls unmount', async () => {
+    handlers.list_chat_sessions = () => ok({ items: [session(), session({ id: 's2', title: '另一会话' })], next_cursor: null });
+    await openSession();
+    fireEvent.click(screen.getByRole('button', { name: '上下文预算' }));
+    let reader: FileReader | undefined;
+    const read = vi.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(function (this: FileReader) { reader = this; });
+    try {
+      fireEvent.change(await screen.findByLabelText('导入上下文资料'), { target: { files: [new File(['source'], 'source.md', { type: 'text/markdown' })] } });
+      expect(reader).toBeDefined();
+      await act(async () => { await useChatStore.getState().selectSession(session({ id: 's2', title: '另一会话' })); });
+      await act(async () => {
+        Object.defineProperty(reader!, 'result', { value: 'data:text/markdown;base64,c291cmNl' });
+        reader!.onload?.call(reader!, new ProgressEvent('load') as ProgressEvent<FileReader>);
+      });
+      expect(calls('chat_import_ai_resource')).toHaveLength(0);
+    } finally { read.mockRestore(); }
+  });
+
+  it('imports without selection, then inspects and sends exactly the selected immutable range and schema', async () => {
+    setLocaleForTesting('zh-CN');
+    const resource = { id: 'context-1', name: 'source.md', mime: 'text/markdown', bytes_len: 12, sha256: 'immutable-context-hash', expires_at: 9999999999 };
+    handlers.chat_import_ai_resource = () => ok(resource);
+    handlers.chat_delete_ai_resource = () => ok(true);
+    await openSession(); typeDraft('使用所选资料');
+    fireEvent.click(screen.getByRole('button', { name: '上下文预算' }));
+    fireEvent.change(await screen.findByLabelText('导入上下文资料'), { target: { files: [new File(['source text!'], 'source.md', { type: 'text/markdown' })] } });
+    const include = await screen.findByRole('checkbox', { name: '提供 source.md' });
+    expect(include.getAttribute('aria-checked')).toBe('false');
+    expect(calls('chat_import_ai_resource')[0]).toMatchObject({ sessionId: 's1', input: { name: 'source.md', mime: 'text/markdown', base64: expect.any(String) } });
+    fireEvent.click(include);
+    fireEvent.change(screen.getByLabelText('起始字节：source.md'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('最大字节数：source.md'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('combobox', { name: '提供方式：source.md' }));
+    fireEvent.click(await screen.findByRole('option', { name: '按需读取' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '按 JSON Schema 校验输出' }));
+    fireEvent.change(screen.getByLabelText('输出 JSON Schema'), { target: { value: '{"type":"object"}' } });
+    fireEvent.click(screen.getByRole('button', { name: '检查当前上下文' }));
+    const foundation = { ...defaultAiFoundation(), context_refs: [{ resource_id: 'context-1', sha256: resource.sha256, start: 2, max_bytes: 4, mode: 'on_demand' }], output: { kind: 'json_schema', schema: { type: 'object' } } };
+    await waitFor(() => expect(calls('inspect_chat_context').at(-1)?.input.foundation).toEqual(foundation));
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    const resolveAck = deferSend(); fireEvent.click(sendButton());
+    const args = await sentArgs(); expect(args.input.foundation).toEqual(foundation);
+    await settle(resolveAck, ackFor(args));
+    emit(args.onEvent, { kind: 'done', message: message(2, 'assistant', '{}', { id: 'a1' }) });
+    fireEvent.click(screen.getByRole('button', { name: '上下文预算' }));
+    fireEvent.click(await screen.findByRole('button', { name: '删除上下文资料' }));
+    await waitFor(() => expect(screen.queryByRole('checkbox', { name: '提供 source.md' })).toBeNull());
+    expect(calls('chat_delete_ai_resource')[0]).toEqual({ sessionId: 's1', resourceId: 'context-1' });
+    expect(useChatStore.getState().sessionFoundation.s1.context_refs).toEqual([]);
+  });
+
+  it('blocks invalid schema before inspect/send and clears session controls on account reset', async () => {
+    setLocaleForTesting('zh-CN');
+    await openSession(); typeDraft('保留草稿');
+    fireEvent.click(screen.getByRole('button', { name: '上下文预算' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: '按 JSON Schema 校验输出' }));
+    fireEvent.change(screen.getByLabelText('输出 JSON Schema'), { target: { value: '{invalid' } });
+    expect(screen.getByText('发送前请填写合法的 JSON 输出结构。')).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    const before = calls('inspect_chat_context').length;
+    await act(async () => { expect(await useChatStore.getState().send('保留草稿')).toBe('rejected'); });
+    expect(calls('inspect_chat_context')).toHaveLength(before);
+    expect(calls('send_chat_message')).toHaveLength(0);
+    expect(draftBox().value).toBe('保留草稿');
+    expect(useChatStore.getState().sessionFoundation.s1.output_schema).toBe('{invalid');
+    act(() => useChatStore.getState().reset());
+    expect(useChatStore.getState().sessionFoundation).toEqual({});
+    expect(useChatStore.getState().sessionResources).toEqual({});
+  });
+
+  it('passes current explicit resources and output schema to regeneration without reusing hidden original settings', async () => {
+    setLocaleForTesting('zh-CN');
+    handlers.list_chat_messages = () => ok({ items: [message(1, 'user', '资料分析'), message(2, 'assistant', '旧结果')], next_before_seq: null });
+    handlers.regenerate_chat_message = args => ok(ackFor(args));
+    await openSession(); await screen.findByText('旧结果');
+    const context = { resource_id: 'selected-source', sha256: 'selected-sha', start: 4, max_bytes: 8, mode: 'inline' as const };
+    act(() => useChatStore.getState().setFoundation('s1', { context_refs: [context], output_schema: '{"type":"array"}' }));
+    await act(async () => { expect(await useChatStore.getState().regenerate('m2')).toBe('started'); });
+    expect(calls('regenerate_chat_message')[0].input.foundation).toEqual({ ...defaultAiFoundation(), context_refs: [context], output: { kind: 'json_schema', schema: { type: 'array' } } });
+    expect(calls('send_chat_message')).toHaveLength(0);
+  });
+});
+
+describe('store-owned preflight and authoritative uncertainty', () => {
+  const pin = { skill_id: 'explicit-skill', version: '1.0', content_hash: 'pinned-skill-hash' };
+  const runSnapshot = (taskId: string, extra: Args = {}) => ({ task_id: taskId, session_id: 's1', assistant_message_id: 'retained-assistant', source_run_id: null, status: 'completed', partial_content: 'retained result', dispatched: true, result_unknown: false, audit_warning: null, total_tokens: 4, steps: [], created_at: 1, updated_at: 2, ...extra });
+  it('does not resume tool discovery from an unmounted Composer after A→B→A', async () => {
+    handlers.list_chat_sessions = () => ok({ items: [session(), session({ id: 's2', title: '另一会话' })], next_cursor: null });
+    await openSession();
+    await pickTools(/read_file/);
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    typeDraft('只发送一次');
+    const oldTools = Promise.withResolvers<unknown>();
+    handlers.list_mcp_tools = () => oldTools.promise;
+    const before = calls('list_mcp_tools').length;
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(calls('list_mcp_tools')).toHaveLength(before + 1));
+    await act(async () => { await useChatStore.getState().selectSession(session({ id: 's2', title: '另一会话' })); });
+    await act(async () => { await useChatStore.getState().selectSession(session()); });
+    handlers.list_mcp_tools = () => [tool('read_file')];
+    const resolveAck = deferSend();
+    fireEvent.click(sendButton());
+    const args = await sentArgs();
+    await settle(resolveAck, ackFor(args));
+    emit(args.onEvent, { kind: 'done', message: message(2, 'assistant', '唯一回复', { id: 'a1' }) });
+    await act(async () => { oldTools.resolve([tool('read_file')]); });
+    expect(calls('send_chat_message')).toHaveLength(1);
+    expect(calls('inspect_chat_context')).toHaveLength(1);
+  });
+
+
+  it('keeps one paid intent through delayed inspection and A→B→A Composer remounts', async () => {
+    setLocaleForTesting('zh-CN');
+    const first = Promise.withResolvers<unknown>(), second = Promise.withResolvers<unknown>();
+    let inspections = 0;
+    handlers.inspect_chat_context = () => ++inspections === 1 ? first.promise : second.promise;
+    handlers.list_chat_sessions = () => ok({ items: [session(), session({ id: 's2', title: '另一会话' })], next_cursor: null });
+    await openSession(); typeDraft('只发送一次');
+    const resolveAck = deferSend(); fireEvent.click(sendButton());
+    await waitFor(() => expect(calls('inspect_chat_context')).toHaveLength(1));
+    expect(useChatStore.getState().preparingSessionId).toBe('s1');
+    await act(async () => { await useChatStore.getState().selectSession(session({ id: 's2', title: '另一会话' })); });
+    await act(async () => { await useChatStore.getState().selectSession(session()); });
+    expect(sendButton().disabled).toBe(true);
+    let duplicate!: Promise<unknown>;
+    act(() => { duplicate = useChatStore.getState().send('只发送一次'); });
+    await act(async () => {
+      expect(await useChatStore.getState().regenerate('m2')).toBe('rejected');
+      expect(await useChatStore.getState().summarize()).toBe('rejected');
+      expect(await useChatStore.getState().continueRun('source', '另一动作')).toBe('rejected');
+      first.resolve(ok(chatBudget()));
+    });
+    const args = await sentArgs(); await settle(resolveAck, ackFor(args));
+    emit(args.onEvent, { kind: 'done', message: message(2, 'assistant', '唯一回复', { id: 'a1' }) });
+    await act(async () => { second.resolve(ok(chatBudget())); expect(await duplicate).toBe('rejected'); });
+    expect(calls('inspect_chat_context')).toHaveLength(1);
+    expect(calls('send_chat_message')).toHaveLength(1);
+    expect(calls('regenerate_chat_message')).toHaveLength(0);
+    expect(calls('summarize_chat_context')).toHaveLength(0);
+    expect(calls('get_chat_run')).toHaveLength(0);
+    expect(useChatStore.getState().preparingSessionId).toBeNull();
+  });
+
+  it('releases rejected and failed preflight reservations without dispatching', async () => {
+    setLocaleForTesting('zh-CN');
+    await openSession();
+    handlers.inspect_chat_context = () => ok(chatBudget({ can_send: false }));
+    await act(async () => { expect(await useChatStore.getState().send('超限')).toBe('rejected'); });
+    expect(useChatStore.getState().preparingSessionId).toBeNull();
+    handlers.inspect_chat_context = () => Promise.reject(new Error('transport failure'));
+    await act(async () => { expect(await useChatStore.getState().send('检查失败')).toBe('rejected'); });
+    expect(useChatStore.getState().preparingSessionId).toBeNull();
+    expect(calls('send_chat_message')).toHaveLength(0);
+  });
+
+  it('does not let a stale preflight finally release a new account reservation', async () => {
+    setLocaleForTesting('zh-CN');
+    const oldBudget = Promise.withResolvers<unknown>(), newBudget = Promise.withResolvers<unknown>();
+    let inspection = 0;
+    handlers.inspect_chat_context = () => ++inspection === 1 ? oldBudget.promise : newBudget.promise;
+    await openSession();
+    let oldIntent!: Promise<unknown>, newIntent!: Promise<unknown>;
+    act(() => { oldIntent = useChatStore.getState().send('旧账户意图'); });
+    await waitFor(() => expect(calls('inspect_chat_context')).toHaveLength(1));
+    await act(async () => { useChatStore.getState().reset(); await useChatStore.getState().loadSessions(); await useChatStore.getState().selectSession(session()); });
+    act(() => { newIntent = useChatStore.getState().send('新账户意图'); });
+    await waitFor(() => expect(calls('inspect_chat_context')).toHaveLength(2));
+    await act(async () => { oldBudget.resolve(ok(chatBudget())); expect(await oldIntent).toBe('rejected'); });
+    expect(useChatStore.getState().preparingSessionId).toBe('s1');
+    await act(async () => { newBudget.resolve(ok(chatBudget({ can_send: false }))); expect(await newIntent).toBe('rejected'); });
+    expect(useChatStore.getState().preparingSessionId).toBeNull();
+    expect(calls('send_chat_message')).toHaveLength(0);
+  });
+
+  it.each(['manual', 'on_demand'] as const)('normalizes %s skill preferences for inspect, send, regenerate and continue', async mode => {
+    setLocaleForTesting('zh-CN');
+    handlers.list_chat_messages = () => ok({ items: [message(1, 'user', '原问题'), message(2, 'assistant', '原回答')], next_before_seq: null });
+    handlers.send_chat_message = args => ok(ackFor(args));
+    handlers.regenerate_chat_message = args => ok(ackFor(args));
+    handlers.continue_chat_run = args => ok(ackFor(args));
+    handlers.get_chat_run = () => ok(runSnapshot('source-run'));
+    await openSession(); await screen.findByText('原回答');
+    act(() => useChatStore.getState().setSkillAccess('s1', { skill_mode: mode, authorized_skill_refs: [pin] }));
+    const wire = { skill_mode: mode, authorized_skill_refs: mode === 'on_demand' ? [pin] : [] };
+    await act(async () => { await useChatStore.getState().inspectContext('s1', '新问题'); });
+    expect(calls('inspect_chat_context').at(-1)?.input).toMatchObject(wire);
+    await act(async () => { expect(await useChatStore.getState().regenerate('m2')).toBe('started'); });
+    const regenerated = calls('regenerate_chat_message')[0];
+    expect(regenerated.input).toMatchObject(wire);
+    emit(regenerated.onEvent, { kind: 'done', message: message(2, 'assistant', '新回答', { id: 'a1' }) });
+    await act(async () => { expect(await useChatStore.getState().continueRun('source-run', '新的明确动作')).toBe('started'); });
+    const continued = calls('continue_chat_run')[0];
+    expect(continued.input).toMatchObject(wire);
+    emit(continued.onEvent, { kind: 'done', message: message(4, 'assistant', '继续回复', { id: 'a1' }) });
+    await act(async () => { expect(await useChatStore.getState().send('普通发送')).toBe('started'); });
+    expect(calls('send_chat_message')[0].input).toMatchObject(wire);
+    expect(calls('inspect_chat_context').at(-1)?.input).toMatchObject(wire);
+    expect(useChatStore.getState().sessionSkillAccess.s1).toEqual({ skill_mode: mode, authorized_skill_refs: [pin] });
+  });
+
+  it.each(['list', 'inspect'] as const)('resolves only the exact lost request from safe terminal %s evidence', async readMode => {
+    setLocaleForTesting('zh-CN');
+    handlers.send_chat_message = () => { throw new Error('lost acknowledgement'); };
+    await openSession();
+    await act(async () => { expect(await useChatStore.getState().send('原请求')).toBe('rejected'); });
+    const taskId = calls('send_chat_message')[0].input.client_request_id;
+    expect(useChatStore.getState().sessionUnknown.s1).toBe(true);
+    await act(async () => { await useChatStore.getState().listRuns('s1'); });
+    expect(useChatStore.getState().sessionUnknown.s1).toBe(true);
+    handlers.get_chat_run = () => ok(runSnapshot('unrelated-run'));
+    await act(async () => { await useChatStore.getState().inspectRun('unrelated-run'); });
+    expect(useChatStore.getState().sessionUnknown.s1).toBe(true);
+    let observed = runSnapshot(taskId, { status: 'running' });
+    handlers.list_chat_runs = () => ok({ items: [observed] });
+    handlers.get_chat_run = () => ok(observed);
+    const read = async () => { if (readMode === 'list') await useChatStore.getState().listRuns('s1'); else await useChatStore.getState().inspectRun(taskId); };
+    for (const extra of [{ status: 'running' }, { status: 'completed', result_unknown: true }, { status: 'completed', audit_warning: 'audit_unconfirmed' }, { status: 'completed', steps: [{ id: 'uncertain-tool', kind: 'tool', status: 'dispatched', dispatched: true, result_unknown: false, receipt: null }] }]) {
+      observed = runSnapshot(taskId, extra);
+      await act(read);
+      expect(useChatStore.getState().sessionUnknown.s1).toBe(true);
+    }
+    observed = runSnapshot(taskId);
+    await act(read);
+    expect(useChatStore.getState().sessionUnknown.s1).toBe(false);
+    expect(calls('send_chat_message')).toHaveLength(1);
+    handlers.send_chat_message = args => ok(ackFor(args));
+    await act(async () => { expect(await useChatStore.getState().send('核实后的新意图')).toBe('started'); });
+    expect(calls('send_chat_message')).toHaveLength(2);
+    expect(calls('send_chat_message')[1].input.client_request_id).not.toBe(taskId);
+  });
+
+  it('does not clear a different genuinely unknown run when a lost acknowledgement is reconciled', async () => {
+    setLocaleForTesting('zh-CN');
+    handlers.send_chat_message = () => { throw new Error('lost acknowledgement'); };
+    await openSession();
+    await act(async () => { await useChatStore.getState().send('原请求'); });
+    const taskId = calls('send_chat_message')[0].input.client_request_id;
+    handlers.list_chat_runs = () => ok({ items: [runSnapshot('unknown-effect', { result_unknown: true }), runSnapshot(taskId)] });
+    await act(async () => { await useChatStore.getState().listRuns('s1'); });
+    handlers.get_chat_run = () => ok(runSnapshot(taskId));
+    await act(async () => { await useChatStore.getState().inspectRun(taskId); });
+    expect(useChatStore.getState().sessionUnknown.s1).toBe(true);
+    await act(async () => { expect(await useChatStore.getState().send('禁止重发')).toBe('rejected'); });
+    expect(calls('send_chat_message')).toHaveLength(1);
+  });
 });

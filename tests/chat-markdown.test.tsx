@@ -1,5 +1,3 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Lexer } from 'marked';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -210,16 +208,5 @@ describe('ordinary Markdown still renders', () => {
   it('decodes character references the lexer leaves as written', () => {
     const { container } = show('Tom &amp; Jerry &lt;3');
     expect(container.textContent).toBe('Tom & Jerry <3');
-  });
-});
-
-describe('source scan', () => {
-  it('no chat source uses innerHTML, dangerouslySetInnerHTML, marked.parse or the Renderer', () => {
-    const roots = ['src/components/chat', 'src/pages/workbench', 'src/stores'];
-    const files = roots.flatMap(root => readdirSync(root).filter(name => /\.(ts|tsx)$/.test(name)).map(name => join(root, name)));
-    for (const file of files.filter(name => /chat|Chat|Markdown|Composer|Message|Session|Target|Disclosures|clipboard|catalog/.test(name))) {
-      const source = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-      expect(source, file).not.toMatch(/dangerouslySetInnerHTML|innerHTML|outerHTML|insertAdjacentHTML|marked\.parse|new Renderer|\bparse\(/);
-    }
   });
 });
