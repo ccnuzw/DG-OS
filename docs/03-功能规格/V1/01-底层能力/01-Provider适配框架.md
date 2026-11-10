@@ -444,6 +444,10 @@ CREATE TABLE provider_usage_logs (
 
 推理文本和思考块（含签名）不写入 SQLite、使用记录、审计或日志，只在同一工具循环的内存上下文中传递。工作台对可展示推理文本的处理已由 FR-006 回答（D072）：`reasoning_delta` 只实时显示，不写库、不写日志、不作为后续轮次上下文回传给上游。聊天经 `ProviderManager::stream_provider_bound_cancellable_with_provenance` 调用，调用方为 `BuiltinCaller::Workbench`，`request_id` 等于任务 ID；上游未给用量时聊天消息存 NULL 而不是 0（D074），Provider 层的使用记录以 `usage_reported = 0` 标记同一情况（D081）。
 
+### 4.4 D140工具流式消费增量
+
+OpenAI-compatible与Anthropic工具请求支持真实参数/正文/推理增量；完整调用身份、参数JSON与schema验证完成后才能交给宿主审批。用量未知、已派发和审计失败分别保留，不用同步请求模拟token流。既有同步工具API仍适用于同步消费者；完整聊天行为与验收以[FR-006 AC31/AC34](../02-应用模块/06-AI工作台.md#ac34-流式工具与有界结果)和[D140](../../../06-决策记录/V7-冻结决策.md#d140-ai会话持续完善与受控能力增量)为准。推理正文仍不持久化。
+
 ## 5. 验收标准
 
 ### 5.1 AC 逐项测试设计表
