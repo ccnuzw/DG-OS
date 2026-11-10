@@ -4,19 +4,20 @@ import type { AgentSession } from './agentRunnerStore';
 import { useDevelopment } from './developmentStore';
 import { developmentDraftKey, useDevelopmentDrafts } from './developmentDrafts';
 import { fileBase64 } from '../components/chat/Attachments';
+import { desktopSlot, onDesktopStateRestored, rebaseDesktopKey, setDesktopSlot } from './developmentDesktop';
 
 export type AgentImageMime = 'image/png' | 'image/jpeg' | 'image/webp';
 export interface AgentImageInput { mime: AgentImageMime; base64: string }
 export interface CapturedAgentImage { id: string; name: string; bytes: number; input: AgentImageInput }
-export interface AgentImageDraft { images: CapturedAgentImage[]; busy: boolean; error: string | null }
+export interface AgentImageDraft { images: CapturedAgentImage[]; busy: boolean; error: string | null; expiresAt?: number }
 interface AgentImagesState { drafts: Record<string, AgentImageDraft>; reset(): void }
 export const AGENT_IMAGE_COUNT_LIMIT = 4;
 export const AGENT_IMAGE_BYTES_LIMIT = 2 * 1024 * 1024;
 export const AGENT_IMAGE_TOTAL_LIMIT = 2 * 1024 * 1024;
-// Draft images are volatile, never written to localStorage, DB, or IPC until send.
-// A bounded account-wide budget also prevents many parked drafts retaining bytes.
-const ACCOUNT_IMAGE_BYTES_LIMIT = 64 * 1024 * 1024;
-const IMAGE_DRAFT_LIFETIME_MS = 60 * 60 * 1000;
+// Bytes stay in private account host storage; the generic discard guard contains
+// only opaque identities. Leave room for text/editor state in the 8 MiB envelope.
+const ACCOUNT_IMAGE_BYTES_LIMIT = 4 * 1024 * 1024;
+export const AGENT_IMAGE_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 const EMPTY_IMAGES: CapturedAgentImage[] = [];
 const revisions = new Map<string, number>();
 const timers = new Map<string, number>();
@@ -30,14 +31,15 @@ export const useAgentImages = create<AgentImagesState>((set, get) => ({ drafts: 
 
 export const agentImagesKey = (projectId: string | null, sessionOrDraft: Pick<AgentSession, 'id' | 'generation'> | string) => typeof sessionOrDraft === 'string'
   ? developmentDraftKey('conversation', projectId, 'images', 'draft', sessionOrDraft)
-  : developmentDraftKey('conversation', projectId, 'images', sessionOrDraft.id, sessionOrDraft.generation);
+  : developmentDraftKey('conversation', projectId, 'images', sessionOrDraft.id);
 function currentOwner(owner: string) {
   try { const parts = JSON.parse(owner); return parts[0] === useDevelopment.getState().epoch && parts[1] === 'conversation' && parts[3] === 'images'; }
   catch { return false; }
 }
 function draft(owner: string): AgentImageDraft { return useAgentImages.getState().drafts[owner] ?? { images: EMPTY_IMAGES, busy: false, error: null }; }
 function update(owner: string, value: AgentImageDraft) {
-  useAgentImages.setState(state => ({ drafts: { ...state.drafts, [owner]: value } }));
+  const expiresAt = value.images.length ? value.expiresAt ?? draft(owner).expiresAt ?? Date.now() + AGENT_IMAGE_LIFETIME_MS : undefined;
+  useAgentImages.setState(state => ({ drafts: { ...state.drafts, [owner]: { ...value, expiresAt } } }));
 }
 function mark(owner: string, images: CapturedAgentImage[], busy = false) {
   // Only opaque identities enter the generic unsaved-draft guard. Bytes/names do
@@ -59,7 +61,7 @@ function scheduleExpiry(owner: string) {
   const timer = window.setTimeout(() => {
     clearAgentImages(owner);
     if (currentOwner(owner)) update(owner, { images: [], busy: false, error: 'expired' });
-  }, IMAGE_DRAFT_LIFETIME_MS);
+  }, Math.max(0, (draft(owner).expiresAt ?? Date.now() + AGENT_IMAGE_LIFETIME_MS) - Date.now()));
   timers.set(owner, timer);
 }
 export function captureAgentImages(owner: string): CapturedAgentImage[] { return currentOwner(owner) ? draft(owner).images.slice() : []; }
@@ -86,7 +88,7 @@ export function transferAgentImages(from: string, to: string) {
   if (target.busy || images.length > AGENT_IMAGE_COUNT_LIMIT || images.reduce((sum, image) => sum + image.bytes, 0) > AGENT_IMAGE_TOTAL_LIMIT) throw new Error('agent_images_transfer_conflict');
   invalidate(from); invalidate(to);
   stopTimer(from);
-  useAgentImages.setState(state => { const drafts = { ...state.drafts, [to]: { images, busy: false, error: null } }; delete drafts[from]; return { drafts }; });
+  useAgentImages.setState(state => { const drafts = { ...state.drafts, [to]: { images, busy: false, error: null, expiresAt: Math.min(source.expiresAt ?? Date.now() + AGENT_IMAGE_LIFETIME_MS, target.expiresAt ?? Date.now() + AGENT_IMAGE_LIFETIME_MS) } }; delete drafts[from]; return { drafts }; });
   mark(to, images); mark(from, []);
   if (images.length) scheduleExpiry(to);
 }
@@ -152,4 +154,34 @@ useDevelopmentDrafts.subscribe((state, previous) => {
       useAgentImages.setState(current => { const drafts = { ...current.drafts }; delete drafts[owner]; return { drafts }; });
     }
   }
+});
+
+onDesktopStateRestored(() => {
+  const saved = desktopSlot<Record<string, AgentImageDraft>>('images', {});
+  const epoch = useDevelopment.getState().epoch;
+  const drafts: Record<string, AgentImageDraft> = {};
+  let total = 0;
+  for (const [key, value] of Object.entries(saved)) {
+    const owner = rebaseDesktopKey(key, epoch);
+    if (!owner || !currentOwner(owner) || !value || !Array.isArray(value.images)) continue;
+    const expired = value.images.length > 0 && (!Number.isFinite(value.expiresAt) || value.expiresAt! <= Date.now());
+    const valid = value.images.length <= AGENT_IMAGE_COUNT_LIMIT && value.images.every(image => {
+      if (!image || typeof image.id !== 'string' || typeof image.name !== 'string' || !Number.isInteger(image.bytes) || image.bytes <= 0 || image.bytes > AGENT_IMAGE_BYTES_LIMIT || !image.input || !['image/png', 'image/jpeg', 'image/webp'].includes(image.input.mime) || typeof image.input.base64 !== 'string') return false;
+      const encoded = image.input.base64;
+      const bytes = encoded.length / 4 * 3 - (encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0);
+      return encoded.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(encoded) && bytes === image.bytes;
+    });
+    const bytes = value.images.reduce((sum, image) => sum + (image?.bytes ?? 0), 0);
+    if (expired) drafts[owner] = { images: [], busy: false, error: 'expired' };
+    else if (!valid || bytes > AGENT_IMAGE_TOTAL_LIMIT || total + bytes > ACCOUNT_IMAGE_BYTES_LIMIT) drafts[owner] = { images: [], busy: false, error: 'limits' };
+    else { total += bytes; drafts[owner] = { images: value.images, expiresAt: value.expiresAt, busy: false, error: value.busy ? 'read' : value.error }; }
+  }
+  useAgentImages.setState(state => ({ drafts: { ...drafts, ...state.drafts } }));
+  for (const [owner, value] of Object.entries(useAgentImages.getState().drafts)) {
+    mark(owner, value.images);
+    if (value.images.length) scheduleExpiry(owner);
+  }
+});
+useAgentImages.subscribe((state, previous) => {
+  if (state.drafts !== previous.drafts) setDesktopSlot('images', state.drafts);
 });

@@ -16,7 +16,6 @@ type Model = { id: string; name: string; routes: Route[] };
 type Provider = { id: string; name: string; models: Model[] };
 type Scope = { projectId: string; epoch: number; generation: number };
 type CatalogState = Scope & { reload: number; ticket: number; providers: Provider[]; failed: boolean; loading: boolean };
-type ModelTarget = { providerId: string; modelId: string };
 const engineNames = { codex: 'Codex', claude: 'Claude' } as const;
 
 function sameScope(left: Scope, right: Scope) {
@@ -48,12 +47,13 @@ function mergeCatalogs(catalogs: CliProviderCatalog[]): Provider[] {
   return Array.from(providers.values());
 }
 
-export function ComposerModelPicker({ projectId, value, preferred, disabled = false, onChange }: {
+export function ComposerModelPicker({ projectId, value, preferred, disabled = false, onChange, onOpenChange }: {
   projectId: string;
   value: CliProviderConfiguration | null;
   preferred: CliProviderConfiguration | null;
   disabled?: boolean;
   onChange: (value: CliProviderConfiguration) => void;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const { t } = useLocale();
   const id = useId();
@@ -68,10 +68,10 @@ export function ComposerModelPicker({ projectId, value, preferred, disabled = fa
   const restoreFocus = useRef(false);
   const [openScope, setOpenScope] = useState<Scope | null>(null);
   const [query, setQuery] = useState('');
-  const [routeTarget, setRouteTarget] = useState<ModelTarget | null>(null);
   const [reload, setReload] = useState(0);
   const [state, setState] = useState<CatalogState | null>(null);
   const open = Boolean(openScope && sameScope(openScope, scope) && active && !pending);
+  useEffect(() => { onOpenChange?.(open); }, [open, onOpenChange]);
   const scoped = state && sameScope(state, scope) && state.reload === reload && !pending && active ? state : null;
   const loading = !scoped || scoped.loading;
   const providers = useMemo(() => scoped?.providers ?? [], [scoped]);
@@ -88,7 +88,6 @@ export function ComposerModelPicker({ projectId, value, preferred, disabled = fa
 
   function refresh() {
     ++operation.current;
-    setRouteTarget(null);
     setReload(current => current + 1);
   }
 
@@ -114,7 +113,7 @@ export function ComposerModelPicker({ projectId, value, preferred, disabled = fa
 
   useEffect(() => {
     if (!active || pending) return;
-    const focus = () => { ++operation.current; setRouteTarget(null); setReload(current => current + 1); };
+    const focus = () => { ++operation.current; setReload(current => current + 1); };
     window.addEventListener('focus', focus);
     return () => window.removeEventListener('focus', focus);
   }, [active, pending]);
@@ -131,7 +130,6 @@ export function ComposerModelPicker({ projectId, value, preferred, disabled = fa
   function changeOpen(next: boolean) {
     if (next && (disabled || pending || !active)) return;
     setOpenScope(next ? scope : null);
-    setRouteTarget(null);
     setQuery('');
     if (next) refresh();
   }
@@ -154,9 +152,8 @@ export function ComposerModelPicker({ projectId, value, preferred, disabled = fa
     const preferredRoute = preferred && preferred.provider.provider_id === provider.id
       ? routes.find(route => route.engine === preferred.engine && route.revision === preferred.provider.provider_revision)
       : undefined;
-    if (routes.length === 1) chooseRoute(provider, model, routes[0]);
-    else if (preferredRoute) chooseRoute(provider, model, preferredRoute);
-    else if (routes.length > 1) setRouteTarget({ providerId: provider.id, modelId: model.id });
+    const route = preferredRoute ?? routes.find(item => item.engine === 'codex') ?? routes[0];
+    if (route) chooseRoute(provider, model, route);
   }
 
   function reasonText(reason: string | null) {
@@ -213,7 +210,7 @@ export function ComposerModelPicker({ projectId, value, preferred, disabled = fa
             {value ? <small>{engineNames[value.engine]}</small> : null}
             {invalid ? <p role="alert" className="composer-model-picker-warning">{t('modelPicker.reselect')}{selectedRoute && !selectedRoute.available ? ` ${reasonText(selectedRoute.reason)}` : ''}</p> : null}
           </section>
-          <div className="composer-model-picker-search"><Search size={16} aria-hidden="true" /><Input id={`${id}-search`} type="search" label={t('modelPicker.search')} placeholder={t('modelPicker.searchHint')} value={query} onChange={event => { setQuery(event.target.value); setRouteTarget(null); }} /></div>
+          <div className="composer-model-picker-search"><Search size={16} aria-hidden="true" /><Input id={`${id}-search`} type="search" label={t('modelPicker.search')} placeholder={t('modelPicker.searchHint')} value={query} onChange={event => setQuery(event.target.value)} /></div>
           <div className="composer-model-picker-toolbar"><Button variant="secondary" size="xs" disabled={loading} onClick={refresh}>{t('modelPicker.refresh')}</Button>{loading ? <span role="status">{t('modelPicker.loading')}</span> : null}</div>
           <div className="composer-model-picker-results" aria-busy={loading}>
             {scoped?.failed ? <p role="alert" className="composer-model-picker-warning">{t('modelPicker.readFailed')}</p> : null}
@@ -225,17 +222,16 @@ export function ComposerModelPicker({ projectId, value, preferred, disabled = fa
               {provider.models.map(model => {
                 const selected = value?.provider.provider_id === provider.id && value.provider.model_id === model.id;
                 const available = model.routes.some(route => route.available);
-                const choosingRoute = routeTarget?.providerId === provider.id && routeTarget.modelId === model.id;
                 return <div key={model.id} className="composer-model-picker-model">
-                  <Button variant="ghost" className="composer-model-picker-option" aria-pressed={Boolean(selected)} disabled={disabled || !available} aria-expanded={choosingRoute} onClick={() => chooseModel(provider, model)}>
+                  <Button variant="ghost" className="composer-model-picker-option" aria-pressed={Boolean(selected)} disabled={disabled || !available} onClick={() => chooseModel(provider, model)}>
                     <span className="composer-model-picker-model-copy"><strong>{model.name}</strong><small>{model.id}</small></span>
                     {selected ? <span className="composer-model-picker-selected"><Check size={14} aria-hidden="true" />{t('modelPicker.current')}</span> : null}
                   </Button>
-                  <div className="composer-model-picker-route-summary">{model.routes.map(route => <span key={route.engine} className={!route.available ? 'composer-model-picker-unavailable' : undefined}>{engineNames[route.engine]}{!route.available ? ` — ${reasonText(route.reason)}` : ''}</span>)}</div>
-                  {choosingRoute ? <div className="composer-model-picker-routes" role="group" aria-label={t('modelPicker.chooseRoute')}>
-                    <p>{t('modelPicker.chooseRouteHint')}</p>
-                    {model.routes.map(route => <Button key={route.engine} variant="secondary" disabled={disabled || !route.available} aria-pressed={Boolean(selected && value?.engine === route.engine && value.provider.provider_revision === route.revision)} onClick={() => chooseRoute(provider, model, route)}>{engineNames[route.engine]}</Button>)}
-                  </div> : null}
+                  <details className="composer-model-picker-route-summary"><summary>{t('desktop.advancedRoute')}</summary>
+                    <div className="composer-model-picker-routes" role="group" aria-label={t('modelPicker.chooseRoute')}>
+                      {model.routes.map(route => <Button key={route.engine} variant="secondary" disabled={disabled || !route.available} aria-pressed={Boolean(selected && value?.engine === route.engine && value.provider.provider_revision === route.revision)} onClick={() => chooseRoute(provider, model, route)}>{engineNames[route.engine]}{!route.available ? ` — ${reasonText(route.reason)}` : ''}</Button>)}
+                    </div>
+                  </details>
                 </div>;
               })}
             </section>) : null}

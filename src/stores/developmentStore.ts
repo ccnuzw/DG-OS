@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { useAgentRunner, type Engine } from './agentRunnerStore';
 import { hostCode } from './hostError';
+import { initializeDesktopState, onDesktopStateRestored, resetDesktopState, setDesktopSlot, useDesktopPersistence } from './developmentDesktop';
 
 export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'review' | 'completed' | 'cancelled';
 export const TASK_STATUSES: readonly TaskStatus[] = ['todo', 'in_progress', 'blocked', 'review', 'completed', 'cancelled'];
@@ -18,18 +19,29 @@ export interface SaveTaskInput { id: string | null; project_id: string; goal: st
 export type Outcome<T> = { ok: true; value: T } | { ok: false; code: string };
 interface Workspace { projects: Project[]; tasks: DevelopmentTask[]; sessions: DevelopmentSession[]; selection: Selection; operations: ProjectOperation[] }
 
-export interface ConversationTab { id: string; projectId: string; taskId: string | null; sessionId: string | null; title: string }
-export interface ReadingPosition { top: number; follow: boolean }
+export interface ConversationTab { id: string; projectId: string; taskId: string | null; sessionId: string | null; title: string; hidden?: boolean }
+export interface ReadingPosition { top: number; follow: boolean; messageId?: string; offset?: number }
 interface ConversationWorkspace { tabs: ConversationTab[]; activeTabId: string | null; sessionNames: Record<string, string>; reading: Record<string, ReadingPosition>; pinnedProjectIds: string[]; archivedSessionIds: string[] }
 const emptyConversations = (): ConversationWorkspace => ({ tabs: [], activeTabId: null, sessionNames: {}, reading: {}, pinnedProjectIds: [], archivedSessionIds: [] });
 function stringIds(value: unknown): string[] {
   return Array.isArray(value) ? [...new Set(value.filter((id): id is string => typeof id === 'string' && id.trim().length > 0))] : [];
 }
 function workspaceKey(owner: string) { return `dgos.development.conversations:${owner}`; }
-function restoreConversations(owner: string): ConversationWorkspace | null {
+const migratedConversationKeys = new Map<string, string>();
+function restoreConversations(owner: string, legacyOwner?: string): ConversationWorkspace | null {
   try {
-    const value = JSON.parse(localStorage.getItem(workspaceKey(owner)) ?? 'null');
-    if (!value || !Array.isArray(value.tabs)) return null;
+    // Only legacy navigation metadata is migrated from browser storage. No body
+    // or attachment is ever written there by this store.
+    let value = (useDesktopPersistence.getState().value.conversations as ConversationWorkspace | undefined) ?? null;
+    if (!value) {
+      const key = localStorage.getItem(workspaceKey(owner)) !== null ? workspaceKey(owner) : legacyOwner ? workspaceKey(legacyOwner) : workspaceKey(owner);
+      const raw = localStorage.getItem(key);
+      if (raw === null) return null;
+      value = JSON.parse(raw);
+      if (!value || !Array.isArray(value.tabs)) throw new Error('desktop_state_invalid');
+      migratedConversationKeys.set(owner, key);
+    }
+    if (!Array.isArray(value.tabs)) throw new Error('desktop_state_invalid');
     const ids = new Set<string>(), sessions = new Set<string>();
     const tabs = value.tabs.filter((tab: ConversationTab) => {
       if (!tab || typeof tab.id !== 'string' || typeof tab.projectId !== 'string' || typeof tab.title !== 'string' || !(tab.taskId === null || typeof tab.taskId === 'string') || !(tab.sessionId === null || typeof tab.sessionId === 'string') || ids.has(tab.id) || tab.sessionId && sessions.has(tab.sessionId)) return false;
@@ -37,8 +49,9 @@ function restoreConversations(owner: string): ConversationWorkspace | null {
     });
     const sessionNames = Object.fromEntries(Object.entries(value.sessionNames ?? {}).filter(([, name]) => typeof name === 'string')) as Record<string, string>;
     const reading = Object.fromEntries(Object.entries(value.reading ?? {}).filter(([, position]) => position && typeof position === 'object' && 'top' in position && Number.isFinite(position.top) && Number(position.top) >= 0 && 'follow' in position && typeof position.follow === 'boolean')) as Record<string, ReadingPosition>;
-    return { tabs, activeTabId: ids.has(value.activeTabId) ? value.activeTabId : tabs[0]?.id ?? null, sessionNames, reading, pinnedProjectIds: stringIds(value.pinnedProjectIds), archivedSessionIds: stringIds(value.archivedSessionIds) };
-  } catch { return null; }
+    const active = value.activeTabId;
+    return { tabs, activeTabId: tabs.some((tab: ConversationTab) => tab.id === active && !tab.hidden) ? active : tabs.find((tab: ConversationTab) => !tab.hidden)?.id ?? null, sessionNames, reading, pinnedProjectIds: stringIds(value.pinnedProjectIds), archivedSessionIds: stringIds(value.archivedSessionIds) };
+  } catch { useDesktopPersistence.setState({ error: 'desktop_state_invalid' }); return null; }
 }
 
 interface DevelopmentState extends Workspace, ConversationWorkspace {
@@ -105,11 +118,11 @@ export const useDevelopment = create<DevelopmentState>((set, get) => {
     openTab(session) {
       if (!session.project_id) return null;
       const existing = get().tabs.find(tab => tab.sessionId === session.id);
-      if (existing) { set({ activeTabId: existing.id }); return existing; }
+      if (existing) { get().activateTab(existing.id); return get().tabs.find(tab => tab.id === existing.id)!; }
       const tab = { id: `session:${session.id}`, projectId: session.project_id, taskId: session.task_id, sessionId: session.id, title: get().sessionNames[session.id] ?? '' };
       set({ tabs: [...get().tabs, tab], activeTabId: tab.id }); return tab;
     },
-    activateTab(id) { if (get().tabs.some(tab => tab.id === id)) set({ activeTabId: id }); },
+    activateTab(id) { if (get().tabs.some(tab => tab.id === id)) set({ tabs: get().tabs.map(tab => tab.id === id && tab.hidden ? { ...tab, hidden: false } : tab), activeTabId: id }); },
     bindTab(id, session) {
       if (!session.project_id) return;
       const duplicate = get().tabs.find(tab => tab.sessionId === session.id && tab.id !== id);
@@ -117,8 +130,12 @@ export const useDevelopment = create<DevelopmentState>((set, get) => {
       set({ tabs: get().tabs.filter(tab => tab.id !== duplicate?.id).map(tab => tab.id === id ? { ...tab, projectId: session.project_id!, taskId: session.task_id, sessionId: session.id } : tab), sessionNames: title ? { ...get().sessionNames, [session.id]: title } : get().sessionNames });
     },
     closeTab(id) {
-      const index = get().tabs.findIndex(tab => tab.id === id), tabs = get().tabs.filter(tab => tab.id !== id);
-      set({ tabs, activeTabId: get().activeTabId === id ? tabs[Math.min(index, tabs.length - 1)]?.id ?? null : get().activeTabId });
+      const before = get().tabs, index = before.findIndex(tab => tab.id === id), closing = before[index];
+      if (!closing) return;
+      const tabs = closing.sessionId ? before.filter(tab => tab.id !== id) : before.map(tab => tab.id === id ? { ...tab, hidden: true } : tab);
+      const visible = tabs.filter(tab => !tab.hidden);
+      const next = visible.find(tab => before.indexOf(tab) >= index) ?? visible[visible.length - 1];
+      set({ tabs, activeTabId: get().activeTabId === id ? next?.id ?? null : get().activeTabId });
     },
     renameTab(id, title) {
       const tab = get().tabs.find(item => item.id === id); if (!tab || !title.trim()) return;
@@ -149,18 +166,26 @@ export const useDevelopment = create<DevelopmentState>((set, get) => {
       if (restored.size) set({ archivedSessionIds: get().archivedSessionIds.filter(id => !restored.has(id)) });
     },
     async load(accountName) {
-      const epoch = get().epoch;
-      const seq = ++loadSeq;
-      const selectionAtStart = selectionSeq;
+      let epoch = get().epoch;
+      let seq = ++loadSeq;
+      let selectionAtStart = selectionSeq;
       const result = await call<Workspace>('read_development_workspace', {});
       // Only the newest load may apply, and only within the epoch it started in.
       if (!result.ok || seq !== loadSeq || epoch !== get().epoch) return false;
       const data = result.value;
       // A selection committed while this load was in flight is newer than the value the load read.
       let selection = get().loaded || selectionSeq !== selectionAtStart ? get().selection : data.selection;
-      const owner = accountName ? `account:${accountName}` : get().workspaceOwner ?? data.projects[0]?.owner ?? data.sessions[0]?.owner ?? data.tasks[0]?.owner ?? null;
+      const dataOwner = data.projects[0]?.owner ?? data.sessions[0]?.owner ?? data.tasks[0]?.owner;
+      // The account name remains stable when an empty workspace gains its first row.
+      const owner = accountName ? `account:${accountName}` : get().workspaceOwner?.startsWith('account:') ? get().workspaceOwner : dataOwner ?? get().workspaceOwner;
+      if (get().workspaceOwner && owner !== get().workspaceOwner) {
+        get().reset(); epoch = get().epoch; seq = ++loadSeq; selectionAtStart = selectionSeq; selection = data.selection;
+      }
+      if (owner) await initializeDesktopState(owner);
+      if (seq !== loadSeq || epoch !== get().epoch) return false;
+      if (selectionSeq !== selectionAtStart) selection = get().selection;
       const ownerChanged = get().workspaceOwner !== owner;
-      const restored = owner && ownerChanged ? restoreConversations(owner) : null;
+      const restored = owner && ownerChanged && useDesktopPersistence.getState().loaded ? restoreConversations(owner, dataOwner && dataOwner !== owner ? dataOwner : undefined) : null;
       if (restored) {
         const tab = restored.tabs.find(item => item.id === restored.activeTabId);
         selection = tab ? { project_id: tab.projectId, task_id: tab.taskId, session_id: tab.sessionId } : emptySelection;
@@ -205,13 +230,25 @@ export const useDevelopment = create<DevelopmentState>((set, get) => {
     reset() {
       ++loadSeq; ++selectionSeq;
       set({ ...emptyWorkspace, ...emptyConversations(), workspaceOwner: null, loaded: false, error: null, epoch: get().epoch + 1 });
+      resetDesktopState();
     },
   };
 });
 
-// Only presentation metadata is durable. Never restore runtime approval or trust.
+// Presentation metadata only: CLI runtime state, approvals and trust stay host-owned.
 useDevelopment.subscribe((state, previous) => {
+  if (!previous.loaded && state.loaded && !useDesktopPersistence.getState().loaded) return;
   if (!state.workspaceOwner || state.epoch !== previous.epoch || state.tabs === previous.tabs && state.activeTabId === previous.activeTabId && state.sessionNames === previous.sessionNames && state.reading === previous.reading && state.pinnedProjectIds === previous.pinnedProjectIds && state.archivedSessionIds === previous.archivedSessionIds) return;
-  try { localStorage.setItem(workspaceKey(state.workspaceOwner), JSON.stringify({ tabs: state.tabs, activeTabId: state.activeTabId, sessionNames: state.sessionNames, reading: state.reading, pinnedProjectIds: state.pinnedProjectIds, archivedSessionIds: state.archivedSessionIds })); }
-  catch { /* Storage may be unavailable; in-memory working state remains intact. */ }
+  setDesktopSlot('conversations', { tabs: state.tabs, activeTabId: state.activeTabId, sessionNames: state.sessionNames, reading: state.reading, pinnedProjectIds: state.pinnedProjectIds, archivedSessionIds: state.archivedSessionIds });
+});
+onDesktopStateRestored(() => {
+  const owner = useDevelopment.getState().workspaceOwner;
+  if (owner) { const restored = restoreConversations(owner); if (restored) useDevelopment.setState(restored); }
+});
+// Delete the migration source only once the private host copy is confirmed saved.
+useDesktopPersistence.subscribe((state, previous) => {
+  if (previous.dirty && !state.dirty && state.loaded && !state.error && state.owner) {
+    const key = migratedConversationKeys.get(state.owner);
+    if (key) try { localStorage.removeItem(key); migratedConversationKeys.delete(state.owner); } catch { /* Legacy copy remains recoverable. */ }
+  }
 });

@@ -9,6 +9,7 @@ import { createWorkspaceController } from '../src/workspace/controller';
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('../src/i18n', () => ({ useLocale: () => ({ t: (key: string) => key }), t: (key: string) => key, formatDateTime: String }));
+vi.mock('../src/stores/developmentTrust', () => ({ useWorkspaceTrust: () => ({ value: { path: '/workspace', terminal: true, service: true }, loading: false, error: null, grant: vi.fn(), revoke: vi.fn(), refresh: vi.fn() }) }));
 const process = (id = 'run', status = 'exited', output = 'first snapshot'): DevelopmentProcess => ({ id, project_id: 'p', task_id: 't', kind: 'command', source: 'host', status, output, truncated: false, exit_code: status === 'running' ? null : 0, reason: null, started_at: 1, finished_at: status === 'running' ? null : 2, program: 'echo', args: [], cwd: '.', fingerprint: '', start_fingerprint: '', verification_status: 'not_requested', verification_complete: false, mutation_observed: false, preview_url: null });
 const calls = (command: string) => invoke.mock.calls.filter(([name]) => name === command).length;
 async function flush() { await act(async () => {}); }
@@ -220,7 +221,7 @@ it('explains invalid runtime fields next to inputs before dispatching', async ()
   show(); await flush();
   fireEvent.click(screen.getByTestId('dev-process-start'));
   expect(screen.getByText('direct.validation.program')).toBeTruthy();
-  expect(screen.getByText('direct.validation.trust')).toBeTruthy();
+  expect(screen.queryByTestId('dev-process-trust')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'direct.saveCommand' }));
   expect(screen.getByText('direct.validation.name')).toBeTruthy();
   expect(calls('start_development_process')).toBe(0);
@@ -238,7 +239,6 @@ it('retains an owned start receipt across unmount and separates a failed history
   });
   const view = render(<DevelopmentRuntime projectId="p" taskId="t" />); await flush();
   fireEvent.change(screen.getByTestId('dev-process-program'), { target: { value: 'echo' } });
-  fireEvent.click(screen.getByTestId('dev-process-trust'));
   fireEvent.click(screen.getByTestId('dev-process-start'));
   expectReceipt('start', 'pending', startedId);
   fireEvent.click(screen.getByTestId('dev-process-start'));
@@ -282,7 +282,7 @@ it('keeps an unknown start blocked and reconciles only its original process ID',
     throw 'unexpected command';
   });
   show(); await flush();
-  fireEvent.change(screen.getByTestId('dev-process-program'), { target: { value: 'echo' } }); fireEvent.click(screen.getByTestId('dev-process-trust'));
+  fireEvent.change(screen.getByTestId('dev-process-program'), { target: { value: 'echo' } });
   fireEvent.click(screen.getByTestId('dev-process-start')); await flush();
   expectReceipt('start', 'unknown', id);
   fireEvent.click(screen.getByTestId('dev-process-start')); expect(calls('start_development_process')).toBe(1);
@@ -338,7 +338,7 @@ it('keeps a late start receipt on the original task and removes it at the accoun
     return process(id, 'running');
   });
   const view = show(); await flush();
-  fireEvent.change(screen.getByTestId('dev-process-program'), { target: { value: 'echo' } }); fireEvent.click(screen.getByTestId('dev-process-trust'));
+  fireEvent.change(screen.getByTestId('dev-process-program'), { target: { value: 'echo' } });
   fireEvent.click(screen.getByTestId('dev-process-start'));
   await view.activity(true, 'other');
   fireEvent.change(screen.getByTestId('dev-process-program'), { target: { value: 'other task draft' } });
@@ -383,7 +383,6 @@ it('takes the runtime operation lock synchronously before React can rerender', a
 it('validates environment references and each service readiness field without sending a start', async () => {
   show(); await flush();
   fireEvent.change(screen.getByTestId('dev-process-program'), { target: { value: 'echo' } });
-  fireEvent.click(screen.getByTestId('dev-process-trust'));
   fireEvent.click(screen.getByRole('button', { name: 'direct.addEnvironment' }));
   fireEvent.change(screen.getByTestId('dev-process-kind'), { target: { value: 'service' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'direct.probePath' }), { target: { value: '//wrong' } });
@@ -452,7 +451,7 @@ it('does not replay a retained catalog receipt over a fresh catalog after remoun
 it('keeps a mismatched start acknowledgement unknown without projecting its output', async () => {
   invoke.mockImplementation(async (name: string) => name === 'read_development_commands' ? { commands: [], discovered: [] } : name === 'list_development_processes' ? [] : { ...process('wrong', 'running', 'WRONG_RECEIPT'), task_id: 'other' });
   show(); await flush();
-  fireEvent.change(screen.getByTestId('dev-process-program'), { target: { value: 'echo' } }); fireEvent.click(screen.getByTestId('dev-process-trust'));
+  fireEvent.change(screen.getByTestId('dev-process-program'), { target: { value: 'echo' } });
   fireEvent.click(screen.getByTestId('dev-process-start')); await flush();
   expect(useDevelopmentRuntime.getState().operations.find(item => item.action === 'start')?.phase).toBe('unknown');
   expectReceipt('start', 'unknown');
@@ -516,7 +515,7 @@ it('keeps acceptance separate from a later launch failure and distinguishes conf
     return current;
   });
   show(); await flush();
-  fireEvent.change(screen.getByTestId('dev-process-program'), { target: { value: 'missing-program' } }); fireEvent.click(screen.getByTestId('dev-process-trust'));
+  fireEvent.change(screen.getByTestId('dev-process-program'), { target: { value: 'missing-program' } });
   fireEvent.click(screen.getByTestId('dev-process-start')); await flush();
   expect(useDevelopmentRuntime.getState().operations[0]?.phase).toBe('accepted');
   expect(screen.getByTestId('dev-process-detail').textContent).toContain('direct.status.starting');
@@ -565,7 +564,7 @@ it('retains command drafts across internal unmount and task changes without carr
   restored.rerender(<DevelopmentRuntime projectId="p" taskId="t" />); await flush();
   openConfiguration();
   expect((screen.getByRole('textbox', { name: 'direct.commandName' }) as HTMLInputElement).value).toBe('Retained name');
-  expect((screen.getByTestId('dev-process-trust') as HTMLInputElement).checked).toBe(false);
+  expect(screen.queryByTestId('dev-process-trust')).toBeNull();
   await act(async () => { useDevelopment.getState().reset(); });
   expect((screen.getByTestId('dev-process-program') as HTMLInputElement).value).toBe('');
   expect(calls('start_development_process')).toBe(0);
@@ -580,7 +579,7 @@ it.each([false, true])('selects a new accepted start unless the user changed pro
     return process(useDevelopmentRuntime.getState().selected ?? 'old');
   });
   show(); await flush();
-  fireEvent.change(screen.getByTestId('dev-process-program'), { target: { value: 'echo' } }); fireEvent.click(screen.getByTestId('dev-process-trust'));
+  fireEvent.change(screen.getByTestId('dev-process-program'), { target: { value: 'echo' } });
   fireEvent.click(screen.getByTestId('dev-process-start'));
   if (changed) { fireEvent.click(screen.getByTestId('dev-process-history-other')); await flush(); }
   await act(async () => { start.resolve(process(id, 'running')); });

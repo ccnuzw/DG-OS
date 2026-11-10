@@ -7,7 +7,7 @@ import { AgentImages } from '../src/components/development/AgentImages';
 import { fileBase64 } from '../src/components/chat/Attachments';
 import { useDevelopment } from '../src/stores/developmentStore';
 import { guardWorkbenchDrafts, useDevelopmentDrafts } from '../src/stores/developmentDrafts';
-import { acknowledgeAgentImages, addAgentImages, agentImageInputs, agentImagePaste, agentImagesKey, captureAgentImages, clearAgentImages, removeAgentImage, transferAgentImages, useAgentImages } from '../src/stores/agentImages';
+import { acknowledgeAgentImages, addAgentImages, agentImageInputs, agentImagePaste, agentImagesKey, captureAgentImages, clearAgentImages, removeAgentImage, transferAgentImages, useAgentImages, AGENT_IMAGE_LIFETIME_MS } from '../src/stores/agentImages';
 import { hostCode } from '../src/stores/hostError';
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
@@ -142,17 +142,17 @@ it.each(['reset', 'discard', 'clear'] as const)('discards late FileReader result
   expect(useAgentImages.getState().drafts[key]).toBeUndefined();
 });
 
-it('isolates project, generation and account keys and expires unsent previews without sending them', async () => {
+it('isolates project and account drafts, retains images across native generations, and expires without sending', async () => {
   const key = owner();
   await addAgentImages(key, [png()]);
   expect(captureAgentImages(agentImagesKey('other-project', session))).toEqual([]);
-  expect(captureAgentImages(agentImagesKey('project', { ...session, generation: 'replaced' }))).toEqual([]);
+  expect(captureAgentImages(agentImagesKey('project', { ...session, generation: 'replaced' }))).toEqual(captureAgentImages(key));
   expect(useDevelopmentDrafts.getState().entries[key].value).toEqual(captureAgentImages(key).map(image => image.id));
   clearAgentImages(key);
   vi.useFakeTimers();
   vi.mocked(fileBase64).mockResolvedValueOnce(PNG);
   await addAgentImages(key, [png()]);
-  act(() => vi.advanceTimersByTime(60 * 60 * 1000));
+  act(() => vi.advanceTimersByTime(AGENT_IMAGE_LIFETIME_MS));
   expect(captureAgentImages(key)).toEqual([]);
   expect(useAgentImages.getState().drafts[key].error).toBe('expired');
   expect(useDevelopmentDrafts.getState().entries[key]).toBeUndefined();
@@ -221,6 +221,24 @@ it('retains existing-session unknown image sends and reconciles the host run ide
   fireEvent.click(screen.getByRole('button', { name: 'directConversation.recheck' }));
   await waitFor(() => expect(captureAgentImages(owner())).toEqual([]));
   expect(invoke.mock.calls.filter(([command]) => command === 'send_agent_message')).toHaveLength(1);
+});
+
+it('acknowledges restored unknown image sends using the rebased session owner, not the saved renderer epoch', async () => {
+  const live: AgentSession = { ...session, generation: 'restored-generation', engine: 'codex', native_id: 'native', workspace: '/project', status: 'idle', events: [{ seq: 1, kind: 'userMessage', text: null, data: null, run: 'original-request' }], pending: [], error: null };
+  useDevelopment.setState({ selection: { project_id: 'project', task_id: null, session_id: live.id } });
+  useAgentRunner.setState({ selected: live.id, session: live, snapshots: { [live.id]: live } });
+  await addAgentImages(owner(), [png()]);
+  const submitted = captureAgentImages(owner()).map(image => ({ id: image.id }));
+  const epoch = useDevelopment.getState().epoch;
+  const pendingKey = JSON.stringify([epoch, 'conversation', 'project', live.id, 'original-generation', 'pending-send']);
+  const savedImageOwner = JSON.stringify([epoch - 1, 'conversation', 'project', 'images', live.id]);
+  useDevelopmentDrafts.setState(state => ({ entries: { ...state.entries, [pendingKey]: { kind: 'conversation', baseline: null, value: { requestId: 'original-request', generation: 'original-generation', text: '', references: [], skills: [], imageOwner: savedImageOwner, images: submitted } } } }));
+  invoke.mockImplementation(command => Promise.resolve(command === 'get_agent_session' ? live : null));
+  render(<MemoryRouter><AgentConversation session={live} drafts={{}} setDraft={vi.fn()} busy={false} error={false} /></MemoryRouter>);
+  fireEvent.click(screen.getByRole('button', { name: 'directConversation.recheck' }));
+  await waitFor(() => expect(useDevelopmentDrafts.getState().entries[pendingKey]).toBeUndefined());
+  expect(captureAgentImages(owner())).toEqual([]);
+  expect(invoke.mock.calls.some(([command]) => command === 'send_agent_message')).toBe(false);
 });
 
 it.each(['agent_image_count_limit', 'agent_image_bytes_limit', 'agent_image_total_limit', 'agent_image_type', 'agent_image_invalid', 'agent_image_dimensions', 'agent_images_unsupported'])('preserves definite host image validation code %s without exposing arbitrary host details', code => {

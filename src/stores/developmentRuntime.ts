@@ -5,6 +5,7 @@ import { useDevelopment, type Outcome } from './developmentStore';
 import { contextGeneration } from './developmentSelection';
 import { hostCode } from './hostError';
 import { beginResourceRead, failResourceRead, type ResourceReadState } from '../resourceState';
+import { desktopSlot, onDesktopStateRestored, rebaseDesktopKey, setDesktopSlot } from './developmentDesktop';
 
 export interface DevelopmentCommand { id: string; name: string; program: string; args: string[]; cwd: string; env_refs: Record<string, string> }
 export interface CommandCatalog { commands: DevelopmentCommand[]; discovered: DevelopmentCommand[] }
@@ -35,16 +36,18 @@ export function useRuntimeProcessView(process: DevelopmentProcess) {
   }, [epoch, key]);
   return { view, setView };
 }
-// User configuration survives panel disposal; trust is intentionally view-local.
+// User configuration survives panel disposal and restart; grants remain host-owned.
 export function useRuntimeDraft(projectId: string, taskId: string) {
-  const key = JSON.stringify([useDevelopment(state => state.epoch), projectId, taskId]);
+  const epoch = useDevelopment(state => state.epoch);
+  const key = JSON.stringify([epoch, projectId, taskId]);
   const draft = useDevelopmentRuntime(state => state.drafts[key] ?? emptyDraft);
   const setField = useCallback(<K extends keyof RuntimeDraft>(field: K, value: SetStateAction<RuntimeDraft[K]>) => {
+    if (epoch !== useDevelopment.getState().epoch) return;
     useDevelopmentRuntime.setState(state => {
       const current = state.drafts[key] ?? emptyDraft;
       return { drafts: { ...state.drafts, [key]: { ...current, dirty: field === 'dirty' ? Boolean(value) : field === 'commandId' || field === 'editorApplication' ? current.dirty : true, [field]: typeof value === 'function' ? (value as (previous: RuntimeDraft[K]) => RuntimeDraft[K])(current[field]) : value } } };
     });
-  }, [key]);
+  }, [key, epoch]);
   return { draft, setField };
 }
 export async function runtimeCall<T>(command: string, args: Record<string, unknown>): Promise<Outcome<T>> {
@@ -109,6 +112,33 @@ export function resizeDevelopmentTerminal(id: string, rows: number, cols: number
 export const openDevelopmentExternal = (projectId: string, taskId: string, target: 'preview' | 'editor', processId: string | null = null, editor: string | null = null) => runtimeCall<null>('open_development_external', { input: { project_id: projectId, task_id: taskId, process_id: processId, target, editor } });
 // A timestamp alone cannot establish cleanup or an outcome after host recovery.
 export function processActive(process: DevelopmentProcess): boolean { return !(process.finished_at !== null && ['exited', 'failed', 'cancelled'].includes(process.status)); }
+
+export type RuntimeIntent = 'preview' | 'test' | 'build' | 'run';
+export function commandIntent(command: DevelopmentCommand): RuntimeIntent {
+  const script = command.args[0] === 'run' ? command.args[1] : /^(cargo|npm|pnpm|yarn|bun)$/.test(command.program) ? command.args[0] : command.name;
+  if (/^test(:|$)/i.test(script ?? '')) return 'test';
+  if (/^build(:|$)/i.test(script ?? '')) return 'build';
+  if (/^(dev|start|preview|serve)(:|$)/i.test(script ?? '')) return 'preview';
+  return 'run';
+}
+export function matchingService(processes: DevelopmentProcess[], taskId: string, program: string, args: string[], cwd: string): DevelopmentProcess | undefined {
+  return processes.find(process => process.task_id === taskId && process.source === 'host_service' && process.kind === 'service' && processActive(process) && process.program === program && process.args.length === args.length && process.args.every((value, index) => value === args[index]) && process.cwd.replace(/\/$/, '') === cwd.replace(/\/$/, ''));
+}
+// Sharing is explicit: strip terminal controls and credential-shaped data before
+// showing an editable, bounded excerpt. Host redaction remains the first layer.
+export function runtimeOutputExcerpt(process: DevelopmentProcess): string {
+  const redact = (value: string) => value
+    .replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g, '')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
+    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)/g, '[REDACTED]')
+    .replace(/\b(?:Bearer\s+)[^\s"']+/gi, 'Bearer [REDACTED]')
+    .replace(/((?:["']?)(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|authorization)["']?\s*[=:]\s*)(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi, '$1[REDACTED]')
+    .replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|AKIA[A-Z0-9]{16})\b/g, '[REDACTED]')
+    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@');
+  const args = process.args.map((argument, index) => index > 0 && /^--?(?:api[-_]?key|token|password|secret|authorization)$/i.test(process.args[index - 1]) ? '[REDACTED]' : argument);
+  const header = redact(`${JSON.stringify([process.program, ...args])}\nexit: ${process.exit_code ?? process.status}`).slice(0, 1998);
+  return `${header}\n\n${redact(process.output).slice(-10000)}`;
+}
 
 export type RuntimeOperationPhase = 'pending' | 'confirming' | 'accepted' | 'succeeded' | 'failed' | 'unknown';
 export interface RuntimeOperation {
@@ -202,6 +232,10 @@ export async function submitRuntimeOperation(input: RuntimeOperationInput): Prom
   const epoch = useDevelopment.getState().epoch;
   const targetId = input.action === 'save' ? input.command.id : input.action === 'start' ? input.input.id : input.processId;
   if (runtimeOperationBlocked(useDevelopmentRuntime.getState().operations, input.projectId, input.taskId, input.action)) return null;
+  if (input.action === 'start' && input.input.kind === 'service') {
+    const existing = matchingService([...useDevelopmentRuntime.getState().processes, ...Object.values(useDevelopmentRuntime.getState().details)], input.taskId, input.input.program, input.input.args, input.input.cwd);
+    if (existing) { useDevelopmentRuntime.getState().select(existing.id); return null; }
+  }
   const operation: RuntimeOperation = { id: crypto.randomUUID(), epoch, projectId: input.projectId, taskId: input.taskId, action: input.action, targetId, phase: 'pending', observedAfter: ++observation, selectionRevision, generation: contextGeneration(), ...(input.action === 'save' ? { command: input.command, commands: input.commands } : {}) };
   useDevelopmentRuntime.setState(state => ({ operations: [...state.operations.filter(item => item.projectId !== input.projectId || item.taskId !== input.taskId || item.action !== input.action || !['succeeded', 'failed', 'accepted'].includes(item.phase)), operation] }));
   const result = input.action === 'save' ? await saveDevelopmentCommands(input.taskId, input.commands) : input.action === 'start' ? await startDevelopmentProcess(input.input) : await stopDevelopmentProcess(input.processId);
@@ -266,3 +300,17 @@ export const useDevelopmentRuntime = create<RuntimeState>((set, get) => ({
   reset() { ++request; ++selectionRevision; detailObservations.clear(); set({ taskId: null, processes: [], selected: null, selections: {}, details: {}, processViews: {}, read: { status: 'idle' } }); },
 }));
 useDevelopment.subscribe((state, previous) => { if (state.epoch !== previous.epoch) { useDevelopmentRuntime.getState().reset(); useDevelopmentRuntime.setState({ operations: [], drafts: {} }); } });
+
+onDesktopStateRestored(() => {
+  const saved = desktopSlot<Record<string, RuntimeDraft>>('runtime-drafts', {});
+  const drafts: Record<string, RuntimeDraft> = {};
+  for (const [key, draft] of Object.entries(saved)) {
+    const rebased = rebaseDesktopKey(key, useDevelopment.getState().epoch);
+    if (!rebased || !draft || typeof draft.program !== 'string' || !Array.isArray(draft.args) || !draft.args.every(value => typeof value === 'string') || !Array.isArray(draft.env) || !draft.env.every(value => value && typeof value.target === 'string' && typeof value.source === 'string')) continue;
+    drafts[rebased] = { ...emptyDraft, ...draft };
+  }
+  useDevelopmentRuntime.setState(state => ({ drafts: { ...drafts, ...state.drafts } }));
+});
+useDevelopmentRuntime.subscribe((state, previous) => {
+  if (state.drafts !== previous.drafts) setDesktopSlot('runtime-drafts', state.drafts);
+});

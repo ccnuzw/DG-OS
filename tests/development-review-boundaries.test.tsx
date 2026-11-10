@@ -21,16 +21,21 @@ it('does not reveal a late source response after selecting a different task', as
   if (cmd === 'read_development_file') return source.promise;
   return Promise.resolve(null);
  });
- render(<ProjectReview projectId="p" taskId="t" />);
+ const view = render(<ProjectReview projectId="p" taskId="t" />);
  fireEvent.click(await screen.findByTestId('dev-file-item-old.ts'));
  await waitFor(() => expect(invoke.mock.calls.some(([cmd]) => cmd === 'read_development_file')).toBe(true));
  await act(async () => {
   await chooseContext({ project_id: 'p2', task_id: 't2', session_id: null });
-  expect(useDevelopmentEditor.getState().documents).toEqual({});
+  expect(Object.values(useDevelopmentEditor.getState().documents).map(document => document.path)).toEqual(['old.ts']);
+  view.rerender(<ProjectReview projectId="p2" taskId="t2" />);
   expect(invoke.mock.calls.some(([cmd]) => cmd === 'select_development_context')).toBe(true);
   source.resolve({ path: 'old.ts', text: 'PRIVATE_OLD_SOURCE', size: 10, reason: null, hash: 'hash' });
  });
  expect(document.body.textContent).not.toContain('PRIVATE_OLD_SOURCE');
+ expect(invoke.mock.calls.filter(([command]) => command === 'read_development_file').map(([, args]) => args.input.task_id)).toEqual(['t']);
+ // The old file is retained for its own task, never projected into the newly selected one.
+ view.rerender(<ProjectReview projectId="p" taskId="t" />);
+ await waitFor(() => expect(document.body.textContent).toContain('PRIVATE_OLD_SOURCE'));
 });
 
 it('uses the current native question method and selects one offered answer without inventing multi-select', async () => {

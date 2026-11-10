@@ -7,6 +7,7 @@ export const HOST_CODES: readonly string[] = [
   'takeover_stale', 'takeover_confirmation_required',
   'task_not_found', 'project_not_found', 'invalid_project', 'invalid_task', 'invalid_selection', 'project_archived', 'project_busy',
   'git_unavailable', 'git_failed', 'git_timeout', 'git_output_limit', 'storage_failed',
+  'desktop_state_conflict', 'desktop_state_limit', 'invalid_desktop_state', 'workspace_trust_conflict', 'invalid_workspace_trust',
   'file_sensitive', 'file_access_denied', 'file_not_found', 'file_too_large', 'file_binary', 'file_changed', 'scan_limit',
   'invalid_reference', 'reference_limit',
   'invalid_command', 'secret_argument_denied', 'request_conflict', 'invalid_readiness', 'process_capacity', 'maintenance_active',

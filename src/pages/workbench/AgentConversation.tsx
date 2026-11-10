@@ -29,8 +29,15 @@ import { NativeElicitation, elicitationDefaults, elicitationValid } from '../../
 import CodexOperations from '../../components/development/CodexOperations';
 import { AgentImages } from '../../components/development/AgentImages';
 import { acknowledgeAgentImages, agentImageInputs, agentImagePaste, agentImagesKey, captureAgentImages, useAgentImages } from '../../stores/agentImages';
+import { AgentSlashPicker } from '../../components/development/AgentSlashPicker';
+import { useCodexOperations, codexOperationsKey, emptyCodexOperations } from '../../stores/codexOperations';
+import type { CodexOperationScope } from '../../components/development/codexOperationsService';
+import { pendingAgentDraftKeys } from '../../components/development/agentPendingRequests';
 
-type PendingConversationSend = { requestId: string; generation: string; text: string; references: CapturedConversationReference[]; skills: CapturedAgentSkill[]; imageOwner?: string; images?: { id: string }[] };
+export type AgentRuntimeAction = 'test' | 'preview' | 'build' | 'terminal';
+export type AgentMessageFocus = { runId: string; seq: number; nonce: number };
+
+type PendingConversationSend = { requestId: string; generation: string; text: string; references: CapturedConversationReference[]; skills: CapturedAgentSkill[]; images?: { id: string }[]; titleEligible?: boolean };
 function object(value: Json | undefined): { [key: string]: Json } { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
 function text(value: Json | undefined) { return typeof value === 'string' ? value : ''; }
 function blocks(event: Event): Json[] { const content = object(event.data).content; return Array.isArray(content) ? content : []; }
@@ -134,7 +141,7 @@ function transcript(events: Event[]) {
 }
 
 // Drafts belong to the existing account-scoped draft store; this is only its visible projection.
-export function AgentConversation({ session, drafts, setDraft, busy, error, visible = true, onOpenReference, onSelectRun, onNewConversation, onContinueModel, onOpenSession }: AgentReferenceActions & { session: AgentSession; drafts: { [id: string]: string }; setDraft: (id: string, value: string, expected?: string) => void; busy: boolean; error: boolean; visible?: boolean; onNewConversation?: (configuration?: CliProviderConfiguration) => Promise<void>; onContinueModel?: () => void; onOpenSession?: (sessionId: string) => void }) {
+export function AgentConversation({ session, drafts, setDraft, busy, error, visible = true, onOpenReference, onSelectRun, onNewConversation, onContinueModel, onOpenSession, onOpenRuntime, onOpenChanges, focusMessage }: AgentReferenceActions & { session: AgentSession; drafts: { [id: string]: string }; setDraft: (id: string, value: string, expected?: string) => void; busy: boolean; error: boolean; visible?: boolean; onNewConversation?: (configuration?: CliProviderConfiguration) => Promise<void>; onContinueModel?: () => void; onOpenSession?: (sessionId: string) => void; onOpenRuntime?: (action?: AgentRuntimeAction) => void; onOpenChanges?: () => void; focusMessage?: AgentMessageFocus }) {
   const { t } = useLocale();
   const action = useAgentRunner(state => state.action);
   const acting = useAgentRunner(state => state.acting);
@@ -150,13 +157,14 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
   const imageOwner = agentImagesKey(projectId, session);
   const imageDraft = useAgentImages(state => state.drafts[imageOwner]);
   const hasImages = session.engine === 'codex' && Boolean(imageDraft?.images.length);
-  const pendingSendKey = developmentDraftKey('conversation', projectId, session.id, session.generation, 'pending-send');
-  const pendingSend = useDevelopmentDrafts(state => state.entries[pendingSendKey]?.value as PendingConversationSend | undefined);
-  const pendingSteerKey = developmentDraftKey('conversation', projectId, session.id, session.generation, 'pending-steer');
-  const pendingSteer = useDevelopmentDrafts(state => Boolean(state.entries[pendingSteerKey]));
+  const draftEntries = useDevelopmentDrafts(state => state.entries);
+  const pendingSendKeys = pendingAgentDraftKeys(draftEntries, devEpoch, projectId, session.id, 'pending-send');
+  const pendingSendKey = pendingSendKeys[0] ?? developmentDraftKey('conversation', projectId, session.id, session.generation, 'pending-send');
+  const pendingSend = draftEntries[pendingSendKey]?.value as PendingConversationSend | undefined;
+  const pendingSteer = pendingAgentDraftKeys(draftEntries, devEpoch, projectId, session.id, 'pending-steer').length > 0;
   const binding = session.configuration?.format === 'provider_bound' ? session.configuration.snapshot : null;
   const boundConfiguration: CliProviderConfiguration | null = binding ? { engine: session.engine, provider: { provider_id: binding.provider_id, model_id: binding.model_id, provider_revision: binding.provider_revision } } : null;
-  const emptySession = !session.events.length && !session.active_run && session.status === 'idle';
+  const emptySession = !session.events.some(event => event.run || isUser(event)) && !session.active_run && session.status === 'idle' && !pendingSend && !pendingSteer;
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   const viewport = useRef<HTMLDivElement>(null);
@@ -176,6 +184,11 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
   const follow = useRef(true);
   const [atBottom, setAtBottom] = useState(true);
   const [inspect, setInspect] = useState(false);
+  const [expandedInput, setExpandedInput] = useState(false);
+  const [hasNewContent, setHasNewContent] = useState(false);
+  const [shownRows, setShownRows] = useState(100);
+  const olderAnchor = useRef<{ top: number; height: number } | null>(null);
+  const focusedMessage = useRef<string | null>(null);
   const { rows, toolResults, toolNames } = useMemo(() => transcript(session.events), [session.events]);
   const runStates = useMemo(() => activityStates(session.events, session), [session.events, session.active_run, session.status]);
   const referenceEvent = useMemo(() => {
@@ -185,7 +198,7 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
     }
     return undefined;
   }, [session.events, toolNames]);
-  function latest() { if (!visibleOwner.current) return; const node = viewport.current; if (node) node.scrollTop = node.scrollHeight; follow.current = true; setAtBottom(true); }
+  function latest() { if (!visibleOwner.current) return; const node = viewport.current; if (node) node.scrollTop = node.scrollHeight; follow.current = true; setAtBottom(true); setHasNewContent(false); }
   useLayoutEffect(() => {
     if (!visible || !surfaceActive) return;
     const position = useDevelopment.getState().reading[session.id];
@@ -193,8 +206,27 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
     const node = viewport.current;
     if (node) node.scrollTop = follow.current ? node.scrollHeight : position?.top ?? 0;
   }, [session.id, epoch, visible, surfaceActive]);
-  useEffect(() => { setInspect(false); }, [session.id, epoch]);
-  useEffect(() => { if (follow.current) latest(); }, [session.events[session.events.length - 1]?.seq, visible, surfaceActive]);
+  useEffect(() => { setInspect(false); setExpandedInput(false); setHasNewContent(false); }, [session.id, epoch]);
+  useEffect(() => { if (follow.current) latest(); else if (session.events.length) setHasNewContent(true); }, [session.events[session.events.length - 1]?.seq, visible, surfaceActive]);
+  useLayoutEffect(() => {
+    const node = viewport.current, anchor = olderAnchor.current;
+    if (!node || !anchor) return;
+    node.scrollTop = anchor.top + node.scrollHeight - anchor.height;
+    olderAnchor.current = null;
+    follow.current = false; setAtBottom(false);
+  }, [shownRows]);
+  useLayoutEffect(() => {
+    if (!focusMessage || !visible || !surfaceActive || !viewport.current || focusedMessage.current === `${session.id}:${focusMessage.nonce}`) return;
+    const position = rows.findIndex(row => row.event.run === focusMessage.runId && row.event.seq >= focusMessage.seq);
+    if (position >= 0 && rows.length - position > shownRows) { setShownRows(rows.length - position); return; }
+    const nodes = Array.from(viewport.current.querySelectorAll<HTMLElement>('[data-event-seq]')).filter(node => node.dataset.eventRun === focusMessage.runId);
+    const target = nodes.find(node => Number(node.dataset.eventSeq) >= focusMessage.seq) ?? nodes[nodes.length - 1];
+    if (!target) return;
+    focusedMessage.current = `${session.id}:${focusMessage.nonce}`;
+    follow.current = false; setAtBottom(false); target.tabIndex = -1;
+    target.scrollIntoView({ block: 'center' }); target.focus({ preventScroll: true });
+    if (devEpoch === useDevelopment.getState().epoch) useDevelopment.getState().setReading(session.id, { top: viewport.current.scrollTop, follow: false });
+  }, [focusMessage?.nonce, shownRows, session.id, visible, surfaceActive]);
   useLayoutEffect(() => {
     const node = composerInput.current;
     if (!node) return;
@@ -214,20 +246,32 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
     onOpenReference: onOpenReference ? (reference, mode) => currentOwner() ? onOpenReference(reference, mode) : undefined : undefined,
     onSelectRun: onSelectRun ? runId => { if (currentOwner() && session.events.some(event => event.run === runId)) onSelectRun(runId); } : undefined,
   };
-  function clearPendingSend(requestId: string) {
+  function clearPendingSend(requestId: string, requestGeneration: string) {
     if (epoch !== useAgentRunner.getState().epoch || devEpoch !== useDevelopment.getState().epoch) return;
     useDevelopmentDrafts.setState(state => {
-      if ((state.entries[pendingSendKey]?.value as PendingConversationSend | undefined)?.requestId !== requestId) return state;
-      const entries = { ...state.entries }; delete entries[pendingSendKey]; return { entries };
+      const keys = pendingAgentDraftKeys(state.entries, devEpoch, projectId, session.id, 'pending-send').filter(key => {
+        const pending = state.entries[key].value as PendingConversationSend;
+        return pending.requestId === requestId && pending.generation === requestGeneration;
+      });
+      if (!keys.length) return state;
+      const entries = { ...state.entries };
+      for (const key of keys) delete entries[key];
+      return { entries };
     });
   }
   function acknowledgeSend(capture: PendingConversationSend) {
     if (epoch !== useAgentRunner.getState().epoch || devEpoch !== useDevelopment.getState().epoch) return;
+    if (capture.titleEligible) {
+      const workspace = useDevelopment.getState();
+      const tab = workspace.tabs.find(item => item.sessionId === session.id);
+      const title = Array.from(capture.text.split(/\r?\n/, 1)[0].trim()).slice(0, 80).join('');
+      if (title && tab && !tab.title.trim() && !workspace.sessionNames[session.id]?.trim()) workspace.renameTab(tab.id, title);
+    }
     setDraft(session.id, '', capture.text);
     if (projectId) clearConversationReferences(projectId, session.id, capture.references);
     acknowledgeAgentSkills(projectId, { id: session.id, generation: capture.generation }, capture.skills ?? []);
-    if (capture.imageOwner) acknowledgeAgentImages(capture.imageOwner, capture.images ?? []);
-    clearPendingSend(capture.requestId);
+    if (capture.images?.length) acknowledgeAgentImages(agentImagesKey(projectId, { id: session.id, generation: capture.generation }), capture.images);
+    clearPendingSend(capture.requestId, capture.generation);
   }
   async function recheckSend() {
     if (!pendingSend || sendingRef.current || busy || acting || !currentOwner()) return;
@@ -237,17 +281,13 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
       if (!currentOwner()) return;
       const runner = useAgentRunner.getState();
       const live = runner.session;
-      if (!runner.error && live?.generation === pendingSend.generation && (live.active_run === pendingSend.requestId || live.events.some(event => event.run === pendingSend.requestId))) acknowledgeSend(pendingSend);
+      if (!runner.error && live?.id === session.id && (live.events.some(event => event.run === pendingSend.requestId) || live.generation === pendingSend.generation && live.active_run === pendingSend.requestId)) acknowledgeSend(pendingSend);
     } finally { sendingRef.current = false; if (navigationOwner.current.mounted) setSending(false); }
-  }
-  function selectCommand(command: string) {
-    const live = useAgentRunner.getState().session;
-    if (!currentOwner() || busy || sendingRef.current || acting || pendingSend || live?.status !== 'idle' || live.active_run || live.pending.length) return;
-    setDraft(session.id, `${command} ${prompt}`, prompt);
-    composerInput.current?.focus({ preventScroll: true });
   }
   async function send() {
     if (sendingRef.current || reason || !currentOwner()) return;
+    const entries = useDevelopmentDrafts.getState().entries;
+    if (pendingAgentDraftKeys(entries, devEpoch, projectId, session.id, 'pending-send').length || pendingAgentDraftKeys(entries, devEpoch, projectId, session.id, 'pending-steer').length) return;
     const id = session.id;
     const sentPrompt = prompt;
     const captured = projectId ? captureConversationReferences(projectId, id) : [];
@@ -256,14 +296,14 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
     if (!sentPrompt.trim() && !captured.length && !images.length) return;
     const proposedSettings = agentTurnSettings(session);
     const settings = proposedSettings ? { ...proposedSettings } : undefined;
-    const capture: PendingConversationSend = { requestId: crypto.randomUUID(), generation: session.generation, text: sentPrompt, references: captured, skills, imageOwner, images: images.map(image => ({ id: image.id })) };
+    const capture: PendingConversationSend = { requestId: crypto.randomUUID(), generation: session.generation, text: sentPrompt, references: captured, skills, images: images.map(image => ({ id: image.id })), titleEligible: emptySession };
     sendingRef.current = true; setSending(true);
     useDevelopmentDrafts.setState(state => ({ entries: { ...state.entries, [pendingSendKey]: { kind: 'conversation', value: capture, baseline: null } } }));
     try {
       let failure: string | undefined;
       const sent = await action('send_agent_message', { input: { session_id: id, generation: capture.generation, request_id: capture.requestId, text: sentPrompt, ...(settings ? { settings } : {}), ...(captured.length ? { references: captured.map(item => item.reference) } : {}), ...(skills.length ? { skills: skills.map(item => item.skill) } : {}), ...(images.length ? { images: agentImageInputs(images) } : {}) } }, code => { failure = code; });
       if (sent) acknowledgeSend(capture);
-      else if (failure && failure !== 'unknown') clearPendingSend(capture.requestId);
+      else if (failure && failure !== 'unknown') clearPendingSend(capture.requestId, capture.generation);
     } finally { sendingRef.current = false; if (navigationOwner.current.mounted) setSending(false); }
   }
   return <div ref={root} className="agent-conversation-product" onFocusCapture={event => { requestFocus.current = (event.target as HTMLElement).closest('.agent-dialogue-requests') ? event.target as HTMLElement : null; }}>
@@ -276,36 +316,94 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
       {session.engine === 'codex' ? <CodexOperations session={session} disabled={busy || !visible || !surfaceActive} onOpenSession={onOpenSession} onSessionChanged={() => { if (currentOwner()) void useAgentRunner.getState().attach(session.id); }} /> : null}
       <div className="agent-dialogue-messages">
         {session.history_truncated ? <p className="text-sm text-ink-secondary">{t('agent.truncated')}</p> : null}
-        {rows.map(({ event, suppressText, codex }) => <EventContent key={`${session.id}:${event.seq}`} event={event} suppressText={suppressText} codex={codex} toolResults={toolResults} toolNames={toolNames} runState={runStates.get(event.run ?? '')} {...referenceActions} />)}
+        {rows.length > shownRows ? <Button size="xs" variant="secondary" onClick={() => { const node = viewport.current; if (node) olderAnchor.current = { top: node.scrollTop, height: node.scrollHeight }; setShownRows(count => count + 100); }}>{t('agent.loadOlder')}</Button> : null}
+        {rows.slice(-shownRows).map(({ event, suppressText, codex }) => <EventContent key={`${session.id}:${event.seq}`} event={event} suppressText={suppressText} codex={codex} toolResults={toolResults} toolNames={toolNames} runState={runStates.get(event.run ?? '')} {...referenceActions} />)}
         {!session.events.length ? <p className="agent-dialogue-empty">{t('agent.empty')}</p> : null}
+        {session.status === 'idle' && session.events.some(event => ['result', 'turn/completed'].includes(event.kind)) && (onOpenRuntime || onOpenChanges) ? <section className="agent-dialogue-result-actions" aria-label={t('agent.resultActions')}>
+          <p>{t('agent.resultBoundary')}</p>
+          {onOpenChanges ? <Button size="xs" variant="secondary" onClick={() => { if (currentOwner()) onOpenChanges(); }}>{t('agent.viewChanges')}</Button> : null}
+          {onOpenRuntime ? <><Button size="xs" variant="secondary" onClick={() => { if (currentOwner()) onOpenRuntime('test'); }}>{t('agent.runTests')}</Button><Button size="xs" variant="secondary" onClick={() => { if (currentOwner()) onOpenRuntime('preview'); }}>{t('agent.openPreview')}</Button></> : null}
+        </section> : null}
       </div>
       {session.events.length ? <details className="agent-dialogue-inspector" open={inspect} onToggle={event => setInspect(event.currentTarget.open)}><summary>{t('agent.rawEvents', { count: session.events.length })}</summary>{inspect ? session.events.map(event => <NativeEvent key={event.seq} event={event} />) : null}</details> : null}
     </div>
-    <footer className="agent-dialogue-footer">
-      {!atBottom ? <Button size="xs" variant="secondary" className="agent-dialogue-latest" onClick={latest}>{t('agent.latest')}</Button> : null}
+    <footer className={`agent-dialogue-footer${expandedInput ? ' agent-dialogue-footer-expanded' : ''}`}>
+      {!atBottom ? <Button size="xs" variant="secondary" className="agent-dialogue-latest" onClick={latest}>{t(hasNewContent ? 'agent.newContent' : 'agent.latest')}</Button> : null}
       {interruptPending ? <p role="status">{t('agent.interruptPending')}</p> : null}
       {session.persistence_error ? <p role="alert" className="text-status-error">{t('agent.storageFailed')}</p> : null}
-      {session.engine === 'codex' ? <CodexTurnControls key={`${epoch}:${session.id}:${session.generation}`} session={session} projectId={projectId} prompt={prompt} setDraft={setDraft} currentOwner={currentOwner} disabled={busy || !visible || !surfaceActive} /> : null}
+      {session.engine === 'codex' ? <CodexTurnControls hideMode key={`${epoch}:${session.id}:${session.generation}`} session={session} projectId={projectId} prompt={prompt} setDraft={setDraft} currentOwner={currentOwner} disabled={busy || !visible || !surfaceActive || Boolean(pendingSend)} /> : null}
       <div className="agent-dialogue-requests">
         {['idle', 'running', 'waiting'].includes(session.status) ? session.pending.map(pending => <Request key={`${epoch}:${generation}:${session.id}:${session.generation}:${pending.id}:${JSON.stringify(pending.data)}`} engine={session.engine} pending={pending} sessionId={session.id} generation={session.generation} submit={response => currentOwner() && ['idle', 'running', 'waiting'].includes(useAgentRunner.getState().session?.status ?? '') && useAgentRunner.getState().session?.pending.some(item => item.id === pending.id && item.kind === pending.kind && JSON.stringify(item.data) === JSON.stringify(pending.data)) ? action('respond_agent_request', { input: { session_id: session.id, generation: session.generation, request_id: pending.id, response } }) : Promise.resolve(false)} />) : null}
       </div>
       {session.error && !error ? <div role="alert" className="agent-dialogue-error text-status-error"><p>{t('agent.failure')}</p><details className="agent-dialogue-native"><summary>{t('agent.details')}</summary><pre>{session.error}</pre></details></div> : null}
       {pendingSend && !sending && !acting ? <div><p role="alert">{t('directConversation.send_unknown')}</p><Button size="xs" disabled={busy} onClick={() => void recheckSend()}>{t('directConversation.recheck')}</Button></div> : null}
-      <div className="agent-dialogue-composer"><div className="agent-composer-shell">{inputReferences.chips}{session.engine === 'codex' ? <AgentImages owner={imageOwner} active={visible && surfaceActive} disabled={busy || sending || acting || Boolean(pendingSend) || !visible || !surfaceActive || session.status !== 'idle'} /> : null}<div className="agent-composer-input"><Input multiline rows={2} id="agent-message" ref={composerInput} label={t('agent.prompt')} className="type-reading" aria-describedby="agent-send-hint" value={prompt} onPaste={session.engine === 'codex' ? agentImagePaste(imageOwner, busy || sending || acting || Boolean(pendingSend) || !visible || !surfaceActive || session.status !== 'idle') : undefined} onChange={event => setDraft(session.id, inputReferences.promptChange(event.target.value, prompt, event.target.selectionStart, (event.nativeEvent as InputEvent).isComposing))} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); if (!event.repeat) void send(); } }} /></div>
-        <AgentComposerControls session={session} projectId={projectId} visible={visible} disabled={busy || sending || acting || Boolean(pendingSend)} onCommandSelect={selectCommand} referencePicker={inputReferences.picker} references={referenceEvent ? <AgentOutputReferences key={`${session.id}:${referenceEvent.seq}`} event={referenceEvent} toolNames={toolNames} {...referenceActions} /> : undefined} model={visible && surfaceActive && projectId && onNewConversation && emptySession ? <ComposerModelPicker projectId={projectId} value={boundConfiguration} preferred={boundConfiguration} disabled={busy || sending || acting} onChange={configuration => { if (currentOwner()) void onNewConversation(configuration); }} /> : <div className="dev-review-toolbar"><span className="text-xs">{binding ? `${binding.model_id} · ${t(`agent.engine.${session.engine}`)}` : t(`agent.engine.${session.engine}`)}</span>{onContinueModel ? <Button size="xs" variant="ghost" onClick={() => { if (currentOwner()) onContinueModel(); }}>{t('workbenchNavigation.continueModel')}</Button> : null}</div>} sendHint={reason || t('agent.sendShortcut')} send={<Button disabled={Boolean(reason)} onClick={() => void send()}>{t('agent.send')}</Button>} />
+      {session.status === 'running' || session.active_run ? <p className="agent-next-draft-note">{t('agent.editWhileRunning')}</p> : null}
+      {session.engine === 'codex' ? <ConversationQueue session={session} prompt={prompt} setDraft={setDraft} currentOwner={currentOwner} active={visible && surfaceActive} disabled={busy || sending || acting || Boolean(pendingSend) || Boolean(pendingSteer) || hasImages || Boolean(inputReferences.references.length) || Boolean(captureAgentSkills(projectId, session).length)} /> : session.status === 'running' ? <p className="agent-next-draft-note">{t('agent.queueUnavailable')}</p> : null}
+      <div className="agent-dialogue-composer"><div className={`agent-composer-shell${expandedInput ? ' agent-composer-shell-expanded' : ''}`}>
+        <AgentSlashPicker session={session} projectId={projectId} value={prompt} onChange={(value, expected) => { if (currentOwner()) setDraft(session.id, value, expected); }} inputRef={composerInput} active={visible && surfaceActive} disabled={busy || sending || acting || Boolean(pendingSend)} />
+        {inputReferences.chips}{session.engine === 'codex' ? <AgentImages owner={imageOwner} active={visible && surfaceActive} disabled={busy || sending || acting || Boolean(pendingSend) || !visible || !surfaceActive || session.status !== 'idle'} /> : null}
+        <div className="agent-composer-input"><Input multiline rows={2} id="agent-message" ref={composerInput} label={t('agent.prompt')} className="type-reading" aria-describedby="agent-send-hint" value={prompt} onPaste={session.engine === 'codex' ? agentImagePaste(imageOwner, busy || sending || acting || Boolean(pendingSend) || !visible || !surfaceActive || session.status !== 'idle') : undefined} onChange={event => setDraft(session.id, inputReferences.promptChange(event.target.value, prompt, event.target.selectionStart, (event.nativeEvent as InputEvent).isComposing))} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); if (!event.repeat) void send(); } }} /></div>
+        <div className="agent-composer-edit-actions"><small>{t('agentSkills.slash.hint')}</small><Button size="xs" variant="ghost" aria-expanded={expandedInput} onClick={() => { setExpandedInput(value => !value); composerInput.current?.focus({ preventScroll: true }); }}>{t(expandedInput ? 'agent.collapseInput' : 'agent.expandInput')}</Button></div>
+        <AgentComposerControls session={session} projectId={projectId} visible={visible} disabled={busy || sending || acting || Boolean(pendingSend)} referencePicker={inputReferences.picker} references={referenceEvent ? <AgentOutputReferences key={`${session.id}:${referenceEvent.seq}`} event={referenceEvent} toolNames={toolNames} {...referenceActions} /> : undefined} model={visible && surfaceActive && projectId && onNewConversation && emptySession ? <ComposerModelPicker projectId={projectId} value={boundConfiguration} preferred={boundConfiguration} disabled={busy || sending || acting} onChange={configuration => { if (currentOwner()) void onNewConversation(configuration); }} /> : <div className="dev-review-toolbar"><span className="text-xs">{binding ? `${binding.model_id} · ${t(`agent.engine.${session.engine}`)}` : t(`agent.engine.${session.engine}`)}</span>{onContinueModel ? <Button size="xs" variant="ghost" onClick={() => { if (currentOwner()) onContinueModel(); }}>{t('workbenchNavigation.continueModel')}</Button> : null}</div>} sendHint={reason || t('agent.sendShortcut')} send={<Button disabled={Boolean(reason)} onClick={() => void send()}>{t('agent.send')}</Button>} />
       </div></div>
     </footer>
   </div>;
 }
 
+function ConversationQueue({ session, prompt, setDraft, currentOwner, active, disabled }: { session: AgentSession; prompt: string; setDraft: (id: string, value: string, expected?: string) => void; currentOwner: () => boolean; active: boolean; disabled: boolean }) {
+  const { t } = useLocale();
+  const epoch = useDevelopment(state => state.epoch);
+  const accountKey = useDevelopment(state => state.workspaceOwner);
+  const metadata = useDevelopment(state => state.sessions.find(item => item.id === session.id));
+  const project = useDevelopment(state => state.projects.find(item => item.id === metadata?.project_id));
+  const scope: CodexOperationScope | null = accountKey && metadata?.owner && project?.owner === metadata.owner && !project.archived && metadata.engine === 'codex' ? { epoch, accountKey, owner: metadata.owner, projectId: project.id, taskId: metadata.task_id, sessionId: session.id, generation: session.generation } : null;
+  const key = scope ? codexOperationsKey(scope) : '';
+  const state = useCodexOperations(store => store.entries[key] ?? emptyCodexOperations);
+  const [confirmed, setConfirmed] = useState(false);
+  useEffect(() => { setConfirmed(false); }, [key, prompt]);
+  // Reading capabilities is local IPC, not a turn or a paid model probe.
+  useEffect(() => { if (active && scope && !state.snapshot && !state.reading && !state.pending && !state.busy && session.status === 'running') void useCodexOperations.getState().observe(scope); }, [key, active, session.status]);
+  const running = Boolean(session.active_run) && ['running', 'waiting'].includes(session.status);
+  const supported = Boolean(state.snapshot && !state.stale && !state.snapshot.unsupported.includes('queue_add'));
+  async function add() {
+    if (!scope || !currentOwner() || !active || disabled || !running || !prompt.trim() || !supported || state.busy || state.pending) return;
+    const captured = prompt;
+    const receipt = await useCodexOperations.getState().act(scope, { kind: 'queue_add', text: captured });
+    if (epoch !== useDevelopment.getState().epoch || accountKey !== useDevelopment.getState().workspaceOwner) return;
+    if (receipt?.state === 'applied') { setDraft(session.id, '', captured); if (currentOwner()) setConfirmed(true); await useCodexOperations.getState().observe(scope); }
+  }
+  async function inspectQueue() {
+    if (!scope || !currentOwner() || !active || state.busy) return;
+    const submitted = state.pending?.action;
+    const receipt = await useCodexOperations.getState().inspect(scope);
+    if (epoch !== useDevelopment.getState().epoch || accountKey !== useDevelopment.getState().workspaceOwner) return;
+    if (receipt?.state === 'applied') {
+      if (submitted?.kind === 'queue_add') { setDraft(session.id, '', submitted.text); if (currentOwner()) setConfirmed(true); }
+      await useCodexOperations.getState().observe(scope);
+    }
+  }
+  if (!running && !state.pending && !state.snapshot?.queue.length && !confirmed) return null;
+  return <section className="agent-conversation-queue" aria-label={t('agent.queueTitle')}>
+    {running ? <><Button size="xs" variant="secondary" disabled={disabled || !supported || state.busy || Boolean(state.pending) || !prompt.trim()} onClick={() => void add()}>{t('agent.queueNext')}</Button><small>{t('agent.queueBoundary')}</small></> : null}
+    {running && !supported ? <p>{t(state.reading ? 'codexOperations.loading' : 'agent.queueUnverified')}{scope ? <Button size="xs" variant="ghost" disabled={state.busy || state.reading || Boolean(state.pending)} onClick={() => { if (currentOwner() && active) void useCodexOperations.getState().observe(scope); }}>{t('codexOperations.refresh')}</Button> : null}</p> : null}
+    {confirmed ? <p role="status">{t('agent.queued')}</p> : null}
+    {state.error && !state.pending ? <p role="alert">{t('agent.queueFailed')}</p> : null}
+    {state.pending ? <div role="status"><p>{t('codexOperations.unknown')}</p><Button size="xs" variant="secondary" disabled={state.busy || !active} onClick={() => void inspectQueue()}>{t('codexOperations.inspect')}</Button></div> : null}
+    {state.snapshot?.queue.length ? <details><summary>{t('agent.queuedCount', { count: state.snapshot.queue.length })}</summary><ol>{state.snapshot.queue.map(item => <li key={item.id}>{item.text}</li>)}</ol><p>{t('agent.queueManage')}</p></details> : null}
+  </section>;
+}
+
 // Persisted run events are read-only evidence, not a fabricated live session or a second runner.
-export function AgentSessionHistory({ sessionId, taskId, children, visible = true }: { sessionId: string; taskId: string; children: ReactNode; visible?: boolean }) {
+export function AgentSessionHistory({ sessionId, taskId, children, visible = true, focusMessage }: { sessionId: string; taskId: string; children: ReactNode; visible?: boolean; focusMessage?: AgentMessageFocus }) {
   const { t } = useLocale();
   const epoch = useDevelopment(state => state.epoch);
   const { generation } = useContextSelection();
   const [runs, setRuns] = useState<DevRun[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const viewport = useRef<HTMLDivElement>(null);
+  const [shownRuns, setShownRuns] = useState(10);
+  const historyAnchor = useRef<{ top: number; height: number } | null>(null);
+  const focusedMessage = useRef<string | null>(null);
   const surfaceActive = useSurfaceActive();
   const visibleOwner = useRef(visible && surfaceActive);
   visibleOwner.current = visible && surfaceActive;
@@ -314,9 +412,27 @@ export function AgentSessionHistory({ sessionId, taskId, children, visible = tru
     const position = useDevelopment.getState().reading[sessionId];
     viewport.current.scrollTop = position?.follow === false ? position.top : viewport.current.scrollHeight;
   }, [sessionId, runs, visible, surfaceActive]);
+  useLayoutEffect(() => {
+    const node = viewport.current, anchor = historyAnchor.current;
+    if (!node || !anchor) return;
+    node.scrollTop = anchor.top + node.scrollHeight - anchor.height;
+    historyAnchor.current = null;
+  }, [shownRuns]);
+  useLayoutEffect(() => {
+    if (!focusMessage || !visible || !surfaceActive || !runs || !viewport.current || focusedMessage.current === `${sessionId}:${focusMessage.nonce}`) return;
+    const index = runs.findIndex(run => run.events.some(event => event.run === focusMessage.runId && event.seq === focusMessage.seq));
+    if (index >= 0 && runs.length - index > shownRuns) { setShownRuns(runs.length - index); return; }
+    const nodes = Array.from(viewport.current.querySelectorAll<HTMLElement>('[data-event-seq]')).filter(node => node.dataset.eventRun === focusMessage.runId);
+    const target = nodes.find(node => Number(node.dataset.eventSeq) >= focusMessage.seq) ?? nodes[nodes.length - 1];
+    if (!target) return;
+    focusedMessage.current = `${sessionId}:${focusMessage.nonce}`;
+    target.tabIndex = -1; target.scrollIntoView({ block: 'center' }); target.focus({ preventScroll: true });
+    if (epoch === useDevelopment.getState().epoch) useDevelopment.getState().setReading(sessionId, { top: viewport.current.scrollTop, follow: false });
+  }, [focusMessage?.nonce, runs, shownRuns, visible, surfaceActive]);
   useEffect(() => {
     let active = true;
     setRuns(null); setError(null);
+    setShownRuns(10);
     void listDevelopmentRuns(taskId).then(result => {
       if (!active || epoch !== useDevelopment.getState().epoch || generation !== contextGeneration()) return;
       if (result.ok) setRuns(result.value.filter(run => run.session_id === sessionId).sort((a, b) => a.started_at - b.started_at));
@@ -327,7 +443,8 @@ export function AgentSessionHistory({ sessionId, taskId, children, visible = tru
   return <div className="agent-conversation-product" data-testid="dev-session-history">
     <div className="agent-dialogue-transcript" ref={viewport} role="region" aria-label={t('agent.messages')} tabIndex={0} onScroll={event => { if (!visibleOwner.current) return; const node = event.currentTarget; if (epoch === useDevelopment.getState().epoch) useDevelopment.getState().setReading(sessionId, { top: node.scrollTop, follow: node.scrollHeight - node.scrollTop - node.clientHeight < 64 }); }}>
       <details className="agent-dialogue-capabilities"><summary>{t('capabilities.actual')}</summary><SessionCapabilitySnapshot sessionId={sessionId} snapshot={undefined} /></details>
-      {error ? <p role="alert">{errorText(error)}</p> : runs === null ? <p role="status">{t('review.loading')}</p> : !runs.length ? <p>{t('agent.empty')}</p> : runs.map(run => {
+      {runs && runs.length > shownRuns ? <Button size="xs" variant="secondary" onClick={() => { const node = viewport.current; if (node) historyAnchor.current = { top: node.scrollTop, height: node.scrollHeight }; setShownRuns(count => count + 10); }}>{t('agent.loadOlder')}</Button> : null}
+      {error ? <p role="alert">{errorText(error)}</p> : runs === null ? <p role="status">{t('review.loading')}</p> : !runs.length ? <p>{t('agent.empty')}</p> : runs.slice(-shownRuns).map(run => {
         const { rows, toolResults, toolNames } = transcript(run.events);
         const runStates = activityStates(run.events);
         return <div className="agent-dialogue-messages" key={run.id}>{run.truncated ? <p>{t('agent.truncated')}</p> : null}{rows.map(({ event, suppressText, codex }) => <EventContent key={event.seq} event={event} suppressText={suppressText} codex={codex} toolResults={toolResults} toolNames={toolNames} runState={runStates.get(event.run ?? '')} />)}</div>;

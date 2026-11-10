@@ -157,4 +157,9 @@ export default {
   'dev.error.invalid_prompt': 'The instruction is empty or exceeds the native input limit.',
   'dev.error.not_running': 'The target run has ended or is no longer current.',
   'dev.error.engine_rejected': 'The native engine rejected this operation.',
+  'dev.error.desktop_state_conflict': 'The saved workspace changed. Reload and merge before saving.',
+  'dev.error.desktop_state_limit': 'The workspace exceeds its storage limit. Remove unneeded attachments and retry.',
+  'dev.error.invalid_desktop_state': 'The workspace could not be saved safely. Your input is retained.',
+  'dev.error.workspace_trust_conflict': 'Directory permissions changed. Review the current grant and retry.',
+  'dev.error.invalid_workspace_trust': 'The directory permission scope or revision is invalid. Refresh and retry.',
 } as const;
