@@ -8,6 +8,7 @@ mod host;
 mod instance_lock;
 mod lan;
 mod lifecycle;
+mod desktop_exit;
 mod local_fonts;
 mod logging;
 mod module_host;
@@ -35,7 +36,19 @@ pub fn run() {
     module_host::install(tauri::Builder::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    desktop_exit::request(window.app_handle());
+                }
+            }
+        })
+        .on_menu_event(|app, event| {
+            if event.id().as_ref() == desktop_exit::QUIT_MENU_ID && !desktop_exit::request(app) { app.exit(0); }
+        })
         .setup(|app| {
+            desktop_exit::install(app.handle())?;
             // Initialize database connection
             let app_handle = app.handle().clone();
             tauri::async_runtime::block_on(async move {
@@ -576,6 +589,11 @@ pub fn run() {
             commands::open_development_external,
             commands::open_development_project_external,
             commands::list_development_runs,
+            commands::read_development_desktop_state,
+            commands::save_development_desktop_state,
+            commands::read_development_workspace_trust,
+            commands::set_development_workspace_trust,
+            commands::reply_development_exit,
             commands::read_development_cli_provider,
             commands::generate_development_commit_message,
             commands::cancel_development_commit_message,
@@ -691,7 +709,13 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(move |app, event| {
-            // macOS menu Quit can deliver Exit without ExitRequested.
+            // User exits wait for the main WebView to save and explicitly reply.
+            // Programmatic exits (including smoke and approved replies) keep the
+            // original awaited owned-process shutdown path.
+            if let tauri::RunEvent::ExitRequested { code: None, api, .. } = &event {
+                if desktop_exit::request(app) { api.prevent_exit(); return; }
+            }
+            // Exit-only OS termination is too late to save; still clean up owned work.
             if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) && !shutdown_started {
                 shutdown_started = true;
                 tauri::async_runtime::block_on(lifecycle::shutdown(app));

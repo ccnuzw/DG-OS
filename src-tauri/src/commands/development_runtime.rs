@@ -140,7 +140,10 @@ pub async fn open_development_project_external(app: tauri::AppHandle, window: We
     let admission = manager.admit_native_project(&owner, &input.project_id, &lease).await?;
     if lease.is_cancelled() { return Err("session_invalid".into()); }
     let result = match input.target {
-        ProjectExternalTarget::Terminal => open_project_terminal(std::path::Path::new(&admission.project.path), &lease).await,
+        ProjectExternalTarget::Terminal => {
+            manager.authorize_development_external_terminal(&owner, &admission.project, &lease).await?;
+            open_project_terminal(std::path::Path::new(&admission.project.path), &lease).await
+        },
         ProjectExternalTarget::Reveal => app.opener().reveal_item_in_dir(&admission.project.path).map_err(|_| "external_open_failed".into()),
     };
     if lease.is_cancelled() { return Err("session_invalid".into()); }

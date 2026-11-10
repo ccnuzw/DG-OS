@@ -3,7 +3,7 @@
 use super::*;
 use sea_orm::TransactionTrait;
 
-fn require_owner(owner: &str) -> Result<(), String> {
+pub(super) fn require_owner(owner: &str) -> Result<(), String> {
     if owner.is_empty() { Err("invalid_project".into()) } else { Ok(()) }
 }
 

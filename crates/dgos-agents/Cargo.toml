@@ -36,3 +36,4 @@ libc = "0.2"
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
+tempfile = "3"

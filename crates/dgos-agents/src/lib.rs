@@ -15,6 +15,7 @@ pub mod explorer;
 pub mod review;
 pub mod references;
 pub mod runtime;
+pub mod desktop;
 pub mod workspaces;
 pub mod git;
 pub mod handoffs;
@@ -42,3 +43,5 @@ mod project_tests;
 mod file_review_tests;
 #[cfg(test)]
 mod recovery_tests;
+#[cfg(test)]
+mod desktop_tests;

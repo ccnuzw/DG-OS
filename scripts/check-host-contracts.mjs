@@ -6,6 +6,7 @@ import { checkReactVersions } from './react-version.mjs';
 // Static contract checks supplement compilation; they do not prove WebView isolation.
 const files = ['native_extensions', 'ai', 'provider_commands', 'skills', 'mcp', 'workbench', 'chat', 'chat_assets', 'agents', 'development_review', 'development_explorer', 'development_runtime', 'development_takeover', 'development_capabilities', 'development_delivery', 'desktop', 'cli', 'storage', 'modules', 'module_host', 'module_capabilities', 'appearance', 'accounts', 'lan', 'locale'];
 files.push('development_commit_message');
+files.push('development_desktop');
 // FR-010 / interface contract §14.8: the eight LAN host commands. Exact parameter lists; no user
 // id, caller, session token or access code. Every one enters through the Settings caller with
 // `Capability::LanManage`, which `allows` grants to Settings only.
@@ -325,7 +326,7 @@ for (const file of files) {
       } else assert.match(body, /host::module_session\(\s*&window,/, `${name}: missing host entry gate`);
     } else {
       assert.doesNotMatch(args, /\b(?:user_id|module_id|caller)\s*:/, `${name}: identity belongs to the host`);
-      if (!['development_runtime', 'development_capabilities', 'development_takeover'].includes(file)) assert.match(body, /host::context\(\s*&window,/, `${name}: missing host entry gate`);
+      if (!['development_runtime', 'development_capabilities', 'development_takeover', 'development_desktop'].includes(file)) assert.match(body, /host::context\(\s*&window,/, `${name}: missing host entry gate`);
       const exact = providerExactParams.get(name);
       if (file === 'provider_commands' && exact) {
         const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
@@ -401,6 +402,25 @@ for (const file of files) {
         assert.match(caller, /session\.user_id\(\) != context\.user_id\(\) \|\| lease\.is_cancelled\(\)/, `${name}: takeover owner and lease`);
         assert.match(body, /caller\(&app, &window\)/, `${name}: takeover caller gate`);
         assert.match(body, /lease\.is_cancelled\(\)/, `${name}: revoked lease after await`);
+      }
+      if (file === 'development_desktop') {
+        const expected = name === 'read_development_desktop_state' ? ['app', 'window']
+          : ['save_development_desktop_state', 'read_development_workspace_trust', 'set_development_workspace_trust', 'reply_development_exit'].includes(name) ? ['app', 'window', 'input'] : null;
+        assert.ok(expected, `${name}: unrecognized desktop command`);
+        const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
+        assert.deepEqual([...names].sort(), [...expected].sort(), `${name}: desktop parameter allow-list`);
+        if (name === 'reply_development_exit') {
+          assert.match(body, /host::account_window\(&window\)/, `${name}: trusted account window gate`);
+          assert.match(body, /coordinator\.complete\(window\.label\(\), &input\.request_id, input\.proceed\)/, `${name}: window-bound one-shot exit reply`);
+        } else {
+          const caller = source.match(/\nfn caller\([\s\S]*?\n\}/)?.[0];
+          assert.ok(caller, `${name}: desktop caller gate`);
+          assert.match(caller, /host::context\(window,\s*BuiltinCaller::Workbench,\s*Capability::TasksRun/, `${name}: desktop Workbench gate`);
+          assert.match(caller, /agent_session\(\)/, `${name}: desktop account lease`);
+          assert.match(caller, /session\.user_id\(\) != context\.user_id\(\) \|\| lease\.is_cancelled\(\)/, `${name}: desktop owner and lease`);
+          assert.match(body, /caller\(&app, &window\)/, `${name}: gated desktop command`);
+          assert.match(body, /lease\.is_cancelled\(\)/, `${name}: desktop lease recheck`);
+        }
       }
       if (file === 'development_runtime') {
         const expected = ['save_development_file','save_development_commands','start_development_process'].includes(name) || ['write_development_terminal','resize_development_terminal'].includes(name) ? ['app','window','input']

@@ -65,7 +65,7 @@ impl UserDataDomain {
     /// Tables keyed by `owner`, purged with the workbench domain and included in orphan accounting.
     pub fn owner_tables(self) -> &'static [&'static str] {
         match self {
-            UserDataDomain::Workbench => &["development_codex_operations", "development_cli_legacy_history", "development_cli_session_bindings", "development_handoffs", "development_file_writes", "development_task_workspaces", "development_workspaces", "development_run_capabilities", "development_session_capabilities", "development_capability_heads", "development_capability_revisions", "development_selection", "development_commands", "development_runs", "development_review_observations", "development_review_baselines", "development_agent_sessions", "development_project_operations", "development_tasks", "development_projects"],
+            UserDataDomain::Workbench => &["development_desktop_state", "development_workspace_trust", "development_codex_operations", "development_cli_legacy_history", "development_cli_session_bindings", "development_handoffs", "development_file_writes", "development_task_workspaces", "development_workspaces", "development_run_capabilities", "development_session_capabilities", "development_capability_heads", "development_capability_revisions", "development_selection", "development_commands", "development_runs", "development_review_observations", "development_review_baselines", "development_agent_sessions", "development_project_operations", "development_tasks", "development_projects"],
             _ => &[],
         }
     }
@@ -216,6 +216,8 @@ fn statements(domain: UserDataDomain) -> &'static [&'static str] {
         UserDataDomain::Workbench => &[
             "DELETE FROM ai_content_resources WHERE user_id = ?1",
             "DELETE FROM ai_content_runs WHERE user_id = ?1",
+            "DELETE FROM development_desktop_state WHERE owner = ?1",
+            "DELETE FROM development_workspace_trust WHERE owner = ?1",
             "DELETE FROM development_codex_operations WHERE owner = ?1",
             "DELETE FROM development_cli_legacy_history WHERE owner = ?1",
             "DELETE FROM development_cli_session_bindings WHERE owner = ?1",

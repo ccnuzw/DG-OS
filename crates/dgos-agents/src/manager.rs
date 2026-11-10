@@ -316,10 +316,12 @@ impl AgentManager {
     }
 
     pub async fn resume_session(&self, owner: &str, id: &str, trust_workspace: bool, lease: CancellationToken) -> Result<OwnedSessionView, String> {
-        if !trust_workspace { return Err("workspace_untrusted".into()); }
         self.ready().await?;
         let _admission = self.inner.admission.lock().await;
         let record = self.list(owner).await.into_iter().find(|r| r.id == id).ok_or("session_not_found")?;
+        if lease.is_cancelled() { return Err("session_invalid".into()); }
+        let project = self.task_project(owner, record.task_id.as_deref().ok_or("task_not_found")?).await?;
+        self.require_workspace_trust(owner, &project, "agent", trust_workspace).await?;
         let configuration = self.inner.providers.read_session(owner, id).await?;
         let crate::capabilities::SessionConfigurationView::ProviderBound { snapshot, .. } = configuration else { return Err("legacy_session_read_only".into()); };
         let old = self.inner.active.lock().await.get(id).map(|active| (active.backend.clone(), active.binding.clone(), active.slot, active.control.clone()));
@@ -335,7 +337,7 @@ impl AgentManager {
         }
         if !self.slot_is_settled(owner, id).await { return Err("cleanup_pending".into()); }
         let create = crate::capabilities::SessionCreate {
-            options: SessionOptions { workspace: record.workspace, resume_id: Some(record.native_id.ok_or("session_not_saved")?), executable: record.executable, model: record.model, trust_workspace: true },
+            options: SessionOptions { workspace: record.workspace, resume_id: Some(record.native_id.ok_or("session_not_saved")?), executable: record.executable, model: record.model, trust_workspace },
             project_revision: snapshot.revision,
             provider: crate::capabilities::CliProviderRef { provider_id: snapshot.provider_id, model_id: snapshot.model_id, provider_revision: snapshot.provider_revision },
         };
@@ -346,14 +348,14 @@ impl AgentManager {
         self.validate_handoff_target(owner, &id).await?;
         if self.inner.stop.is_cancelled() || lease.is_cancelled() { return Err("cancelled".into()); }
         let mut options = create.options;
-        if !options.trust_workspace { return Err("workspace_untrusted".into()); }
         let task_id = task_id.ok_or("task_not_found")?;
         let project = self.ensure_task_workspace(owner, &task_id).await?;
         if project.archived { return Err("project_archived".into()); }
         crate::projects::validate_directory(&project).await?;
+        self.require_workspace_trust(owner, &project, "agent", options.trust_workspace).await?;
         options.workspace = tokio::fs::canonicalize(&project.path).await.map_err(|_| "invalid_workspace")?.to_string_lossy().into_owned();
         self.workspace_available(&options.workspace, Some(&id)).await?;
-        self.host_workspace_available(&options.workspace).await?;
+        self.agent_host_workspace_available(owner, &project).await?;
         if self.occupied_slots().await >= 8 { return Err("session_capacity".into()); }
         let permit = self.inner.gate.admit().map_err(|_| "maintenance_active")?;
         let slot = Uuid::new_v4();
@@ -372,6 +374,9 @@ impl AgentManager {
             }
         };
         options.model = Some(launch.model.clone());
+        // Preserve the caller's trust flag in its durable request digest; only
+        // the backend receives the host-resolved one-operation authority.
+        options.trust_workspace = true;
         let backend = {
             let opening = async {
                 match engine {
@@ -441,6 +446,9 @@ impl AgentManager {
         Ok(OwnedSessionView { id, engine, generation: generation.to_string(), view, event_sync: None, configuration: crate::capabilities::SessionConfigurationView::ProviderBound { snapshot: launch.snapshot, read_only: false } })
     }
     pub(crate) async fn workspace_available(&self, workspace: &str, except: Option<&str>) -> Result<(), String> {
+        self.workspace_available_with_service(workspace, except, None).await
+    }
+    pub(crate) async fn workspace_available_with_service(&self, workspace: &str, except: Option<&str>, coexist: Option<(&str, &str)>) -> Result<(), String> {
         let records = self.inner.records.lock().await.clone();
         for record in records.iter().filter(|record| record.workspace == workspace) {
             let configuration = match self.inner.repository.read_cli_session_configuration(&record.owner, &record.id).await {
@@ -452,7 +460,7 @@ impl AgentManager {
                 return Err("cleanup_pending".into());
             }
         }
-        let backends: Vec<_> = self.inner.active.lock().await.iter().filter(|(id, _)| Some(id.as_str()) != except).filter_map(|(id, a)| records.iter().find(|r| &r.id == id && r.workspace == workspace).map(|_| a.backend.clone())).collect();
+        let backends: Vec<_> = self.inner.active.lock().await.iter().filter(|(id, _)| Some(id.as_str()) != except).filter_map(|(id, a)| records.iter().find(|r| &r.id == id && r.workspace == workspace && !(coexist.is_some_and(|(owner, project)| r.owner == owner && r.project_id.as_deref() == Some(project)) && !a.lease.is_cancelled() && !a.provider_lease.is_cancelled())).map(|_| a.backend.clone())).collect();
         for backend in backends { if backend.snapshot().await.status != "closed" { return Err("workspace_busy".into()); } }
         Ok(())
     }
@@ -592,6 +600,9 @@ impl AgentManager {
     }
     pub async fn close_session(&self, owner: &str, id: &str) -> Result<bool, String> {
         let _admission = self.inner.admission.lock().await;
+        self.close_session_admitted(owner, id).await
+    }
+    pub(crate) async fn close_session_admitted(&self, owner: &str, id: &str) -> Result<bool, String> {
         self.reap_completed_tasks().await;
         self.reconcile_inactive_slots().await;
         let record = self.inner.records.lock().await.iter().find(|record| record.owner == owner && record.id == id).cloned().ok_or("session_not_found")?;
@@ -608,6 +619,18 @@ impl AgentManager {
             self.retire_settled_session(id).await;
         }
         Ok(reaped)
+    }
+    /// Revocation is durable before cleanup. Cancel all matching execution leases
+    /// first, even if one owned process cannot yet prove a clean exit.
+    pub(crate) async fn revoke_directory_agents(&self, owner: &str, project_id: &str, path: &str) -> Result<(), String> {
+        let ids: Vec<_> = self.inner.records.lock().await.iter().filter(|r| r.owner == owner && r.project_id.as_deref() == Some(project_id) && r.workspace == path).map(|r| r.id.clone()).collect();
+        {
+            let active = self.inner.active.lock().await;
+            for id in &ids { if let Some(entry) = active.get(id) { entry.lease.cancel(); entry.provider_lease.cancel(); } }
+        }
+        let mut clean = true;
+        for id in ids { clean &= self.close_session_admitted(owner, &id).await.unwrap_or(false); }
+        if clean { Ok(()) } else { Err("cleanup_pending".into()) }
     }
     /// Same close lifecycle, with authority rechecked after capability cleanup and just
     /// before touching the native process. Caller holds manager admission.

@@ -49,6 +49,7 @@ mod m20261109_000035_git_restore;
 mod m20261109_000036_chat_continuous;
 mod m20261110_000037_ai_foundation;
 mod m20261110_000038_codex_operations;
+mod m20261110_000039_development_desktop;
 
 pub struct Migrator;
 
@@ -117,6 +118,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261109_000036_chat_continuous::Migration),
             Box::new(m20261110_000037_ai_foundation::Migration),
             Box::new(m20261110_000038_codex_operations::Migration),
+            Box::new(m20261110_000039_development_desktop::Migration),
         ]
     }
 }
