@@ -12,6 +12,7 @@ import {
 import { evaluateFixtureSource, hooksControl, moduleProbe, readFixture, resetModuleProbe } from './helpers/moduleFixtures';
 import { resetLocaleForTesting, setLocaleForTesting } from '../src/i18n/runtime';
 import type { AiEvent, AiRunInput, AiTerminal } from '../src/types/ai';
+import type { ModuleAiApi } from '../src/modules/moduleApi';
 
 // The real import(blobUrl) cannot run in jsdom/Node. `importModule` is replaced by a double that
 // evaluates the fixture source (see evaluateFixtureSource); the real path is covered by the WebView smoke.
@@ -907,5 +908,30 @@ describe('module AI event lifecycle', () => {
     f.pending.resolve({ success: true, data: f.terminal, error: null });
     await rejected;
     expect(f.events).toEqual([]);
+  });
+
+  it.each([
+    ['importResource', 'module_import_ai_resource'], ['deleteResource', 'module_delete_ai_resource'],
+    ['inspect', 'module_inspect_ai_context'], ['getResult', 'module_get_ai_result'], ['ackResult', 'module_ack_ai_result'],
+  ] as const)('binds %s to the current attachment and rejects late results after rerouting', async (method, command) => {
+    const pending = Promise.withResolvers<unknown>();
+    let ai!: ModuleAiApi;
+    const h = createHarness([], { importModule: async () => ({ default: (host: { ai: ModuleAiApi }) => { ai = host.ai; return { Component: () => null }; } }) });
+    const invoke = h.invoke.getMockImplementation()!;
+    h.invoke.mockImplementation(async (name, args) => name === command ? pending.promise : invoke(name, args));
+    await h.host.ensureAttached(); h.send(loadInstruction('counter.js')); await h.waitForReceipts(1);
+    h.send({ kind: 'route', runtimeId: 'rt-1', route: 'foundation-route' });
+    const result = method === 'importResource' ? ai.importResource({ name: 'source.txt', mime: 'text/plain', base64: 'YQ==' })
+      : method === 'deleteResource' ? ai.deleteResource('resource-1')
+      : method === 'inspect' ? ai.inspect({ provider_id: 'p', model_id: 'm', provider_revision: 0, prompt: 'test', skill_refs: [], tools: [], generation: {} })
+      : method === 'getResult' ? ai.getResult('run-1') : ai.ackResult('run-1');
+    const rejected = expect(result).rejects.toMatchObject({ code: 1004028 });
+    await vi.waitFor(() => expect(h.invoke.mock.calls.some(([name]) => name === command)).toBe(true));
+    const payload = h.invoke.mock.calls.find(([name]) => name === command)?.[1];
+    expect(payload).toMatchObject({ attachmentId: 'att-1', route: 'foundation-route', callId: expect.any(String) });
+    expect(payload).not.toHaveProperty('scope'); expect(payload).not.toHaveProperty('moduleId');
+    h.send({ kind: 'route', runtimeId: 'rt-1', route: 'new-foundation-route' });
+    pending.resolve({ success: true, data: null, error: null }); await rejected;
+    expect(h.invoke.mock.calls.some(([name]) => name === 'module_run_ai')).toBe(false);
   });
 });

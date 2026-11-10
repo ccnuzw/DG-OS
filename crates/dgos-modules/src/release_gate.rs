@@ -731,20 +731,20 @@ mod tests {
     #[test]
     fn production_admission_takes_the_recomputed_shipped_digest_and_nothing_else() {
         use crate::{ModuleAdmission, PinnedModuleAdmission};
-        let shipped = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../bundled-modules")
-            .join(CONSOLE_DIR);
-        let real = digest::package_integrity(&shipped).unwrap();
         let admission = PinnedModuleAdmission::builtin();
-        assert!(admission.admits("provider-console", "1.1.0", &real));
-
-        let copy = copy_of_shipped_bundle();
-        let dir = copy.path().join(CONSOLE_DIR);
-        fs::write(dir.join("entry.js"), "export default function () {}").unwrap();
-        let tampered = digest::package_integrity(&dir).unwrap();
-        assert_ne!(real, tampered);
-        assert!(!admission.admits("provider-console", "1.1.0", &tampered));
-        assert!(!admission.admits("unpinned-module", "1.0.0", &real));
+        for &(id, version, _) in BUILTIN_PINS {
+            let relative = Path::new(id).join(version);
+            let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bundled-modules").join(&relative);
+            let real = digest::package_integrity(&shipped).unwrap();
+            assert!(admission.admits(id, version, &real));
+            let copy = copy_of_shipped_bundle();
+            let dir = copy.path().join(&relative);
+            fs::write(dir.join("entry.js"), "export default function () {}").unwrap();
+            let tampered = digest::package_integrity(&dir).unwrap();
+            assert_ne!(real, tampered);
+            assert!(!admission.admits(id, version, &tampered));
+            assert!(!admission.admits("unpinned-module", version, &real));
+        }
     }
 
     #[test]

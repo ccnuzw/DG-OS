@@ -342,13 +342,44 @@ fn proposed(name: &str, arguments: Value) -> Value {
         "id":"call_1","type":"function","function":{"name":name,"arguments":arguments.to_string()}
     }]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}})
 }
+
+/// Exercise the real streaming protocol, preserving invalid fixture shapes as invalid SSE.
+fn tool_sse(path: &str, response: Value) -> String {
+    if path == "/v1/messages" {
+        let mut start = response.clone();
+        start["content"] = json!([]);
+        start["stop_reason"] = Value::Null;
+        let mut events = format!("event: message_start\ndata: {}\n\n", json!({"type":"message_start","message":start}));
+        if let Some(blocks) = response["content"].as_array() {
+            for (index, block) in blocks.iter().enumerate() {
+                events.push_str(&format!("event: content_block_start\ndata: {}\n\n", json!({"type":"content_block_start","index":index,"content_block":block})));
+                events.push_str(&format!("event: content_block_stop\ndata: {}\n\n", json!({"type":"content_block_stop","index":index})));
+            }
+        }
+        events.push_str(&format!("event: message_delta\ndata: {}\n\n", json!({"type":"message_delta","delta":{"stop_reason":response["stop_reason"]},"usage":response["usage"]})));
+        events.push_str("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n");
+        events
+    } else {
+        let mut choices = response["choices"].as_array().cloned().unwrap_or_default();
+        for (index, choice) in choices.iter_mut().enumerate() {
+            choice["index"] = json!(index);
+            let mut delta = choice["message"].take();
+            if let Some(calls) = delta["tool_calls"].as_array_mut() {
+                for (index, call) in calls.iter_mut().enumerate() { call["index"] = json!(index); }
+            }
+            choice.as_object_mut().unwrap().remove("message");
+            choice["delta"] = delta;
+        }
+        format!("data: {}\n\ndata: [DONE]\n\n", json!({"choices":choices,"usage":response["usage"]}))
+    }
+}
 async fn proposal_mock(server: &mut mockito::ServerGuard, body: Value) -> mockito::Mock {
     server
         .mock("POST", "/chat/completions")
         .match_body(mockito::Matcher::Regex("\"role\":\"user\"".into()))
         .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(body.to_string())
+        .with_header("content-type", "text/event-stream")
+        .with_body(tool_sse("/chat/completions", body))
         .expect(1)
         .create_async()
         .await
@@ -368,9 +399,9 @@ async fn normal_vault_backed_workbench_tool_task_completes() {
             body["messages"].as_array().is_some_and(|messages| messages.last()
                 .is_some_and(|message| message["role"] == "tool" && message["tool_call_id"] == "call_1"))
         })
-        .with_status(200).with_header("content-type", "application/json")
-        .with_body(json!({"choices":[{"message":{"role":"assistant","content":"Completed"},"finish_reason":"stop"}],
-            "usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10}}).to_string())
+        .with_status(200).with_header("content-type", "text/event-stream")
+        .with_body(tool_sse("/chat/completions", json!({"choices":[{"message":{"role":"assistant","content":"Completed"},"finish_reason":"stop"}],
+            "usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10}})))
         .expect(1).create_async().await;
     let fixture = setup(&server.url()).await;
     let update = fixture.propose().await;
@@ -495,9 +526,9 @@ async fn model_proposal_waits_for_exact_approval_then_continues_with_correlated_
                     "text":{"type":"string","minLength":1},"delay":{"type":"integer","minimum":0},"fail":{"type":"boolean"}
                 }}
         }}]})))
-        .with_status(200).with_header("content-type", "application/json")
-        .with_body(json!({"choices":[{"message":{"role":"assistant","content":"Final answer"},"finish_reason":"stop"}],
-            "usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}}).to_string()).expect(1).create_async().await;
+        .with_status(200).with_header("content-type", "text/event-stream")
+        .with_body(tool_sse("/chat/completions", json!({"choices":[{"message":{"role":"assistant","content":"Final answer"},"finish_reason":"stop"}],
+            "usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}}))).expect(1).create_async().await;
     let f = setup(&server.url()).await;
     let update = f.propose().await;
     assert_eq!(update.phase, "awaiting_confirmation");
@@ -997,8 +1028,8 @@ async fn mock_rounds(
         .mock("POST", path)
         .match_request(recorder(0, seen.clone()))
         .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(first.to_string())
+        .with_header("content-type", "text/event-stream")
+        .with_body(tool_sse(path, first))
         .expect(1)
         .create_async()
         .await;
@@ -1010,8 +1041,8 @@ async fn mock_rounds(
         .mock("POST", path)
         .match_request(recorder(1, seen.clone()))
         .with_status(status)
-        .with_header("content-type", "application/json")
-        .with_body(body.to_string())
+        .with_header("content-type", "text/event-stream")
+        .with_body(if status == 200 { tool_sse(path, body) } else { body.to_string() })
         .expect(hits)
         .create_async()
         .await;

@@ -1,14 +1,8 @@
 //! Chat turns that carry MCP tools (V1-FR-006 stage 5, D022/D075).
 //!
-//! A tool turn is not streamed. The model proposes one call; the renderer shows the exact server,
-//! tool and JSON arguments; `advance_chat_tool_turn` approves or denies that single proposal
-//! (consumed on use, 120 s limit); the host re-checks Provider revision, permission, connection
-//! and schema hash before the one MCP call. Model/MCP mechanics live in `execution.rs`; this
-//! module only adds the chat lifecycle around the shared tool step:
-//! registry slot, parked state, expiry, cancellation and the one terminal transaction.
-//!
-//! Arguments, results and proposals live in memory only. The chat database receives the final
-//! assistant text (or an error category), never a tool round trip, so later turns do not see one.
+//! Genuine model streaming and host-local skill reads use the shared bounded execution loop.
+//! Exact MCP proposals park for one explicit approval; dispatched receipts and batched partial
+//! content are retained in account-owned chat storage, never general task audit.
 
 use super::*;
 use crate::tools::{SelectedTool, ToolAction, ToolContext, ToolSession};
@@ -17,7 +11,8 @@ use dgos_db::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use dgos_types::ToolMessage;
 
 const PROPOSAL_WINDOW: Duration = Duration::from_secs(120);
-const TURN_WINDOW: Duration = Duration::from_secs(15 * 60);
+const TURN_WINDOW: Duration = MAX_DURATION;
+
 
 /// Everything a tool turn needs beyond the plain job, fixed at send time.
 pub(super) struct ToolPlan {
@@ -37,6 +32,21 @@ pub(super) struct ToolTurn {
     sink: Arc<dyn ChatSink>,
     _guard: ReleaseGuard,
     permit: Mutex<Option<dgos_db::ActivityPermit>>,
+    provider_id: String,
+    model_id: String,
+    revision: Option<i64>,
+    pins: Vec<PinnedSkill>,
+    blocked_effects: Vec<String>,
+    runtime: tokio::sync::Mutex<Option<crate::skill_runtime::SkillRuntime>>,
+    contexts: Vec<crate::foundation::ResolvedContext>,
+    output: dgos_types::AiOutputContract,
+    foundation_receipts: Mutex<crate::foundation::FoundationReceipts>,
+    source_runs: Vec<String>,
+    skill_receipts_written: Mutex<usize>,
+    context_receipts_written: Mutex<usize>,
+    checkpoint: CheckpointWriter,
+    evidence: Mutex<TerminalEvidence>,
+    deadline: tokio::time::Instant,
 }
 
 #[derive(Deserialize)]
@@ -75,6 +85,7 @@ impl ChatManager {
         &self,
         providers: &ProviderManager,
         mcp: &McpManager,
+        skills: Arc<tokio::sync::RwLock<SkillsManager>>,
         job: GenerationJob,
         sink: Arc<dyn ChatSink>,
     ) {
@@ -83,6 +94,7 @@ impl ChatManager {
             user,
             assistant_message_id,
             plan,
+            provider_id, model_id, revision, pins, skill_runtime, blocked_effects, contexts, output, inline_receipts, source_runs,
             active,
             _guard,
             _permit,
@@ -143,6 +155,17 @@ impl ChatManager {
             sink,
             _guard,
             permit: Mutex::new(Some(_permit)),
+            provider_id, model_id, revision, pins, blocked_effects,
+            runtime: tokio::sync::Mutex::new(skill_runtime),
+            contexts, output, foundation_receipts: Mutex::new(crate::foundation::FoundationReceipts {
+                pending_context_receipts: inline_receipts, ..Default::default()
+            }),
+            source_runs,
+            skill_receipts_written: Mutex::new(0),
+            context_receipts_written: Mutex::new(0),
+            checkpoint: CheckpointWriter::new(self.repo.clone(),user.clone(),task_id.clone()),
+            evidence: Mutex::new(TerminalEvidence::default()),
+            deadline: tokio::time::Instant::now()+TURN_WINDOW,
         });
         self.tool_turns
             .lock()
@@ -154,7 +177,7 @@ impl ChatManager {
             slot.take()
         };
         if let Some(context) = taken {
-            self.tool_step(providers, mcp, turn, context, ToolAction::RunModel)
+            self.tool_step(providers, mcp, skills, turn, context, ToolAction::RunModel)
                 .await;
         }
     }
@@ -166,6 +189,7 @@ impl ChatManager {
         user: &str,
         input: AdvanceChatToolTurnInput,
     ) -> Result<ToolActionJob> {
+        self.check_lease()?;
         let turn = {
             let turns = self.tool_turns.lock().unwrap_or_else(|e| e.into_inner());
             turns.get(&input.task_id).cloned()
@@ -173,7 +197,16 @@ impl ChatManager {
         let turn = turn
             .filter(|turn| turn.user == user)
             .ok_or(ChatError::ToolTurnInvalid)?;
+        if turn.active.token.is_cancelled() || tokio::time::Instant::now() >= turn.deadline {
+            return Err(ChatError::ToolTurnInvalid);
+        }
         let mut slot = turn.session.context.lock().await;
+        if turn.active.token.is_cancelled() || tokio::time::Instant::now() >= turn.deadline {
+            return Err(ChatError::ToolTurnInvalid);
+        }
+        if slot.as_ref().and_then(|context| context.pending.as_ref()).is_some_and(|pending| pending.expires <= tokio::time::Instant::now()) {
+            return Err(ChatError::ToolTurnInvalid);
+        }
         if !slot
             .as_ref()
             .is_some_and(|context| context.accepts(&input.action))
@@ -193,6 +226,7 @@ impl ChatManager {
         &self,
         providers: &ProviderManager,
         mcp: &McpManager,
+        skills: Arc<tokio::sync::RwLock<SkillsManager>>,
         job: ToolActionJob,
     ) {
         let ToolActionJob {
@@ -200,7 +234,7 @@ impl ChatManager {
             context,
             action,
         } = job;
-        self.tool_step(providers, mcp, turn, context, action).await;
+        self.tool_step(providers, mcp, skills, turn, context, action).await;
     }
 
     async fn task_record(&self, user: &str, task_id: &str) -> Option<TaskRecord> {
@@ -221,12 +255,56 @@ impl ChatManager {
         &self,
         providers: &ProviderManager,
         mcp: &McpManager,
+        skills: Arc<tokio::sync::RwLock<SkillsManager>>,
         turn: Arc<ToolTurn>,
         mut context: ToolContext,
         action: ToolAction,
     ) {
-        let result = turn.session.advance(providers, mcp, &mut context, action).await;
+        let guard=ChatStepGuard{manager:self,providers,user:&turn.user,task:&turn.task_id,assistant:&turn.assistant_message_id,
+            provider:&turn.provider_id,model:&turn.model_id,revision:turn.revision,active:&turn.active,pins:&turn.pins,blocked_effects:&turn.blocked_effects,contexts:&turn.contexts,source_runs:&turn.source_runs,sink:&*turn.sink};
+        let forward=|event| {
+            let sent=match event {
+                crate::execution::CoreEvent::Delta(text)=>{turn.checkpoint.push(&text);turn.sink.send(ChatEvent::Delta{assistant_message_id:turn.assistant_message_id.clone(),text})},
+                crate::execution::CoreEvent::ReasoningDelta(text)=>turn.sink.send(ChatEvent::ReasoningDelta{assistant_message_id:turn.assistant_message_id.clone(),text}),
+                crate::execution::CoreEvent::Phase(phase)=>turn.sink.send(ChatEvent::Phase{task_id:turn.task_id.clone(),assistant_message_id:turn.assistant_message_id.clone(),phase}),
+            };if !sent{turn.active.stop("task_cancelled")}sent
+        };
+        let mut runtime=turn.runtime.lock().await;
+        let mut tools=match crate::foundation::FoundationTools::new_shared_contexts(skills,runtime.take(),&turn.contexts,&guard) {
+            Ok(tools)=>tools,
+            Err(error)=>{drop(runtime);self.finish_tool(&turn,turn.checkpoint.content(),End::Tool(error)).await;return;}
+        };
+        *tools.receipts().lock().unwrap_or_else(|e|e.into_inner())=turn.foundation_receipts.lock().unwrap_or_else(|e|e.into_inner()).clone();
+        let result=turn.session.advance_streaming(providers,mcp,&mut context,action,&guard,&forward,turn.deadline,Some(&mut tools)).await;
+        let context_receipts=tools.context_receipts();
+        let skill_receipts=tools.skill_receipts();
+        *turn.foundation_receipts.lock().unwrap_or_else(|e|e.into_inner())=tools.receipts().lock().unwrap_or_else(|e|e.into_inner()).clone();
+        *runtime=tools.into_runtime();
+        drop(runtime);
+        {let mut evidence=turn.evidence.lock().unwrap_or_else(|e|e.into_inner());
+            evidence.dispatched=context.dispatched();evidence.result_unknown=context.result_unknown();
+            evidence.audit_warning=context.audit_warning().then(||"execution_audit_warning".into());
+            evidence.tokens=(!context.usage_unknown()).then(||context.tokens());}
+        if self.persist_tool_coverage(&turn,&context_receipts,&skill_receipts).await.is_err() {
+            turn.evidence.lock().unwrap_or_else(|e|e.into_inner()).audit_warning=Some("context_receipt_persistence_failed".into());
+            self.finish_tool(&turn,turn.checkpoint.content(),End::Tool("persistence_failed".into())).await;return;
+        }
         self.after_step(turn, context, result).await;
+    }
+
+    async fn persist_tool_coverage(&self,turn:&ToolTurn,contexts:&[dgos_types::AiContextReceipt],skills:&Value)->Result<()> {
+        let context_count=*turn.context_receipts_written.lock().unwrap_or_else(|e|e.into_inner());
+        self.record_inline_context(&turn.user,&turn.task_id,&contexts[context_count.min(contexts.len())..]).await?;
+        *turn.context_receipts_written.lock().unwrap_or_else(|e|e.into_inner())=contexts.len();
+        let count=*turn.skill_receipts_written.lock().unwrap_or_else(|e|e.into_inner());
+        if let Some(receipts)=skills.as_array() {
+            for receipt in &receipts[count.min(receipts.len())..] {
+                let step=self.repo.record_step(&turn.user,&turn.task_id,"skill","processing_result","supplied",false,false,Some(receipt.clone())).await?;
+                if !turn.sink.send(ChatEvent::Activity{task_id:turn.task_id.clone(),assistant_message_id:turn.assistant_message_id.clone(),step}) {turn.active.stop("task_cancelled");return Err(ChatError::ToolTurnInvalid)}
+            }
+            *turn.skill_receipts_written.lock().unwrap_or_else(|e|e.into_inner())=receipts.len();
+        }
+        Ok(())
     }
 
     async fn after_step(
@@ -247,14 +325,14 @@ impl ChatManager {
                 } else {
                     End::Completed {
                         finish_reason: "stop".into(),
-                        tokens: Some(context.tokens()).filter(|tokens| *tokens > 0),
+                        tokens: (!context.usage_unknown()).then(||context.tokens()),
                     }
                 };
                 self.finish_tool(&turn, content, end).await;
             }
             Ok(None) if !cancelled => {
                 let Some(proposal) = context.proposal().cloned() else {
-                    self.finish_tool(&turn, String::new(), End::Tool("tool_turn_invalid".into()))
+                    self.finish_tool(&turn, turn.checkpoint.content(), End::Tool("tool_turn_invalid".into()))
                         .await;
                     return;
                 };
@@ -264,48 +342,57 @@ impl ChatManager {
                     let mut slot = turn.session.context.lock().await;
                     if turn.active.token.is_cancelled() {
                         drop(slot);
-                        self.finish_tool(&turn, String::new(), End::Stopped(turn.active.reason()))
+                        self.finish_tool(&turn, turn.checkpoint.content(), End::Stopped(turn.active.reason()))
                             .await;
                         return;
                     }
                     *slot = Some(context);
+                    if !turn.sink.send(ChatEvent::ToolProposal {
+                        assistant_message_id: turn.assistant_message_id.clone(),
+                        proposal: proposal.clone(),
+                    }) {
+                        turn.active.stop("task_cancelled");
+                    }
                 }
                 self.arm_proposal_timer(&turn, proposal.id.clone());
-                if !turn.sink.send(ChatEvent::ToolProposal {
-                    assistant_message_id: turn.assistant_message_id.clone(),
-                    proposal,
-                }) {
-                    turn.active.stop("task_cancelled");
-                }
             }
             Ok(None) => {
-                self.finish_tool(&turn, String::new(), End::Stopped(turn.active.reason()))
+                self.finish_tool(&turn, turn.checkpoint.content(), End::Stopped(turn.active.reason()))
                     .await;
             }
             Err(error) => {
                 let end = if cancelled {
                     End::Stopped(turn.active.reason())
+                } else if error == "generation_limit" {
+                    End::Stopped("generation_limit")
                 } else {
                     End::Tool(category(error))
                 };
-                self.finish_tool(&turn, String::new(), end).await;
+                self.finish_tool(&turn, turn.checkpoint.content(), end).await;
             }
         }
     }
 
     /// The only place a tool turn ends. It leaves the table first, so a decision arriving while
     /// the terminal transaction runs is refused rather than lost.
-    async fn finish_tool(&self, turn: &Arc<ToolTurn>, buffer: String, end: End) {
+    async fn finish_tool(&self, turn: &Arc<ToolTurn>, buffer: String, mut end: End) {
+        if matches!(end, End::Completed { .. }) && crate::foundation::validate_output(&turn.output, &buffer).is_err() {
+            end=End::Tool("output_validation_failed".into());
+        }
         self.tool_turns
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&turn.task_id);
-        self.finish(
+        let mut evidence=turn.evidence.lock().unwrap_or_else(|e|e.into_inner()).clone();
+        if turn.checkpoint.flush().await.is_err(){evidence.audit_warning=Some("checkpoint_persistence_failed".into());end=End::Tool("persistence_failed".into());}
+        if evidence.audit_warning.is_some() && matches!(end,End::Completed{..}) {end=End::Tool("execution_audit_warning".into());}
+        self.finish_evidenced(
             &turn.user,
             &turn.task_id,
             &turn.assistant_message_id,
             buffer,
             end,
+            evidence,
             &*turn.sink,
         )
         .await;
@@ -326,7 +413,7 @@ impl ChatManager {
             if parked.is_some() {
                 let reason = watched.active.reason();
                 manager
-                    .finish_tool(&watched, String::new(), End::Stopped(reason))
+                    .finish_tool(&watched, watched.checkpoint.content(), End::Stopped(reason))
                     .await;
             }
         });

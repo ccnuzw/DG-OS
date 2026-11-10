@@ -66,9 +66,17 @@ pub struct ModuleRequestStats {
     pub cancelled: u64,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum ModuleRequestClass {
+    Execution,
+    Control,
+}
+
 struct RuntimeInner {
     state: ModuleRuntimeState,
     stats: ModuleRequestStats,
+    execution_in_flight: usize,
+    control_in_flight: usize,
 }
 
 struct RuntimeShared {
@@ -110,6 +118,8 @@ impl ModuleRuntimeHandle {
                 inner: Mutex::new(RuntimeInner {
                     state: ModuleRuntimeState::Starting,
                     stats: ModuleRequestStats::default(),
+                    execution_in_flight: 0,
+                    control_in_flight: 0,
                 }),
                 in_flight: tokio::sync::watch::Sender::new(0),
                 released: tokio::sync::Mutex::new(false),
@@ -153,12 +163,27 @@ impl ModuleRuntimeHandle {
         self.begin_request_limited(usize::MAX)
     }
 
-    /// Like `begin_request`, but refuses when `max_in_flight` requests are
-    /// already in flight. The check and the increment happen under one lock,
-    /// so concurrent callers can never exceed the limit. A refused request is
-    /// not counted as admitted, only as rejected (D051).
+    /// Like `begin_request`, but refuses when `max_in_flight` execution
+    /// requests are already in flight. Control requests have a separate pool.
+    /// The check and increment are atomic with lifecycle transitions. A
+    /// refused request is counted as rejected, not admitted (D051).
     pub fn begin_request_limited(
         &self,
+        max_in_flight: usize,
+    ) -> Result<ModuleRequest, ModuleRuntimeError> {
+        self.begin_request_class(ModuleRequestClass::Execution, max_in_flight)
+    }
+
+    pub(crate) fn begin_control_request_limited(
+        &self,
+        max_in_flight: usize,
+    ) -> Result<ModuleRequest, ModuleRuntimeError> {
+        self.begin_request_class(ModuleRequestClass::Control, max_in_flight)
+    }
+
+    fn begin_request_class(
+        &self,
+        class: ModuleRequestClass,
         max_in_flight: usize,
     ) -> Result<ModuleRequest, ModuleRuntimeError> {
         let mut inner = self.shared.lock();
@@ -166,10 +191,15 @@ impl ModuleRuntimeHandle {
             inner.stats.rejected += 1;
             return Err(ModuleRuntimeError::NotAccepting(inner.state));
         }
-        if inner.stats.in_flight >= max_in_flight {
+        let in_flight = match class {
+            ModuleRequestClass::Execution => &mut inner.execution_in_flight,
+            ModuleRequestClass::Control => &mut inner.control_in_flight,
+        };
+        if *in_flight >= max_in_flight {
             inner.stats.rejected += 1;
             return Err(ModuleRuntimeError::AtCapacity);
         }
+        *in_flight += 1;
         inner.stats.admitted += 1;
         inner.stats.in_flight += 1;
         self.shared.in_flight.send_replace(inner.stats.in_flight);
@@ -177,6 +207,7 @@ impl ModuleRuntimeHandle {
         Ok(ModuleRequest {
             context: self.context.with_new_request_id(),
             shared: Some(self.shared.clone()),
+            class,
         })
     }
 
@@ -270,6 +301,7 @@ impl ModuleRuntimeHandle {
 pub struct ModuleRequest {
     context: HostExecutionContext,
     shared: Option<Arc<RuntimeShared>>,
+    class: ModuleRequestClass,
 }
 
 impl ModuleRequest {
@@ -288,6 +320,10 @@ impl ModuleRequest {
             return;
         };
         let mut inner = shared.lock();
+        match self.class {
+            ModuleRequestClass::Execution => inner.execution_in_flight -= 1,
+            ModuleRequestClass::Control => inner.control_in_flight -= 1,
+        }
         inner.stats.in_flight -= 1;
         match outcome {
             ModuleRequestOutcome::Succeeded => inner.stats.succeeded += 1,

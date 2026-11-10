@@ -55,7 +55,7 @@ async fn fx() -> Fx {
         })
         .with_status(200)
         .with_header("content-type", "text/event-stream")
-        .with_body("data: {\"choices\":[{\"delta\":{\"content\":\"summary\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+        .with_body("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"summary\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
         .expect_at_least(0)
         .create_async()
         .await;
@@ -160,14 +160,13 @@ async fn turn(fx: &Fx, session: &str, text: &str) -> Result<ChatEvent, ChatError
             &fx.skills,
             ALICE,
             "main",
-            SendChatInput {
-                session_id: session.into(),
-                content: text.into(),
-                client_request_id: uuid::Uuid::new_v4().to_string(),
-                accept_destination: None,
-                tools: vec![],
-                asset_ids: vec![],
-            },
+            SendChatInput { skill_mode: Default::default(), authorized_skill_refs: Vec::new(), session_id: session.into(),
+            foundation: Default::default(),
+            content: text.into(),
+            client_request_id: uuid::Uuid::new_v4().to_string(),
+            accept_destination: None,
+            tools: vec![],
+            asset_ids: vec![], },
         )
         .await?;
     let sink = Collect::default();
@@ -401,12 +400,12 @@ async fn empty_skills_send_without_confirmation_in_new_and_reopened_sessions() {
     let saved = fx.chat.list_sessions(ALICE, Default::default()).await.unwrap().items
         .into_iter().find(|s| s.id == legacy).unwrap();
     assert!(saved.skills.is_empty() && !saved.no_skill_confirmed);
-    let ChatEvent::Done { message } = turn(&fx, &legacy, "legacy empty selection").await.unwrap() else {
-        panic!("empty-skill legacy send did not complete");
-    };
+    let ChatEvent::Done { message, .. } = turn(&fx, &legacy, "legacy empty selection").await.unwrap() else { panic!("empty-skill legacy send did not complete"); };
     let regenerated = fx.chat.regenerate(
         &fx.providers, &fx.skills, ALICE, "main",
         RegenerateChatInput {
+            skill_mode: Default::default(), authorized_skill_refs: Vec::new(),
+            foundation: Default::default(),
             message_id: message.id,
             client_request_id: uuid::Uuid::new_v4().to_string(),
             accept_destination: None,
@@ -511,4 +510,28 @@ async fn unsupported_budget_and_output_limit_refuse_before_session_commit_or_dis
     assert!(fx.chat.create_session(&fx.providers, &fx.skills, ALICE, CreateChatSessionInput { target: Some(chosen) }).await.is_err());
     assert!(fx.chat.list_sessions(ALICE, Default::default()).await.unwrap().items.is_empty());
     assert!(fx.seen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn regeneration_honors_current_on_demand_selection_and_rejects_manual_pins() {
+    let fx=fx().await;let s=session(&fx,None,true).await;
+    let ChatEvent::Done{message,..}=turn(&fx,&s,"first question").await.unwrap() else {panic!("initial reply")};
+    let prepared=fx.skills.prepare_content_skill(SKILL,ALICE).await.unwrap();
+    let pin=dgos_types::AiSkillRef{skill_id:prepared.skill_id,version:prepared.version,content_hash:prepared.content_hash};
+    let manual=fx.chat.regenerate(&fx.providers,&fx.skills,ALICE,"main",RegenerateChatInput{message_id:message.id.clone(),client_request_id:uuid::Uuid::new_v4().to_string(),accept_destination:None,foundation:Default::default(),skill_mode:dgos_workbench::ChatSkillMode::Manual,authorized_skill_refs:vec![pin.clone()]}).await;
+    assert!(matches!(manual,Err(ChatError::SkillUnavailable)));
+    let sent=fx.chat.regenerate(&fx.providers,&fx.skills,ALICE,"main",RegenerateChatInput{message_id:message.id,client_request_id:uuid::Uuid::new_v4().to_string(),accept_destination:None,foundation:Default::default(),skill_mode:dgos_workbench::ChatSkillMode::OnDemand,authorized_skill_refs:vec![pin]}).await.unwrap();
+    assert!(sent.job.as_ref().unwrap().is_tool_turn(),"current explicit pins select actual local runtime");
+    let job=sent.job.unwrap();let task=sent.ack.task_id;
+    assert_eq!(count(&fx.db, &format!("SELECT COUNT(*) FROM workbench_task_skills WHERE task_id='{task}' AND skill_id='{SKILL}'")).await, 1, "regeneration audit pins the actual on-demand runtime selection");
+    let skills=Arc::new(tokio::sync::RwLock::new(fx.skills));let mcp=dgos_mcp::McpManager::new(fx.db.clone());let sink=Arc::new(Collect::default());
+    fx.chat.run_tool_turn(&fx.providers,&mcp,skills.clone(),job,sink.clone()).await;
+    {
+        let events = sink.0.lock().unwrap();
+        assert!(matches!(events.last(), Some(ChatEvent::Done { .. })), "regeneration events: {events:?}");
+    }
+    let run=fx.chat.get_run(ALICE,dgos_workbench::GetChatRunInput{task_id:task}).await.unwrap();assert_eq!(run.status,"completed");
+    let wire=fx.seen.lock().unwrap();let request=wire.last().unwrap();
+    assert!(request["tools"].as_array().unwrap().iter().any(|tool|tool["function"]["name"].as_str().is_some_and(|name|name.starts_with("dgos_skill_"))));
+    assert!(skills.try_write().is_ok());
 }

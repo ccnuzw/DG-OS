@@ -38,6 +38,13 @@ use std::{
 use tokio_util::sync::CancellationToken;
 
 mod tool_turn;
+mod contract;
+mod continuous;
+mod lifecycle;
+mod foundation;
+use foundation::effective_skill_mode;
+pub use contract::*;
+use lifecycle::{ChatStepGuard, CheckpointWriter, TerminalEvidence};
 pub use tool_turn::{AdvanceChatToolTurnInput, ToolActionJob};
 use tool_turn::{ToolPlan, ToolTurn};
 
@@ -274,6 +281,12 @@ pub struct SendChatInput {
     /// stored assets and linked in the same transaction as the message.
     #[serde(default)]
     pub asset_ids: Vec<String>,
+    #[serde(default)]
+    pub skill_mode: ChatSkillMode,
+    #[serde(default)]
+    pub authorized_skill_refs: Vec<dgos_types::AiSkillRef>,
+    #[serde(default)]
+    pub foundation: dgos_types::AiFoundationOptions,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -283,6 +296,12 @@ pub struct RegenerateChatInput {
     pub client_request_id: String,
     #[serde(default)]
     pub accept_destination: Option<String>,
+    #[serde(default)]
+    pub foundation: dgos_types::AiFoundationOptions,
+    #[serde(default)]
+    pub skill_mode: ChatSkillMode,
+    #[serde(default)]
+    pub authorized_skill_refs: Vec<dgos_types::AiSkillRef>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -338,8 +357,15 @@ pub enum ChatEvent {
         assistant_message_id: String,
         proposal: ChatToolProposal,
     },
+    Phase { task_id: String, assistant_message_id: String, phase: dgos_types::AiPhase },
+    Activity { task_id: String, assistant_message_id: String, step: ChatRunStep },
+    SummaryDone { task_id: String, assistant_message_id: String, summary: ChatSummary,
+        dispatched: bool, result_unknown: bool, audit_warning: Option<String> },
     Done {
         message: ChatMessage,
+        dispatched: bool,
+        result_unknown: bool,
+        audit_warning: Option<String>,
     },
     Error {
         assistant_message_id: String,
@@ -348,6 +374,8 @@ pub enum ChatEvent {
         provider_code: Option<u32>,
         result_unknown: bool,
         regeneration_discarded: bool,
+        dispatched: bool,
+        audit_warning: Option<String>,
     },
 }
 
@@ -426,6 +454,14 @@ pub struct GenerationJob {
     provider_id: String,
     model_id: String,
     revision: Option<i64>,
+    pins: Vec<PinnedSkill>,
+    skill_runtime: Option<crate::skill_runtime::SkillRuntime>,
+    blocked_effects: Vec<String>,
+    summary: Option<continuous::SummaryPlan>,
+    contexts: Vec<crate::foundation::ResolvedContext>,
+    output: dgos_types::AiOutputContract,
+    inline_receipts: Vec<dgos_types::AiContextReceipt>,
+    source_runs: Vec<String>,
     request: ChatRequest,
     plan: Option<ToolPlan>,
     active: Arc<Active>,
@@ -464,6 +500,7 @@ pub struct ChatManager {
     db: DatabaseConnection,
     tool_turns: Arc<Mutex<HashMap<String, Arc<ToolTurn>>>>,
     gate: MaintenanceGate,
+    account_lease: Option<CancellationToken>,
 }
 
 struct Prepared {
@@ -490,7 +527,22 @@ impl ChatManager {
             stopping: Arc::new(AtomicBool::new(false)),
             tool_turns: Arc::new(Mutex::new(HashMap::new())),
             gate,
+            account_lease: None,
         }
+    }
+
+    /// Host captures owner and irreversible lease atomically before its first await. A bound
+    /// clone shares registries and storage, never the account generation token with a later login.
+    pub fn with_account_lease(&self, lease: CancellationToken) -> Self {
+        let mut bound = self.clone();
+        bound.account_lease = Some(lease);
+        bound
+    }
+
+    fn check_lease(&self) -> Result<()> {
+        if self.account_lease.as_ref().is_some_and(CancellationToken::is_cancelled) {
+            Err(ChatError::Provider(DgosError::SessionInvalid.error_code()))
+        } else { Ok(()) }
     }
 
     fn registry(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<Active>>> {
@@ -506,6 +558,7 @@ impl ChatManager {
         session_id: &str,
         window: &str,
     ) -> Result<Arc<Active>> {
+        self.check_lease()?;
         let mut registry = self.registry();
         if self.stopping.load(Ordering::SeqCst) {
             return Err(ChatError::Internal);
@@ -521,7 +574,7 @@ impl ChatManager {
             user: user.to_owned(),
             session_id: session_id.to_owned(),
             window: window.to_owned(),
-            token: CancellationToken::new(),
+            token: self.account_lease.as_ref().map(CancellationToken::child_token).unwrap_or_default(),
             reason: Mutex::new(None),
         });
         registry.insert(task_id.to_owned(), entry.clone());
@@ -617,6 +670,7 @@ impl ChatManager {
     /// Startup, before any command is registered. The instance lock (D077) guarantees nothing
     /// else is generating.
     pub async fn recover_interrupted(&self) -> Result<u64> {
+        self.repo.recover_runs(None).await?;
         Ok(self.repo.recover_generating().await?)
     }
 
@@ -804,9 +858,24 @@ impl ChatManager {
         window: &str,
         input: SendChatInput,
     ) -> Result<Sent> {
+        self.send_with_source(providers, skills, mcp, user, window, input, None).await
+    }
+
+    async fn send_with_source(
+        &self,
+        providers: &ProviderManager,
+        skills: &SkillsManager,
+        mcp: Option<&McpManager>,
+        user: &str,
+        window: &str,
+        input: SendChatInput,
+        source_run_id: Option<&str>,
+    ) -> Result<Sent> {
+        self.check_lease()?;
+        let skill_mode = effective_skill_mode(input.skill_mode, &input.foundation);
         let task_id = canonical_uuid(&input.client_request_id)?;
         let content = input.content.trim();
-        if (content.is_empty() && input.asset_ids.is_empty()) || content.len() > MAX_MESSAGE_BYTES {
+        if (content.is_empty() && input.asset_ids.is_empty() && input.foundation.context_refs.is_empty()) || content.len() > MAX_MESSAGE_BYTES {
             return Err(ChatError::InvalidMessageContent);
         }
         if self.stopping.load(Ordering::SeqCst) {
@@ -831,6 +900,7 @@ impl ChatManager {
             assets: &input.asset_ids,
         };
         if let Some(begun) = self.repo.find_replay(&probe).await? {
+            self.check_foundation_replay(user,&task_id,&input.foundation).await?;
             return Ok(replayed(task_id, begun));
         }
         if self.user_busy(user) {
@@ -844,9 +914,12 @@ impl ChatManager {
                 &input.session_id,
                 &task_id,
                 input.accept_destination.as_deref(),
+                skill_mode == ChatSkillMode::Manual,
             )
             .await?;
-        let history = self
+        let contexts = self.resolve_contexts(user, &input.session_id, &input.foundation).await?;
+        let inline = foundation::inline_context(&contexts, &prepared.model, &input.foundation.output)?;
+        let mut history = self
             .repo
             .history(user, &input.session_id, None, MAX_CONTEXT_BYTES)
             .await?;
@@ -872,10 +945,16 @@ impl ChatManager {
                 )
             })
             .collect();
-        let (policy, reserve) = if selected.is_empty() {
+        let runtime = self.authorize_runtime(skills, user, skill_mode, &input.authorized_skill_refs).await?;
+        let pins:Vec<PinnedSkill>=if let Some(runtime)=&runtime {runtime.pins().iter().map(|p|PinnedSkill{skill_id:p.skill_id.clone(),version_id:format!("{}@{}",p.skill_id,p.version),content_hash:p.content_hash.clone()}).collect()} else {prepared.skills.iter().map(|s|s.pin.clone()).collect()};
+        let (runtime, local_reserve) = Self::local_schema_bytes(runtime, &contexts)?;
+        let summary = self.repo.summary(user, &input.session_id).await?;
+        if let Some(summary) = &summary { history.rows.retain(|r| r.seq > summary.source_last_seq); }
+        let has_tools = !selected.is_empty() || runtime.is_some() || foundation::has_context_tools(&contexts);
+        let (policy, reserve) = if !has_tools {
             (HOST_POLICY, 0)
         } else {
-            (crate::tools::TOOL_HOST_POLICY, tool_reserve(&selected))
+            (crate::tools::TOOL_HOST_POLICY, tool_reserve(&selected) + local_reserve)
         };
         let assets = crate::assets::ChatAssets::new(self.db.clone());
         let current_assets = assets.for_send(user, &input.asset_ids).await?;
@@ -890,9 +969,12 @@ impl ChatManager {
             generation: &prepared.generation,
             current_assets: &current_assets,
             history_assets: &history_assets,
+            summary: summary.as_ref(),
+            foundation: Some(&inline),
         })?;
         validate_image_support(&messages, &prepared.model)?;
-        let plan = (!selected.is_empty()).then(|| ToolPlan {
+        foundation::validate_budget(&messages, &prepared.generation, reserve, prepared.model.context_window, has_tools)?;
+        let plan = has_tools.then(|| ToolPlan {
             messages: messages.clone(),
             tools: selected,
             window: prepared.model.context_window,
@@ -907,12 +989,14 @@ impl ChatManager {
             entry: active.clone(),
         };
         // This process holds the user's only registry slot, so a `generating` row is an orphan.
+        self.repo.recover_runs(Some(user)).await?;
         self.repo.recover_user_orphans(user).await?;
         let user_message_id = uuid::Uuid::new_v4().to_string();
         let assistant_message_id = uuid::Uuid::new_v4().to_string();
+        let foundation_fingerprint = foundation::foundation_fingerprint(&input.foundation)?;
         let begun = self
             .repo
-            .begin_generation(&BeginGeneration {
+            .begin_generation_with_metadata(&BeginGeneration {
                 user,
                 session_id: &input.session_id,
                 task_id: &task_id,
@@ -924,11 +1008,11 @@ impl ChatManager {
                 model_id: &prepared.model.model_id,
                 provider_config_revision: Some(prepared.provider.config_revision),
                 endpoint_fingerprint: &prepared.fingerprint,
-                skills: &prepared.skills.iter().map(|s| s.pin.clone()).collect::<Vec<_>>(),
+                skills: &pins,
                 generation: &prepared.generation,
                 tools: &tool_refs,
                 assets: &input.asset_ids,
-            })
+            }, Some(&foundation_fingerprint), source_run_id)
             .await;
         let begun = match begun {
             Ok(begun) => begun,
@@ -938,6 +1022,7 @@ impl ChatManager {
             }
         };
         if begun.replayed {
+            self.check_foundation_replay(user,&task_id,&input.foundation).await?;
             self.release(&task_id);
             return Ok(replayed(task_id, begun));
         }
@@ -956,6 +1041,14 @@ impl ChatManager {
                 provider_id: prepared.provider.id,
                 model_id: prepared.model.model_id,
                 revision: Some(prepared.provider.config_revision),
+                pins,
+                skill_runtime: runtime,
+                blocked_effects: Vec::new(),
+                summary: None,
+                contexts,
+                output: input.foundation.output,
+                inline_receipts: inline.receipts,
+                source_runs: Vec::new(),
                 request: wire_request(messages, &prepared.generation),
                 plan,
                 active,
@@ -973,6 +1066,7 @@ impl ChatManager {
         window: &str,
         input: RegenerateChatInput,
     ) -> Result<Sent> {
+        self.check_lease()?;
         let task_id = canonical_uuid(&input.client_request_id)?;
         if self.stopping.load(Ordering::SeqCst) {
             return Err(ChatError::Internal);
@@ -1015,6 +1109,7 @@ impl ChatManager {
             assets: &[],
         };
         if let Some(begun) = self.repo.find_replay(&probe).await? {
+            self.check_foundation_replay(user,&task_id,&input.foundation).await?;
             return Ok(replayed(task_id, begun));
         }
         let message = message.ok_or(ChatError::RequestIdConflict)?;
@@ -1028,6 +1123,7 @@ impl ChatManager {
         if self.user_busy(user) {
             return Err(ChatError::GenerationInProgress);
         }
+        let skill_mode = effective_skill_mode(input.skill_mode, &input.foundation);
         let prepared = self
             .prepare(
                 providers,
@@ -1036,8 +1132,15 @@ impl ChatManager {
                 &session_id,
                 &task_id,
                 input.accept_destination.as_deref(),
+                skill_mode == ChatSkillMode::Manual,
             )
             .await?;
+        let contexts = self.resolve_contexts(user, &session_id, &input.foundation).await?;
+        let inline = foundation::inline_context(&contexts, &prepared.model, &input.foundation.output)?;
+        let runtime = self.authorize_runtime(skills, user, skill_mode, &input.authorized_skill_refs).await?;
+        let pins: Vec<PinnedSkill> = runtime.as_ref().map(|runtime| runtime.pins().iter().map(|pin| PinnedSkill {skill_id:pin.skill_id.clone(),version_id:format!("{}@{}",pin.skill_id,pin.version),content_hash:pin.content_hash.clone()}).collect()).unwrap_or_else(||prepared.skills.iter().map(|skill|skill.pin.clone()).collect());
+        let has_tools = runtime.is_some() || foundation::has_context_tools(&contexts);
+        let (runtime, local_reserve) = Self::local_schema_bytes(runtime, &contexts)?;
         // History ends before the question; the replaced reply is not part of the context.
         let history = self
             .repo
@@ -1049,8 +1152,8 @@ impl ChatManager {
         let mut history_assets = assets.for_messages(user, &ids).await?;
         let current_assets = history_assets.remove(&question.id).unwrap_or_default();
         let (messages, dropped) = assemble_assets(ContextAssembly {
-            policy: HOST_POLICY,
-            reserve: 0,
+            policy: if has_tools { crate::tools::TOOL_HOST_POLICY } else { HOST_POLICY },
+            reserve: local_reserve,
             skills: &prepared.skills.iter().map(|s| &s.content).collect::<Vec<_>>(),
             history: &history,
             current: &question.content,
@@ -1058,8 +1161,11 @@ impl ChatManager {
             generation: &prepared.generation,
             current_assets: &current_assets,
             history_assets: &history_assets,
+            summary: None,
+            foundation: Some(&inline),
         })?;
         validate_image_support(&messages, &prepared.model)?;
+        foundation::validate_budget(&messages, &prepared.generation, local_reserve, prepared.model.context_window, has_tools)?;
         // Same admission as send: maintenance refuses new generations at once instead of waiting.
         let permit = self.gate.admit().map_err(|_| ChatError::GenerationInProgress)?;
         let active = self.register(user, &task_id, &session_id, window)?;
@@ -1068,11 +1174,13 @@ impl ChatManager {
             task_id: task_id.clone(),
             entry: active.clone(),
         };
+        self.repo.recover_runs(Some(user)).await?;
         self.repo.recover_user_orphans(user).await?;
         let assistant_message_id = uuid::Uuid::new_v4().to_string();
+        let foundation_fingerprint = foundation::foundation_fingerprint(&input.foundation)?;
         let begun = self
             .repo
-            .begin_generation(&BeginGeneration {
+            .begin_generation_with_metadata(&BeginGeneration {
                 user,
                 session_id: &session_id,
                 task_id: &task_id,
@@ -1084,11 +1192,11 @@ impl ChatManager {
                 model_id: &prepared.model.model_id,
                 provider_config_revision: Some(prepared.provider.config_revision),
                 endpoint_fingerprint: &prepared.fingerprint,
-                skills: &prepared.skills.iter().map(|s| s.pin.clone()).collect::<Vec<_>>(),
+                skills: &pins,
                 generation: &prepared.generation,
                 tools: &[],
                 assets: &[],
-            })
+            }, Some(&foundation_fingerprint), None)
             .await;
         let begun = match begun {
             Ok(begun) => begun,
@@ -1098,6 +1206,7 @@ impl ChatManager {
             }
         };
         if begun.replayed {
+            self.check_foundation_replay(user,&task_id,&input.foundation).await?;
             self.release(&task_id);
             return Ok(replayed(task_id, begun));
         }
@@ -1116,8 +1225,16 @@ impl ChatManager {
                 provider_id: prepared.provider.id,
                 model_id: prepared.model.model_id,
                 revision: Some(prepared.provider.config_revision),
-                request: wire_request(messages, &prepared.generation),
-                plan: None,
+                pins,
+                skill_runtime: runtime,
+                blocked_effects: Vec::new(),
+                summary: None,
+                contexts,
+                output: input.foundation.output,
+                inline_receipts: inline.receipts,
+                source_runs: Vec::new(),
+                request: wire_request(messages.clone(), &prepared.generation),
+                plan: has_tools.then(|| ToolPlan { messages: messages.clone(), tools: Vec::new(), window: prepared.model.context_window, generation: prepared.generation.clone() }),
                 active,
                 _guard: guard,
                 _permit: permit,
@@ -1135,6 +1252,7 @@ impl ChatManager {
         session_id: &str,
         task_id: &str,
         accept_destination: Option<&str>,
+        eager_skills: bool,
     ) -> Result<Prepared> {
         let session = self.repo.get_session(user, session_id).await?;
         let (provider, model) = resolve_model(
@@ -1150,7 +1268,7 @@ impl ChatManager {
         };
         session.generation.validate(Some(&model))?;
         validate_generation_profile(&provider, &session.generation)?;
-        let skills = resolve_skills(skills, user, &session, &provenance).await?;
+        let skills = if eager_skills { resolve_skills(skills, user, &session, &provenance).await? } else { Vec::new() };
         let (fingerprint, host) = fingerprint(&provider.provider_type, &provider.base_url)?;
         let last = self
             .repo
@@ -1173,71 +1291,64 @@ impl ChatManager {
     // -----------------------------------------------------------------------------------------
     // Generation
 
-    /// Streams one generation to `sink` and ends it in exactly one terminal transaction. The
-    /// registry entry is released after that transaction commits and before the terminal event
-    /// is sent, so a client reacting to the event can send again immediately.
-    pub async fn run_generation(
-        &self,
-        providers: &ProviderManager,
-        job: GenerationJob,
-        sink: &dyn ChatSink,
-    ) {
-        let GenerationJob {
-            task_id,
-            user,
-            assistant_message_id,
-            provider_id,
-            model_id,
-            revision,
-            request,
-            plan,
-            active,
-            _guard,
-            _permit,
-        } = job;
+    /// Drive exactly one admitted generation and retain a bounded restart checkpoint.
+    pub async fn run_generation(&self, providers: &ProviderManager, job: GenerationJob, sink: &dyn ChatSink) {
+        use crate::execution::ExecutionGuard;
+        let GenerationJob { task_id,user,assistant_message_id,provider_id,model_id,revision,pins,
+            summary,request,plan,active,contexts,output,inline_receipts,source_runs,_guard,_permit,.. } = job;
         if plan.is_some() {
-            // A tool turn belongs to `run_tool_turn`; running it as plain text would drop its tools.
-            self.finish(
-                &user,
-                &task_id,
-                &assistant_message_id,
-                String::new(),
-                End::Tool("tool_turn_misrouted".into()),
-                sink,
-            )
-            .await;
+            self.finish(&user,&task_id,&assistant_message_id,String::new(),End::Tool("tool_turn_misrouted".into()),sink).await;
             return;
         }
-        if !sink.send(ChatEvent::Started {
-            task_id: task_id.clone(),
-            assistant_message_id: assistant_message_id.clone(),
-        }) {
-            active.stop("task_cancelled");
-        }
-        let provenance = ExecutionProvenance {
-            caller: BuiltinCaller::Workbench,
-            request_id: task_id.clone(),
-        };
+        if !sink.send(ChatEvent::Started{task_id:task_id.clone(),assistant_message_id:assistant_message_id.clone()}) { active.stop("task_cancelled"); }
+        let checkpoint = CheckpointWriter::new(self.repo.clone(),user.clone(),task_id.clone());
+        let guard = ChatStepGuard{manager:self,providers,user:&user,task:&task_id,assistant:&assistant_message_id,
+            provider:&provider_id,model:&model_id,revision,active:&active,pins:&pins,blocked_effects:&[],contexts:&contexts,source_runs:&source_runs,sink};
         let forward = |event| {
             let sent = match event {
-                crate::execution::CoreEvent::Delta(text) => sink.send(ChatEvent::Delta { assistant_message_id: assistant_message_id.clone(), text }),
-                crate::execution::CoreEvent::ReasoningDelta(text) => sink.send(ChatEvent::ReasoningDelta { assistant_message_id: assistant_message_id.clone(), text }),
-                crate::execution::CoreEvent::Phase(_) => true,
+                crate::execution::CoreEvent::Delta(text) => { checkpoint.push(&text); sink.send(ChatEvent::Delta{assistant_message_id:assistant_message_id.clone(),text}) },
+                crate::execution::CoreEvent::ReasoningDelta(text) => sink.send(ChatEvent::ReasoningDelta{assistant_message_id:assistant_message_id.clone(),text}),
+                crate::execution::CoreEvent::Phase(phase) => sink.send(ChatEvent::Phase{task_id:task_id.clone(),assistant_message_id:assistant_message_id.clone(),phase}),
             };
-            if !sent { active.stop("task_cancelled"); }
-            sent
+            if !sent { active.stop("task_cancelled"); } sent
         };
-        let binding = crate::execution::StepBinding { user: &user, provider_id: &provider_id, model_id: &model_id, revision,
-            provenance: &provenance, cancellation: &active.token, deadline: tokio::time::Instant::now() + MAX_DURATION,
-            guard: &crate::execution::LegacyGuard, sink: &forward };
-        let drained = crate::execution::drain_stream(providers, &binding, request).await;
-        let end = match drained.end {
-            crate::execution::StreamEnd::Completed { finish_reason, tokens } => End::Completed { finish_reason, tokens },
-            crate::execution::StreamEnd::Stopped("task_cancelled") => End::Stopped(active.reason()),
-            crate::execution::StreamEnd::Stopped(reason) => End::Stopped(reason),
-            crate::execution::StreamEnd::Failed(code) => End::Failed(code),
+        let provenance=ExecutionProvenance{caller:BuiltinCaller::Workbench,request_id:task_id.clone()};
+        let binding=crate::execution::StepBinding{user:&user,provider_id:&provider_id,model_id:&model_id,revision,
+            provenance:&provenance,cancellation:&active.token,deadline:tokio::time::Instant::now()+MAX_DURATION,guard:&guard,sink:&forward};
+        let admitted=guard.before_model().await;
+        let mut evidence=TerminalEvidence::default();
+        let (content,mut end)=match admitted {
+            Err(error)=>(String::new(),End::Tool(error)),
+            Ok(())=>{
+                sink.send(ChatEvent::Phase{task_id:task_id.clone(),assistant_message_id:assistant_message_id.clone(),phase:dgos_types::AiPhase::Model});
+                let drained=crate::execution::drain_stream(providers,&binding,request).await;
+                evidence.dispatched=drained.dispatched;
+                evidence.audit_warning=drained.audit_warning.then(||"provider_audit_warning".into());
+                let end=match drained.end {
+                    crate::execution::StreamEnd::Completed{finish_reason,tokens}=>{evidence.tokens=tokens;End::Completed{finish_reason,tokens}},
+                    crate::execution::StreamEnd::Stopped("task_cancelled")=>{evidence.result_unknown=drained.dispatched;End::Stopped(active.reason())},
+                    crate::execution::StreamEnd::Stopped(reason)=>{evidence.result_unknown=drained.dispatched;End::Stopped(reason)},
+                    crate::execution::StreamEnd::Failed(code)=>{evidence.result_unknown=drained.dispatched&&!matches!(code,1001001|1001002|1001003|1001004|1001005|1001012|1001015|1001016|1001017|1001018|1001019|1001020|1001022|1001023|1001024);End::Failed(code)},
+                };(drained.content,end)
+            }
         };
-        self.finish(&user, &task_id, &assistant_message_id, drained.content, end, sink).await;
+        if matches!(end,End::Completed{..}) {
+            if let Err(error)=crate::foundation::FoundationGuard::revalidate(&guard,&contexts).await {end=End::Tool(error);}
+        }
+        if evidence.dispatched && self.record_inline_context(&user,&task_id,&inline_receipts).await.is_err() {
+            end=End::Tool("persistence_failed".into());
+            evidence.audit_warning=Some("context_receipt_persistence_failed".into());
+        }
+        if matches!(end, End::Completed { .. }) && crate::foundation::validate_output(&output, &content).is_err() {
+            end = End::Tool("output_validation_failed".into());
+        }
+        if checkpoint.flush().await.is_err(){end=End::Tool("persistence_failed".into());evidence.audit_warning=Some("checkpoint_persistence_failed".into());}
+        if evidence.audit_warning.is_some() && matches!(end,End::Completed{..}) { end=End::Tool("provider_audit_warning".into()); }
+        if let Some(plan)=summary {
+            self.finish_summary(&user,&task_id,&assistant_message_id,&provider_id,&model_id,plan,content,end,evidence,&active,sink).await;
+        } else {
+            self.finish_evidenced(&user,&task_id,&assistant_message_id,content,end,evidence,sink).await;
+        }
     }
 
     async fn finish(
@@ -1249,7 +1360,12 @@ impl ChatManager {
         end: End,
         sink: &dyn ChatSink,
     ) {
-        let outcome = outcome(&buffer, end);
+        self.finish_evidenced(user,task_id,assistant_message_id,buffer,end,TerminalEvidence::default(),sink).await;
+    }
+
+    async fn finish_evidenced(&self,user:&str,task_id:&str,assistant_message_id:&str,buffer:String,end:End,evidence:TerminalEvidence,sink:&dyn ChatSink) {
+        let mut outcome = outcome(&buffer, end);
+        if evidence.tokens.is_some() { outcome.tokens=evidence.tokens; }
         let write = || async {
             self.repo
                 .finalize_generation(&FinalizeGeneration {
@@ -1263,6 +1379,7 @@ impl ChatManager {
                     task_status: outcome.task_status,
                     task_error: outcome.task_error.as_deref(),
                     total_tokens: outcome.tokens,
+                    evidence: Some(dgos_db::repositories::chat_repository::ChatTerminalEvidence{dispatched:evidence.dispatched,result_unknown:evidence.result_unknown,audit_warning:evidence.audit_warning.clone()}),
                 })
                 .await
         };
@@ -1277,27 +1394,24 @@ impl ChatManager {
             .clone()
             .or_else(|| outcome.message_error.clone())
             .unwrap_or_default();
-        let event = match result {
+        let mut event = match result {
             Ok(Finalized::Done { message, discarded }) => {
                 if outcome.message_status == "completed" && !discarded {
-                    ChatEvent::Done { message: *message }
+                    ChatEvent::Done { dispatched:message.dispatched,result_unknown:message.result_unknown,audit_warning:message.audit_warning.clone(),message: *message }
                 } else {
+                    let unknown = evidence.result_unknown || (!discarded && message.result_unknown);
                     error_event(
                         assistant_message_id,
                         Some(*message),
                         error_code,
-                        dgos_db::result_is_unknown(
-                            outcome.message_status,
-                            outcome.tokens,
-                            outcome.task_error.as_deref(),
-                        ),
+                        unknown,
                         discarded,
                     )
                 }
             }
             Ok(Finalized::AlreadyFinalized) => {
                 match self.repo.get_message(user, assistant_message_id).await {
-                    Ok(message) if message.status == "completed" => ChatEvent::Done { message },
+                    Ok(message) if message.status == "completed" => ChatEvent::Done { dispatched:message.dispatched,result_unknown:message.result_unknown,audit_warning:message.audit_warning.clone(),message },
                     Ok(message) => {
                         let code = message.error_code.clone().unwrap_or_default();
                         let unknown = message.result_unknown;
@@ -1325,6 +1439,11 @@ impl ChatManager {
                 )
             }
         };
+        if let ChatEvent::Error{dispatched,audit_warning,result_unknown,error_code,..}=&mut event {
+            *dispatched=evidence.dispatched;
+            *audit_warning=evidence.audit_warning.or_else(||(error_code.as_str()=="persistence_failed").then(||"terminal_persistence_failed".into()));
+            *result_unknown|=evidence.result_unknown;
+        }
         sink.send(event);
     }
 }
@@ -1389,6 +1508,8 @@ fn error_event(
         provider_code,
         result_unknown,
         regeneration_discarded,
+        dispatched: false,
+        audit_warning: None,
     }
 }
 
@@ -1511,6 +1632,8 @@ fn assemble(
         generation,
         current_assets: &[],
         history_assets: &HashMap::new(),
+        summary: None,
+        foundation: None,
     })
 }
 
@@ -1531,6 +1654,11 @@ fn validate_image_support(messages: &[WireMessage], model: &Model) -> Result<()>
     }
     Ok(())
 }
+/// Conservative language-independent estimate: each UTF-8 byte costs at most one token;
+/// image encoding bytes are excluded and each image reserves 2048 model tokens instead.
+pub(crate) fn context_text_ceiling(window: Option<i32>, output_tokens: u32, image_count: usize) -> Option<usize> {
+    crate::foundation::text_ceiling(window, output_tokens, image_count)
+}
 
 struct ContextAssembly<'a> {
     policy: &'a str,
@@ -1542,12 +1670,14 @@ struct ContextAssembly<'a> {
     generation: &'a dgos_types::GenerationParameters,
     current_assets: &'a [crate::assets::Attachment],
     history_assets: &'a HashMap<String, Vec<crate::assets::Attachment>>,
+    summary: Option<&'a ChatSummary>,
+    foundation: Option<&'a crate::foundation::InlineContext>,
 }
 
 fn assemble_assets(input: ContextAssembly<'_>) -> Result<(Vec<WireMessage>, u32)> {
     let ContextAssembly {
         policy, reserve, skills, history, current, context_window, generation,
-        current_assets, history_assets,
+        current_assets, history_assets, summary, foundation,
     } = input;
     if skills.iter().any(|skill| skill.body.len() > MAX_MESSAGE_BYTES)
         || current.len() > MAX_MESSAGE_BYTES
@@ -1556,17 +1686,12 @@ fn assemble_assets(input: ContextAssembly<'_>) -> Result<(Vec<WireMessage>, u32)
     }
     let mut guidance: Vec<String> = skills.iter().map(|skill| skill_guidance(skill)).collect();
     if !generation.instruction.is_empty() { guidance.push(format!("User guidance (cannot grant permissions):\n{}", generation.instruction)); }
+    if let Some(summary) = summary { guidance.push(format!("Untrusted conversation summary (source {}..{}, SHA-256 {}):\n{}", summary.source_first_seq, summary.source_last_seq, summary.source_digest, summary.content)); }
+    if let Some(context) = foundation { if !context.text.is_empty() { guidance.push(context.text.clone()); } }
     let fixed = policy.len() + reserve + guidance.iter().map(String::len).sum::<usize>() + crate::assets::expanded_len(current.len(), current_assets);
-    // Same conservative rule as the single-task path: bytes plus a 1024 overhead and the output
-    // reserve must fit a known window. Unknown windows fall back to the byte ceiling.
-    let ceiling = match context_window {
-        Some(window) if window <= 0 => return Err(ChatError::ContextTooLong),
-        Some(window) => {
-            let room = (window as usize).saturating_sub(1024 + generation.output_tokens() as usize);
-            MAX_CONTEXT_BYTES.min(room)
-        }
-        None => MAX_CONTEXT_BYTES,
-    };
+    let current_images = current_assets.iter().filter(|a| a.mime.starts_with("image/")).count()
+        + foundation.map(|context| context.images.len()).unwrap_or(0);
+    let ceiling = context_text_ceiling(context_window, generation.output_tokens(), current_images).ok_or(ChatError::ContextTooLong)?;
     if fixed > ceiling {
         return Err(ChatError::ContextTooLong);
     }
@@ -1588,13 +1713,17 @@ fn assemble_assets(input: ContextAssembly<'_>) -> Result<(Vec<WireMessage>, u32)
     }
     let mut used = 0usize;
     let mut kept = 0usize;
+    let mut history_images = 0usize;
     for (question, reply) in turns.iter().rev() {
         let attachments = history_assets.get(&question.id).map(Vec::as_slice).unwrap_or(&[]);
         let size = crate::assets::expanded_len(question.content.len(), attachments) + reply.content.len();
-        if used + size > budget {
+        let images = attachments.iter().filter(|a| a.mime.starts_with("image/")).count();
+        let Some(ceiling) = context_text_ceiling(context_window, generation.output_tokens(), current_images + history_images + images) else { break };
+        if used + size > budget || fixed + used + size > ceiling {
             break;
         }
         used += size;
+        history_images += images;
         kept += 1;
     }
     let included = &turns[turns.len() - kept..];
@@ -1626,10 +1755,12 @@ fn assemble_assets(input: ContextAssembly<'_>) -> Result<(Vec<WireMessage>, u32)
             images: Vec::new(),
         });
     }
+    let mut images = crate::assets::image_parts(current_assets);
+    if let Some(context) = foundation { images.extend(context.images.iter().cloned()); }
     messages.push(WireMessage {
         role: "user".into(),
         content: crate::assets::expanded(current, current_assets),
-        images: crate::assets::image_parts(current_assets),
+        images,
     });
     Ok((messages, dropped as u32))
 }
@@ -1690,7 +1821,7 @@ async fn resolve_model(
         return Err(ChatError::ProviderNotSelected);
     }
     let unsupported = || ChatError::Provider(DgosError::RequestNotSupported.error_code());
-    if model.model_type != "text-generation" {
+    if model.model_type != "text-generation" || model.capabilities.streaming == dgos_types::model_catalog::Hint::Unsupported {
         return Err(unsupported());
     }
     if model

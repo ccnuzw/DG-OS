@@ -5,7 +5,8 @@
 //! types). The UI is driven by DOM events from the evaluated script (click, input, Radix Select via keyboard events), which
 //! is not the same as a user's pointer; two checks (clipboard) use real `NSEvent` key presses and read the
 //! real `NSPasteboard`. The IPC `Channel` is the real one the chat store creates; a spy installed on
-//! `transformCallback` only records what Tauri delivered.
+//! `transformCallback` only records what Tauri delivered. Check 1 also exercises resource import and
+//! malformed/valid output schemas through production IPC, against the same loopback Provider.
 //!
 //! Replaced for the run (fixture level, NOT a real Provider): the Provider is a loopback server that plays
 //! scripted OpenAI-style SSE/JSON replies, the credential vault is in memory, and the MCP server is the
@@ -109,11 +110,11 @@ fn data(value: Value) -> Step {
     Step::Send(format!("data: {value}\n\n"))
 }
 fn delta(text: &str) -> Step {
-    data(json!({"choices":[{"delta":{"content":text},"finish_reason":null}]}))
+    data(json!({"choices":[{"index":0,"delta":{"content":text},"finish_reason":null}]}))
 }
 fn stop_steps() -> Vec<Step> {
     vec![
-        data(json!({"choices":[{"delta":{},"finish_reason":"stop"}]})),
+        data(json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]})),
         data(
             json!({"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}),
         ),
@@ -126,19 +127,12 @@ fn reply(text: &str) -> Script {
     Script::Sse(steps)
 }
 fn proposal(marker: &str) -> Script {
-    Script::Json(
-        json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{
-        "id":"call_1","type":"function",
-        "function":{"name":"dgos_tool_0","arguments":json!({"text":marker}).to_string()}
-    }]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}),
-    )
+    Script::Sse(vec![
+        data(json!({"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"dgos_tool_0","arguments":json!({"text":marker}).to_string()}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}})),
+        Step::Send("data: [DONE]\n\n".into()),
+    ])
 }
-fn answer_json(text: &str) -> Script {
-    Script::Json(
-        json!({"choices":[{"message":{"role":"assistant","content":text},"finish_reason":"stop"}],
-        "usage":{"prompt_tokens":8,"completion_tokens":3,"total_tokens":11}}),
-    )
-}
+fn answer_json(text: &str) -> Script { reply(text) }
 
 async fn serve(listener: TcpListener, upstream: Arc<Upstream>) {
     loop {
@@ -312,7 +306,7 @@ const STREAM = 'article[aria-label="助手消息（生成中）"]';
 const DONE_A = 'article[aria-label="助手消息"]';
 const USER_A = 'article[aria-label="用户消息"]';
 const PROPOSAL = 'section[aria-labelledby="chat-proposal-heading"]';
-const KNOWN = ['started', 'delta', 'reasoning_delta', 'tool_proposal', 'done', 'error'];
+const KNOWN = ['started', 'delta', 'reasoning_delta', 'tool_proposal', 'phase', 'activity', 'summary_done', 'done', 'error'];
 const spy = () => {
   if (window.__spy) return;
   window.__spy = { events: [], calls: [] };
@@ -342,11 +336,11 @@ const choose = async (label, opt) => {
   await wait(100);
 };
 const newSession = async (model) => {
-  const before = $$('[aria-label="AI 会话标签"] [role=tab]').length;
+  const before = $$('[aria-label="AI 助手标签"] [role=tab]').length;
   const create = $('button[aria-label="新建会话"]') || btn('新建会话');
   if (!create) throw new Error('new session control missing');
   create.click();
-  const ready = await until(() => $$('[aria-label="AI 会话标签"] [role=tab]').length > before && $('button[aria-label="会话目标"]'));
+  const ready = await until(() => $$('[aria-label="AI 助手标签"] [role=tab]').length > before && $('button[aria-label="会话目标"]'));
   if (!ready) throw new Error('new session did not appear');
   $('button[aria-label="会话目标"]').click();
   const provider = await until(() => $$('.chat-provider-option').find(x => x.getAttribute('aria-label') === 'Smoke Loopback'));
@@ -700,6 +694,7 @@ async fn block_stream(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
         "const ok = await until(() => !$(STREAM) && $$(DONE_A).length === 1 && idle(), 12000); const a = lastDone(); \
          const ev = window.__spy.events; const doneEv = ev.filter((e) => e.m.kind === 'done'); \
          return { ok, dom: a ? mdText(a) : null, kinds: kinds(), idx: ev.map((e) => e.i), doneContent: doneEv[0] && doneEv[0].m.message.content, \
+                  meaningfulDelta: ev.some((e) => e.m.kind === 'delta' && typeof e.m.text === 'string' && e.m.text.trim().length > 0), \
                   deltas: ev.filter((e) => e.m.kind === 'delta').map((e) => e.m.text).join(''), startedTask: ev[0] && ev[0].m.task_id };",
     )
     .await;
@@ -717,15 +712,13 @@ async fn block_stream(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
         .unwrap_or_default();
     let ordered = kinds.first().map(String::as_str) == Some("started")
         && kinds.last().map(String::as_str) == Some("done")
-        && kinds.iter().filter(|k| *k == "done").count() == 1
+        && kinds.iter().filter(|k| matches!(k.as_str(), "done" | "error")).count() == 1
         && kinds.iter().filter(|k| *k == "started").count() == 1
-        && kinds[1..kinds.len().saturating_sub(1)]
-            .iter()
-            .all(|k| k == "delta")
-        && kinds.iter().filter(|k| *k == "delta").count() >= 2
+        && end["meaningfulDelta"] == true
+        && idx.len() == kinds.len()
         && idx.iter().enumerate().all(|(i, v)| *v == i as u64);
     checks.check(
-        "[1] the page's Channel delivered started, delta..., done in order with contiguous indexes",
+        "[1] the page's Channel starts once, delivers meaningful deltas and ends once with contiguous indexes (nonterminal activity allowed)",
         ordered,
         format!("{kinds:?} idx={idx:?}"),
     );
@@ -743,6 +736,93 @@ async fn block_stream(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
             && row["tokens"] == 18,
         format!("{end} db={row}"),
     );
+    if wanted(1) {
+        block_foundation(app, checks, fx).await;
+    }
+}
+
+/// Foundation coverage stays in selected target 1 and uses the production commands/Channel, not a
+/// renderer store substitute. The loopback request body proves actual selected-source delivery.
+async fn block_foundation(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
+    const SOURCE: &str = "FOUNDATION-SMOKE-SOURCE-2f8a: preserve this immutable context.";
+    let before = fx.up.bodies();
+    let prepared = js(app, &format!(r#"
+        await newSession('chat-model');
+        const session_id = $('.workspace-session-tabs [role=tab][aria-selected=true]').id.replace('chat-session-tab-', '');
+        const invoke = window.__TAURI_INTERNALS__.invoke;
+        const imported = await invoke('chat_import_ai_resource', {{ sessionId: session_id, input: {{ name: 'foundation-smoke.txt', mime: 'text/plain', base64: btoa({SOURCE:?}) }} }});
+        if (!imported.success) throw new Error('resource import: ' + JSON.stringify(imported));
+        const resource = imported.data;
+        const foundation = {{ context_refs: [{{ resource_id: resource.id, sha256: resource.sha256, start: 0, max_bytes: resource.bytes_len, mode: 'inline' }}], output: {{ kind: 'json_schema', schema: {{ type: 'object', properties: {{ answer: {{ type: 'string' }} }}, required: ['answer'], additionalProperties: false }} }} }};
+        window.__foundationSmoke = {{ session_id, resource, foundation, events: [] }};
+        const callback = window.__TAURI_INTERNALS__.transformCallback(raw => {{
+          const event = raw?.message ?? raw;
+          if (typeof event?.kind === 'string') window.__foundationSmoke.events.push(event);
+        }}, false);
+        window.__foundationSmoke.channel = `__CHANNEL__:${{callback}}`;
+        const malformed = {{ ...foundation, output: {{ kind: 'json_schema', schema: {{ type: 42 }} }} }};
+        const messagesBefore = await invoke('list_chat_messages', {{ input: {{ session_id }} }});
+        const rejectedBudget = await invoke('inspect_chat_context', {{ input: {{ session_id, content: 'T1 malformed schema', foundation: malformed }} }});
+        const rejectedSend = await invoke('send_chat_message', {{ input: {{ session_id, content: 'T1 malformed schema', client_request_id: crypto.randomUUID(), foundation: malformed }}, onEvent: window.__foundationSmoke.channel }});
+        const messagesAfter = await invoke('list_chat_messages', {{ input: {{ session_id }} }});
+        const validBudget = await invoke('inspect_chat_context', {{ input: {{ session_id, content: 'T1 foundation valid schema', foundation }} }});
+        return {{ imported, rejectedBudget, rejectedSend, messagesBefore, messagesAfter, validBudget, events: window.__foundationSmoke.events }};
+    "#)).await;
+    checks.check(
+        "[1] foundation resource import uses production session-scoped IPC and returns immutable metadata",
+        prepared["imported"]["success"] == true
+            && prepared["imported"]["data"]["name"] == "foundation-smoke.txt"
+            && prepared["imported"]["data"]["bytes_len"] == SOURCE.len() as u64
+            && prepared["imported"]["data"]["sha256"].as_str().is_some_and(|hash| hash.len() == 64),
+        prepared["imported"].to_string(),
+    );
+    checks.check(
+        "[1] malformed JSON Schema is rejected by production inspect/send before dispatch or message creation; a valid schema remains sendable",
+        !failed(&prepared)
+            && prepared["rejectedBudget"]["success"] == false
+            && prepared["rejectedSend"]["success"] == false
+            && prepared["messagesBefore"]["success"] == true
+            && prepared["messagesAfter"]["success"] == true
+            && prepared["messagesBefore"]["data"]["items"] == prepared["messagesAfter"]["data"]["items"]
+            && prepared["events"].as_array().is_some_and(Vec::is_empty)
+            && prepared["validBudget"]["success"] == true
+            && prepared["validBudget"]["data"]["can_send"] == true
+            && fx.up.bodies() == before,
+        prepared.to_string(),
+    );
+    // Do not enqueue a Provider response when setup failed: it would contaminate later targets.
+    if failed(&prepared) {
+        return;
+    }
+    let output = r#"{"answer":"foundation accepted"}"#;
+    fx.up.script(reply(output));
+    let completed = js(app, r#"
+        const state = window.__foundationSmoke;
+        const ack = await window.__TAURI_INTERNALS__.invoke('send_chat_message', { input: { session_id: state.session_id, content: 'T1 foundation valid schema', client_request_id: crypto.randomUUID(), foundation: state.foundation }, onEvent: state.channel });
+        const terminal = ack.success && await until(() => state.events.find(e => e.kind === 'done' || e.kind === 'error'), 12000);
+        return { ack, terminal, terminals: state.events.filter(e => e.kind === 'done' || e.kind === 'error').length };
+    "#).await;
+    let persisted = wait_rows(&fx.db, &turn_sql("T1 foundation valid schema"), terminal, 10).await;
+    let row = persisted.first().cloned().unwrap_or(Value::Null);
+    let body = if fx.up.bodies() > before { fx.up.body(before).to_string() } else { String::new() };
+    checks.check(
+        "[1] valid JSON Schema output completes once through production IPC, persists unchanged and receives the selected imported source in the actual Provider request",
+        completed["ack"]["success"] == true
+            && completed["terminal"]["kind"] == "done"
+            && completed["terminals"] == 1
+            && completed["terminal"]["message"]["content"] == output
+            && row["content"] == output
+            && row["status"] == "completed"
+            && row["task_status"] == "succeeded"
+            && fx.up.bodies() == before + 1
+            && body.contains(SOURCE),
+        format!("{completed} db={row} requests={} selected_source_delivered={}", fx.up.bodies() - before, body.contains(SOURCE)),
+    );
+    let removed = js(app, r#"
+        const { session_id, resource } = window.__foundationSmoke;
+        return await window.__TAURI_INTERNALS__.invoke('chat_delete_ai_resource', { sessionId: session_id, resourceId: resource.id });
+    "#).await;
+    checks.check("[1] imported foundation source is removed through production session-scoped IPC", removed["success"] == true && removed["data"] == true, removed.to_string());
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -890,21 +970,16 @@ struct Port(u16);
 async fn block_copy(app: &AppHandle, checks: &mut Checks, expected: &str) {
     let saved = mac::snapshot(app).await;
     mac::activate(app).await;
-    let mut focused = false;
-    for _ in 0..12 {
-        mac::activate(app).await;
-        sleep(Duration::from_millis(250)).await;
-        if js(app, "return document.hasFocus();").await == true {
-            focused = true;
-            break;
-        }
-    }
+    let initial_focus = js(app, "return document.hasFocus();").await;
     let prep = r##"
         const a = lastDone(); const foot = $('footer', a); const b = btn('复制', foot);
         window.__cb = { calls: 0, ok: 0, err: 0 };
         const real = navigator.clipboard.writeText.bind(navigator.clipboard);
         navigator.clipboard.writeText = (t) => { window.__cb.calls++; return real(t).then(() => { window.__cb.ok++; }, (e) => { window.__cb.err++; window.__cb.name = String(e && e.name); throw e; }); };
         b.focus();
+        b.addEventListener('keydown', event => {
+          if (event.key === 'Enter') window.__cb.activation = { trusted: event.isTrusted, copyTarget: event.target === b, focused: document.activeElement === b, documentFocus: document.hasFocus() };
+        }, { once: true });
         return { focused: document.activeElement === b };
     "##;
     let read_status = r##"
@@ -927,9 +1002,18 @@ async fn block_copy(app: &AppHandle, checks: &mut Checks, expected: &str) {
     let after = mac::get_text(app).await.flatten();
     let success = status["status"] == "已复制";
     checks.check(
+        "[7] native Return activates the focused copy control (focus sampled at activation, not before preparation)",
+        ready["focused"] == true
+            && pressed
+            && status["cb"]["activation"]["trusted"] == true
+            && status["cb"]["activation"]["copyTarget"] == true
+            && status["cb"]["activation"]["focused"] == true,
+        format!("initial_document_focus={initial_focus} ready={ready} activation={}", status["cb"]["activation"]),
+    );
+    checks.check(
         "[7] copy button, real navigator.clipboard.writeText path: pasteboard (NSPasteboard) holds the message text and the UI says 已复制",
-        focused && ready["focused"] == true && set && pressed && success && status["cb"]["ok"] == 1 && after.as_deref() == Some(expected),
-        format!("focused={focused} ready={ready} status={status} pasteboard_matches={}", after.as_deref() == Some(expected)),
+        set && success && status["cb"]["calls"] == 1 && status["cb"]["ok"] == 1 && status["cb"]["err"] == 0 && after.as_deref() == Some(expected),
+        format!("status={status} pasteboard_matches={}", after.as_deref() == Some(expected)),
     );
     // Path 2: writeText rejects, so the execCommand fallback (or a visible failure) must follow.
     sleep(Duration::from_millis(2800)).await;
@@ -1337,15 +1421,71 @@ async fn block_lists(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
         &format!("SELECT json_object('id',id,'kind',kind,'session',session_id) AS j FROM workbench_tasks WHERE session_id='{session_id}'"),
     )
     .await;
-    let deleted = js(
+    // SessionTab opens its Modal on requestAnimationFrame after the menu closes. The real key
+    // driver activates the WKWebView (an occluded/non-key window can suspend that transition).
+    // Deletion selects the first remaining open session; only the last tab shows the start state.
+    #[cfg(target_os = "macos")]
+    let responder_ready = super::ui_keys::prepare(app).await;
+    #[cfg(not(target_os = "macos"))]
+    let responder_ready = true;
+    let delete_menu = js(
         app,
-        "const tab = $('.workspace-session-tabs [role=tab][aria-selected=true]'); tab.dispatchEvent(new MouseEvent('contextmenu', {bubbles:true,clientX:100,clientY:100})); \
-         const del = await until(() => $$('[role=menuitem]').find(e => txt(e)==='删除会话')); if (!del) throw new Error('no delete menu item'); del.click(); \
-         const dialog = await until(() => $('[data-modal-kind][role=dialog]')); const confirm = dialog && btn('删除会话', dialog); if (!confirm) throw new Error('no confirm'); confirm.click(); \
-         const ok = await until(() => txt(document.body).includes('开始一次对话') && !$$('[role=tab]').some(t=>t.title.includes('T8 regen base')), 8000); \
-         return { ok: !!ok };",
-    )
-    .await;
+        &format!(r#"
+        const id = {session_id:?};
+        const tab = document.getElementById('chat-session-tab-' + id);
+        if (!tab || tab.getAttribute('aria-selected') !== 'true') throw new Error('delete target is not the active session');
+        window.__deleteNavigation = {{ id, fallback: $$('.workspace-session-tabs [role=tab]').find(t => t !== tab)?.id ?? null, keys: [] }};
+        tab.focus(); kd(tab, 'ContextMenu');
+        const menu = await until(() => $('[role=menu][data-state=open]'), 4000);
+        const del = menu && $$('[role=menuitem]', menu).find(e => txt(e) === '删除会话');
+        if (!del) throw new Error('delete menu item missing');
+        menu.addEventListener('keydown', event => window.__deleteNavigation.keys.push({{ key: event.key, trusted: event.isTrusted, label: txt(event.target) }}));
+        menu.focus();
+        return {{ opened: true, items: $$('[role=menuitem]', menu).map(txt), focusedMenu: document.activeElement === menu }};
+        "#),
+    ).await;
+    #[cfg(target_os = "macos")]
+    super::ui_keys::key(app, super::ui_keys::Key::End).await;
+    #[cfg(not(target_os = "macos"))]
+    js(app, "kd($('[role=menu][data-state=open]'), 'End'); return true;").await;
+    let delete_selection = js(app, r#"
+        const active = document.activeElement;
+        return { selected: active?.getAttribute('role') === 'menuitem' && txt(active) === '删除会话' };
+    "#).await;
+    #[cfg(target_os = "macos")]
+    super::ui_keys::key(app, super::ui_keys::Key::Enter).await;
+    #[cfg(not(target_os = "macos"))]
+    js(app, "kd(document.activeElement, 'Enter'); return true;").await;
+    let delete_confirm = js(app, r#"
+        const dialog = await until(() => $$('[data-modal-kind][role=dialog]').find(d => txt(d).includes('删除会话')), 4000);
+        const confirm = dialog && btn('删除会话', dialog);
+        if (!confirm) throw new Error('delete confirmation missing');
+        confirm.focus();
+        confirm.addEventListener('keydown', event => {
+          if (event.key === 'Enter') window.__deleteNavigation.confirmActivation = { trusted: event.isTrusted, focused: document.activeElement === confirm };
+        }, { once: true });
+        return { ready: document.activeElement === confirm, menuClosed: !$('[role=menu][data-state=open]') };
+    "#).await;
+    #[cfg(target_os = "macos")]
+    super::ui_keys::key(app, super::ui_keys::Key::Enter).await;
+    #[cfg(not(target_os = "macos"))]
+    js(app, "const dialog = $('[data-modal-kind][role=dialog]'); const confirm = dialog && btn('删除会话', dialog); if (!confirm) throw new Error('delete confirmation missing'); confirm.click(); return true;").await;
+    let deleted = js(app, r#"
+        const { id, fallback } = window.__deleteNavigation;
+        const ok = await until(() => {
+          if (document.getElementById('chat-session-tab-' + id) || $('[data-modal-kind][role=dialog]')) return false;
+          const selected = $('.workspace-session-tabs [role=tab][aria-selected=true]');
+          return fallback ? selected?.id === fallback && $('#chat-session-panel')?.getAttribute('aria-labelledby') === fallback : !selected && !!$('.chat-start');
+        }, 5000);
+        const history = await openHistory();
+        if (history) setVal(history, '');
+        const absentFromHistory = !!await until(() => {
+          const list = $('[role=region][aria-label="会话列表"]');
+          return list && list.getAttribute('aria-busy') !== 'true' && !txt(list).includes('T8 regen base');
+        }, 2000);
+        const trigger = btn('会话历史'); if (trigger) trigger.click();
+        return { ok: !!ok, absentFromHistory, fallback, selected: $('.workspace-session-tabs [role=tab][aria-selected=true]')?.id ?? null, keys: window.__deleteNavigation.keys, confirmActivation: window.__deleteNavigation.confirmActivation };
+    "#).await;
     let remaining = rows(
         &fx.db,
         &format!(
@@ -1361,14 +1501,20 @@ async fn block_lists(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
     .await;
     let left = remaining.first().cloned().unwrap_or(Value::Null);
     checks.check(
-        "[8] delete session: UI drops it and returns to the empty state; DB removes session and messages, keeps its chat task rows with session_id cleared (D072)",
-        deleted["ok"] == true
+        "[8] delete session: UI removes it from tabs/history and selects the remaining session (or empty state); DB removes session and messages, keeps its chat task rows with session_id cleared (D072)",
+        delete_menu["opened"] == true
+            && delete_selection["selected"] == true
+            && delete_confirm["ready"] == true
+            && delete_confirm["menuClosed"] == true
+            && (!cfg!(target_os = "macos") || (deleted["confirmActivation"]["trusted"] == true && deleted["confirmActivation"]["focused"] == true))
+            && deleted["ok"] == true
+            && deleted["absentFromHistory"] == true
             && !session_id.is_empty()
             && tasks_before.len() == 2
             && left["sessions"] == 0
             && left["messages"] == 0
             && left["tasks"] == 2,
-        format!("{deleted} tasks_before={tasks_before:?} after={left}"),
+        format!("native_responder={responder_ready} menu={delete_menu} selection={delete_selection} confirm={delete_confirm} navigation={deleted} tasks_before={tasks_before:?} after={left}"),
     );
 }
 
@@ -2029,6 +2175,39 @@ async fn block_layout(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
     js(app, "const saved = window.__layoutRootStyle; if (saved === null) document.documentElement.removeAttribute('style'); else document.documentElement.setAttribute('style', saved); return true;").await;
 }
 
+async fn block_continuous_context(app:&AppHandle,checks:&mut Checks,fx:&Fixture){
+    fx.up.script(reply("Original constraints: keep the user's source history."));
+    fx.up.script(reply("Goals: preserve source history. Constraints: explicit user approval. Confirmed results: prior answer. Open tasks: new explicit intent."));
+    fx.up.script(reply("Fresh continuation answer; no prior tool effect replayed."));
+    let result=js(app,r#"
+      const invoke=window.__TAURI_INTERNALS__.invoke;
+      const providers=await invoke('list_providers');
+      const selected=providers.data?.find(p=>p.name==='Smoke Loopback');
+      if(!selected)throw new Error('fixture provider unavailable');
+      const created=await invoke('create_chat_session',{input:{target:{provider_id:selected.id,model_id:'chat-model',skill_ids:[],no_skill:true}}});
+      if(!created.success)throw new Error(JSON.stringify(created.error));
+      const session_id=created.data.id;
+      const events=[];
+      const channel=()=>{const id=window.__TAURI_INTERNALS__.transformCallback(raw=>{if(raw?.message)events.push(raw.message)},false);return `__CHANNEL__:${id}`};
+      const first=await invoke('send_chat_message',{input:{session_id,content:'Remember explicit source constraints',client_request_id:crypto.randomUUID()},onEvent:channel()});
+      await until(()=>events.some(e=>e.kind==='done'||e.kind==='error'),12000);
+      const before=await invoke('list_chat_messages',{input:{session_id}});
+      const budget=await invoke('inspect_chat_context',{input:{session_id,content:'new question'}});
+      const count=events.length;
+      const summarized=await invoke('summarize_chat_context',{input:{session_id,client_request_id:crypto.randomUUID(),confirmed:true},onEvent:channel()});
+      const summary=await until(()=>events.slice(count).find(e=>e.kind==='summary_done'||e.kind==='error'),12000);
+      const after=await invoke('list_chat_messages',{input:{session_id}});
+      const inspected=await invoke('get_chat_run',{input:{task_id:first.data?.task_id}});
+      const continuation=await invoke('continue_chat_run',{input:{source_task_id:first.data?.task_id,client_request_id:crypto.randomUUID(),intent:'Write only the next new answer, preserve completed actions'},onEvent:channel()});
+      await until(()=>events.filter(e=>e.kind==='done'||e.kind==='error').length>=2,12000);
+      const runs=await invoke('list_chat_runs',{input:{session_id}});
+      return {budget,summaryKind:summary?.kind,originalCount:before.data?.items.length,afterSummaryCount:after.data?.items.length,firstTask:first.data?.task_id,continuedTask:continuation.data?.task_id,inspected:inspected.success,sourceLinked:runs.data?.items.some(r=>r.task_id===continuation.data?.task_id&&r.source_run_id===first.data?.task_id),summaryAccepted:summarized.success};
+    "#).await;
+    checks.check("[14] production WebView IPC inspects budget, explicitly summarizes without replacing messages and continues under a fresh linked run",
+        result["budget"]["success"]==true&&result["summaryKind"]=="summary_done"&&result["originalCount"]==result["afterSummaryCount"]&&result["firstTask"]!=result["continuedTask"]&&result["sourceLinked"]==true&&result["inspected"]==true,
+        result.to_string());
+}
+
 async fn scenario(app: AppHandle, root_ready: bool) {
     let mut checks = Checks::default();
     let (up, db, root, mcp_note) = {
@@ -2062,6 +2241,10 @@ async fn scenario(app: AppHandle, root_ready: bool) {
         block_account_workspace(&app,&mut checks,&fx).await;
         finish(checks,&root);
     }
+    if std::env::var("DGOS_CHAT_SMOKE_ONLY").ok().as_deref()==Some("14") {
+        block_continuous_context(&app,&mut checks,&fx).await;
+        finish(checks,&root);
+    }
     if wanted(10) {
         block_workspace_task(&app, &mut checks, &fx).await;
         if std::env::var("DGOS_CHAT_SMOKE_ONLY").ok().as_deref() == Some("10") { finish(checks, &root); }
@@ -2080,7 +2263,7 @@ async fn scenario(app: AppHandle, root_ready: bool) {
         reloaded,
         "reload failed",
     );
-    let shell = js(&app, "const ok = await until(() => $('.chat-surface') && $('[role=tablist][aria-label=\"AI 会话标签\"]') && $('button[aria-label=\"新建会话\"]'), 10000); return { ok: !!ok, boundary: !!$('[data-error-kind]') };" )
+    let shell = js(&app, "const ok = await until(() => $('.chat-surface') && $('[role=tablist][aria-label=\"AI 助手标签\"]') && $('button[aria-label=\"新建会话\"]'), 10000); return { ok: !!ok, boundary: !!$('[data-error-kind]') };" )
         .await;
     checks.check(
         "the real /workbench chat page renders (h1, session sidebar, no error boundary)",
@@ -2129,6 +2312,18 @@ pub fn run_chat() {
             dgos_db::migrations::Migrator::up(&db, None)
                 .await
                 .expect("migrate");
+            // This fixture's no-accounts host resolves LOCAL_USER. The content repository still
+            // requires that owner to exist; seed it here rather than weakening production checks.
+            // Keep the separate account-lifecycle target's initially empty users table unchanged.
+            if wanted(1) {
+                dgos_db::UserRepository::new(db.clone()).insert(dgos_db::NewUser {
+                    id: LOCAL_USER,
+                    username: "Chat smoke",
+                    username_key: "chat-smoke",
+                    password_hash: "fixture",
+                    now: 1,
+                }).await.expect("seed chat foundation owner");
+            }
             let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
             let address = listener.local_addr().expect("address");
             tauri::async_runtime::spawn(serve(listener, upstream.clone()));
@@ -2400,6 +2595,15 @@ pub fn run_chat() {
             commands::regenerate_chat_message,
             commands::cancel_chat_generation,
             commands::advance_chat_tool_turn,
+            commands::inspect_chat_context,
+            commands::chat_import_ai_resource,
+            commands::chat_delete_ai_resource,
+            commands::summarize_chat_context,
+            commands::list_chat_runs,
+            commands::get_chat_run,
+            commands::continue_chat_run,
+            commands::chat_skill_catalog,
+            commands::resolve_chat_run_step,
             commands::list_mcp_servers,
             commands::get_mcp_server_config,
             commands::create_mcp_server,

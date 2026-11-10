@@ -21,7 +21,8 @@ import { createModuleI18n, type HostI18n } from './moduleHostI18n';
 import { useLocale } from '../i18n';
 import { OverlayContainerContext } from '../ui/components/Popover';
 import { useProviderStore } from '../stores/providerStore';
-import type { AiEvent, AiRunInput, AiTerminal, AiProviderEntry, AiSkillEntry, AiToolEntry, AiRunListInput, AiRunPage, AiRunSummary } from '../types/ai';
+import type { AiEvent, AiRunInput, AiTerminal, AiProviderEntry, AiSkillEntry, AiToolEntry, AiRunListInput, AiRunPage, AiRunSummary, AiResourceImport, AiResource, AiContextBudget, AiRunContent } from '../types/ai';
+import type { ModuleAiApi } from './moduleApi';
 
 export type LoadFailureStage = 'import' | 'contract' | 'render' | 'hook' | 'timeout' | 'cancelled';
 
@@ -232,15 +233,7 @@ interface ModuleHostApi {
   readonly apiVersion: 1;
   readonly moduleId: string;
   readonly version: string;
-  readonly ai: Readonly<{
-    listProviders: (options?: HostCallOptions) => Promise<AiProviderEntry[]>;
-    listSkills: (options?: HostCallOptions) => Promise<AiSkillEntry[]>;
-    listTools: (options?: HostCallOptions) => Promise<AiToolEntry[]>;
-    run: (input: AiRunInput, onEvent: (event: AiEvent) => void, options?: HostCallOptions) => Promise<AiTerminal>;
-    listRuns: (input?: AiRunListInput, options?: HostCallOptions) => Promise<AiRunPage>;
-    getRun: (runId: string, options?: HostCallOptions) => Promise<AiRunSummary | null>;
-    cancel: (runId: string, options?: HostCallOptions) => Promise<boolean>;
-  }>;
+  readonly ai: Readonly<ModuleAiApi>;
   readonly providers: Readonly<{
     list: (options?: HostCallOptions) => Promise<ModuleProviderEntry[]>;
     subscribe: (listener: () => void) => () => void;
@@ -920,6 +913,11 @@ export class ModuleRuntimeHost {
         listRuns: (input: AiRunListInput = {}, options?: HostCallOptions) => this.callAi<AiRunPage>(runtimeId, 'module_list_ai_runs', { input }, options),
         getRun: (runId: string, options?: HostCallOptions) => this.callAi<AiRunSummary | null>(runtimeId, 'module_get_ai_run', { runId }, options),
         cancel: (runId: string, options?: HostCallOptions) => this.callAi<boolean>(runtimeId, 'module_cancel_ai_run', { runId }, options),
+        importResource: (input: AiResourceImport, options?: HostCallOptions) => this.callAi<AiResource>(runtimeId, 'module_import_ai_resource', { input }, options),
+        deleteResource: (resourceId: string, options?: HostCallOptions) => this.callAi<boolean>(runtimeId, 'module_delete_ai_resource', { resourceId }, options),
+        inspect: (input: AiRunInput, options?: HostCallOptions) => this.callAi<AiContextBudget>(runtimeId, 'module_inspect_ai_context', { input }, options),
+        getResult: (runId: string, options?: HostCallOptions) => this.callAi<AiRunContent | null>(runtimeId, 'module_get_ai_result', { runId }, options),
+        ackResult: (runId: string, options?: HostCallOptions) => this.callAi<boolean>(runtimeId, 'module_ack_ai_result', { runId }, options),
       }),
       providers: Object.freeze({
         list: async (options?: HostCallOptions) => {

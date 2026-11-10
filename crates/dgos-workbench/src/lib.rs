@@ -18,6 +18,7 @@ use tokio::sync::Mutex;
 
 mod tools;
 pub mod execution;
+pub mod foundation;
 pub use execution::{AiExecutor, CoreEvent, ExecutionGuard, ExecutionRequest, ExecutionResult, ExecutionSink};
 pub const TOOL_POLICY: &str = tools::TOOL_HOST_POLICY;
 pub const TEXT_POLICY: &str = HOST_POLICY;
@@ -30,12 +31,18 @@ pub use assets::{
 };
 
 mod chat;
+pub mod skill_runtime;
+pub(crate) use foundation::text_ceiling as context_text_ceiling;
 pub use chat::{
     AdvanceChatToolTurnInput, ChatError, ChatEvent, ChatManager, ChatMessagePage, ChatSearchPage,
     ChatSessionPage, ChatSink, ChatTargetInput, ChatToolProposal, CreateChatSessionInput,
     DeleteChatSessionInput, GenerationJob, ListChatMessagesInput, ListChatSessionsInput,
     RegenerateChatInput, RenameChatSessionInput, SearchChatSessionsInput, SendAck, SendChatInput,
     Sent, ToolActionJob, UpdateChatSessionTargetInput,
+    InspectChatContextInput, ChatContextBudget, SummarizeChatContextInput,
+    ListChatRunsInput, GetChatRunInput, ChatRunPage, ChatRun, ChatRunStep, ChatSummary,
+    ContinueChatRunInput, ChatSkillMode, ChatSkillCatalogInput, ChatSkillCatalog,
+    ResolveChatRunStepInput,
 };
 
 type Result<T> = std::result::Result<T, String>;
@@ -360,7 +367,6 @@ impl WorkbenchManager {
                 "succeeded", None, Some(response.content), Some(i64::from(response.usage.total_tokens)), response.audit_warning,
             ),
             Ok(execution::ModelResponse::Text(response)) => ("failed", Some("empty_response".into()), None, None, response.audit_warning),
-            Ok(execution::ModelResponse::Tools(_)) => unreachable!("text request returns text response"),
             Err(reason) if matches!(reason.as_str(), "task_cancelled" | "process_interrupted") => ("interrupted", Some(reason), None, None, false),
             Err(reason) => ("failed", Some(if reason == "generation_limit" { "provider_timeout".into() } else { reason }), None, None, false),
         };

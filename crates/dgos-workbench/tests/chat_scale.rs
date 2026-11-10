@@ -855,18 +855,16 @@ async fn run(lay: Layout) {
             let begin = ms(started);
             let started = Instant::now();
             let done = repo
-                .finalize_generation(&FinalizeGeneration {
-                    user: ALICE,
-                    assistant_message_id: &new_id,
-                    task_id: &task,
-                    content: "regenerated 重新生成",
-                    message_status: "completed",
-                    finish_reason: Some("stop"),
-                    message_error: None,
-                    task_status: "succeeded",
-                    task_error: None,
-                    total_tokens: Some(5),
-                })
+                .finalize_generation(&FinalizeGeneration { evidence: None, user: ALICE,
+                assistant_message_id: &new_id,
+                task_id: &task,
+                content: "regenerated 重新生成",
+                message_status: "completed",
+                finish_reason: Some("stop"),
+                message_error: None,
+                task_status: "succeeded",
+                task_error: None,
+                total_tokens: Some(5), })
                 .await
                 .unwrap();
             let finalize = ms(started);
@@ -1002,18 +1000,16 @@ async fn run(lay: Layout) {
             let user = format!("cu{idx}");
             let started = Instant::now();
             let result = repo
-                .finalize_generation(&FinalizeGeneration {
-                    user: &user,
-                    assistant_message_id: &message,
-                    task_id: &task,
-                    content: "done 完成",
-                    message_status: "completed",
-                    finish_reason: Some("stop"),
-                    message_error: None,
-                    task_status: "succeeded",
-                    task_error: None,
-                    total_tokens: Some(3),
-                })
+                .finalize_generation(&FinalizeGeneration { evidence: None, user: &user,
+                assistant_message_id: &message,
+                task_id: &task,
+                content: "done 完成",
+                message_status: "completed",
+                finish_reason: Some("stop"),
+                message_error: None,
+                task_status: "succeeded",
+                task_error: None,
+                total_tokens: Some(3), })
                 .await;
             waits.push(ms(started));
             match result {
