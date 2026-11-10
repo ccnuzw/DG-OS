@@ -171,14 +171,14 @@ async fn send_admission_resolves_before_receipt_and_retries_never_reread_or_disp
     let file = f.reference(ReferenceKind::File).await;
     let expected = f.resolve(vec![file.clone()]).await.unwrap();
     let request = uuid::Uuid::new_v4().to_string();
-    f.manager.send("alice", &f.session.id, &generation, request.clone(), "Review these references".into(), None, vec![file.clone()], vec![]).await.unwrap();
+    f.manager.send("alice", &f.session.id, &generation, request.clone(), "Review these references".into(), None, vec![file.clone()], vec![], vec![]).await.unwrap();
     // Removal after dispatch cannot invalidate the durable receipt or replay it.
     std::fs::remove_file(f.root.join("code/source.txt")).unwrap();
-    f.manager.send("alice", &f.session.id, &generation, request.clone(), "Review these references".into(), None, vec![file.clone()], vec![]).await.unwrap();
+    f.manager.send("alice", &f.session.id, &generation, request.clone(), "Review these references".into(), None, vec![file.clone()], vec![], vec![]).await.unwrap();
     let literal_references = format!("Review these references\0DG-OS references\0{}", serde_json::to_string(&vec![file.clone()]).unwrap());
-    assert_eq!(f.manager.send("alice", &f.session.id, &generation, request.clone(), literal_references, None, vec![], vec![]).await.unwrap_err(), "request_conflict");
+    assert_eq!(f.manager.send("alice", &f.session.id, &generation, request.clone(), literal_references, None, vec![], vec![], vec![]).await.unwrap_err(), "request_conflict");
     let mut conflict = file.clone(); conflict.kind = ReferenceKind::Path; conflict.expected_hash = None;
-    assert_eq!(f.manager.send("alice", &f.session.id, &generation, request.clone(), "Review these references".into(), None, vec![conflict], vec![]).await.unwrap_err(), "request_conflict");
+    assert_eq!(f.manager.send("alice", &f.session.id, &generation, request.clone(), "Review these references".into(), None, vec![conflict], vec![], vec![]).await.unwrap_err(), "request_conflict");
     tokio::time::timeout(std::time::Duration::from_secs(4), async {
         loop {
             let runs = f.manager.list_development_runs("alice", f.session.task_id.as_deref().unwrap()).await.unwrap();
@@ -187,16 +187,16 @@ async fn send_admission_resolves_before_receipt_and_retries_never_reread_or_disp
         }
     }).await.unwrap();
     let invalid = uuid::Uuid::new_v4().to_string();
-    assert_eq!(f.manager.send("alice", &f.session.id, &generation, invalid.clone(), "Review these references".into(), None, vec![file.clone()], vec![]).await.unwrap_err(), "file_not_found");
+    assert_eq!(f.manager.send("alice", &f.session.id, &generation, invalid.clone(), "Review these references".into(), None, vec![file.clone()], vec![], vec![]).await.unwrap_err(), "file_not_found");
     assert!(f.manager.inner.repository.run("alice", &invalid).await.unwrap().is_none());
     std::fs::write(f.root.join("code/source.txt"), "external edit\n").unwrap();
-    assert_eq!(f.manager.send("alice", &f.session.id, &generation, invalid.clone(), "Review these references".into(), None, vec![file.clone()], vec![]).await.unwrap_err(), "file_changed");
+    assert_eq!(f.manager.send("alice", &f.session.id, &generation, invalid.clone(), "Review these references".into(), None, vec![file.clone()], vec![], vec![]).await.unwrap_err(), "file_changed");
     assert!(f.manager.inner.repository.run("alice", &invalid).await.unwrap().is_none());
     std::fs::write(f.root.join("code/source.txt"), vec![b'x'; files::FILE_LIMIT + 1]).unwrap();
-    assert_eq!(f.manager.send("alice", &f.session.id, &generation, invalid.clone(), "Review these references".into(), None, vec![file.clone()], vec![]).await.unwrap_err(), "file_too_large");
+    assert_eq!(f.manager.send("alice", &f.session.id, &generation, invalid.clone(), "Review these references".into(), None, vec![file.clone()], vec![], vec![]).await.unwrap_err(), "file_too_large");
     assert!(f.manager.inner.repository.run("alice", &invalid).await.unwrap().is_none());
     std::fs::write(f.root.join("code/source.txt"), "first\nsecond\nthird\n").unwrap();
-    assert_eq!(f.manager.send("alice", &f.session.id, &generation, invalid.clone(), "x".repeat(PROMPT_BYTES_LIMIT - 1), None, vec![file], vec![]).await.unwrap_err(), "reference_limit");
+    assert_eq!(f.manager.send("alice", &f.session.id, &generation, invalid.clone(), "x".repeat(PROMPT_BYTES_LIMIT - 1), None, vec![file], vec![], vec![]).await.unwrap_err(), "reference_limit");
     assert!(f.manager.inner.repository.run("alice", &invalid).await.unwrap().is_none());
     let protocol: Vec<serde_json::Value> = std::fs::read_to_string(f.root.join("code/protocol")).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
     let sends: Vec<_> = protocol.iter().filter(|value| value["method"] == "turn/start").collect();
@@ -208,7 +208,7 @@ async fn send_admission_resolves_before_receipt_and_retries_never_reread_or_disp
     assert!(f.manager.shutdown().await);
     let restarted = crate::test_support::manager(&f.root).await;
     let original = ConversationReference { project_id: f.session.project_id.clone().unwrap(), task_id: f.session.task_id.clone(), path: "source.txt".into(), kind: ReferenceKind::File, diff_source: None, expected_hash: Some(format!("{:x}", Sha256::digest(b"first\nsecond\nthird\n"))), start_line: None, end_line: None };
-    restarted.send("alice", &f.session.id, &generation, request, "Review these references".into(), None, vec![original], vec![]).await.unwrap();
+    restarted.send("alice", &f.session.id, &generation, request, "Review these references".into(), None, vec![original], vec![], vec![]).await.unwrap();
     assert!(restarted.shutdown().await);
     f.close().await;
 }

@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, expect, it, vi } from 'vitest';
 import { ProjectReview } from '../src/components/development/ProjectReview';
 import { useDevelopment } from '../src/stores/developmentStore';
-import { useDevelopmentEditor } from '../src/stores/developmentEditor';
+import { useDevelopmentEditor, documentId, openDevelopmentDocument, closeDevelopmentDocuments, guardDevelopmentDraft, remapDevelopmentDocuments, invalidateDevelopmentDocuments } from '../src/stores/developmentEditor';
 import { chooseContext } from '../src/stores/developmentSelection';
 import { useDevelopmentRuntime } from '../src/stores/developmentRuntime';
 import { FileEditor } from '../src/components/development/FileEditor';
@@ -18,20 +18,21 @@ function installFiles() {
     return Promise.resolve(null);
   });
 }
-it('keeps the dirty editor through filtering and cancelled file or context changes', async () => {
+it('retains independent file drafts through filtering and cancelled context changes', async () => {
   installFiles(); confirmDiscard.mockResolvedValue(false);
   render(<ProjectReview projectId="p" taskId="t" />);
   fireEvent.click(await screen.findByTestId('dev-file-item-a.ts'));
-  fireEvent.change(await screen.findByTestId('dev-file-editor'), { target: { value: 'unsaved draft' } });
+  fireEvent.change(await screen.findByTestId('dev-file-editor'), { target: { value: 'draft a' } });
   fireEvent.click(screen.getByTestId('dev-file-item-b.ts'));
-  await waitFor(() => expect(confirmDiscard).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect((screen.getByTestId('dev-file-editor') as HTMLTextAreaElement).value).toBe('base'));
+  fireEvent.change(screen.getByTestId('dev-file-editor'), { target: { value: 'draft b' } });
+  expect(confirmDiscard).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByTestId('dev-file-item-a.ts'));
+  await waitFor(() => expect((screen.getByTestId('dev-file-editor') as HTMLTextAreaElement).value).toBe('draft a'));
   fireEvent.change(screen.getByTestId('dev-file-search'), { target: { value: 'b' } });
-  await act(async () => {});
-  fireEvent.keyDown(screen.getByTestId('dev-review-tab-changes'), { key: 'Enter' });
-  expect(confirmDiscard).toHaveBeenCalledTimes(1);
-  fireEvent.keyDown(screen.getByTestId('dev-review-tab-files'), { key: 'Enter' });
   await act(async () => { expect((await chooseContext({ project_id: 'other', task_id: null, session_id: null })).ok).toBe(false); });
-  expect((screen.getByTestId('dev-file-editor') as HTMLTextAreaElement).value).toBe('unsaved draft');
+  expect((screen.getByTestId('dev-file-editor') as HTMLTextAreaElement).value).toBe('draft a');
+  expect(useDevelopmentEditor.getState().documents[documentId('p', 't', 'b.ts')].draft).toBe('draft b');
   expect((screen.getByTestId('dev-file-search') as HTMLInputElement).value).toBe('b');
   expect(invoke.mock.calls.some(([command]) => command === 'select_development_context')).toBe(false);
 });
@@ -143,4 +144,129 @@ it('reports an expired line and never exposes the previous project file during a
   expect(screen.queryByTestId('dev-file-editor')).toBeNull();
   await act(async () => next.resolve({ path: 'a.ts', text: 'different project', hash: 'other-version', size: 17, reason: null }));
   expect((screen.getByTestId('dev-file-editor') as HTMLTextAreaElement).value).toBe('different project');
+});
+
+it('saves two dirty files independently even when another tab is active', async () => {
+  installFiles();
+  await useDevelopmentEditor.getState().open('p', 't', 'a.ts', '/repo');
+  const a = documentId('p', 't', 'a.ts', '/repo');
+  useDevelopmentEditor.getState().edit('draft a', a);
+  await useDevelopmentEditor.getState().open('p', 't', 'b.ts', '/repo');
+  const b = documentId('p', 't', 'b.ts', '/repo');
+  useDevelopmentEditor.getState().edit('draft b', b);
+  invoke.mockImplementation((command: string, args: { input: { path: string; text: string } }) => command === 'save_development_file' ? Promise.resolve({ path: args.input.path, text: args.input.text, hash: `saved-${args.input.path}`, size: 7, reason: null }) : Promise.resolve(null));
+  await useDevelopmentEditor.getState().save(a);
+  expect(useDevelopmentEditor.getState().documents[a].file?.text).toBe('draft a');
+  expect(useDevelopmentEditor.getState().documents[b].draft).toBe('draft b');
+  expect(useDevelopmentEditor.getState().documents[b].file?.text).toBe('base');
+  await useDevelopmentEditor.getState().save(b);
+  expect(useDevelopmentEditor.getState().documents[b].file?.text).toBe('draft b');
+  expect(useDevelopmentEditor.getState().draft).toBe('draft b');
+});
+
+it('keeps all tabs intact when batch dirty-close is cancelled', async () => {
+  installFiles();
+  for (const path of ['a.ts', 'b.ts']) {
+    openDevelopmentDocument({ projectId: 'p', taskId: 't', workspacePath: '/repo', path, mode: 'file', source: 'worktree' });
+    await useDevelopmentEditor.getState().open('p', 't', path, '/repo');
+    useDevelopmentEditor.getState().edit(`draft ${path}`);
+  }
+  const ids = useDevelopmentEditor.getState().tabs.map(tab => tab.id);
+  confirmDiscard.mockResolvedValueOnce(false);
+  expect(await closeDevelopmentDocuments(ids)).toBe(false);
+  expect(useDevelopmentEditor.getState().tabs.map(tab => tab.id)).toEqual(ids);
+  confirmDiscard.mockResolvedValueOnce(true);
+  expect(await closeDevelopmentDocuments(ids)).toBe(true);
+  expect(useDevelopmentEditor.getState().tabs).toEqual([]);
+  expect(useDevelopmentEditor.getState().documents).toEqual({});
+});
+
+it('guards inactive drafts and remaps every document under renamed ancestors', async () => {
+  installFiles();
+  for (const path of ['folder/a.ts', 'folder/b.ts']) {
+    openDevelopmentDocument({ projectId: 'p', taskId: 't', workspacePath: '/repo', path, mode: 'file', source: 'worktree' });
+    await useDevelopmentEditor.getState().open('p', 't', path, '/repo');
+    useDevelopmentEditor.getState().edit(`draft ${path}`);
+  }
+  confirmDiscard.mockResolvedValue(false);
+  expect(await guardDevelopmentDraft()).toBe(false);
+  remapDevelopmentDocuments('p', 't', 'folder', 'renamed', '/repo');
+  expect(useDevelopmentEditor.getState().tabs.map(tab => tab.path)).toEqual(['renamed/a.ts', 'renamed/b.ts']);
+  expect(useDevelopmentEditor.getState().documents[documentId('p', 't', 'renamed/a.ts', '/repo')].draft).toBe('draft folder/a.ts');
+  invalidateDevelopmentDocuments('p', 't', ['renamed'], '/repo');
+  expect(useDevelopmentEditor.getState().tabs).toEqual([]);
+  expect(useDevelopmentEditor.getState().documents).toEqual({});
+});
+
+it('separates equal paths across workspace and project identities and clears all on account reset', async () => {
+  installFiles();
+  await useDevelopmentEditor.getState().open('p', 't', 'a.ts', '/one');
+  useDevelopmentEditor.getState().edit('private draft');
+  await useDevelopmentEditor.getState().open('p', 't', 'a.ts', '/two');
+  expect(useDevelopmentEditor.getState().draft).toBe('base');
+  await useDevelopmentEditor.getState().open('other', 't', 'a.ts', '/one');
+  expect(useDevelopmentEditor.getState().draft).toBe('base');
+  await useDevelopmentEditor.getState().open('p', 't', 'a.ts', '/one');
+  expect(useDevelopmentEditor.getState().draft).toBe('private draft');
+  useDevelopment.getState().reset();
+  expect(useDevelopmentEditor.getState().documents).toEqual({});
+  expect(useDevelopmentEditor.getState().tabs).toEqual([]);
+});
+
+it('settles an inactive save without replacing newer typing or another file draft', async () => {
+  installFiles();
+  await useDevelopmentEditor.getState().open('p', 't', 'a.ts');
+  const a = documentId('p', 't', 'a.ts');
+  useDevelopmentEditor.getState().edit('saved snapshot', a);
+  const pending = Promise.withResolvers<unknown>();
+  invoke.mockImplementation((command: string, args: { input?: { path: string } }) => command === 'save_development_file' ? pending.promise : Promise.resolve({ path: args.input?.path, text: 'base', hash: 'initial-hash', size: 4, reason: null }));
+  const saving = useDevelopmentEditor.getState().save(a);
+  useDevelopmentEditor.getState().edit('typed during save', a);
+  await useDevelopmentEditor.getState().open('p', 't', 'b.ts');
+  useDevelopmentEditor.getState().edit('draft b');
+  pending.resolve({ path: 'a.ts', text: 'saved snapshot', hash: 'saved-hash', size: 14, reason: null });
+  await saving;
+  expect(useDevelopmentEditor.getState().documents[a].draft).toBe('typed during save');
+  expect(useDevelopmentEditor.getState().documents[a].file?.hash).toBe('saved-hash');
+  expect(useDevelopmentEditor.getState().draft).toBe('draft b');
+});
+
+it('blocks context changes while a file save is in flight', async () => {
+  installFiles();
+  await useDevelopmentEditor.getState().open('p', 't', 'a.ts');
+  useDevelopmentEditor.getState().edit('saving draft');
+  const pending = Promise.withResolvers<unknown>();
+  invoke.mockReturnValue(pending.promise);
+  const saving = useDevelopmentEditor.getState().save();
+  expect(await chooseContext({ project_id: 'other', task_id: null, session_id: null })).toEqual({ ok: false, code: 'cancelled' });
+  expect(useDevelopmentEditor.getState().saving).toBe(true);
+  expect(invoke.mock.calls.some(([command]) => command === 'select_development_context')).toBe(false);
+  pending.resolve({ path: 'a.ts', text: 'saving draft', hash: 'saved-hash', size: 12, reason: null });
+  await saving;
+  expect(useDevelopmentEditor.getState().file?.hash).toBe('saved-hash');
+});
+
+it('renames documents only in the filesystem workspace that changed', async () => {
+  installFiles();
+  for (const workspacePath of ['/one', '/two']) {
+    openDevelopmentDocument({ projectId: 'p', taskId: 't', workspacePath, path: 'folder/a.ts', mode: 'file', source: 'worktree' });
+    await useDevelopmentEditor.getState().open('p', 't', 'folder/a.ts', workspacePath);
+    useDevelopmentEditor.getState().edit(`draft ${workspacePath}`);
+  }
+  remapDevelopmentDocuments('p', 't', 'folder', 'renamed', '/one');
+  expect(useDevelopmentEditor.getState().tabs.map(tab => [tab.workspacePath, tab.path])).toEqual([['/one', 'renamed/a.ts'], ['/two', 'folder/a.ts']]);
+  expect(useDevelopmentEditor.getState().documents[documentId('p', 't', 'renamed/a.ts', '/one')].draft).toBe('draft /one');
+  expect(useDevelopmentEditor.getState().documents[documentId('p', 't', 'folder/a.ts', '/two')].draft).toBe('draft /two');
+});
+
+it('preserves a clean document edited while its async close guard is settling', async () => {
+  installFiles();
+  openDevelopmentDocument({ projectId: 'p', taskId: 't', workspacePath: '/repo', path: 'a.ts', mode: 'file', source: 'worktree' });
+  await useDevelopmentEditor.getState().open('p', 't', 'a.ts', '/repo');
+  const id = documentId('p', 't', 'a.ts', '/repo');
+  const closing = closeDevelopmentDocuments(useDevelopmentEditor.getState().tabs.map(tab => tab.id));
+  useDevelopmentEditor.getState().edit('new unsaved draft', id);
+  expect(await closing).toBe(false);
+  expect(useDevelopmentEditor.getState().documents[id].draft).toBe('new unsaved draft');
+  expect(confirmDiscard).not.toHaveBeenCalled();
 });

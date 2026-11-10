@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ProjectSessionTree } from '../src/components/development/ProjectSessionTree';
 import { useDevelopment, type DevelopmentSession, type Project } from '../src/stores/developmentStore';
 import { useAgentRunner } from '../src/stores/agentRunnerStore';
+import { chooseContext, contextGeneration } from '../src/stores/developmentSelection';
 
 const { invoke, picker } = vi.hoisted(() => ({ invoke: vi.fn(), picker: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
@@ -30,6 +31,16 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
   invoke.mockReset();
+});
+
+it('invalidates context synchronously before awaiting a cross-project draft guard', async () => {
+  const selected = vi.spyOn(useDevelopment.getState(), 'select').mockResolvedValue({ ok: true, value: null });
+  const generation = contextGeneration();
+  const selection = chooseContext({ project_id: null, task_id: null, session_id: null });
+  expect(contextGeneration()).toBe(generation + 1);
+  expect(await selection).toEqual({ ok: true, value: null });
+  expect(contextGeneration()).toBe(generation + 2);
+  expect(selected).toHaveBeenCalledWith({ project_id: null, task_id: null, session_id: null });
 });
 
 it('uses one metadata batch for real previews and times, five recent rows plus the current row', async () => {
@@ -209,4 +220,46 @@ it('keeps presentation controls available while context selection is busy', () =
   expect(screen.getByTestId('dev-session-item-s7').hasAttribute('disabled')).toBe(true);
   fireEvent.click(screen.getByRole('button', { name: 'workbenchNavigation.collapseProject: Workbench' }));
   expect(screen.getByRole('button', { name: 'workbenchNavigation.expandProject: Workbench' }).hasAttribute('disabled')).toBe(false);
+});
+
+it('reveals an older conversation through collapsed groups and search without selecting it', async () => {
+  const view = render(<ProjectSessionTree busy={false} {...callbacks} />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(210); });
+  fireEvent.click(screen.getByRole('button', { name: 'workbenchNavigation.collapseProject: Workbench' }));
+  fireEvent.change(screen.getByTestId('dev-unified-search'), { target: { value: 'no match' } });
+  view.rerender(<ProjectSessionTree busy={false} {...callbacks} revealTarget={{ tabId: 'old-tab', projectId: 'p', sessionId: 's6', nonce: 1 }} />);
+  expect((screen.getByTestId('dev-unified-search') as HTMLInputElement).value).toBe('');
+  expect(document.activeElement).toBe(screen.getByTestId('dev-session-item-s6'));
+  expect(useDevelopment.getState().selection.session_id).toBe('s7');
+  expect(callbacks.onSelect).not.toHaveBeenCalled();
+  expect(callbacks.onSelectProject).not.toHaveBeenCalled();
+});
+
+it('reveals archived history by opening disclosures without restoring archive metadata', () => {
+  const archived = { ...project, id: 'archive', name: 'Archive', archived: true };
+  const oldSessions = Array.from({ length: 8 }, (_, index) => ({ ...sessions[0], id: `old${index}`, project_id: 'archive' }));
+  useDevelopment.setState({ projects: [project, archived], sessions: [...sessions, ...oldSessions], archivedSessionIds: oldSessions.map(session => session.id) });
+  const view = render(<ProjectSessionTree busy={false} {...callbacks} />);
+  view.rerender(<ProjectSessionTree busy={false} {...callbacks} revealTarget={{ tabId: 'old-tab', projectId: 'archive', sessionId: 'old7', nonce: 1 }} />);
+  const item = screen.getByTestId('dev-session-item-old7');
+  expect(item.closest('[hidden]')).toBeNull();
+  expect(document.activeElement).toBe(item);
+  expect(useDevelopment.getState().archivedSessionIds).toEqual(oldSessions.map(session => session.id));
+  expect(useDevelopment.getState().projects.find(project => project.id === 'archive')?.archived).toBe(true);
+  expect(callbacks.onSelect).not.toHaveBeenCalled();
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it('reveals an unsent draft and unclassified session without changing the active context', () => {
+  const draft = { id: 'draft', projectId: 'p', taskId: null, sessionId: null, title: 'Unsent conversation' };
+  useDevelopment.setState({ tabs: [draft], sessions: [...sessions, { ...sessions[0], id: 'loose', project_id: null }] });
+  const view = render(<ProjectSessionTree busy={false} {...callbacks} />);
+  fireEvent.click(screen.getByRole('button', { name: 'workbenchNavigation.collapseProject: Workbench' }));
+  fireEvent.change(screen.getByTestId('dev-unified-search'), { target: { value: 'no match' } });
+  view.rerender(<ProjectSessionTree busy={false} {...callbacks} revealTarget={{ tabId: draft.id, projectId: 'p', sessionId: null, nonce: 1 }} />);
+  expect(document.activeElement).toBe(screen.getByTestId('dev-draft-item-draft'));
+  view.rerender(<ProjectSessionTree busy={false} {...callbacks} revealTarget={{ tabId: 'loose-tab', projectId: 'p', sessionId: 'loose', nonce: 2 }} />);
+  expect(document.activeElement).toBe(screen.getByTestId('dev-session-item-loose'));
+  expect(callbacks.onSelect).not.toHaveBeenCalled();
+  expect(callbacks.onSelectDraft).not.toHaveBeenCalled();
 });

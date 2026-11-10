@@ -1,0 +1,40 @@
+.git-commit-detail { display:flex; flex-direction:column; height:100%; min-width:0; min-height:0; overflow:hidden; background:var(--surface-panel); color:var(--text-primary); font-size:var(--font-size-xs); }
+.git-detail-header { display:flex; align-items:center; gap:var(--spacing-2); flex:none; min-height:2.5rem; padding:var(--spacing-2) var(--spacing-3); border-bottom:1px solid var(--border-subtle); }
+.git-detail-header > svg { color:var(--accent-default); flex:none; }
+.git-detail-header h2 { flex:1; margin:0; font-size:var(--font-size-xs); font-weight:500; }
+.git-commit-detail button:focus-visible, .git-commit-detail [tabindex]:focus-visible { outline:2px solid var(--border-focus); outline-offset:-2px; }
+.git-detail-summary { flex:0 1 auto; min-height:0; max-height:48%; overflow:auto; overscroll-behavior:contain; padding:var(--spacing-3); border-bottom:1px solid var(--border-subtle); }
+.git-detail-summary h3 { margin:0 0 var(--spacing-3); font-size:var(--font-size-sm); line-height:1.5; overflow-wrap:anywhere; }
+.git-detail-body { margin:0 0 var(--spacing-3); white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.6; }
+.git-detail-metadata { display:grid; gap:var(--spacing-2); margin:0; color:var(--text-secondary); }
+.git-detail-metadata > div { display:flex; gap:var(--spacing-2); align-items:flex-start; min-width:0; }
+.git-detail-metadata dt { flex:none; padding-top:.15rem; }
+.git-detail-metadata dd { min-width:0; margin:0; overflow-wrap:anywhere; }
+.git-detail-hash { display:flex; align-items:flex-start; gap:var(--spacing-2); padding:0; border:0; background:transparent; color:var(--accent-default); font:inherit; text-align:start; cursor:pointer; }
+.git-detail-hash code { overflow-wrap:anywhere; font-family:var(--font-family-code); font-size:11px; }
+.git-detail-hash svg { flex:none; margin-top:.15rem; }
+.git-detail-parents { display:flex; flex-wrap:wrap; gap:var(--spacing-1) var(--spacing-2); }
+.git-detail-parents button { padding:0; border:0; background:transparent; color:var(--text-secondary); font:inherit; cursor:pointer; }
+.git-detail-parents button:hover { color:var(--accent-default); text-decoration:underline; }
+.git-detail-comparison { margin:var(--spacing-2) 0 0; color:var(--text-secondary); line-height:1.5; }
+.git-detail-files { flex:1; min-height:0; min-width:0; overflow:auto; overscroll-behavior:contain; }
+.git-detail-files > header { display:flex; align-items:center; gap:var(--spacing-2); padding:var(--spacing-3); }
+.git-detail-files h3 { margin:0; font-size:inherit; font-weight:500; }
+.git-detail-files > header > .git-line-stats { margin-inline-start:auto; }
+.git-detail-files ol { list-style:none; margin:0; padding:0 var(--spacing-2) var(--spacing-2); }
+.git-detail-file { display:flex; align-items:center; gap:var(--spacing-2); min-width:0; width:100%; min-height:1.9rem; border:0; border-radius:var(--radius-sm); padding:var(--spacing-1); background:transparent; color:var(--text-primary); font:inherit; cursor:pointer; text-align:start; }
+.git-detail-file:hover { background:var(--surface-hover); }
+.git-detail-path { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--font-family-code); font-size:11px; }
+.git-detail-file .git-status { font-weight:600; background:var(--surface-inset); border-radius:var(--radius-sm); min-width:1rem; }
+.git-historical-diff { display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; overflow:auto; overscroll-behavior:contain; }
+.git-detail-diff-header { display:flex; flex:none; align-items:center; gap:var(--spacing-2); padding:var(--spacing-2); min-width:0; }
+.git-detail-diff-header > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.git-detail-readonly { color:var(--text-secondary); margin:0; padding:0 var(--spacing-3) var(--spacing-2); }
+.git-historical-diff > .file-diff-toolbar { flex:none; padding:var(--spacing-1) var(--spacing-2); }
+.git-historical-diff > .file-unified-diff, .git-historical-diff > .dev-source { flex:1; min-height:6rem; max-height:none; }
+.git-commit-detail .git-icon:hover { color:var(--text-primary); background:var(--surface-hover); }
+@media (pointer:coarse) { .git-detail-file, .git-commit-detail button { min-height:2.75rem; } }
+
+.git-commit-detail [hidden] { display:none !important; }
+.git-detail-file .git-status-A { background:var(--status-success-surface); }
+.git-detail-file .git-status-D { background:var(--status-error-surface); }

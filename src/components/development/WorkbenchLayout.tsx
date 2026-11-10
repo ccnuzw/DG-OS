@@ -8,11 +8,12 @@ interface Layout {
   drawerWidth: number;
   codeView: CodeView;
   runtimeView: 'processes' | 'runs';
+  documentWidth: number;
 }
 const KEY = 'dgos.development.layout.v3';
 const MIN_DRAWER_WIDTH = 18;
 const MAX_DRAWER_WIDTH = 42;
-const defaults: Layout = { drawer: 'projects', drawerWidth: 24, codeView: 'files', runtimeView: 'processes' };
+const defaults: Layout = { drawer: 'projects', drawerWidth: 24, documentWidth: 36, codeView: 'files', runtimeView: 'processes' };
 const clamp = (value: number) => Math.max(MIN_DRAWER_WIDTH, Math.min(MAX_DRAWER_WIDTH, Math.round(value * 2) / 2));
 function restore(): Layout {
   try {
@@ -21,6 +22,7 @@ function restore(): Layout {
     return {
       drawer: value.drawer === 'git' ? 'files' : value.drawer === null || ['projects', 'files', 'tasks'].includes(value.drawer) ? value.drawer : defaults.drawer,
       drawerWidth: Number.isFinite(value.drawerWidth) ? clamp(value.drawerWidth) : defaults.drawerWidth,
+      documentWidth: Number.isFinite(value.documentWidth) ? clamp(value.documentWidth) : defaults.documentWidth,
       codeView: ['files', 'changes', 'capabilities', 'delivery', 'review'].includes(value.codeView) ? value.codeView : defaults.codeView,
       runtimeView: value.runtimeView === 'runs' ? 'runs' : 'processes',
     };
@@ -36,12 +38,12 @@ export function useWorkbenchLayout() {
   return { root, compact, layout, setLayout };
 }
 
-export function PanelResizer({ value, onChange, label, testId, controls }: { value: number; onChange(value: number): void; label: string; testId: string; controls: string }) {
+export function PanelResizer({ value, onChange, label, testId, controls, reverse = false }: { value: number; onChange(value: number): void; label: string; testId: string; controls: string; reverse?: boolean }) {
   const drag = useRef<{ pointer: number; start: number; value: number; rem: number } | null>(null);
   function move(event: PointerEvent<HTMLDivElement>) {
     const current = drag.current;
     if (!current || current.pointer !== event.pointerId) return;
-    onChange(clamp(current.value + (event.clientX - current.start) / current.rem));
+    onChange(clamp(current.value + (reverse ? -1 : 1) * (event.clientX - current.start) / current.rem));
   }
   return <div className="dev-panel-resizer" role="separator" tabIndex={0} aria-label={label} aria-controls={controls} aria-orientation="vertical" aria-valuemin={MIN_DRAWER_WIDTH} aria-valuemax={MAX_DRAWER_WIDTH} aria-valuenow={value} aria-valuetext={`${value}rem`} data-testid={testId}
     onPointerDown={event => {
@@ -57,6 +59,6 @@ export function PanelResizer({ value, onChange, label, testId, controls }: { val
     onKeyDown={event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
-      onChange(event.key === 'Home' ? MIN_DRAWER_WIDTH : event.key === 'End' ? MAX_DRAWER_WIDTH : clamp(value + (event.key === 'ArrowRight' ? 1 : -1)));
+      onChange(event.key === 'Home' ? MIN_DRAWER_WIDTH : event.key === 'End' ? MAX_DRAWER_WIDTH : clamp(value + (event.key === 'ArrowRight' ? 1 : -1) * (reverse ? -1 : 1)));
     }} />;
 }

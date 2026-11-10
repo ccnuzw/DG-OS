@@ -32,6 +32,30 @@ pub async fn read_development_git(app:tauri::AppHandle,window:WebviewWindow,task
  if lease.is_cancelled(){return Err("session_invalid".into());}result
 }
 #[tauri::command]
+pub async fn read_development_git_details(app:tauri::AppHandle,window:WebviewWindow,input:dgos_agents::git::GitDetailsInput)->Result<dgos_agents::git::GitDetails,String>{
+ let context=host::context(&window,BuiltinCaller::Workbench,Capability::TasksRun).map_err(|e|e.to_string())?;
+ let(session,lease)=app.state::<Arc<SessionResolver>>().agent_session().map_err(|e|e.to_string())?;
+ if session.user_id()!=context.user_id()||lease.is_cancelled(){return Err("session_invalid".into());}
+ let result=app.state::<AgentManager>().read_development_git_details(context.user_id(),input,lease.clone()).await;
+ if lease.is_cancelled(){return Err("session_invalid".into());}result
+}
+#[tauri::command]
+pub async fn read_development_git_commit(app:tauri::AppHandle,window:WebviewWindow,input:dgos_agents::git::GitCommitInput)->Result<dgos_agents::git::GitCommitDetails,String>{
+ let context=host::context(&window,BuiltinCaller::Workbench,Capability::TasksRun).map_err(|e|e.to_string())?;
+ let(session,lease)=app.state::<Arc<SessionResolver>>().agent_session().map_err(|e|e.to_string())?;
+ if session.user_id()!=context.user_id()||lease.is_cancelled(){return Err("session_invalid".into());}
+ let result=app.state::<AgentManager>().read_development_git_commit(context.user_id(),input,lease.clone()).await;
+ if lease.is_cancelled(){return Err("session_invalid".into());}result
+}
+#[tauri::command]
+pub async fn read_development_git_commit_diff(app:tauri::AppHandle,window:WebviewWindow,input:dgos_agents::git::GitCommitDiffInput)->Result<dgos_agents::review::FileDiff,String>{
+ let context=host::context(&window,BuiltinCaller::Workbench,Capability::TasksRun).map_err(|e|e.to_string())?;
+ let(session,lease)=app.state::<Arc<SessionResolver>>().agent_session().map_err(|e|e.to_string())?;
+ if session.user_id()!=context.user_id()||lease.is_cancelled(){return Err("session_invalid".into());}
+ let result=app.state::<AgentManager>().read_development_git_commit_diff(context.user_id(),input,lease.clone()).await;
+ if lease.is_cancelled(){return Err("session_invalid".into());}result
+}
+#[tauri::command]
 pub async fn preview_development_git_pull(app:tauri::AppHandle,window:WebviewWindow,input:dgos_agents::git::GitPullPreviewInput)->Result<dgos_agents::git::GitPullPreview,String>{
  let context=host::context(&window,BuiltinCaller::Workbench,Capability::TasksRun).map_err(|e|e.to_string())?;
  let(session,lease)=app.state::<Arc<SessionResolver>>().agent_session().map_err(|e|e.to_string())?;

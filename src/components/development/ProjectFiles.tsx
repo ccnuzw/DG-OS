@@ -7,7 +7,7 @@ import { listDevelopmentFiles, readDevelopmentFile, type DevFileEntry, type DevF
 import { useDevelopment } from '../../stores/developmentStore';
 import { contextGeneration } from '../../stores/developmentSelection';
 import { developmentDraftKey, useDevelopmentDrafts, useScopedDevelopmentDraft } from '../../stores/developmentDrafts';
-import { discardDevelopmentDraft, developmentEditorMutationAffects, guardDevelopmentDraft, useDevelopmentEditor } from '../../stores/developmentEditor';
+import { developmentEditorMutationAffects, guardDevelopmentDraft, guardDevelopmentDocuments, invalidateDevelopmentDocuments, remapDevelopmentDocuments, useDevelopmentEditor } from '../../stores/developmentEditor';
 import type { ConversationReference } from '../../stores/developmentReferences';
 import { useWorkbenchLocation } from './workbenchLocations';
 import { FileTree } from './FileTree';
@@ -70,12 +70,8 @@ export function Files({ projectId, taskId, workspacePath = '', target, onOpenFil
   function finishMutation(op: Operation) {
     if (!op.action || op.action === 'copy') return;
     const mutation = { action: op.action, path: op.path, destination: op.destination ?? null };
-    const editor = useDevelopmentEditor.getState();
-    if (editor.projectId === projectId && editor.taskId === taskId && editor.path && filePathAffected(editor.path, op.path)) {
-      const next = op.action === 'rename' ? `${op.destination}${editor.path.slice(op.path.length)}` : null;
-      editor.reset();
-      if (next && !onOpenFile) setOpened(next);
-    }
+    if (op.action === 'rename' && op.destination) remapDevelopmentDocuments(projectId, taskId, op.path, op.destination, workspacePath);
+    else invalidateDevelopmentDocuments(projectId, taskId, [op.path], workspacePath);
     if (selected && filePathAffected(selected, op.path)) setSelected(op.action === 'rename' ? `${op.destination}${selected.slice(op.path.length)}` : null);
     if (opened && filePathAffected(opened, op.path)) setOpened(op.action === 'rename' ? `${op.destination}${opened.slice(op.path.length)}` : null);
     if (filePathAffected(path, op.path)) setPath(op.action === 'rename' ? `${op.destination}${path.slice(op.path.length)}` : parentPath(op.path));
@@ -104,10 +100,8 @@ export function Files({ projectId, taskId, workspacePath = '', target, onOpenFil
         const destinationState = destination ? destination.ok ? t('workbenchFiles.present') : t('workbenchFiles.absent') : '';
         const facts = `${op.path}: ${sourceState}${op.destination ? `\n${op.destination}: ${destinationState}` : ''}`;
         if (!await confirmAction(t('workbenchFiles.inspectResult'), `${facts}\n\n${t('workbenchFiles.acceptObservedDetail')}`, t('workbenchFiles.acceptObserved')) || !valid(generation) || latest().operation !== op) return;
-        const editor = useDevelopmentEditor.getState();
-        const affectsEditor = op.action !== 'copy' && editor.projectId === projectId && editor.taskId === taskId && editor.path && (filePathAffected(editor.path, op.path) || filePathAffected(op.path, editor.path));
-        if (affectsEditor && (!await guardDevelopmentDraft(true) || !valid(generation) || latest().operation !== op)) return;
-        if (affectsEditor) editor.reset();
+        if (op.action !== 'copy' && (!await guardDevelopmentDraft(true) || !valid(generation) || latest().operation !== op)) return;
+        if (op.action !== 'copy') invalidateDevelopmentDocuments(projectId, taskId, [op.path], workspacePath);
         if (op.action !== 'copy') {
           if (selected && filePathAffected(selected, op.path)) setSelected(null);
           if (opened && filePathAffected(opened, op.path)) setOpened(null);
@@ -169,11 +163,10 @@ export function Files({ projectId, taskId, workspacePath = '', target, onOpenFil
     if (working.current || latest().operation) return;
     const generation = contextGeneration(), identity = currentScope;
     working.current = true; setError(null);
-    const editor = useDevelopmentEditor.getState();
-    const affectsEditor = action !== 'copy' && editor.projectId === projectId && editor.taskId === taskId && editor.path && (filePathAffected(editor.path, source.path) || filePathAffected(source.path, editor.path));
-    if (developmentEditorMutationAffects(projectId, taskId, source.path) || affectsEditor && (editor.saving || editor.busy)) { setError('workspace_busy'); working.current = false; return; }
-    if (affectsEditor && !await guardDevelopmentDraft()) { working.current = false; return; }
-    if (!valid(generation, identity) || latest().operation || affectsEditor && (useDevelopmentEditor.getState().draft !== editor.draft || useDevelopmentEditor.getState().file !== editor.file)) { working.current = false; return; }
+    const documents = Object.values(useDevelopmentEditor.getState().documents).filter(document => document.projectId === projectId && document.taskId === taskId && document.workspacePath === workspacePath && filePathAffected(document.path, source.path));
+    if (developmentEditorMutationAffects(projectId, taskId, source.path) || action !== 'copy' && documents.some(document => document.saving || document.busy)) { setError('workspace_busy'); working.current = false; return; }
+    if (action === 'delete' && !await guardDevelopmentDocuments(projectId, taskId, [source.path], workspacePath)) { working.current = false; return; }
+    if (!valid(generation, identity) || latest().operation || action !== 'copy' && documents.some(document => useDevelopmentEditor.getState().documents[document.id] !== document)) { working.current = false; return; }
     const pending: Operation = { ...source, name, action, destination, status: 'pending' };
     draft.setValue({ ...latest(), operation: pending });
     const result = await mutateDevelopmentEntry({ ...input(source.path), expected_version: source.version, action, destination, trust_directory: true });
@@ -226,8 +219,7 @@ export function Files({ projectId, taskId, workspacePath = '', target, onOpenFil
   function open(entryPath: string) {
     setSelected(entryPath); setPath(parentPath(entryPath));
     if (onOpenFile) { onOpenFile({ path: entryPath, mode: 'file', nonce: Date.now() }); return; }
-    const generation = contextGeneration();
-    void discardDevelopmentDraft().then(allowed => { if (allowed && valid(generation)) setOpened(entryPath); });
+    setOpened(entryPath);
   }
   const shortcut = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+';
   function menu(entry: DevFileEntry): MenuItem[] {
@@ -276,7 +268,7 @@ export function Files({ projectId, taskId, workspacePath = '', target, onOpenFil
     {listing ? <div className={onOpenFile ? 'dev-file-browser' : 'dev-file-layout'}><nav aria-label={t('review.files')} className="dev-file-list">
       {!listing.entries.length ? <p className="text-xs text-ink-secondary">{t('review.noFiles')}</p> : null}
       <FileTree projectId={projectId} taskId={taskId} scope={scope} entries={listing.entries} query={query} ignored={ignored} selected={selected} refreshKey={treeRefresh} collapseKey={collapseKey} onOpen={open} onDirectory={setPath} onSelect={setSelected} menuItems={menu} />
-    </nav>{!onOpenFile ? <div className="min-w-0">{opened ? <FileEditor key={opened} projectId={projectId} taskId={taskId} path={opened} line={target?.path === opened ? target.line : undefined} onReference={onReference} /> : <p className="text-xs text-ink-secondary">{t('review.selectFile')}</p>}</div> : null}</div> : null}
+    </nav>{!onOpenFile ? <div className="min-w-0">{opened ? <FileEditor key={opened} projectId={projectId} taskId={taskId} workspacePath={workspacePath} path={opened} line={target?.path === opened ? target.line : undefined} onReference={onReference} /> : <p className="text-xs text-ink-secondary">{t('review.selectFile')}</p>}</div> : null}</div> : null}
     <Modal open={Boolean(dialog)} onOpenChange={open => { if (!open && !latest().operation) setDialog(null); }} title={t(dialog?.action === 'rename' ? 'workbenchFiles.rename' : dialog?.action === 'copy' ? 'workbenchFiles.paste' : dialog?.action === 'directory' ? 'workbenchFiles.newFolder' : 'workbenchFiles.newFile')} footer={<><Button variant="secondary" disabled={blocked} onClick={() => setDialog(null)}>{t('dev.cancel')}</Button><Button disabled={blocked || !name.trim()} onClick={() => void submit()}>{t(dialog?.action === 'rename' ? 'workbenchFiles.rename' : dialog?.action === 'copy' ? 'workbenchFiles.paste' : 'workbenchFiles.create')}</Button></>}>
       <Input label={t('workbenchFiles.entryName')} value={name} disabled={blocked} onChange={event => draft.setValue({ ...latest(), name: event.target.value })} onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
       {dialog?.parent ? <p className="text-xs text-ink-secondary">{dialog.parent}/</p> : null}

@@ -78,10 +78,8 @@ impl AgentManager {
             DiffSource::Task => return Err("invalid_request".into()),
         };
         if before.is_none() && after.is_none() { return Err("file_not_found".into()); }
-        let diff = if input.source == DiffSource::Worktree && index.is_empty() {
-            // Git diff omits untracked files; explicitly construct their complete
-            // addition from the capability-validated, bounded current file.
-            similar::TextDiff::from_lines("", after.as_deref().unwrap_or("")).unified_diff().context_radius(3).header("/dev/null", &format!("worktree/{}", input.path)).to_string()
+        let raw_diff = if input.source == DiffSource::Worktree {
+            super::restore::raw_diff(&project, &input.path, &index, &lease, stop).await?
         } else {
             let mut args = vec!["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", "--no-relative", "--no-indent-heuristic", "--diff-algorithm=myers"];
             if input.source == DiffSource::Index { args.push("--cached"); }
@@ -89,9 +87,11 @@ impl AgentManager {
             let bytes = output(path, &args, &lease, stop, false).await?;
             if bytes.len() > files::FILE_LIMIT { return Err("file_too_large".into()); }
             let diff = String::from_utf8(bytes).map_err(|_| "file_binary")?;
-            crate::executions::sanitize_text(&diff)
+            diff
         };
-        if diff.len() > files::FILE_LIMIT { return Err("file_too_large".into()); }
+        if raw_diff.len() > files::FILE_LIMIT { return Err("file_too_large".into()); }
+        let diff_hash = (input.source == DiffSource::Worktree).then(|| digest(raw_diff.as_bytes()));
+        let diff = crate::executions::sanitize_text(&raw_diff);
         // External Git/editors do not honor admission; never combine a patch with
         // previews from another observed HEAD/index/worktree version.
         if head != optional_ref(path, &["rev-parse", "--verify", "HEAD"], &lease, stop).await? || index_bytes != output(path, &["ls-files", "--stage", "-z", "--", &input.path], &lease, stop, false).await? { return Err("file_changed".into()); }
@@ -100,6 +100,6 @@ impl AgentManager {
         };
         if current.as_ref().map(|view| (&view.hash, &view.reason)) != latest.as_ref().map(|view| (&view.hash, &view.reason)) { return Err("file_changed".into()); }
         crate::projects::validate_directory(&project).await?;
-        Ok(FileDiff { path: input.path, before, after, diff, reason: None })
+        Ok(FileDiff { path: input.path, before, after, diff, diff_hash, reason: None })
     }
 }
