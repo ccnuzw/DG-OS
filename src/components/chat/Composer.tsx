@@ -2,8 +2,8 @@ import { t, useLocale as usePageLocale } from '../../i18n';
 import { useEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Checkbox, Input, Loading, Popover, cn } from '@dgos/ui';
-import { ArrowUp, Mic, MoreHorizontal, Square, Wrench, X } from 'lucide-react';
-import { MAX_MESSAGE_BYTES, MAX_TOOLS, useChatStore, utf8Bytes } from '../../stores/chatStore';
+import { ArrowUp, Mic, MoreHorizontal, RotateCcw, Square, Wrench, X } from 'lucide-react';
+import { MAX_INTENT_BYTES, MAX_MESSAGE_BYTES, MAX_TOOLS, useChatStore, utf8Bytes } from '../../stores/chatStore';
 import { ChatNotice } from './ChatNotice';
 import { FOCUS_RING } from '@dgos/ui/lib/focus';
 import { fetchConnectedTools, toolKey, type ConnectedTool } from './catalog';
@@ -15,6 +15,7 @@ import './conversation.css';
 import { useSurfaceActive } from '../../workspace/SurfaceContext';
 import ContextPanel from './ContextPanel';
 import { useDevelopment } from '../../stores/developmentStore';
+import WebControls from './WebControls';
 
 const LINK = cn('text-accent-default underline', FOCUS_RING);
 
@@ -98,10 +99,15 @@ export default function Composer() {
   const actionError = useChatStore(state => state.actionError);
   const actionCode = useChatStore(state => state.actionCode);
   const draft = useChatStore(state => sessionId ? state.sessionDrafts[sessionId] ?? '' : '');
+  const continuation = useChatStore(state => sessionId ? state.sessionContinuation[sessionId] : undefined);
+  const clearContinuation = useChatStore(state => state.clearContinuation);
+  const continueRun = useChatStore(state => state.continueRun);
+  const [continuationConfirmed, setContinuationConfirmed] = useState(false);
+  useEffect(() => { setContinuationConfirmed(false); }, [sessionId, continuation?.taskId, draft]);
   const selectedTools = useChatStore(state => sessionId ? state.sessionTools[sessionId] ?? [] : []);
   const rememberTools = useChatStore(state => sessionId ? state.sessionRememberTools[sessionId] ?? false : false);
   const setRememberTools = useChatStore(state => state.setRememberTools);
-  const unknown = useChatStore(state => !!sessionId && (state.sessionUnknown[sessionId] || state.messages.some(message => message.result_unknown || !!message.audit_warning)));
+  const unknown = useChatStore(state => !!sessionId && (continuation ? !state.replyRuns[continuation.taskId]?.run || !!state.replyRuns[continuation.taskId]?.run?.audit_warning || !!state.replyRuns[continuation.taskId]?.steps.some(step => step.kind === 'tool' && (step.result_unknown || step.status === 'dispatched' || (step.dispatched && !step.receipt))) : state.sessionUnknown[sessionId] || state.messages.some(message => message.result_unknown || !!message.audit_warning)));
   const accountBusy = useChatStore(state => state.preparingSessionId !== null || Object.keys(state.generations).length > 0);
   const [preparing, setPreparing] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -131,8 +137,8 @@ export default function Composer() {
   const generating = generation !== null;
   const hasTarget = !!session?.provider_id && !!session?.model_id;
   const bytes = utf8Bytes(draft);
-  const tooLong = bytes > MAX_MESSAGE_BYTES;
-  const canSend = !!session && !stale && !accountBusy && !unknown && !preparing && !assetBusy && !voiceBusy && hasTarget && (draft.trim().length > 0 || !!assets?.length || hasContext) && !tooLong;
+  const tooLong = bytes > (continuation ? MAX_INTENT_BYTES : MAX_MESSAGE_BYTES);
+  const canSend = !!session && !stale && !accountBusy && !unknown && !preparing && !assetBusy && !voiceBusy && hasTarget && (continuation ? draft.trim().length > 0 && continuationConfirmed : draft.trim().length > 0 || !!assets?.length || hasContext) && !tooLong;
 
 
   useEffect(() => {
@@ -163,7 +169,9 @@ export default function Composer() {
       const chosen = selectedTools.map(key => available.find(tool => toolKey(tool) === key));
       if (chosen.some(tool => !tool)) { setSubmitError(t('chat.toolsChanged')); return; }
       setTools(available);
-      await send(draft, chosen.filter((tool): tool is ConnectedTool => !!tool).map(tool => ({ server_id: tool.server_id, tool_name: tool.tool_name, schema_hash: tool.schema_hash })));
+      const chosenTools = chosen.filter((tool): tool is ConnectedTool => !!tool).map(tool => ({ server_id: tool.server_id, tool_name: tool.tool_name, schema_hash: tool.schema_hash }));
+      if (continuation) await continueRun(continuation.taskId, draft, chosenTools);
+      else await send(draft, chosenTools);
     } catch { if (mounted.current && useChatStore.getState().activeSessionId === owner && useDevelopment.getState().epoch === account) setSubmitError(t('chat.toolsFailed')); }
     finally { preparingRef.current = false; if (mounted.current) setPreparing(false); }
   };
@@ -187,11 +195,11 @@ export default function Composer() {
   if (!session) return null;
 
   return (
-    <Attachments sessionId={session.id} openRequest={materialRequest} disabled={stale || accountBusy || preparing || voiceBusy} onBusy={setAssetBusy}>{media =>
+    <Attachments sessionId={session.id} openRequest={materialRequest} disabled={stale || accountBusy || preparing || voiceBusy || !!continuation} onBusy={setAssetBusy}>{media =>
     <TargetBar session={session} preparing={preparing} content={draft} skillRequest={skillRequest}>{target =>
     <form ref={form} aria-label={t('chat.sendForm')} className="chat-composer" onSubmit={event => { event.preventDefault(); void submit(); }}>
       <div className="chat-composer-body" onFocusCapture={revealComposerControl}>
-      <div className="chat-composer-context">{target.context}{media.attachments}{selectedTools.map(key => {
+      <div className="chat-composer-context">{continuation ? <Button type="button" size="sm" variant="ghost" className="chat-context-chip chat-continuation-chip" disabled={accountBusy || preparing} aria-label={t('chat.continueRemoveSource')} onClick={() => clearContinuation(session.id)}><RotateCcw size={14} aria-hidden="true" /><span>{t('chat.continueSource')}</span><X size={13} aria-hidden="true" /></Button> : null}{target.context}{!continuation ? media.attachments : null}{selectedTools.map(key => {
         const tool = tools?.find(item => toolKey(item) === key);
         let name = t('chat.composerToolsTitle');
         try { const parts: unknown = JSON.parse(key); if (Array.isArray(parts) && typeof parts[1] === 'string') name = parts[1]; } catch { /* Unavailable selections stay removable and cannot be sent. */ }
@@ -221,20 +229,22 @@ export default function Composer() {
         placeholder={t('chat.inputPlaceholder')}
         value={draft}
         disabled={!session || stale || generating}
-        error={tooLong ? t('chat.tooLong') : undefined}
+        error={tooLong ? t(continuation ? 'chat.intentTooLong' : 'chat.tooLong') : undefined}
         className="type-reading chat-composer-input"
         onChange={event => { if (sessionId) setDraft(sessionId, event.target.value); }}
         onKeyDown={onKeyDown}
         onCompositionStart={() => { composing.current = true; }}
         onCompositionEnd={() => { composing.current = false; }}
       />
-      <p id="chat-input-hint" className={cn('chat-composer-counter m-0 text-xs', bytes < MAX_MESSAGE_BYTES * 0.9 && 'sr-only', tooLong ? 'text-status-error-text' : 'text-ink-secondary')}>
-        {formatNumber(bytes)} / {formatNumber(MAX_MESSAGE_BYTES)} {t('chat.byteUnit')}
+      {continuation ? <div className="chat-composer-continuation"><p className="chat-picker-help">{t('chat.activityContinueHelp')}</p><Checkbox checked={continuationConfirmed} disabled={stale || accountBusy || preparing || unknown} onChange={setContinuationConfirmed} label={t('chat.activityContinueConfirm')} /></div> : null}
+      <p id="chat-input-hint" className={cn('chat-composer-counter m-0 text-xs', bytes < (continuation ? MAX_INTENT_BYTES : MAX_MESSAGE_BYTES) * 0.9 && 'sr-only', tooLong ? 'text-status-error-text' : 'text-ink-secondary')}>
+        {formatNumber(bytes)} / {formatNumber(continuation ? MAX_INTENT_BYTES : MAX_MESSAGE_BYTES)} {t('chat.byteUnit')}
       </p>
       </div>
       <div className="chat-composer-footer">
         <div className="chat-composer-toolbar" role="group" aria-label={t('chat.composerTools')}>
           {media.attachmentTrigger}{target.settings}{target.skills}
+          <WebControls sessionId={session.id} disabled={stale || accountBusy || preparing} />
           <Popover label={t('chat.composerMore')} side="top" align="start" open={moreOpen} onOpenChange={next => { setMoreOpen(next); if (next) setMorePage(null); }} trigger={<Button type="button" size="sm" variant="ghost" iconOnly aria-label={t('chat.composerMore')} title={t('chat.composerMore')} className={cn('chat-composer-more', (selectedTools.length > 0 || voiceBusy) && 'chat-composer-selected')}><MoreHorizontal size={16} aria-hidden="true" /></Button>} content={<section className="chat-more-menu" data-page={morePage ?? 'menu'}>
             <header className="chat-picker-heading"><strong>{t('chat.composerMore')}</strong></header>
             <nav className="chat-more-navigation" aria-label={t('chat.composerMore')}>

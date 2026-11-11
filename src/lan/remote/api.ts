@@ -66,10 +66,14 @@ export interface LanTarget {
   no_skill: boolean;
 }
 
-export type ChatStreamEvent =
+export type ChatStreamEvent = { seq: number } & (
   | { kind: 'started'; task_id: string; assistant_message_id: string }
   | { kind: 'delta'; assistant_message_id: string; text: string }
   | { kind: 'reasoning_delta'; assistant_message_id: string; text: string }
+  | { kind: 'model_segment'; task_id: string; assistant_message_id: string; round: number }
+  | { kind: 'phase'; task_id: string; assistant_message_id: string; phase: string }
+  | { kind: 'activity'; task_id: string; assistant_message_id: string; step: unknown }
+  | { kind: 'summary_done'; task_id: string; assistant_message_id: string; summary: unknown }
   | { kind: 'done'; message: ChatMessage }
   | {
       kind: 'error';
@@ -79,7 +83,7 @@ export type ChatStreamEvent =
       provider_code: number | null;
       result_unknown: boolean;
       regeneration_discarded: boolean;
-    };
+    });
 
 /** The server answered with a non-2xx status. `code` is 0 for transport errors, which have an empty body. */
 export class LanApiError extends Error {

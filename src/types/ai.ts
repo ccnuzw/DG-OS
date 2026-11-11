@@ -54,6 +54,7 @@ export interface AiTerminal {
 export type AiEvent = { run_id: string; request_id: string; seq: number } & (
   | { kind: 'started'; provider_revision: number; skill_refs: AiSkillRef[]; tools: AiToolSelection[] }
   | { kind: 'delta' | 'reasoning_delta'; text: string }
+  | { kind: 'model_segment'; round: number }
   | { kind: 'phase'; phase: 'model' | 'awaiting_confirmation' | 'tool' | 'processing_result' | 'final_answer' }
   | { kind: 'terminal'; terminal: AiTerminal }
 );

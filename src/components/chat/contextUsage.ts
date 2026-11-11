@@ -1,4 +1,5 @@
-import type { ChatContextBudget, ChatMessage } from '../../stores/chatStore';
+import { formatNumber } from '../../i18n';
+import type { ChatContextBudget, ChatUsageSummary } from '../../stores/chatStore';
 
 /** Chat inspection already includes the image reserve in estimated_input_tokens. */
 export function contextUsage(budget: ChatContextBudget) {
@@ -9,27 +10,25 @@ export function contextUsage(budget: ChatContextBudget) {
   return { requested, window, percent, nearLimit: hostNearLimit || (percent !== null && percent >= 80) };
 }
 
-/** Only provider-reported totals on ended assistant messages in the loaded window. */
-export function reportedUsage(messages: readonly ChatMessage[] | undefined) {
-  let count = 0;
-  let reported = 0;
-  let sum = 0;
-  let latest: ChatMessage | undefined;
-  for (const message of messages ?? []) {
-    if (message.role !== 'assistant' || message.status === 'generating') continue;
-    count++;
-    if (!latest || message.seq > latest.seq) latest = message;
-    if (message.total_tokens !== null && Number.isFinite(message.total_tokens) && message.total_tokens >= 0) {
-      reported++;
-      sum += message.total_tokens;
-    }
-  }
-  const lastTotal = latest?.total_tokens;
+export function compactTokens(value: number): string {
+  if (value >= 1_000_000) return `${formatNumber(Math.round(value / 100_000) / 10)}M`;
+  if (value >= 1_000) return `${formatNumber(Math.round(value / 100) / 10)}k`;
+  return formatNumber(value);
+}
+
+export function usageFieldPartial(usage: ChatUsageSummary, field: keyof ChatUsageSummary['coverage']): boolean {
+  return usage.coverage[field] > 0 && (usage.legacy || usage.coverage[field] < usage.call_count);
+}
+
+/** History may change during compression; every other budget input must stay identical. */
+export function compareContextBudgets(before: ChatContextBudget, after: ChatContextBudget, sameInputs: boolean) {
+  if (!sameInputs || before.model_id !== after.model_id) return null;
+  const previous = contextUsage(before), current = contextUsage(after);
+  const percentages = previous.percent !== null && current.percent !== null && previous.window === current.window;
   return {
-    count,
-    reported,
-    missing: count - reported,
-    total: reported > 0 ? sum : null,
-    latest: lastTotal !== undefined && lastTotal !== null && Number.isFinite(lastTotal) && lastTotal >= 0 ? lastTotal : null,
+    before: percentages ? previous.percent! : previous.requested,
+    after: percentages ? current.percent! : current.requested,
+    unit: percentages ? 'percent' as const : 'tokens' as const,
+    lowered: current.requested < previous.requested,
   };
 }

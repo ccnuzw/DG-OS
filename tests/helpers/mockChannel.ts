@@ -3,6 +3,7 @@
 // calls `emit` at the moment it wants an event to arrive (before or after invoke resolves).
 export class MockChannel<T = unknown> {
   static instances: MockChannel[] = [];
+  private seq = 0;
 
   onmessage: (event: T) => void = () => {};
 
@@ -11,7 +12,11 @@ export class MockChannel<T = unknown> {
   }
 
   emit(event: T): void {
-    this.onmessage(event);
+    if (event && typeof event === 'object' && 'kind' in event) {
+      const seq = 'seq' in event && typeof event.seq === 'number' ? event.seq : this.seq + 1;
+      this.seq = Math.max(this.seq, seq);
+      this.onmessage({ ...event, seq });
+    } else this.onmessage(event);
   }
 
   static reset(): void {

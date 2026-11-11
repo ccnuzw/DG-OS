@@ -1,7 +1,7 @@
 import { t, formatNumber, formatDateTime, formatTime, useLocale as usePageLocale } from '../../i18n';
-import { Bot, Check, Copy, RotateCcw, UserRound } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Button, Loading, cn } from '@dgos/ui';
+import { Bot, Check, Copy, MoreHorizontal, RotateCcw, UserRound } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Button, Loading, Popover, cn } from '@dgos/ui';
 import { generationErrorText, useChatStore, type ChatMessage, type ChatToolProposal, type Generation } from '../../stores/chatStore';
 import { ChatNotice } from './ChatNotice';
 import { FOCUS_RING } from '@dgos/ui/lib/focus';
@@ -9,8 +9,10 @@ import { COPY_TEXT, useCopyFeedback } from './clipboard';
 import Markdown from './Markdown';
 import { AssetPreview } from './Attachments';
 import { useSurfaceActive } from '../../workspace/SurfaceContext';
-import RunSteps, { chatPhaseText } from './RunSteps';
+import { chatPhaseText } from './RunSteps';
 import RunInspector from './RunInspector';
+import ReplyExecution, { useReplyRun } from './ReplyExecution';
+import { executionSteps, trustedSources, webActivity } from './sources';
 
 const BOTTOM_FOLLOW_THRESHOLD = 2;
 
@@ -35,11 +37,13 @@ function MessageItem({ message, regenerateId, dropped }: { message: ChatMessage;
   const evidence = useChatStore(state => state.terminalEvidence[message.id]);
   const [copyState, copy] = useCopyFeedback();
   const assistant = message.role === 'assistant';
+  const { row, projection } = useReplyRun(message.session_id, assistant ? message.task_id : null, message.id);
+  const sources = useMemo(() => trustedSources(projection?.steps ?? []), [projection?.steps]);
   const errorText = message.status === 'completed' ? null : messageErrorText(message.error_code);
   const timestamp = new Date(message.created_at * 1000);
   return (
     <li className={cn('chat-message-row', assistant ? 'chat-message-row-assistant' : 'chat-message-row-user')}>
-      <article aria-label={t('chat.messageAria', { role: t(ROLE_LABEL[message.role]) })} className={cn('chat-message', assistant ? 'chat-assistant-message' : 'chat-user-message')}>
+      <article ref={row} aria-label={t('chat.messageAria', { role: t(ROLE_LABEL[message.role]) })} className={cn('chat-message', assistant ? 'chat-assistant-message' : 'chat-user-message')}>
         <header className="chat-message-header">
           <span className={cn('chat-message-avatar', assistant ? 'chat-message-avatar-assistant' : 'chat-message-avatar-user')} aria-hidden="true">
             {assistant ? <Bot size={17} strokeWidth={1.8} /> : <UserRound size={17} strokeWidth={1.8} />}
@@ -50,10 +54,11 @@ function MessageItem({ message, regenerateId, dropped }: { message: ChatMessage;
           {message.status === 'failed' ? <Badge tone="error">{t('chat.failed')}</Badge> : null}
           {message.status === 'generating' ? <Badge tone="info">{t('chat.generating')}</Badge> : null}
         </header>
+        {assistant && message.task_id ? <ReplyExecution taskId={message.task_id} steps={projection?.steps ?? []} run={projection?.run} unavailable={projection?.unavailable} settled /> : null}
         <div className="chat-message-body">
         <div className="chat-message-content">
           {assistant
-            ? (message.content ? <Markdown source={message.content} /> : <p className="m-0 text-sm text-ink-secondary">{t('chat.emptyContent')}</p>)
+            ? (message.content ? <Markdown source={message.content} sources={sources} /> : <p className="m-0 text-sm text-ink-secondary">{t('chat.emptyContent')}</p>)
             : <p className="type-reading m-0 whitespace-pre-wrap wrap-anywhere">{message.content}</p>}
         </div>
         {message.assets?.map(asset => <AssetPreview key={asset.id} asset={asset} />)}
@@ -70,7 +75,7 @@ function MessageItem({ message, regenerateId, dropped }: { message: ChatMessage;
               {copyState === 'copied' ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
             </Button>
             {regenerateId ? <Button size="xs" variant="ghost" iconOnly className="chat-regenerate-button" aria-label={t('chat.regenerate')} title={t('chat.regenerate')} onClick={() => void regenerate(regenerateId)}><RotateCcw size={15} aria-hidden="true" /></Button> : null}
-            {message.task_id ? <RunInspector sessionId={message.session_id} taskId={message.task_id} messageId={message.id} /> : null}
+            {message.task_id ? <Popover label={t('chat.replyMore')} side="top" align="start" trigger={<Button type="button" size="xs" variant="ghost" iconOnly aria-label={t('chat.replyMore')}><MoreHorizontal size={15} aria-hidden="true" /></Button>} content={<RunInspector sessionId={message.session_id} taskId={message.task_id} messageId={message.id} />} /> : null}
             <span role="status" className={cn('chat-copy-status', copyState === 'failed' && 'text-status-error-text', copyState === 'copied' && 'text-status-success-text')}>{COPY_TEXT[copyState]}</span>
             <span className="chat-token-usage">{message.total_tokens === null ? t('chat.usageUnknown') : t('chat.usage', { count: formatNumber(message.total_tokens) })}</span>
           </footer>
@@ -142,6 +147,7 @@ const PHASE_TEXT: Readonly<Record<Generation['phase'], string>> = {
 function StreamingBubble({ generation }: { generation: Generation }) {
   usePageLocale();
   const [showReasoning, setShowReasoning] = useState(false);
+  const sources = useMemo(() => trustedSources(generation.activities ?? []), [generation.activities]);
   const status = generation.stopping ? t('chat.stopping') : generation.hostPhase ? chatPhaseText(generation.hostPhase) : generation.toolsMode && generation.phase === 'running' ? t('chat.waitingToolsModel') : t(PHASE_TEXT[generation.phase]);
   return (
     <li>
@@ -152,8 +158,8 @@ function StreamingBubble({ generation }: { generation: Generation }) {
           <Loading size="sm" label={status} aria-hidden="true" aria-live="off" />
         </header>
         {generation.kind === 'summary' ? <p className="text-xs text-ink-secondary">{t('chat.summarizing')}</p> : null}
-        {generation.activities?.length ? <details><summary>{t('chat.executionActivity')}</summary><RunSteps steps={generation.activities} /></details> : null}
-        {generation.text ? <Markdown source={generation.text} /> : null}
+        <ReplyExecution taskId={generation.taskId ?? generation.runId} steps={generation.activities ?? []} segments={generation.segments} proposal={generation.proposal} />
+        {generation.text ? <Markdown source={generation.text} sources={sources} /> : null}
         {generation.reasoning ? (
           <div className="mt-2">
             <Button size="sm" variant="ghost" aria-expanded={showReasoning} onClick={() => setShowReasoning(value => !value)}>{showReasoning ? t('chat.hideReasoning') : t('chat.showReasoning')}</Button>
@@ -186,6 +192,8 @@ export default function MessageList() {
   const loadLatest = useChatStore(state => state.loadLatestMessages);
 
   const live = generation && generation.sessionId === activeId ? generation : null;
+  const webOperations = live?.activities ? executionSteps(live.activities).map(webActivity).filter(activity => activity?.status === 'running') : [];
+  const webOperation = webOperations[webOperations.length - 1]?.operation;
   const hidden = live?.replacesMessageId ?? null;
   // The reply that is being generated is shown by the bubble, not by a persisted placeholder.
   const visible = messages.filter(message => message.id !== hidden && message.id !== live?.assistantMessageId);
@@ -275,7 +283,7 @@ export default function MessageList() {
 
   return (
     <>
-    <p role="status" className="sr-only">{active && live ? (live.stopping ? t('chat.stopping') : live.hostPhase ? chatPhaseText(live.hostPhase) : t(PHASE_TEXT[live.phase])) : ''}</p>
+    <p role="status" className="sr-only">{active && live ? (live.stopping ? t('chat.stopping') : live.proposal ? t('chat.awaitingTool') : webOperation ? t(webOperation === 'search' ? 'chat.webSearching' : 'chat.webReading') : live.hostPhase ? chatPhaseText(live.hostPhase) : t(PHASE_TEXT[live.phase])) : ''}</p>
     <div className="chat-timeline">
     <div ref={container} onScroll={onScroll} className="chat-message-scroll" role="region" aria-label={t('chat.messages')} aria-busy={loading}>
       <div className="chat-reading-column flex flex-col gap-3">

@@ -139,6 +139,14 @@ function reduceEvent(state: ChatState, event: ChatStreamEvent): ChatState {
       );
       return { ...state, messages: { ...state.messages, [sessionId]: list } };
     }
+    case 'model_segment':
+      return { ...state, live: { ...state.live, [event.assistant_message_id]: { content: '', reasoning: '' } } };
+    case 'phase':
+    case 'activity':
+    case 'summary_done':
+      // LAN currently grants no local/MCP tools and has no summary operation. Consume lifecycle
+      // metadata without treating it as answer text or a renderer-authorized operation.
+      return state;
     case 'delta':
     case 'reasoning_delta': {
       const current = state.live[event.assistant_message_id] ?? { content: '', reasoning: '' };

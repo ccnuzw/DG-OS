@@ -11,8 +11,8 @@ function chatFoundation(settings?: ChatFoundationSettings): AiFoundationOptions 
 }
 
 // FR-006 stages 3-5 chat store. Contract: docs/04-技术架构/当前版本/V1-接口契约.md §10.1.
-// - Every command is invoked as invoke('<name>', { input, onEvent? }) with snake_case input keys. Identity comes from the
-//   host: no user id is ever sent.
+// - Mutating/inspection inputs use { input } with snake_case input keys; get_chat_usage uses { sessionId }.
+//   Identity always comes from the host: no user id is ever sent.
 // - Each send/regenerate creates its own Channel BEFORE invoking. Events can arrive before invoke resolves, so they are
 //   buffered until the SendAck names the assistant message they belong to (B06-59).
 // - A terminal event carries the persisted message snapshot; the accumulated delta text is display-only (B06-60).
@@ -73,7 +73,28 @@ export interface ChatContextBudget {
   reserved_output_tokens: number; estimated_input_tokens: number; text_bytes: number;
   image_reserve_tokens: number; skill_bytes: number; tool_schema_bytes: number; history_bytes: number;
   dropped_turns: number; summary: ChatSummary | null; can_send: boolean; rejection: string | null;
+  can_summarize: boolean; summary_unavailable_reason: string | null;
 }
+export interface ChatUsageLatest {
+  model_id: string; total_tokens: number | null; input_tokens: number | null; output_tokens: number | null;
+  cache_read_tokens: number | null; duration_ms: number | null; created_at: number | null; partial: boolean;
+}
+export interface ChatUsageSummary {
+  total_tokens: number | null; input_tokens: number | null; output_tokens: number | null;
+  cache_read_tokens: number | null; cache_write_tokens: number | null; reasoning_tokens: number | null;
+  duration_ms: number | null; cache_hit_rate: number | null;
+  call_count: number; reported_count: number; pending_count: number; partial: boolean; legacy: boolean;
+  coverage: { input: number; output: number; cache_read: number; cache_write: number; reasoning: number; duration: number; total: number };
+  latest: ChatUsageLatest | null;
+}
+export interface ChatWebAccess { search: boolean; fetch: boolean }
+export interface ChatWebStatus { backend: 'brave'; search_configured: boolean; fetch_available: boolean }
+export interface ChatWebSource { id: string; url: string; title: string; excerpt: string; retrieved_at: number; kind: 'search_result' | 'web_page'; truncated: boolean }
+export interface ChatWebActivity { id: string; operation: 'search' | 'fetch'; status: 'running' | 'completed' | 'failed'; query?: string; url?: string; sources: ChatWebSource[]; error?: string; truncated: boolean }
+export interface ChatModelSegment { round: number; content: string; truncated?: boolean }
+export interface ChatRunProjection { sessionId: string; messageId: string; steps: ChatRunStep[]; loading: boolean; loaded: boolean; unavailable: boolean; run: ChatRun | null }
+export const noWebAccess = (): ChatWebAccess => ({ search: false, fetch: false });
+
 export interface ChatRunStep {
   id: string; ordinal: number; kind: string; phase: string; status: string; dispatched: boolean;
   result_unknown: boolean; receipt: Record<string, unknown> | null; created_at: number; updated_at: number;
@@ -82,20 +103,26 @@ export interface ChatRun {
   task_id: string; session_id: string; assistant_message_id: string; source_run_id: string | null;
   status: string; partial_content: string; dispatched: boolean; result_unknown: boolean;
   audit_warning: string | null; total_tokens: number | null; steps: ChatRunStep[]; created_at: number; updated_at: number;
+  live_snapshot?: {
+    seq: number; round: number; text: string; reasoning: string; phase: string | null;
+    proposal: ChatToolProposal | null; activities: ChatRunStep[]; terminal: ChatStreamEvent | null;
+  } | null;
 }
 export interface ChatTerminalEvidence { dispatched: boolean; result_unknown: boolean; audit_warning: string | null }
-export type ChatStreamEvent =
+export type ChatStreamPayload =
   | { kind: 'started'; task_id: string; assistant_message_id: string }
   | { kind: 'delta'; assistant_message_id: string; text: string }
   | { kind: 'reasoning_delta'; assistant_message_id: string; text: string }
   | { kind: 'phase'; task_id: string; assistant_message_id: string; phase: string }
   | { kind: 'activity'; task_id: string; assistant_message_id: string; step: ChatRunStep }
+  | { kind: 'model_segment'; task_id: string; assistant_message_id: string; round: number }
   | ({ kind: 'summary_done'; task_id: string; assistant_message_id: string; summary: ChatSummary } & ChatTerminalEvidence)
   | { kind: 'tool_proposal'; assistant_message_id: string; proposal: ChatToolProposal }
   | ({ kind: 'done'; message: ChatMessage } & Partial<ChatTerminalEvidence>)
   | { kind: 'error'; assistant_message_id: string; message: ChatMessage | null;
       error_code: string; provider_code: number | null;
       result_unknown: boolean; regeneration_discarded: boolean; dispatched?: boolean; audit_warning?: string | null };
+export type ChatStreamEvent = ChatStreamPayload & { seq: number };
 
 interface CommandResponse<T> {
   success: boolean; data?: T; error?: { code?: number; message?: string; detail?: unknown };
@@ -129,9 +156,29 @@ export class ChatCommandError extends Error {
 
 const CHAT_ERROR_CODES = new Set([1006001, 1006002, 1006005, 1006006, 1006007, 1006008, 1006009, 1006010, 1006011, 1006012, 1006013, 1006014, 1006015, 1006016, 1006017]);
 
-/** Fixed Chinese text for a chat error. The host's own message text is never rendered. */
+/** Render fixed localized explanations, never host-provided message text or credentials. */
+export function webErrorText(reason: string): string {
+  switch (reason) {
+    case 'web_search_key_required': return t('chat.webKeyRequired');
+    case 'web_search_key_rejected': case 'web_api_key_invalid': return t('chat.webKeyRejected');
+    case 'web_html_complexity_limit': return t('chat.webHtmlComplexityLimit');
+    case 'web_url_not_allowed': case 'web_address_not_public': return t('chat.webUrlBlocked');
+    case 'web_content_type_not_allowed': case 'web_content_encoding_not_allowed': case 'web_page_has_no_readable_text': return t('chat.webPageUnsupported');
+    case 'web_timeout': return t('chat.webTimedOut');
+    case 'web_body_limit': return t('chat.webPageTooLarge');
+    case 'web_call_limit': case 'web_search_limit': case 'web_fetch_limit': case 'web_context_budget_exhausted': return t('chat.webBudgetReached');
+    case 'web_search_rate_limited': return t('chat.webRateLimited');
+    case 'web_cancelled': return t('chat.webCancelled');
+    case 'web_configuration_changed': case 'web_account_changed': return t('chat.webSettingsChanged');
+    default: return t('chat.webUnavailable');
+  }
+}
+
 export function chatErrorText(error: unknown): string {
   const code = error instanceof ChatCommandError ? error.code : extractErrorCode(error);
+  const reason = error instanceof ChatCommandError && error.detail && typeof error.detail === 'object' && 'reason' in error.detail ? error.detail.reason : null;
+  if (typeof reason === 'string' && reason.startsWith('web_')) return webErrorText(reason);
+  if (code === 1006022) return t('chat.webUnavailable');
   if (code === null) return t('chat.operationFailed');
   if (CHAT_ERROR_CODES.has(code)) return t(`chat.error${code}`);
   const info = lookupError(code);
@@ -165,6 +212,7 @@ export interface ChatDeps {
 export type GenerationPhase = 'sending' | 'running' | 'awaiting_tool' | 'tool_running';
 export interface Generation {
   runId: string;
+  taskId?: string;
   sessionId: string;
   kind: 'send' | 'regenerate' | 'summary' | 'continue';
   phase: GenerationPhase;
@@ -181,6 +229,9 @@ export interface Generation {
   replacesMessageId: string | null;
   hostPhase?: string;
   activities?: ChatRunStep[];
+  segments?: ChatModelSegment[];
+  round?: number;
+  lastSeq?: number;
 }
 export interface ChatNotice { tone: 'error' | 'warning' | 'info'; text: string }
 export type PendingDestination =
@@ -220,9 +271,14 @@ export interface ChatState {
   sessionUnknown: Record<string, boolean>;
   terminalEvidence: Record<string, ChatTerminalEvidence>;
   sessionSummaries: Record<string, ChatSummary>;
+  sessionUsageRevisions: Record<string, number>;
   sessionSkillAccess: Record<string, ChatSkillAccess>;
   sessionFoundation: Record<string, ChatFoundationSettings>;
   sessionResources: Record<string, AiResource[]>;
+  sessionWebAccess: Record<string, ChatWebAccess>;
+  sessionContinuation: Record<string, { taskId: string; messageId: string }>;
+  replyRuns: Record<string, ChatRunProjection>;
+  replyExpanded: Record<string, boolean>;
   runIntentDrafts: Record<string, string>;
   sessionAssets: Record<string, ChatAsset[]>;
   sessionScrollTop: Record<string, number>;
@@ -264,7 +320,16 @@ export interface ChatState {
   importResource: (sessionId: string, input: AiResourceImport) => Promise<AiResource | null>;
   deleteResource: (sessionId: string, resourceId: string) => Promise<void>;
   skillCatalog: (query: string) => Promise<{ items: ChatSkillEntry[]; recommendations: ChatSkillRecommendation[] } | null>;
+  setWebAccess: (sessionId: string, access: ChatWebAccess) => void;
+  webStatus: (sessionId: string) => Promise<ChatWebStatus | null>;
+  configureWeb: (sessionId: string, apiKey?: string, remove?: boolean) => Promise<ChatWebStatus | null>;
+  loadReplyRun: (sessionId: string, taskId: string, messageId: string, refresh?: boolean) => Promise<void>;
+  retainReplyRun: (taskId: string) => () => void;
+  setReplyExpanded: (taskId: string, expanded: boolean) => void;
+  stageContinuation: (run: ChatRun) => void;
+  clearContinuation: (sessionId: string) => void;
   inspectContext: (sessionId: string, content: string, tools?: ChatToolSelection[], assetIds?: string[], foundation?: AiFoundationOptions, skillAccess?: Partial<ChatSkillAccess>) => Promise<ChatContextBudget | null>;
+  inspectUsage: (sessionId: string) => Promise<ChatUsageSummary | null>;
   summarize: (acceptDestination?: string) => Promise<SendOutcome>;
   listRuns: (sessionId: string) => Promise<ChatRun[] | null>;
   inspectRun: (taskId: string) => Promise<ChatRun | null>;
@@ -328,7 +393,8 @@ type Data = Omit<ChatState, 'loadSessions' | 'loadMoreSessions' | 'setSearchQuer
   | 'selectSession' | 'closeSession' | 'loadLatestMessages' | 'loadOlderMessages' | 'setDraft' | 'setSessionTargetDraft' | 'setSessionTools' | 'setSessionAssets' | 'setSessionScrollTop'
   | 'renameSession' | 'deleteSession' | 'updateTarget' | 'send' | 'regenerate' | 'stop' | 'stopSession' | 'cancelAll' | 'cancelOnLeave'
   | 'decideTool' | 'confirmDestination' | 'dismissDestination' | 'dismissNotice' | 'reset'
-  | 'setRememberTools' | 'inspectContext' | 'summarize' | 'listRuns' | 'inspectRun' | 'continueRun' | 'setSkillAccess' | 'skillCatalog' | 'setRunIntent' | 'resolveRunStep' | 'setFoundation' | 'importResource' | 'deleteResource'>;
+  | 'setRememberTools' | 'inspectContext' | 'inspectUsage' | 'summarize' | 'listRuns' | 'inspectRun' | 'continueRun' | 'setSkillAccess' | 'skillCatalog' | 'setRunIntent' | 'resolveRunStep' | 'setFoundation' | 'importResource' | 'deleteResource'
+  | 'setWebAccess' | 'webStatus' | 'configureWeb' | 'loadReplyRun' | 'retainReplyRun' | 'stageContinuation' | 'clearContinuation' | 'setReplyExpanded'>;
 
 const initialData = (): Data => ({
   sessions: [], sessionsCursor: null, sessionsCapped: false, sessionsLoading: false, sessionsLoaded: false, sessionsError: null,
@@ -336,7 +402,9 @@ const initialData = (): Data => ({
   sessionNotices: {}, sessionActionErrors: {}, sessionActionCodes: {}, sessionPendingDestinations: {},
   openSessionIds: [], activeSessionId: null, sessionViews: {}, sessionDrafts: {}, sessionTargetDrafts: {}, sessionTools: {}, sessionAssets: {}, sessionScrollTop: {}, generations: {},
   sessionRememberTools: {}, sessionUnknown: {}, terminalEvidence: {}, sessionSummaries: {},
+  sessionUsageRevisions: {},
   sessionSkillAccess: {}, sessionFoundation: {}, sessionResources: {},
+  sessionWebAccess: {}, sessionContinuation: {}, replyRuns: {}, replyExpanded: {},
   runIntentDrafts: {},
   preparingSessionId: null,
   activeSession: null, activeStale: false, messages: [], olderCursor: null, newerTrimmed: false,
@@ -389,6 +457,10 @@ interface Run {
   assistantId: string | null;
   buffer: ChatStreamEvent[];
   stopRequested: boolean;
+  lastSeq: number;
+  generatedBytes: number;
+  reconciling?: boolean;
+  recoveryBuffer?: ChatStreamEvent[];
   cancellationError?: string;
 }
 
@@ -407,9 +479,15 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
   const uncertainRuns = new Map<string, Set<string>>();
   let sessionsToken = 0;
   const messageTokens = new Map<string, number>();
+  const usageTokens = new Map<string, number>();
   let searchToken = 0;
   let searchTimer: number | undefined;
   let accountEpoch = 0;
+  const replyReads = new Map<string, Promise<void>>();
+  const replyRetainers = new Map<string, number>();
+  const replyRevisions = new Map<string, number>();
+  let replyReadCount = 0;
+  const replyReadQueue: (() => void)[] = [];
 
   async function call<T>(command: string, args: Record<string, unknown>): Promise<T> {
     let response: CommandResponse<T>;
@@ -488,6 +566,60 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
       }
     }
 
+    function trimReplies(projections: Record<string, ChatRunProjection>) {
+      const entries = Object.entries(projections);
+      const retained = entries.filter(([id]) => replyRetainers.has(id));
+      const available = Math.max(0, 24 - retained.length);
+      const recent = entries.filter(([id]) => !replyRetainers.has(id));
+      return Object.fromEntries([...recent.slice(Math.max(0, recent.length - available)), ...retained]);
+    }
+
+    function cacheReply(taskId: string, projection: ChatRunProjection) {
+      set(state => ({ replyRuns: trimReplies({ ...Object.fromEntries(Object.entries(state.replyRuns).filter(([id]) => id !== taskId)), [taskId]: projection }) }));
+    }
+
+    async function reconcileGap(r: Run) {
+      if (r.reconciling || !r.assistantId) return;
+      r.reconciling = true;
+      try {
+        const snapshot = await get().inspectRun(r.taskId);
+        if (runs.get(r.sessionId) !== r || snapshot?.session_id !== r.sessionId || snapshot.assistant_message_id !== r.assistantId) return;
+        const live = snapshot.live_snapshot;
+        if (live?.terminal) {
+          r.reconciling = false;
+          r.recoveryBuffer = [];
+          applyEvent(r, live.terminal);
+          return;
+        }
+        if (!live) {
+          if (['completed', 'succeeded', 'failed', 'cancelled', 'interrupted'].includes(snapshot.status)) finalize(r, null, null, snapshot);
+          return; // A persisted checkpoint has no stream watermark and cannot be replayed safely.
+        }
+        if (!Number.isSafeInteger(live.seq) || live.seq < r.lastSeq) return;
+        r.lastSeq = live.seq;
+        r.generatedBytes = Math.max(r.generatedBytes, utf8Bytes(live.text) + utf8Bytes(live.reasoning));
+        patchGeneration(r, g => ({
+          lastSeq: live.seq, round: live.round, text: live.text, reasoning: live.reasoning,
+          activities: live.activities, hostPhase: live.phase ?? undefined,
+          proposal: live.proposal, proposalBusy: false, phase: live.proposal ? 'awaiting_tool' : 'running',
+          segments: g.segments?.filter(segment => segment.round < live.round),
+        }));
+        const buffered = (r.recoveryBuffer ?? []).filter(event => event.seq > live.seq);
+        r.recoveryBuffer = [];
+        r.reconciling = false;
+        for (let index = 0; index < buffered.length; index++) {
+          if (buffered[index].seq > r.lastSeq + 1) {
+            // Another real gap waits for a new event; never poll an unchanged snapshot forever.
+            r.recoveryBuffer = buffered.slice(index);
+            break;
+          }
+          applyEvent(r, buffered[index]);
+        }
+      } catch {
+        // Keep buffered facts until another event permits a read-only recovery or a terminal snapshot arrives.
+      } finally { r.reconciling = false; }
+    }
+
     function patchGeneration(r: Run, patch: Partial<Generation> | ((g: Generation) => Partial<Generation>)) {
       if (runs.get(r.sessionId) !== r) return;
       set(state => {
@@ -532,6 +664,7 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
       }
       if (evidence?.audit_warning) notice = { tone: 'warning', text: `${notice?.text ?? ''} ${t('chat.auditWarning')}`.trim() };
       let reload = false;
+      set(state => ({ sessionUsageRevisions: { ...state.sessionUsageRevisions, [r.sessionId]: (state.sessionUsageRevisions[r.sessionId] ?? 0) + 1 } }));
       set(state => {
         if (r.cancellationError && state.sessionActionErrors[r.sessionId] === r.cancellationError) {
           state = { ...state, sessionActionErrors: { ...state.sessionActionErrors, [r.sessionId]: null } };
@@ -548,6 +681,12 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
         const next = { ...state, sessionViews: { ...state.sessionViews, [r.sessionId]: { ...view, messages } }, generations: Object.fromEntries(Object.entries(state.generations).filter(([id]) => id !== r.sessionId)), sessionNotices: { ...state.sessionNotices, [r.sessionId]: notice }, sessionUnknown: { ...state.sessionUnknown, [r.sessionId]: runUncertainty(r.sessionId, r.taskId, terminal.result_unknown || !!terminal.audit_warning) }, terminalEvidence: { ...state.terminalEvidence, [r.assistantId ?? r.id]: terminal } };
         return { ...next, ...projectActive(next, state.activeSessionId) };
       });
+      if (generation && r.assistantId && snapshot?.id === r.assistantId) {
+        const now = Math.floor(Date.now() / 1000);
+        const segments: ChatRunStep[] = (generation.segments ?? []).filter(segment => !generation.activities?.some(step => step.kind === 'model_segment' && step.receipt?.round === segment.round)).map(segment => ({ id: `intermediate:${segment.round}`, ordinal: segment.round, kind: 'model_segment', phase: 'processing_result', status: 'intermediate', dispatched: true, result_unknown: false, receipt: { ...segment }, created_at: now, updated_at: now }));
+        cacheReply(r.taskId, { sessionId: r.sessionId, messageId: r.assistantId, steps: [...segments, ...(generation.activities ?? [])], run: null, loaded: false, loading: false, unavailable: false });
+        void get().loadReplyRun(r.sessionId, r.taskId, r.assistantId, true);
+      }
       if (reload && get().activeSessionId === r.sessionId) void get().loadLatestMessages();
       void refreshSessions();
     }
@@ -557,10 +696,28 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
       const id = eventAssistantId(event);
       if (id !== null && r.assistantId !== null && id !== r.assistantId) return;
       if ('task_id' in event && event.task_id !== r.taskId) return;
+      if (!Number.isSafeInteger(event.seq) || event.seq <= r.lastSeq) return;
+      const terminal = ['done', 'error', 'summary_done'].includes(event.kind);
+      if (!terminal && (r.reconciling || r.recoveryBuffer?.length || event.seq > r.lastSeq + 1)) {
+        const buffered = r.recoveryBuffer ?? (r.recoveryBuffer = []);
+        if (event.seq > (buffered[buffered.length - 1]?.seq ?? r.lastSeq)) buffered.push(event);
+        if (!r.reconciling) void reconcileGap(r);
+        return;
+      }
+      r.lastSeq = event.seq;
+      patchGeneration(r, { lastSeq: event.seq });
       switch (event.kind) {
         case 'started': return;
-        case 'delta': return patchGeneration(r, g => ({ text: g.text + event.text }));
-        case 'reasoning_delta': return patchGeneration(r, g => ({ reasoning: g.reasoning + event.text }));
+        case 'delta':
+        case 'reasoning_delta': {
+          const bytes = new TextEncoder().encode(event.text);
+          let end = Math.min(bytes.length, Math.max(0, 65536 - r.generatedBytes));
+          while (end > 0 && end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--;
+          const text = end === bytes.length ? event.text : new TextDecoder().decode(bytes.subarray(0, end));
+          r.generatedBytes += end;
+          return patchGeneration(r, g => event.kind === 'delta' ? { text: g.text + text } : { reasoning: g.reasoning + text });
+        }
+        case 'model_segment': return patchGeneration(r, g => event.round <= (g.round ?? 0) ? {} : ({ round: event.round, segments: g.text ? [...(g.segments ?? []), { round: g.round ?? 1, content: g.text }] : g.segments, text: '', reasoning: '' }));
         case 'phase': return patchGeneration(r, { hostPhase: event.phase });
         case 'activity': return patchGeneration(r, g => ({ activities: [...(g.activities ?? []).filter(step => step.id !== event.step.id), event.step].sort((a, b) => a.ordinal - b.ordinal) }));
         case 'summary_done': set(state => ({ sessionSummaries: { ...state.sessionSummaries, [r.sessionId]: event.summary } })); return finalize(r, null, null, event);
@@ -584,6 +741,7 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
       r.taskId = ack.task_id || r.taskId;
       if (ack.replayed) {
         runs.delete(r.sessionId);
+        set(state => ({ sessionUsageRevisions: { ...state.sessionUsageRevisions, [r.sessionId]: (state.sessionUsageRevisions[r.sessionId] ?? 0) + 1 } }));
         set(state => {
           const next = { ...state, generations: Object.fromEntries(Object.entries(state.generations).filter(([id]) => id !== r.sessionId)) };
           return { ...next, ...projectActive(next, state.activeSessionId) };
@@ -599,12 +757,17 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
           messages = [...messages, { id: ack.user_message_id, session_id: r.sessionId, seq: (messages[messages.length - 1]?.seq ?? 0) + 1, role: 'user', content: r.content, assets: r.assets, status: 'completed', task_id: ack.task_id, finish_reason: null, error_code: null, total_tokens: null, result_unknown: false, created_at: now, updated_at: now }];
         }
         const current = state.generations[r.sessionId];
-        const generation = current?.runId === r.id ? { ...current, assistantMessageId: ack.assistant_message_id, phase: current.phase === 'sending' ? 'running' as const : current.phase } : current;
+        const generation = current?.runId === r.id ? { ...current, taskId: ack.task_id, assistantMessageId: ack.assistant_message_id, phase: current.phase === 'sending' ? 'running' as const : current.phase } : current;
         const sessionDrafts = r.kind === 'send' && state.sessionDrafts[r.sessionId] === r.content ? { ...state.sessionDrafts, [r.sessionId]: '' } : state.sessionDrafts;
         const sessionTools = r.kind === 'send' && !state.sessionRememberTools[r.sessionId] ? { ...state.sessionTools, [r.sessionId]: [] } : state.sessionTools;
         const next = { ...state, sessionDrafts, sessionTools, sessionViews: { ...state.sessionViews, [r.sessionId]: { ...view, messages, droppedTurns: ack.dropped_turns > 0 ? { ...view.droppedTurns, [ack.assistant_message_id]: ack.dropped_turns } : view.droppedTurns } }, generations: generation ? { ...state.generations, [r.sessionId]: generation } : state.generations, lastSent: r.kind === 'send' ? { seq: state.lastSent.seq + 1, sessionId: r.sessionId } : state.lastSent };
         return { ...next, ...projectActive(next, state.activeSessionId) };
       });
+      if (r.kind !== 'summary') set(state => ({ sessionWebAccess: { ...state.sessionWebAccess, [r.sessionId]: noWebAccess() } }));
+      if (r.kind === 'continue') {
+        get().clearContinuation(r.sessionId);
+        if (get().sessionDrafts[r.sessionId] === r.content) get().setDraft(r.sessionId, '');
+      }
       if (r.kind === 'send') set(state => ({ sessionAssets: { ...state.sessionAssets, [r.sessionId]: (state.sessionAssets[r.sessionId] ?? []).filter(asset => !r.assets.some(sent => sent.id === asset.id)) } }));
       for (const event of r.buffer.splice(0)) applyEvent(r, event);
       if (r.stopRequested && runs.get(r.sessionId) === r) void cancelRun(r);
@@ -613,7 +776,7 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
     async function start(kind: Generation['kind'], sessionId: string, command: string, input: Record<string, unknown>, requestId: string, content: string, toolsMode: boolean, replacesMessageId: string | null, pending: () => PendingDestination): Promise<SendOutcome> {
       const epoch = accountEpoch;
       const assets = kind === 'send' ? (get().sessionAssets[sessionId] ?? []).filter(asset => (input.asset_ids as string[] | undefined)?.includes(asset.id)) : [];
-      const r: Run = { id: requestId, sessionId, kind, content, assets, taskId: requestId, acked: false, assistantId: null, buffer: [], stopRequested: false };
+      const r: Run = { id: requestId, sessionId, kind, content, assets, taskId: requestId, acked: false, assistantId: null, buffer: [], stopRequested: false, lastSeq: 0, generatedBytes: 0 };
       const channel = deps.createChannel();
       channel.onmessage = event => handleEvent(r, event);
       runs.set(sessionId, r);
@@ -631,7 +794,7 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
         if (runs.get(sessionId) === r) {
           runs.delete(sessionId);
           set(state => {
-            const next = { ...state, generations: Object.fromEntries(Object.entries(state.generations).filter(([id]) => id !== sessionId)) };
+            const next = { ...state, sessionUsageRevisions: { ...state.sessionUsageRevisions, [sessionId]: (state.sessionUsageRevisions[sessionId] ?? 0) + 1 }, generations: Object.fromEntries(Object.entries(state.generations).filter(([id]) => id !== sessionId)) };
             return { ...next, ...projectActive(next, state.activeSessionId) };
           });
         }
@@ -644,7 +807,9 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
           return 'needs_confirmation';
         }
         const text = code === null ? t('chat.requestUnconfirmed') : chatErrorText(error);
-        set(state => ({ sessionActionErrors: { ...state.sessionActionErrors, [sessionId]: text }, sessionActionCodes: { ...state.sessionActionCodes, [sessionId]: code }, ...(state.activeSessionId === sessionId ? { actionError: text, actionCode: code } : {}) }));
+        const reason = error instanceof ChatCommandError && error.detail && typeof error.detail === 'object' && 'reason' in error.detail ? error.detail.reason : null;
+        const actionCode = code === 1006022 || (typeof reason === 'string' && reason.startsWith('web_')) ? null : code;
+        set(state => ({ sessionActionErrors: { ...state.sessionActionErrors, [sessionId]: text }, sessionActionCodes: { ...state.sessionActionCodes, [sessionId]: actionCode }, ...(state.activeSessionId === sessionId ? { actionError: text, actionCode } : {}) }));
         if (code === null) set(state => ({ sessionUnknown: { ...state.sessionUnknown, [sessionId]: runUncertainty(sessionId, r.taskId, true) } }));
         if (code === 1006001) markStale(sessionId);
         return 'rejected';
@@ -758,6 +923,65 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
         if (epoch !== accountEpoch) return;
         set(state => ({ sessionResources: { ...state.sessionResources, [sessionId]: (state.sessionResources[sessionId] ?? []).filter(resource => resource.id !== resourceId) }, sessionFoundation: { ...state.sessionFoundation, [sessionId]: { output_schema: state.sessionFoundation[sessionId]?.output_schema ?? null, context_refs: (state.sessionFoundation[sessionId]?.context_refs ?? []).filter(ref => ref.resource_id !== resourceId) } } }));
       },
+      setWebAccess(sessionId, access) { set(state => ({ sessionWebAccess: { ...state.sessionWebAccess, [sessionId]: access } })); },
+      setReplyExpanded(taskId, expanded) { set(state => state.replyExpanded[taskId] === expanded ? {} : ({ replyExpanded: Object.fromEntries([...Object.entries(state.replyExpanded).filter(([id]) => id !== taskId), [taskId, expanded]].slice(-200)) })); },
+      retainReplyRun(taskId) {
+        const epoch = accountEpoch;
+        replyRetainers.set(taskId, (replyRetainers.get(taskId) ?? 0) + 1);
+        let released = false;
+        return () => {
+          if (released || epoch !== accountEpoch) return;
+          released = true;
+          const count = (replyRetainers.get(taskId) ?? 1) - 1;
+          if (count) replyRetainers.set(taskId, count); else replyRetainers.delete(taskId);
+          set(state => ({ replyRuns: trimReplies(state.replyRuns) }));
+        };
+      },
+      async webStatus(sessionId) {
+        const epoch = accountEpoch;
+        const status = await call<ChatWebStatus>('get_chat_web_status', { input: { session_id: sessionId } });
+        return epoch === accountEpoch && get().activeSessionId === sessionId ? status : null;
+      },
+      async configureWeb(sessionId, apiKey, remove = false) {
+        const epoch = accountEpoch;
+        if (runs.size || preparation || get().activeSessionId !== sessionId || get().activeStale) return null;
+        const status = await call<ChatWebStatus>('configure_chat_web', { input: { session_id: sessionId, ...(apiKey ? { api_key: apiKey } : {}), remove } });
+        return epoch === accountEpoch && get().activeSessionId === sessionId ? status : null;
+      },
+      async loadReplyRun(sessionId, taskId, messageId, refresh = false) {
+        const epoch = accountEpoch;
+        const existing = get().replyRuns[taskId];
+        if (!refresh && existing?.sessionId === sessionId && existing.messageId === messageId && existing.loaded) return;
+        const inFlight = replyReads.get(taskId);
+        if (inFlight) { await inFlight; if (!refresh || runs.has(sessionId)) return; if (replyReads.get(taskId) === inFlight) replyReads.delete(taskId); }
+        if (epoch !== accountEpoch || get().activeSessionId !== sessionId) return;
+        const work = (async () => {
+          if (replyReadCount >= 2) await new Promise<void>(resolve => replyReadQueue.push(resolve));
+          else replyReadCount++;
+          const revision = replyRevisions.get(taskId) ?? 0;
+          try {
+            if (epoch !== accountEpoch || get().activeSessionId !== sessionId) return;
+            cacheReply(taskId, { sessionId, messageId, steps: existing?.steps ?? [], run: existing?.run ?? null, loading: true, loaded: false, unavailable: false });
+            const run = await call<ChatRun>('get_chat_run', { input: { task_id: taskId } });
+            if (epoch !== accountEpoch || get().activeSessionId !== sessionId || revision !== (replyRevisions.get(taskId) ?? 0)) return;
+            if (run.task_id !== taskId || run.session_id !== sessionId || run.assistant_message_id !== messageId) throw new ChatCommandError(null);
+            reconcileRuns(sessionId, [run]);
+            cacheReply(taskId, { sessionId, messageId, steps: run.steps, run, loading: false, loaded: true, unavailable: false });
+          } catch {
+            if (epoch === accountEpoch && get().activeSessionId === sessionId && revision === (replyRevisions.get(taskId) ?? 0)) cacheReply(taskId, { sessionId, messageId, steps: existing?.steps ?? [], run: null, loading: false, loaded: true, unavailable: true });
+          } finally { const next = replyReadQueue.shift(); if (next) next(); else replyReadCount--; }
+        })();
+        replyReads.set(taskId, work);
+        try { await work; } finally { if (replyReads.get(taskId) === work) replyReads.delete(taskId); }
+      },
+      stageContinuation(run) {
+        const sessionId = get().activeSessionId;
+        if (sessionId !== run.session_id || get().activeStale || runs.size || preparation || run.audit_warning || ['running', 'generating', 'pending'].includes(run.status) || run.steps.some(step => step.kind === 'tool' && (step.result_unknown || step.status === 'dispatched' || (step.dispatched && !step.receipt)))) return;
+        cacheReply(run.task_id, { sessionId: run.session_id, messageId: run.assistant_message_id, steps: run.steps, run, loaded: true, loading: false, unavailable: false });
+        set(state => ({ sessionContinuation: { ...state.sessionContinuation, [sessionId]: { taskId: run.task_id, messageId: run.assistant_message_id } } }));
+        requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.chat-composer textarea')?.focus({ preventScroll: true }));
+      },
+      clearContinuation(sessionId) { set(state => ({ sessionContinuation: Object.fromEntries(Object.entries(state.sessionContinuation).filter(([id]) => id !== sessionId)) })); },
       setRunIntent(taskId, intent) { set(state => ({ runIntentDrafts: { ...state.runIntentDrafts, [taskId]: intent } })); },
       async skillCatalog(query) {
         const epoch = accountEpoch;
@@ -766,8 +990,19 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
       },
       async inspectContext(sessionId, content, tools = [], assetIds, foundation, skillAccess) {
         const epoch = accountEpoch;
-        const budget = await call<ChatContextBudget>('inspect_chat_context', { input: { session_id: sessionId, content, asset_ids: assetIds ?? (get().sessionAssets[sessionId] ?? []).map(asset => asset.id), tools, ...skillAccessWire(skillAccess ?? get().sessionSkillAccess[sessionId]), foundation: foundation ?? chatFoundation(get().sessionFoundation[sessionId]) } });
-        return epoch === accountEpoch ? budget : null;
+        const target = get().sessions.find(session => session.id === sessionId);
+        const budget = await call<ChatContextBudget>('inspect_chat_context', { input: { session_id: sessionId, content, asset_ids: assetIds ?? (get().sessionAssets[sessionId] ?? []).map(asset => asset.id), tools, web_access: get().sessionWebAccess[sessionId] ?? noWebAccess(), ...skillAccessWire(skillAccess ?? get().sessionSkillAccess[sessionId]), foundation: foundation ?? chatFoundation(get().sessionFoundation[sessionId]) } });
+        const current = get().sessions.find(session => session.id === sessionId);
+        return epoch === accountEpoch && get().activeSessionId === sessionId && target?.provider_id === current?.provider_id && target?.model_id === current?.model_id && budget.model_id === current?.model_id ? budget : null;
+      },
+      async inspectUsage(sessionId) {
+        const epoch = accountEpoch;
+        const ticket = (usageTokens.get(sessionId) ?? 0) + 1;
+        usageTokens.set(sessionId, ticket);
+        const target = get().sessions.find(session => session.id === sessionId);
+        const usage = await call<ChatUsageSummary>('get_chat_usage', { sessionId });
+        const current = get().sessions.find(session => session.id === sessionId);
+        return epoch === accountEpoch && ticket === usageTokens.get(sessionId) && get().activeSessionId === sessionId && target?.provider_id === current?.provider_id && target?.model_id === current?.model_id ? usage : null;
       },
       async summarize(acceptDestination) {
         const sessionId = get().activeSessionId;
@@ -784,19 +1019,27 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
       },
       async inspectRun(taskId) {
         const epoch = accountEpoch;
+        const revision = replyRevisions.get(taskId) ?? 0;
         const run = await call<ChatRun>('get_chat_run', { input: { task_id: taskId } });
         if (epoch !== accountEpoch || run.task_id !== taskId) return null;
+        if (revision !== (replyRevisions.get(taskId) ?? 0)) return get().replyRuns[taskId]?.run ?? null;
         reconcileRuns(run.session_id, [run]);
+        cacheReply(taskId, { sessionId: run.session_id, messageId: run.assistant_message_id, steps: run.steps, run, loading: false, loaded: true, unavailable: false });
         return run;
       },
       async resolveRunStep(taskId, stepId, outcome, note) {
         const epoch = accountEpoch;
         if (!note.trim() || utf8Bytes(note) > 2048 || runs.size) return null;
         const run = await call<ChatRun>('resolve_chat_run_step', { input: { task_id: taskId, step_id: stepId, confirmed: true, outcome, note } });
-        if (epoch !== accountEpoch) return null;
+        if (epoch !== accountEpoch || run.task_id !== taskId) return null;
+        replyRevisions.set(taskId, (replyRevisions.get(taskId) ?? 0) + 1);
+        const draftKey = `resolution:${taskId}:${stepId}`;
+        set(state => state.runIntentDrafts[draftKey] !== note ? {} : ({ runIntentDrafts: Object.fromEntries(Object.entries(state.runIntentDrafts).filter(([key]) => key !== draftKey)) }));
+        cacheReply(taskId, { sessionId: run.session_id, messageId: run.assistant_message_id, steps: run.steps, run, loading: false, loaded: true, unavailable: false });
+        reconcileRuns(run.session_id, [run]);
         const page = await call<{ items: ChatRun[] }>('list_chat_runs', { input: { session_id: run.session_id } });
         if (epoch !== accountEpoch) return null;
-        reconcileRuns(run.session_id, [run, ...page.items]);
+        reconcileRuns(run.session_id, [...page.items.filter(item => item.task_id !== taskId), run]);
         if (get().activeSessionId === run.session_id) await get().loadLatestMessages();
         return run;
       },
@@ -811,14 +1054,14 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
           if (!source || epoch !== accountEpoch || preparation !== token || get().activeSessionId !== sessionId || source.session_id !== sessionId || runs.size) return 'rejected';
           if (source.audit_warning || source.steps.some(step => step.kind === 'tool' && (step.result_unknown || step.status === 'dispatched' || (step.dispatched && !step.receipt))) || ['running', 'generating', 'pending'].includes(source.status)) { set({ actionError: t('chat.continueBlocked') }); return 'rejected'; }
           const requestId = deps.newRequestId();
-          return await start('continue', sessionId, 'continue_chat_run', { source_task_id: sourceTaskId, client_request_id: requestId, intent, tools, ...skillAccessWire(get().sessionSkillAccess[sessionId]), foundation: chatFoundation(get().sessionFoundation[sessionId]), ...(acceptDestination ? { accept_destination: acceptDestination } : {}) }, requestId, intent, tools.length > 0, null, () => ({ kind: 'continue', sessionId, sourceTaskId, intent, tools, fingerprint: '', host: '' }));
+          return await start('continue', sessionId, 'continue_chat_run', { source_task_id: sourceTaskId, client_request_id: requestId, intent, tools, web_access: get().sessionWebAccess[sessionId] ?? noWebAccess(), ...skillAccessWire(get().sessionSkillAccess[sessionId]), foundation: chatFoundation(get().sessionFoundation[sessionId]), ...(acceptDestination ? { accept_destination: acceptDestination } : {}) }, requestId, intent, tools.length > 0, null, () => ({ kind: 'continue', sessionId, sourceTaskId, intent, tools, fingerprint: '', host: '' }));
         } catch (error) { if (epoch === accountEpoch && get().activeSessionId === sessionId) set({ actionError: chatErrorText(error) }); return 'rejected'; }
         finally { releasePreparation(token); }
       },
       setSessionAssets(sessionId, assets) { set(state => ({ sessionAssets: { ...state.sessionAssets, [sessionId]: assets } })); },
       setSessionScrollTop(sessionId, top) { set(state => ({ sessionScrollTop: { ...state.sessionScrollTop, [sessionId]: top } })); },
       async renameSession(sessionId, title) { const token = accountEpoch; const trimmed = title.trim(); if (charCount(trimmed) < 1 || charCount(trimmed) > TITLE_MAX_CHARS) return chatErrorText(new ChatCommandError(1006007)); try { const value = await call<ChatSession>('rename_chat_session', { input: { session_id: sessionId, title: trimmed } }); if (token !== accountEpoch) return null; replaceSession(value); return null; } catch (error) { if (token === accountEpoch && error instanceof ChatCommandError && error.code === 1006001) markStale(sessionId); return token === accountEpoch ? chatErrorText(error) : null; } },
-      async deleteSession(sessionId) { const token = accountEpoch; try { await call<unknown>('delete_chat_session', { input: { session_id: sessionId } }); } catch (error) { if (token !== accountEpoch) return null; if (!(error instanceof ChatCommandError && error.code === 1006001)) return chatErrorText(error); } if (token !== accountEpoch) return null; runs.delete(sessionId); messageTokens.delete(sessionId); set(state => { const openSessionIds = state.openSessionIds.filter(id => id !== sessionId); const active = state.activeSessionId === sessionId ? (openSessionIds[0] ?? null) : state.activeSessionId; const next = { ...state, sessions: state.sessions.filter(item => item.id !== sessionId), searchResults: state.searchResults.filter(hit => hit.session.id !== sessionId), openSessionIds }; return { ...next, ...projectActive(next, active) }; }); return null; },
+      async deleteSession(sessionId) { const token = accountEpoch; try { await call<unknown>('delete_chat_session', { input: { session_id: sessionId } }); } catch (error) { if (token !== accountEpoch) return null; if (!(error instanceof ChatCommandError && error.code === 1006001)) return chatErrorText(error); } if (token !== accountEpoch) return null; runs.delete(sessionId); messageTokens.delete(sessionId); usageTokens.delete(sessionId); set(state => { const openSessionIds = state.openSessionIds.filter(id => id !== sessionId); const active = state.activeSessionId === sessionId ? (openSessionIds[0] ?? null) : state.activeSessionId; const next = { ...state, sessions: state.sessions.filter(item => item.id !== sessionId), searchResults: state.searchResults.filter(hit => hit.session.id !== sessionId), sessionUsageRevisions: Object.fromEntries(Object.entries(state.sessionUsageRevisions).filter(([id]) => id !== sessionId)), openSessionIds }; return { ...next, ...projectActive(next, active) }; }); return null; },
       async updateTarget(sessionId, target) { const token = accountEpoch; try { const value = await call<ChatSession>('update_chat_session_target', { input: { session_id: sessionId, ...target } }); if (token !== accountEpoch) return null; replaceSession(value); return null; } catch (error) { if (token === accountEpoch && error instanceof ChatCommandError && error.code === 1006001) markStale(sessionId); return token === accountEpoch ? chatErrorText(error) : null; } },
       async send(content, tools = [], acceptDestination, assetIds) {
         const { activeSession, activeSessionId, activeStale, generation } = get();
@@ -840,7 +1083,7 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
           if (!budget || epoch !== accountEpoch || preparation !== token || get().activeSessionId !== activeSessionId || runs.size) return 'rejected';
           if (!budget.can_send) { set({ actionError: t('chat.contextRejected'), actionCode: 1006008 }); return 'rejected'; }
           const requestId = deps.newRequestId();
-          const input: Record<string, unknown> = { session_id: activeSessionId, content, client_request_id: requestId, ...(ids.length ? { asset_ids: ids } : {}), ...skillAccess, foundation };
+          const input: Record<string, unknown> = { session_id: activeSessionId, content, client_request_id: requestId, web_access: get().sessionWebAccess[activeSessionId] ?? noWebAccess(), ...(ids.length ? { asset_ids: ids } : {}), ...skillAccess, foundation };
           if (acceptDestination) input.accept_destination = acceptDestination;
           if (tools.length) input.tools = tools.map(tool => ({ server_id: tool.server_id, tool_name: tool.tool_name, schema_hash: tool.schema_hash }));
           return await start('send', activeSessionId, 'send_chat_message', input, requestId, content, tools.length > 0, null, () => ({ kind: 'send', sessionId: activeSessionId, content, tools, assetIds: ids, fingerprint: '', host: '' }));
@@ -856,7 +1099,7 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
         try { foundation = chatFoundation(get().sessionFoundation[activeSessionId]); }
         catch { set({ actionError: t('chat.invalidOutputSchema') }); return 'rejected'; }
         const requestId = deps.newRequestId();
-        const input: Record<string, unknown> = { message_id: messageId, client_request_id: requestId, ...skillAccessWire(get().sessionSkillAccess[activeSessionId]), foundation };
+        const input: Record<string, unknown> = { message_id: messageId, client_request_id: requestId, web_access: get().sessionWebAccess[activeSessionId] ?? noWebAccess(), ...skillAccessWire(get().sessionSkillAccess[activeSessionId]), foundation };
         if (acceptDestination) input.accept_destination = acceptDestination;
         return start('regenerate', activeSessionId, 'regenerate_chat_message', input, requestId, '', false, messageId, () => ({ kind: 'regenerate', sessionId: activeSessionId, messageId, fingerprint: '', host: '' }));
       },
@@ -868,7 +1111,7 @@ export function createChatStore(overrides: Partial<ChatDeps> = {}) {
       confirmDestination() { const pending = get().pendingDestination; if (!pending || get().activeSessionId !== pending.sessionId) return; set(state => ({ pendingDestination: null, sessionPendingDestinations: { ...state.sessionPendingDestinations, [pending.sessionId]: null } })); if (pending.kind === 'send') void get().send(pending.content, pending.tools, pending.fingerprint, pending.assetIds); else if (pending.kind === 'summary') void get().summarize(pending.fingerprint); else if (pending.kind === 'continue') void get().continueRun(pending.sourceTaskId, pending.intent, pending.tools, pending.fingerprint); else void get().regenerate(pending.messageId, pending.fingerprint); },
       dismissDestination(token) { const pending = get().pendingDestination; if (token && token !== pending) return; set(state => ({ pendingDestination: null, ...(pending ? { sessionPendingDestinations: { ...state.sessionPendingDestinations, [pending.sessionId]: null } } : {}) })); },
       dismissNotice() { const id = get().activeSessionId; if (id) set(state => ({ notice: null, sessionNotices: { ...state.sessionNotices, [id]: null } })); },
-      reset() { ++accountEpoch; clearTimeout(searchTimer); searchTimer = undefined; preparation = null; uncertainRuns.clear(); runs.clear(); messageTokens.clear(); ++sessionsToken; ++searchToken; set(initialData()); },
+      reset() { ++accountEpoch; clearTimeout(searchTimer); searchTimer = undefined; preparation = null; uncertainRuns.clear(); runs.clear(); replyReads.clear(); replyRetainers.clear(); replyRevisions.clear(); messageTokens.clear(); usageTokens.clear(); ++sessionsToken; ++searchToken; set(initialData()); }
     };
   });
 }
