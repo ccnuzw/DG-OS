@@ -1,0 +1,27 @@
+.agent-transcript-diagnostics { min-width: 0; width: 100%; padding-block: var(--spacing-2); border-block-start: 1px solid var(--border-subtle); color: var(--text-secondary); }
+.agent-transcript-diagnostics > summary > strong { font-weight: var(--font-weight-medium); }
+.agent-transcript-diagnostic-types { display: flex; flex-wrap: wrap; gap: var(--spacing-2); min-width: 0; margin: 0; padding: 0; border: 0; }
+.agent-transcript-diagnostic-types > legend { margin-block-end: var(--spacing-2); color: var(--text-secondary); }
+.agent-transcript-diagnostic-types > button { max-width: 100%; height: auto; min-height: var(--control-height-compact); justify-content: flex-start; gap: var(--spacing-2); text-align: start; white-space: normal; }
+.agent-transcript-diagnostic-types > button[aria-pressed='true'] { color: var(--text-primary); background: var(--surface-selected); }
+.agent-transcript-diagnostic-types code { min-width: 0; font: inherit; overflow-wrap: anywhere; }
+.agent-transcript-diagnostic-types button > span { flex: none; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.agent-transcript-diagnostic-locate { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--spacing-2); min-width: 0; }
+.agent-transcript-diagnostic-locate > :not(button) { flex: 1 1 12rem; min-width: 0; max-width: 100%; }
+.agent-transcript-diagnostic-locate > button { align-self: center; }
+.agent-transcript-diagnostic-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-2); min-width: 0; font-variant-numeric: tabular-nums; }
+.agent-transcript-diagnostic-pagination > span { overflow-wrap: anywhere; }
+.agent-transcript-diagnostic-pagination > [role='status'] { flex: 1 1 100%; }
+.agent-transcript-diagnostic-records { min-width: 0; }
+.agent-transcript-diagnostic-event { margin: 0; border-block-start: 1px solid var(--border-subtle); }
+.agent-transcript-diagnostic-event > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--spacing-2); list-style: none; }
+.agent-transcript-diagnostic-event > summary::-webkit-details-marker { display: none; }
+.agent-transcript-diagnostic-event > summary::before { content: '+'; flex: none; color: var(--text-secondary); }
+.agent-transcript-diagnostic-event[open] > summary::before { content: '−'; }
+.agent-transcript-diagnostic-event > summary:hover { background: var(--surface-hover); }
+.agent-transcript-diagnostic-event > summary > span { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.agent-transcript-diagnostic-event > summary > code { flex: 1 1 14rem; min-width: 0; font: inherit; overflow-wrap: anywhere; }
+.agent-transcript-diagnostic-sequence { font-variant-numeric: tabular-nums; }
+.agent-transcript-diagnostic-run { flex: 0 1 18ch; }
+.agent-transcript-diagnostic-event[data-focused-diagnostic] { border-inline-start: 2px solid var(--border-focus); background: var(--surface-selected); }
+.agent-transcript-diagnostic-event .agent-reply-native-value:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }

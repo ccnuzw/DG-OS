@@ -1,7 +1,7 @@
 export default {
   'agent.sendShortcut': '⌘ / Ctrl + Enter to send', 'agent.sendEmpty': 'Write a message to send.', 'agent.sendBusy': 'Wait for the current operation to finish.',
   'agent.sendWaiting': 'Respond to the pending request to continue.', 'agent.sendRunning': 'You can edit your next message while the agent works. Sending starts a separate turn only when the current turn is idle.', 'agent.sendUnavailable': 'This runtime is not ready. Resume or select a ready session to send.',
-  'agent.latest': 'Jump to latest', 'agent.rawEvents': 'Inspect native events ({count})', 'agent.allowSession': 'Allow for this session',
+  'agent.latest': 'Jump to latest', 'agent.allowSession': 'Allow for this session',
   'agent.requestCommand': 'Command', 'agent.requestDirectory': 'Working directory', 'agent.requestPath': 'Affected path', 'agent.requestInput': 'Tool input', 'agent.requestSending': 'Sending your response. Waiting for the native agent to confirm.',
   'agent.permissionExpansion': 'Native permission expansion', 'agent.allowTurn': 'Allow for this turn',
   'agent.permissionScope': 'Grant exactly the permissions below for this turn or this running native session. This is not approval of a specific command or MCP tool. Grants are not replayed after close or resume.',
