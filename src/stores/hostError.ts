@@ -20,6 +20,7 @@ export const HOST_CODES: readonly string[] = [
   'file_symlink', 'file_save_unknown', 'file_exists', 'file_create_unknown', 'file_mutation_unknown',
   'program_unavailable', 'port_conflict',
   'capability_unavailable', 'capability_conflict', 'capability_revoked', 'provider_unavailable', 'provider_incompatible',
+  'provider_protocol_unsupported', 'provider_auth_unsupported', 'provider_route_invalid', 'provider_model_unsupported', 'provider_model_mismatch', 'provider_auth_conflict',
   'skill_unavailable', 'mcp_unavailable', 'schema_changed', 'adapter_unavailable', 'cli_version_changed', 'confirmation_expired', 'confirmation_not_found',
   'cli_incompatible', 'provider_required', 'provider_revision_changed', 'provider_binding_unconfirmed', 'credential_unavailable', 'legacy_session_read_only', 'session_closed', 'session_busy',
   'cli_not_installed', 'cli_not_executable', 'cli_probe_timeout', 'cli_probe_failed', 'cli_start_failed', 'cli_handshake_timeout', 'cli_handshake_failed',

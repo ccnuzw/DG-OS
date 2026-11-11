@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ContextMenu, DropdownMenu, type MenuItem } from '@dgos/ui';
 import { Ellipsis, FileText, GitCompareArrows, X } from 'lucide-react';
 import { useDevelopment } from '../../stores/developmentStore';
+import { contextGeneration, useContextSelection } from '../../stores/developmentSelection';
 import { useLocale } from '../../i18n';
 import { useDevelopmentEditor, documentScope, documentId, documentDirty, openDevelopmentDocument, closeDevelopmentDocuments, type DocumentTab } from '../../stores/developmentEditor';
 import type { ConversationReference } from '../../stores/developmentReferences';
@@ -10,18 +11,44 @@ import { FileEditor } from './FileEditor';
 import { GitFileDiff, type DiffSource } from './GitFileDiff';
 import './file-workspace.css';
 
-export function FileWorkspace({ projectId, taskId, workspacePath, target, source = 'worktree', visible = true, ensureTask, onClose, onOpenFile, onReference, onChanged }: { projectId: string; taskId: string | null; workspacePath: string; target: FileTarget | null; source?: DiffSource; visible?: boolean; ensureTask?: () => Promise<string | null>; onClose(): void; onOpenFile(target: FileTarget, source?: DiffSource): void; onReference?: (reference: ConversationReference) => void; onChanged?: () => void }) {
+export function FileWorkspace({ projectId, taskId, workspacePath, target, source = 'worktree', visible = true, ensureTask, onPrepareEdit, onClose, onOpenFile, onReference, onChanged }: { projectId: string; taskId: string | null; workspacePath: string; target: FileTarget | null; source?: DiffSource; visible?: boolean; ensureTask?: () => Promise<string | null>; onPrepareEdit?: () => Promise<boolean>; onClose(): void; onOpenFile(target: FileTarget, source?: DiffSource): void; onReference?: (reference: ConversationReference) => void; onChanged?: () => void }) {
   const { t } = useLocale();
   const state = useDevelopmentEditor(), root = useRef<HTMLElement>(null);
   const epoch = useDevelopment(state => state.epoch);
+  const context = useContextSelection();
   const closeLock = useRef(false), currentScope = useRef('');
   const [closing, setClosing] = useState(false);
+  const [editingPaths, setEditingPaths] = useState<ReadonlySet<string>>(() => new Set());
   const scope = documentScope(projectId, taskId, workspacePath);
   currentScope.current = scope;
   const tabs = state.tabs.filter(tab => documentScope(tab.projectId, tab.taskId, tab.workspacePath) === scope);
   const selected = tabs.find(tab => tab.id === state.activeTabs[scope]) ?? tabs[tabs.length - 1];
   useEffect(() => { if (target) openDevelopmentDocument({ projectId, taskId, workspacePath, path: target.path, mode: target.mode, line: target.line, source }); }, [projectId, taskId, workspacePath, target?.nonce]);
   useEffect(() => { if (visible) root.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }); }, [selected?.id, visible]);
+  function changeEditing(tab: DocumentTab, editing: boolean) {
+    if (epoch !== useDevelopment.getState().epoch || currentScope.current !== scope || context.pending || context.generation !== contextGeneration() || useDevelopment.getState().projects.find(item => item.id === projectId)?.archived || !useDevelopmentEditor.getState().tabs.some(item => item.id === tab.id)) return;
+    const id = documentId(projectId, taskId, tab.path, workspacePath);
+    setEditingPaths(current => { const next = new Set(current); if (editing) next.add(id); else next.delete(id); return next; });
+  }
+  async function prepareEdit(tab: DocumentTab): Promise<boolean> {
+    const owner = useDevelopment.getState(), conversationTabId = owner.activeTabId;
+    if (!onPrepareEdit || epoch !== owner.epoch || currentScope.current !== scope || context.pending || context.generation !== contextGeneration() || owner.projects.find(item => item.id === projectId)?.archived) return false;
+    const editing = tabs.filter(item => item.mode === 'file' && editingPaths.has(documentId(projectId, taskId, item.path, workspacePath))).map(item => item.path);
+    if (!await onPrepareEdit()) return false;
+    const current = useDevelopment.getState();
+    const conversation = current.tabs.find(item => item.id === conversationTabId);
+    if (current.epoch !== epoch || current.activeTabId !== conversationTabId || current.selection.project_id !== projectId || conversation?.projectId !== projectId || !current.selection.task_id || conversation.taskId !== current.selection.task_id) return false;
+    const preparedScope = documentScope(projectId, current.selection.task_id, workspacePath);
+    if (![scope, preparedScope].includes(currentScope.current)) return false;
+    const prepared = useDevelopmentEditor.getState().tabs.find(item => item.projectId === projectId && item.taskId === current.selection.task_id && item.workspacePath === workspacePath && item.path === tab.path && item.mode === 'file');
+    if (!prepared || !root.current?.isConnected) return false;
+    setEditingPaths(paths => {
+      const next = new Set(paths);
+      for (const path of [...editing, tab.path]) next.add(documentId(projectId, current.selection.task_id, path, workspacePath));
+      return next;
+    });
+    return true;
+  }
   function select(tab: DocumentTab) {
     if (epoch !== useDevelopment.getState().epoch || currentScope.current !== scope) return;
     useDevelopmentEditor.setState(current => ({ activeTabs: { ...current.activeTabs, [scope]: tab.id } }));
@@ -48,6 +75,7 @@ export function FileWorkspace({ projectId, taskId, workspacePath, target, source
         try {
           const closed = await closeDevelopmentDocuments(scopedIds);
           if (!valid()) return;
+          if (closed) setEditingPaths(paths => new Set([...paths].filter(id => !scopedIds.includes(`${id}:file`))));
           if (closed && !useDevelopmentEditor.getState().tabs.some(tab => documentScope(tab.projectId, tab.taskId, tab.workspacePath) === scope)) onClose();
           else window.requestAnimationFrame(() => {
             if (!valid()) return;
@@ -98,9 +126,9 @@ export function FileWorkspace({ projectId, taskId, workspacePath, target, source
         <button type="button" className="workbench-tab-action" disabled={closing} aria-label={t('fileWorkspace.closePanel')} title={t('fileWorkspace.closePanel')} onClick={() => close(tabs.map(tab => tab.id), selected?.id, true)}><X size={15} aria-hidden="true" /></button>
       </div>
     </div></ContextMenu>
-    {selected ? <nav className="file-workspace-breadcrumbs" aria-label={t('fileWorkspace.breadcrumbs')}>{selected.path.split('/').map((part, index) => <span key={index}>{index ? <span aria-hidden="true">/ </span> : null}{part}</span>)}</nav> : null}
+    {selected?.mode === 'diff' ? <nav className="file-workspace-breadcrumbs" aria-label={t('fileWorkspace.breadcrumbs')}>{selected.path.split('/').map((part, index) => <span key={index}>{index ? <span aria-hidden="true">/ </span> : null}{part}</span>)}</nav> : null}
     <div className="file-workspace-contents">{tabs.map(tab => <div id={`document-content-${tab.id}`} role="tabpanel" aria-labelledby={`document-tab-${tab.id}`} className="file-workspace-document" key={tab.id} hidden={tab.id !== selected?.id}>
-      {tab.mode === 'file' ? <FileEditor projectId={projectId} taskId={taskId} path={tab.path} workspacePath={workspacePath} line={tab.line} visible={visible && selected?.id === tab.id} onReference={onReference} /> : <GitFileDiff projectId={projectId} taskId={taskId} workspacePath={workspacePath} path={tab.path} source={tab.source} ensureTask={ensureTask} onSourceChange={next => useDevelopmentEditor.setState(current => ({ tabs: current.tabs.map(item => item.id === tab.id ? { ...item, source: next } : item) }))} onOpenFile={() => onOpenFile({ path: tab.path, mode: 'file', nonce: Date.now() })} onReference={onReference} onChanged={onChanged} />}
+      {tab.mode === 'file' ? <FileEditor projectId={projectId} taskId={taskId} path={tab.path} workspacePath={workspacePath} line={tab.line} visible={visible && selected?.id === tab.id} editing={editingPaths.has(documentId(projectId, taskId, tab.path, workspacePath))} onEditingChange={editing => changeEditing(tab, editing)} onPrepareEdit={onPrepareEdit ? () => prepareEdit(tab) : undefined} onReference={onReference} /> : <GitFileDiff projectId={projectId} taskId={taskId} workspacePath={workspacePath} path={tab.path} source={tab.source} ensureTask={ensureTask} onSourceChange={next => useDevelopmentEditor.setState(current => ({ tabs: current.tabs.map(item => item.id === tab.id ? { ...item, source: next } : item) }))} onOpenFile={() => onOpenFile({ path: tab.path, mode: 'file', nonce: Date.now() })} onReference={onReference} onChanged={onChanged} />}
     </div>)}{!tabs.length ? <p className="text-xs">{t('fileWorkspace.empty')}</p> : null}</div>
   </section>;
 }

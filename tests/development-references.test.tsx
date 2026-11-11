@@ -194,7 +194,7 @@ function RecoverableConversation() {
   })} busy={false} error={false} /></MemoryRouter>;
 }
 
-it.each(['event', 'active_run'] as const)('blocks unknown live sends across clicks and remount, and explicitly acknowledges only the original capture using %s', async evidence => {
+it.each(['event', 'active_run'] as const)('blocks unknown live sends across clicks and remount, and automatically acknowledges only the original capture using %s', async evidence => {
   select();
   useAgentRunner.setState({ session, selected: session.id, snapshots: { [session.id]: session } });
   let observed = session;
@@ -205,7 +205,6 @@ it.each(['event', 'active_run'] as const)('blocks unknown live sends across clic
   fireEvent.change(prompt, { target: { value: 'Original request' } });
   fireEvent.click(screen.getByRole('button', { name: 'agent.send' }));
   await waitFor(() => expect(useAgentRunner.getState().error).toBe('unknown'));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'directConversation.recheck' })).toHaveProperty('disabled', false));
   const request = invoke.mock.calls.find(([command]) => command === 'send_agent_message')![1].input;
   const pendingKey = developmentDraftKey('conversation', 'p', session.id, session.generation, 'pending-send');
   expect(useDevelopmentDrafts.getState().entries[pendingKey].value).toMatchObject({ requestId: request.request_id, generation: session.generation, text: 'Original request', references: [{ reference: file }] });
@@ -215,19 +214,17 @@ it.each(['event', 'active_run'] as const)('blocks unknown live sends across clic
   act(() => addConversationReference('p', session.id, { ...file, path: 'later.ts' }));
   view.unmount(); render(<RecoverableConversation />);
   expect(screen.getByRole('button', { name: 'agent.send' })).toHaveProperty('disabled', true);
-  fireEvent.click(screen.getByRole('button', { name: 'directConversation.recheck' }));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'directConversation.recheck' })).toHaveProperty('disabled', false));
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === 'get_agent_session').length).toBeGreaterThan(0));
   expect(useDevelopmentDrafts.getState().entries[pendingKey]).toBeDefined();
   expect(getConversationReferences('p', session.id)).toHaveLength(2);
   observed = evidence === 'active_run' ? { ...session, active_run: request.request_id } : { ...session, events: [{ seq: 1, kind: 'userMessage', run: request.request_id, text: 'Original request', data: null }] };
-  fireEvent.click(screen.getByRole('button', { name: 'directConversation.recheck' }));
-  await waitFor(() => expect(useDevelopmentDrafts.getState().entries[pendingKey]).toBeUndefined());
+  await waitFor(() => expect(useDevelopmentDrafts.getState().entries[pendingKey]).toBeUndefined(), { timeout: 2500 });
   expect(screen.getByLabelText<HTMLTextAreaElement>('agent.prompt').value).toBe('Concurrent next-turn edit');
   expect(getConversationReferences('p', session.id).map(reference => reference.path)).toEqual(['later.ts']);
   expect(invoke.mock.calls.filter(([command]) => command === 'send_agent_message')).toHaveLength(1);
 });
 
-it('clears an unchanged live prompt only when explicit recheck proves the original request', async () => {
+it('clears an unchanged live prompt only when background observation proves the original request', async () => {
   select(); useAgentRunner.setState({ session, selected: session.id, snapshots: { [session.id]: session } });
   let requestId = '';
   let proven = false;
@@ -239,10 +236,10 @@ it('clears an unchanged live prompt only when explicit recheck proves the origin
   render(<RecoverableConversation />);
   fireEvent.change(screen.getByLabelText('agent.prompt'), { target: { value: 'Original request' } });
   fireEvent.click(screen.getByRole('button', { name: 'agent.send' }));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'directConversation.recheck' })).toHaveProperty('disabled', false));
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === 'send_agent_message')).toHaveLength(1));
   expect(screen.getByLabelText<HTMLTextAreaElement>('agent.prompt').value).toBe('Original request');
-  proven = true; fireEvent.click(screen.getByRole('button', { name: 'directConversation.recheck' }));
-  await waitFor(() => expect(screen.getByLabelText<HTMLTextAreaElement>('agent.prompt').value).toBe(''));
+  proven = true;
+  await waitFor(() => expect(screen.getByLabelText<HTMLTextAreaElement>('agent.prompt').value).toBe(''), { timeout: 2500 });
   expect(invoke.mock.calls.filter(([command]) => command === 'send_agent_message')).toHaveLength(1);
 });
 
@@ -262,6 +259,5 @@ it('retains draft content but releases the original pending capture after a late
   render(<RecoverableConversation />);
   expect(screen.getByLabelText<HTMLTextAreaElement>('agent.prompt').value).toBe('Retain this rejected prompt');
   expect(getConversationReferences('p', session.id)).toEqual([file]);
-  expect(screen.queryByRole('button', { name: 'directConversation.recheck' })).toBeNull();
   expect(screen.getByRole('button', { name: 'agent.send' })).toHaveProperty('disabled', false);
 });

@@ -3,7 +3,7 @@ import { Modal } from '@dgos/ui';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ChangeDiff } from '../src/components/development/ProjectReview';
 import { Files } from '../src/components/development/ProjectFiles';
-import { DeliveryPanel } from '../src/components/development/DeliveryPanel';
+import { GitPanel } from '../src/components/development/GitPanel';
 import { useDevelopment } from '../src/stores/developmentStore';
 import { useDevelopmentDrafts } from '../src/stores/developmentDrafts';
 import { useDevelopmentEditor } from '../src/stores/developmentEditor';
@@ -24,6 +24,7 @@ beforeEach(() => {
     if (command === 'read_development_workspaces') return workspace;
     if (command === 'read_development_workspace') return { projects: [project], tasks: [], sessions: [], operations: [], selection: { project_id: 'p', task_id: null, session_id: null } };
     if (command === 'read_development_project_git_history') return { anchor: overview.head, commits: [], next_cursor: null };
+    if (command === 'read_development_git_details') return { branches: ['main'], remotes: [], remote_branches: {}, remote_push_targets: {}, remote_fetch_targets: {}, upstream: null, ahead: null, behind: null, files: [], history: [], history_truncated: true };
     if (command === 'list_development_files') return { entries: [], truncated: false };
     return null;
   });
@@ -31,12 +32,12 @@ beforeEach(() => {
 afterEach(() => { cleanup(); invoke.mockReset(); vi.restoreAllMocks(); useDevelopment.getState().reset(); useDevelopmentDrafts.setState({ entries: {}, handoffs: {} }); localStorage.clear(); });
 it('browses project Git and fixed-anchor history without obtaining write authority', async () => {
   const ensureTask = vi.fn();
-  render(<DeliveryPanel projectId="p" taskId={null} ensureTask={ensureTask} sessions={[]} live={{}} mode="git" />);
-  await screen.findByRole('checkbox', { name: 'src/app.ts' });
+  render(<GitPanel projectId="p" taskId={null} ensureTask={ensureTask} sessions={[]} live={{}} />);
+  await screen.findByRole('button', { name: 'gitPanel.stageAll' });
   expect(ensureTask).not.toHaveBeenCalled();
   expect(invoke.mock.calls.some(([command]) => command === 'read_development_git')).toBe(false);
   fireEvent.click(screen.getByRole('button', { name: 'delivery.openGitHistory' }));
-  await waitFor(() => expect(invoke).toHaveBeenCalledWith('read_development_project_git_history', { input: { project_id: 'p', start_oid: overview.head, cursor: null, limit: 30 } }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('read_development_project_git_history', { input: { project_id: 'p', start_oid: overview.head, cursor: null, limit: 50 } }));
   expect(ensureTask).not.toHaveBeenCalled();
 });
 it('rereads full task review before an explicit stage and never uses project data as authority', async () => {
@@ -49,9 +50,8 @@ it('rereads full task review before an explicit stage and never uses project dat
     if (command === 'execute_development_git') return { id: args.input.id, project_id: 'p', task_id: 't', kind: 'git_stage', status: 'succeeded', workspace_id: null, request_fingerprint: '', details: {} };
     return null;
   });
-  render(<DeliveryPanel projectId="p" taskId={null} ensureTask={ensureTask} sessions={[]} live={{}} mode="git" />);
-  fireEvent.click(await screen.findByRole('checkbox', { name: 'src/app.ts' }));
-  fireEvent.click(screen.getByRole('button', { name: 'delivery.stage' }));
+  render(<GitPanel projectId="p" taskId={null} ensureTask={ensureTask} sessions={[]} live={{}} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'gitPanel.stageAll' }));
   await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === 'execute_development_git')).toBe(true));
   const write = invoke.mock.calls.find(([command]) => command === 'execute_development_git')!;
   expect(write[1].input).toMatchObject({ task_id: 't', review_token: 'task-authority', action: { kind: 'stage', paths: ['src/app.ts'] } });
@@ -60,8 +60,8 @@ it('rereads full task review before an explicit stage and never uses project dat
 });
 it('never dispatches or retries when explicit task preparation is unconfirmed', async () => {
   const ensureTask = vi.fn().mockResolvedValue(null);
-  render(<DeliveryPanel projectId="p" taskId={null} ensureTask={ensureTask} sessions={[]} live={{}} mode="git" />);
-  fireEvent.click(await screen.findByRole('checkbox', { name: 'src/app.ts' })); fireEvent.click(screen.getByRole('button', { name: 'delivery.stage' }));
+  render(<GitPanel projectId="p" taskId={null} ensureTask={ensureTask} sessions={[]} live={{}} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'gitPanel.stageAll' }));
   await act(async () => {});
   expect(ensureTask).toHaveBeenCalledTimes(1);
   expect(invoke.mock.calls.some(([command]) => command === 'execute_development_git')).toBe(false);
@@ -104,8 +104,8 @@ it('expands directories lazily, retains filter ancestors and creates entries onl
 it('refuses task preparation that resolves to a different workspace', async () => {
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation(async (command: string, args: unknown) => command === 'read_development_git' ? { ...review, path: '/other-worktree' } : original(command, args));
-  render(<DeliveryPanel projectId="p" taskId={null} ensureTask={vi.fn().mockResolvedValue('t')} sessions={[]} live={{}} mode="git" />);
-  fireEvent.click(await screen.findByRole('checkbox', { name: 'src/app.ts' })); fireEvent.click(screen.getByRole('button', { name: 'delivery.stage' }));
+  render(<GitPanel projectId="p" taskId={null} ensureTask={vi.fn().mockResolvedValue('t')} sessions={[]} live={{}} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'gitPanel.stageAll' }));
   await screen.findByRole('alert');
   expect(invoke.mock.calls.some(([command]) => command === 'execute_development_git')).toBe(false);
 });

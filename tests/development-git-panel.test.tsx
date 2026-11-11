@@ -1,11 +1,11 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { Modal } from '@dgos/ui';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { Modal, ModalHost } from '@dgos/ui';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { GitPanel } from '../src/components/development/GitPanel';
 import { useCommitMessageGenerator } from '../src/components/development/CommitMessageGenerator';
 import { useDevelopment } from '../src/stores/developmentStore';
-import { useDevelopmentDrafts } from '../src/stores/developmentDrafts';
-import { developmentEditorMutationAffects } from '../src/stores/developmentEditor';
+import { developmentDraftKey, useDevelopmentDrafts } from '../src/stores/developmentDrafts';
+import { developmentEditorMutationAffects, documentId, useDevelopmentEditor } from '../src/stores/developmentEditor';
 import { chooseContext } from '../src/stores/developmentSelection';
 import type { ExecuteGitInput, GitReview } from '../src/stores/developmentDelivery';
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
@@ -126,7 +126,7 @@ it('renders compact selectable history with full-date titles and forwards full i
   render(<GitPanel {...props} taskId={null} ensureTask={ensureTask} selectedCommit={oid} onSelectCommit={onSelectCommit} />); await act(async () => {});
   const row = screen.getByRole('button', { name: /Full history subject/ });
   expect(row.getAttribute('aria-pressed')).toBe('true'); expect(row.getAttribute('data-commit-oid')).toBe(oid); expect(row.title).toContain('Alice'); expect(row.title).toContain('2023');
-  expect(row.firstElementChild?.textContent).toBe('fffffff'); expect(row.lastElementChild?.tagName).toBe('TIME'); expect(screen.getByText('gitPanel.historyBound')).toBeTruthy();
+  expect(row.firstElementChild?.textContent).toBe('fffffff'); expect(row.lastElementChild?.tagName).toBe('TIME'); expect(screen.getByRole('button', { name: 'delivery.openGitHistory' })).toBeTruthy();
   fireEvent.click(row); expect(onSelectCommit).toHaveBeenCalledExactlyOnceWith(oid, row, '/workspace'); expect(ensureTask).not.toHaveBeenCalled(); expect(mutations()).toEqual([]);
 });
 
@@ -262,4 +262,197 @@ it('keeps provider failures local after a successful staged preview', async () =
   expect(screen.getByLabelText('delivery.commitMessage')).toHaveProperty('value', 'Existing commit message');
   expect(screen.getAllByRole('button', { name: 'file.ts' })).toHaveLength(2);
   expect(mutations()).toEqual([]);
+});
+
+it.each([null, 't'])('paginates %s history against the fixed original anchor without obtaining write authority', async taskId => {
+  const original = invoke.getMockImplementation()!, older = 'b'.repeat(40), ensureTask = vi.fn(), select = vi.fn();
+  invoke.mockImplementation(async (command: string, args: { input?: { cursor?: string | null } }) => {
+    if (command === 'read_development_git_history' || command === 'read_development_project_git_history') return { anchor: review.head, commits: [{ oid: args.input?.cursor ? older : review.head, author: 'Alice', timestamp: 1, subject: args.input?.cursor ? 'Older paginated commit' : '<img src=x onerror=alert(1)>', parents: [] }], next_cursor: args.input?.cursor ? null : 'opaque-cursor' };
+    const result = await original(command, args);
+    return command === 'read_development_git_details' ? { ...result, history_truncated: true } : result;
+  });
+  const view = render(<GitPanel {...props} taskId={taskId} ensureTask={ensureTask} onSelectCommit={select} />); await act(async () => {});
+  fireEvent.click(screen.getByRole('button', { name: 'delivery.openGitHistory' })); await act(async () => {});
+  expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeTruthy(); expect(view.container.querySelector('img')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'delivery.moreGitHistory' })); await act(async () => {});
+  expect(screen.getByText('Older paginated commit')).toBeTruthy(); expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeTruthy();
+  expect(invoke).toHaveBeenLastCalledWith(taskId ? 'read_development_git_history' : 'read_development_project_git_history', { input: { ...(taskId ? { task_id: taskId } : { project_id: 'p' }), start_oid: review.head, cursor: 'opaque-cursor', limit: 50 } });
+  fireEvent.click(screen.getByRole('button', { name: /Older paginated commit/ })); expect(select.mock.calls[0][0]).toBe(older);
+  expect(screen.queryByRole('button', { name: 'delivery.moreGitHistory' })).toBeNull(); expect(ensureTask).not.toHaveBeenCalled(); expect(mutations()).toEqual([]);
+  expect(invoke.mock.calls.some(([command]) => command === 'read_development_git')).toBe(false);
+});
+
+it('drops pending history pages after a refreshed HEAD and never reloads pages automatically', async () => {
+  const original = invoke.getMockImplementation()!, pending = Promise.withResolvers<unknown>();
+  invoke.mockImplementation(async (command: string, args: unknown) => {
+    if (command === 'read_development_git_history') return pending.promise;
+    const result = await original(command, args);
+    return command === 'read_development_git_details' ? { ...result, history_truncated: true } : result;
+  });
+  const view = render(<GitPanel {...props} refreshKey={0} />); await act(async () => {});
+  fireEvent.click(screen.getByRole('button', { name: 'delivery.openGitHistory' })); await act(async () => {});
+  review = { ...review, head: 'b'.repeat(40) }; view.rerender(<GitPanel {...props} refreshKey={1} />); await act(async () => {});
+  await act(async () => { pending.resolve({ anchor: 'a'.repeat(40), next_cursor: 'old', commits: [{ oid: 'a'.repeat(40), author: 'Alice', timestamp: 1, subject: 'Obsolete page', parents: [] }] }); });
+  expect(screen.queryByText('Obsolete page')).toBeNull(); expect(invoke.mock.calls.filter(([command]) => command === 'read_development_git_history')).toHaveLength(1); expect(mutations()).toEqual([]);
+});
+
+it('keeps already loaded history when the next page fails and retries the same cursor', async () => {
+  const original = invoke.getMockImplementation()!; let attempts = 0;
+  invoke.mockImplementation(async (command: string, args: { input?: { cursor?: string | null } }) => {
+    if (command === 'read_development_git_history') {
+      if (!args.input?.cursor) return { anchor: review.head, next_cursor: 'retained-cursor', commits: [{ oid: review.head, author: 'Alice', timestamp: 1, subject: 'Retained first page', parents: [] }] };
+      if (++attempts === 1) throw 'git_output_limit';
+      return { anchor: review.head, next_cursor: null, commits: [] };
+    }
+    const result = await original(command, args); return command === 'read_development_git_details' ? { ...result, history_truncated: true } : result;
+  });
+  render(<GitPanel {...props} />); await act(async () => {});
+  fireEvent.click(screen.getByRole('button', { name: 'delivery.openGitHistory' })); await act(async () => {});
+  fireEvent.click(screen.getByRole('button', { name: 'delivery.moreGitHistory' })); await act(async () => {});
+  expect(screen.getByRole('alert').textContent).toBe('dev.error.git_output_limit'); expect(screen.getByText('Retained first page')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'delivery.moreGitHistory' })); await act(async () => {});
+  expect(invoke).toHaveBeenLastCalledWith('read_development_git_history', { input: { task_id: 't', start_oid: review.head, cursor: 'retained-cursor', limit: 50 } }); expect(mutations()).toEqual([]);
+});
+
+it.each(['empty', 'same', 'different'])('migrates an old workspace commit draft against a %s unified draft without overwriting conflicts', async current => {
+  const original = invoke.getMockImplementation()!, oldKey = developmentDraftKey('commit', 'p', 't', 'legacy-workspace'), newKey = developmentDraftKey('commit', 'p', 't', '/workspace'), otherKey = developmentDraftKey('commit', 'p', 'other-task', 'legacy-workspace');
+  invoke.mockImplementation(async (command: string, args: unknown) => command === 'read_development_workspaces' ? { workspaces: [{ id: 'legacy-workspace', kind: 'managed', path: '/workspace' }], selected_workspace_id: 'legacy-workspace', operations: [], operation: null } : original(command, args));
+  useDevelopmentDrafts.setState({ entries: {
+    [oldKey]: { kind: 'commit', value: 'Legacy unsent draft', baseline: '' },
+    [otherKey]: { kind: 'commit', value: 'Private other task draft', baseline: '' },
+    ...(current === 'empty' ? {} : { [newKey]: { kind: 'commit' as const, value: current === 'same' ? 'Legacy unsent draft' : 'Current unsent draft', baseline: '' } }),
+  } });
+  render(<GitPanel {...props} />); await act(async () => {});
+  expect(screen.getByLabelText('delivery.commitMessage')).toHaveProperty('value', current === 'different' ? 'Current unsent draft' : 'Legacy unsent draft');
+  if (current === 'different') { expect(screen.getByLabelText('gitPanel.savedDraft')).toHaveProperty('value', 'Legacy unsent draft'); expect(useDevelopmentDrafts.getState().entries[oldKey].value).toBe('Legacy unsent draft'); }
+  else expect(useDevelopmentDrafts.getState().entries[oldKey]).toBeUndefined();
+  expect(useDevelopmentDrafts.getState().entries[otherKey].value).toBe('Private other task draft'); expect(screen.queryByDisplayValue('Private other task draft')).toBeNull(); expect(mutations()).toEqual([]);
+});
+
+it('does not assign a legacy workspace draft to a different selected directory', async () => {
+  const original = invoke.getMockImplementation()!, oldKey = developmentDraftKey('commit', 'p', 't', 'other-workspace');
+  invoke.mockImplementation(async (command: string, args: unknown) => command === 'read_development_workspaces' ? { workspaces: [{ id: 'other-workspace', kind: 'managed', path: '/other' }], selected_workspace_id: 'other-workspace', operations: [], operation: null } : original(command, args));
+  useDevelopmentDrafts.setState({ entries: { [oldKey]: { kind: 'commit', value: 'Other workspace unsent draft', baseline: '' } } });
+  render(<GitPanel {...props} />); await act(async () => {});
+  expect(screen.getByLabelText('delivery.commitMessage')).toHaveProperty('value', ''); expect(screen.queryByDisplayValue('Other workspace unsent draft')).toBeNull(); expect(useDevelopmentDrafts.getState().entries[oldKey].value).toBe('Other workspace unsent draft');
+});
+
+it('keeps pull preview read-only, requires explicit trust and forwards only the fresh exact preview token', async () => {
+  review = { ...review, files: [] };
+  const original = invoke.getMockImplementation()!, confirm = vi.spyOn(Modal, 'confirm').mockImplementation(options => { options.onCancel?.(); return { id: 'confirm', close: () => {} }; });
+  invoke.mockImplementation(async (command: string, args: unknown) => command === 'preview_development_git_pull' ? { review_token: review.review_token, remote: 'origin', branch: 'main', remote_display: 'https://example.test/fetch.git', remote_ref: 'refs/heads/main', preview_token: 'fresh-preview' } : original(command, args));
+  render(<GitPanel {...props} />); await act(async () => {});
+  fireEvent.click(screen.getByRole('button', { name: 'delivery.pull' }));
+  const dialog = screen.getByRole('dialog', { name: 'delivery.pull' });
+  fireEvent.change(within(dialog).getByLabelText('delivery.remote'), { target: { value: 'origin' } });
+  fireEvent.change(within(dialog).getByLabelText('delivery.branch'), { target: { value: 'main' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'gitPanel.previewTarget' })); await act(async () => {});
+  expect(mutations()).toEqual([]);
+  fireEvent.click(within(dialog).getByRole('button', { name: 'delivery.pull' })); await act(async () => {});
+  expect(confirm.mock.calls[0][0].content).toContain('https://example.test/fetch.git'); expect(mutations()).toEqual([]);
+  confirm.mockImplementation(options => { options.onConfirm?.(); return { id: 'confirm', close: () => {} }; });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'delivery.pull' })); await act(async () => {});
+  const write = invoke.mock.calls.find(([command]) => command === 'execute_development_git')!;
+  expect(write[1].input.action).toEqual({ kind: 'pull', remote: 'origin', branch: 'main', preview_token: 'fresh-preview', trust_directory: true, trust_network: true });
+});
+
+it('keeps merge as one guarded Git action and locks documents for an unknown merge receipt', async () => {
+  review = { ...review, files: [] };
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: { input: ExecuteGitInput }) => {
+    if (command === 'execute_development_git') {
+      const result = { id: args.input.id, kind: 'git_merge', status: 'unknown', project_id: 'p', task_id: 't', workspace_id: null, request_fingerprint: '', details: {} };
+      receipts = [result]; return result;
+    }
+    return original(command, args);
+  });
+  render(<GitPanel {...props} />); await act(async () => {});
+  fireEvent.keyDown(screen.getByRole('button', { name: 'gitPanel.mergeBranches' }), { key: 'ArrowDown' }); await act(async () => {});
+  fireEvent.click(screen.getByRole('menuitem', { name: 'gitPanel.mergeBranch' })); await act(async () => {});
+  const writes = invoke.mock.calls.filter(([command]) => command === 'execute_development_git');
+  expect(writes).toHaveLength(1); expect(writes[0][1].input.action).toEqual({ kind: 'merge', branch: 'topic' });
+  expect(developmentEditorMutationAffects('p', 't', 'any-file.ts')).toBe(true);
+  expect(screen.getByRole('button', { name: 'gitPanel.mergeBranches' })).toHaveProperty('disabled', true);
+});
+
+it('invalidates a reviewed pull target on native refresh without pulling or fetching automatically', async () => {
+  const view = render(<GitPanel {...props} refreshKey={0} />); await act(async () => {});
+  fireEvent.click(screen.getByRole('button', { name: 'delivery.pull' }));
+  const dialog = screen.getByRole('dialog', { name: 'delivery.pull' });
+  fireEvent.change(within(dialog).getByLabelText('delivery.remote'), { target: { value: 'origin' } });
+  fireEvent.change(within(dialog).getByLabelText('delivery.branch'), { target: { value: 'main' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'gitPanel.previewTarget' })); await act(async () => {});
+  expect(within(dialog).getByText(/https:\/\/example\.test\/fetch\.git/)).toBeTruthy();
+  view.rerender(<GitPanel {...props} refreshKey={1} />); await act(async () => {});
+  expect(within(dialog).queryByText(/https:\/\/example\.test\/fetch\.git/)).toBeNull();
+  expect(within(dialog).getByLabelText('delivery.remote')).toHaveProperty('value', 'origin'); expect(mutations()).toEqual([]);
+});
+
+it.each(['restore', 'switch', 'pull', 'merge'] as const)('reviews again after saving before %s and requires a new gesture for changed snapshots', async kind => {
+  if (kind === 'pull' || kind === 'merge') review = { ...review, files: [] };
+  const original = invoke.getMockImplementation()!, saved = Promise.withResolvers<unknown>();
+  invoke.mockImplementation(async (command: string, args: unknown) => {
+    if (command === 'read_development_file') return { path: 'src/file.ts', text: 'base', hash: 'baseline', size: 4, reason: null };
+    if (command === 'save_development_file') return saved.promise;
+    return original(command, args);
+  });
+  await useDevelopmentEditor.getState().open('p', 't', 'src/file.ts', '/workspace');
+  useDevelopmentEditor.getState().edit('approved saved draft');
+  const showConfirm = Modal.confirm.bind(Modal);
+  const confirmation = vi.spyOn(Modal, 'confirm').mockImplementation(options => {
+    if (options.title === 'workbenchFiles.unsavedTitle') return showConfirm(options);
+    options.onConfirm?.(); return { id: 'confirmed', close() {} };
+  });
+  const changed = vi.fn();
+  render(<><GitPanel {...props} onChanged={changed} /><ModalHost /></>); await act(async () => {});
+  if (kind === 'restore') fireEvent.click(screen.getByRole('button', { name: 'gitPanel.restore' }));
+  else if (kind === 'switch') fireEvent.change(screen.getByLabelText('gitPanel.branch'), { target: { value: 'topic' } });
+  else if (kind === 'merge') {
+    fireEvent.keyDown(screen.getByRole('button', { name: 'gitPanel.mergeBranches' }), { key: 'ArrowDown' }); await act(async () => {});
+    fireEvent.click(screen.getByRole('menuitem', { name: 'gitPanel.mergeBranch' }));
+  } else {
+    fireEvent.click(screen.getByRole('button', { name: 'delivery.pull' }));
+    const dialog = screen.getByRole('dialog', { name: 'delivery.pull' });
+    fireEvent.change(within(dialog).getByLabelText('delivery.remote'), { target: { value: 'origin' } });
+    fireEvent.change(within(dialog).getByLabelText('delivery.branch'), { target: { value: 'main' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'gitPanel.previewTarget' })); await act(async () => {});
+    fireEvent.click(within(dialog).getByRole('button', { name: 'delivery.pull' }));
+  }
+  fireEvent.click(await screen.findByRole('button', { name: 'workbenchFiles.saveAndContinue' }));
+  await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === 'save_development_file')).toBe(true));
+  expect(invoke.mock.calls.some(([command]) => command === 'read_development_git')).toBe(false);
+  review = { ...review, snapshot_token: 'after-save-snapshot', review_token: 'after-save-authority', files: [{ path: 'src/file.ts', index: 'M', worktree: 'M' }], file_versions: { 'src/file.ts': 'saved-hash' } };
+  await act(async () => { saved.resolve({ path: 'src/file.ts', text: 'approved saved draft', hash: 'saved-hash', size: 20, reason: null }); });
+  await waitFor(() => expect(screen.getAllByRole('alert').some(node => node.textContent === 'dev.error.git_review_stale')).toBe(true));
+  expect(mutations()).toEqual([]);
+  expect(changed).not.toHaveBeenCalled();
+  expect(useDevelopmentEditor.getState().documents[documentId('p', 't', 'src/file.ts', '/workspace')]).toMatchObject({ draft: 'approved saved draft', file: { hash: 'saved-hash' } });
+  expect(invoke.mock.calls.findIndex(([command]) => command === 'read_development_git')).toBeGreaterThan(invoke.mock.calls.findIndex(([command]) => command === 'save_development_file'));
+
+  if (kind === 'restore') {
+    fireEvent.click(screen.getByRole('button', { name: 'gitPanel.restore' })); await act(async () => {});
+    expect(confirmation.mock.calls.filter(([options]) => options.title === 'gitPanel.restore')).toHaveLength(2);
+    const writes = invoke.mock.calls.filter(([command]) => command === 'execute_development_git');
+    expect(writes).toHaveLength(1);
+    expect(writes[0][1].input).toMatchObject({ review_token: 'after-save-authority', action: { kind: 'restore', paths: ['src/file.ts'], confirmed: true } });
+    expect(changed).toHaveBeenCalledTimes(1);
+  }
+});
+
+it('retains new typing made while the post-guard Git review is pending', async () => {
+  const original = invoke.getMockImplementation()!, pending = Promise.withResolvers<GitReview>();
+  invoke.mockImplementation(async (command: string, args: unknown) => {
+    if (command === 'read_development_file') return { path: 'src/file.ts', text: 'base', hash: 'baseline', size: 4, reason: null };
+    if (command === 'read_development_git') return pending.promise;
+    return original(command, args);
+  });
+  await useDevelopmentEditor.getState().open('p', 't', 'src/file.ts', '/workspace');
+  render(<GitPanel {...props} />); await act(async () => {});
+  fireEvent.change(screen.getByLabelText('gitPanel.branch'), { target: { value: 'topic' } });
+  await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === 'read_development_git')).toBe(true));
+  act(() => { useDevelopmentEditor.getState().edit('typed during rereview'); });
+  await act(async () => { pending.resolve(review); });
+  expect(mutations()).toEqual([]);
+  expect(useDevelopmentEditor.getState().documents[documentId('p', 't', 'src/file.ts', '/workspace')].draft).toBe('typed during rereview');
+  expect(screen.getByLabelText('gitPanel.branch')).toHaveProperty('disabled', false);
 });

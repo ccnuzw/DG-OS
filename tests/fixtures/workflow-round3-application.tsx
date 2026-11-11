@@ -99,7 +99,16 @@ class FixtureHost {
         const saved = { ...task, ...input, id: input.id ?? 'fixture-created-task' };
         this.tasks = [...this.tasks.filter(item => item.id !== saved.id), saved]; return saved;
       }
+      case 'prepare_agent_task': {
+        const input = args.input as { id: string; project_id: string; goal: string };
+        const existing = this.tasks.find(item => item.id === input.id);
+        if (existing && (existing.project_id !== input.project_id || existing.goal !== input.goal)) throw 'request_conflict';
+        if (existing) return existing;
+        const prepared = { ...task, ...input, requirements: '', status: 'todo' as const };
+        this.tasks.push(prepared); return prepared;
+      }
       case 'select_development_context': return null;
+      case 'reconcile_agent_start': return { status: 'recovering', session: null };
       case 'read_development_commands': return { commands: [], discovered: [{ id: 'fixture-command', name: 'Fixture check', program: 'node', args: ['--test', 'fixture.js'], cwd: '', env_refs: {} }] };
       case 'list_development_processes': return this.processes;
       case 'read_development_process': { const process = this.processes.find(item => item.id === args.id); if (!process) throw 'process_not_found'; return process; }
@@ -201,7 +210,7 @@ export async function runWorkflowRound3Probe() {
           testid<HTMLInputElement>('direct-conversation-trust').click();
           await until(() => !testid<HTMLButtonElement>('direct-conversation-send').disabled, 'remounted directory trust');
           testid<HTMLButtonElement>('direct-conversation-send').click();
-          await until(() => host.count('open_agent_session') === 1 && testid<HTMLButtonElement>('direct-conversation-send').disabled && [...stage.querySelectorAll('[role="alert"]')].some(item => item.textContent === t('directConversation.open_unknown')), 'unknown session outcome');
+          await until(() => host.count('open_agent_session') === 1 && testid<HTMLButtonElement>('direct-conversation-send').disabled && host.count('reconcile_agent_start') > 0, 'background startup recovery');
           const originalRequest = host.calls.find(call => call.command === 'open_agent_session');
           testid<HTMLButtonElement>('direct-conversation-send').click(); await settle();
           await remount(conversation);

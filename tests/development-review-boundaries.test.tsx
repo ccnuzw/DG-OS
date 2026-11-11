@@ -1,13 +1,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ProjectReview } from '../src/components/development/ProjectReview';
-import { AgentConversation, Request } from '../src/pages/workbench/AgentConversation';
+import { Files } from '../src/components/development/ProjectFiles';
+import { AgentConversation } from '../src/pages/workbench/AgentConversation';
+import { Request } from '../src/components/development/AgentNativeRequest';
 import { useDevelopment } from '../src/stores/developmentStore';
 import { chooseContext } from '../src/stores/developmentSelection';
 import { ProjectCapabilities } from '../src/components/development/ProjectCapabilities';
 import { useAgentRunner } from '../src/stores/agentRunnerStore';
-import { DeliveryPanel } from '../src/components/development/DeliveryPanel';
 import { useDevelopmentEditor } from '../src/stores/developmentEditor';
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
@@ -21,20 +21,20 @@ it('does not reveal a late source response after selecting a different task', as
   if (cmd === 'read_development_file') return source.promise;
   return Promise.resolve(null);
  });
- const view = render(<ProjectReview projectId="p" taskId="t" />);
+ const view = render(<Files projectId="p" taskId="t" />);
  fireEvent.click(await screen.findByTestId('dev-file-item-old.ts'));
  await waitFor(() => expect(invoke.mock.calls.some(([cmd]) => cmd === 'read_development_file')).toBe(true));
  await act(async () => {
   await chooseContext({ project_id: 'p2', task_id: 't2', session_id: null });
   expect(Object.values(useDevelopmentEditor.getState().documents).map(document => document.path)).toEqual(['old.ts']);
-  view.rerender(<ProjectReview projectId="p2" taskId="t2" />);
+  view.rerender(<Files projectId="p2" taskId="t2" />);
   expect(invoke.mock.calls.some(([cmd]) => cmd === 'select_development_context')).toBe(true);
   source.resolve({ path: 'old.ts', text: 'PRIVATE_OLD_SOURCE', size: 10, reason: null, hash: 'hash' });
  });
  expect(document.body.textContent).not.toContain('PRIVATE_OLD_SOURCE');
  expect(invoke.mock.calls.filter(([command]) => command === 'read_development_file').map(([, args]) => args.input.task_id)).toEqual(['t']);
  // The old file is retained for its own task, never projected into the newly selected one.
- view.rerender(<ProjectReview projectId="p" taskId="t" />);
+ view.rerender(<Files projectId="p" taskId="t" />);
  await waitFor(() => expect(document.body.textContent).toContain('PRIVATE_OLD_SOURCE'));
 });
 
@@ -140,24 +140,6 @@ it('submits one exact native permission decision without granting unrelated host
  expect(allow.hasAttribute('disabled')).toBe(true);
 });
 
-it('keeps the file selected when checking it again after deselection', async () => {
- invoke.mockImplementation((cmd: string) => {
-  if (cmd === 'read_development_workspaces') return Promise.resolve({ workspaces: [], selected_workspace_id: null });
-  if (cmd === 'read_development_project_git') return Promise.resolve({ kind: 'git', path: '/project', files: [{ path: 'code.txt', index: ' ', worktree: 'M' }], conflicts: [], snapshot_token: 'snapshot', merge_heads: [] });
-  if (cmd === 'list_development_handoffs') return Promise.resolve([]);
-  return Promise.resolve(null);
- });
- render(<DeliveryPanel projectId="p" taskId="t" sessions={[]} live={{}} />);
- const file = await screen.findByRole('checkbox', { name: /code.txt/ });
- const stage = screen.getByRole('button', { name: 'delivery.stage' });
- fireEvent.click(file);
- expect((stage as HTMLButtonElement).disabled).toBe(false);
- fireEvent.click(file);
- expect((stage as HTMLButtonElement).disabled).toBe(true);
- fireEvent.click(file);
- expect((file as HTMLInputElement).checked).toBe(true);
- expect((stage as HTMLButtonElement).disabled).toBe(false);
-});
 
 it('expires native approvals on session closure and rejects a retained button callback', async () => {
  const pending = { id: 'approval', kind: 'item/commandExecution/requestApproval', title: 'Bash', data: { command: 'write output', availableDecisions: ['accept', 'decline'] } };

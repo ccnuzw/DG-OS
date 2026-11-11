@@ -1,0 +1,121 @@
+.agent-native-request {
+  container-name: agent-native-request;
+  container-type: inline-size;
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  overflow: clip;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+.agent-native-request > *, .agent-native-request-group > * { min-width: 0; max-width: 100%; }
+.agent-native-request p { margin: 0; overflow-wrap: anywhere; }
+.agent-native-request code { overflow-wrap: anywhere; font-family: var(--font-family-code); }
+.agent-native-request-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-3);
+  padding: var(--spacing-4);
+  border-block-end: 1px solid var(--border-subtle);
+  background: var(--status-warning-surface);
+}
+.agent-native-request-heading-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--control-height-default);
+  height: var(--control-height-default);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  color: var(--status-warning-text);
+}
+.agent-native-request-heading { display: grid; gap: var(--spacing-1); min-width: 0; }
+.agent-native-request-heading > strong { font-size: var(--font-size-base); font-weight: var(--font-weight-semibold); overflow-wrap: anywhere; }
+.agent-native-request-waiting { display: flex; align-items: center; gap: var(--spacing-1); color: var(--status-warning-text); font-size: var(--font-size-xs); }
+.agent-native-request-waiting > svg { flex: none; }
+.agent-native-request[data-request-tone='input'] .agent-native-request-header { background: var(--status-info-surface); }
+.agent-native-request[data-request-tone='input'] :is(.agent-native-request-heading-icon, .agent-native-request-waiting) { color: var(--status-info-text); }
+.agent-native-request-body { display: grid; gap: var(--spacing-4); min-width: 0; padding: var(--spacing-4); }
+.agent-native-request-message { max-width: 76ch; color: var(--text-reading); line-height: var(--line-height-relaxed); }
+.agent-native-request-group { display: grid; gap: var(--spacing-2); min-width: 0; margin: 0; padding: 0; border: 0; }
+.agent-native-request-group > legend { max-width: 100%; margin-bottom: var(--spacing-2); padding: 0; color: var(--text-primary); font-weight: var(--font-weight-semibold); overflow-wrap: anywhere; }
+.agent-native-request-section-title { display: flex; align-items: center; gap: var(--spacing-2); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
+.agent-native-request-section-title > svg { flex: none; color: var(--text-secondary); }
+.agent-native-request-content-card { padding: var(--spacing-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-inset); }
+.agent-native-request-content-card > legend { padding-inline: var(--spacing-1); }
+.agent-native-request-field { gap: var(--spacing-3); padding: var(--spacing-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-content); }
+.agent-native-request-field > legend { margin: 0; padding-inline: var(--spacing-1); }
+.agent-native-request-form { gap: var(--spacing-4); }
+.agent-native-request-note { color: var(--text-secondary); font-size: var(--font-size-xs); line-height: var(--line-height-normal); }
+.agent-native-request-scope { display: flex; align-items: flex-start; gap: var(--spacing-2); padding: var(--spacing-3); border-radius: var(--radius-md); background: var(--surface-inset); }
+.agent-native-request-scope > svg { flex: none; margin-block-start: var(--spacing-1); color: var(--status-warning-text); }
+.agent-native-request-scope > span { min-width: 0; }
+.agent-native-request-error { padding: var(--spacing-2) var(--spacing-3); border-radius: var(--radius-sm); background: var(--status-error-surface); color: var(--status-error-text); font-size: var(--font-size-xs); }
+.agent-native-request-code { max-height: 24rem; max-width: 100%; margin: 0; padding: var(--spacing-3); overflow: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-code); color: var(--text-code); }
+.agent-native-request-metadata { display: grid; gap: var(--spacing-2); min-width: 0; margin: 0; }
+.agent-native-request-metadata > div { display: grid; grid-template-columns: minmax(6ch, 14ch) minmax(0, 1fr); align-items: baseline; gap: var(--spacing-2); min-width: 0; }
+.agent-native-request-metadata dt { color: var(--text-secondary); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
+.agent-native-request-metadata dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.agent-native-request-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: var(--spacing-2); min-width: 0; }
+.agent-native-request-choice {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: var(--spacing-3);
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  min-height: var(--control-height-default);
+  padding: var(--spacing-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  white-space: normal;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.agent-native-request-choice:not(:disabled):hover { border-color: var(--accent-default); background: var(--surface-hover); }
+.agent-native-request-choice[aria-pressed='true'] { border-color: var(--accent-default); background: var(--surface-selected); }
+.agent-native-request-choice[aria-pressed='true']:not(:disabled):hover { background: var(--surface-selected); }
+.agent-native-request-choice-indicator { display: grid; flex: none; place-items: center; width: var(--spacing-4); height: var(--spacing-4); margin-block-start: var(--spacing-1); border: 1px solid var(--border-control); border-radius: var(--radius-full); color: var(--accent-on); }
+.agent-native-request-choice[aria-pressed='true'] .agent-native-request-choice-indicator { border-color: var(--accent-default); background: var(--accent-default); }
+.agent-native-request-choice-copy { display: grid; gap: var(--spacing-1); min-width: 0; }
+.agent-native-request-choice-label { color: var(--text-primary); font-weight: var(--font-weight-medium); }
+.agent-native-request-choice-description { color: var(--text-secondary); font-size: var(--font-size-xs); font-weight: var(--font-weight-normal); line-height: var(--line-height-normal); }
+.agent-native-request-option { display: flex; align-items: flex-start; gap: var(--spacing-2); min-width: 0; min-height: var(--control-height-default); padding: var(--spacing-3); border: 1px solid var(--border-control); border-radius: var(--radius-md); background: var(--surface-card); cursor: pointer; }
+.agent-native-request-option:not(:has(> input:disabled)):hover { background: var(--surface-hover); }
+.agent-native-request-option[data-selected='true'], .agent-native-request-option:has(> input:checked) { border-color: var(--accent-default); background: var(--surface-selected); }
+.agent-native-request-option:has(> input:focus-visible) { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.agent-native-request-option > input { flex: none; margin: var(--spacing-1) 0 0; accent-color: var(--accent-default); }
+.agent-native-request-option > span { min-width: 0; overflow-wrap: anywhere; }
+.agent-native-request-rules { display: grid; gap: var(--spacing-2); min-width: 0; margin: 0; padding-inline-start: var(--spacing-4); overflow-wrap: anywhere; }
+.agent-native-request-rules code { color: var(--text-primary); }
+.agent-native-request-footer { display: grid; gap: var(--spacing-3); min-width: 0; padding: var(--spacing-3) var(--spacing-4); border-block-start: 1px solid var(--border-subtle); background: var(--surface-inset); }
+.agent-native-request-actions { display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--spacing-2); min-width: 0; }
+.agent-native-request-actions > button, .agent-native-request-field > div > button { max-width: 100%; height: auto; min-height: var(--control-height-default); white-space: normal; overflow-wrap: anywhere; text-align: start; }
+.agent-native-request-actions > button > svg { flex: none; }
+.agent-native-request-submitting { display: flex; align-items: flex-start; gap: var(--spacing-2); color: var(--status-info-text); font-size: var(--font-size-xs); }
+.agent-native-request-submitting > svg { flex: none; margin-block-start: var(--spacing-1); }
+.agent-native-request-diagnostics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--spacing-2); min-width: 0; padding: var(--spacing-2) var(--spacing-4); border-block-start: 1px solid var(--border-subtle); }
+.agent-native-request-diagnostics > details[open] { grid-column: 1 / -1; }
+.agent-native-request-details, .agent-native-request-diagnostics > details { min-width: 0; font-size: var(--font-size-xs); }
+.agent-native-request-details > summary, .agent-native-request-diagnostics > details > summary { min-height: var(--control-height-compact); padding-block: var(--spacing-1); cursor: pointer; color: var(--text-secondary); }
+.agent-native-request-details[open] > summary { margin-block-end: var(--spacing-3); }
+.agent-native-request :is(summary, input, button, a):focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.agent-native-request :disabled, .agent-native-request fieldset:disabled .agent-native-request-option { cursor: not-allowed; }
+.agent-native-request fieldset:disabled .agent-native-request-option { opacity: var(--opacity-disabled); }
+.agent-native-request fieldset[aria-invalid='true'] { border-inline-start: 2px solid var(--status-error-text); }
+@container agent-native-request (max-width: 28rem) {
+  .agent-native-request-header, .agent-native-request-body { padding: var(--spacing-3); }
+  .agent-native-request-footer { padding: var(--spacing-3); }
+  .agent-native-request-diagnostics { padding-inline: var(--spacing-3); }
+  .agent-native-request-metadata > div { grid-template-columns: minmax(0, 1fr); gap: var(--spacing-1); }
+  .agent-native-request-footer > .agent-native-request-actions > button { flex: 1 1 9rem; }
+  .agent-native-request-choices { grid-template-columns: minmax(0, 1fr); }
+}

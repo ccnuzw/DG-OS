@@ -51,10 +51,31 @@
 .dev-terminal { min-width: 0; height: 22rem; overflow: hidden; padding: var(--spacing-2); background: var(--surface-code); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
 .dev-terminal:focus-within { border-color: var(--border-focus); }
 @container (max-width: 600px) { .dev-comparison, .dev-command-catalog { grid-template-columns: minmax(0, 1fr); } .dev-structured-row { flex-wrap: wrap; } }
-.dev-runtime-actions { display: flex; flex-wrap: wrap; gap: var(--spacing-3); min-width: 0; padding-block: var(--spacing-2); }
-.dev-runtime-action { display: grid; align-content: start; gap: var(--spacing-2); flex: 1 1 11rem; min-width: 0; padding-inline-start: var(--spacing-3); border-inline-start: 2px solid var(--border-subtle); }
-.dev-runtime-action[data-requested='true'] { border-inline-start-color: var(--border-focus); }
-.dev-runtime-action > button { justify-self: start; white-space: normal; min-height: 2rem; height: auto; }
+.dev-runtime { container-type: inline-size; }
+.dev-runtime-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--spacing-3); padding-block: var(--spacing-3); }
+.dev-runtime-location { display: flex; flex: 1; align-items: center; gap: var(--spacing-2); min-width: 0; }
+.dev-runtime-location > svg { flex-shrink: 0; color: var(--text-secondary); }
+.dev-runtime-location > div { display: grid; gap: var(--spacing-1); min-width: 0; }
+.dev-runtime-location strong { font-size: var(--font-size-sm); }
+.dev-runtime-location span { font-size: var(--font-size-xs); color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-runtime-actions { display: grid; min-width: 0; border-block: 1px solid var(--border-subtle); }
+.dev-runtime-action { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--spacing-3); min-width: 0; padding: var(--spacing-4) var(--spacing-2); }
+.dev-runtime-action + .dev-runtime-action { border-top: 1px solid var(--border-subtle); }
+.dev-runtime-action > svg { color: var(--text-secondary); }
+.dev-runtime-action[data-requested='true'] { background: var(--surface-hover); }
+.dev-runtime-action-copy { display: grid; gap: var(--spacing-1); min-width: 0; }
+.dev-runtime-action-copy strong { font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
+.dev-runtime-action-copy > p { margin: 0; font-size: var(--font-size-xs); color: var(--text-secondary); }
+.dev-runtime-action-copy code { overflow-wrap: anywhere; }
+.dev-runtime-action-controls { display: flex; align-items: center; gap: var(--spacing-2); max-width: 24rem; min-width: 0; }
+.dev-runtime-action-controls > label { min-width: 0; }
+.dev-runtime-action-controls > button { flex-shrink: 0; }
+@container (max-width: 600px) {
+  .dev-runtime-action { grid-template-columns: auto minmax(0, 1fr); }
+  .dev-runtime-action-controls { grid-column: 2; flex-wrap: wrap; max-width: 100%; }
+  .dev-runtime-toolbar { align-items: start; }
+  .dev-runtime-location { flex-basis: 100%; }
+}
 .dev-runtime-configuration > summary { cursor: pointer; font-size: var(--font-size-xs); padding-block: var(--spacing-2); }
 .dev-runtime-configuration > div { padding-block: var(--spacing-2); }
 .dev-runtime .dev-field textarea { width: 100%; min-width: 0; resize: vertical; padding: var(--spacing-2); color: var(--text-code); background: var(--surface-code); border: 1px solid var(--border-control); border-radius: var(--radius-md); font: var(--font-size-code)/var(--line-height-code) var(--font-family-code); }

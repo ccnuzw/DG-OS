@@ -14,4 +14,5 @@ export default {
   'conversationHandoff.reserved': 'This handoff has a durable reservation or unknown outcome. It will not be retried; refresh the handoff history before taking further action.',
   'conversationHandoff.recheck': 'Check handoff status',
   'conversationHandoff.attach': 'Open target session',
+  'conversationHandoff.existingDraft': 'Your existing continuation draft has been retained, not overwritten. The selected historical summary remains available in delivery records.',
 } as const;

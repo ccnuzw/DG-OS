@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { AgentEvent, Json } from '../../stores/agentRunnerStore';
 import type { Outcome } from '../../stores/developmentStore';
 import { hostCode } from '../../stores/hostError';
+import { itemKey } from './agentTranscript';
 
 export interface AgentOutputReference {
   path: string;
@@ -12,6 +13,9 @@ export interface AgentOutputReference {
 export interface AgentReferenceActions {
   onOpenReference?: (reference: AgentOutputReference, mode: 'file' | 'diff', shouldOpen?: () => boolean) => void | Promise<void>;
   onSelectRun?: (runId: string) => void;
+  onQuoteReply?: (text: string) => void;
+  onOpenAgentActivity?: () => void;
+  onPreviewResource?: (id: string) => Promise<{ base64: string; mime: string }>;
 }
 const object = (value: Json | undefined): { [key: string]: Json } => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 const lineNumber = (value: Json | undefined): number | undefined => typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 0xffffffff ? value : undefined;
@@ -22,7 +26,7 @@ function pathHint(value: Json | undefined): string | null {
 }
 export function agentEventFailed(event: AgentEvent): boolean {
   const data = object(event.data);
-  return ['error', 'failure'].includes(event.kind) || Boolean(data.error) || data.run_status === 'failed' || data.status === 'failed' || data.success === false || data.is_error === true || typeof data.exitCode === 'number' && data.exitCode !== 0 || Array.isArray(data.content) && data.content.some(block => object(block).type === 'tool_result' && object(block).is_error === true);
+  return ['error', 'failure'].includes(event.kind) || Boolean(data.error) || data.run_status === 'failed' || data.status === 'failed' || data.success === false || data.is_error === true || data.isError === true || object(data.result).isError === true || object(data.tool_use_result).isError === true || object(data.tool_use_result).is_error === true || typeof data.exitCode === 'number' && data.exitCode !== 0 || Array.isArray(data.content) && data.content.some(block => object(block).type === 'tool_result' && object(block).is_error === true);
 }
 
 /** Only native structured tool fields and compiler-style diagnostic output qualify.
@@ -78,7 +82,7 @@ export function agentOutputReferences(event: AgentEvent, toolNames: ReadonlyMap<
         const input = object(item.input);
         add(input.file_path ?? input.notebook_path, 'tool', item.name !== 'Read', item.name === 'Read' ? lineNumber(input.offset) : undefined);
       }
-      if (data.type === 'user' && item.type === 'tool_result' && typeof item.tool_use_id === 'string' && toolNames.get(`${event.run ?? ''}:${item.tool_use_id}`) === 'Bash') {
+      if (data.type === 'user' && item.type === 'tool_result' && typeof item.tool_use_id === 'string' && toolNames.get(itemKey(event, item.tool_use_id)) === 'Bash') {
         const result = object(data.tool_use_result);
         diagnostics(result.diagnostics);
         output(result.stderr);

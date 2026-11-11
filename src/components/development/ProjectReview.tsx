@@ -3,21 +3,18 @@ import { Button, Tabs } from '@dgos/ui';
 import './workbench-tree.css';
 import { formatDateTime, useLocale } from '../../i18n';
 import { useDevelopment } from '../../stores/developmentStore';
-import { readDevelopmentProjectGit, readDevelopmentProjectDiff } from '../../stores/developmentExplorer';
+import { readDevelopmentProjectDiff } from '../../stores/developmentExplorer';
 import { contextGeneration } from '../../stores/developmentSelection';
 import { readDevelopmentReview, readDevelopmentDiff, listDevelopmentRuns, type DevDiff, type DevRun } from '../../stores/developmentReview';
 import type { Outcome } from '../../stores/developmentStore';
 import { errorText } from './shared';
 import type { CodeView } from './WorkbenchLayout';
-import { discardDevelopmentDraft } from '../../stores/developmentEditor';
-import { ProjectCapabilities } from './ProjectCapabilities';
 import { SessionConfigurationViewDisplay } from './CapabilitySnapshotView';
 import { DeliveryPanel } from './DeliveryPanel';
 import { TaskReview } from './TaskReview';
-import type { CliProviderRevision, CliProviderSnapshot } from '../../stores/developmentCapabilities';
 import type { ConversationReference } from '../../stores/developmentReferences';
 
-import { Files, type FileTarget } from './ProjectFiles';
+import type { FileTarget } from './ProjectFiles';
 import { useWorkbenchLocation } from './workbenchLocations';
 
 // Each resource has an independent request generation. Unmount, account reset and context intent all invalidate it.
@@ -55,28 +52,23 @@ export function SourceLines({ text, label }: { text: string; label: string }) {
   return <div className="dev-source" tabIndex={0} role="region" aria-label={label}><ol>{text.split('\n').map((line, index) => <li key={index}><code>{line || ' '}</code></li>)}</ol></div>;
 }
 
-export function ProjectReview({ projectId, taskId, sessions = [], live = {}, capabilityRevision = 0, workspacePath = '', onHandoff, onWorkspaceChange, view, views = ['files', 'changes', 'review', 'delivery', 'capabilities'], onViewChange, fileTarget, snapshot, onUseConfiguration, onOpenRuntime, onOpenFile }: { projectId: string; taskId: string | null; sessions?: {id:string;engine:'codex'|'claude'}[]; live?: Record<string,string>; capabilityRevision?: number; workspacePath?: string; onHandoff?: (sessionId:string)=>void; onWorkspaceChange?: (path:string)=>void; view?: CodeView; views?: readonly CodeView[]; onViewChange?: (view: CodeView)=>void; fileTarget?: FileTarget | null; snapshot?: CliProviderSnapshot | null; onUseConfiguration?: (revision: CliProviderRevision)=>void; onOpenRuntime?: ()=>void; onOpenFile?: (target: FileTarget) => void }) {
+export function ProjectReview({ projectId, taskId, sessions = [], onContinueModel, onOpenGit, onWorkspaceChange, view, views = ['review', 'delivery'], onViewChange, onOpenRuntime, onOpenFile }: { projectId: string; taskId: string | null; sessions?: {id:string;engine:'codex'|'claude'}[]; onContinueModel?: (sourceSessionId: string, preparedHandoffId?: string) => void; onOpenGit?: () => void; onWorkspaceChange?: (path:string)=>void; view?: CodeView; views?: readonly CodeView[]; onViewChange?: (view: CodeView)=>void; onOpenRuntime?: ()=>void; onOpenFile?: (target: FileTarget) => void }) {
   const { t } = useLocale();
-  const [localTab, setTab] = useState<CodeView>('files');
+  const [localTab, setTab] = useState<CodeView>('review');
   const tab = view ?? localTab;
   const [visited, setVisited] = useState<Set<string>>(() => new Set([tab]));
   useEffect(() => { setVisited(previous => previous.has(tab) ? previous : new Set([...previous, tab])); }, [tab]);
   function changeTab(next: string) {
-    if (!['files', 'changes', 'capabilities', 'delivery', 'review'].includes(next)) return;
+    if (next !== 'delivery' && next !== 'review') return;
     setTab(next as CodeView); onViewChange?.(next as CodeView);
   }
-  const [reviewTarget, setReviewTarget] = useState<FileTarget | null>(null);
-  const target = fileTarget && (!reviewTarget || fileTarget.nonce > reviewTarget.nonce) ? fileTarget : reviewTarget;
   return <section className="dev-review" aria-label={t('review.title')}>
     <Tabs value={tab} activationMode="manual" onValueChange={changeTab}>
       <Tabs.List aria-label={t('review.title')}>
-        {views.map(item => <Tabs.Trigger key={item} value={item} data-testid={`dev-review-tab-${item}`}>{t(item === 'review' ? 'workflow.review' : item === 'capabilities' ? 'capabilities.title' : item === 'delivery' ? 'delivery.title' : `review.${item}`)}</Tabs.Trigger>)}
+        {views.filter(item => item === 'review' || item === 'delivery').map(item => <Tabs.Trigger key={item} value={item} data-testid={`dev-review-tab-${item}`}>{t(item === 'review' ? 'workflow.review' : 'delivery.title')}</Tabs.Trigger>)}
       </Tabs.List>
-      <Tabs.Content forceMount hidden={tab !== 'files'} value="files">{visited.has('files') ? <Files projectId={projectId} taskId={taskId} workspacePath={workspacePath} target={target?.mode === 'file' ? target : null} /> : null}</Tabs.Content>
-      <Tabs.Content forceMount hidden={tab !== 'changes'} value="changes">{visited.has('changes') ? taskId ? <Changes projectId={projectId} taskId={taskId} target={target?.mode === 'diff' ? target : null} /> : <ProjectChanges projectId={projectId} target={target?.mode === 'diff' ? target : null} /> : null}</Tabs.Content>
-      <Tabs.Content forceMount hidden={tab !== 'review'} value="review">{visited.has('review') && taskId ? <TaskReview projectId={projectId} taskId={taskId} onOpenDiff={async path => { const target: FileTarget = { path, mode: 'diff', nonce: Date.now() }; if (onOpenFile) { onOpenFile(target); return; } if (await discardDevelopmentDraft()) { setReviewTarget(target); changeTab('changes'); } }} onOpenRuntime={() => onOpenRuntime?.()} onOpenDelivery={() => changeTab('delivery')} /> : null}</Tabs.Content>
-      <Tabs.Content forceMount hidden={tab !== 'capabilities'} value="capabilities">{visited.has('capabilities') ? <ProjectCapabilities projectId={projectId} snapshot={snapshot} onUseConfiguration={onUseConfiguration} /> : null}</Tabs.Content>
-      <Tabs.Content forceMount hidden={tab !== 'delivery'} value="delivery">{visited.has('delivery') ? <DeliveryPanel projectId={projectId} taskId={taskId} sessions={sessions} live={live} capabilityRevision={capabilityRevision} workspacePath={workspacePath} onHandoff={onHandoff} onWorkspaceChange={onWorkspaceChange} /> : null}</Tabs.Content>
+      <Tabs.Content forceMount hidden={tab !== 'review'} value="review">{visited.has('review') && taskId ? <TaskReview projectId={projectId} taskId={taskId} onOpenDiff={path => onOpenFile?.({ path, mode: 'diff', nonce: Date.now() })} onOpenRuntime={() => onOpenRuntime?.()} onOpenDelivery={() => changeTab('delivery')} /> : null}</Tabs.Content>
+      <Tabs.Content forceMount hidden={tab !== 'delivery'} value="delivery">{visited.has('delivery') ? <DeliveryPanel projectId={projectId} taskId={taskId} sessions={sessions} onContinueModel={onContinueModel} onOpenGit={onOpenGit} onWorkspaceChange={onWorkspaceChange} /> : null}</Tabs.Content>
     </Tabs>
   </section>;
 }
@@ -87,32 +79,6 @@ function Evidence({ capturedAt, late, truncated, stale }: { capturedAt: number |
   return <div className="dev-review-stack" role="status"><p className="m-0 text-xs text-ink-secondary">{capturedAt === null ? t('review.noBaseline') : t('review.baselineAt', { time: formatDateTime(capturedAt * 1000) })}</p>{late ? <p className="dev-evidence-warning">{t('review.baselineLate')}</p> : null}{truncated ? <p className="dev-evidence-warning">{t('review.reviewTruncated')}</p> : null}{stale ? <p className="dev-evidence-warning">{t('review.stale')}</p> : null}</div>;
 }
 
-function ProjectChanges({ projectId, target }: { projectId: string; target?: FileTarget | null }) {
-  const { t } = useLocale();
-  const git = useRead(useCallback(() => readDevelopmentProjectGit(projectId, null), [projectId]));
-  const [selected, setSelected] = useWorkbenchLocation<string | null>(`${projectId}:project-change`, null);
-  useEffect(() => { if (target) setSelected(target.path); }, [target?.nonce]);
-  return <div className="dev-review-stack"><div className="dev-review-toolbar"><p className="m-0 text-xs text-ink-secondary">{t('workbenchGit.projectScope')}</p><Button size="xs" variant="secondary" disabled={git.busy} onClick={() => { setSelected(null); void git.refresh(); }}>{t('review.refresh')}</Button></div><Feedback busy={git.busy} error={git.error} />
-    {git.value ? <><p className="m-0 break-all text-xs">{git.value.branch ?? t('delivery.detached')} · {git.value.head ?? t('delivery.unknown')}</p>
-      {!git.value.files.length ? <p className="text-xs text-ink-secondary">{t('workbenchGit.noChanges')}</p> : <nav className="dev-change-list" aria-label={t('review.changes')}>{git.value.files.map(file => <div key={file.path} className="dev-change-tree-group"><Button size="xs" variant={selected === file.path ? 'secondary' : 'ghost'} className="dev-change-entry" onClick={() => setSelected(file.path)}><span className="break-all">{file.path}</span><span className="dev-evidence-tags">{file.index !== ' ' ? t('delivery.stagedDiff') : null}{file.worktree !== ' ' ? t('delivery.worktreeDiff') : null}</span></Button></div>)}</nav>}
-      {selected ? <ChangeDiff taskId={null} projectId={projectId} path={selected} source="worktree" /> : null}</> : null}
-  </div>;
-}
-
-function Changes({ projectId, taskId, target }: { projectId: string; taskId: string; target?: FileTarget | null }) {
-  const { t } = useLocale();
-  const review = useRead(useCallback(() => readDevelopmentReview(taskId), [taskId]));
-  const [selected, setSelected] = useWorkbenchLocation<string | null>(`${taskId}:change`, null);
-  useEffect(() => { if (target) setSelected(target.path); }, [target?.nonce]);
-  return <div className="dev-review-stack"><div className="dev-review-toolbar"><p className="m-0 text-xs text-ink-secondary">{t('review.uncertainty')}</p><Button size="xs" variant="secondary" data-testid="dev-review-refresh" disabled={review.busy} onClick={() => { setSelected(null); void review.refresh(); }}>{t('review.refresh')}</Button></div><Feedback busy={review.busy} error={review.error} />
-    {review.value ? <><Evidence capturedAt={review.value.captured_at} late={review.value.baseline_late} truncated={review.value.truncated} stale={review.value.runs_stale} />
-      {review.value.excluded?.length ? <section className="dev-review-stack" aria-label={t('review.excluded')}><strong className="text-xs">{t('review.excluded')}</strong><ul className="m-0 grid gap-2 pl-4">{review.value.excluded.map((entry, index) => <li key={`${entry.path}:${index}`}><span className="break-all text-xs">{entry.path}</span><ContentReason reason={entry.reason} /></li>)}</ul></section> : null}
-      {!review.value.changes.length ? <p className="text-xs text-ink-secondary">{t('review.noChanges')}</p> : null}
-      <nav className="dev-change-list" aria-label={t('review.changes')}>{review.value.changes.map(change => <Button key={`${change.kind}:${change.path}`} size="xs" variant={selected === change.path ? 'secondary' : 'ghost'} className="dev-change-entry" data-testid={`dev-change-item-${change.path}`} aria-pressed={selected === change.path} onClick={() => setSelected(change.path)}>
-        <span className="break-all">{change.path}</span><span className="dev-evidence-tags"><span>{t(`review.change.${change.kind}`)}</span>{change.pre_existing && change.kind !== 'pre_existing' ? <span>{t('review.change.pre_existing')}</span> : null}<span>{t(change.origin === 'external' ? 'review.external' : 'review.uncertain')}</span>{!change.previewable ? <span>{t('review.noPreview')}</span> : null}</span>
-      </Button>)}</nav>{selected ? <ChangeDiff key={selected} taskId={taskId} projectId={projectId} path={selected} /> : null}</> : null}
-  </div>;
-}
 
 export function ChangeDiff({ taskId, path, projectId, source: requestedSource, onReference }: { taskId: string | null; path: string; projectId: string; source?: 'task' | 'index' | 'worktree'; onReference?: (reference: ConversationReference) => void }) {
   const source = taskId ? requestedSource ?? 'task' : requestedSource === 'index' ? 'index' : 'worktree';

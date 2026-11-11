@@ -1,5 +1,5 @@
 export default {
-  'review.title': '项目审查', 'review.files': '文件', 'review.changes': '变更', 'review.runs': '运行记录',
+  'review.title': '任务验收与交付', 'review.files': '文件', 'review.changes': '变更', 'review.runs': '运行记录',
   'review.loading': '读取中…', 'review.refresh': '刷新', 'review.search': '搜索文件名', 'review.includeIgnored': '包含被忽略文件',
   'review.directory': '目录导航', 'review.root': '项目根目录', 'review.ignored': '已忽略', 'review.kind.symlink': '符号链接（不跟随）', 'review.kind.blocked': '不可访问',
   'review.searchHint': '匹配当前目录及子目录中的文件名。', 'review.readonly': '只读源码。此处不会修改文件。',

@@ -27,6 +27,9 @@ import { getLocale } from '../../i18n/runtime';
 type BilingualMessage = { zh: ErrorMessage; en: ErrorMessage };
 
 const BILINGUAL_ERRORS: Readonly<Record<number, BilingualMessage>> = Object.freeze({
+  1001026: { zh: { message: '此 CLI 协议未启用', description: '仅在服务支持时启用对应的 Responses 或 Messages 路由', severity: 'moderate' }, en: { message: 'CLI protocol is not enabled', description: 'Enable the Responses or Messages route only if the service supports it', severity: 'moderate' } },
+  1001027: { zh: { message: 'CLI 认证方式不支持', description: 'Codex 使用 Bearer；请检查对应路由的认证设置', severity: 'moderate' }, en: { message: 'Unsupported CLI authentication', description: 'Codex requires Bearer. Check the authentication setting for this route', severity: 'moderate' } },
+  1001028: { zh: { message: 'CLI 路由配置无效', description: '填写 API 基础地址，不含用户名、密码、查询参数、片段或完整操作路径，并检查 HTTP 授权设置', severity: 'moderate' }, en: { message: 'Invalid CLI route configuration', description: 'Use an API base without user info, query, fragment, or an operation path, and check the HTTP permission setting', severity: 'moderate' } },
   1000000: { zh: { message: '操作失败', description: '请稍后重试，持续出现时查看日志', severity: 'moderate' }, en: { message: 'Operation failed', description: 'Please try again later. Check the logs if the problem persists', severity: 'moderate' } },
   1001001: { zh: { message: 'Provider 不存在', description: '请检查 Provider ID 是否正确', severity: 'moderate', action: { label: '查看 Provider 列表', route: '/settings/providers' } }, en: { message: 'Provider not found', description: 'Check that the Provider ID is correct', severity: 'moderate', action: { label: 'View Providers', route: '/settings/providers' } } },
   1001002: { zh: { message: 'API Key 无效', description: 'Provider 返回认证错误，请检查 API Key 是否正确', severity: 'moderate' }, en: { message: 'Invalid API key', description: 'The Provider rejected authentication. Check the API key', severity: 'moderate' } },
@@ -46,6 +49,9 @@ const BILINGUAL_ERRORS: Readonly<Record<number, BilingualMessage>> = Object.free
 });
 
 export const ERROR_MESSAGES: Readonly<Record<number, ErrorMessage>> = Object.freeze({
+  1001026: BILINGUAL_ERRORS[1001026].zh,
+  1001027: BILINGUAL_ERRORS[1001027].zh,
+  1001028: BILINGUAL_ERRORS[1001028].zh,
   1000000: {
     message: '操作失败',
     description: '请稍后重试，持续出现时查看日志',

@@ -78,6 +78,9 @@ export function agentContextUsage(session?: AgentSession): AgentContextUsage {
     // even after event truncation; never sum it with per-turn message.usage.
     const receipt = receiptOrder.length ? receipts.get(receiptOrder[receiptOrder.length - 1]) : undefined;
     if (receipt) {
+      // Result usage is the final main-loop turn receipt; completed assistant
+      // blocks carry provisional usage and must never be added to this total.
+      result.latest = claudeCounts(object(receipt.data).usage);
       const models = Object.values(object(object(receipt.data).model_usage));
       result.cumulative = combine(models.map(value => {
         const model = object(value);
@@ -88,16 +91,17 @@ export function agentContextUsage(session?: AgentSession): AgentContextUsage {
     }
     for (let i = session.events.length - 1; i >= 0; --i) {
       const event = session.events[i], data = object(event.data);
-      if (event.kind !== 'message' || data.type !== 'assistant' || data.history === true || data.parent_tool_use_id || data.usage_source !== 'native_response') continue;
-      result.latest = claudeCounts(data.usage);
-      result.used = result.latest.total;
+      if (event.kind !== 'message' || data.type !== 'assistant' || data.history === true || data.parent_tool_use_id || !['native_response', 'native_response_input'].includes(String(data.usage_source))) continue;
+      // Only the latest request input estimates occupancy. Block output is
+      // provisional, while result/model_usage output is cumulative across calls.
+      result.used = claudeCounts(data.usage).input;
       const run = identity(event), receipt = run ? receipts.get(run) : undefined;
       if (typeof data.model === 'string' && receipt) {
         const limit = count(object(object(object(receipt.data).model_limits)[data.model]).contextWindow);
         result.limit = limit && limit > 0 ? limit : null;
       }
       result.seq = count(event.seq);
-      result.source = 'assistant.message.usage';
+      result.source = 'assistant.message.input_usage';
       break;
     }
   }

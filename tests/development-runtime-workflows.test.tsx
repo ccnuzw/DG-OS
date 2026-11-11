@@ -51,8 +51,8 @@ it('runs a chosen real test script directly with verification and no configurati
 
 it('edits a saved command without allocating another command identity', async () => {
   render(<DevelopmentRuntime projectId="p" taskId="t" />); await flush();
-  fireEvent.change(screen.getByRole('combobox', { name: 'direct.savedCommands' }), { target: { value: saved.id } }); await flush();
   configure();
+  fireEvent.change(screen.getByRole('combobox', { name: 'direct.savedCommands' }), { target: { value: saved.id } }); await flush();
   fireEvent.change(screen.getByRole('textbox', { name: 'direct.commandName' }), { target: { value: 'Updated check' } });
   fireEvent.click(screen.getByRole('button', { name: 'direct.saveCommand' })); await flush();
   expect(commands).toEqual([{ ...saved, name: 'Updated check' }]);
@@ -62,13 +62,15 @@ it('edits a saved command without allocating another command identity', async ()
 it('requests shell permission only when needed and blocks unknown starts without changing the command draft', async () => {
   trustState.terminal = false; grant.mockResolvedValue(false);
   render(<DevelopmentRuntime projectId="p" taskId="t" />); await flush();
+  configure();
   fireEvent.change(screen.getByRole('combobox', { name: 'direct.discovered' }), { target: { value: script.id } }); await flush();
   fireEvent.click(screen.getByTestId('dev-open-terminal')); await flush();
   expect(grant).toHaveBeenCalledWith('terminal'); expect(calls('start_development_process')).toHaveLength(0);
   grant.mockResolvedValue(true);
   fireEvent.click(screen.getByTestId('dev-open-terminal')); await flush();
   expect(calls('start_development_process')[0][1].input).toMatchObject({ kind: 'terminal', program: '/bin/sh', args: [], cwd: '', env_refs: {}, trust_workspace: false });
-  expect(screen.getByTestId('dev-runtime-draft-summary').textContent).toContain('["npm","run","test"]');
+  expect((screen.getByTestId('dev-process-program') as HTMLInputElement).value).toBe(script.program);
+  expect(screen.getAllByRole('textbox', { name: 'direct.argument' }).map(field => (field as HTMLInputElement).value)).toEqual(script.args);
   await act(async () => { useDevelopmentRuntime.setState(state => ({ operations: state.operations.map(operation => ({ ...operation, phase: 'unknown' as const })) })); });
   fireEvent.click(screen.getByTestId('dev-open-terminal')); fireEvent.click(screen.getByTestId('dev-process-start'));
   expect(calls('start_development_process')).toHaveLength(1);
@@ -78,37 +80,40 @@ it('retains the blocked draft after directory cleanup and waits for explicit res
   const implementation = invoke.getMockImplementation()!; let busy = true;
   invoke.mockImplementation(async (command: string, args: unknown) => { if (command === 'start_development_process' && busy) throw 'workspace_busy'; return implementation(command, args); });
   render(<DevelopmentRuntime projectId="p" taskId="t" />); await flush();
+  configure();
   fireEvent.change(screen.getByRole('combobox', { name: 'direct.discovered' }), { target: { value: script.id } }); await flush();
   fireEvent.click(screen.getByTestId('dev-process-start')); await flush();
   expect(calls('start_development_process')).toHaveLength(1);
   busy = false; fireEvent.click(screen.getByRole('button', { name: 'Release directory' })); await flush();
   expect(screen.getByText('runtimeWorkflow.resubmit')).toBeTruthy();
-  expect(screen.getByTestId('dev-runtime-draft-summary').textContent).toContain('["npm","run","test"]');
   expect(calls('start_development_process')).toHaveLength(1);
   fireEvent.click(screen.getByTestId('dev-process-start')); await flush();
   expect(calls('start_development_process')).toHaveLength(2);
+  expect(calls('start_development_process')[1][1].input).toMatchObject({ kind: 'command', program: script.program, args: script.args, cwd: script.cwd });
 });
 
 it('shows actual service statuses and output selection without starting or refreshing history again', async () => {
   processes = [process('service', 'service', 'ready'), process('recent')];
   render(<DevelopmentRuntime projectId="p" taskId="t" />); await flush();
   const historyReads = calls('list_development_processes').length;
-  const services = screen.getByRole('region', { name: 'runtimeWorkflow.services' });
-  expect(within(services).getByText('direct.status.ready')).toBeTruthy();
+  const history = screen.getByRole('navigation', { name: 'direct.history' });
+  expect(within(history).getByTestId('dev-process-history-service').textContent).toContain('direct.status.ready');
   fireEvent.click(screen.getByTestId('dev-process-history-recent')); await flush();
   expect(screen.getByText('recent real output')).toBeTruthy();
+  fireEvent.click(within(history).getByTestId('dev-process-history-service')); await flush();
+  expect(screen.getByText('service real output')).toBeTruthy();
   expect(calls('list_development_processes')).toHaveLength(historyReads);
   expect(calls('start_development_process')).toHaveLength(0);
 });
 
 it('opens a terminal at the actual task workspace independently of advanced command overrides', async () => {
   render(<DevelopmentRuntime projectId="p" taskId="t" />); await flush();
-  fireEvent.change(screen.getByRole('combobox', { name: 'direct.discovered' }), { target: { value: script.id } }); await flush();
   configure();
+  fireEvent.change(screen.getByRole('combobox', { name: 'direct.discovered' }), { target: { value: script.id } }); await flush();
   fireEvent.change(screen.getByTestId('dev-process-cwd'), { target: { value: 'packages/app' } }); await flush();
   fireEvent.click(screen.getByTestId('dev-open-terminal')); await flush();
   expect(calls('start_development_process')[0][1].input).toMatchObject({ kind: 'terminal', cwd: '', env_refs: {}, trust_workspace: false });
-  expect(screen.getByTestId('dev-runtime-draft-summary').textContent).toContain('packages/app');
+  expect((screen.getByTestId('dev-process-cwd') as HTMLInputElement).value).toBe('packages/app');
 });
 
 it('restores manual selection per project/task, excludes native runs and rejects stale cross-task selection', async () => {
@@ -163,7 +168,6 @@ it('shows project and host working directory without treating a native terminal-
   const context = screen.getByTestId('dev-runtime-context');
   expect(within(context).getByText('Local project')).toBeTruthy();
   expect(within(context).getByText('/tmp/local-project/task-root')).toBeTruthy();
-  expect(within(context).getByText('direct.status.running')).toBeTruthy();
   expect(screen.queryByTestId('dev-process-history-native')).toBeNull();
   expect(useDevelopmentRuntime.getState().selected).toBe('manual');
   expect(calls('start_development_process')).toHaveLength(0);
@@ -207,13 +211,43 @@ it.each([true, false])('restarts only after the old service cleanup has been con
   } else expect(screen.getByRole('button', { name: 'direct.operation.confirm' })).toBeTruthy();
 });
 
-it('requires real readiness settings before launching an unconfigured preview', async () => {
-  commands = [{ ...saved, args: ['run', 'dev'] }];
+it('configures a first preview without dispatching early or replacing the custom command draft', async () => {
+  const preview = { ...saved, args: ['run', 'dev'] };
+  commands = [preview];
   render(<DevelopmentRuntime projectId="p" taskId="t" />); await flush();
+  configure();
+  fireEvent.change(screen.getByRole('textbox', { name: 'direct.commandName' }), { target: { value: 'Custom command' } });
+  fireEvent.change(screen.getByTestId('dev-process-program'), { target: { value: 'custom-runner' } });
+  fireEvent.click(screen.getByRole('button', { name: 'direct.addArgument' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'direct.argument' }), { target: { value: '--custom' } });
+  fireEvent.change(screen.getByTestId('dev-process-cwd'), { target: { value: 'packages/custom' } });
+  fireEvent.change(screen.getByTestId('dev-process-kind'), { target: { value: 'service' } });
+  fireEvent.change(screen.getByRole('spinbutton', { name: 'direct.port' }), { target: { value: '4100' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'direct.probePath' }), { target: { value: '/custom' } });
+  fireEvent.change(screen.getByRole('spinbutton', { name: 'direct.timeout' }), { target: { value: '11000' } });
+  configure(false);
   fireEvent.click(screen.getByRole('button', { name: 'runtimeWorkflow.preview' })); await flush();
-  expect((screen.getByTestId('dev-runtime-configuration') as HTMLDetailsElement).open).toBe(true);
-  expect((screen.getByTestId('dev-process-kind') as HTMLSelectElement).value).toBe('service');
   expect(calls('start_development_process')).toHaveLength(0);
+  const dialog = screen.getByRole('dialog', { name: 'runtimeWorkflow.previewSetup' });
+  expect((screen.getByTestId('dev-runtime-configuration') as HTMLDetailsElement).open).toBe(false);
+  fireEvent.change(within(dialog).getByRole('spinbutton', { name: 'direct.port' }), { target: { value: '5173' } });
+  const readinessDetails = within(dialog).getByText('direct.probePath').closest('details')!;
+  readinessDetails.open = true; fireEvent(readinessDetails, new Event('toggle'));
+  fireEvent.change(within(readinessDetails).getByRole('textbox', { name: 'direct.probePath' }), { target: { value: '/health' } });
+  fireEvent.change(within(readinessDetails).getByRole('spinbutton', { name: 'direct.timeout' }), { target: { value: '12000' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'runtimeWorkflow.saveAndPreview' })); await flush();
+  expect(calls('start_development_process')).toHaveLength(1);
+  expect(calls('start_development_process')[0][1].input).toEqual({ id: expect.any(String), task_id: 't', kind: 'service', program: preview.program, args: preview.args, cwd: preview.cwd, env_refs: preview.env_refs, trust_workspace: false, verification: false, readiness: { port: 5173, path: '/health', timeout_ms: 12000 } });
+  expect(screen.queryByRole('dialog', { name: 'runtimeWorkflow.previewSetup' })).toBeNull();
+  configure();
+  expect((screen.getByRole('textbox', { name: 'direct.commandName' }) as HTMLInputElement).value).toBe('Custom command');
+  expect((screen.getByTestId('dev-process-program') as HTMLInputElement).value).toBe('custom-runner');
+  expect((screen.getByRole('textbox', { name: 'direct.argument' }) as HTMLInputElement).value).toBe('--custom');
+  expect((screen.getByTestId('dev-process-cwd') as HTMLInputElement).value).toBe('packages/custom');
+  expect((screen.getByTestId('dev-process-kind') as HTMLSelectElement).value).toBe('service');
+  expect((screen.getByRole('spinbutton', { name: 'direct.port' }) as HTMLInputElement).value).toBe('4100');
+  expect((screen.getByRole('textbox', { name: 'direct.probePath' }) as HTMLInputElement).value).toBe('/custom');
+  expect((screen.getByRole('spinbutton', { name: 'direct.timeout' }) as HTMLInputElement).value).toBe('11000');
 });
 
 it('previews bounded redacted failure output and hands back only the user-reviewed draft', async () => {

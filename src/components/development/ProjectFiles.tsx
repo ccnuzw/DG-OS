@@ -166,7 +166,20 @@ export function Files({ projectId, taskId, workspacePath = '', target, onOpenFil
     const documents = Object.values(useDevelopmentEditor.getState().documents).filter(document => document.projectId === projectId && document.taskId === taskId && document.workspacePath === workspacePath && filePathAffected(document.path, source.path));
     if (developmentEditorMutationAffects(projectId, taskId, source.path) || action !== 'copy' && documents.some(document => document.saving || document.busy)) { setError('workspace_busy'); working.current = false; return; }
     if (action === 'delete' && !await guardDevelopmentDocuments(projectId, taskId, [source.path], workspacePath)) { working.current = false; return; }
-    if (!valid(generation, identity) || latest().operation || action !== 'copy' && documents.some(document => useDevelopmentEditor.getState().documents[document.id] !== document)) { working.current = false; return; }
+    if (!valid(generation, identity) || latest().operation || action !== 'copy' && documents.some(document => {
+      const current = useDevelopmentEditor.getState().documents[document.id];
+      return action === 'delete' ? !current || current.revision !== document.revision || current.editRevision !== document.editRevision || current.draft !== document.draft || current.saving || current.busy : current !== document;
+    })) { working.current = false; return; }
+    if (action === 'delete' && documents.some(document => useDevelopmentEditor.getState().documents[document.id]?.file !== document.file)) {
+      const guarded = Object.values(useDevelopmentEditor.getState().documents).filter(document => document.projectId === projectId && document.taskId === taskId && document.workspacePath === workspacePath && filePathAffected(document.path, source.path));
+      const inspected = await inspectDevelopmentEntry(input(source.path));
+      if (!valid(generation, identity) || latest().operation || developmentEditorMutationAffects(projectId, taskId, source.path) || guarded.some(document => useDevelopmentEditor.getState().documents[document.id] !== document) || Object.values(useDevelopmentEditor.getState().documents).filter(document => document.projectId === projectId && document.taskId === taskId && document.workspacePath === workspacePath && filePathAffected(document.path, source.path)).length !== guarded.length) { working.current = false; return; }
+      if (!inspected.ok) { setError(inspected.code); working.current = false; return; }
+      // Saving a child cannot authorize other changes to the directory snapshot.
+      // A new delete gesture must inspect and confirm that directory again.
+      if (source.kind === 'directory' && inspected.value.version !== source.version) { setError('file_changed'); working.current = false; return; }
+      source = inspected.value;
+    }
     const pending: Operation = { ...source, name, action, destination, status: 'pending' };
     draft.setValue({ ...latest(), operation: pending });
     const result = await mutateDevelopmentEntry({ ...input(source.path), expected_version: source.version, action, destination, trust_directory: true });

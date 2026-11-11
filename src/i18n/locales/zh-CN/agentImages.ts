@@ -5,7 +5,7 @@ export default {
   'agentImages.remove': '移除 {name}',
   'agentImages.reading': '正在读取图片…',
   'agentImages.size': '{kib} KiB',
-  'agentImages.limits': '支持 PNG、JPEG、WebP；最多 4 张，每张及合计最多 2 MiB。也可直接粘贴图片。',
+  'agentImages.limits': '支持 PNG、JPEG、WebP；最多 4 张，每张及合计最多 2 MiB。也可粘贴或拖入图片。',
   'agentImages.privacy': '未发送图片在账户私有存储保留最多 7 天，所有草稿合计 4 MiB。发送时会交给已配置的 Codex Provider；DG-OS 历史仅保留元数据，并移除已发送预览。',
   'agentImages.history': '图片输入：{count} 张',
   'agentImages.historyPrivacy': '历史中不保留图片内容或可重开链接；恢复会话不会重新发送图片。',
@@ -13,4 +13,5 @@ export default {
   'agentImages.error.type': '请选择 PNG、JPEG 或 WebP 图片文件。图片链接和文件系统路径不能作为图片输入。',
   'agentImages.error.read': '无法读取图片，请重新选择或粘贴。',
   'agentImages.error.expired': '这些未发送图片已在 7 天后过期。文字草稿仍保留，请重新选择图片后发送。',
+  'agentImages.error.unavailable': '当前暂不能添加图片；请在空闲的 Codex 会话中重试。',
 } as const;

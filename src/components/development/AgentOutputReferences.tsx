@@ -14,7 +14,7 @@ export function AgentOutputReferences({ event, toolNames, onOpenReference, onSel
   const run = agentEventFailed(event) && event.run;
   if (!references.length && !unresolved && !run) return null;
   return <section data-testid={`agent-event-references-${event.seq}`} className="flex min-w-0 flex-wrap items-center gap-2 py-2 text-xs" aria-label={t('agent.references')}>
-    {references.map((reference, index) => <div key={`${reference.path}:${reference.line ?? ''}:${index}`} data-reference-path={reference.path} data-reference-line={reference.line} className="flex min-w-0 flex-wrap items-center gap-2"><code className="break-all">{reference.path}{reference.line ? `:${reference.line}` : ''}</code>{(['file', ...(reference.diff ? ['diff'] : [])] as ('file' | 'diff')[]).map(mode => <Button key={mode} data-testid={`agent-reference-${event.seq}-${index}-${mode}`} data-reference-mode={mode} size="xs" variant="secondary" disabled={busy || !onOpenReference} onClick={async () => {
+    {references.map((reference, index) => <div key={`${reference.path}:${reference.line ?? ''}:${index}`} data-reference-path={reference.path} data-reference-line={reference.line} className="flex min-w-0 flex-wrap items-center gap-2"><code className="break-all">{reference.path}{reference.line ? `:${reference.line}` : ''}</code>{(['file', ...(reference.diff ? ['diff'] : [])] as ('file' | 'diff')[]).map(mode => <Button key={mode} title={mode === 'diff' ? t('agentExecution.diskDiff') : undefined} data-testid={`agent-reference-${event.seq}-${index}-${mode}`} data-reference-mode={mode} size="xs" variant="secondary" disabled={busy || !onOpenReference} onClick={async () => {
       if (busy || !onOpenReference) return;
       setBusy(true); setFailed(false);
       try { await onOpenReference(reference, mode); } catch { if (current.current) setFailed(true); }
@@ -23,6 +23,7 @@ export function AgentOutputReferences({ event, toolNames, onOpenReference, onSel
     {run ? onSelectRun ? <Button data-testid={`agent-reference-${event.seq}-run`} data-run-id={run} size="xs" variant="secondary" onClick={() => onSelectRun(run)}>{t('agent.openRun')}</Button> : <span>{t('agent.referenceUnavailable')}</span> : null}
     {unresolved ? <span className="text-ink-secondary">{t('agent.referenceUnresolved')}</span> : null}
     {references.length > 0 && !onOpenReference ? <span className="text-ink-secondary">{t('agent.referenceUnavailable')}</span> : null}
+    {references.some(reference => reference.diff) ? <span className="text-ink-secondary">{t('agentExecution.diskReferenceBoundary')}</span> : null}
     {failed ? <span role="alert" className="text-status-error">{t('agent.referenceUnavailable')}</span> : null}
   </section>;
 }

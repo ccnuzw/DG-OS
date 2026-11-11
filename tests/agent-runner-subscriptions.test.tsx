@@ -193,6 +193,27 @@ it('blocks fresh send identities until the original unknown send has matching ad
  expect(invoke.mock.calls.filter(([command]) => command === 'send_agent_message')).toHaveLength(2);
 });
 
+it('allows a corrected prompt after host preflight rejects its UTF-8 byte limit without admission evidence', async () => {
+  const admitted = vi.fn();
+  invoke.mockImplementation(async (command: string, args: { input?: { text: string; request_id: string } }) => {
+    if (command !== 'send_agent_message') return session('one');
+    if (new TextEncoder().encode(args.input!.text).length > 65536) throw 'invalid_prompt';
+    admitted(args.input);
+    return null;
+  });
+  await useAgentRunner.getState().attach('one');
+  const input = { session_id: 'one', generation: 'generation-one', request_id: 'oversized', text: '界'.repeat(21846) };
+  const onFailure = vi.fn();
+  expect(await useAgentRunner.getState().action('send_agent_message', { input }, onFailure)).toBe(false);
+  expect(onFailure).toHaveBeenCalledWith('invalid_prompt');
+  expect(useAgentRunner.getState().session?.events).toEqual([]);
+  expect(admitted).not.toHaveBeenCalled();
+  const corrected = { ...input, request_id: 'corrected', text: '界'.repeat(21845) };
+  expect(await useAgentRunner.getState().action('send_agent_message', { input: corrected })).toBe(true);
+  expect(admitted).toHaveBeenCalledExactlyOnceWith(corrected);
+  expect(invoke.mock.calls.filter(([command]) => command === 'send_agent_message')).toHaveLength(2);
+});
+
 it('appends each event once, drops evicted history and refreshes approvals without transcript output', async () => {
   const event = (seq: number) => ({ seq, kind: 'output', text: `message-${seq}`, data: null });
   const pending = { id: 'native-request', kind: 'approval', title: 'Approve command', data: null };

@@ -17,6 +17,10 @@ async function advance(ms: number) { await act(async () => { await vi.advanceTim
 function expectReceipt(action: 'save' | 'start' | 'stop', phase: 'pending' | 'accepted' | 'succeeded' | 'failed' | 'unknown', targetId?: string) {
   const operation = useDevelopmentRuntime.getState().operations.find(item => item.action === action);
   expect(operation).toMatchObject({ phase, projectId: 'p', taskId: 't', ...(targetId ? { targetId } : {}) });
+  if (!operation!.error && !operation!.refreshError && (phase === 'succeeded' || action === 'start' && phase === 'accepted')) {
+    const disclosure = screen.getByText('runtimeWorkflow.operationDetails', { selector: 'summary' }).closest('details')!;
+    if (!disclosure.open) { disclosure.open = true; fireEvent(disclosure, new Event('toggle')); }
+  }
   const receipts = screen.getByRole('region', { name: 'direct.operation.receipts' });
   const identity = within(receipts).getByText(operation!.targetId, { selector: 'code' });
   const receipt = identity.closest('details')!.parentElement!;
@@ -29,7 +33,7 @@ function show() {
   const tree = (active: boolean, taskId = 't') => <SurfaceScope id="agent" active={active} controller={controller}><DevelopmentRuntime projectId="p" taskId={taskId} /></SurfaceScope>;
   const view = render(tree(true));
   openConfiguration();
-  return { async activity(active: boolean, taskId = 't') { view.rerender(tree(active, taskId)); await flush(); } };
+  return { async activity(active: boolean, taskId = 't') { view.rerender(tree(active, taskId)); await flush(); openConfiguration(); } };
 }
 beforeEach(() => {
   vi.useFakeTimers(); useDevelopment.getState().reset();
@@ -221,7 +225,6 @@ it('explains invalid runtime fields next to inputs before dispatching', async ()
   show(); await flush();
   fireEvent.click(screen.getByTestId('dev-process-start'));
   expect(screen.getByText('direct.validation.program')).toBeTruthy();
-  expect(screen.queryByTestId('dev-process-trust')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'direct.saveCommand' }));
   expect(screen.getByText('direct.validation.name')).toBeTruthy();
   expect(calls('start_development_process')).toBe(0);
@@ -238,6 +241,7 @@ it('retains an owned start receipt across unmount and separates a failed history
     return process(startedId, 'running');
   });
   const view = render(<DevelopmentRuntime projectId="p" taskId="t" />); await flush();
+  openConfiguration();
   fireEvent.change(screen.getByTestId('dev-process-program'), { target: { value: 'echo' } });
   fireEvent.click(screen.getByTestId('dev-process-start'));
   expectReceipt('start', 'pending', startedId);
@@ -551,20 +555,21 @@ it.each(['exited', 'failed', 'cancelled', 'unknown', 'cleanup_pending'])('retain
   expect(calls('stop_development_process')).toBe(0);
 });
 
-it('retains command drafts across internal unmount and task changes without carrying trust to another target', async () => {
+it('retains command drafts across internal unmount and isolates task and account changes', async () => {
   const view = render(<DevelopmentRuntime projectId="p" taskId="t" />); await flush();
   openConfiguration();
   fireEvent.change(screen.getByTestId('dev-process-program'), { target: { value: 'retained-command-draft' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'direct.commandName' }), { target: { value: 'Retained name' } });
   view.unmount();
   const restored = render(<DevelopmentRuntime projectId="p" taskId="t" />); await flush();
+  openConfiguration();
   expect((screen.getByTestId('dev-process-program') as HTMLInputElement).value).toBe('retained-command-draft');
   restored.rerender(<DevelopmentRuntime projectId="p" taskId="other" />); await flush();
+  openConfiguration();
   expect((screen.getByTestId('dev-process-program') as HTMLInputElement).value).toBe('');
   restored.rerender(<DevelopmentRuntime projectId="p" taskId="t" />); await flush();
   openConfiguration();
   expect((screen.getByRole('textbox', { name: 'direct.commandName' }) as HTMLInputElement).value).toBe('Retained name');
-  expect(screen.queryByTestId('dev-process-trust')).toBeNull();
   await act(async () => { useDevelopment.getState().reset(); });
   expect((screen.getByTestId('dev-process-program') as HTMLInputElement).value).toBe('');
   expect(calls('start_development_process')).toBe(0);

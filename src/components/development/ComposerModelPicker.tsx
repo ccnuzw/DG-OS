@@ -165,6 +165,10 @@ export function ComposerModelPicker({ projectId, value, preferred, disabled = fa
     switch (reason) {
       case 'provider_disabled': return t('modelPicker.providerDisabled');
       case 'provider_incompatible': return t('modelPicker.providerIncompatible');
+      case 'provider_protocol_unsupported':
+      case 'provider_auth_unsupported':
+      case 'provider_route_invalid':
+      case 'provider_model_unsupported': return t(`dev.error.${reason}`);
       case 'cli_incompatible': return t('modelPicker.cliUnavailable');
       case 'cli_not_installed':
       case 'cli_not_executable':

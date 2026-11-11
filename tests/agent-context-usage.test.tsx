@@ -30,6 +30,25 @@ it('reads the latest cumulative Claude model receipt and never sums duplicate or
   expect(agentContextUsage(value).costUsd).toBe(0.01);
 });
 
+it('uses result usage as final turn accounting while block input alone estimates context', () => {
+  const value = session();
+  for (const [seq, output] of [[1, 900], [2, 1800]]) value.events.push({ seq, kind: 'message', run: 'turn', text: null, data: { type: 'assistant', native_message_id: 'api', model: 'main', usage_source: 'native_response_input', usage_final: false, usage: { input_tokens: 20, output_tokens: output, cache_read_input_tokens: 100, cache_creation_input_tokens: 10 } } });
+  expect(agentContextUsage(value)).toMatchObject({ used: 130, latest: null, cumulative: null });
+  result(value, 3, 'turn', { usage: { input_tokens: 40, output_tokens: 8, cache_read_input_tokens: 200, cache_creation_input_tokens: 20 }, model_usage: { main: { ...model, outputTokens: 8 } }, model_limits: { main: { contextWindow: 1000 } } });
+  expect(agentContextUsage(value)).toMatchObject({ used: 130, limit: 1000, latest: { input: 260, output: 8, total: 268 }, cumulative: { input: 130, output: 8, total: 138 } });
+  value.events.push({ seq: 4, kind: 'message', run: 'turn', text: null, data: { type: 'assistant', parent_tool_use_id: 'spawn', usage_source: 'native_response_input', usage: { input_tokens: 99999, output_tokens: 99999 } } });
+  expect(agentContextUsage(value).used).toBe(130);
+  result(value, 5, 'turn', { usage: { input_tokens: 40, output_tokens: 8, cache_read_input_tokens: 200, cache_creation_input_tokens: 20 }, model_usage: { main: { ...model, outputTokens: 8 } } });
+  expect(agentContextUsage(value).latest?.total).toBe(268);
+});
+
+it('never substitutes a final turn or cumulative output total for missing context input', () => {
+  const value = session();
+  value.events.push({ seq: 1, kind: 'message', run: 'turn', text: null, data: { type: 'assistant', usage_source: 'native_response_input', usage: { output_tokens: 99999 } } });
+  result(value, 2, 'turn', { usage: { input_tokens: 8000, output_tokens: 9000 }, model_usage: { main: model } });
+  expect(agentContextUsage(value)).toMatchObject({ used: null, kind: 'unavailable', latest: { input: 8000, output: 9000 }, cumulative: { total: 135 } });
+});
+
 it('retains cumulative native totals after truncation but cannot invent missing duration', () => {
   const value = session(); value.history_truncated = true;
   value.events.push({ seq: 90, kind: 'message', text: null, data: { type: 'assistant', history: true, usage_source: 'native_response', usage: { input_tokens: 999, output_tokens: 99 } } });
@@ -75,7 +94,7 @@ it('dispatches real Claude compact, retains receipts, and checks uncertain reque
   await waitFor(() => expect(button).toHaveProperty('disabled', false));
   fireEvent.click(button);
   await screen.findByText('agentUsage.unknown');
-  expect(screen.getByText('25 / —')).toBeTruthy();
+  expect(screen.getByText('20 / —')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'agentUsage.check' }));
   await waitFor(() => expect(screen.queryByText('agentUsage.unknown')).toBeNull());
   expect(invoke.mock.calls.filter(([command]) => command === 'control_codex_operation')).toHaveLength(1);
