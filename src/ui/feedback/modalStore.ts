@@ -17,6 +17,7 @@ export interface ModalEntry {
   confirmText?: string;
   cancelText?: string;
   confirmVariant?: ButtonVariant;
+  footer?: ReactNode;
   onConfirm?: () => void | Promise<void>;
   onCancel?: () => void;
 }
@@ -33,6 +34,8 @@ export interface ConfirmOptions {
   confirmText?: string;
   cancelText?: string;
   confirmVariant?: ButtonVariant;
+  /** Replaces the default buttons, as on the declarative Modal. */
+  footer?: ReactNode;
   onConfirm?: () => void | Promise<void>;
   onCancel?: () => void;
 }

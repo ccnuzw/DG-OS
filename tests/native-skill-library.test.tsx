@@ -8,7 +8,7 @@ import type { NativeLibrarySkill, NativeSkillSource } from '../src/types/nativeS
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn() }));
-vi.mock('../src/i18n', () => ({ t: (key: string) => key }));
+vi.mock('../src/i18n', () => ({ t: (key: string) => key, useLocale: () => ({ locale: 'en-US', t: (key: string) => key }) }));
 const selection: NativeSelection = { target: 'Codex', scope: 'ProjectShared', project_id: 'project-a', task_id: 'task-worktree' };
 const declarations = { declared: true, tools: [{ program: 'fixture-tool', version_requirement: '>=1' }], packages: ['unverified-package'], required_tools: [] };
 const librarySkill: NativeLibrarySkill = { path: 'skills/first', name: 'first', description: 'First fixture skill', content_hash: 'a'.repeat(64), file_count: 2, script_count: 1, executable_files: 1, dynamic_commands: false, dependencies: declarations };
@@ -36,8 +36,9 @@ it('reads only the saved source cache on mount and saves a source without indexi
   render(<NativeSkillLibrary selection={selection} tab="sources" disabled={false} onPreview={onPreview} />);
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('list_native_skill_sources', { input: selection }));
   expect(invoke.mock.calls.every(([command]) => command === 'list_native_skill_sources')).toBe(true);
-  fireEvent.change(screen.getByLabelText('nativeSkillLibrary.repositoryUrl'), { target: { value: repository.normalized_source } });
   fireEvent.click(screen.getByRole('button', { name: 'nativeSkillLibrary.addSource' }));
+  fireEvent.change(screen.getByLabelText('nativeSkillLibrary.repositoryUrl'), { target: { value: repository.normalized_source } });
+  fireEvent.submit(screen.getByLabelText('nativeSkillLibrary.repositoryUrl').closest('form')!);
   await screen.findByText('nativeSkillLibrary.sourceSaved');
   expect(invoke).toHaveBeenCalledWith('save_native_skill_source', { input: { selection, id: null, expected_revision: null, input: repository.normalized_source } });
   expect(invoke.mock.calls.some(([command]) => ['refresh_native_skill_source', 'preview_native_skill', 'commit_native_operation', 'run_native_skill_version'].includes(command))).toBe(false);
@@ -52,7 +53,7 @@ it('searches explicitly and sends the selected repository subdirectory through t
   expect(invoke.mock.calls.some(([command]) => command === 'search_native_skill_library')).toBe(false);
   fireEvent.change(screen.getByLabelText('nativeSkillLibrary.searchQuery'), { target: { value: 'fixture' } });
   fireEvent.click(screen.getByRole('button', { name: 'nativeSkillLibrary.search' }));
-  fireEvent.click(await screen.findByRole('button', { name: /^second First fixture skill/ }));
+  fireEvent.click(await screen.findByRole('button', { name: /^second/ }));
   fireEvent.click(screen.getByRole('button', { name: 'nativeSkillLibrary.previewInstall' }));
   expect(onPreview).toHaveBeenCalledWith({ ...selection, action: 'install', slug: 'second', expected: null, source: { kind: 'repository', source_id: source.id, skill_path: 'skills/second' } });
   expect(invoke.mock.calls.some(([command]) => ['preview_native_skill', 'commit_native_operation', 'run_native_skill_version'].includes(command))).toBe(false);
@@ -65,7 +66,7 @@ it('imports multiple picker packages using only a host grant, never a renderer f
   render(<NativeSkillLibrary selection={selection} tab="discover" disabled={false} onPreview={onPreview} />);
   fireEvent.click(screen.getByRole('button', { name: 'nativeSkillLibrary.method.local' }));
   fireEvent.click(screen.getByRole('button', { name: 'nativeSkillLibrary.pickZip' }));
-  fireEvent.click(await screen.findByRole('button', { name: /^second First fixture skill/ }));
+  fireEvent.click(await screen.findByRole('button', { name: /^second/ }));
   fireEvent.click(screen.getByRole('button', { name: 'nativeSkillLibrary.previewInstall' }));
   expect(invoke).toHaveBeenCalledWith('pick_native_skill_source', { input: { selection, kind: 'zip' } });
   expect(onPreview).toHaveBeenCalledWith({ ...selection, action: 'install', slug: 'second', expected: null, source: { kind: 'picker', handle: 'opaque-host-grant', skill_path: 'skills/second' } });
@@ -145,7 +146,7 @@ it('releases the previous picker grant on repick and the current grant on unmoun
   const view = render(<NativeSkillLibrary selection={selection} tab="discover" disabled={false} onPreview={vi.fn()} />);
   fireEvent.click(screen.getByRole('button', { name: 'nativeSkillLibrary.method.local' }));
   fireEvent.click(screen.getByRole('button', { name: 'nativeSkillLibrary.pickZip' }));
-  await screen.findByRole('button', { name: /^first First fixture skill/ });
+  await screen.findByRole('button', { name: /^first/ });
   fireEvent.click(screen.getByRole('button', { name: 'nativeSkillLibrary.pickDirectory' }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('release_native_skill_source', { input: { selection, handle: 'host-grant-1' } }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('pick_native_skill_source', { input: { selection, kind: 'directory' } }));

@@ -5,6 +5,7 @@ export interface NativeManagementEntry {
   kind: 'skills' | 'mcp';
   selection: NativeSelection;
   sessionId?: string;
+  resourceId?: string;
 }
 
 // Presentation-only routing inside the resident CLI workbench. Host commands

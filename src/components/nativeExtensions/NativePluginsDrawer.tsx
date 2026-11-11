@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Button, StatusBadge } from '@dgos/ui';
+import { BookOpen, ChevronRight, Puzzle, Server } from 'lucide-react';
 import { t } from '../../i18n';
 import { useDevelopment } from '../../stores/developmentStore';
 import { nativeSelectionIdentity, useNativeExtensions } from '../../stores/nativeExtensions';
@@ -9,7 +10,7 @@ import './native-manager.css';
 export interface NativePluginsDrawerProps {
   selection: NativeSelection;
   sessionId?: string;
-  onManage(kind: 'skills' | 'mcp'): void;
+  onManage(kind: 'skills' | 'mcp', resourceId?: string): void;
 }
 
 /** File-backed summaries only: opening the drawer never starts or observes a CLI. */
@@ -33,7 +34,7 @@ export default function NativePluginsDrawer({ selection, sessionId, onManage }: 
     if (skillsSupported) void current.discoverSkills({ ...selection, query: '' });
   }, [rootIdentity, valid, skillsSupported, Boolean(mcp), Boolean(skills)]);
   return <aside className="native-plugins-drawer" aria-label={t('nativeExtensions.plugins')}>
-    <header><h2>{t('nativeExtensions.plugins')}</h2><p>{selection.target === 'Claude' ? 'Claude Code' : 'Codex'} · {t(`nativeExtensions.scope.${selection.scope}`)}</p><p>{sessionId ? t('nativeExtensions.drawerSessionNotice') : t('nativeExtensions.noActiveSession')}</p></header>
+    <header><span className="native-resource-icon" aria-hidden="true"><Puzzle /></span><div><h2>{t('nativeExtensions.plugins')}</h2><p>{selection.target === 'Claude' ? 'Claude Code' : 'Codex'} · {t(`nativeExtensions.scope.${selection.scope}`)}</p></div></header>
     {!valid && <p role="alert">{t('nativeExtensions.error.project_not_found')}</p>}
     {(['mcp', 'skills'] as const).map(kind => {
       const state = kind === 'mcp' ? mcp : skills;
@@ -49,11 +50,11 @@ export default function NativePluginsDrawer({ selection, sessionId, onManage }: 
           {state?.stale && state.value && !state.loading && <p role="status">{t('nativeExtensions.stale')}</p>}
           {state?.value?.incomplete && <p role="status">{t('nativeExtensions.incomplete')}</p>}
           {state?.value && count === 0 && !state.loading && !state.error && !state.stale && !state.value.incomplete && <p>{t(kind === 'mcp' ? 'nativeExtensions.noConfiguredServers' : 'nativeExtensions.noInstalledSkills')}</p>}
-          {kind === 'mcp' ? <ul>{mcp?.value?.instances.slice(0, 4).map(server => <li key={server.native_key}><strong>{server.native_key}</strong><span>{server.transport} · {t('nativeExtensions.configEnabled')}: {t(server.enabled === null ? 'nativeExtensions.notReported' : server.enabled ? 'nativeExtensions.yes' : 'nativeExtensions.no')}</span><span>{t('nativeExtensions.sessionNotRead')}</span>{server.owner !== 'Loose' && <StatusBadge status="neutral" label={t(`nativeExtensions.owner.${server.owner}`)}/>}</li>)}</ul> : <ul>{skills?.value?.instances.slice(0, 4).map(skill => <li key={skill.instance.id}><strong>{skill.metadata.name}</strong><span>{skill.metadata.description}</span><span>{t(`nativeExtensions.owner.${skill.owner}`)} · {skill.source?.commit ? skill.source.commit.slice(0, 12) : t('nativeExtensions.sourceUnavailable')}</span></li>)}{skills?.value?.readonly_entries.slice(0, Math.max(0, 4 - skills.value.instances.length)).map(entry => <li key={entry.id}><strong>{entry.slug}</strong><span>{t('nativeExtensions.owner.Symlink')}</span></li>)}</ul>}
-          {count !== undefined && count > 4 && <p>{t('nativeExtensions.moreResources', { count: count - 4 })}</p>}
+          {kind === 'mcp' ? <ul>{mcp?.value?.instances.slice(0, 4).map(server => <li key={server.native_key}><button type="button" className="native-plugins-item" onClick={() => onManage('mcp', server.native_key)}><Server aria-hidden="true" /><span><strong>{server.native_key}</strong><span>{server.transport} · {t('nativeExtensions.configEnabled')}: {t(server.enabled === null ? 'nativeExtensions.notReported' : server.enabled ? 'nativeExtensions.yes' : 'nativeExtensions.no')}</span>{server.owner !== 'Loose' && <StatusBadge status="neutral" label={t(`nativeExtensions.owner.${server.owner}`)}/>}</span><ChevronRight aria-hidden="true" /></button></li>)}</ul> : <ul>{skills?.value?.instances.slice(0, 4).map(skill => <li key={skill.instance.id}><button type="button" className="native-plugins-item" onClick={() => onManage('skills', skill.instance.id)}><BookOpen aria-hidden="true" /><span><strong>{skill.metadata.name}</strong><span>{skill.metadata.description}</span>{skill.owner !== 'Loose' && <StatusBadge status="neutral" label={t(`nativeExtensions.owner.${skill.owner}`)}/>}</span><ChevronRight aria-hidden="true" /></button></li>)}{skills?.value?.readonly_entries.slice(0, Math.max(0, 4 - skills.value.instances.length)).map(entry => <li key={entry.id}><strong>{entry.slug}</strong><span>{t('nativeExtensions.owner.Symlink')}</span></li>)}</ul>}
+          {count !== undefined && count > 4 && <Button variant="ghost" onClick={() => onManage(kind)}>{t('nativeExtensions.moreResources', { count: count - 4 })}</Button>}
         </>}
       </section>;
     })}
-    <p className="native-plugins-footer">{t('nativeExtensions.drawerProviderNotice')}</p>
+    <footer className="native-plugins-footer"><p>{sessionId ? t('nativeExtensions.drawerSessionNotice') : t('nativeExtensions.noActiveSession')}</p><details><summary>{t('nativeExtensions.managerBoundary')}</summary><p>{t('nativeExtensions.drawerProviderNotice')}</p></details></footer>
   </aside>;
 }

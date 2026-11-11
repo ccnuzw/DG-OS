@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@dgos/ui';
 import { t } from '../../i18n';
 import { useDevelopment } from '../../stores/developmentStore';
-import { nativeCatalogKey, nativeProbeKey, useNativeMcpCatalog, type ProbeRead } from '../../stores/nativeMcpCatalog';
+import { nativeCatalogKey, nativeProbeKey, nativeProbeRecordKey, useNativeMcpCatalog, type ProbeRead } from '../../stores/nativeMcpCatalog';
 import { useNativeManagerGuard } from './NativeManagerLifecycle';
 import type { NativeDraft, NativeSelection } from '../../types/nativeExtensions';
 import type { NativeMcpConfigProjection, NativeProbeInput } from '../../types/nativeMcpCatalog';
@@ -19,29 +19,36 @@ export function nativeDraftProbeInput(selection: NativeSelection, draft: NativeD
   if (!draft.name.trim() || (stdio ? !draft.program : !draft.url)) return null;
   return { selection, source: { kind: 'draft', draft: { name: draft.name.trim(), transport: draft.transport, program: stdio ? draft.program : '', args: stdio && draft.args ? draft.args.split('\n') : [], url: stdio ? '' : draft.url, cwd: stdio && selection.target === 'Codex' ? draft.cwd : '', bearer_env: !stdio && selection.target === 'Codex' ? draft.bearer_env : '', forwarded_env: stdio ? draft.forwarded_env.split('\n').map(name => name.trim()).filter(Boolean) : [], header_env } } };
 }
+const probeError = (code: string) => t(code.startsWith('registry_') || code.startsWith('probe_') ? `nativeMcpCatalog.error.${code}` : `nativeExtensions.error.${code}`);
 export function NativeMcpProbeRecovery({ record, probeKey }: { record: ProbeRead; probeKey: string }) {
   const busy = useNativeMcpCatalog(state => Boolean(state.busy[probeKey])), snapshot = record.snapshot;
+  const context = useDevelopment(() => nativeCatalogKey(record.input.selection));
+  useEffect(() => snapshot.state === 'running' ? useNativeMcpCatalog.getState().follow(probeKey) : undefined, [probeKey, snapshot.probe_id, snapshot.state, context]);
   return <section className="native-mcp-probe" aria-label={t('nativeMcpCatalog.inspectProbe')}>
     <h3>{t('nativeMcpCatalog.inspectProbe')}</h3>
     <p>{snapshot.selection.target} · {t(`nativeExtensions.scope.${snapshot.selection.scope}`)} · {snapshot.config.name} · {snapshot.probe_id}</p>
     <dl><dt>{t('nativeMcpCatalog.resolvedProgram')}</dt><dd>{snapshot.executable ?? snapshot.config.url}</dd><dt>{t('nativeMcpCatalog.workspaceRoot')}</dt><dd>{snapshot.root}</dd><dt>{t('nativeExtensions.cwd')}</dt><dd>{snapshot.cwd}</dd><dt>{t('nativeMcpCatalog.configDigest')}</dt><dd>{snapshot.digest}</dd></dl>
     <pre>{JSON.stringify(snapshot.probe_args, null, 2)}</pre>
     <p role="status">{t(`nativeMcpCatalog.state.${snapshot.state}`)} · {t(`nativeMcpCatalog.cleanup.${snapshot.cleanup}`)}</p>
+    {(record.error || snapshot.error) && <p role="alert">{probeError(record.error ?? snapshot.error!)}</p>}
     <div className="native-mcp-catalog-actions">{(['cancel', 'inspect'] as const).map(action => <Button key={action} variant="secondary" disabled={busy} onClick={() => void useNativeMcpCatalog.getState().operation(snapshot.selection, action, probeKey)}>{t(action === 'cancel' ? 'nativeMcpCatalog.cancelProbe' : 'nativeMcpCatalog.inspectProbe')}</Button>)}</div>
   </section>;
 }
 
-export default function NativeMcpProbe({ selection, serverName, draft, disabled = false }: { selection: NativeSelection; serverName?: string; draft?: NativeDraft; disabled?: boolean }) {
+export default function NativeMcpProbe({ selection, serverName, draft, disabled = false, active = true }: { selection: NativeSelection; serverName?: string; draft?: NativeDraft; disabled?: boolean; active?: boolean }) {
   const epoch = useDevelopment(state => state.epoch), context = useDevelopment(() => nativeCatalogKey(selection));
   const input: NativeProbeInput | null = serverName ? { selection, source: { kind: 'existing', server_name: serverName } } : draft ? nativeDraftProbeInput(selection, draft) : null;
   const key = input ? nativeProbeKey(input) : JSON.stringify([context, serverName ?? null]);
   const probes = useNativeMcpCatalog(state => state.probes);
-  const probeKey = probes[key] ? key : Object.entries(probes).find(([, value]) => ['running', 'unknown'].includes(value.snapshot.state) && JSON.stringify(value.snapshot.selection) === JSON.stringify(selection) && value.input.source.kind === input?.source.kind && (value.input.source.kind === 'existing' ? value.input.source.server_name === serverName : value.input.source.draft.name === draft?.name.trim()))?.[0] ?? key;
+  const probeKey = nativeProbeRecordKey(input, probes) ?? key;
   const probe = probes[probeKey], busy = useNativeMcpCatalog(state => Boolean(state.busy[probeKey]));
   const [projection, setProjection] = useState<NativeMcpConfigProjection | null>(null), [message, setMessage] = useState(''), [reading, setReading] = useState(false), [approved, setApproved] = useState(false);
   const revision = useRef(0), inFlight = useRef(false);
   const inputKey = JSON.stringify(input), contextKey = JSON.stringify([context, serverName ?? null]);
-  useEffect(() => { revision.current++; inFlight.current = false; setProjection(null); setMessage(''); setReading(false); setApproved(false); }, [contextKey, epoch]);
+  useEffect(() => {
+    revision.current++; inFlight.current = false; setProjection(null); setMessage(''); setReading(false); setApproved(false);
+    return () => { revision.current++; inFlight.current = false; };
+  }, [contextKey, epoch]);
   useEffect(() => { setApproved(false); }, [inputKey, probe?.snapshot.probe_id]);
   useNativeManagerGuard(() => {
     const current = useNativeMcpCatalog.getState();
@@ -49,30 +56,30 @@ export default function NativeMcpProbe({ selection, serverName, draft, disabled 
     setMessage(t('nativeMcpCatalog.closeBlocked')); return false;
   });
   const snapshot = probe?.snapshot;
+  useEffect(() => active && snapshot?.state === 'running' ? useNativeMcpCatalog.getState().follow(probeKey) : undefined, [active, probeKey, snapshot?.probe_id, snapshot?.state, context]);
   const stale = Boolean(probe && (probeKey !== key || JSON.stringify(probe.input) !== inputKey || projection && projection.config_digest !== probe.snapshot.config.config_digest));
   const unresolved = snapshot?.state === 'running' || snapshot?.state === 'unknown';
-  const showError = (code: string) => t(code.startsWith('registry_') || code.startsWith('probe_') ? `nativeMcpCatalog.error.${code}` : `nativeExtensions.error.${code}`);
   const project = async () => {
     if (!serverName || inFlight.current) return;
     const captured = revision.current; inFlight.current = true; setReading(true); setMessage('');
     const result = await useNativeMcpCatalog.getState().project(selection, serverName);
     if (captured !== revision.current || context !== nativeCatalogKey(selection)) return;
     inFlight.current = false; setReading(false);
-    if (result.ok) setProjection(result.value); else setMessage(showError(result.code));
+    if (result.ok) setProjection(result.value); else setMessage(probeError(result.code));
   };
   const preview = async () => {
     if (!input || disabled || inFlight.current || busy || unresolved) return;
     const captured = revision.current; inFlight.current = true; setMessage(''); setApproved(false);
     const result = await useNativeMcpCatalog.getState().preview(input);
     if (captured !== revision.current || context !== nativeCatalogKey(selection)) return;
-    inFlight.current = false; if (!result.ok) setMessage(showError(result.code));
+    inFlight.current = false; if (!result.ok) setMessage(probeError(result.code));
   };
   const operate = async (action: 'run' | 'cancel' | 'inspect') => {
     if (inFlight.current || busy || action === 'run' && (!approved || stale || disabled)) return;
     const captured = revision.current; inFlight.current = true; setMessage('');
     const result = await useNativeMcpCatalog.getState().operation(snapshot?.selection ?? selection, action, probeKey);
     if (captured !== revision.current || context !== nativeCatalogKey(selection)) return;
-    inFlight.current = false; if (!result.ok) setMessage(showError(result.code));
+    inFlight.current = false; if (!result.ok) setMessage(probeError(result.code));
   };
   const config = snapshot?.config ?? projection;
   return <section className="native-mcp-probe" aria-label={t('nativeMcpCatalog.probe')}>
@@ -90,14 +97,16 @@ export default function NativeMcpProbe({ selection, serverName, draft, disabled 
     </dl>{config.redacted && <p>{t('nativeMcpCatalog.redacted')}</p>}</details>}
     {snapshot && <>
       <h4>{t('nativeMcpCatalog.exactPlan')}</h4>
-      <dl><dt>{t('nativeMcpCatalog.requestId')}</dt><dd>{snapshot.probe_id}</dd><dt>{t('nativeMcpCatalog.resolvedProgram')}</dt><dd>{snapshot.executable ?? snapshot.config.url}</dd><dt>{t('nativeExtensions.cwd')}</dt><dd>{snapshot.cwd}</dd><dt>{t('nativeMcpCatalog.workspaceRoot')}</dt><dd>{snapshot.root}</dd><dt>{t('nativeMcpCatalog.platformIdentity')}</dt><dd>{snapshot.platform_identity}</dd><dt>{t('nativeMcpCatalog.binaryIdentity')}</dt><dd>{snapshot.executable_identity ?? '—'}</dd><dt>{t('nativeMcpCatalog.configDigest')}</dt><dd>{snapshot.digest}</dd><dt>{t('nativeExtensions.expires')}</dt><dd>{new Date(snapshot.expires_at * 1000).toLocaleString()}</dd></dl>
+      <dl><dt>{t('nativeMcpCatalog.resolvedProgram')}</dt><dd>{snapshot.executable ?? snapshot.config.url}</dd><dt>{t('nativeExtensions.cwd')}</dt><dd>{snapshot.cwd}</dd><dt>{t('nativeMcpCatalog.workspaceRoot')}</dt><dd>{snapshot.root}</dd><dt>{t('nativeExtensions.expires')}</dt><dd>{new Date(snapshot.expires_at * 1000).toLocaleString()}</dd></dl>
+      <details><summary>{t('nativeExtensions.technicalDetails')}</summary><dl><dt>{t('nativeMcpCatalog.requestId')}</dt><dd>{snapshot.probe_id}</dd><dt>{t('nativeMcpCatalog.platformIdentity')}</dt><dd>{snapshot.platform_identity}</dd><dt>{t('nativeMcpCatalog.binaryIdentity')}</dt><dd>{snapshot.executable_identity ?? '—'}</dd><dt>{t('nativeMcpCatalog.configDigest')}</dt><dd>{snapshot.digest}</dd></dl></details>
       {snapshot.config.transport === 'Stdio' && <><h4>{t('nativeMcpCatalog.effectiveArgv')}</h4><pre>{JSON.stringify(snapshot.probe_args, null, 2)}</pre></>}
       {snapshot.cleanup_plan && <><h4>{t('nativeMcpCatalog.containerCleanup')}</h4><p>{t('nativeMcpCatalog.containerCleanupNotice')}</p><pre>{JSON.stringify(snapshot.cleanup_plan, null, 2)}</pre></>}
       <p>{t('nativeMcpCatalog.bounds')}</p>{snapshot.may_download_execute && <p className="native-mcp-catalog-warning">{t('nativeMcpCatalog.executionWarning')}</p>}
       {stale && <p role="status">{t('nativeMcpCatalog.expiredResult')}</p>}
       <p role="status">{t(`nativeMcpCatalog.state.${snapshot.state}`)} · {t('nativeMcpCatalog.phase')}: {t(`nativeMcpCatalog.phase.${snapshot.phase}`)} · {t('nativeMcpCatalog.cleanup')}: {t(`nativeMcpCatalog.cleanup.${snapshot.cleanup}`)}</p>
-      {snapshot.error && <p role="alert">{showError(snapshot.error)}</p>}
-      {probe?.error && <p role="alert">{showError(probe.error)}</p>}
+      {snapshot.state === 'running' && <p>{t('nativeMcpCatalog.followupNotice')}</p>}
+      {snapshot.error && <p role="alert">{probeError(snapshot.error)}</p>}
+      {probe?.error && <p role="alert">{probeError(probe.error)}</p>}
       <div className="native-mcp-catalog-actions">
         {snapshot.state === 'ready' && <><label className="native-mcp-catalog-consent"><input type="checkbox" checked={approved} onChange={event => setApproved(event.target.checked)} disabled={disabled || stale || busy}/>{t('nativeMcpCatalog.approval')}</label><Button disabled={disabled || busy || stale || !approved} onClick={() => void operate('run')}>{t('nativeMcpCatalog.runProbe')}</Button></>}
         {unresolved && <Button variant="secondary" disabled={busy} onClick={() => void operate('cancel')}>{t('nativeMcpCatalog.cancelProbe')}</Button>}

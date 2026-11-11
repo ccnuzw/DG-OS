@@ -13,13 +13,14 @@ import type { NativeMcpConfigProjection, NativeProbeInput, NativeProbeSnapshot }
 const skill = { instance: { id: 'fixture-skill-1', revision: 'fixture-revision' }, target: 'Codex', scope: 'OsUser', slug: 'sample-skill', owner: 'Loose', metadata: { name: 'Sample native skill', description: 'Isolated renderer fixture', license: null, dependencies: { declared: true, tools: [{ program: 'node', version_requirement: null }], packages: [], required_tools: [] }, dynamic_commands: false }, resources: [{ path: 'SKILL.md', hash: 'sample-hash', bytes: 128, executable: false }], source: { source_hash: 'sample-source-hash', commit: null, origin: null }, source_modified: false, can_update: true };
 function ManagementSurface() {
   const [kind, setKind] = useState<'skills' | 'mcp' | null>(null);
+  const [resourceId, setResourceId] = useState<string | undefined>();
   const manager = useRef<NativeManagerHandle>(null);
   const selection: NativeSelection = { target: 'Codex', scope: 'OsUser', project_id: null };
   return <div className="grid min-h-screen grid-cols-1 gap-4 p-4 md:grid-cols-[minmax(12rem,20rem)_minmax(0,1fr)]">
-    <NativePluginsDrawer selection={selection} onManage={setKind} />
+    <NativePluginsDrawer selection={selection} onManage={(next, resource) => { setResourceId(resource); setKind(next); }} />
     <section className="min-w-0"><h1>Native management — isolated renderer fixture</h1><p>Production components with explicit IPC doubles. No filesystem, CLI, network or probe execution.</p><textarea className="w-full" aria-label="Conversation draft" defaultValue="Keep this draft while managing extensions" /></section>
     <Modal open={kind !== null} onOpenChange={open => { if (!open) void manager.current?.requestClose(); }} title={kind === 'skills' ? 'CLI Skills' : 'CLI MCP'} footer={<></>}>
-      {kind && <NativeManager ref={manager} kind={kind} initialSelection={selection} onClose={() => setKind(null)} />}
+      {kind && <NativeManager ref={manager} kind={kind} initialSelection={selection} initialResourceId={resourceId} onClose={() => setKind(null)} />}
     </Modal><ModalHost />
   </div>;
 }
@@ -75,7 +76,8 @@ export function mountNativeManagement(host: HTMLElement) {
       const rule = intent.kind === 'claude_name' ? { evidence_version: 1, name: intent.name, state: intent.state, previous: savedRules.get(layerKey(request))?.get(intent.name) ?? null, scope: request.scope, current_and_future: true, plugins_excluded: true, higher_precedence: 'not_evaluated', config_change_hook_possible: true } : null;
       return { preview: { receipt: { operation_id: id, state: 'Previewed', pending_activation: false, recovery_material_retained: false }, target: request.target, scope: request.scope, target_path: '/fixture/settings.json', expires_at: Math.floor(Date.now() / 1000) + 600, rule }, affected: intent.kind === 'codex_path' ? [{ selection: request, instance: intent.instance, slug: skill.slug }] : [], coverage: intent.kind === 'codex_path' ? 'exact_path' : 'current_observations_only', observation_coverage: intent.kind === 'codex_path' ? 'not_applicable' : 'not_captured', rule };
     }
-    if (command === 'preview_native_skill' || command === 'preview_native_mcp') return { receipt: { operation_id: 'fixture-operation-1', state: 'Previewed', pending_activation: false, recovery_material_retained: false }, target: input.target, scope: input.scope, project_id: input.project_id, task_id: input.task_id ?? null, target_path: command === 'preview_native_mcp' ? (input.target === 'Claude' ? '/fixture/.claude.json' : '/fixture/.codex/config.toml') : '/fixture/.agents/skills/sample-skill', expires_at: Math.floor(Date.now() / 1000) + 600, slug: input.slug ?? 'sample-skill', before_hash: 'before-fixture', after_hash: 'after-fixture', source: null, resources: [skill.resources[0]], metadata: skill.metadata };
+    if (command === 'preview_native_mcp') return { receipt: { operation_id: 'fixture-operation-1', state: 'Previewed', pending_activation: false, recovery_material_retained: false }, target: input.target, scope: input.scope, target_path: input.target === 'Claude' ? '/fixture/.claude.json' : '/fixture/.codex/config.toml', expires_at: Math.floor(Date.now() / 1000) + 600 };
+    if (command === 'preview_native_skill') return { receipt: { operation_id: 'fixture-operation-1', state: 'Previewed', pending_activation: false, recovery_material_retained: false }, target: input.target, scope: input.scope, project_id: input.project_id, task_id: input.task_id ?? null, target_path: '/fixture/.agents/skills/sample-skill', expires_at: Math.floor(Date.now() / 1000) + 600, slug: input.slug ?? 'sample-skill', before_hash: 'before-fixture', after_hash: 'after-fixture', source: null, resources: [skill.resources[0]], metadata: skill.metadata };
     if (command === 'commit_native_operation' || command === 'cancel_native_operation' || command === 'inspect_native_operation') {
       const request = previews.get(String(input.operation_id));
       if (command === 'commit_native_operation' && request?.intent.kind === 'claude_name') {

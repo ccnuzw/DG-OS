@@ -21,7 +21,7 @@ beforeEach(() => {
   useDevelopment.setState({ epoch: 0, workspaceOwner: 'fixture', projects: [{ id: 'project', owner: 'fixture', name: 'Project', path: '/workspace', directory_identity: 'root-a', archived: false, created_at: 1, last_opened_at: null }], tasks: [], sessions: [] });
   useNativeMcpCatalog.setState({ catalogs: {}, probes: {}, busy: {} });
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('official Registry deployment boundary', () => {
   it('creates only an unsaved draft with host credential references', () => {
@@ -103,6 +103,130 @@ describe('independent approved probe boundary', () => {
     expect(input?.source).toMatchObject({ kind: 'draft', draft: { args: ['  path with spaces  ', '', 'last'], forwarded_env: ['NATIVE_TOKEN'] } });
     render(<NativeMcpProbe selection={selection} draft={draft} />);
     expect(invoke).not.toHaveBeenCalled();
+  });
+  it('follows the approved original probe to its rendered result without another run', async () => {
+    vi.useFakeTimers();
+    let inspections = 0;
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'preview_native_mcp_probe') return snapshot;
+      if (command === 'run_native_mcp_probe') return { ...snapshot, state: 'running', phase: 'handshake', cleanup: 'pending' };
+      if (command === 'inspect_native_mcp_probe') return ++inspections === 1
+        ? { ...snapshot, state: 'running', phase: 'tools', cleanup: 'pending' }
+        : { ...snapshot, state: 'succeeded', phase: 'finished', cleanup: 'confirmed', tools: [{ name: 'read_result' }] };
+      throw new Error(`Unexpected command ${command}`);
+    });
+    render(<NativeMcpProbe selection={selection} draft={draft} />);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'nativeMcpCatalog.previewProbe' })); });
+    expect(screen.getByRole('button', { name: 'nativeMcpCatalog.runProbe' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'nativeMcpCatalog.approval' }));
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'nativeMcpCatalog.runProbe' })); });
+    expect(screen.getByText(/nativeMcpCatalog.state.running/)).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(screen.queryByText('read_result')).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(screen.getByText('read_result')).toBeTruthy();
+    expect(screen.getByText(/nativeMcpCatalog.state.succeeded/)).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'nativeMcpCatalog.inspectProbe' })).toHaveLength(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(inspections).toBe(2);
+    expect(invoke.mock.calls.filter(([command]) => command === 'run_native_mcp_probe')).toHaveLength(1);
+    expect(invoke.mock.calls.filter(([command]) => command === 'inspect_native_mcp_probe').map(([, args]) => args)).toEqual([{ input: { probe_id: 'original' } }, { input: { probe_id: 'original' } }]);
+  });
+  it.each(['unknown', 'unavailable'] as const)('stops automatic checking on %s and keeps original inspection and close guards available', async outcome => {
+    vi.useFakeTimers();
+    const input = nativeDraftProbeInput(selection, draft)!, key = nativeProbeKey(input);
+    useNativeMcpCatalog.setState({ probes: { [key]: { snapshot: { ...snapshot, state: 'running', cleanup: 'pending' }, input, error: null } } });
+    if (outcome === 'unknown') invoke.mockResolvedValueOnce({ ...snapshot, state: 'unknown', cleanup: 'unknown' });
+    else invoke.mockRejectedValueOnce('native_extension_Unavailable');
+    invoke.mockResolvedValueOnce({ ...snapshot, state: 'succeeded', cleanup: 'confirmed', tools: [{ name: 'recovered_tool' }] });
+    let guard!: NativeManagerGuard;
+    const register = (next: NativeManagerGuard) => { guard = next; return () => {}; };
+    render(<NativeManagerLifecycle.Provider value={register}><NativeMcpProbe selection={selection} draft={draft} /></NativeManagerLifecycle.Provider>);
+    await act(async () => { expect(await guard('close')).toBe(false); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(screen.getByText(outcome === 'unknown' ? /nativeMcpCatalog.state.unknown/ : /nativeMcpCatalog.state.running/)).toBeTruthy();
+    if (outcome === 'unavailable') expect(screen.getByText('nativeExtensions.error.native_extension_Unavailable')).toBeTruthy();
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: 'nativeMcpCatalog.runProbe' })).toBeNull();
+    await act(async () => { expect(await guard('close')).toBe(false); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'nativeMcpCatalog.inspectProbe' })); });
+    expect(screen.getByText('recovered_tool')).toBeTruthy();
+    await act(async () => { expect(await guard('close')).toBe(true); });
+    expect(invoke.mock.calls.map(([command, args]) => [command, args])).toEqual([
+      ['inspect_native_mcp_probe', { input: { probe_id: 'original' } }],
+      ['inspect_native_mcp_probe', { input: { probe_id: 'original' } }],
+    ]);
+  });
+  it('shares one in-flight inspection across mounted observers and releases only the departing observer', async () => {
+    vi.useFakeTimers();
+    const input = nativeDraftProbeInput(selection, draft)!, key = nativeProbeKey(input);
+    useNativeMcpCatalog.setState({ probes: { [key]: { snapshot: { ...snapshot, state: 'running', cleanup: 'pending' }, input, error: null } } });
+    const inspection = Promise.withResolvers<NativeProbeSnapshot>();
+    invoke.mockReturnValueOnce(inspection.promise);
+    const view = render(<><NativeMcpProbe key="first" selection={selection} draft={draft} /><NativeMcpProbe key="second" selection={selection} draft={draft} /></>);
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByRole('button', { name: 'nativeMcpCatalog.inspectProbe' }).every(button => button.hasAttribute('disabled'))).toBe(true);
+    view.rerender(<><NativeMcpProbe key="second" selection={selection} draft={draft} /></>);
+    await act(async () => { inspection.resolve({ ...snapshot, state: 'running', phase: 'tools', cleanup: 'pending' }); });
+    invoke.mockResolvedValueOnce({ ...snapshot, state: 'succeeded', cleanup: 'confirmed', tools: [{ name: 'shared_result' }] });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(screen.getByText('shared_result')).toBeTruthy();
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+  it('bounds automatic checking without fabricating a terminal result and permits manual recovery', async () => {
+    vi.useFakeTimers();
+    const input = nativeDraftProbeInput(selection, draft)!, key = nativeProbeKey(input);
+    const running = { ...snapshot, state: 'running' as const, cleanup: 'pending' as const };
+    useNativeMcpCatalog.setState({ probes: { [key]: { snapshot: running, input, error: null } } });
+    invoke.mockResolvedValue(running);
+    render(<NativeMcpProbe selection={selection} draft={draft} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(screen.getByText('nativeMcpCatalog.error.probe_tracking_timeout')).toBeTruthy();
+    expect(useNativeMcpCatalog.getState().probes[key].snapshot.state).toBe('running');
+    const count = invoke.mock.calls.length;
+    expect(count).toBeGreaterThan(0);
+    expect(count).toBeLessThan(61);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(invoke).toHaveBeenCalledTimes(count);
+    invoke.mockResolvedValueOnce({ ...snapshot, state: 'cancelled', cleanup: 'confirmed' });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'nativeMcpCatalog.inspectProbe' })); });
+    expect(screen.getByText(/nativeMcpCatalog.state.cancelled/)).toBeTruthy();
+    expect(screen.queryByText('nativeMcpCatalog.error.probe_tracking_timeout')).toBeNull();
+    expect(invoke.mock.calls.every(([command]) => command === 'inspect_native_mcp_probe')).toBe(true);
+  });
+  it('stops checking on unmount and drops an old account inspection that arrives late', async () => {
+    vi.useFakeTimers();
+    const input = nativeDraftProbeInput(selection, draft)!, key = nativeProbeKey(input);
+    useNativeMcpCatalog.setState({ probes: { [key]: { snapshot: { ...snapshot, state: 'running', cleanup: 'pending' }, input, error: null } } });
+    const first = render(<NativeMcpProbe selection={selection} draft={draft} />);
+    first.unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(invoke).not.toHaveBeenCalled();
+    const inspection = Promise.withResolvers<NativeProbeSnapshot>();
+    invoke.mockReturnValueOnce(inspection.promise);
+    render(<NativeMcpProbe selection={selection} draft={draft} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    act(() => useDevelopment.setState({ epoch: 1 }));
+    await act(async () => { inspection.resolve({ ...snapshot, state: 'succeeded', cleanup: 'confirmed', tools: [{ name: 'old_account_tool' }] }); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(useNativeMcpCatalog.getState().probes).toEqual({});
+    expect(screen.queryByText('old_account_tool')).toBeNull();
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+  it('stops automatic checking when selection identity changes and keeps the original request manually recoverable', async () => {
+    vi.useFakeTimers();
+    const input = nativeDraftProbeInput(selection, draft)!, key = nativeProbeKey(input);
+    useNativeMcpCatalog.setState({ probes: { [key]: { snapshot: { ...snapshot, state: 'running', cleanup: 'pending' }, input, error: null } } });
+    render(<NativeMcpProbe selection={selection} draft={draft} />);
+    act(() => useDevelopment.setState(state => ({ projects: state.projects.map(project => ({ ...project, directory_identity: 'root-b' })) })));
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(invoke).not.toHaveBeenCalled();
+    expect(screen.getByText('nativeMcpCatalog.expiredResult')).toBeTruthy();
+    invoke.mockResolvedValueOnce({ ...snapshot, state: 'failed', cleanup: 'confirmed' });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'nativeMcpCatalog.inspectProbe' })); });
+    expect(useNativeMcpCatalog.getState().probes[key].snapshot).toMatchObject({ state: 'failed', cleanup: 'confirmed' });
+    expect(invoke).toHaveBeenCalledWith('inspect_native_mcp_probe', { input: { probe_id: 'original' } });
   });
   it('pins approval, keeps unknown receipts and inspects without replay', async () => {
     invoke.mockResolvedValueOnce(snapshot).mockRejectedValueOnce('native_extension_Unavailable').mockResolvedValueOnce({ ...snapshot, state: 'running', phase: 'handshake', cleanup: 'pending' });

@@ -6,6 +6,9 @@ import { useDevelopment } from '../src/stores/developmentStore';
 import { useNativeExtensions } from '../src/stores/nativeExtensions';
 import NativePluginsDrawer from '../src/components/nativeExtensions/NativePluginsDrawer';
 import { nativeLibraryKey, useNativeSkillLibrary } from '../src/stores/nativeSkillLibrary';
+import { useNativeMcpCatalog } from '../src/stores/nativeMcpCatalog';
+import type { NativeProbeSnapshot } from '../src/types/nativeMcpCatalog';
+import type * as NativeMcpProbeModule from '../src/components/nativeExtensions/NativeMcpProbe';
 import type { NativeDraft, NativeMcpInstance, NativeReceipt, NativeSelection, NativeSkill, NativeSkillPreview, NativeSkillRuleIntentState, NativeVisibilityPreview, PreviewNativeSkill } from '../src/types/nativeExtensions';
 import { ModalHost } from '@dgos/ui';
 import { SurfaceScope } from '../src/workspace/SurfaceContext';
@@ -31,8 +34,10 @@ vi.mock('../src/components/nativeExtensions/NativeSkillLibrary', () => {
   };
 });
 vi.mock('../src/components/nativeExtensions/NativeMcpMarket', () => ({ default: ({ disabled, onConfigure }: { disabled: boolean; onConfigure(draft: NativeDraft): boolean | Promise<boolean> }) => <button disabled={disabled} onClick={() => void onConfigure({ slug: '', source: '', name: 'registry-server', transport: 'Stdio', program: 'npx', args: '--yes\n@fixture/server', cwd: '', url: '', bearer_env: '', forwarded_env: 'API_KEY', header_env: '', modes: { program: 'set', args: 'set', forwarded_env: 'set' } })}>market.configure</button> }));
-vi.mock('../src/components/nativeExtensions/NativeMcpProbe', () => {
-  return { NativeMcpProbeRecovery: () => null, default: () => { useNativeManagerGuard(() => !childState.blocked); return null; } };
+vi.mock('../src/components/nativeExtensions/NativeMcpProbe', async importOriginal => {
+  const actual = await importOriginal<typeof NativeMcpProbeModule>();
+  const Probe = actual.default;
+  return { ...actual, default: (props: Parameters<typeof Probe>[0]) => { useNativeManagerGuard(() => !childState.blocked); return <Probe {...props} />; } };
 });
 
 const skill: NativeSkill = { instance: { id: 'skill-1', revision: 'rev-1' }, target: 'Codex', scope: 'OsUser', slug: 'sample-skill', owner: 'Loose', metadata: { name: 'Sample skill', description: 'Installed description', license: null, dependencies: { declared: true, tools: [], packages: [], required_tools: [] }, dynamic_commands: false }, resources: [], source: { source_hash: 'installed-hash', commit: 'installed-commit' }, source_modified: false, can_update: true };
@@ -42,9 +47,14 @@ const skillPreview: NativeSkillPreview = { ...basePreview, project_id: null, tar
 const server: NativeMcpInstance = { native_key: 'alpha', transport: 'Stdio', enabled: true, owner: 'Loose', has_auth_configuration: true, unknown_fields_present: true, authentication: { configured: true, credential_present: null, authenticated: null, connected: null, approved: null, active_session: null, login: 'Unsupported', logout: 'Unsupported', delete_credentials: 'Unsupported' } };
 
 async function choose(label: string, option: string) {
-  fireEvent.click(screen.getByRole('combobox', { name: label }));
+  const control = screen.getByRole('combobox', { name: label });
+  fireEvent.click(control);
   fireEvent.click(await screen.findByRole('option', { name: option }));
-  await waitFor(() => expect(screen.getByRole('combobox', { name: label }).textContent).toContain(option));
+  await waitFor(() => expect(control.textContent).toContain(option));
+}
+async function hidePreview() {
+  fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.hidePreview' }));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'nativeExtensions.previewLayer' })).toBeNull());
 }
 async function createServer() {
   fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.createServer' }));
@@ -61,6 +71,7 @@ beforeEach(() => {
   childState.blocked = false;
   useNativeSkillLibrary.getState().reset();
   useNativeExtensions.getState().reset();
+  useNativeMcpCatalog.setState({ catalogs: {}, probes: {}, busy: {} });
   invoke.mockImplementation(async (command: string) => {
     if (command === 'discover_native_skills') return { instances: [skill], readonly_entries: [], missing: false, incomplete: false };
     if (command === 'discover_native_skill_rules') return { rules: [], coverage: 'selected_settings_layer' };
@@ -87,6 +98,8 @@ describe('native skill workflows', () => {
     expect(invoke).toHaveBeenCalledWith('preview_native_skill', { input: { target: 'Codex', scope: 'OsUser', project_id: null, action: 'install', slug: 'requested-slug', expected: null, source: { kind: 'github', input: 'owner/repo/tree/main/skill' } } });
     expect(invoke).not.toHaveBeenCalledWith('commit_native_operation', expect.anything());
     fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.confirm' }));
+    await screen.findByText('nativeExtensions.state.Committed', { selector: 'dd' });
+    await hidePreview();
     await waitFor(() => expect(screen.getByRole('tab', { name: 'nativeExtensions.tab.installed' }).getAttribute('aria-selected')).toBe('true'));
     expect(invoke).toHaveBeenCalledWith('commit_native_operation', { input: { operation_id: receipt.operation_id } });
   });
@@ -114,6 +127,7 @@ describe('native skill workflows', () => {
     expect(invoke).toHaveBeenCalledWith('preview_native_skill', { input: expect.objectContaining({ action: 'update', slug: skill.slug, expected: skill.instance, source: { kind: 'github', input: 'owner/repo/tree/commit/skill' } }) });
     fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.cancel' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'nativeExtensions.confirm' })).toBeNull());
+    await hidePreview();
     fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.remove' }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('preview_native_skill', { input: expect.objectContaining({ action: 'remove', slug: skill.slug, expected: skill.instance, source: null }) }));
   });
@@ -187,7 +201,7 @@ describe('Claude name rule consumers', () => {
     await waitFor(() => expect(document.activeElement?.id).toBe(observationsLink.getAttribute('aria-controls')));
     expect(invoke.mock.calls.some(([command]) => command === 'observe_native_session')).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.cancel' }));
-    await screen.findByText('nativeExtensions.state.Cancelled', { selector: 'dd' });
+    await waitFor(() => expect(useNativeExtensions.getState().pending[JSON.stringify([0, 'Claude', 'OsUser', null, null])]?.receipt.state).toBe('Cancelled'));
     expect((screen.getByLabelText('nativeExtensions.ruleName') as HTMLInputElement).value).toBe('future-skill');
     expect(invoke).not.toHaveBeenCalledWith('commit_native_operation', expect.anything());
     expect(invoke.mock.calls.some(([command]) => command === 'native_session_action')).toBe(false);
@@ -211,6 +225,7 @@ describe('Claude name rule consumers', () => {
     await screen.findByText('nativeExtensions.state.Committed', { selector: 'dd' });
     expect(invoke.mock.calls.filter(([command]) => command.startsWith('discover_'))).toHaveLength(readCount);
     expect(invoke.mock.calls.some(([command]) => command === 'native_session_action')).toBe(false);
+    await hidePreview();
     expect(screen.getByText('nativeExtensions.refreshRequired')).toBeTruthy();
     if (scope === 'ProjectLocal') {
       expect(screen.getByRole('button', { name: 'nativeExtensions.installSkill' }).hasAttribute('disabled')).toBe(true);
@@ -219,7 +234,7 @@ describe('Claude name rule consumers', () => {
     }
     const manager = screen.getByRole('region', { name: 'nativeExtensions.skills' });
     const ruleReadCount = invoke.mock.calls.filter(([command]) => command === 'discover_native_skill_rules').length;
-    fireEvent.click(within(manager.querySelector('header')!).getByRole('button', { name: 'nativeExtensions.refresh' }));
+    fireEvent.click(within(manager.querySelector('.native-manager-list-toolbar')!).getByRole('button', { name: 'nativeExtensions.refresh' }));
     await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === 'discover_native_skill_rules')).toHaveLength(ruleReadCount + 1));
   });
 
@@ -255,6 +270,27 @@ describe('native MCP field changes', () => {
     expect(screen.getAllByLabelText('nativeExtensions.program')).toHaveLength(1);
     expect(invoke).toHaveBeenCalledWith('preview_native_mcp', { input: expect.objectContaining({ target: 'Codex', scope: 'OsUser', project_id: null, change: { kind: 'upsert', name: 'new-server', fields: expect.objectContaining({ transport: { kind: 'set', value: 'Stdio' }, program: { kind: 'set', value: 'node' }, args: { kind: 'keep' } }) } }) });
     expect(invoke).not.toHaveBeenCalledWith('commit_native_operation', expect.anything());
+  });
+
+  it('selects the normalized server after committing a name with surrounding whitespace', async () => {
+    let committed = false;
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'preview_native_mcp') return basePreview;
+      if (command === 'commit_native_operation') { committed = true; return { ...receipt, state: 'Committed' }; }
+      return { instances: committed ? [server, { ...server, native_key: 'new-server' }] : [server], incomplete: false };
+    });
+    render(<NativeManager kind="mcp" />);
+    await screen.findByRole('button', { name: /alpha/ });
+    fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.createServer' }));
+    fireEvent.change(await screen.findByLabelText('nativeExtensions.name'), { target: { value: ' new-server ' } });
+    fireEvent.change(screen.getByLabelText('nativeExtensions.program'), { target: { value: 'node' } });
+    fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.previewChange' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'nativeExtensions.confirm' }));
+    await screen.findByText('nativeExtensions.state.Committed', { selector: 'dd' });
+    await hidePreview();
+    expect(await screen.findByRole('heading', { name: 'new-server' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /new-server/, pressed: true })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /alpha/, pressed: false })).toBeTruthy();
   });
 
   it('keeps hidden fields and offers explicit keep, set and remove while edits remain attached to their server', async () => {
@@ -304,6 +340,7 @@ describe('native MCP field changes', () => {
     expect(invoke).toHaveBeenCalledWith('preview_native_mcp', { input: { target: 'Codex', scope: 'OsUser', project_id: null, change: { kind: 'remove', name: 'alpha' } } });
     fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.cancel' }));
     await screen.findByText('nativeExtensions.state.Cancelled', { selector: 'dd' });
+    await hidePreview();
     fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.visibility' }));
     await screen.findByRole('button', { name: 'nativeExtensions.confirm' });
     expect(invoke).toHaveBeenCalledWith('preview_native_mcp', { input: { target: 'Codex', scope: 'OsUser', project_id: null, change: { kind: 'set_enabled', name: 'alpha', enabled: false } } });
@@ -387,12 +424,14 @@ describe('native operation lifecycle', () => {
     fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.confirm' }));
     await screen.findByRole('button', { name: 'nativeExtensions.verify' });
     expect(screen.queryByRole('button', { name: 'nativeExtensions.confirm' })).toBeNull();
+    await hidePreview();
     expect(screen.getByRole('button', { name: 'nativeExtensions.previewChange' }).hasAttribute('disabled')).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.verify' }));
-    await screen.findByText('nativeExtensions.state.Committed', { selector: 'dd' });
+    await waitFor(() => expect(useNativeExtensions.getState().pending[JSON.stringify([0, 'Codex', 'OsUser', null, null])]?.receipt.state).toBe('Committed'));
     expect(invoke.mock.calls.filter(([command]) => command === 'commit_native_operation')).toHaveLength(1);
     expect(invoke).toHaveBeenCalledWith('inspect_native_operation', { input: { operation_id: receipt.operation_id } });
-    expect((screen.getByLabelText('nativeExtensions.program') as HTMLInputElement).value).toBe('');
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'nativeExtensions.tab.manual' }), { button: 0, ctrlKey: false });
+    expect((await screen.findByLabelText('nativeExtensions.program') as HTMLInputElement).value).toBe('');
   });
 
   it('keeps an unresolved receipt across management views and does not clear drafts on an unknown cancellation', async () => {
@@ -407,13 +446,16 @@ describe('native operation lifecycle', () => {
     await createServer();
     fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.cancel' }));
     await screen.findByRole('button', { name: 'nativeExtensions.verify' });
+    await hidePreview();
     view.rerender(<NativeManager kind="skills" />);
     await screen.findAllByText('Sample skill');
     expect(screen.getByRole('button', { name: 'nativeExtensions.remove' }).hasAttribute('disabled')).toBe(true);
-    expect(screen.getByText('preview-operation')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.reviewPreview' }));
+    expect(await screen.findByText('preview-operation')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.verify' }));
     await screen.findByText('nativeExtensions.state.Cancelled', { selector: 'dd' });
     view.rerender(<NativeManager kind="mcp" />);
+    await hidePreview();
     expect((screen.getByLabelText('nativeExtensions.program') as HTMLInputElement).value).toBe('node');
     expect(invoke).toHaveBeenCalledWith('cancel_native_operation', { input: { operation_id: receipt.operation_id } });
     expect(invoke).toHaveBeenCalledWith('inspect_native_operation', { input: { operation_id: receipt.operation_id } });
@@ -426,6 +468,7 @@ describe('native operation lifecycle', () => {
     fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.cancel' }));
     await screen.findByText('nativeExtensions.state.Cancelled', { selector: 'dd' });
     expect((screen.getByLabelText('nativeExtensions.program') as HTMLInputElement).value).toBe('node');
+    await hidePreview();
     invoke.mockImplementationOnce(async () => { throw 'native_extension_AccessDenied'; });
     fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.previewChange' }));
     await screen.findByText('nativeExtensions.error.native_extension_AccessDenied');
@@ -435,7 +478,9 @@ describe('native operation lifecycle', () => {
     fireEvent.change(screen.getByLabelText('nativeExtensions.program'), { target: { value: 'newer-edit' } });
     fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.confirm' }));
     await screen.findByText('nativeExtensions.state.Committed', { selector: 'dd' });
-    expect((screen.getByLabelText('nativeExtensions.program') as HTMLInputElement).value).toBe('newer-edit');
+    await hidePreview();
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'nativeExtensions.tab.manual' }), { button: 0, ctrlKey: false });
+    expect((await screen.findByLabelText('nativeExtensions.program') as HTMLInputElement).value).toBe('newer-edit');
   });
 
   it('clears old account drafts and ignores its late preview receipt', async () => {
@@ -646,6 +691,96 @@ describe('native capability manager integration', () => {
   expect(invoke).not.toHaveBeenCalledWith('commit_native_operation', expect.anything());
   expect(invoke).not.toHaveBeenCalledWith('cancel_native_operation', expect.anything());
  });
+
+ it.each(['Committed', 'Cancelled', 'Conflict'] as const)('closes an expanded %s receipt through normal guards on the first request', async state => {
+  const ref = createRef<NativeManagerHandle>(), onClose = vi.fn();
+  invoke.mockImplementation(async (command: string) => {
+   if (command === 'preview_native_mcp') return basePreview;
+   if (command === 'commit_native_operation' || command === 'cancel_native_operation') return { ...receipt, state };
+   return { instances: [server], incomplete: false };
+  });
+  render(<NativeManager ref={ref} kind="mcp" onClose={onClose} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'nativeExtensions.remove' }));
+  await screen.findByRole('button', { name: 'nativeExtensions.confirm' });
+  fireEvent.click(screen.getByRole('button', { name: state === 'Cancelled' ? 'nativeExtensions.cancel' : 'nativeExtensions.confirm' }));
+  await screen.findByText(`nativeExtensions.state.${state}`, { selector: 'dd' });
+  await waitFor(() => expect(Object.values(useNativeExtensions.getState().busy).some(Boolean)).toBe(false));
+  await act(async () => { expect(await ref.current!.requestClose()).toBe(true); });
+  expect(onClose).toHaveBeenCalledTimes(1);
+ });
+
+ it('does not bypass a running post-commit read when the expanded receipt is already terminal', async () => {
+  const ref = createRef<NativeManagerHandle>(), onClose = vi.fn();
+  const read = Promise.withResolvers<{ instances: NativeMcpInstance[]; incomplete: boolean }>();
+  let committed = false;
+  invoke.mockImplementation(async (command: string) => {
+   if (command === 'preview_native_mcp') return basePreview;
+   if (command === 'commit_native_operation') { committed = true; return { ...receipt, state: 'Committed' }; }
+   return committed ? read.promise : { instances: [server], incomplete: false };
+  });
+  render(<NativeManager ref={ref} kind="mcp" onClose={onClose} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'nativeExtensions.remove' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'nativeExtensions.confirm' }));
+  await screen.findByText('nativeExtensions.state.Committed', { selector: 'dd' });
+  await act(async () => { expect(await ref.current!.requestClose()).toBe(false); });
+  expect(onClose).not.toHaveBeenCalled();
+  await act(async () => { read.resolve({ instances: [], incomplete: false }); });
+  await act(async () => { expect(await ref.current!.requestClose()).toBe(true); });
+  expect(onClose).toHaveBeenCalledTimes(1);
+ });
+
+
+ it('still confirms dirty drafts on the first close request after a terminal cancellation', async () => {
+  const ref = createRef<NativeManagerHandle>(), onClose = vi.fn();
+  render(<><NativeManager ref={ref} kind="mcp" onClose={onClose} /><ModalHost /></>);
+  await createServer();
+  fireEvent.click(screen.getByRole('button', { name: 'nativeExtensions.cancel' }));
+  await screen.findByText('nativeExtensions.state.Cancelled', { selector: 'dd' });
+  let closing!: Promise<boolean>;
+  act(() => { closing = ref.current!.requestClose(); });
+  const discard = await screen.findByRole('button', { name: 'shell.discard' });
+  expect(onClose).not.toHaveBeenCalled();
+  expect((screen.getByLabelText('nativeExtensions.program') as HTMLInputElement).value).toBe('node');
+  fireEvent.click(discard);
+  await act(async () => { expect(await closing).toBe(true); });
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(useNativeExtensions.getState().drafts).toEqual({});
+ });
+
+ it('keeps one visible control group per original probe and restores recovery away from its target', async () => {
+  const selection: NativeSelection = { target: 'Codex', scope: 'OsUser', project_id: null };
+  const plan: NativeProbeSnapshot = { probe_id: 'original-probe', selection, config: { name: 'alpha', transport: 'Stdio', program: 'server', args: [], url: null, cwd: '/workspace', credential_references: [], redacted: false, config_digest: 'config-digest' }, digest: 'approval-digest', executable: '/trusted/server', cwd: '/workspace', root: '/workspace', platform_identity: 'cli-identity', executable_identity: 'server-identity', expires_at: 4102444800, state: 'ready', phase: 'approval', cleanup: 'not_started', error: null, observed_at: null, protocol_version: null, tools: [], schema_source: 'independent_host_probe', may_download_execute: false, probe_args: [], cleanup_plan: null };
+  invoke.mockImplementation(async (command: string) => {
+   if (command === 'preview_native_mcp_probe') return plan;
+   if (command === 'run_native_mcp_probe') throw 'native_extension_Unavailable';
+   if (command === 'inspect_native_mcp_probe') return { ...plan, state: 'failed', phase: 'finished', cleanup: 'confirmed' };
+   return { instances: [server], incomplete: false };
+  });
+  const ref = createRef<NativeManagerHandle>(), onClose = vi.fn();
+  const view = render(<NativeManager ref={ref} kind="mcp" initialSelection={selection} onClose={onClose} />);
+  await screen.findByRole('button', { name: /alpha/ });
+  fireEvent.mouseDown(screen.getByRole('tab', { name: 'nativeMcpCatalog.probe' }), { button: 0, ctrlKey: false });
+  fireEvent.click(await screen.findByRole('button', { name: 'nativeMcpCatalog.previewProbe' }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'nativeMcpCatalog.approval' }));
+  fireEvent.click(screen.getByRole('button', { name: 'nativeMcpCatalog.runProbe' }));
+  await screen.findByText(/nativeMcpCatalog.state.unknown/);
+  expect(screen.getAllByRole('button', { name: 'nativeMcpCatalog.inspectProbe' })).toHaveLength(1);
+  expect(screen.getAllByRole('button', { name: 'nativeMcpCatalog.cancelProbe' })).toHaveLength(1);
+  expect(screen.queryByRole('region', { name: 'nativeMcpCatalog.inspectProbe' })).toBeNull();
+  await act(async () => { expect(await ref.current!.requestClose()).toBe(false); });
+  expect(onClose).not.toHaveBeenCalled();
+  view.rerender(<NativeManager ref={ref} kind="mcp" initialSelection={{ ...selection, target: 'Claude' }} onClose={onClose} />);
+  const recovery = await screen.findByRole('region', { name: 'nativeMcpCatalog.inspectProbe' });
+  expect(within(recovery).getByText(/original-probe/)).toBeTruthy();
+  expect(screen.getAllByRole('button', { name: 'nativeMcpCatalog.inspectProbe' })).toHaveLength(1);
+  fireEvent.click(within(recovery).getByRole('button', { name: 'nativeMcpCatalog.inspectProbe' }));
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'nativeMcpCatalog.inspectProbe' })).toBeNull());
+  await act(async () => { expect(await ref.current!.requestClose()).toBe(true); });
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(invoke.mock.calls.filter(([command]) => command === 'run_native_mcp_probe')).toHaveLength(1);
+  expect(invoke).toHaveBeenCalledWith('inspect_native_mcp_probe', { input: { probe_id: 'original-probe' } });
+ });
+
 
  it('CAS-protects inactive source drafts and only discards owned selection snapshots', async () => {
   const ref = createRef<NativeManagerHandle>(), onClose = vi.fn();

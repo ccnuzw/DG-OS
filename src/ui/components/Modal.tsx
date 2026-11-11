@@ -243,6 +243,7 @@ export function ModalHost() {
           confirmText={entry.confirmText}
           cancelText={entry.cancelText}
           confirmVariant={entry.confirmVariant}
+          footer={entry.footer}
           onConfirm={entry.onConfirm}
           onCancel={entry.onCancel}
         />
