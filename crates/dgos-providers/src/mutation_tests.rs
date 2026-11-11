@@ -103,7 +103,7 @@ async fn dropped_mutation_waiter_still_terminates_and_reaps_a_real_child() {
     use tokio::io::{AsyncBufReadExt, BufReader};
     let (_dir, manager, provider, mut events) = setup().await;
     let lease = manager.register_cli_opening(binding(&provider), &CancellationToken::new()).await.unwrap();
-    let launch = manager.resolve_cli_provider_for_lease(&lease).await.unwrap();
+    let launch = manager.resolve_cli_provider_for_lease(&lease, crate::CliProviderProtocol::OpenAiResponses).await.unwrap();
     let mut child = manager.with_cli_spawn(&lease, &launch, |_| {
         let child = tokio::process::Command::new("/bin/sh").args(["-c", "printf 'ready\\n'; read value"])
             .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped())

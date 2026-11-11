@@ -2,7 +2,7 @@
 //!
 //! This module resolves configuration; it neither launches a process nor proxies a protocol.
 use super::{scope_for, ProviderManager};
-use crate::{vendor::validate_provider_config, AuthStyle, SecretValue};
+use crate::{resolve_cli_provider_route, vendor::validate_provider_config, AuthStyle, SecretValue};
 use dgos_types::{DgosError, DgosResult, Model, ModelKind, PROTOCOL_ANTHROPIC, PROTOCOL_OPENAI_COMPATIBLE};
 
 /// Wire protocol a CLI engine may probe. A candidate is never proof of compatibility.
@@ -42,6 +42,8 @@ pub struct CliProviderLaunchMetadata {
     pub protocol_candidate: CliProviderProtocol,
     /// False means no engine-specific real-service proof, not an admission failure.
     pub protocol_verified: bool,
+    /// Explicitly enabled by the user; this is not a real-service verification.
+    pub protocol_declared: bool,
     pub auth_style: AuthStyle,
     pub allow_insecure_http: bool,
     pub anthropic_version: Option<&'static str>,
@@ -94,13 +96,15 @@ impl CliProviderLaunch {
 /// Compare only settings consumed by the native launch adapter. Retry policy and
 /// unrelated metadata do not change a running process's route or authorization.
 pub(super) fn execution_settings_changed(before: &dgos_types::Provider, after: &dgos_types::ProviderConfig) -> bool {
-    let Ok(before) = validate_provider_config(&before.provider_type, &before.base_url, before.config.as_ref()) else { return true; };
-    let Ok(after) = validate_provider_config(&after.provider_type, &after.base_url, after.config.as_ref()) else { return true; };
-    before.provider_type != after.provider_type || before.base_url != after.base_url
-        || before.auth_override.unwrap_or(before.profile.auth) != after.auth_override.unwrap_or(after.profile.auth)
-        || before.allow_insecure_http != after.allow_insecure_http
-        || before.profile.version_header != after.profile.version_header
-        || before.workspace_id.as_ref().filter(|_| before.profile.official) != after.workspace_id.as_ref().filter(|_| after.profile.official)
+    let Ok(before_ordinary) = validate_provider_config(&before.provider_type, &before.base_url, before.config.as_ref()) else { return true; };
+    let Ok(after_ordinary) = validate_provider_config(&after.provider_type, &after.base_url, after.config.as_ref()) else { return true; };
+    if before_ordinary.provider_type != after_ordinary.provider_type || before_ordinary.base_url != after_ordinary.base_url
+        || before_ordinary.auth_override.unwrap_or(before_ordinary.profile.auth) != after_ordinary.auth_override.unwrap_or(after_ordinary.profile.auth)
+        || before_ordinary.allow_insecure_http != after_ordinary.allow_insecure_http
+        || before_ordinary.profile.version_header != after_ordinary.profile.version_header
+        || before_ordinary.workspace_id.as_ref().filter(|_| before_ordinary.profile.official) != after_ordinary.workspace_id.as_ref().filter(|_| after_ordinary.profile.official)
+    { return true; }
+    crate::cli_routes::execution_settings_changed(&before_ordinary, before.config.as_ref(), &after_ordinary, after.config.as_ref())
 }
 
 impl ProviderManager {
@@ -122,6 +126,7 @@ impl ProviderManager {
         model_id: &str,
         user_id: &str,
         expected_revision: i64,
+        protocol: CliProviderProtocol,
     ) -> DgosResult<CliProviderLaunch> {
         let _permit = self.gate.admit().map_err(|_| DgosError::ProviderRequestRejected)?;
         let _guard = self.credentials_lock.lock().await;
@@ -134,13 +139,12 @@ impl ProviderManager {
         if model.model_type != ModelKind::TextGeneration.as_str() && model.model_type != "chat" {
             return Err(DgosError::RequestNotSupported);
         }
-        let normalized = validate_provider_config(
+        let route = resolve_cli_provider_route(
             &provider.provider_type,
             &provider.base_url,
             provider.config.as_ref(),
+            protocol,
         )?;
-        let protocol_candidate = CliProviderProtocol::candidate_for_provider_type(normalized.provider_type)
-            .ok_or(DgosError::UnsupportedProviderType)?;
         let reference = provider.credential_ref.as_ref().ok_or(DgosError::CredentialUnavailable)?;
         let credential = self.vault.load(&scope_for(
             user_id,
@@ -158,13 +162,14 @@ impl ProviderManager {
                 provider_type: provider.provider_type,
                 config_revision: provider.config_revision,
                 model,
-                base_url: normalized.base_url,
-                protocol_candidate,
+                base_url: route.base_url,
+                protocol_candidate: protocol,
                 protocol_verified: false,
-                auth_style: normalized.auth_override.unwrap_or(normalized.profile.auth),
-                allow_insecure_http: normalized.allow_insecure_http,
-                anthropic_version: normalized.profile.version_header,
-                workspace_id: normalized.workspace_id.filter(|_| normalized.profile.official),
+                protocol_declared: route.declared,
+                auth_style: route.auth_style,
+                allow_insecure_http: route.allow_insecure_http,
+                anthropic_version: route.anthropic_version,
+                workspace_id: route.workspace_id,
             },
             credential,
         })

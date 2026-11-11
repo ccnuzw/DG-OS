@@ -195,8 +195,8 @@ fn encode_cursor(id: &str) -> String {
         .collect()
 }
 
-/// Only documented `/v1/models` fields are read: `display_name`, `max_input_tokens`, `max_tokens`
-/// and the `capabilities.{thinking, structured_output, image_input}.supported` flags.
+/// `max_input_tokens` remains a conservative admission bound, not evidence of a combined window.
+/// Display consumers must not present this input-only bound as precise input-plus-output capacity.
 fn model_from_item(id: &str, item: &Value) -> Model {
     let mut model = build_model(
         PROTOCOL_ANTHROPIC,
@@ -273,14 +273,12 @@ impl ProviderAdapter for AnthropicAdapter {
                     .post_json(&url, &state, model_id, Some(options.request_timeout), None, None)
                     .await?;
                 let bytes = read_limited(response, options.max_body_bytes).await?;
-                let mut response = parse_chat_response(&bytes)?;
+                let mut response = parse_chat_response(&bytes, &billed)?;
                 if let Some(format) = &request.response_format {
                     // A mismatch is final: `StructuredOutputInvalid` is not retryable.
                     match structured::validate(&response.content, format) {
                         Ok(value) => response.structured = Some(value),
                         Err(error) => {
-                            *billed.lock().unwrap_or_else(|e| e.into_inner()) =
-                                Some(response.usage.clone());
                             return Err(error.into());
                         }
                     }
@@ -289,9 +287,7 @@ impl ProviderAdapter for AnthropicAdapter {
             })
             .await
             .map_err(|error| CallFailure {
-                usage: matches!(error, DgosError::StructuredOutputInvalid)
-                    .then(|| billed.lock().unwrap_or_else(|e| e.into_inner()).take())
-                    .flatten(),
+                usage: billed.lock().unwrap_or_else(|e| e.into_inner()).take(),
                 error,
             })
     }
@@ -657,35 +653,39 @@ fn map_stop_reason(reason: Option<&str>) -> DgosResult<&'static str> {
     }
 }
 
-/// Input is the sum of the three input counters; Anthropic reports no total. Reasoning tokens
-/// are already part of `output_tokens`. A missing or empty `usage` is zero and flagged.
-fn parse_usage(usage: Option<&Value>) -> (TokenUsage, bool) {
-    let Some(usage) = usage.and_then(Value::as_object) else {
-        return (TokenUsage::default(), true);
-    };
-    let field = |name: &str| {
-        usage
-            .get(name)
-            .and_then(Value::as_u64)
-            .map(|value| value.min(u32::MAX as u64) as u32)
-    };
-    let (input, output) = (field("input_tokens"), field("output_tokens"));
-    if input.is_none() && output.is_none() {
-        return (TokenUsage::default(), true);
+/// Anthropic input excludes cache reads/writes; normalized prompt includes those subsets once.
+fn normalized_usage(input: Option<u32>, output: Option<u32>, cache_read: Option<u32>,
+    cache_write: Option<u32>, reasoning: Option<u32>) -> TokenUsage {
+    let prompt = input.and_then(|input| input.checked_add(cache_read.unwrap_or(0)))
+        .and_then(|input| input.checked_add(cache_write.unwrap_or(0)));
+    let total = prompt.zip(output).and_then(|(input, output)| input.checked_add(output));
+    TokenUsage {
+        prompt_tokens: prompt.unwrap_or(0), completion_tokens: output.unwrap_or(0),
+        total_tokens: total.unwrap_or_else(|| prompt.unwrap_or(0).saturating_add(output.unwrap_or(0))),
+        prompt_tokens_reported: prompt.is_some(),
+        completion_tokens_reported: output.is_some(), total_tokens_reported: total.is_some(),
+        cache_read_tokens: cache_read, cache_write_tokens: cache_write, reasoning_tokens: reasoning,
     }
-    let prompt = input
-        .unwrap_or(0)
-        .saturating_add(field("cache_creation_input_tokens").unwrap_or(0))
-        .saturating_add(field("cache_read_input_tokens").unwrap_or(0));
-    let completion = output.unwrap_or(0);
-    (
-        TokenUsage {
-            prompt_tokens: prompt,
-            completion_tokens: completion,
-            total_tokens: prompt.saturating_add(completion),
-        },
-        false,
-    )
+}
+
+fn usage_counts_valid(usage: Option<&Value>) -> bool {
+    let Some(usage) = usage else { return true; };
+    ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens",
+        "reasoning_tokens"].into_iter().all(|name| {
+        usage.get(name).filter(|value| !value.is_null()).is_none_or(|value|
+            value.as_u64().is_some_and(|value| u32::try_from(value).is_ok()))
+    })
+}
+
+pub(crate) fn parse_usage(usage: Option<&Value>) -> (TokenUsage, bool) {
+    if !usage_counts_valid(usage) { return (TokenUsage::default(), true); }
+    let field = |name: &str| usage.and_then(|usage| usage.get(name)).and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok());
+    let usage = normalized_usage(field("input_tokens"), field("output_tokens"),
+        field("cache_read_input_tokens"), field("cache_creation_input_tokens"), field("reasoning_tokens"));
+    let unknown = !usage.has_reported_usage();
+    crate::usage::observe(&usage);
+    (usage, unknown)
 }
 
 #[derive(Default)]
@@ -742,12 +742,13 @@ fn parse_content(value: &Value) -> DgosResult<Parsed> {
     Ok(parsed)
 }
 
-fn parse_chat_response(bytes: &[u8]) -> DgosResult<ChatResponse> {
+fn parse_chat_response(bytes: &[u8], billed: &std::sync::Mutex<Option<TokenUsage>>) -> DgosResult<ChatResponse> {
     let value: Value =
         serde_json::from_slice(bytes).map_err(|_| DgosError::ProviderResponseInvalid)?;
+    let (usage, usage_unknown) = parse_usage(value.get("usage"));
+    *billed.lock().unwrap_or_else(|e| e.into_inner()) = usage.has_reported_usage().then(|| usage.clone());
     let parsed = parse_content(&value)?;
     let finish = map_stop_reason(value.get("stop_reason").and_then(Value::as_str))?;
-    let (usage, usage_unknown) = parse_usage(value.get("usage"));
     Ok(ChatResponse {
         content: parsed.text,
         usage,
@@ -762,6 +763,7 @@ fn parse_chat_response(bytes: &[u8]) -> DgosResult<ChatResponse> {
 fn parse_tool_response(bytes: &[u8]) -> DgosResult<ToolChatResponse> {
     let value: Value =
         serde_json::from_slice(bytes).map_err(|_| DgosError::ProviderResponseInvalid)?;
+    let usage = parse_usage(value.get("usage")).0;
     let invalid = || DgosError::InternalError("Invalid or incomplete tool chat response".into());
     let parsed = parse_content(&value)?;
     let finish =
@@ -783,7 +785,7 @@ fn parse_tool_response(bytes: &[u8]) -> DgosResult<ToolChatResponse> {
             reasoning,
             images: Vec::new(),
         },
-        usage: parse_usage(value.get("usage")).0,
+        usage,
         audit_warning: false,
     })
 }
@@ -798,31 +800,32 @@ fn parse_tool_response(bytes: &[u8]) -> DgosResult<ToolChatResponse> {
 struct AnthropicMapper {
     input: Option<u32>,
     output: Option<u32>,
+    cache_read: Option<u32>,
+    cache_write: Option<u32>,
+    reasoning: Option<u32>,
     stop_reason: Option<String>,
     stopped: bool,
 }
 
 impl AnthropicMapper {
-    fn absorb_usage(&mut self, usage: Option<&Value>) {
-        let Some(usage) = usage.and_then(Value::as_object) else {
-            return;
-        };
-        let field = |name: &str| {
-            usage
-                .get(name)
-                .and_then(Value::as_u64)
-                .map(|value| value.min(u32::MAX as u64) as u32)
-        };
-        // `message_delta.usage` is cumulative: the latest value replaces the earlier one.
-        if let Some(input) = field("input_tokens") {
-            let cached = field("cache_creation_input_tokens")
-                .unwrap_or(0)
-                .saturating_add(field("cache_read_input_tokens").unwrap_or(0));
-            self.input = Some(input.saturating_add(cached));
+    fn absorb_usage(&mut self, usage: Option<&Value>, output_authoritative: bool) {
+        if usage.is_none() || !usage_counts_valid(usage) { return; }
+        let field = |name: &str| usage.and_then(|usage| usage.get(name)).and_then(Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok());
+        // Values are cumulative; fields omitted by message_delta keep their previous presence.
+        if let Some(value) = field("input_tokens") { self.input = Some(value); }
+        // message_start's output counter is preliminary, not a completed output receipt.
+        if output_authoritative {
+            if let Some(value) = field("output_tokens") { self.output = Some(value); }
         }
-        if let Some(output) = field("output_tokens") {
-            self.output = Some(output);
-        }
+        if let Some(value) = field("cache_read_input_tokens") { self.cache_read = Some(value); }
+        if let Some(value) = field("cache_creation_input_tokens") { self.cache_write = Some(value); }
+        if let Some(value) = field("reasoning_tokens") { self.reasoning = Some(value); }
+        crate::usage::observe(&self.snapshot());
+    }
+
+    fn snapshot(&self) -> TokenUsage {
+        normalized_usage(self.input, self.output, self.cache_read, self.cache_write, self.reasoning)
     }
 
     fn finish(&mut self) -> Outcome {
@@ -839,6 +842,12 @@ impl Mapper for AnthropicMapper {
         let Ok(value) = serde_json::from_str::<Value>(event.data.trim()) else {
             return Outcome::Fail(DgosError::StreamInterrupted);
         };
+        if !usage_counts_valid(value.get("usage").or_else(|| value.pointer("/message/usage"))) {
+            return Outcome::Fail(DgosError::ProviderResponseInvalid);
+        }
+        let output_authoritative = value.get("type").and_then(Value::as_str)
+            .or(event.event.as_deref()) != Some("message_start");
+        self.absorb_usage(value.get("usage").or_else(|| value.pointer("/message/usage")), output_authoritative);
         // The SSE event name `error` decides, whatever shape the payload has: after HTTP 200 the
         // upstream may send `{"type":"error",...}` or just `{"type":"overloaded_error",...}`.
         if event.event.as_deref() == Some("error") {
@@ -853,7 +862,7 @@ impl Mapper for AnthropicMapper {
         match kind.as_str() {
             // Only resets the idle timer, which the driver already did by receiving bytes.
             "ping" => {}
-            "message_start" => self.absorb_usage(value.pointer("/message/usage")),
+            "message_start" => {}
             "content_block_start" => {
                 if let Some(text) = value
                     .pointer("/content_block/text")
@@ -903,7 +912,6 @@ impl Mapper for AnthropicMapper {
                     self.stop_reason = Some(reason.to_owned());
                     self.stopped = true;
                 }
-                self.absorb_usage(value.get("usage"));
             }
             "message_stop" => {
                 self.stopped = true;
@@ -917,15 +925,8 @@ impl Mapper for AnthropicMapper {
     }
 
     fn terminal(&mut self) -> ChatChunk {
-        let usage = (self.input.is_some() || self.output.is_some()).then(|| {
-            let prompt = self.input.unwrap_or(0);
-            let completion = self.output.unwrap_or(0);
-            TokenUsage {
-                prompt_tokens: prompt,
-                completion_tokens: completion,
-                total_tokens: prompt.saturating_add(completion),
-            }
-        });
+        let snapshot = self.snapshot();
+        let usage = snapshot.has_reported_usage().then_some(snapshot);
         ChatChunk {
             finish_reason: Some(
                 map_stop_reason(self.stop_reason.as_deref())
@@ -965,7 +966,6 @@ enum ToolStreamBlock {
 struct AnthropicToolMapper {
     usage: AnthropicMapper,
     started: bool,
-    output_reported: bool,
     next_index: u64,
     active: Option<ToolStreamBlock>,
     parsed: Parsed,
@@ -1167,6 +1167,12 @@ impl AnthropicToolMapper {
     fn accept(&mut self, event: &SseEvent, out: &mut Vec<ToolStreamEvent>) -> DgosResult<bool> {
         let value: Value = serde_json::from_str(event.data.trim())
             .map_err(|_| DgosError::ProviderResponseInvalid)?;
+        if !usage_counts_valid(value.get("usage").or_else(|| value.pointer("/message/usage"))) {
+            return Err(DgosError::ProviderResponseInvalid);
+        }
+        let output_authoritative = value.get("type").and_then(Value::as_str)
+            .or(event.event.as_deref()) != Some("message_start");
+        self.usage.absorb_usage(value.get("usage").or_else(|| value.pointer("/message/usage")), output_authoritative);
         let kind = value.get("type").and_then(Value::as_str)
             .ok_or(DgosError::ProviderResponseInvalid)?;
         if event.event.as_deref().is_some_and(|name| name != kind) {
@@ -1189,7 +1195,6 @@ impl AnthropicToolMapper {
                 return Err(DgosError::ProviderResponseInvalid);
             }
             self.started = true;
-            self.usage.absorb_usage(message.get("usage"));
             return Ok(false);
         }
         if !self.started { return Err(DgosError::ProviderResponseInvalid); }
@@ -1214,8 +1219,6 @@ impl AnthropicToolMapper {
                     return Err(DgosError::ProviderResponseInvalid);
                 }
                 self.usage.stop_reason = Some(reason.to_owned());
-                self.usage.absorb_usage(value.get("usage"));
-                self.output_reported |= value.pointer("/usage/output_tokens").and_then(Value::as_u64).is_some();
             }
             "message_stop" => {
                 if self.active.is_some() || self.usage.stop_reason.is_none() {
@@ -1240,8 +1243,8 @@ impl Mapper<ToolStreamEvent> for AnthropicToolMapper {
 
     fn terminal(&mut self) -> ToolStreamEvent {
         let parsed = std::mem::take(&mut self.parsed);
-        let prompt = self.usage.input.unwrap_or(0);
-        let completion = self.usage.output.unwrap_or(0);
+        let usage = self.usage.snapshot();
+        let usage_unknown = !usage.total_tokens_reported;
         ToolStreamEvent::Complete {
             response: ToolChatResponse {
                 message: ToolMessage {
@@ -1254,11 +1257,10 @@ impl Mapper<ToolStreamEvent> for AnthropicToolMapper {
                     }),
                     images: Vec::new(),
                 },
-                usage: TokenUsage { prompt_tokens: prompt, completion_tokens: completion,
-                    total_tokens: prompt.saturating_add(completion) },
+                usage,
                 audit_warning: false,
             },
-            usage_unknown: self.usage.input.is_none() || !self.output_reported,
+            usage_unknown,
         }
     }
 
@@ -1273,6 +1275,47 @@ mod tests {
     use super::*;
     use crate::vendor::ANTHROPIC_OFFICIAL;
     use dgos_types::{ChatMessage, ReasoningConfig, ResponseFormat, ToolDefinition, ToolFunction};
+
+    #[test]
+    fn token_boundaries_never_clamp_cache_or_derived_input() {
+        let max = u32::MAX as u64;
+        let (usage,unknown) = parse_usage(Some(&json!({"input_tokens":max,"output_tokens":0})));
+        assert!(!unknown && usage.total_tokens_reported);
+        assert_eq!(usage.total_tokens,u32::MAX);
+        for usage in [json!({"input_tokens":max+1,"output_tokens":0}),
+            json!({"input_tokens":1,"cache_read_input_tokens":max+1,"output_tokens":0}),
+            json!({"reasoning_tokens":max+1})] {
+            let (usage,unknown) = parse_usage(Some(&usage));
+            assert!(unknown && !usage.has_reported_usage());
+        }
+        let (usage,_) = parse_usage(Some(&json!({"input_tokens":max,"cache_read_input_tokens":1,"output_tokens":0})));
+        assert!(!usage.prompt_tokens_reported && !usage.total_tokens_reported);
+        assert_eq!(usage.cache_read_tokens,Some(1));
+        let mut mapper = AnthropicMapper::default();
+        let event = SseEvent { event:Some("message_delta".into()),data:json!({"type":"message_delta",
+            "usage":{"output_tokens":max+1}}).to_string() };
+        assert!(matches!(mapper.event(&event,&mut Vec::new()),Outcome::Fail(DgosError::ProviderResponseInvalid)));
+    }
+
+    #[test]
+    fn cumulative_usage_keeps_cache_presence_and_does_not_add_cumulative_output() {
+        let mut mapper = AnthropicMapper::default();
+        mapper.absorb_usage(Some(&json!({"input_tokens":10,"output_tokens":1,
+            "cache_read_input_tokens":3,"cache_creation_input_tokens":2})), false);
+        assert!(!mapper.snapshot().completion_tokens_reported && !mapper.snapshot().total_tokens_reported);
+        mapper.absorb_usage(Some(&json!({"output_tokens":4})), true);
+        let stream_usage = mapper.terminal().usage.unwrap();
+        let (sync_usage, unknown) = parse_usage(Some(&json!({"input_tokens":10,"output_tokens":4,
+            "cache_read_input_tokens":3,"cache_creation_input_tokens":2})));
+        assert!(!unknown);
+        assert_eq!(stream_usage,sync_usage);
+        assert_eq!((stream_usage.prompt_tokens,stream_usage.completion_tokens,stream_usage.total_tokens),(15,4,19));
+        assert_eq!(stream_usage.reasoning_tokens,None,"thinking text cannot prove a token count");
+        let (partial,unknown) = parse_usage(Some(&json!({"output_tokens":0})));
+        assert!(!unknown && partial.completion_tokens_reported);
+        assert!(!partial.prompt_tokens_reported && !partial.total_tokens_reported);
+        assert_eq!(partial.cache_read_tokens,None);
+    }
 
     fn message(role: &str, content: &str) -> ChatMessage {
         ChatMessage {

@@ -3,6 +3,7 @@
 
 mod adapters;
 pub mod classify;
+mod cli_routes;
 mod credentials;
 pub mod endpoint;
 mod manager;
@@ -13,6 +14,7 @@ mod structured;
 mod traits;
 mod transport;
 mod upstream;
+mod usage;
 pub mod vendor;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -23,6 +25,7 @@ mod credential_tests;
 
 pub use adapters::anthropic::AnthropicAdapter;
 pub use adapters::openai::OpenAIAdapter;
+pub use cli_routes::{resolve_cli_provider_route, CliProviderRoute};
 pub use credentials::{
     new_credential_ref, ProviderCredentialScope, ProviderCredentialVault, SecretValue,
     UnavailableCredentialVault,

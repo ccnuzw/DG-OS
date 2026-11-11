@@ -7,6 +7,10 @@ use uuid::Uuid;
 use super::ModelRepository;
 use crate::entities::providers;
 
+pub const CHAT_WEB_CREDENTIAL_KEY: &str = "chat.web.brave.credential_ref";
+pub const CHAT_WEB_PROVIDER_ID: &str = "dgos-chat-web-brave";
+pub const CHAT_WEB_ENDPOINT: &str = "https://api.search.brave.com/res/v1/web/search";
+
 /// Provider repository for CRUD operations
 pub struct ProviderRepository {
     db: DatabaseConnection,
@@ -414,12 +418,14 @@ impl ProviderRepository {
     }
 
     pub async fn credential_is_active(&self, reference: &str) -> DgosResult<bool> {
-        Ok(providers::Entity::find()
-            .filter(providers::Column::CredentialRef.eq(reference))
-            .count(&self.db)
-            .await
-            .map_err(db_error)?
-            > 0)
+        let row = self.db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 FROM providers WHERE credential_ref = ? UNION ALL \
+             SELECT 1 FROM system_settings WHERE setting_key = ? \
+             AND CASE WHEN json_valid(setting_value) THEN json_extract(setting_value, '$') END = ? LIMIT 1",
+            [reference.into(), CHAT_WEB_CREDENTIAL_KEY.into(), reference.into()],
+        )).await.map_err(db_error)?;
+        Ok(row.is_some())
     }
 
     pub async fn acknowledge_credential_cleanup(&self, reference: &str) -> DgosResult<()> {

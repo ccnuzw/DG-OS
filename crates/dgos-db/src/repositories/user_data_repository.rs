@@ -73,7 +73,7 @@ impl UserDataDomain {
     /// Tables keyed by `user_id`; child tables without an owner column are removed through their parents.
     pub fn user_tables(self) -> &'static [&'static str] {
         match self {
-            UserDataDomain::Chat => &["chat_summaries", "chat_runs", "chat_message_assets", "asset_leases", "chat_assets", "chat_messages", "chat_sessions"],
+            UserDataDomain::Chat => &["chat_usage_attempts", "chat_summaries", "chat_runs", "chat_message_assets", "asset_leases", "chat_assets", "chat_messages", "chat_sessions"],
             UserDataDomain::Workbench => &["ai_content_resources", "ai_content_runs", "ai_run_bindings", "workbench_tasks"],
             UserDataDomain::Mcp => &["mcp_usage_logs", "mcp_connection_logs", "mcp_servers"],
             UserDataDomain::Providers => &["provider_usage_logs", "usage_logs", "providers"],

@@ -95,6 +95,9 @@ impl RetryPolicy {
                 Ok(value) => return Ok(value),
                 Err(failure) => failure,
             };
+            // Includes failures while reading an accepted response body. Close the actual
+            // dispatch with its real error before backoff; retry waiting is not execution time.
+            crate::usage::fail_dispatch(&failure.error).await;
             if failure.terminal || !is_retryable(&failure.error) {
                 return Err(failure.error);
             }

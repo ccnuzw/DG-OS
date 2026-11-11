@@ -1139,6 +1139,7 @@ impl ChatRepository {
     /// guarantees no other process is generating (D077).
     pub async fn recover_generating(&self) -> Result<u64> {
         let tx = self.db.begin().await?;
+        crate::ChatUsageRepository::recover_pending_in_transaction(&tx, None).await?;
         tx.execute(stmt(
             "DELETE FROM chat_messages WHERE status = 'generating' AND replaces_id IS NOT NULL",
             vec![],
@@ -1161,6 +1162,7 @@ impl ChatRepository {
     /// matching running task. Nothing is resent.
     pub async fn recover_user_orphans(&self, user: &str) -> Result<u64> {
         let tx = self.db.begin().await?;
+        crate::ChatUsageRepository::recover_pending_in_transaction(&tx, Some(user)).await?;
         tx.execute(stmt(
             "DELETE FROM chat_messages WHERE user_id = ? AND status = 'generating' AND replaces_id IS NOT NULL",
             vec![user.into()],

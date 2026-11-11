@@ -231,6 +231,18 @@ impl UserRepository {
         .await
         .map_err(db_error)?;
         tx.execute(stmt(
+            "INSERT INTO provider_credential_cleanup (credential_ref, user_id, provider_id, endpoint) \
+             SELECT json_extract(setting_value, '$'), user_id, ?, ? FROM system_settings \
+             WHERE user_id = ? AND setting_key = ? AND json_valid(setting_value) \
+             AND json_extract(setting_value, '$') <> '' \
+             ON CONFLICT(credential_ref) DO NOTHING",
+            [super::provider_repository::CHAT_WEB_PROVIDER_ID.into(),
+             super::provider_repository::CHAT_WEB_ENDPOINT.into(), id.into(),
+             super::provider_repository::CHAT_WEB_CREDENTIAL_KEY.into()],
+        ))
+        .await
+        .map_err(db_error)?;
+        tx.execute(stmt(
             "INSERT INTO mcp_credential_cleanup (credential_ref, user_id, server_id, endpoint) \
              SELECT credential_ref, user_id, id, json_extract(config_json, '$.url') FROM mcp_servers \
              WHERE user_id = ? AND credential_ref IS NOT NULL AND transport = 'http' \

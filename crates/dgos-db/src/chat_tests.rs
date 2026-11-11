@@ -1149,6 +1149,40 @@ async fn restart_checkpoint_and_manual_report_retain_unknown_effect_identity() {
 }
 
 #[tokio::test]
+async fn a_new_model_segment_can_shorten_checkpoints_but_not_change_a_terminal_snapshot() {
+    let db=memory().await;let repo=ChatRepository::new(db.clone());
+    let session=repo.create_session(ALICE,&ChatTarget::default()).await.unwrap();
+    repo.begin_generation(&begin(ALICE,&session.id,"segment-task",Some("question"),None,("segment-user","segment-assistant"))).await.unwrap();
+    repo.checkpoint(ALICE,"segment-task","Long intermediate plan, not the final answer").await.unwrap();
+    repo.record_step(ALICE,"segment-task","model_segment","processing_result","intermediate",true,false,Some(serde_json::json!({"round":1,"content":"Long intermediate plan, not the final answer","truncated":false}))).await.unwrap();
+    repo.checkpoint(ALICE,"segment-task","").await.unwrap();
+    assert!(repo.get_run(ALICE,"segment-task").await.unwrap().partial_content.is_empty());
+    repo.checkpoint(ALICE,"segment-task","Final.").await.unwrap();
+    repo.finalize_generation(&done(ALICE,"segment-assistant","segment-task","Final.")).await.unwrap();
+    repo.checkpoint(ALICE,"segment-task","late stale update").await.unwrap();
+    repo.seal_run(ALICE,"segment-task","failed",false,false,Some("late"),None).await.unwrap();
+    let run=repo.get_run(ALICE,"segment-task").await.unwrap();
+    assert_eq!(run.status,"completed");assert_eq!(run.partial_content,"Final.");
+    assert!(run.steps.iter().any(|step|step.kind=="model_segment"));
+    assert!(repo.record_step(ALICE,"segment-task","web","processing_result","running",true,false,None).await.is_err());
+}
+
+#[tokio::test]
+async fn recovered_web_reads_fail_without_creating_unknown_side_effects_or_losing_sources() {
+    let db=memory().await;let repo=ChatRepository::new(db.clone());
+    let session=repo.create_session(ALICE,&ChatTarget::default()).await.unwrap();
+    repo.begin_generation(&begin(ALICE,&session.id,"web-recovery",Some("read public page"),None,("web-user","web-assistant"))).await.unwrap();
+    repo.record_step(ALICE,"web-recovery","web","processing_result","running",true,false,Some(serde_json::json!({"web_activity":{"id":"pending-read","operation":"fetch","status":"running","sources":[]}}))).await.unwrap();
+    repo.record_step(ALICE,"web-recovery","web","processing_result","completed",true,false,Some(serde_json::json!({"web_activity":{"id":"settled-read","operation":"fetch","status":"completed","sources":[{"id":"source","excerpt":"bounded fact"}]}}))).await.unwrap();
+    repo.recover_runs(None).await.unwrap();
+    let run=repo.get_run(ALICE,"web-recovery").await.unwrap();
+    assert_eq!(run.status,"interrupted");assert!(!run.result_unknown);
+    assert_eq!(run.steps[0].status,"failed");assert!(!run.steps[0].result_unknown);
+    assert_eq!(run.steps[0].receipt.as_ref().unwrap()["web_activity"]["error"],"web_cancelled");
+    assert_eq!(run.steps[1].receipt.as_ref().unwrap()["web_activity"]["sources"][0]["excerpt"],"bounded fact");
+}
+
+#[tokio::test]
 async fn foundation_identity_failure_rolls_back_the_entire_generation() {
     let db = memory().await;
     let repo = ChatRepository::new(db.clone());

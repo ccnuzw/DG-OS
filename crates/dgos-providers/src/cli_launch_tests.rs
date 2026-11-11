@@ -36,7 +36,7 @@ async fn launch_binds_owner_revision_model_and_normalized_base_without_protocol_
         options.provider_type = provider_type.into();
         let provider = crate::test_support::seed_provider(db.clone(), &vault, options, "local").await.unwrap();
         let revision = select_model(&manager, &provider.id, "fixture-chat").await;
-        let launch = manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision).await.unwrap();
+        let launch = manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision, candidate).await.unwrap();
         let metadata = launch.metadata();
         assert_eq!(metadata.user_id, "local");
         assert_eq!(metadata.provider_id, provider.id);
@@ -45,15 +45,16 @@ async fn launch_binds_owner_revision_model_and_normalized_base_without_protocol_
         assert_eq!(metadata.base_url, expected_base);
         assert_eq!(metadata.protocol_candidate, candidate);
         assert!(!metadata.protocol_verified);
+        assert!(!metadata.protocol_declared);
         assert_eq!(launch.credential().expose(), "synthetic-cli-key");
         assert!(!format!("{metadata:?}").contains("synthetic-cli-key"));
-        assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "other", revision).await, Err(DgosError::ProviderNotFound(_))));
-        assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision - 1).await, Err(DgosError::ProviderConfigurationChanged)));
-        assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "missing", "local", revision).await, Err(DgosError::ModelNotFound(_))));
+        assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "other", revision, candidate).await, Err(DgosError::ProviderNotFound(_))));
+        assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision - 1, candidate).await, Err(DgosError::ProviderConfigurationChanged)));
+        assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "missing", "local", revision, candidate).await, Err(DgosError::ModelNotFound(_))));
         manager.toggle_provider(&provider.id, false, "local").await.unwrap();
-        assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision).await, Err(DgosError::ProviderConfigurationChanged)));
+        assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision, candidate).await, Err(DgosError::ProviderConfigurationChanged)));
         let disabled = manager.get_provider(&provider.id, "local").await.unwrap().unwrap();
-        assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", disabled.config_revision).await, Err(DgosError::ProviderConfigurationChanged)));
+        assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", disabled.config_revision, candidate).await, Err(DgosError::ProviderConfigurationChanged)));
     }
 }
 
@@ -64,14 +65,14 @@ async fn launch_rejects_non_text_models_and_rechecks_endpoint_policy() {
     let manager = ProviderManager::with_vault(&url, vault.clone()).await.unwrap();
     let provider = crate::test_support::seed_provider(db.clone(), &vault, config("https://example.invalid/v1", "synthetic-cli-key"), "local").await.unwrap();
     let revision = select_model(&manager, &provider.id, "text-embedding-3-small").await;
-    assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "text-embedding-3-small", "local", revision).await, Err(DgosError::RequestNotSupported)));
+    assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "text-embedding-3-small", "local", revision, CliProviderProtocol::OpenAiResponses).await, Err(DgosError::RequestNotSupported)));
     let revision = select_model(&manager, &provider.id, "fixture-chat").await;
     // Simulates a configuration persisted by an older host: call-time validation still applies.
     use dgos_db::sea_orm::{ConnectionTrait, DbBackend, Statement};
     db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "UPDATE providers SET base_url = ? WHERE id = ?", ["http://public.example/v1".into(), provider.id.clone().into()]
     )).await.unwrap();
-    assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision).await, Err(DgosError::InsecureEndpoint)));
+    assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision, CliProviderProtocol::OpenAiResponses).await, Err(DgosError::InsecureEndpoint)));
 }
 
 #[tokio::test]
@@ -83,15 +84,15 @@ async fn launch_never_falls_forward_after_credential_rotation_or_missing_vault_e
     let revision = select_model(&manager, &provider.id, "fixture-chat").await;
     let rotated = manager.update_provider(&provider.id, config("https://example.invalid/v1", "synthetic-new-key"), "local").await.unwrap();
     // Rotation clears the model cache. The stale binding still fails as a revision conflict.
-    assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision).await, Err(DgosError::ProviderConfigurationChanged)));
+    assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision, CliProviderProtocol::OpenAiResponses).await, Err(DgosError::ProviderConfigurationChanged)));
     let revision = select_model(&manager, &provider.id, "fixture-chat").await;
-    let launch = manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision).await.unwrap();
+    let launch = manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision, crate::CliProviderProtocol::OpenAiResponses).await.unwrap();
     assert_eq!(launch.credential().expose(), "synthetic-new-key");
     vault.remove(&ProviderCredentialScope {
         user_id: "local".into(), provider_id: provider.id.clone(), endpoint: rotated.base_url,
         credential_ref: rotated.credential_ref.unwrap(),
     }).await.unwrap();
-    assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision).await, Err(DgosError::CredentialUnavailable)));
+    assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision, CliProviderProtocol::OpenAiResponses).await, Err(DgosError::CredentialUnavailable)));
 }
 
 struct FailingVault;
@@ -112,14 +113,14 @@ async fn launch_never_echoes_a_vault_error_or_reads_legacy_plaintext() {
     let provider = crate::test_support::seed_provider(db.clone(), &vault, config("https://example.invalid/v1", "synthetic-cli-key"), "local").await.unwrap();
     let manager = ProviderManager::with_vault(&url, Arc::new(FailingVault)).await.unwrap();
     let revision = select_model(&manager, &provider.id, "fixture-chat").await;
-    let error = manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision).await.err().unwrap();
+    let error = manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision, crate::CliProviderProtocol::OpenAiResponses).await.err().unwrap();
     assert!(matches!(error, DgosError::CredentialUnavailable));
     assert!(!format!("{error:?} {error}").contains("synthetic-secret"));
     use dgos_db::sea_orm::{ConnectionTrait, DbBackend, Statement};
     db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "UPDATE providers SET credential_ref = NULL, api_key = 'synthetic-legacy-key' WHERE id = ?", [provider.id.clone().into()]
     )).await.unwrap();
-    assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision).await, Err(DgosError::CredentialUnavailable)));
+    assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision, CliProviderProtocol::OpenAiResponses).await, Err(DgosError::CredentialUnavailable)));
 }
 
 struct PausingVault {
@@ -152,7 +153,7 @@ async fn launch_detects_external_rotation_and_revocation_during_vault_read() {
         let manager = Arc::new(ProviderManager::with_vault(&url, vault.clone()).await.unwrap());
         let id = provider.id.clone();
         let read = tokio::spawn(async move {
-            manager.resolve_cli_provider_launch(&id, "fixture-chat", "local", revision).await
+            manager.resolve_cli_provider_launch(&id, "fixture-chat", "local", revision, crate::CliProviderProtocol::OpenAiResponses).await
         });
         vault.loaded.notified().await;
         if revoke {
@@ -167,5 +168,86 @@ async fn launch_detects_external_rotation_and_revocation_during_vault_read() {
         } else {
             assert!(matches!(error, DgosError::ProviderConfigurationChanged));
         }
+    }
+}
+
+#[tokio::test]
+async fn dual_protocol_launches_use_requested_route_and_only_the_original_provider_vault_scope() {
+    use crate::{resolve_cli_provider_route, AuthStyle};
+    use serde_json::json;
+    for provider_type in ["openai_compatible", "anthropic"] {
+        let (_dir, url, db) = database().await;
+        let vault = Arc::new(MemoryCredentialVault::default());
+        let manager = ProviderManager::with_vault(&url, vault.clone()).await.unwrap();
+        let mut options = config("https://chat.example.invalid/v1", "synthetic-original-provider-key");
+        options.provider_type = provider_type.into();
+        options.config = Some(json!({"display_note": "preserved", "cli_routes": {
+            "responses": {"enabled": true, "base_url": "https://responses.example.invalid/v1/"},
+            "messages": {"enabled": true, "base_url": "https://messages.example.invalid/v1/", "auth_style": "x-api-key"}
+        }}));
+        let provider = crate::test_support::seed_provider(db, &vault, options, "local").await.unwrap();
+        let revision = select_model(&manager, &provider.id, "fixture-chat").await;
+        // A decoy under the override scope must never replace the original Provider key.
+        for endpoint in ["https://responses.example.invalid/v1", "https://messages.example.invalid"] {
+            let scope = ProviderCredentialScope { user_id: "local".into(), provider_id: provider.id.clone(),
+                endpoint: endpoint.into(), credential_ref: provider.credential_ref.clone().unwrap() };
+            vault.store(&scope, SecretValue::new("synthetic-wrong-override-key".into()).unwrap()).await.unwrap();
+        }
+        for (protocol, expected_auth) in [(CliProviderProtocol::OpenAiResponses, AuthStyle::Bearer),
+            (CliProviderProtocol::AnthropicMessages, AuthStyle::XApiKey)] {
+            let route = resolve_cli_provider_route(provider_type, &provider.base_url, provider.config.as_ref(), protocol).unwrap();
+            let launch = manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision, protocol).await.unwrap();
+            let metadata = launch.metadata();
+            assert_eq!(metadata.provider_type, provider_type);
+            assert_eq!(metadata.protocol_candidate, protocol);
+            assert!(metadata.protocol_declared);
+            assert!(!metadata.protocol_verified);
+            assert_eq!(metadata.base_url, route.base_url);
+            assert_eq!(metadata.auth_style, expected_auth);
+            assert_eq!(metadata.anthropic_version, route.anthropic_version);
+            assert_eq!(launch.credential().expose(), "synthetic-original-provider-key");
+        }
+        let saved = manager.get_provider(&provider.id, "local").await.unwrap().unwrap();
+        assert_eq!(saved.base_url, provider.base_url);
+        assert_eq!(saved.config, provider.config);
+    }
+}
+
+#[tokio::test]
+async fn disabled_requested_route_never_falls_back_or_reads_credentials() {
+    let (_dir, url, db) = database().await;
+    let vault = Arc::new(MemoryCredentialVault::default());
+    let mut options = config("https://chat.example.invalid/v1", "synthetic-provider-key");
+    options.config = Some(serde_json::json!({"cli_routes": {
+        "responses": {"enabled": false}, "messages": {"enabled": true}
+    }}));
+    let provider = crate::test_support::seed_provider(db, &vault, options, "local").await.unwrap();
+    let manager = ProviderManager::with_vault(&url, Arc::new(FailingVault)).await.unwrap();
+    let revision = select_model(&manager, &provider.id, "fixture-chat").await;
+    assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision,
+        CliProviderProtocol::OpenAiResponses).await, Err(DgosError::CliProviderProtocolUnsupported)));
+    assert!(matches!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision,
+        CliProviderProtocol::AnthropicMessages).await, Err(DgosError::CredentialUnavailable)));
+}
+
+#[tokio::test]
+async fn launch_revalidates_invalid_persisted_cli_routes_before_vault_access() {
+    for (routes, expected_code) in [
+        (serde_json::json!({"responses": {"enabled": true, "base_url": "https://route.example.invalid/v1?key=synthetic"}}), 1001028),
+        (serde_json::json!({"responses": {"enabled": true, "auth_style": "both"}}), 1001027),
+        (serde_json::json!({"responses": {"enabled": true, "unknown": true}}), 1001028),
+    ] {
+        let (_dir, url, db) = database().await;
+        let vault = Arc::new(MemoryCredentialVault::default());
+        let mut options = config("https://chat.example.invalid/v1", "synthetic-provider-key");
+        options.config = Some(serde_json::json!({"cli_routes": routes}));
+        // Fixture storage deliberately bypasses save validation, as an older host might have.
+        let provider = crate::test_support::seed_provider(db, &vault, options, "local").await.unwrap();
+        let manager = ProviderManager::with_vault(&url, Arc::new(FailingVault)).await.unwrap();
+        let revision = select_model(&manager, &provider.id, "fixture-chat").await;
+        let error = manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", revision,
+            CliProviderProtocol::OpenAiResponses).await.err().unwrap();
+        assert_eq!(error.error_code(), expected_code);
+        assert!(!format!("{error:?} {error}").contains("synthetic"));
     }
 }

@@ -51,6 +51,7 @@ mod m20261110_000037_ai_foundation;
 mod m20261110_000038_codex_operations;
 mod m20261110_000039_development_desktop;
 mod m20261110_000040_workspace_agent_activation;
+mod m20261111_000041_chat_usage;
 
 pub struct Migrator;
 
@@ -121,6 +122,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261110_000038_codex_operations::Migration),
             Box::new(m20261110_000039_development_desktop::Migration),
             Box::new(m20261110_000040_workspace_agent_activation::Migration),
+            Box::new(m20261111_000041_chat_usage::Migration),
         ]
     }
 }
