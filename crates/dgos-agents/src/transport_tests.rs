@@ -49,7 +49,8 @@ impl Fixture {
         crate::test_support::prepare_shell_fixture(&executable, body).await;
         let mut command = Command::new(executable);
         command.current_dir(&root);
-        let (wire, events) = Transport::spawn(command, launch.lease.cancellation_token(), ProcessDiagnostic::new("agent_start", "codex"), launch.lease.clone()).unwrap();
+        let ownership = crate::process_ownership::OwnershipJournal::reserve(&root.join("cli-processes"), &uuid::Uuid::new_v4().to_string()).unwrap();
+        let (wire, events) = Transport::spawn(command, launch.lease.cancellation_token(), ProcessDiagnostic::new("agent_start", "codex"), launch.lease.clone(), ownership).unwrap();
         Self { root, manager, wire, events }
     }
 
@@ -228,7 +229,7 @@ done
 
 #[cfg(unix)]
 #[tokio::test]
-async fn connection_loss_and_pending_failure_precede_slow_process_reap() {
+async fn connection_loss_and_pending_failure_do_not_wait_for_group_cleanup() {
     let mut fixture = Fixture::new(r#"
 trap '' TERM
 while IFS= read -r line; do
@@ -244,8 +245,6 @@ done
     wire.write(json!({"method":"lose"})).await.unwrap();
     tokio::time::timeout(Duration::from_millis(250), wire.connection_lost.cancelled()).await.unwrap();
     assert!(!wire.native_available());
-    assert!(!wire.stopped());
-    assert!(!wire.finished.is_cancelled());
     assert_eq!(tokio::time::timeout(Duration::from_millis(250), request).await.unwrap().unwrap_err(), "connection_lost");
     assert!(wire.pending.lock().unwrap().replies.is_empty());
     assert!(tokio::time::timeout(Duration::from_secs(3), wire.wait_stopped()).await.unwrap());
@@ -268,7 +267,6 @@ async fn malformed_input_and_writer_failure_signal_loss_without_waiting_for_reap
         assert!(matches!(error.as_str(), "connection_lost" | "closed"));
         assert!(fixture.wire.connection_lost.is_cancelled());
         assert!(!fixture.wire.native_available());
-        assert!(!fixture.wire.stopped());
         assert!(fixture.wire.pending.lock().unwrap().replies.is_empty());
         fixture.finish().await;
     }

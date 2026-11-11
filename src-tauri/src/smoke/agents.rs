@@ -203,12 +203,12 @@ const prepareSavedConversation = async sid => {
  if(!await until(()=>!tid('saved-conversation-composer')&&document.getElementById('agent-message')&&!document.getElementById('agent-message').disabled))throw Error('saved conversation native prepare did not finish');
 };
 const authorizeRuntime = async scope => {
- const root=await need('dev-development-runtime'),label=scope==='service'?/^(与 Agent 编辑共存的开发服务|Development services alongside Agent editing)$/:/^(直接 Shell 命令与交互终端|Direct shell commands and interactive terminals)$/;
- const details=[...root.querySelectorAll('details')].find(d=>[...d.querySelectorAll('span')].some(s=>label.test(txt(s))));if(!details)throw Error(scope+' permission controls absent');details.open=true;
+ const root=await need('dev-development-runtime'),label=scope==='service'?/^(可与 Agent 编辑同时运行的开发服务|Development services that run alongside Agent editing)$/:/^(Shell 命令与交互终端|Shell commands and interactive terminals)$/;
+ const details=[...root.querySelectorAll('details')].find(d=>[...d.querySelectorAll('span')].some(s=>label.test(txt(s))));if(!details)throw Error(scope+' permission controls absent');for(let parent=details;parent&&root.contains(parent);parent=parent.parentElement){if(parent.tagName==='DETAILS')parent.open=true;}
  const row=await until(()=>$$('.dev-review-toolbar',details).find(r=>$$('span',r).some(s=>label.test(txt(s)))));if(!row)throw Error(scope+' permission row absent');
  const button=await until(()=>$$('button',row).find(b=>!b.disabled));if(!button)throw Error(scope+' permission action unavailable');
  if(/^(撤销授权|Revoke permission)$/.test(txt(button)))return;
- if(!/^(授权工作区|Authorize workspace)$/.test(txt(button)))throw Error('unexpected '+scope+' permission action');button.click();await confirmWorkspaceGrant();
+ if(!/^(允许项目运行|Allow project to run)$/.test(txt(button)))throw Error('unexpected '+scope+' permission action');button.click();await confirmWorkspaceGrant();
  if(!await until(()=>$$('button',row).some(b=>/^(撤销授权|Revoke permission)$/.test(txt(b)))))throw Error(scope+' grant not reflected');
 };
 const showRuntimeView = async () => {

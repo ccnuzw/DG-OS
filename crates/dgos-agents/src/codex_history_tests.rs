@@ -95,6 +95,21 @@ fn history_protocol_full_items_upgrade_summaries_and_preserve_entry_timestamps()
 }
 
 #[test]
+fn restored_user_input_text_and_safe_unknown_items_survive_summary_upgrade() {
+    let mut history = History::default();
+    let mut view = SessionView::new("/fixture".into());
+    history.seed(&mut view, &json!({"thread":{"turns":[{"id":"turn","itemsView":"summary","items":[{"id":"user","type":"userMessage","input":[]}]}]}}));
+    let page = history.pages.pop_front().unwrap();
+    history.page(&mut view, &page, &json!({"data":[{"turnId":"turn","item":{"id":"user","type":"userMessage","input":[{"type":"text","text":"first"},{"type":"image","url":"SECRET"},{"type":"text","text":"second"}]}},{"turnId":"turn","item":{"id":"future","type":"futureItem","payload":"SECRET","thinking":"SECRET"}}],"nextCursor":null,"backwardsCursor":null}));
+    history.finish(&mut view);
+    assert_eq!(view.events[0].text.as_deref(), Some("first\nsecond"));
+    assert_eq!(view.events[0].data["input"][1]["redacted"], true);
+    assert_eq!(view.events[1].data, json!({"type":"futureItem","diagnostic":"unsupported_native_event","payload_omitted":true}));
+    assert!(!serde_json::to_string(&view).unwrap().contains("SECRET"));
+}
+
+
+#[test]
 fn history_protocol_event_and_byte_budgets_keep_partial_history() {
     let mut history = History::default();
     let mut view = SessionView::new("/fixture".into());
@@ -164,9 +179,9 @@ case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$rpc";;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$rpc";;
-*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"history-thread","turns":[]}}}\n' "$rpc" "$PWD";;
+*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"history-thread","turns":[]}}}\n' "$rpc" "$PWD";;
 *'"method":"thread/resume"'*)
- printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"history-thread","turns":[]},"initialTurnsPage":{"data":[{"id":"t3","itemsView":"full","items":[{"id":"d","type":"agentMessage","text":"same"},{"id":"e","type":"agentMessage","text":"same"}]}],"nextCursor":"more-turns","backwardsCursor":"newer-turns"},"turnsBackwardsCursor":"older-turns","itemsBackwardsCursor":"older-items"}}\n' "$rpc" "$PWD";;
+ printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"history-thread","turns":[]},"initialTurnsPage":{"data":[{"id":"t3","itemsView":"full","items":[{"id":"d","type":"agentMessage","text":"same"},{"id":"e","type":"agentMessage","text":"same"}]}],"nextCursor":"more-turns","backwardsCursor":"newer-turns"},"turnsBackwardsCursor":"older-turns","itemsBackwardsCursor":"older-items"}}\n' "$rpc" "$PWD";;
 *'"method":"thread/turns/list"'*|*'"method":"thread/items/list"'*)
  if [ -f close-history ]; then exit 0; fi
  if [ -f hold-history ]; then printf waiting > history-waiting; continue; fi

@@ -35,14 +35,18 @@ async fn fixture(path: &Path) -> Result<(), String> {
     std::fs::write(path, r##"#!/bin/sh
 if [ "${1-}" = --version ]; then printf 'codex-cli 0.167.0\n'; exit 0; fi
 if [ "${1-}" = --fixture-ready ]; then exit 0; fi
+fixture_provider=
+for argument do
+  case "$argument" in model_provider=*) fixture_provider=${argument#*=}; fixture_provider=${fixture_provider#\"}; fixture_provider=${fixture_provider%\"};; esac
+done
 while IFS= read -r line; do
 printf '%s\n' "$line" >> protocol.jsonl
 request=${line#*\"id\":}; request=${request%%,*}
 case "$line" in
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
-*'"method":"config/read"'*) printf '{"id":%s,"result":{"config":{"model_provider":"dgos_project","model_providers":{"dgos_project":{"base_url":"http://127.0.0.1:9/v1","wire_api":"responses","env_key":"DGOS_PROVIDER_KEY","requires_openai_auth":false}}}}}\n' "$request";;
+*'"method":"config/read"'*) printf '{"id":%s,"result":{"config":{"model_provider":"'"$fixture_provider"'","model_providers":{"'"$fixture_provider"'":{"base_url":"http://127.0.0.1:9/v1","wire_api":"responses","env_key":"DGOS_PROVIDER_KEY","requires_openai_auth":false}}}}}\n' "$request";;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
-*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"references-smoke","turns":[]}}}\n' "$request" "$PWD";;
+*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"references-smoke","turns":[]}}}\n' "$request" "$PWD";;
 *'"method":"skills/list"'*) printf '{"id":%s,"result":{"data":[{"cwd":"%s","skills":[{"name":"smoke-skill","path":"%s/.agents/skills/smoke-skill/SKILL.md","enabled":true,"scope":"repo"}],"errors":[]}]}}\n' "$request" "$PWD" "$PWD";;
 *'"method":"turn/start"'*) printf '{"id":%s,"result":{"turn":{"id":"smoke-turn"}}}\n' "$request"; printf '%s\n' '{"method":"turn/completed","params":{"threadId":"references-smoke","turn":{"id":"smoke-turn","status":"completed"}}}';;
 esac

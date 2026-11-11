@@ -15,7 +15,7 @@ case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
-*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"desktop-thread","turns":[]}}}\n' "$request" "$PWD";;
+*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"desktop-thread","turns":[]}}}\n' "$request" "$PWD";;
 esac
 done
 "#.replace("CONFIG_REPLY", crate::test_support::CODEX_CONFIG_REPLY)).await;

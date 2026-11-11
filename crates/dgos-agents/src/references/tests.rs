@@ -36,7 +36,7 @@ case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
-*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"reference-thread","turns":[]}}}\n' "$request" "$PWD";;
+*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"reference-thread","turns":[]}}}\n' "$request" "$PWD";;
 *'"method":"turn/start"'*) printf '{"id":%s,"result":{"turn":{"id":"reference-turn"}}}\n' "$request"; printf '%s\n' '{"method":"turn/completed","params":{"threadId":"reference-thread","turn":{"id":"reference-turn","status":"completed"}}}';;
 esac
 done

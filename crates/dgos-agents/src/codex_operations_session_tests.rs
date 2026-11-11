@@ -16,7 +16,7 @@ case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$rpc";;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$rpc";;
-*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"root","turns":[]}}}\n' "$rpc" "$PWD";;
+*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"root","turns":[]}}}\n' "$rpc" "$PWD";;
 *'"method":"thread/read"'*)
  case "$line" in
  *'"threadId":"child"'*) printf '{"id":%s,"result":{"thread":{"id":"child","parentThreadId":"root","status":{"type":"active"},"canAcceptDirectInput":true}}}\n' "$rpc";;

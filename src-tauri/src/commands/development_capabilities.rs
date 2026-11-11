@@ -47,11 +47,3 @@ pub async fn get_development_session_configuration(app: tauri::AppHandle, window
     if lease.is_cancelled() { return Err("session_invalid".into()); }
     result
 }
-#[tauri::command]
-pub async fn recheck_development_cli_cleanup(app: tauri::AppHandle, window: WebviewWindow) -> Result<(), String> {
-    let (_context, lease) = caller(&app, &window)?;
-    let _guard = app.state::<dgos_agents::AgentManager>().admit_native_extensions(&lease).await?;
-    let result = app.state::<CliProviders>().recheck_cleanup().await;
-    if lease.is_cancelled() { return Err("session_invalid".into()); }
-    result.map(|_| ())
-}

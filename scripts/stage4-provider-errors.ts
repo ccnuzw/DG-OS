@@ -29,12 +29,14 @@ try {
     await mkdir(join(root, directory), { mode: 0o700 });
   }
   await writeFile(join(root, 'stage4-provider-errors-isolated'), 'DG-OS isolated provider error fixture\n', { mode: 0o600 });
+  // Reproduce a stale native provider table without reading or changing the user's config.
+  await writeFile(join(root, 'codex-home/config.toml'), '[model_providers.dgos_project]\nname="Unrelated native route"\nbase_url="http://127.0.0.1:9/v1"\nwire_api="responses"\nexperimental_bearer_token="synthetic-obsolete-token"\n', { mode: 0o600 });
   // The launcher is deliberately a real-CLI pass-through. Only --version can be
   // changed for the explicitly labelled inert recovery scenario. Never fake a turn.
   for (const [engine, executable] of [['codex', codex], ['claude', claude]]) {
     if (!engines.includes(engine!)) continue;
     const marker = join(root, `${engine}-changed-version`);
-    const source = `#!/bin/sh\nif [ "$#" -eq 1 ] && [ "$1" = --version ] && [ -f ${shell(marker)} ]; then\n  printf '%s\\n' 'stage4-controlled-version-change'\n  exit 0\nfi\n${engine === 'codex' ? `if [ "$#" -eq 1 ] && [ "$1" = --version ]; then\n  exec ${shell(executable!)} "$@"\nfi\nexec ${shell(executable!)} "$@" -c 'model_providers.dgos_project.request_max_retries=0' -c 'model_providers.dgos_project.stream_max_retries=0'\n` : `export CLAUDE_CODE_MAX_RETRIES=0\nexport ANTHROPIC_MAX_RETRIES=0\nexport MAX_RETRIES=0\nexec ${shell(executable!)} "$@"\n`}`;
+    const source = `#!/bin/sh\nif [ "$#" -eq 1 ] && [ "$1" = --version ] && [ -f ${shell(marker)} ]; then\n  printf '%s\\n' 'stage4-controlled-version-change'\n  exit 0\nfi\n${engine === 'codex' ? `if [ "$#" -eq 1 ] && [ "$1" = --version ]; then\n  exec ${shell(executable!)} "$@"\nfi\nprovider=\nfor argument do\n  case "$argument" in model_provider=*) provider=\${argument#*=}; provider=\${provider#\\\"}; provider=\${provider%\\\"};; esac\ndone\n[ -n "$provider" ] || exit 64\nexec ${shell(executable!)} "$@" -c "model_providers.$provider.request_max_retries=0" -c "model_providers.$provider.stream_max_retries=0"\n` : `export CLAUDE_CODE_MAX_RETRIES=0\nexport ANTHROPIC_MAX_RETRIES=0\nexport MAX_RETRIES=0\nexec ${shell(executable!)} "$@"\n`}`;
     await writeFile(join(root, `${engine}-cli`), source, { mode: 0o700 });
   }
   const description = 'Local throwaway package used only to prove missing skill recovery fails closed.';

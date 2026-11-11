@@ -153,15 +153,16 @@ impl History {
         let identities = self.identities.entry(turn.into()).or_default();
         for (item, entry) in items {
             let Some(id) = identity(item, "id") else { view.history_truncated = true; continue; };
-            let Some(kind) = item.get("type").and_then(Value::as_str) else { view.history_truncated = true; continue; };
+            let Some(kind) = super::safe_type(item.get("type").and_then(Value::as_str)) else { view.history_truncated = true; continue; };
             let previous = identities.get(id);
             if previous.is_none() || (full && previous.is_some_and(|previous| !previous.full)) {
                 // Match ThreadItemEntry -> ThreadItem in the pinned protocol:
                 // entry timestamps fill only missing/null item timestamps.
                 let overlays = ["startedAtMs", "completedAtMs"].map(|field| {
-                    entry.and_then(|entry| entry.get(field)).filter(|value| !value.is_null() && item.get(field).is_none_or(Value::is_null)).map(|value| (field, value))
+                    entry.and_then(|entry| entry.get(field)).filter(|value| value.as_i64().is_some() && item.get(field).is_none_or(Value::is_null)).map(|value| (field, value))
                 });
-                let mut bytes = event_size(item) + item.get("text").and_then(Value::as_str).map_or(0, str::len);
+                let text = super::item_text(item);
+                let mut bytes = event_size(item) + text.as_ref().map_or(0, String::len);
                 for (field, value) in overlays.iter().flatten() {
                     bytes += event_size(value);
                     if let Some(old) = item.get(*field) { bytes -= event_size(old); }
@@ -173,9 +174,8 @@ impl History {
                     self.exhausted = true;
                     break;
                 }
-                let mut data = if kind == "reasoning" { json!({"type":"reasoning","id":item.get("id"),"summary":item.get("summary")}) } else { item.clone() };
+                let mut data = super::item_data(item);
                 for (field, value) in overlays.into_iter().flatten() { data[field] = value.clone(); }
-                let text = (kind != "reasoning").then(|| item.get("text").and_then(Value::as_str).map(str::to_owned)).flatten();
                 if let Some(previous) = previous {
                     let seq = previous.seq;
                     if !view.replace_history_event(seq, kind, text, data) {

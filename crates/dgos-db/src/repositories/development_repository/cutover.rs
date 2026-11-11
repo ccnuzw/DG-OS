@@ -313,6 +313,17 @@ impl DevelopmentRepository {
         Ok(CleanupReceipt{matched:changed==1,state:if changed==1{Some(target_cleanup.into())}else{None}})
     }
 
+    /// Internal recovery only. Callers supply OS-backed ownership evidence, never UI claims.
+    pub async fn pending_cli_processes(&self) -> Result<Vec<StoredCliBinding>, String> {
+        fetch(&self.db, "SELECT * FROM development_cli_session_bindings WHERE execution_policy='provider_bound' AND state IN ('opening','active','unknown','revoked') AND cleanup_state<>'stopped'", vec![]).await?.iter().map(binding_from).collect()
+    }
+
+    /// Release only local ownership. An interrupted historical result stays unknown.
+    pub async fn settle_cli_process_cleanup(&self, target: &CleanupTarget, proof: &str) -> Result<bool, String> {
+        if !matches!(proof, "owned_exit" | "no_execution") { return Err("invalid_cli_binding".into()); }
+        Ok(execute(&self.db, "UPDATE development_cli_session_bindings SET state=CASE WHEN state IN ('opening','active') THEN 'closed' ELSE state END,cleanup_state='stopped',cleanup_proof=?,cleanup_reason=NULL,updated_at=unixepoch() WHERE owner=? AND session_id=? AND binding_id=? AND host_instance_id=? AND execution_policy='provider_bound' AND state IN ('opening','active','unknown','revoked') AND cleanup_state<>'stopped' AND (?<>'no_execution' OR state IN ('opening','unknown','revoked'))", vec![v(proof),v(target.owner.clone()),v(target.session_id.clone()),v(target.binding_id.clone()),v(target.host_instance_id.clone()),v(proof)]).await? == 1)
+    }
+
     /// Mark abandoned opening/active bindings from another host as unknown;
     /// this records no process-exit claim and never revives a lease.
     pub async fn recover_cli_bindings(&self, current_host_instance_id: &str, current_boot_identity: Option<&str>) -> Result<u64, String> {

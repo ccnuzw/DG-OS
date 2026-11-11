@@ -24,8 +24,8 @@ case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
-*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"image-thread","turns":[]}}}\n' "$request" "$PWD";;
-*'"method":"thread/resume"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"image-thread","turns":[{"id":"image-turn","items":[{"id":"restored-image","type":"userMessage","content":[{"type":"image","url":"IMAGE_URL"},{"type":"localImage","path":"/private/image-secret.png"}]}]}]}}}\n' "$request" "$PWD";;
+*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"image-thread","turns":[]}}}\n' "$request" "$PWD";;
+*'"method":"thread/resume"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"image-thread","turns":[{"id":"image-turn","items":[{"id":"restored-image","type":"userMessage","content":[{"type":"image","url":"IMAGE_URL"},{"type":"localImage","path":"/private/image-secret.png"}]}]}]}}}\n' "$request" "$PWD";;
 *'"method":"turn/start"'*)
 printf '%s\n' "$line" >> native-input.jsonl
 printf '{"id":%s,"result":{"turn":{"id":"image-turn"}}}\n' "$request"

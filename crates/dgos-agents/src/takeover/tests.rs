@@ -20,7 +20,7 @@ case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}';;
 *'"method":"model/list"'*) printf '%s\n' '{"id":4,"result":{"data":[],"nextCursor":null}}';;
-*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":3,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"fixture-thread","turns":[]}}}\n' "$PWD";;
+*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":3,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"fixture-thread","turns":[]}}}\n' "$PWD";;
 esac
 done
 "##.replace("CONFIG_REPLY", crate::test_support::CODEX_CONFIG_REPLY)).await;

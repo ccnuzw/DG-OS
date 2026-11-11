@@ -22,11 +22,11 @@ case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
-*'"method":"thread/start"'*) printf 'start\n' >> opens; printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"saved-thread","turns":[]}}}\n' "$request" "$PWD";;
+*'"method":"thread/start"'*) printf 'start\n' >> opens; printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"saved-thread","turns":[]}}}\n' "$request" "$PWD";;
 *'"method":"thread/resume"'*)
  printf 'resume\n' >> opens
  if [ -f missing-history ]; then printf '{"id":%s,"error":{"code":-1,"message":"native history missing"}}\n' "$request"
- else printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"saved-thread","turns":[]}}}\n' "$request" "$PWD"; fi;;
+ else printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"saved-thread","turns":[]}}}\n' "$request" "$PWD"; fi;;
 *'"method":"turn/start"'*)
  printf 'once\n' >> invocations
  printf 'edited by native fixture\n' > source.txt
@@ -351,4 +351,49 @@ async fn terminal_evicted_before_watcher_snapshot_still_finishes_durably() {
     assert!(run.events.iter().all(|event| event.data.get("run_status").and_then(serde_json::Value::as_str) != Some("completed")));
     assert_eq!(std::fs::read_to_string(f.root.join("code/invocations")).unwrap(), "once\n");
     assert!(f.manager.shutdown().await);
+}
+
+#[tokio::test]
+async fn another_owner_cannot_replace_a_recovered_slot_with_a_failed_start() {
+    let f = Fixture::new().await;
+    f.open().await;
+    let pid = f.pid();
+    let recovered = crate::test_support::manager(&f.root).await;
+    let unresolved_slot = *recovered.inner.slots.lock().await.get(&f.id).unwrap();
+    let binding = recovered.inner.repository.read_cli_session_configuration("alice", &f.id).await.unwrap().binding.unwrap();
+    assert_eq!(binding.state, "unknown");
+    assert_eq!(binding.cleanup_state, "unknown");
+    assert!(binding.cleanup_proof.is_none());
+    assert_eq!(unsafe { libc::kill(pid, 0) }, 0, "the original host still owns a live child");
+
+    let directory = f.root.join("bob-code");
+    std::fs::create_dir(&directory).unwrap();
+    let project = recovered.create_project("bob", crate::projects::CreateProjectInput { kind: "import".into(), name: "Bob's project".into(), path: directory.to_string_lossy().into_owned(), source: None }, CancellationToken::new()).await.unwrap();
+    let task = recovered.save_development_task("bob", crate::projects::SaveTaskInput { id: None, project_id: project.id, goal: "Start a different task".into(), requirements: "Do not replace another account's reservation".into(), status: "todo".into() }, CancellationToken::new()).await.unwrap();
+    let mut options = f.options();
+    options.workspace = directory.to_string_lossy().into_owned();
+    let mut create = crate::test_support::create(&recovered, "bob", &task.id, options).await;
+    // This would fail before creating Bob's durable binding. It must not first
+    // replace Alice's global slot and then release that slot as "not found".
+    create.project_revision = 0;
+    let error = recovered.open_session("bob", Engine::Codex, f.id.clone(), create, Some(task.id), CancellationToken::new()).await.err().unwrap();
+    assert_eq!(error, "session_exists");
+    assert_eq!(recovered.inner.slots.lock().await.get(&f.id), Some(&unresolved_slot));
+    assert_eq!(recovered.slot_count().await, 1);
+    assert!(recovered.list("bob").await.is_empty());
+    assert_eq!(recovered.snapshot("bob", &f.id).await.err().unwrap(), "session_not_found");
+    assert!(recovered.inner.repository.agent_session("bob", &f.id).await.unwrap().is_none());
+    assert!(!directory.join("pid").exists(), "the conflicting request must not launch a child");
+    let unchanged = recovered.inner.repository.read_cli_session_configuration("alice", &f.id).await.unwrap().binding.unwrap();
+    assert_eq!(unchanged.binding_id, binding.binding_id);
+    assert_eq!(unchanged.host_instance_id, binding.host_instance_id);
+    assert_eq!(unchanged.cleanup_state, "unknown");
+    assert!(unchanged.cleanup_proof.is_none());
+    assert!(!recovered.shutdown().await, "another account's failed start cannot prove the old child stopped");
+    assert_eq!(recovered.inner.slots.lock().await.get(&f.id), Some(&unresolved_slot));
+    assert_eq!(unsafe { libc::kill(pid, 0) }, 0, "the recovered host must not signal another host's child");
+    assert!(f.manager.shutdown().await);
+    assert_ne!(unsafe { libc::kill(pid, 0) }, 0);
+    assert!(recovered.shutdown().await, "the original host's durable exit proof releases the reservation");
+    assert_eq!(recovered.slot_count().await, 0);
 }

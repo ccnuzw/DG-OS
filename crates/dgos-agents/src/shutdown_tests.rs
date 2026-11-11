@@ -20,7 +20,7 @@ CONFIG_REPLY
  if [ -f block-open ]; then touch entered; while :; do sleep 1; done; fi
  printf '{"id":%s,"result":{}}\n' "$request";;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
-*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"saved-thread","turns":[]}}}\n' "$request" "$PWD";;
+*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"saved-thread","turns":[]}}}\n' "$request" "$PWD";;
 *'"method":"turn/start"'*) touch entered; while :; do sleep 1; done;;
 esac
 done
@@ -89,7 +89,7 @@ async fn shutdown_rejects_an_inflight_send_and_reaps_its_process() {
 }
 
 #[tokio::test]
-async fn codex_handshake_diagnostics_cover_success_rejection_and_lease_cancellation() {
+async fn codex_handshake_failure_and_cancellation_reap_without_sensitive_diagnostics() {
     use tracing::instrument::WithSubscriber;
     let (log, subscriber) = crate::test_support::DiagnosticLog::capture();
     let fixture = Fixture::new().await;
@@ -115,10 +115,7 @@ async fn codex_handshake_diagnostics_cover_success_rejection_and_lease_cancellat
     assert_eq!(error, "cancelled");
     assert_ne!(unsafe { libc::kill(pid, 0) }, 0, "cancelled handshake returned before reaping");
     let text = log.text();
-    assert!(text.contains("stage=\"handshake_initialize\"") && text.contains("stage=\"handshake_thread\""), "{text}");
-    assert!(text.contains("outcome=\"cancelled\"") && text.contains("stage=\"cleanup\"") && text.contains("stage=\"exit_wait\""), "{text}");
     assert!(!text.contains("credential-SENTINEL") && !text.contains(&fixture.0.to_string_lossy().to_string()), "{text}");
-    eprint!("{text}");
     assert!(manager.shutdown().await);
 }
 
@@ -265,7 +262,7 @@ case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
-*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"saved-thread","turns":[]}}}\n' "$request" "$PWD";;
+*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"saved-thread","turns":[]}}}\n' "$request" "$PWD";;
 esac
 done
 "##.replace("CONFIG_REPLY", crate::test_support::CODEX_CONFIG_REPLY)).await;
@@ -276,7 +273,7 @@ done
 }
 
 #[tokio::test]
-async fn unknown_cleanup_keeps_its_capacity_slot() {
+async fn unowned_cleanup_quarantines_its_workspace_without_reducing_owned_capacity() {
     let fixture = Fixture::new().await;
     let manager = crate::test_support::manager(&fixture.0).await;
     let mut tasks = Vec::new();
@@ -303,7 +300,14 @@ async fn unknown_cleanup_keeps_its_capacity_slot() {
     std::fs::create_dir_all(&unused).unwrap();
     let extra_task = crate::test_support::task(&manager, &unused).await;
     let create = crate::test_support::create(&manager, "alice", &extra_task, fixture.options()).await;
-    assert_eq!(manager.open_session("alice", Engine::Codex, uuid::Uuid::new_v4().to_string(), create, Some(extra_task), CancellationToken::new()).await.err().unwrap(), "session_capacity");
+    manager.open_session("alice", Engine::Codex, uuid::Uuid::new_v4().to_string(), create, Some(extra_task), CancellationToken::new()).await.unwrap();
+    let blocked = manager.task_project("alice", &tasks[0]).await.unwrap();
+    assert_eq!(manager.workspace_available(&blocked.path, None).await.unwrap_err(), "cleanup_pending");
+    let overflow = fixture.0.join("overflow");
+    std::fs::create_dir_all(&overflow).unwrap();
+    let overflow_task = crate::test_support::task(&manager, &overflow).await;
+    let create = crate::test_support::create(&manager, "alice", &overflow_task, fixture.options()).await;
+    assert_eq!(manager.open_session("alice", Engine::Codex, uuid::Uuid::new_v4().to_string(), create, Some(overflow_task), CancellationToken::new()).await.err().unwrap(), "session_capacity");
     assert!(!manager.shutdown().await, "external unknown cleanup is not proof of a settled shutdown");
     assert!(original.shutdown().await);
     assert!(manager.shutdown().await);
@@ -324,7 +328,7 @@ case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
 *'"method":"thread/start"'*)
- printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"saved-thread","turns":[]}}}\n' "$request" "$PWD"
+ printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"saved-thread","turns":[]}}}\n' "$request" "$PWD"
  ;;
 *'"method":"model/list"'*)
  printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;

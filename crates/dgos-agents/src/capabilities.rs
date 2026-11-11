@@ -55,11 +55,13 @@ pub enum SessionConfigurationView {
 pub(crate) struct ProviderLaunch {
     pub env: BTreeMap<String, String>,
     pub codex_overrides: Vec<String>,
+    pub codex_provider_id: String,
     pub model: String,
     pub launch: CliProviderLaunch,
     pub lease: Arc<CliProviderLease>,
     pub binding: OpeningBinding,
     pub snapshot: CliProviderSnapshot,
+    pub ownership: Arc<crate::process_ownership::OwnershipJournal>,
 }
 
 pub struct SessionCreate {
@@ -74,6 +76,7 @@ pub struct CliProviders {
     providers: ProviderManager,
     host_instance_id: String,
     boot_identity: Option<String>,
+    process_directory: Option<Arc<std::path::PathBuf>>,
     bindings: Arc<Mutex<HashMap<String, CancellationToken>>>,
     changes: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<bool>>>>,
     change_tx: tokio::sync::mpsc::UnboundedSender<ChangeMessage>,
@@ -100,7 +103,12 @@ impl CliProviders {
             }
             persisted
         });
-        Ok(Self { repository, providers, host_instance_id: uuid::Uuid::new_v4().to_string(), boot_identity: host_boot_identity(), bindings: Arc::default(), changes: Arc::new(tokio::sync::Mutex::new(Some(changes))), change_tx: tx })
+        Ok(Self { repository, providers, host_instance_id: uuid::Uuid::new_v4().to_string(), boot_identity: host_boot_identity(), process_directory: None, bindings: Arc::default(), changes: Arc::new(tokio::sync::Mutex::new(Some(changes))), change_tx: tx })
+    }
+
+    pub(crate) fn with_process_directory(mut self, directory: std::path::PathBuf) -> Self {
+        self.process_directory = Some(Arc::new(directory));
+        self
     }
 
     pub async fn read(&self, owner: &str, project_id: &str) -> Result<Option<CliProviderRevision>, String> {
@@ -123,18 +131,14 @@ impl CliProviders {
 
     pub async fn catalog(&self, owner: &str, project_id: &str, engine: Engine) -> Result<Value, String> {
         self.repository.project(owner, project_id).await?;
-        let cli = crate::cli::probe(match engine { Engine::Codex => crate::cli::CliTool::Codex, Engine::Claude => crate::cli::CliTool::Claude }, None).await;
-        let cli_available = cli.startup_error().is_none();
+        // The catalog is configuration data. Only an actual launch probes the CLI.
         let mut providers = Vec::new();
         for provider in self.providers.list_providers(owner).await.map_err(|_| "provider_unavailable")? {
-            let mut availability = provider_availability(engine, &provider.provider_type, &provider.base_url, provider.config.as_ref(), provider.enabled, cli_available);
-            if engine == Engine::Codex && availability["reason"] == "cli_incompatible" {
-                availability["reason"] = json!(cli.startup_error());
-            }
+            let availability = provider_availability(engine, &provider.provider_type, &provider.base_url, provider.config.as_ref(), provider.enabled, true);
             let models = self.providers.list_models(&provider.id, owner).await.map_err(|_| "provider_unavailable")?;
             providers.push(json!({"id":provider.id,"name":provider.name,"provider_type":provider.provider_type,"config_revision":provider.config_revision,"enabled":provider.enabled,"availability":availability,"models":models.into_iter().filter(|m| matches!(m.model_type.as_str(), "text-generation" | "chat")).map(|m| json!({"id":m.model_id,"name":m.model_name,"model_type":m.model_type})).collect::<Vec<_>>()}));
         }
-        Ok(json!({"project_id":project_id,"engine":engine,"providers":providers,"cli":cli}))
+        Ok(json!({"project_id":project_id,"engine":engine,"providers":providers}))
     }
 
     pub async fn revoke(&self, owner: &str, project_id: &str) -> Result<i64, String> {
@@ -153,19 +157,37 @@ impl CliProviders {
         let config = decode_configuration(&row.configuration)?;
         if config.engine != engine || config.provider.provider_id != provider_ref.provider_id || config.provider.model_id != provider_ref.model_id || config.provider.provider_revision != provider_ref.provider_revision { return Err("provider_revision_changed".into()); }
         let binding_id = uuid::Uuid::new_v4().to_string();
+        let mut evidence = serde_json::Map::new();
+        let codex_provider_id = if engine == Engine::Codex {
+            if options.resume_id.is_some() {
+                let SessionConfigurationView::ProviderBound { snapshot, .. } = self.read_session(owner, session_id).await? else { return Err("legacy_session_read_only".into()); };
+                evidence = snapshot.evidence;
+                // Native threads cannot change provider identity. Pre-route snapshots used
+                // this fixed name; their effective auth must still pass the same readback.
+                let saved = match evidence.get("codex_provider_id") {
+                    None => "dgos_project",
+                    Some(Value::String(id)) if id == "dgos_project" || id.strip_prefix("dgos_").is_some_and(|suffix| suffix.len() == 32 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())) => id,
+                    _ => return Err("provider_binding_unconfirmed".into()),
+                };
+                saved.to_owned()
+            } else {
+                format!("dgos_{}", binding_id.replace('-', ""))
+            }
+        } else { String::new() };
+        if engine == Engine::Codex { evidence.insert("codex_provider_id".into(), json!(codex_provider_id)); }
+        let directory = self.process_directory.as_ref().ok_or("storage_failed")?;
+        let ownership = crate::process_ownership::OwnershipJournal::reserve(directory, &binding_id)?;
         let binding = OpeningBinding { binding_id: binding_id.clone(), project_id: project.id.clone(), task_id: task_id.into(), revision, permission_epoch: row.permission_epoch, provider_id: provider_ref.provider_id.clone(), model_id: provider_ref.model_id.clone(), provider_revision: provider_ref.provider_revision, host_instance_id: self.host_instance_id.clone(), boot_identity: self.boot_identity.clone(), request_digest: request_digest(session_id, engine, task_id, &project.id, options, revision, &provider_ref)? };
-        let snapshot = CliProviderSnapshot { binding_id: binding_id.clone(), engine: engine_name(engine).into(), provider_id: provider_ref.provider_id.clone(), model_id: provider_ref.model_id.clone(), provider_revision: provider_ref.provider_revision, revision, permission_epoch: row.permission_epoch, evidence: serde_json::Map::new() };
+        let snapshot = CliProviderSnapshot { binding_id: binding_id.clone(), engine: engine_name(engine).into(), provider_id: provider_ref.provider_id.clone(), model_id: provider_ref.model_id.clone(), provider_revision: provider_ref.provider_revision, revision, permission_epoch: row.permission_epoch, evidence };
         let session = StoredAgentSession { id: session_id.into(), owner: owner.into(), engine: engine_name(engine).into(), native_id: options.resume_id.clone(), workspace: options.workspace.clone(), executable: options.executable.clone(), model: Some(provider_ref.model_id.clone()), project_id: Some(project.id.clone()), task_id: Some(task_id.into()) };
         self.repository.reserve_cli_session(owner, &session, &binding, &snapshot).await?;
         let provider_binding = CliProviderBinding { binding_id, owner: owner.into(), session_id: session_id.into(), host_instance_id: self.host_instance_id.clone(), provider_id: provider_ref.provider_id.clone(), model_id: provider_ref.model_id.clone(), provider_revision: provider_ref.provider_revision };
         let prepared = async {
             let lease = Arc::new(self.providers.register_cli_opening(provider_binding, account_lease).await.map_err(map_provider_error)?);
             self.bindings.lock().unwrap_or_else(|e| e.into_inner()).insert(binding.binding_id.clone(), lease.cancellation_token());
-            let launch = self.providers.resolve_cli_provider_for_lease(&lease).await.map_err(map_provider_error)?;
-            if !matches!((engine, launch.metadata().protocol_candidate), (Engine::Codex, CliProviderProtocol::OpenAiResponses) | (Engine::Claude, CliProviderProtocol::AnthropicMessages)) { return Err("provider_incompatible".into()); }
-            if engine == Engine::Codex && launch.metadata().auth_style != dgos_providers::AuthStyle::Bearer { return Err("provider_incompatible".into()); }
-            let (env, codex_overrides) = provider_material(engine, &launch)?;
-            Ok(ProviderLaunch { env, codex_overrides, model: provider_ref.model_id, launch, lease, binding: binding.clone(), snapshot })
+            let launch = self.providers.resolve_cli_provider_for_lease(&lease, engine_protocol(engine)).await.map_err(map_provider_error)?;
+            let (env, codex_overrides) = provider_material(engine, &launch, &codex_provider_id)?;
+            Ok(ProviderLaunch { env, codex_overrides, codex_provider_id, model: provider_ref.model_id, launch, lease, binding: binding.clone(), snapshot, ownership })
         }.await;
         if prepared.is_err() && self.cleanup(owner, session_id, &binding, true, false).await.is_err() { return Err("cleanup_pending".into()); }
         prepared
@@ -179,7 +201,7 @@ impl CliProviders {
 
     pub async fn read_session(&self, owner: &str, session: &str) -> Result<SessionConfigurationView, String> {
         let view = self.repository.read_cli_session_configuration(owner, session).await?;
-        if view.legacy_read_only {
+        if view.legacy_read_only || view.snapshot.is_none() && view.legacy_history.is_some() {
             let history = view.legacy_history.map(|raw| serde_json::from_str(&raw).unwrap_or(Value::Null));
             return Ok(SessionConfigurationView::LegacyHistory { history, read_only: true });
         }
@@ -209,14 +231,30 @@ impl CliProviders {
 
     pub(crate) fn boot_identity(&self) -> Option<String> { self.boot_identity.clone() }
 
-    pub async fn recheck_cleanup(&self) -> Result<u64, String> {
-        let boot_identity = host_boot_identity().ok_or("boot_identity_unavailable")?;
-        self.repository.recheck_cli_cleanup(&dgos_db::development_repository::HostBootObservation { boot_identity }).await
+    pub(crate) async fn recheck_cleanup(&self) -> Result<u64, String> {
+        let mut changed = if let Some(boot_identity) = host_boot_identity() {
+            self.repository.recheck_cli_cleanup(&dgos_db::development_repository::HostBootObservation { boot_identity }).await?
+        } else { 0 };
+        let Some(directory) = &self.process_directory else { return Ok(changed); };
+        for binding in self.repository.pending_cli_processes().await? {
+            let Some(host_instance_id) = binding.host_instance_id else { continue; };
+            let root = directory.clone();
+            let id = binding.binding_id.clone();
+            let observed = tokio::task::spawn_blocking(move || crate::process_ownership::observe(&root, &id)).await.map_err(|_| "storage_failed")??;
+            let proof = match observed {
+                crate::process_ownership::Observation::NotStarted => "no_execution",
+                crate::process_ownership::Observation::Stopped => "owned_exit",
+                crate::process_ownership::Observation::Running | crate::process_ownership::Observation::Unavailable => continue,
+            };
+            let target = dgos_db::development_repository::CleanupTarget { owner: binding.owner, session_id: binding.session_id, binding_id: binding.binding_id, host_instance_id };
+            changed += u64::from(self.repository.settle_cli_process_cleanup(&target, proof).await?);
+        }
+        Ok(changed)
     }
 
     pub(crate) async fn recover(&self) -> Result<(), String> {
         self.repository.recover_cli_bindings(&self.host_instance_id, self.boot_identity.as_deref()).await?;
-        if self.boot_identity.is_some() { self.recheck_cleanup().await?; }
+        self.recheck_cleanup().await?;
         Ok(())
     }
 
@@ -257,10 +295,12 @@ impl From<CliProviderConfiguration> for dgos_db::development_repository::CliProv
 }
 
 async fn resolve_provider(owner: &str, providers: &ProviderManager, configuration: &CliProviderConfiguration) -> Result<(), String> {
-    let launch = providers.resolve_cli_provider_launch(&configuration.provider.provider_id, &configuration.provider.model_id, owner, configuration.provider.provider_revision).await.map_err(map_provider_error)?;
-    if !matches!((configuration.engine, launch.metadata().protocol_candidate), (Engine::Codex, CliProviderProtocol::OpenAiResponses) | (Engine::Claude, CliProviderProtocol::AnthropicMessages)) { return Err("provider_incompatible".into()); }
-    if configuration.engine == Engine::Codex && launch.metadata().auth_style != dgos_providers::AuthStyle::Bearer { return Err("provider_incompatible".into()); }
+    providers.resolve_cli_provider_launch(&configuration.provider.provider_id, &configuration.provider.model_id, owner, configuration.provider.provider_revision, engine_protocol(configuration.engine)).await.map_err(map_provider_error)?;
     Ok(())
+}
+
+fn engine_protocol(engine: Engine) -> CliProviderProtocol {
+    match engine { Engine::Codex => CliProviderProtocol::OpenAiResponses, Engine::Claude => CliProviderProtocol::AnthropicMessages }
 }
 
 impl CliProviders {
@@ -269,17 +309,9 @@ impl CliProviders {
 
 fn provider_availability(engine: Engine, provider_type: &str, base_url: &str, config: Option<&Value>, enabled: bool, cli_available: bool) -> Value {
     if !enabled { return json!({"available": false, "reason": "provider_unavailable"}); }
-    let Some(candidate) = CliProviderProtocol::candidate_for_provider_type(provider_type) else {
-        return json!({"available": false, "reason": "provider_incompatible"});
-    };
-    if !matches!((engine, candidate), (Engine::Codex, CliProviderProtocol::OpenAiResponses) | (Engine::Claude, CliProviderProtocol::AnthropicMessages)) {
-        return json!({"available": false, "reason": "provider_incompatible"});
-    }
-    match dgos_providers::vendor::validate_provider_config(provider_type, base_url, config) {
-        Ok(normalized) if engine != Engine::Codex || normalized.auth_override.unwrap_or(normalized.profile.auth) == dgos_providers::AuthStyle::Bearer => {
-            if cli_available { json!({"available": true, "reason": null}) } else { json!({"available": false, "reason": "cli_incompatible"}) }
-        }
-        _ => json!({"available": false, "reason": "provider_incompatible"}),
+    match dgos_providers::resolve_cli_provider_route(provider_type, base_url, config, engine_protocol(engine)) {
+        Ok(route) => json!({"available": cli_available, "reason": if cli_available { None } else { Some("cli_incompatible") }, "protocol": match engine { Engine::Codex => "responses", Engine::Claude => "messages" }, "declared": route.declared, "verified": false}),
+        Err(error) => json!({"available": false, "reason": map_provider_error(error)}),
     }
 }
 
@@ -292,15 +324,26 @@ mod availability_tests {
     #[test]
     fn provider_availability_uses_only_local_engine_policy() {
         assert_eq!(reason(provider_availability(Engine::Codex, "openai_compatible", "https://api.example/v1", None, true, true)), None);
-        assert_eq!(reason(provider_availability(Engine::Codex, "anthropic", "https://api.example", None, true, true)).as_deref(), Some("provider_incompatible"));
-        assert_eq!(reason(provider_availability(Engine::Codex, "openai_compatible", "https://api.example/v1", Some(&json!({"auth_style":"x-api-key"})), true, true)).as_deref(), Some("provider_incompatible"));
+        assert_eq!(reason(provider_availability(Engine::Codex, "anthropic", "https://api.example", None, true, true)).as_deref(), Some("provider_protocol_unsupported"));
+        assert_eq!(reason(provider_availability(Engine::Codex, "openai_compatible", "https://api.example/v1", Some(&json!({"auth_style":"x-api-key"})), true, true)).as_deref(), Some("provider_auth_unsupported"));
         assert_eq!(reason(provider_availability(Engine::Claude, "anthropic", "https://api.example", None, true, false)).as_deref(), Some("cli_incompatible"));
         assert_eq!(reason(provider_availability(Engine::Claude, "anthropic", "https://api.example", None, false, true)).as_deref(), Some("provider_unavailable"));
-        assert_eq!(reason(provider_availability(Engine::Claude, "anthropic", "invalid", None, true, true)).as_deref(), Some("provider_incompatible"));
+        assert_eq!(reason(provider_availability(Engine::Claude, "anthropic", "invalid", None, true, true)).as_deref(), Some("provider_route_invalid"));
+    }
+
+    #[test]
+    fn explicit_routes_override_candidates_without_claiming_verification() {
+        let config = json!({"cli_routes":{"responses":{"enabled":false},"messages":{"enabled":true,"base_url":"https://messages.example/v1"}}});
+        assert_eq!(reason(provider_availability(Engine::Codex, "openai_compatible", "https://chat.example/v1", Some(&config), true, true)).as_deref(), Some("provider_protocol_unsupported"));
+        let route = provider_availability(Engine::Claude, "openai_compatible", "https://chat.example/v1", Some(&config), true, true);
+        assert_eq!(route["available"], true);
+        assert_eq!(route["protocol"], "messages");
+        assert_eq!(route["declared"], true);
+        assert_eq!(route["verified"], false);
     }
 }
 
-fn provider_material(engine: Engine, launch: &CliProviderLaunch) -> Result<(BTreeMap<String,String>, Vec<String>), String> {
+fn provider_material(engine: Engine, launch: &CliProviderLaunch, codex_provider_id: &str) -> Result<(BTreeMap<String,String>, Vec<String>), String> {
     let metadata = launch.metadata();
     let key = launch.credential().expose().to_owned();
     let mut env = BTreeMap::new();
@@ -308,7 +351,9 @@ fn provider_material(engine: Engine, launch: &CliProviderLaunch) -> Result<(BTre
     match engine {
         Engine::Codex => {
             env.insert("DGOS_PROVIDER_KEY".into(), key);
-            overrides.extend(["model_provider=\"dgos_project\"".into(), "model_providers.dgos_project.name=\"DG-OS\"".into(), format!("model_providers.dgos_project.base_url={}", serde_json::to_string(&metadata.base_url).map_err(|_| "provider_unavailable")?), "model_providers.dgos_project.wire_api=\"responses\"".into(), "model_providers.dgos_project.requires_openai_auth=false".into(), "model_providers.dgos_project.env_key=\"DGOS_PROVIDER_KEY\"".into()]);
+            // A session-owned namespace prevents unrelated native tables from merging
+            // credentials into our route. Resume keeps it; effective auth is always checked.
+            overrides.extend([format!("model_provider=\"{codex_provider_id}\""), format!("model_providers.{codex_provider_id}.name=\"DG-OS\""), format!("model_providers.{codex_provider_id}.base_url={}", serde_json::to_string(&metadata.base_url).map_err(|_| "provider_route_invalid")?), format!("model_providers.{codex_provider_id}.wire_api=\"responses\""), format!("model_providers.{codex_provider_id}.requires_openai_auth=false"), format!("model_providers.{codex_provider_id}.env_key=\"DGOS_PROVIDER_KEY\"")]);
         }
         Engine::Claude => {
             env.insert("ANTHROPIC_BASE_URL".into(), metadata.base_url.clone());
@@ -322,12 +367,17 @@ fn provider_material(engine: Engine, launch: &CliProviderLaunch) -> Result<(BTre
 
 pub(crate) fn engine_name(engine: Engine) -> &'static str { match engine { Engine::Codex => "codex", Engine::Claude => "claude" } }
 
-fn map_provider_error(error: impl std::fmt::Display) -> String {
-    let text = error.to_string();
-    if text.contains("Credential") { "credential_unavailable".into() }
-    else if text.contains("ConfigurationChanged") { "provider_revision_changed".into() }
-    else if text.contains("UnsupportedProviderType") || text.contains("RequestNotSupported") { "provider_incompatible".into() }
-    else { "provider_unavailable".into() }
+fn map_provider_error(error: dgos_types::DgosError) -> String {
+    use dgos_types::DgosError;
+    match error {
+        DgosError::CredentialUnavailable | DgosError::CredentialRequired | DgosError::InvalidApiKey => "credential_unavailable",
+        DgosError::ProviderConfigurationChanged => "provider_revision_changed",
+        DgosError::CliProviderProtocolUnsupported | DgosError::UnsupportedProviderType => "provider_protocol_unsupported",
+        DgosError::CliProviderAuthUnsupported => "provider_auth_unsupported",
+        DgosError::CliProviderRouteInvalid | DgosError::InsecureEndpoint => "provider_route_invalid",
+        DgosError::RequestNotSupported => "provider_model_unsupported",
+        _ => "provider_unavailable",
+    }.into()
 }
 
 use sha2::Digest;

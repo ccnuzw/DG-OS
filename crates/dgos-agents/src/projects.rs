@@ -126,15 +126,20 @@ impl AgentManager {
         let mut project = self.inner.repository.project(owner, &input.project_id).await?;
         match input.action.as_str() {
             "rename" => { let name = input.value.ok_or("invalid_project")?; if name.trim().is_empty() || name.chars().count() > 200 { return Err("invalid_project".into()); } project.name = name.trim().into(); },
-            "archive" | "unlink" | "relocate" => {
+            "unlink" => {
+                // Removing a management association includes closing its owned work.
+                // Untraceable historical cleanup stays quarantined by workspace, not
+                // by a project row that the user can never remove.
+                self.close_project_runs(owner, &project.id, &lease).await?;
+                self.project_available(&project.id).await?;
+                check_lease(&lease)?;
+                self.inner.repository.unlink_project(owner, &project.id).await?;
+                return self.reload_records().await;
+            }
+            "archive" | "relocate" => {
                 self.project_available(&project.id).await?;
                 self.workspace_available(&project.path, None).await?;
                 self.host_workspace_available(&project.path).await?;
-                if input.action == "unlink" {
-                    check_lease(&lease)?;
-                    self.inner.repository.unlink_project(owner, &project.id).await?;
-                    return self.reload_records().await;
-                }
                 if input.action == "archive" { project.archived = true; } else {
                     let (path, identity) = directory(input.value.as_deref().ok_or("invalid_workspace")?).await?;
                     self.workspace_available(&path, None).await?;
@@ -148,6 +153,25 @@ impl AgentManager {
         check_lease(&lease)?;
         self.inner.repository.update_project(&project).await?;
         self.reload_records().await
+    }
+    pub async fn prepare_agent_task(&self, owner: &str, id: &str, project_id: &str, goal: &str, lease: &CancellationToken) -> Result<DevelopmentTask, String> {
+        Uuid::parse_str(id).map_err(|_| "invalid_request_id")?;
+        let _admission = self.inner.admission.lock().await;
+        self.ready().await?; check_lease(lease)?;
+        let project = self.inner.repository.project(owner, project_id).await?;
+        if project.archived { return Err("project_archived".into()); }
+        match self.inner.repository.task(owner, id).await {
+            Ok(task) => {
+                if task.project_id != project_id || task.goal != goal.trim() { return Err("request_conflict".into()); }
+                return Ok(task);
+            }
+            Err(error) if error == "task_not_found" => {},
+            Err(error) => return Err(error),
+        }
+        let task = DevelopmentTask { id: id.into(), owner: owner.into(), project_id: project_id.into(), goal: goal.trim().into(), requirements: String::new(), status: "todo".into(), created_at: now() };
+        check_lease(lease)?;
+        self.inner.repository.save_task(&task).await?;
+        Ok(task)
     }
     pub async fn save_development_task(&self, owner: &str, input: SaveTaskInput, lease: CancellationToken) -> Result<DevelopmentTask, String> {
         let _admission = self.inner.admission.lock().await;
