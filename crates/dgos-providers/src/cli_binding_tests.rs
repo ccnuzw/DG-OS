@@ -41,7 +41,7 @@ async fn opening_revocation_blocks_spawn_and_reenable_never_revives_old_lease() 
     let (_dir, manager, _vault, provider, sink, _db) = setup().await;
     let parent = CancellationToken::new();
     let lease = manager.register_cli_opening(binding(&provider), &parent).await.unwrap();
-    let launch = manager.resolve_cli_provider_for_lease(&lease).await.unwrap();
+    let launch = manager.resolve_cli_provider_for_lease(&lease, crate::CliProviderProtocol::OpenAiResponses).await.unwrap();
     manager.clone().toggle_provider(&provider.id, false, "local").await.unwrap();
     assert!(lease.is_cancelled());
     assert!(!parent.is_cancelled());
@@ -51,7 +51,7 @@ async fn opening_revocation_blocks_spawn_and_reenable_never_revives_old_lease() 
     let enabled = manager.toggle_provider(&provider.id, true, "local").await.unwrap();
     assert!(manager.validate_cli_lease(&lease).await.is_err());
     let fresh = manager.register_cli_opening(binding(&enabled), &parent).await.unwrap();
-    let fresh_launch = manager.resolve_cli_provider_for_lease(&fresh).await.unwrap();
+    let fresh_launch = manager.resolve_cli_provider_for_lease(&fresh, crate::CliProviderProtocol::OpenAiResponses).await.unwrap();
     let observed = manager.with_cli_spawn(&fresh, &fresh_launch, |launch| Ok(launch.metadata().config_revision)).await.unwrap();
     assert_eq!(observed, enabled.config_revision);
     let duplicated = AtomicBool::new(false);
@@ -137,7 +137,7 @@ async fn resolving_lease_cancelled_during_vault_read_never_returns_a_launch() {
     vault.pause.store(true, Ordering::SeqCst);
     let reader = manager.clone();
     let reading = lease.clone();
-    let task = tokio::spawn(async move { reader.resolve_cli_provider_for_lease(&reading).await });
+    let task = tokio::spawn(async move { reader.resolve_cli_provider_for_lease(&reading, crate::CliProviderProtocol::OpenAiResponses).await });
     vault.loaded.notified().await;
     lease.cancel();
     vault.release.notify_one();
@@ -165,7 +165,7 @@ async fn failed_credential_store_preserves_binding_and_emits_no_success_notifica
     assert_eq!(after.credential_ref, before.credential_ref);
     assert!(!lease.is_cancelled());
     assert!(sink.0.lock().unwrap().is_empty());
-    assert_eq!(manager.resolve_cli_provider_for_lease(&lease).await.unwrap().credential().expose(), "synthetic-key");
+    assert_eq!(manager.resolve_cli_provider_for_lease(&lease, crate::CliProviderProtocol::OpenAiResponses).await.unwrap().credential().expose(), "synthetic-key");
 }
 
 #[tokio::test]
@@ -179,7 +179,7 @@ async fn missing_sink_rejects_cli_registration_without_breaking_regular_provider
     let provider = manager.get_provider(&provider.id, "local").await.unwrap().unwrap();
     assert!(manager.register_cli_opening(binding(&provider), &CancellationToken::new()).await.is_err());
     assert_eq!(manager.model_snapshot(&provider.id, "fixture-chat", "local").await.unwrap().0.id, provider.id);
-    assert!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", provider.config_revision).await.is_ok());
+    assert!(manager.resolve_cli_provider_launch(&provider.id, "fixture-chat", "local", provider.config_revision, crate::CliProviderProtocol::OpenAiResponses).await.is_ok());
 }
 
 #[tokio::test]
@@ -196,7 +196,7 @@ async fn initial_provider_revision_zero_can_register_resolve_and_spawn() {
     let manager = ProviderManager::with_vault(&url, vault).await.unwrap();
     manager.install_cli_change_sink(Arc::new(Sink::default())).unwrap();
     let lease = manager.register_cli_opening(binding(&provider), &CancellationToken::new()).await.unwrap();
-    let launch = manager.resolve_cli_provider_for_lease(&lease).await.unwrap();
+    let launch = manager.resolve_cli_provider_for_lease(&lease, crate::CliProviderProtocol::OpenAiResponses).await.unwrap();
     assert_eq!(manager.with_cli_spawn(&lease, &launch, |launch| Ok(launch.metadata().config_revision)).await.unwrap(), 0);
 }
 
@@ -216,7 +216,7 @@ async fn disable_queued_during_resolution_cannot_leave_an_authorized_stale_spawn
     vault.pause.store(true, Ordering::SeqCst);
     let reader = manager.clone();
     let reading = lease.clone();
-    let resolve = tokio::spawn(async move { reader.resolve_cli_provider_for_lease(&reading).await });
+    let resolve = tokio::spawn(async move { reader.resolve_cli_provider_for_lease(&reading, crate::CliProviderProtocol::OpenAiResponses).await });
     vault.loaded.notified().await;
     let writer = manager.clone();
     let id = provider.id.clone();
@@ -283,4 +283,120 @@ async fn refresh_preserves_manual_and_still_eligible_remote_models() {
     manager.refresh_models(&provider.id, "local").await.unwrap(); next.assert_async().await;
     assert!(!manual.is_cancelled()); assert!(!kept.is_cancelled()); assert!(removed.is_cancelled());
     assert_eq!(sink.0.lock().unwrap().last().unwrap().1, vec![removed.binding().clone()]);
+}
+
+#[tokio::test]
+async fn meaningful_cli_route_changes_cancel_leases_without_clearing_provider_models_or_keys() {
+    use crate::CliProviderProtocol::{AnthropicMessages, OpenAiResponses};
+    use serde_json::json;
+    for changed_routes in [
+        json!({"responses": {"enabled": false}, "messages": {"enabled": true, "base_url": "https://messages.example.invalid/v1/", "auth_style": "both"}}),
+        json!({"responses": {"enabled": true, "base_url": "https://responses.example.invalid/v1"}, "messages": {"enabled": true, "base_url": "https://messages.example.invalid/v1/", "auth_style": "both"}}),
+        json!({"responses": {"enabled": true}, "messages": {"enabled": false}}),
+        json!({"responses": {"enabled": true}, "messages": {"enabled": true, "base_url": "https://changed.example.invalid/v1", "auth_style": "both"}}),
+        json!({"responses": {"enabled": true}, "messages": {"enabled": true, "base_url": "https://messages.example.invalid/v1/", "auth_style": "x-api-key"}}),
+    ] {
+        let (_dir, manager, vault, provider, sink, _db) = setup().await;
+        let mut initial = config(&provider.base_url, "");
+        initial.config = Some(json!({"cli_routes": {
+            "responses": {"enabled": true},
+            "messages": {"enabled": true, "base_url": "https://messages.example.invalid/v1/", "auth_style": "both"}
+        }}));
+        let provider = manager.update_provider(&provider.id, initial, "local").await.unwrap();
+        let cached = serde_json::to_value(manager.list_models(&provider.id, "local").await.unwrap()).unwrap();
+        let lease = manager.register_cli_opening(binding(&provider), &CancellationToken::new()).await.unwrap();
+        let launch = manager.resolve_cli_provider_for_lease(&lease, OpenAiResponses).await.unwrap();
+        sink.0.lock().unwrap().clear();
+        let mut update = config(&provider.base_url, "");
+        let saved_config = json!({"display_note": {"preserve": true}, "cli_routes": changed_routes});
+        update.config = Some(saved_config.clone());
+        let after = manager.update_provider(&provider.id, update, "local").await.unwrap();
+        assert!(after.config_revision > provider.config_revision);
+        assert_eq!(after.base_url, provider.base_url);
+        assert_eq!(after.provider_type, provider.provider_type);
+        assert_eq!(after.config, Some(saved_config));
+        assert_eq!(after.credential_ref, provider.credential_ref);
+        assert_eq!(vault.entry_count().await, 1);
+        assert_eq!(serde_json::to_value(manager.list_models(&provider.id, "local").await.unwrap()).unwrap(), cached);
+        assert!(lease.is_cancelled());
+        assert!(matches!(manager.resolve_cli_provider_for_lease(&lease, OpenAiResponses).await, Err(DgosError::ProviderConfigurationChanged)));
+        assert!(matches!(manager.with_cli_spawn(&lease, &launch, |_| Ok(())).await, Err(DgosError::ProviderConfigurationChanged)));
+        let events = sink.0.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0.kind, CliProviderChangeKind::ExecutionInvalidated);
+        assert_eq!(events[0].1, vec![lease.binding().clone()]);
+        drop(events);
+        for protocol in [OpenAiResponses, AnthropicMessages] {
+            let route = crate::resolve_cli_provider_route(&after.provider_type, &after.base_url, after.config.as_ref(), protocol);
+            let resolved = manager.resolve_cli_provider_launch(&after.id, "fixture-chat", "local", after.config_revision, protocol).await;
+            match route {
+                Ok(route) => {
+                    let launch = resolved.unwrap();
+                    assert_eq!(launch.metadata().base_url, route.base_url);
+                    assert_eq!(launch.metadata().auth_style, route.auth_style);
+                    assert_eq!(launch.credential().expose(), "synthetic-key");
+                }
+                Err(DgosError::CliProviderProtocolUnsupported) => assert!(matches!(resolved, Err(DgosError::CliProviderProtocolUnsupported))),
+                Err(error) => panic!("unexpected route error: {error}"),
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn equivalent_cli_route_declarations_and_unrelated_metadata_do_not_cancel_processes() {
+    use serde_json::json;
+    let (_dir, manager, _vault, provider, sink, _db) = setup().await;
+    let lease = manager.register_cli_opening(binding(&provider), &CancellationToken::new()).await.unwrap();
+    let mut update = config(&provider.base_url, "");
+    update.config = Some(json!({"display_note": "local", "cli_routes": {
+        "responses": {"enabled": true, "base_url": "https://example.invalid:443/v1/", "auth_style": "bearer"},
+        "messages": {"enabled": false}
+    }}));
+    let provider = manager.update_provider(&provider.id, update, "local").await.unwrap();
+    assert!(!lease.is_cancelled());
+    assert!(sink.0.lock().unwrap().iter().all(|(change, targets)| change.kind == CliProviderChangeKind::MetadataChanged && targets.is_empty()));
+    let mut initial = config(&provider.base_url, "");
+    initial.config = Some(json!({"cli_routes": {
+        "responses": {"enabled": true},
+        "messages": {"enabled": true, "base_url": "https://messages.example.invalid/v1/"}
+    }}));
+    let provider = manager.update_provider(&provider.id, initial, "local").await.unwrap();
+    let lease = manager.register_cli_opening(binding(&provider), &CancellationToken::new()).await.unwrap();
+    sink.0.lock().unwrap().clear();
+    let mut update = config(&provider.base_url, "");
+    update.config = Some(json!({"max_retries": 1, "display_note": {"ignored": true}, "cli_routes": {
+        "responses": {"enabled": true, "base_url": "  ", "auth_style": "bearer"},
+        "messages": {"enabled": true, "base_url": "https://messages.example.invalid/", "auth_style": "both"}
+    }}));
+    manager.update_provider(&provider.id, update, "local").await.unwrap();
+    assert!(!lease.is_cancelled());
+    assert!(sink.0.lock().unwrap().iter().all(|(change, targets)| change.kind == CliProviderChangeKind::MetadataChanged && targets.is_empty()));
+}
+
+#[tokio::test]
+async fn invalid_cli_routes_are_rejected_at_save_without_mutation_or_lease_revocation() {
+    use serde_json::json;
+    for (routes, expected_code) in [
+        (json!({"responses": {"enabled": true, "auth_style": "both"}}), 1001027),
+        (json!({"messages": {"enabled": true, "base_url": "http://public.example.invalid"}}), 1001028),
+        (json!({"messages": {"enabled": true, "base_url": "https://example.invalid/v1/messages"}}), 1001028),
+        (json!({"responses": {"enabled": true, "credential_ref": "forbidden"}}), 1001028),
+    ] {
+        let (_dir, manager, vault, provider, sink, _db) = setup().await;
+        let lease = manager.register_cli_opening(binding(&provider), &CancellationToken::new()).await.unwrap();
+        let cached = serde_json::to_value(manager.list_models(&provider.id, "local").await.unwrap()).unwrap();
+        let mut update = config(&provider.base_url, "");
+        update.config = Some(json!({"cli_routes": routes}));
+        let error = manager.update_provider(&provider.id, update, "local").await.unwrap_err();
+        assert_eq!(error.error_code(), expected_code);
+        let after = manager.get_provider(&provider.id, "local").await.unwrap().unwrap();
+        assert_eq!(after.config_revision, provider.config_revision);
+        assert_eq!(after.config, provider.config);
+        assert_eq!(after.credential_ref, provider.credential_ref);
+        assert_eq!(vault.entry_count().await, 1);
+        assert_eq!(serde_json::to_value(manager.list_models(&provider.id, "local").await.unwrap()).unwrap(), cached);
+        assert!(!lease.is_cancelled());
+        assert!(sink.0.lock().unwrap().is_empty());
+    }
 }

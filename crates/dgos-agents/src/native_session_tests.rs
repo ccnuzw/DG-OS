@@ -28,7 +28,7 @@ case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}';;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
-*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"fixture-thread","turns":[]}}}\n' "$request" "$PWD";;
+*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"fixture-thread","turns":[]}}}\n' "$request" "$PWD";;
 *'"method":"skills/list"'*)
  if [ -f unsupported-skills ]; then printf '{"id":%s,"error":{"code":-32601,"message":"Method not found"}}\n' "$request"; continue; fi
  if [ -f disconnect ]; then exit 0; fi

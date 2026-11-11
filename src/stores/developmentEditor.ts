@@ -1,17 +1,21 @@
+import { createElement } from 'react';
+import { Button, Modal, type ModalHandle } from '@dgos/ui';
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { useDevelopment } from './developmentStore';
 import { readDevelopmentFile, type DevFileView } from './developmentReview';
 import { hostCode } from './hostError';
-import { confirmDiscard } from '../workspace/closeCoordinator';
 import { t } from '../i18n';
 import { useDevelopmentDrafts } from './developmentDrafts';
 import { desktopSlot, onDesktopStateRestored, rebaseDesktopKey, setDesktopSlot } from './developmentDesktop';
+import { contextGeneration } from './developmentSelection';
 
 export interface EditorDocument {
   id: string; projectId: string; taskId: string | null; workspacePath: string; path: string;
   file: DevFileView | null; draft: string; disk: DevFileView | null;
   busy: boolean; saving: boolean; error: string | null; revision: number;
+  /** Changes on typing, independently of saves and read revisions. */
+  editRevision?: number;
   /** Cached baseline must be revalidated before an explicit disk save. */
   restored?: boolean;
 }
@@ -65,7 +69,10 @@ export const useDevelopmentEditor = create<EditorState>((set, get) => {
         else update(id, { file: result.value, draft: current.draft, disk: null, error: null, busy: false, restored: false });
       } else update(id, { file: result.value, draft: result.value.text ?? '', disk: null, error: null, busy: false, restored: false });
     },
-    edit(draft, id = get().activeId ?? '') { update(id, { draft }); },
+    edit(draft, id = get().activeId ?? '') {
+      const document = get().documents[id];
+      if (document && document.draft !== draft) update(id, { draft, editRevision: (document.editRevision ?? 0) + 1 });
+    },
     async save(id = get().activeId ?? '') {
       const document = get().documents[id];
       if (!document) return;
@@ -89,8 +96,15 @@ export const useDevelopmentEditor = create<EditorState>((set, get) => {
     },
     async reloadDisk(id = get().activeId ?? '') {
       const document = get().documents[id];
-      if (!document || !await guardDocuments([document])) return;
-      if (get().documents[id] !== document) return;
+      if (!document || document.busy || document.saving) return;
+      // Recovery revalidation is a read, not consent to replace the local draft.
+      // Keep the cached baseline on failure and compare it with a successful read.
+      if (document.restored) {
+        await get().open(document.projectId, document.taskId, document.path, document.workspacePath);
+        return;
+      }
+      const guarded = await guardDocuments([document]);
+      if (!guarded?.valid()) return;
       await get().open(document.projectId, document.taskId, document.path, document.workspacePath, true);
     },
     reset() { ++sequence; set({ ...empty, activeId: null, documents: {}, tabs: [], activeTabs: {} }); },
@@ -106,35 +120,125 @@ export function developmentEditorMutationAffects(projectId: string, taskId: stri
     const value = draft.value;
     if (!value || typeof value !== 'object' || !('operation' in value) || !value.operation || typeof value.operation !== 'object') return false;
     const operation = value.operation;
-    if (!('status' in operation) || !['pending', 'unknown'].includes(String(operation.status)) || !('action' in operation) || !['rename', 'delete', 'restore_hunk', 'restore', 'pull', 'switch'].includes(String(operation.action))) return false;
+    if (!('status' in operation) || !['pending', 'unknown'].includes(String(operation.status)) || !('action' in operation) || !['rename', 'delete', 'restore_hunk', 'restore', 'pull', 'switch', 'merge'].includes(String(operation.action))) return false;
     const paths = 'paths' in operation && Array.isArray(operation.paths) ? operation.paths.filter((entry): entry is string => typeof entry === 'string') : 'path' in operation && typeof operation.path === 'string' ? [operation.path] : [];
     return paths.some(source => affected(path, source) || affected(source, path));
   });
 }
-async function guardDocuments(documents: EditorDocument[], allowMutation = false): Promise<boolean> {
-  if (documents.some(document => document.saving || !allowMutation && developmentEditorMutationAffects(document.projectId, document.taskId, document.path))) return false;
+interface GuardedDocuments { documents: EditorDocument[]; valid(): boolean }
+type DraftDecision = 'save' | 'discard' | 'cancel';
+const canSaveDocument = (document: EditorDocument) => Boolean(document.taskId && document.file?.hash && document.file.text !== null && !document.restored && !document.busy && !document.saving && document.error !== 'file_changed' && !developmentEditorMutationAffects(document.projectId, document.taskId, document.path));
+function decideDrafts(documents: EditorDocument[]): Promise<DraftDecision> {
+  const canSave = documents.every(canSaveDocument);
+  let resolve!: (decision: DraftDecision) => void;
+  const promise = new Promise<DraftDecision>(done => { resolve = done; });
+  let settled = false;
+  let handle: ModalHandle | undefined;
+  const finish = (decision: DraftDecision) => {
+    if (settled) return;
+    settled = true;
+    handle?.close();
+    resolve(decision);
+  };
+  handle = Modal.confirm({
+    title: t('workbenchFiles.unsavedTitle'), icon: 'warning',
+    content: createElement('div', { className: 'flex flex-col gap-2' },
+      createElement('p', null, t('workbenchFiles.unsavedDetail')),
+      createElement('ul', null, documents.map(document => createElement('li', { key: document.id, className: 'break-all' }, document.path))),
+      !canSave ? createElement('p', { role: 'status' }, t('workbenchFiles.unsavedSaveUnavailable')) : null),
+    footer: createElement('div', { className: 'flex flex-wrap justify-end gap-2' },
+      createElement(Button, { variant: 'secondary', onClick: () => finish('cancel'), children: t('workbenchFiles.returnToEdit') }),
+      createElement(Button, { variant: 'danger', onClick: () => finish('discard'), children: t('workbenchFiles.discardAndContinue') }),
+      createElement(Button, { disabled: !canSave, onClick: () => finish('save'), children: t('workbenchFiles.saveAndContinue') })),
+    onCancel: () => finish('cancel'),
+  });
+  if (settled) handle.close();
+  return promise;
+}
+async function guardDocuments(documents: EditorDocument[], allowMutation = false): Promise<GuardedDocuments | null> {
+  const { epoch, selection } = useDevelopment.getState(), generation = contextGeneration();
+  const contextValid = () => epoch === useDevelopment.getState().epoch && selection === useDevelopment.getState().selection && generation === contextGeneration();
+  const blocked = (document: EditorDocument) => document.saving || document.busy || !allowMutation && developmentEditorMutationAffects(document.projectId, document.taskId, document.path);
+  let approved = documents;
+  const valid = () => contextValid() && approved.every(document => useDevelopmentEditor.getState().documents[document.id] === document && !blocked(document));
+  if (!valid()) return null;
   const dirty = documents.filter(documentDirty);
-  if (!dirty.length) return true;
-  const approved = await confirmDiscard({ title: t('dev.discardDraft'), content: dirty.map(document => t('dev.discardDraft.file', { path: document.path })).join('\n'), confirmText: t('dev.discardDraft') });
-  return approved && documents.every(document => useDevelopmentEditor.getState().documents[document.id] === document);
+  if (!dirty.length) return { documents: approved, valid };
+  const decision = await decideDrafts(dirty);
+  if (decision === 'cancel' || !valid()) return null;
+  if (decision === 'save') {
+    if (!dirty.every(canSaveDocument)) return null;
+    await Promise.all(dirty.map(document => {
+      if (!contextValid() || useDevelopmentEditor.getState().documents[document.id] !== document) return;
+      return useDevelopmentEditor.getState().save(document.id);
+    }));
+    if (!contextValid()) return null;
+    const saved = new Set(dirty.map(document => document.id));
+    const current = documents.map(document => useDevelopmentEditor.getState().documents[document.id]);
+    if (current.some((document, index) => {
+      const original = documents[index];
+      if (!document || blocked(document)) return true;
+      if (!saved.has(original.id)) return document !== original;
+      return document.revision !== original.revision || document.editRevision !== original.editRevision || document.draft !== original.draft || document.file === original.file || document.file?.text !== original.draft || !document.file?.hash || document.error !== null || document.disk !== null || document.restored || documentDirty(document);
+    })) return null;
+    approved = current;
+  }
+  return { documents: approved, valid };
 }
 export async function guardDevelopmentDocuments(projectId: string, taskId: string | null, paths: string[], workspacePath?: string, allowMutation = false): Promise<boolean> {
   if (!allowMutation && paths.some(path => developmentEditorMutationAffects(projectId, taskId, path))) return false;
-  return guardDocuments(Object.values(useDevelopmentEditor.getState().documents).filter(document => matches(document, projectId, taskId, paths, workspacePath)), allowMutation);
+  const documents = Object.values(useDevelopmentEditor.getState().documents).filter(document => matches(document, projectId, taskId, paths, workspacePath));
+  const guarded = await guardDocuments(documents, allowMutation);
+  return Boolean(guarded?.valid() && (allowMutation || !paths.some(path => developmentEditorMutationAffects(projectId, taskId, path))) && Object.values(useDevelopmentEditor.getState().documents).filter(document => matches(document, projectId, taskId, paths, workspacePath)).length === guarded.documents.length);
 }
 export async function guardDevelopmentDraft(allowMutation = false): Promise<boolean> {
   const state = useDevelopmentEditor.getState();
   if (!allowMutation && state.tabs.some(tab => developmentEditorMutationAffects(tab.projectId, tab.taskId, tab.path))) return false;
-  return guardDocuments(Object.values(state.documents), allowMutation);
+  const guarded = await guardDocuments(Object.values(state.documents), allowMutation);
+  return Boolean(guarded?.valid() && (allowMutation || !useDevelopmentEditor.getState().tabs.some(tab => developmentEditorMutationAffects(tab.projectId, tab.taskId, tab.path))) && Object.keys(useDevelopmentEditor.getState().documents).length === guarded.documents.length);
 }
-export async function discardDevelopmentDraft(): Promise<boolean> {
-  const documents = useDevelopmentEditor.getState().documents, epoch = useDevelopment.getState().epoch;
-  if (!await guardDevelopmentDraft() || epoch !== useDevelopment.getState().epoch || useDevelopmentEditor.getState().documents !== documents) return false;
+function resetDocumentDrafts(documents: EditorDocument[]): void {
   useDevelopmentEditor.setState(state => {
-    const next = Object.fromEntries(Object.entries(state.documents).map(([id, document]) => [id, { ...document, draft: document.file?.text ?? '', disk: null, error: null }]));
+    const next = { ...state.documents };
+    for (const document of documents) next[document.id] = { ...document, draft: document.file?.text ?? '', editRevision: (document.editRevision ?? 0) + 1 };
     return { documents: next, ...(state.activeId && next[state.activeId] ? next[state.activeId] : {}) };
   });
+}
+export async function cancelDevelopmentDocumentEdit(id: string): Promise<boolean> {
+  const document = useDevelopmentEditor.getState().documents[id];
+  if (!document) return false;
+  const guarded = await guardDocuments([document]);
+  if (!guarded?.valid()) return false;
+  resetDocumentDrafts(guarded.documents);
   return true;
+}
+export async function discardDevelopmentDraft(): Promise<boolean> {
+  const state = useDevelopmentEditor.getState();
+  if (state.tabs.some(tab => developmentEditorMutationAffects(tab.projectId, tab.taskId, tab.path))) return false;
+  const guarded = await guardDocuments(Object.values(state.documents));
+  if (!guarded?.valid() || Object.keys(useDevelopmentEditor.getState().documents).length !== guarded.documents.length || useDevelopmentEditor.getState().tabs.some(tab => developmentEditorMutationAffects(tab.projectId, tab.taskId, tab.path))) return false;
+  resetDocumentDrafts(guarded.documents);
+  return true;
+}
+
+/** Collect project-only consent now; discard unchanged drafts only after unlink succeeds. */
+export async function prepareProjectDocumentRemoval(projectId: string): Promise<{ valid(): boolean; discard(): void } | null> {
+  const epoch = useDevelopment.getState().epoch;
+  const projectDocuments = () => Object.values(useDevelopmentEditor.getState().documents).filter(document => document.projectId === projectId);
+  const blocked = () => useDevelopmentEditor.getState().tabs.some(tab => tab.projectId === projectId && developmentEditorMutationAffects(tab.projectId, tab.taskId, tab.path));
+  if (blocked()) return null;
+  const guarded = await guardDocuments(projectDocuments());
+  if (!guarded) return null;
+  const valid = () => guarded.valid() && !blocked() && projectDocuments().length === guarded.documents.length;
+  if (!valid()) return null;
+  return {
+    valid,
+    discard() {
+      if (epoch !== useDevelopment.getState().epoch) return;
+      const current = useDevelopmentEditor.getState().documents;
+      resetDocumentDrafts(guarded.documents.filter(document => current[document.id] === document));
+    },
+  };
 }
 export function openDevelopmentDocument(tab: Omit<DocumentTab, 'id'>): void {
   const id = `${documentId(tab.projectId, tab.taskId, tab.path, tab.workspacePath)}:${tab.mode}`;
@@ -146,7 +250,8 @@ export async function closeDevelopmentDocuments(ids: string[]): Promise<boolean>
   if (tabs.some(tab => developmentEditorMutationAffects(tab.projectId, tab.taskId, tab.path))) return false;
   const documentIds = new Set(tabs.filter(tab => tab.mode === 'file').map(tab => documentId(tab.projectId, tab.taskId, tab.path, tab.workspacePath)));
   const documents = Object.values(state.documents).filter(document => documentIds.has(document.id));
-  if (!await guardDocuments(documents) || useDevelopmentEditor.getState().tabs !== state.tabs || documents.some(document => useDevelopmentEditor.getState().documents[document.id] !== document)) return false;
+  const guarded = await guardDocuments(documents);
+  if (!guarded?.valid() || useDevelopmentEditor.getState().tabs !== state.tabs || tabs.some(tab => developmentEditorMutationAffects(tab.projectId, tab.taskId, tab.path))) return false;
   useDevelopmentEditor.setState(current => {
     const remaining = current.tabs.filter(tab => !ids.includes(tab.id));
     const next = { ...current.documents }; for (const id of documentIds) delete next[id];

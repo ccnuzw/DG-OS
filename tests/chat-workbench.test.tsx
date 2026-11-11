@@ -12,6 +12,7 @@ import { SurfaceScope } from '../src/workspace/SurfaceContext';
 import { setLocaleForTesting } from '../src/i18n';
 
 import { chatBudget } from './helpers/chatBudget';
+import { chatUsage } from './helpers/chatUsage';
 import { defaultAiFoundation } from '../src/types/ai';
 // FR-006 chat front end (AC01-AC29 subset that needs the DOM). Contract: V1-接口契约 §10.1, V1-错误码 §3.6.
 // Synthetic data only. The host is a table of command handlers; Channels are the controllable MockChannel.
@@ -65,7 +66,8 @@ beforeEach(() => {
   handlers = {
     list_chat_sessions: () => ok({ items: [session()], next_cursor: null }),
     list_chat_messages: () => ok({ items: [], next_before_seq: null }),
-    inspect_chat_context: () => ok(chatBudget()),
+    inspect_chat_context: ({ input }) => ok(chatBudget({ model_id: useChatStore.getState().sessions.find(item => item.id === input.session_id)?.model_id ?? 'chat1' })),
+    get_chat_usage: () => ok(chatUsage()),
     list_chat_runs: () => ok({ items: [] }),
     chat_skill_catalog: () => ok({ items: [], recommendations: [] }),
     cancel_chat_generation: () => ok(true),
@@ -481,7 +483,7 @@ describe('send, stream and terminal snapshot', () => {
     typeDraft('你好');
     fireEvent.click(sendButton());
     const args = await sentArgs();
-    expect(args.input).toEqual({ session_id: 's1', content: '你好', client_request_id: expect.stringMatching(UUID), foundation: defaultAiFoundation() });
+    expect(args.input).toEqual({ session_id: 's1', content: '你好', client_request_id: expect.stringMatching(UUID), web_access: { search: false, fetch: false }, foundation: defaultAiFoundation() });
     expect(args.onEvent).toBeInstanceOf(MockChannel);
     expect(args.onEvent).toBe(MockChannel.last());
     const channel = args.onEvent as MockChannel;
@@ -590,14 +592,6 @@ describe('send, stream and terminal snapshot', () => {
   });
 
 
-  it('a send has no tools key and no accept_destination unless they were chosen', async () => {
-    await openSession();
-    deferSend();
-    typeDraft('纯文本');
-    fireEvent.click(sendButton());
-    const { input } = await sentArgs();
-    expect(Object.keys(input).sort()).toEqual(['client_request_id', 'content', 'foundation', 'session_id']);
-  });
 
   it('announces dropped turns on the reply', async () => {
     await openSession();
@@ -844,7 +838,7 @@ describe('regenerate', () => {
     fireEvent.click(within(articles[articles.length - 1]).getByRole('button', { name: '重新生成' }));
     await waitFor(() => expect(calls('regenerate_chat_message')).toHaveLength(1));
     const args = calls('regenerate_chat_message')[0];
-    expect(args).toEqual({ input: { message_id: 'm4', client_request_id: expect.stringMatching(UUID), foundation: defaultAiFoundation() }, onEvent: expect.any(MockChannel) });
+    expect(args).toEqual({ input: { message_id: 'm4', client_request_id: expect.stringMatching(UUID), web_access: { search: false, fetch: false }, foundation: defaultAiFoundation() }, onEvent: expect.any(MockChannel) });
     expect(Object.keys(args).sort()).toEqual(['input', 'onEvent']);
     expect(screen.queryByText('答二')).toBeNull();
     expect(screen.queryByRole('button', { name: '重新生成' })).toBeNull();
@@ -1410,10 +1404,11 @@ describe('continuous conversation safety controls', () => {
     typeDraft('保留摘要期间草稿');
     fireEvent.click(screen.getByRole('button', { name: /^预计上下文：/ }));
     await waitFor(() => expect(calls('inspect_chat_context').length).toBeGreaterThan(0));
-    fireEvent.click(screen.getByRole('button', { name: '整理较早对话' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: '压缩', exact: true }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: '压缩', exact: true }));
     expect(calls('summarize_chat_context')).toHaveLength(0);
-    const confirm = await screen.findByRole('dialog', { name: '整理较早对话？' });
-    fireEvent.click(within(confirm).getByRole('button', { name: '允许收费摘要请求' }));
+    const confirm = await screen.findByRole('dialog', { name: '压缩较早对话？' });
+    fireEvent.click(within(confirm).getByRole('button', { name: '确认压缩' }));
     await waitFor(() => expect(calls('summarize_chat_context')).toHaveLength(1));
     expect(calls('summarize_chat_context')[0].input).toEqual({ session_id: 's1', client_request_id: expect.stringMatching(UUID), confirmed: true });
     await waitFor(() => expect(useChatStore.getState().generation).toBeNull());
@@ -1482,7 +1477,7 @@ describe('continuous conversation safety controls', () => {
     const args = await sentArgs(); await settle(resolveAck, ackFor(args));
     emit(args.onEvent, { kind: 'phase', task_id: 'another-task', assistant_message_id: 'a1', phase: 'tool' });
     expect(useChatStore.getState().generation?.hostPhase).toBeUndefined();
-    emit(args.onEvent, { kind: 'phase', task_id: args.input.client_request_id, assistant_message_id: 'a1', phase: 'processing_result' });
+    emit(args.onEvent, { kind: 'phase', seq: 1, task_id: args.input.client_request_id, assistant_message_id: 'a1', phase: 'processing_result' });
     expect(screen.queryByRole('button', { name: '批准本次调用' })).toBeNull();
     expect(useChatStore.getState().generation?.hostPhase).toBe('processing_result');
     emit(args.onEvent, { kind: 'done', message: message(2, 'assistant', '终态', { id: 'a1' }), dispatched: true, result_unknown: false, audit_warning: 'audit_unconfirmed' });
@@ -1499,16 +1494,20 @@ describe('continuous conversation safety controls', () => {
     handlers.continue_chat_run = args => ok(ackFor(args, { assistant_message_id: 'continued-assistant' }));
     await openSession(); typeDraft('原草稿保留');
     await openRetainedRun();
-    const next = await screen.findByRole('textbox', { name: '接下来希望助手做什么？' });
     expect(calls('continue_chat_run')).toHaveLength(0); expect(calls('advance_chat_tool_turn')).toHaveLength(0);
-    fireEvent.change(next, { target: { value: '只完成下一步，不重复写入' } });
-    expect((screen.getByRole('button', { name: '发起新请求' }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole('checkbox', { name: '按此意图发起新请求，不重放之前的操作或批准。' }));
-    fireEvent.click(screen.getByRole('button', { name: '发起新请求' }));
-    await waitFor(() => expect(calls('continue_chat_run')).toHaveLength(1));
-    expect(calls('continue_chat_run')[0].input).toEqual({ source_task_id: 'source-run', client_request_id: expect.stringMatching(UUID), intent: '只完成下一步，不重复写入', tools: [], foundation: defaultAiFoundation() });
-    expect(calls('continue_chat_run')[0].input.client_request_id).not.toBe('source-run');
+    fireEvent.click(await screen.findByRole('button', { name: '回输入区继续处理' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(draftBox().value).toBe('原草稿保留');
+    expect(useChatStore.getState().sessionContinuation.s1.taskId).toBe('source-run');
+    typeDraft('只完成下一步，不重复写入');
+    expect(sendButton().disabled).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: '按此意图发起新请求，不重放之前的操作或批准。' }));
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(calls('continue_chat_run')).toHaveLength(1));
+    expect(calls('continue_chat_run')[0].input).toEqual({ source_task_id: 'source-run', client_request_id: expect.stringMatching(UUID), intent: '只完成下一步，不重复写入', tools: [], web_access: { search: false, fetch: false }, foundation: defaultAiFoundation() });
+    expect(calls('continue_chat_run')[0].input.client_request_id).not.toBe('source-run');
+    await waitFor(() => expect(draftBox().value).toBe(''));
+    expect(useChatStore.getState().sessionContinuation.s1).toBeUndefined();
   });
 
   it('blocks resend and continuation for retained unknown tool outcomes', async () => {
@@ -1516,8 +1515,8 @@ describe('continuous conversation safety controls', () => {
     handlers.list_chat_runs = () => ok({ items: [run] }); handlers.get_chat_run = () => ok(run);
     await openSession(); typeDraft('不重复写入');
     await openRetainedRun();
-    await screen.findByRole('textbox', { name: '接下来希望助手做什么？' });
-    expect((screen.getByRole('button', { name: '发起新请求' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((await screen.findByRole('button', { name: '回输入区继续处理' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(useChatStore.getState().sessionContinuation.s1).toBeUndefined();
     await closePanel();
     expect(sendButton().disabled).toBe(true);
     expect(calls('continue_chat_run')).toHaveLength(0); expect(calls('send_chat_message')).toHaveLength(0);
@@ -1583,9 +1582,11 @@ describe('continuous conversation safety controls', () => {
     await openSession(); typeDraft('不能直接重发'); expect(sendButton().disabled).toBe(true);
     expect(screen.queryByRole('button', { name: '重新生成' })).toBeNull();
     await openRetainedRun();
-    fireEvent.change(await screen.findByRole('textbox', { name: '接下来希望助手做什么？' }), { target: { value: '根据保留片段，执行一个新的下一步' } });
+    fireEvent.click(await screen.findByRole('button', { name: '回输入区继续处理' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    typeDraft('根据保留片段，执行一个新的下一步');
     fireEvent.click(screen.getByRole('checkbox', { name: '按此意图发起新请求，不重放之前的操作或批准。' }));
-    fireEvent.click(screen.getByRole('button', { name: '发起新请求' }));
+    fireEvent.click(sendButton());
     await waitFor(() => expect(calls('continue_chat_run')).toHaveLength(1));
     expect(calls('continue_chat_run')[0].input.client_request_id).not.toBe('source-run');
     expect(useChatStore.getState().messages.find(item => item.id === 'm2')?.result_unknown).toBe(true);
@@ -1778,7 +1779,6 @@ describe('store-owned preflight and authoritative uncertainty', () => {
     expect(calls('send_chat_message')).toHaveLength(1);
     expect(calls('regenerate_chat_message')).toHaveLength(0);
     expect(calls('summarize_chat_context')).toHaveLength(0);
-    expect(calls('get_chat_run')).toHaveLength(0);
     expect(useChatStore.getState().preparingSessionId).toBeNull();
   });
 

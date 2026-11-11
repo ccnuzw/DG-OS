@@ -9,26 +9,39 @@ export type CodexTranscriptEntry =
   | { kind: 'revision'; revisions: AgentEvent[] }
   | { kind: 'malformed' };
 
-const scope = (event: AgentEvent) => event.run ? ['run', event.run] : text(object(event.data).turnId) ? ['turn', text(object(event.data).turnId)] : ['event', event.seq];
-const itemKey = (event: AgentEvent, id: string) => JSON.stringify([scope(event), id]);
+const scope = (event: AgentEvent) => {
+  const data = object(event.data);
+  if (event.run) return ['run', event.run];
+  if (text(data.turnId)) return ['turn', text(data.threadId), text(data.turnId)];
+  if (text(data.session_id)) return ['session', text(data.session_id)];
+  return ['event', event.seq];
+};
+const itemKey = (event: AgentEvent, id: string) => JSON.stringify([scope(event), text(object(event.data).parent_tool_use_id), id]);
+const privateTypes = ['reasoning', 'thinking', 'thinking_delta', 'signature', 'signature_delta', 'redacted_thinking'];
+const privateFields = ['thinking', 'thinking_delta', 'signature', 'signature_delta', 'encrypted_content', 'encryptedContent', 'redacted_thinking'];
 export function isReasoningEvent(event: AgentEvent) {
-  return event.kind === 'reasoning' || event.kind.startsWith('item/reasoning/') || object(event.data).type === 'reasoning' || object(object(event.data).item).type === 'reasoning';
+  return privateTypes.includes(event.kind) || event.kind.startsWith('item/reasoning/') || privateTypes.includes(text(object(event.data).type)) || privateTypes.includes(text(object(object(event.data).item).type));
 }
 
 // Inspector projection only: native evidence stays untouched, but raw reasoning is never
 // exposed as prose or JSON. Summary notifications are the only text-bearing allowlist.
 export function inspectableAgentEvent(event: AgentEvent): AgentEvent {
+  let hasPrivateContent = isReasoningEvent(event);
   const redact = (value: Json): Json => {
     if (Array.isArray(value)) return value.map(redact);
     if (!value || typeof value !== 'object') return value;
-    if (value.type === 'reasoning') return Object.fromEntries(Object.entries(value).filter(([key]) => !['content', 'text', 'encrypted_content', 'encryptedContent'].includes(key)).map(([key, entry]) => [key, redact(entry)]));
-    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, redact(entry)]));
+    const privateBlock = privateTypes.includes(text(value.type));
+    if (privateBlock || Object.keys(value).some(key => privateFields.includes(key))) hasPrivateContent = true;
+    return Object.fromEntries(Object.entries(value).filter(([key]) => !privateFields.includes(key) && !(privateBlock && ['content', 'text', 'data', 'delta'].includes(key))).map(([key, entry]) => [key, redact(entry)]));
   };
-  if (!isReasoningEvent(event)) return { ...event, data: redact(event.data) };
+  if (!isReasoningEvent(event)) {
+    const data = redact(event.data);
+    return { ...event, text: hasPrivateContent ? null : event.text, data };
+  }
   const data = object(event.data);
   const summary = event.kind === summaryDelta || event.kind === summaryPart;
   const safe: Record<string, Json> = {};
-  for (const key of ['type', 'id', 'itemId', 'threadId', 'turnId', 'summaryIndex', 'status', 'summary']) if (data[key] !== undefined) safe[key] = data[key];
+  for (const key of ['type', 'id', 'itemId', 'threadId', 'turnId', 'summaryIndex', 'status', 'summary', 'native_message_id', 'block_index', 'parent_tool_use_id']) if (data[key] !== undefined) safe[key] = redact(data[key]);
   if (summary && data.delta !== undefined) safe.delta = data.delta;
   if (data.item !== undefined) safe.item = redact(data.item);
   return { ...event, text: summary ? event.text : null, data: safe };
@@ -36,7 +49,7 @@ export function inspectableAgentEvent(event: AgentEvent): AgentEvent {
 
 // A map entry with null hides only a superseded projection. All native events remain
 // inspectable. Keys include run/item/index; interleaved turns never share a stream.
-export function projectCodexTranscript(events: AgentEvent[]): Map<AgentEvent, CodexTranscriptEntry | null> {
+export function projectCodexTranscript(events: readonly AgentEvent[]): Map<AgentEvent, CodexTranscriptEntry | null> {
   const result = new Map<AgentEvent, CodexTranscriptEntry | null>();
   const streams = new Map<string, { item: string; event: AgentEvent; entry: Extract<CodexTranscriptEntry, { kind: 'summary' }> }>();
   const snapshots = new Map<string, AgentEvent>();
@@ -71,9 +84,10 @@ export function projectCodexTranscript(events: AgentEvent[]): Map<AgentEvent, Co
       stream.entry.seq = event.seq;
       continue;
     }
-    if (event.kind === 'reasoning' || event.kind === 'item/completed' && data.type === 'reasoning') {
-      const id = text(data.id);
-      if (!id || !Array.isArray(data.summary) || !data.summary.every(part => typeof part === 'string')) {
+    if (event.kind === 'reasoning' || event.kind === 'item/completed' && object(data.item ?? data).type === 'reasoning') {
+      const value = object(data.item ?? data);
+      const id = text(value.id);
+      if (!id || !Array.isArray(value.summary) || !value.summary.every(part => typeof part === 'string')) {
         result.set(event, { kind: 'malformed' }); continue;
       }
       const item = itemKey(event, id);
@@ -81,7 +95,7 @@ export function projectCodexTranscript(events: AgentEvent[]): Map<AgentEvent, Co
       const previous = snapshots.get(item);
       if (previous) result.set(previous, null);
       snapshots.set(item, event);
-      result.set(event, { kind: 'summary', parts: data.summary.map((part, index) => ({ index, text: part as string })), complete: true, seq: event.seq });
+      result.set(event, { kind: 'summary', parts: value.summary.map((part, index) => ({ index, text: part as string })), complete: true, seq: event.seq });
       continue;
     }
     // Starts and raw reasoning deltas have no user-facing text.

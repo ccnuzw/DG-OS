@@ -5,6 +5,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { projectSupportedCommands } from './native-observation';
 import { commandsSchema, modelsSchema, mcpStatusSchema, nativeCapabilities, verifiedWrites, isUnsupportedControl, resultRequestId, validateQuestionAnswers, observeActiveSkillSources, type NativeCapabilities } from './native-protocol';
 import { applyTurnSettings, projectTurnControls, turnSettingsSchema, validateTurnSettings, responseInstructions, deepPlanInstructions, nativePermission, type TurnControls, type TurnSettings } from './turn-controls';
+import { NativeRunBindings, NativeTranscriptProjection, responseUsage, safeNativeDetails, safeUnknownEvent } from './native-transcript';
 
 const emit = (method: string, params: unknown) => process.stdout.write(JSON.stringify({ method, params }) + '\n');
 const reply = (id: unknown, result: unknown) => process.stdout.write(JSON.stringify({ id, result }) + '\n');
@@ -33,6 +34,8 @@ let queryCollaboration: TurnSettings['collaboration_mode'] = 'default';
 let queryDrain: Promise<void> | undefined;
 const projectedMessages = new Set<string>();
 const projectedResults = new Set<string>();
+const transcript = new NativeTranscriptProjection();
+const taskRequests = new NativeRunBindings();
 const queue: SDKUserMessage[] = [];
 const receipts = new Map<string, string>();
 const permissionRequestIds = new Set<string>();
@@ -87,11 +90,9 @@ const settingsSchema = z.object({
 class BridgeFailure extends Error {
   constructor(readonly kind: string) { super(kind); }
 }
-const responseUsage = z.object({ input_tokens: z.number().nonnegative().optional(), output_tokens: z.number().nonnegative().optional(), cache_read_input_tokens: z.number().nonnegative().nullable().optional(), cache_creation_input_tokens: z.number().nonnegative().nullable().optional() });
 const modelLimits = z.record(z.string(), z.object({ contextWindow: z.number().positive().optional().catch(undefined), maxOutputTokens: z.number().positive().optional().catch(undefined), inputTokens: z.number().nonnegative().optional(), outputTokens: z.number().nonnegative().optional(), cacheReadInputTokens: z.number().nonnegative().optional(), cacheCreationInputTokens: z.number().nonnegative().optional(), costUSD: z.number().nonnegative().optional(), costBasis: z.enum(['list', 'managed', 'unknown']).optional(), canonicalModel: z.string().optional(), provider: z.string().optional() }));
 const nativeMessage = z.object({ type: z.string(), subtype: z.string().optional(), session_id: z.string().optional(), user_message_uuid: z.string().optional(), user_message_uuids: z.array(z.string()).optional(), message: z.object({ content: z.unknown(), id: z.string().optional().catch(undefined), model: z.string().optional().catch(undefined), usage: responseUsage.optional().catch(undefined) }).optional(), event: z.object({ delta: z.object({ type: z.string(), text: z.string().optional() }).passthrough().optional() }).passthrough().optional(), uuid: z.string().optional(), parent_tool_use_id: z.string().nullable().optional(), is_error: z.boolean().optional(), result: z.string().optional(), total_cost_usd: z.number().nonnegative().optional(), duration_ms: z.number().nonnegative().optional(), duration_api_ms: z.number().nonnegative().optional(), usage: z.unknown().optional(), modelUsage: modelLimits.optional().catch(undefined), model: z.string().optional(), tools: z.array(z.unknown()).optional(), tool_name: z.string().optional(), tool_use_id: z.string().optional(), elapsed_time_seconds: z.number().optional() });
 const resultTermination = z.object({ terminal_reason: z.string().optional() });
-const nativeDetails = z.object({ tool_use_result: z.unknown().optional(), error: z.unknown().optional(), errors: z.array(z.string()).optional() });
 const nativeApiError = z.object({ isApiErrorMessage: z.literal(true) });
 const commandSchema = z.discriminatedUnion('method', [
   z.object({ id: z.number(), method: z.literal('open'), params: z.object({ workspace: z.string(), executable: z.string(), resume_id: z.string().nullable(), provider: providerSchema }).strict() }),
@@ -159,22 +160,13 @@ async function observeTurnSettings(input: { effort?: { level: string } }) {
   }
   return {};
 }
-function safeNativeDetails(value: unknown) {
-  const parsed = nativeDetails.safeParse(value);
-  if (!parsed.success) return {};
-  const content = nativeMessage.safeParse(value);
-  const blocks = content.success ? content.data.message?.content : undefined;
-  const failed = parsed.data.error !== undefined || !!parsed.data.errors?.length
-    || (Array.isArray(blocks) && blocks.some(block => z.object({ type: z.literal('tool_result'), is_error: z.literal(true) }).safeParse(block).success));
-  return {
-    ...(parsed.data.tool_use_result !== undefined ? { tool_use_result: failed ? 'engine_failed' : parsed.data.tool_use_result } : {}),
-    ...(parsed.data.error !== undefined ? { error: 'engine_failed' } : {}),
-    ...(parsed.data.errors?.length ? { errors: ['engine_failed'] } : {}),
-  };
-}
 function project(value: unknown, history = false) {
   const parsed = nativeMessage.safeParse(value);
-  if (!parsed.success) return;
+  if (!parsed.success) {
+    const summary = safeUnknownEvent(value);
+    if (!closed && summary) emit('native/unsupported', { ...summary, session_id: sessionId, history });
+    return;
+  }
   const message = parsed.data;
   if (closed) return;
   if (message.session_id && message.session_id !== sessionId) {
@@ -185,35 +177,29 @@ function project(value: unknown, history = false) {
   }
   const echoed = [...(message.user_message_uuids ?? []), ...(message.user_message_uuid ? [message.user_message_uuid] : [])];
   const local = z.object({ local_command: z.string().optional() }).safeParse(value);
-  const requestId = history ? undefined : resultRequestId({ ...message, local_command: local.success ? local.data.local_command : undefined }, activeRequestId, activeLocalCommand, optionalWritesVerified);
+  let requestId = history ? undefined : resultRequestId({ ...message, local_command: local.success ? local.data.local_command : undefined }, activeRequestId, activeLocalCommand, optionalWritesVerified);
+  if (!history && message.type !== 'result') requestId = taskRequests.resolve(value, requestId);
   const identity = { session_id: message.session_id ?? sessionId, uuid: message.uuid,
     user_message_uuid: message.user_message_uuid, user_message_uuids: message.user_message_uuids,
     request_id: requestId, history };
-  if (nativeApiError.safeParse(value).success) {
+  if (nativeApiError.safeParse(value).success && !message.parent_tool_use_id) {
     if (!history && echoed.length && !requestId) return;
     emit('failure', { kind: 'engine_failed', message: 'engine_failed', ...identity });
+    transcript.clear();
     return;
   }
-  if (message.type === 'assistant' || message.type === 'user') {
-    const key = message.uuid ? `${identity.session_id}:${message.uuid}` : undefined;
-    if (key && projectedMessages.has(key)) return;
-    if (key) projectedMessages.add(key);
-    const details = safeNativeDetails(value);
-    const content = 'error' in details || 'errors' in details || message.is_error ? 'engine_failed' : message.message?.content;
-    const safeContent = Array.isArray(content) ? content.map(block => {
-      const failed = z.object({ type: z.literal('tool_result'), is_error: z.literal(true), tool_use_id: z.string() }).safeParse(block);
-      return failed.success ? { ...failed.data, content: 'engine_failed' } : block;
-    }) : content;
-    emit('message', { type: message.type, content: safeContent, parent_tool_use_id: message.parent_tool_use_id, model: message.message?.model, usage: message.type === 'assistant' ? message.message?.usage : undefined, native_message_id: message.message?.id, usage_source: message.type === 'assistant' && message.message?.usage ? 'native_response' : undefined, ...details, ...identity });
+  if (message.type === 'assistant' || message.type === 'user' || message.type === 'stream_event' || message.type === 'tool_progress'
+    || message.type === 'system' && ['task_started', 'task_progress', 'task_notification'].includes(message.subtype ?? '')) {
+    for (const event of transcript.project(value, history)) {
+      // resolve() records tool_use IDs from both block starts and full frames.
+      emit(event.kind, { ...event.data, ...(event.kind === 'native/unsupported' ? { session_id: sessionId, request_id: requestId, history } : identity) });
+    }
   } else if (message.type === 'system' && message.subtype === 'local_command_output') {
     const output = z.object({ content: z.string() }).safeParse(value);
     const key = message.uuid ? `${identity.session_id}:${message.uuid}` : undefined;
     if (!output.success || key && projectedMessages.has(key)) return;
     if (key) projectedMessages.add(key);
     emit('message', { type: 'assistant', content: output.data.content, native_subtype: 'local_command_output', ...identity });
-  } else if (message.type === 'stream_event') {
-    const delta = message.event?.delta;
-    if (delta?.type === 'text_delta') emit('text_delta', { text: delta.text, parent_tool_use_id: message.parent_tool_use_id, ...identity });
   } else if (message.type === 'result') {
     const key = message.uuid ? `${identity.session_id}:${message.uuid}` : undefined;
     if (key && projectedResults.has(key)) return;
@@ -226,22 +212,27 @@ function project(value: unknown, history = false) {
       return;
     }
     running = false;
+    transcript.clearMain();
     for (const permission of permissions.values()) permission.resolve({ behavior: 'deny', message: 'Turn completed' });
     activeRequestId = undefined;
     activeLocalCommand = undefined;
     const termination = resultTermination.safeParse(value);
-    emit('result', { subtype: message.subtype, is_error: message.is_error, result: message.is_error ? 'engine_failed' : message.result, local_command: local.success ? local.data.local_command : undefined, total_cost_usd: message.total_cost_usd, cost_kind: message.total_cost_usd === undefined ? undefined : 'estimated', duration_ms: message.duration_ms, duration_api_ms: message.duration_api_ms, usage: message.usage, model_limits: message.modelUsage, model_usage: message.modelUsage, terminal_reason: termination.success ? termination.data.terminal_reason : undefined, ...safeNativeDetails(value), ...identity });
+    const details = safeNativeDetails(value);
+    const usage = responseUsage.safeParse(message.usage);
+    emit('result', { subtype: message.subtype, is_error: message.is_error, result: message.is_error || 'error' in details || 'errors' in details ? 'engine_failed' : message.result, local_command: local.success ? local.data.local_command : undefined, total_cost_usd: message.total_cost_usd, cost_kind: message.total_cost_usd === undefined ? undefined : 'estimated', duration_ms: message.duration_ms, duration_api_ms: message.duration_api_ms, usage: usage.success ? usage.data : undefined, usage_source: usage.success ? 'native_result' : undefined, usage_final: true, model_limits: message.modelUsage, model_usage: message.modelUsage, terminal_reason: termination.success ? termination.data.terminal_reason : undefined, ...details, ...identity });
   } else if (message.type === 'system' && message.subtype === 'init') {
     // The requested session identity is pinned before query(); never adopt a fallback session.
     const metadata = initMetadata.safeParse(value);
     emit('native/initialized', { session_id: sessionId, model: message.model, tools: message.tools, ...(metadata.success ? metadata.data : {}), status: 'observed_not_executed' });
-  } else if (message.type === 'tool_progress') {
-    emit('tool_progress', { tool_name: message.tool_name, tool_use_id: message.tool_use_id, elapsed_time_seconds: message.elapsed_time_seconds, ...identity });
+  } else {
+    const summary = safeUnknownEvent(value);
+    if (summary) emit('native/unsupported', { ...summary, session_id: sessionId, request_id: requestId, history });
   }
 }
 async function close() {
   closed = true; opened = false; running = false; activeRequestId = undefined; queue.length = 0; wake?.();
   activeLocalCommand = undefined;
+  transcript.clear(); taskRequests.clear();
   activeProvider = undefined; activeProviderEnv = undefined;
   for (const permission of permissions.values()) permission.resolve({ behavior: 'deny', message: 'Session closed' });
   permissions.clear(); agent?.close();
@@ -257,6 +248,7 @@ async function startNative(provider: z.infer<typeof providerSchema>, providerEnv
   const draining = queryDrain;
   await draining;
   if (closed) throw new BridgeFailure('closed');
+  transcript.clear();
   queryFullAuto = (settings.permission_mode ?? turnControls?.permission.current) === 'full_auto';
   queryPreferences = settings.response_preferences ?? queryPreferences;
   queryCollaboration = settings.collaboration_mode ?? queryCollaboration;
@@ -269,6 +261,7 @@ async function startNative(provider: z.infer<typeof providerSchema>, providerEnv
     permissionMode: turnControls ? nativePermission(turnControls, settings) : 'default',
     ...(queryFullAuto ? { allowDangerouslySkipPermissions: true } : {}),
     includePartialMessages: true,
+    forwardSubagentText: true,
     hooks: {
       PreToolUse: [{ hooks: [async input => observeTurnSettings(input)] }],
       Stop: [{ hooks: [async input => observeTurnSettings(input)] }],
@@ -499,6 +492,7 @@ async function handle(command: BridgeCommand) {
     receipts.set(params.request_id, fingerprint);
     queryHasHistory = true;
     activeRequestId = params.request_id;
+    transcript.clearMain();
     const commandName = /^\/([^\s]+)(?:\s|$)/.exec(params.text.trim())?.[1];
     // CLI 2.1.319 hXi() sanitizes result.local_command in its !shouldQuery branch.
     activeLocalCommand = commandName?.toLowerCase().replace(/[^a-z]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 64).replace(/_+$/, '') || (commandName ? 'custom' : undefined);
@@ -533,7 +527,9 @@ async function handle(command: BridgeCommand) {
   }
   if (command.method === 'interrupt') {
     if (!running || activeRequestId !== command.params.request_id) throw new BridgeFailure('not_running');
-    await agent.interrupt(); return {};
+    await agent.interrupt();
+    transcript.clear();
+    return {};
   }
   throw new BridgeFailure('unsupported_operation');
 }

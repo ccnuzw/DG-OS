@@ -1,5 +1,5 @@
 use super::*;
-pub use dgos_db::{ChatRun, ChatRunStep, ChatSummary};
+pub use dgos_db::{ChatRun, ChatRunStep, ChatSummary, ChatUsageSummary};
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all="snake_case")]
@@ -13,6 +13,7 @@ pub struct InspectChatContextInput {
     #[serde(default)] pub skill_mode:ChatSkillMode,
     #[serde(default)] pub authorized_skill_refs:Vec<dgos_types::AiSkillRef>,
     #[serde(default)] pub foundation:dgos_types::AiFoundationOptions,
+    #[serde(default)] pub web_access:crate::web::WebAccess,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct ChatContextBudget {
@@ -21,6 +22,7 @@ pub struct ChatContextBudget {
     pub text_bytes:usize, pub image_reserve_tokens:usize, pub skill_bytes:usize,
     pub tool_schema_bytes:usize, pub history_bytes:usize, pub dropped_turns:u32,
     pub summary:Option<ChatSummary>, pub can_send:bool, pub rejection:Option<String>,
+    pub can_summarize:bool, pub summary_unavailable_reason:Option<String>,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -45,6 +47,7 @@ pub struct ContinueChatRunInput {
     #[serde(default)] pub skill_mode:ChatSkillMode,
     #[serde(default)] pub authorized_skill_refs:Vec<dgos_types::AiSkillRef>,
     #[serde(default)] pub foundation:dgos_types::AiFoundationOptions,
+    #[serde(default)] pub web_access:crate::web::WebAccess,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

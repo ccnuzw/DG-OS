@@ -386,6 +386,57 @@ async fn revoked_then_regranted_proposal_cannot_dispatch() {
 }
 
 #[tokio::test]
+async fn pending_proposal_drain_distinguishes_revocation_from_caller_cancellation() {
+    for caller_cancel in [false, true] {
+        let mut server = mockito::Server::new_async().await;
+        let model = server.mock("POST", "/chat/completions").with_header("content-type", "text/event-stream")
+            .with_body(tool_proposal(0)).expect(1).create_async().await;
+        let mut f = Fixture::new(&server.url()).await;
+        let (tool, mut prompts) = f.tool().await;
+        let invocation = f.invoke();
+        let run_id = invocation.call.context().request_id().to_owned();
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let output = received.clone();
+        let run = f.service.run(invocation, f.input.clone(), Arc::new(move |event: AiEvent| { output.lock().unwrap().push(event); true }));
+        let invalidate = async {
+            let confirmation = prompts.recv().await.unwrap();
+            if caller_cancel {
+                assert!(f.service.cancel(f.invoke(), &run_id).await.unwrap());
+            } else {
+                f.permissions.revoke("alice", "ai-consumer", ModulePermission::McpCall).await.unwrap();
+                f.permissions.grant("alice", "ai-consumer", ModulePermission::McpCall).await.unwrap();
+            }
+            // Deliberately withhold approval: only the invalidation monitor can finish
+            // this proposal, so scheduler speed cannot select the approval-check path.
+            confirmation
+        };
+        let (terminal, confirmation) = tokio::join!(run, invalidate);
+        let terminal = terminal.unwrap();
+        let expected_status = if caller_cancel { AiRunStatus::Cancelled } else { AiRunStatus::Failed };
+        let expected_reason = if caller_cancel { "task_cancelled" } else { "permission_denied" };
+        assert_eq!(terminal.status, expected_status);
+        assert_eq!(terminal.error.as_ref().unwrap().reason, expected_reason);
+        assert!(!terminal.result_unknown);
+        assert!(!terminal.audit_warning);
+        assert_eq!(terminal.total_tokens, Some(7));
+        assert_eq!(f.runtime.request_stats().in_flight, 0);
+        assert!(f.confirmations.resolve("alice", &confirmation, true).is_err());
+        let persisted = f.repository.get("alice", "ai-consumer", &run_id).await.unwrap().unwrap();
+        assert_eq!(persisted.status, expected_status);
+        assert!(!persisted.result_unknown);
+        let events = received.lock().unwrap();
+        let terminals = events.iter().filter_map(|event| match &event.payload { AiEventPayload::Terminal { terminal } => Some(terminal), _ => None }).collect::<Vec<_>>();
+        assert_eq!(terminals.len(), 1);
+        assert_eq!(terminals[0].status, expected_status);
+        assert_eq!(terminals[0].error.as_ref().unwrap().reason, expected_reason);
+        drop(events);
+        assert!(f.mcp.list_usage_logs("alice", Some(&tool.server_id), None).await.unwrap().is_empty());
+        f.mcp.shutdown().await.unwrap();
+        model.assert_async().await;
+    }
+}
+
+#[tokio::test]
 async fn invalid_structured_output_is_retained_as_failed_without_repair_or_delivery_replay() {
     let mut server = mockito::Server::new_async().await;
     let upstream = server.mock("POST", "/chat/completions").with_header("content-type", "text/event-stream").with_body(sse()).expect(1).create_async().await;

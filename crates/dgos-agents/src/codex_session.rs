@@ -14,6 +14,8 @@ mod history;
 mod permissions;
 #[path = "codex_operations_session.rs"]
 mod operations;
+#[path = "codex_elicitation.rs"]
+mod elicitation;
 
 type SendReceipt = ([u8; 32], Option<Result<(), String>>);
 type SteerReceipt = ([u8; 32], Result<crate::session::SteeringReceipt, String>);
@@ -74,8 +76,7 @@ pub struct CodexSession {
     auth_launch: Option<Arc<crate::manager::native_auth::LaunchContext>>,
 }
 impl CodexSession {
-    async fn event(&self, mut event: Value) {
-        crate::images::redact_image_inputs(&mut event);
+    async fn event(&self, event: Value) {
         let mut view = self.view.lock().await;
         let mut turn = self.turn.lock().await;
         // Startup must fail promptly, but a turn ACK already received by the
@@ -123,6 +124,7 @@ impl CodexSession {
         if method == "turn/started" && Self::matches_thread(view, &params) { operations::bind_automatic(view, turn, &params); }
         if let Some(id) = event.get("id") {
             if !matches!(method, "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" | "item/permissions/requestApproval" | "item/tool/requestUserInput" | "mcpServer/elicitation/request") {
+                record_unsupported(view, method, &params);
                 return Some(json!({"id":id,"error":{"code":-32601,"message":"Unsupported client request"}}));
             }
             let standalone = method == "mcpServer/elicitation/request" && params.get("turnId").is_none_or(Value::is_null);
@@ -179,9 +181,7 @@ impl CodexSession {
                 view.error = error;
                 let mut terminal = params.clone();
                 if let Some(items) = terminal.pointer_mut("/turn/items").and_then(Value::as_array_mut) {
-                    for item in items.iter_mut().filter(|item| item["type"] == "reasoning") {
-                        *item = json!({"type":"reasoning","id":item.get("id"),"summary":item.get("summary")});
-                    }
+                    for item in items.iter_mut() { *item = item_data(item); }
                 }
                 terminal["run_status"] = json!(run);
                 terminal["native_status"] = json!(status);
@@ -202,7 +202,7 @@ impl CodexSession {
             }
             "item/started" => {
                 if let Some(item) = params.get("item").filter(|item| !matches!(item.get("type").and_then(Value::as_str), Some("userMessage" | "agentMessage"))) {
-                    let data = if item["type"] == "reasoning" { json!({"type":"reasoning","id":item.get("id"),"summary":item.get("summary")}) } else { item.clone() };
+                    let data = item_data(item);
                     view.push(method, None, data);
                 }
             }
@@ -247,6 +247,7 @@ impl CodexSession {
                 .into();
                 if let Some(controls) = &mut view.controls { controls.uncertain(); }
                 view.pending.clear();
+                view.clear_output_image_previews();
                 turn.id = None;
                 turn.starting = false;
                 turn.opening = false;
@@ -259,7 +260,9 @@ impl CodexSession {
                 view.error = Some(message.clone());
                 view.push(method, Some(message), params);
             }
-            _ => {}
+            // Private reasoning/authentication notifications never enter history.
+            _ if !method.starts_with("item/reasoning/") && !method.to_ascii_lowercase().contains("auth") => record_unsupported(view, method, &params),
+            _ => {},
         }
         None
     }
@@ -425,10 +428,7 @@ impl CodexSession {
                     })
                 })
             }),
-            "mcpServer/elicitation/request" => response.as_object().is_some_and(|object| object.keys().all(|key| matches!(key.as_str(), "action" | "content" | "_meta")))
-                && response.get("action").and_then(Value::as_str).is_some_and(|action| matches!(action, "accept" | "decline" | "cancel"))
-                && response.get("content").is_none_or(|content| content.is_null() || content.is_object())
-                && response.get("_meta").is_none_or(|meta| meta.is_null() || meta.is_object()),
+            "mcpServer/elicitation/request" => elicitation::valid_response(&pending.data, response),
             _ => false,
         };
         valid
@@ -490,6 +490,12 @@ impl CodexSession {
     }
     pub(crate) async fn snapshot_since(&self, after: Option<u64>) -> (SessionView, crate::session::EventSync) {
         self.view.lock().await.snapshot_since(after)
+    }
+    pub(crate) async fn preview_output_image(&self, id: &str) -> Result<crate::images::OutputImagePreview, String> {
+        if !self.wire.native_available() { return Err("image_preview_expired".into()); }
+        let view = self.view.lock().await;
+        if matches!(view.status.as_str(), "closed" | "unknown" | "starting") { return Err("image_preview_expired".into()); }
+        view.preview_image(id)
     }
     pub(crate) fn native_available(&self) -> bool { self.wire.native_available() }
     pub(crate) fn auth_launch(&self) -> Option<Arc<crate::manager::native_auth::LaunchContext>> {
@@ -574,7 +580,9 @@ impl CodexSession {
     }
     pub async fn close(&self) -> bool {
         let closed = self.wire.close().await;
-        if closed { self.view.lock().await.status = "closed".into(); }
+        let mut view = self.view.lock().await;
+        view.clear_output_image_previews();
+        if closed { view.status = "closed".into(); }
         closed
     }
     pub async fn wait_stopped(&self) -> bool {
@@ -585,7 +593,7 @@ impl CodexSession {
         let probe = crate::cli::probe(crate::cli::CliTool::Codex, options.executable.as_deref()).await;
         if let Some(error) = probe.startup_error() { return Err(error.into()); }
         let executable = probe.path.as_deref().ok_or("cli_not_installed")?;
-        if launch.env.get("DGOS_PROVIDER_KEY").is_none_or(|key| key.is_empty()) { return Err("provider_incompatible".into()); }
+        if launch.env.get("DGOS_PROVIDER_KEY").is_none_or(|key| key.is_empty()) { return Err("credential_unavailable".into()); }
         let mut command = Command::new(executable);
         command.args(["app-server", "--stdio"]).current_dir(&options.workspace);
         for name in ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORGANIZATION", "OPENAI_PROJECT", "AZURE_OPENAI_API_KEY", "CODEX_API_KEY"] { command.env_remove(name); }
@@ -601,7 +609,7 @@ impl CodexSession {
         let auth_launch = Arc::new(crate::manager::native_auth::LaunchContext { executable: executable.into(), workspace: options.workspace.clone(), env: auth_env });
         let process_lease = launch.lease.clone();
         let (wire, mut events) = providers.with_cli_spawn(&launch.lease, &launch.launch, |_| {
-            Ok(Transport::spawn(command, process_lease.cancellation_token(), diagnostic, process_lease.clone()))
+            Ok(Transport::spawn(command, process_lease.cancellation_token(), diagnostic, process_lease.clone(), launch.ownership.clone()))
         }).await.map_err(|_| "provider_revision_changed")??;
         let session = Self {
             wire,
@@ -630,9 +638,9 @@ impl CodexSession {
             session.wire.startup_request("handshake_initialize", "initialize", json!({"clientInfo":{"name":"dgos","version":"0.1.0"},"capabilities":{"experimentalApi":true}})).await?;
             session.wire.startup_write(json!({"method":"initialized","params":{}})).await?;
             let read = session.wire.startup_request("handshake_config_read", "config/read", json!({"includeLayers":false,"cwd":options.workspace})).await?;
-            verify_provider_config(&read, &launch.launch.metadata().base_url)?;
+            verify_provider_config(&read, &launch.launch.metadata().base_url, &launch.codex_provider_id)?;
             let method = if options.resume_id.is_some() { "thread/resume" } else { "thread/start" };
-            let mut params = json!({"cwd":options.workspace,"approvalPolicy":"on-request","sandbox":"workspace-write","model":launch.model,"modelProvider":"dgos_project"});
+            let mut params = json!({"cwd":options.workspace,"approvalPolicy":"on-request","sandbox":"workspace-write","model":launch.model,"modelProvider":launch.codex_provider_id});
             if let Some(id) = &options.resume_id {
                 params["threadId"] = json!(id);
                 params["excludeTurns"] = json!(true);
@@ -640,7 +648,8 @@ impl CodexSession {
             }
             let mut result = session.wire.startup_request("handshake_thread", method, params).await?;
             crate::images::redact_image_inputs(&mut result);
-            if result.get("model").and_then(Value::as_str) != Some(launch.model.as_str()) || result.get("modelProvider").and_then(Value::as_str) != Some("dgos_project") { return Err("provider_incompatible".into()); }
+            if result.get("model").and_then(Value::as_str) != Some(launch.model.as_str()) { return Err("provider_model_mismatch".into()); }
+            if result.get("modelProvider").and_then(Value::as_str) != Some(launch.codex_provider_id.as_str()) { return Err("provider_binding_unconfirmed".into()); }
             providers.validate_cli_lease(&launch.lease).await.map_err(|_| "provider_revision_changed")?;
             let id = result.pointer("/thread/id").and_then(Value::as_str).ok_or("invalid_output")?;
             if id.is_empty() || options.resume_id.as_deref().is_some_and(|expected| expected != id) { return Err("invalid_output".into()); }
@@ -736,9 +745,9 @@ impl CodexSession {
         }
     }
     fn item(view: &mut SessionView, item: &Value) {
-        let kind = item.get("type").and_then(Value::as_str).unwrap_or("item");
-        let text = (kind != "reasoning").then(|| item.get("text").and_then(Value::as_str).map(str::to_owned)).flatten();
-        let data = if kind == "reasoning" { json!({"type":"reasoning","id":item.get("id"),"summary":item.get("summary")}) } else { item.clone() };
+        let kind = safe_type(item.get("type").and_then(Value::as_str)).unwrap_or("item");
+        let text = item_text(item);
+        let data = item_data(item);
         view.push(kind, text, data);
     }
 }
@@ -836,6 +845,66 @@ fn read_only_response(pending: &PendingRequest, response: &Value) -> bool {
 }
 
 
+fn safe_type(value: Option<&str>) -> Option<&str> {
+    value.filter(|value| !value.is_empty() && value.len() <= 128 && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"_/.-".contains(&byte)))
+}
+
+fn record_unsupported(view: &mut SessionView, method: &str, params: &Value) {
+    if method.to_ascii_lowercase().contains("auth") || method.starts_with("item/reasoning/") { return; }
+    if params.get("threadId").and_then(Value::as_str).is_some_and(|id| Some(id) != view.native_id.as_deref()) { return; }
+    let native_type = safe_type(Some(method)).unwrap_or("unknown");
+    // No payload, IDs, field names, error strings or provider data are copied.
+    view.push("native/unsupported", None, json!({"diagnostic":"unsupported_native_event","native_type":native_type,"payload_omitted":true}));
+}
+
+fn item_text(item: &Value) -> Option<String> {
+    match item.get("type").and_then(Value::as_str) {
+        Some("reasoning") => None,
+        Some("userMessage") => item.get("text").and_then(Value::as_str).map(str::to_owned).or_else(|| {
+            let blocks = item.get("content").and_then(Value::as_array).or_else(|| item.get("input").and_then(Value::as_array))?;
+            let text = blocks.iter().filter(|block| block["type"] == "text").filter_map(|block| block.get("text").and_then(Value::as_str)).collect::<Vec<_>>().join("\n");
+            (!text.is_empty()).then_some(text)
+        }),
+        Some("agentMessage" | "plan" | "hookPrompt") => item.get("text").and_then(Value::as_str).map(str::to_owned),
+        _ => None,
+    }
+}
+
+fn item_data(item: &Value) -> Value {
+    match item.get("type").and_then(Value::as_str) {
+        Some("reasoning") => json!({"type":"reasoning","id":item.get("id"),"summary":item.get("summary")}),
+        Some("userMessage") => {
+            let mut data = item.clone();
+            for pointer in ["/content", "/input"] {
+                if let Some(blocks) = data.pointer_mut(pointer).and_then(Value::as_array_mut) { sanitize_content_blocks(blocks); }
+            }
+            data
+        },
+        Some("mcpToolCall" | "dynamicToolCall" | "functionCallOutput") => {
+            let mut data = item.clone();
+            for pointer in ["/result/content", "/contentItems", "/output"] {
+                if let Some(blocks) = data.pointer_mut(pointer).and_then(Value::as_array_mut) { sanitize_content_blocks(blocks); }
+            }
+            data
+        },
+        Some("hookPrompt" | "agentMessage" | "plan" | "commandExecution" | "fileChange" | "collabAgentToolCall" | "subAgentActivity" | "webSearch" | "imageView" | "sleep" | "imageGeneration" | "enteredReviewMode" | "exitedReviewMode" | "contextCompaction") => item.clone(),
+        kind => json!({"type":safe_type(kind).unwrap_or("unknown"),"diagnostic":"unsupported_native_event","payload_omitted":true}),
+    }
+}
+
+fn sanitize_content_blocks(blocks: &mut Vec<Value>) {
+    blocks.retain_mut(|block| {
+        let kind = block.get("type").and_then(Value::as_str);
+        if matches!(kind, Some("thinking" | "redacted_thinking" | "signature" | "reasoning" | "encrypted_content")) { return false; }
+        if !matches!(kind, Some("text" | "input_text" | "inputText" | "image" | "localImage" | "input_image" | "inputImage" | "resource" | "resource_link" | "document" | "audio" | "localAudio" | "input_audio" | "inputAudio" | "skill" | "mention")) {
+            *block = json!({"type":safe_type(kind).unwrap_or("unknown"),"diagnostic":"unsupported_native_event","payload_omitted":true});
+        } else if let Some(object) = block.as_object_mut() {
+            for key in ["thinking", "signature", "redacted_thinking", "encrypted_content"] { object.remove(key); }
+        }
+        true
+    });
+}
+
 fn native_error(_: &Value) -> String { "engine_failed".into() }
 
 fn event_size(value: &Value) -> usize {
@@ -847,17 +916,42 @@ fn event_size(value: &Value) -> usize {
     }
 }
 
-fn verify_provider_config(read: &Value, base_url: &str) -> Result<(), String> {
-    let config = read.get("config").ok_or("provider_incompatible")?;
-    let provider = &config["model_providers"]["dgos_project"];
-    if config.get("model_provider").and_then(Value::as_str) != Some("dgos_project")
+fn verify_provider_config(read: &Value, base_url: &str, provider_id: &str) -> Result<(), String> {
+    let config = read.get("config").ok_or("provider_binding_unconfirmed")?;
+    let provider = &config["model_providers"][provider_id];
+    if config.get("model_provider").and_then(Value::as_str) != Some(provider_id)
         || provider.get("base_url").and_then(Value::as_str) != Some(base_url)
         || provider.get("wire_api").and_then(Value::as_str) != Some("responses")
-        || provider.get("env_key").and_then(Value::as_str) != Some("DGOS_PROVIDER_KEY")
+    { return Err("provider_binding_unconfirmed".into()); }
+    if provider.get("env_key").and_then(Value::as_str) != Some("DGOS_PROVIDER_KEY")
         || provider.get("requires_openai_auth").and_then(Value::as_bool) != Some(false)
         || ["http_headers", "env_http_headers", "experimental_bearer_token", "experimental_bearer_token_command"].iter().any(|key| provider.get(key).is_some_and(|v| !v.is_null() && v.as_object().is_none_or(|o| !o.is_empty())))
-    { return Err("provider_incompatible".into()); }
+    { return Err("provider_auth_conflict".into()); }
     Ok(())
+}
+
+#[cfg(test)]
+mod provider_binding_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_selected_process_route_can_supply_authentication() {
+        let id = "dgos_fresh_binding";
+        let base = "https://responses.example/v1";
+        let mut read = json!({"config":{"model_provider":id,"model_providers":{
+            "dgos_project":{"experimental_bearer_token":"unrelated-native-credential"},
+            (id):{"base_url":base,"wire_api":"responses","env_key":"DGOS_PROVIDER_KEY","requires_openai_auth":false}
+        }}});
+        assert_eq!(verify_provider_config(&read, base, id), Ok(()));
+        read["config"]["model_providers"][id]["experimental_bearer_token"] = json!("unexpected-credential");
+        assert_eq!(verify_provider_config(&read, base, id).unwrap_err(), "provider_auth_conflict");
+        read["config"]["model_providers"][id].as_object_mut().unwrap().remove("experimental_bearer_token");
+        read["config"]["model_providers"][id]["wire_api"] = json!("chat");
+        assert_eq!(verify_provider_config(&read, base, id).unwrap_err(), "provider_binding_unconfirmed");
+        read["config"]["model_providers"][id]["wire_api"] = json!("responses");
+        read["config"]["model_provider"] = json!("dgos_project");
+        assert_eq!(verify_provider_config(&read, base, id).unwrap_err(), "provider_binding_unconfirmed");
+    }
 }
 
 #[cfg(test)]
@@ -1111,6 +1205,54 @@ mod tests {
         let item = json!({"type":"commandExecution","status":"failed","command":"false","exitCode":1,"aggregatedOutput":"failure output","error":{"message":"command failed"}});
         CodexSession::item(&mut view, &item);
         assert_eq!(view.events[0].data, item);
+    }
+
+    #[test]
+    fn completion_distinguishes_missing_empty_and_full_output_without_rewriting_native_data() {
+        for output in [None, Some(""), Some("complete output")] {
+            let (mut view, mut turn) = running();
+            CodexSession::apply_event(&mut view, &mut turn, json!({"method":"item/commandExecution/outputDelta","params":{"threadId":"thread","turnId":"second-turn","itemId":"command","delta":"streamed"}}));
+            let mut item = json!({"id":"command","type":"commandExecution","status":"completed","exitCode":0});
+            if let Some(output) = output { item["aggregatedOutput"] = json!(output); }
+            CodexSession::apply_event(&mut view, &mut turn, json!({"method":"item/completed","params":{"threadId":"thread","turnId":"second-turn","item":item}}));
+            assert_eq!(view.events[0].text.as_deref(), Some("streamed"));
+            assert_eq!(view.events[1].data.get("aggregatedOutput").and_then(Value::as_str), output);
+        }
+    }
+
+    #[test]
+    fn unknown_notifications_and_requests_keep_only_bounded_type_diagnostics() {
+        let (mut view, mut turn) = running();
+        CodexSession::apply_event(&mut view, &mut turn, json!({"method":"item/future","params":{"threadId":"thread","turnId":"second-turn","payload":"SECRET","thinking":"SECRET","apiKey":"SECRET"}}));
+        assert_eq!(view.events[0].kind, "native/unsupported");
+        assert_eq!(view.events[0].data, json!({"diagnostic":"unsupported_native_event","native_type":"item/future","payload_omitted":true}));
+        let reply = CodexSession::apply_event(&mut view, &mut turn, json!({"id":99,"method":"client/future","params":{"threadId":"thread","payload":"SECRET"}})).unwrap();
+        assert_eq!(reply["error"]["code"], -32601);
+        assert_eq!(view.pending.len(), 0);
+        assert!(!serde_json::to_string(&view).unwrap().contains("SECRET"));
+        let count = view.events.len();
+        CodexSession::apply_event(&mut view, &mut turn, json!({"method":"account/authUpdated","params":{"token":"SECRET"}}));
+        assert_eq!(view.events.len(), count);
+    }
+
+    #[test]
+    fn native_sources_and_mcp_resource_payloads_remain_structured_evidence() {
+        let (mut view, mut turn) = running();
+        for item in [json!({"id":"search","type":"webSearch","query":"query","results":[{"title":"Native hit","url":"https://example.org"}]}), json!({"id":"mcp","type":"mcpToolCall","status":"failed","result":{"isError":true,"content":[{"type":"resource","resource":{"uri":"file:///workspace/report.txt","mimeType":"text/plain","text":"body"}}],"structuredContent":{"value":42}}})] {
+            CodexSession::apply_event(&mut view, &mut turn, json!({"method":"item/completed","params":{"threadId":"thread","turnId":"second-turn","item":item}}));
+            assert_eq!(view.events.last().unwrap().data, item);
+        }
+        assert!(view.terminal_run.is_none());
+    }
+
+    #[test]
+    fn unknown_native_blocks_and_encrypted_content_never_persist_arbitrary_payloads() {
+        let mut view = SessionView::new("/fixture".into());
+        for item in [json!({"id":"user","type":"userMessage","input":[{"type":"text","text":"safe"},{"type":"futureInput","payload":"SECRET"}]}), json!({"id":"mcp","type":"mcpToolCall","result":{"content":[{"type":"futureContent","payload":"SECRET"},{"type":"thinking","thinking":"SECRET"},{"type":"text","text":"visible","signature":"SECRET"}],"structuredContent":{"record":42}}}), json!({"id":"function","type":"functionCallOutput","output":[{"type":"encrypted_content","encrypted_content":"SECRET"}]})] { CodexSession::item(&mut view, &item); }
+        assert_eq!(view.events[0].text.as_deref(), Some("safe"));
+        assert_eq!(view.events[1].data["result"]["structuredContent"], json!({"record":42}));
+        assert_eq!(view.events[2].data["output"], json!([]));
+        assert!(!serde_json::to_string(&view).unwrap().contains("SECRET"));
     }
 
 }

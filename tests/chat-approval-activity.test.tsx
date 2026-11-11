@@ -1,10 +1,11 @@
 import { chatBudget } from './helpers/chatBudget';
+import { chatUsage } from './helpers/chatUsage';
 import { Profiler } from 'react';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { invoke } from '@tauri-apps/api/core';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import MessageList from '../src/components/chat/MessageList';
-import { useChatStore, type ChatSession, type ChatStreamEvent, type ChatToolProposal } from '../src/stores/chatStore';
+import { useChatStore, type ChatSession, type ChatStreamPayload, type ChatToolProposal } from '../src/stores/chatStore';
 import { SurfaceScope } from '../src/workspace/SurfaceContext';
 import { createWorkspaceController } from '../src/workspace/controller';
 import { MockChannel } from './helpers/mockChannel';
@@ -24,7 +25,7 @@ const proposal = (id = 'proposal-1', seconds = 5): ChatToolProposal => ({
   id, server_id: 'srv1', server_name: '文件服务', tool_name: 'read_file', schema_hash: 'schema',
   arguments: { path: '/synthetic/example.txt' }, expires_at: Date.now() / 1000 + seconds,
 });
-const emit = (event: ChatStreamEvent) => act(() => MockChannel.last().emit(event));
+const emit = (event: ChatStreamPayload) => act(() => MockChannel.last().emit(event));
 const arrive = (value = proposal()) => emit({ kind: 'tool_proposal', assistant_message_id: 'a1', proposal: value });
 const heading = () => screen.getByRole('heading', { hidden: true });
 const remaining = () => screen.getByText(/剩余 \d+ 秒/).textContent;
@@ -42,6 +43,7 @@ beforeEach(async () => {
       case 'list_chat_sessions': return ok({ items: sessions, next_cursor: null });
       case 'list_chat_messages': return ok({ items: [], next_before_seq: null });
       case 'inspect_chat_context': return ok(chatBudget());
+      case 'get_chat_usage': return ok(chatUsage());
       case 'send_chat_message': {
         const { input } = args as { input: { client_request_id: string } };
         return ok({ task_id: input.client_request_id, user_message_id: 'u1', assistant_message_id: 'a1', dropped_turns: 0, replayed: false });

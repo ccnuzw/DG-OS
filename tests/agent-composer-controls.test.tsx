@@ -48,14 +48,14 @@ it('uses latest Codex turn usage, never cumulative totals, and refuses guessed c
   value.events.push({ seq: 2, kind: 'thread/tokenUsage/updated', text: null, data: { tokenUsage: { total: { totalTokens: 99000 } } } });
   expect(agentContextUsage(value)).toMatchObject({ used: null, limit: null, kind: 'unavailable' });
 });
-it('keeps Claude context to the latest main-agent response and exact same-run model limit', () => {
+it('keeps Claude context to the latest main-agent request input and exact same-run model limit', () => {
   const value = { ...session(), engine: 'claude' as const };
   value.events = [
     { seq: 1, kind: 'message', text: null, run: 'turn', data: { type: 'assistant', model: 'native-model', usage_source: 'native_response', usage: { input_tokens: 20, output_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 10 } } },
     { seq: 2, kind: 'message', text: null, run: 'turn', data: { type: 'assistant', model: 'native-model', parent_tool_use_id: 'subagent', usage_source: 'native_response', usage: { input_tokens: 9999, output_tokens: 100 } } },
     { seq: 3, kind: 'result', text: null, run: 'turn', data: { usage: { input_tokens: 80000 }, model_limits: { 'native-model': { contextWindow: 1000 } } } },
   ];
-  expect(agentContextUsage(value)).toMatchObject({ used: 135, limit: 1000, seq: 1 });
+  expect(agentContextUsage(value)).toMatchObject({ used: 130, limit: 1000, seq: 1, latest: { input: 80000, output: null } });
   value.events[2].run = 'another-turn';
   expect(agentContextUsage(value).limit).toBeNull();
   value.events[0].data = { ...(value.events[0].data as object), history: true };
@@ -67,8 +67,8 @@ it('does not invent a Claude context limit without a run identity or label overf
     { seq: 1, kind: 'message', text: null, data: { type: 'assistant', model: 'm', usage_source: 'native_response', usage: { input_tokens: 4, output_tokens: 2 } } },
     { seq: 2, kind: 'result', text: null, data: { model_limits: { m: { contextWindow: 1000 } } } },
   ] };
-  expect(agentContextUsage(value)).toMatchObject({ used: 6, limit: null, kind: 'estimated' });
-  value.events[0].data = { type: 'assistant', model: 'm', usage_source: 'native_response', usage: { input_tokens: Number.MAX_SAFE_INTEGER, output_tokens: 1 } };
+  expect(agentContextUsage(value)).toMatchObject({ used: 4, limit: null, kind: 'estimated' });
+  value.events[0].data = { type: 'assistant', model: 'm', usage_source: 'native_response_input', usage: { input_tokens: Number.MAX_SAFE_INTEGER, cache_read_input_tokens: 1, output_tokens: 1 } };
   expect(agentContextUsage(value)).toMatchObject({ used: null, limit: null, kind: 'unavailable' });
 });
 

@@ -1,7 +1,9 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { AgentConversation, EventContent } from '../src/pages/workbench/AgentConversation';
+import { AgentConversation } from '../src/pages/workbench/AgentConversation';
+import { EventContent } from '../src/components/development/AgentReplyContent';
 import { agentEventFailed, agentOutputReferences, resolveDevelopmentFileReference } from '../src/components/development/eventOutputReferences';
+import { itemKey } from '../src/components/development/agentTranscript';
 import { useAgentRunner, type AgentEvent, type AgentSession } from '../src/stores/agentRunnerStore';
 import { useDevelopment } from '../src/stores/developmentStore';
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
@@ -32,16 +34,18 @@ it('links constrained diagnostics only from known native command output and tool
   expect(agentOutputReferences(codex).references).toEqual([{ path: '/task/src/app.ts', line: 7, source: 'diagnostic', diff: false }]);
   const claude = event({ type: 'user', content: [{ type: 'tool_result', tool_use_id: 'bash-1', is_error: true, content: '/task/src/app.ts:7:2: error: invalid type' }] }, 'message');
   expect(agentOutputReferences(claude).references).toEqual([]);
-  expect(agentOutputReferences(claude, new Map([['other-run:bash-1', 'Bash']])).references).toEqual([]);
-  expect(agentOutputReferences(claude, new Map([['actual-run:bash-1', 'Bash']])).references[0].line).toBe(7);
+  expect(agentOutputReferences(claude, new Map([[itemKey({ ...claude, run: 'other-run' }, 'bash-1'), 'Bash']])).references).toEqual([]);
+  expect(agentOutputReferences(claude, new Map([[itemKey(claude, 'bash-1'), 'Bash']])).references[0].line).toBe(7);
   expect(agentEventFailed(claude)).toBe(true);
 });
 
-it('requires explicit clicks and navigates to the actual failed run', () => {
+it('requires explicit clicks and navigates to the actual failed run', async () => {
   const onOpenReference = vi.fn(); const onSelectRun = vi.fn();
   render(<EventContent event={event({ type: 'commandExecution', status: 'failed', cwd: '/task', aggregatedOutput: 'a.ts:2:1: error: failed' }, 'commandExecution')} onOpenReference={onOpenReference} onSelectRun={onSelectRun} />);
   expect(onOpenReference).not.toHaveBeenCalled(); expect(onSelectRun).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'agent.openFile' }));
+  expect(screen.queryByRole('button', { name: 'agent.openFile' })).toBeNull();
+  fireEvent.click(screen.getByText('agent.references'));
+  fireEvent.click(await screen.findByRole('button', { name: 'agent.openFile' }));
   expect(onOpenReference).toHaveBeenCalledWith({ path: '/task/a.ts', line: 2, source: 'diagnostic', diff: false }, 'file');
   fireEvent.click(screen.getByRole('button', { name: 'agent.openRun' }));
   expect(onSelectRun).toHaveBeenCalledWith('actual-run');

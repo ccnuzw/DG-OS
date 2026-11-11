@@ -21,11 +21,11 @@ use dgos_types::{
 };
 use futures::StreamExt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::sync::atomic::AtomicBool;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::info;
+use crate::usage::{CallAudit, UsageMeter, UsageRegistry};
 
 use crate::adapters::anthropic::AnthropicAdapter;
 use crate::adapters::openai::OpenAIAdapter;
@@ -49,6 +49,7 @@ pub struct ProviderManager {
     provider_repo: ProviderRepository,
     model_repo: ModelRepository,
     usage_log_repo: UsageLogRepository,
+    usage: Arc<UsageRegistry>,
     vault: Arc<dyn ProviderCredentialVault>,
     // Serialize credential pointer changes and their outbox cleanup. Network
     // calls release this lock after obtaining their immutable adapter snapshot.
@@ -75,6 +76,7 @@ impl Clone for ProviderManager {
             provider_repo: ProviderRepository::new(self.db.clone()),
             model_repo: ModelRepository::new(self.db.clone()),
             usage_log_repo: UsageLogRepository::new(self.db.clone()),
+            usage: self.usage.clone(),
             vault: self.vault.clone(),
             credentials_lock: self.credentials_lock.clone(),
             cli_bindings: self.cli_bindings.clone(),
@@ -87,6 +89,12 @@ impl Clone for ProviderManager {
 }
 
 impl ProviderManager {
+    /// Await all owned admission/settlement work before publishing a live chat run's terminal
+    /// state. Dropped stream/future cleanup is included; this never dispatches provider work.
+    pub async fn settle_chat_usage(&self, user_id: &str, run_id: &str) -> bool {
+        self.usage.settle(user_id, run_id).await
+    }
+
     /// Create a new provider manager
     pub async fn new(database_url: &str) -> DgosResult<Self> {
         Self::with_vault(database_url, Arc::new(UnavailableCredentialVault)).await
@@ -109,6 +117,7 @@ impl ProviderManager {
             provider_repo,
             model_repo,
             usage_log_repo,
+            usage: Arc::new(UsageRegistry::default()),
             vault,
             credentials_lock: Arc::new(Mutex::new(())),
             cli_bindings: Arc::new(CliProviderBindingGate::default()),
@@ -119,9 +128,19 @@ impl ProviderManager {
         })
     }
 
+    /// Serializes host credential pointer mutations with this manager's cleanup outbox.
+    pub fn credential_mutation_lock(&self) -> Arc<Mutex<()>> {
+        self.credentials_lock.clone()
+    }
+
     #[cfg(test)]
     pub async fn hold_credentials_lock_for_test(&self) -> ProviderCredentialLockFixture {
         ProviderCredentialLockFixture(self.credentials_lock.clone().lock_owned().await)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn provider_usage_gate_for_test(&self, user: &str, provider: &str) -> Arc<tokio::sync::RwLock<()>> {
+        self.usage.provider_gate(user, provider)
     }
 
     /// Production wiring passes the process-wide gate that VACUUM uses. Without it, the manager owns a private gate.
@@ -318,13 +337,25 @@ impl ProviderManager {
     async fn delete_provider_owned(&self, id: &str, user_id: &str) -> DgosResult<()> {
         info!("Deleting provider: {}", id);
 
+        // Never wait for network/settlement while holding the global credential pointer lock:
+        // unrelated Providers must remain usable. Each attempt owns a read permit until its
+        // terminal transaction commits; queued deletion also closes admission for new attempts.
+        let usage_gate = self.usage.provider_gate(user_id, id);
+        let _usage = usage_gate.write().await;
         let guard = self.credentials_lock.lock().await;
-        let current = self.owned_provider(id, user_id).await?;
+        let current = match self.owned_provider(id, user_id).await {
+            Err(error @ DgosError::ProviderNotFound(_)) => {
+                self.usage.forget_provider(user_id, id);
+                return Err(error);
+            }
+            result => result?,
+        };
         let result = self.provider_repo.delete(id, user_id).await;
         let delivery = self.cli_mutation_outcome(&current, &result, CliProviderChangeKind::ExecutionInvalidated).await;
         drop(guard);
         if let Some(delivery) = delivery { delivery.deliver(); }
         let _ = self.drain_credential_cleanup().await;
+        if result.is_ok() { self.usage.forget_provider(user_id, id); }
         result
     }
 
@@ -465,8 +496,7 @@ impl ProviderManager {
         expected_revision: Option<i64>,
         provenance: Option<&ExecutionProvenance>,
     ) -> DgosResult<ChatResponse> {
-        let start = Instant::now();
-        let _permit = self.gate.admit().map_err(|_| DgosError::ProviderRequestRejected)?;
+        let permit = self.gate.admit().map_err(|_| DgosError::ProviderRequestRejected)?;
 
         let provider = self
             .provider_repo
@@ -486,66 +516,13 @@ impl ProviderManager {
         let mut request = request;
         self.fill_max_tokens(adapter.as_ref(), provider_id, model_id, &mut request)
             .await;
+        let mut audit = CallAudit::new(&self.db, provider_id, model_id, user_id, provenance, &self.usage, permit);
 
-        let mut result = adapter
-            .call_with_usage(model_id, request)
-            .await
+        let mut result = audit.meter.scope(adapter.call_with_usage(model_id, request)).await
             .map_err(|failure| (failure.error, failure.usage));
-        let latency_ms = start.elapsed().as_millis() as u32;
-
-        // Log usage. A failure normally cost nothing (0 tokens); one the upstream answered and
-        // the host then rejected carries the upstream's own numbers.
-        match &result {
-            Ok(response) => {
-                let (prompt, completion) = (
-                    response.usage.prompt_tokens,
-                    response.usage.completion_tokens,
-                );
-                if let Err(audit_error) = self
-                    .usage_log_repo
-                    .create_with_provenance(
-                        provider_id,
-                        model_id,
-                        user_id,
-                        prompt,
-                        completion,
-                        prompt > 0 || completion > 0,
-                        latency_ms,
-                        true,
-                        None,
-                        provenance,
-                    )
-                    .await
-                {
-                    warn!(provider_id, model_id, error = %audit_error, "Provider succeeded but usage audit write failed");
-                    if let Ok(response) = &mut result {
-                        response.audit_warning = true;
-                    }
-                }
-            }
-            Err((e, usage)) => {
-                let (prompt, completion) = usage.as_ref().map_or((0, 0), |usage| {
-                    (usage.prompt_tokens, usage.completion_tokens)
-                });
-                if let Err(audit_error) = self
-                    .usage_log_repo
-                    .create_with_provenance(
-                        provider_id,
-                        model_id,
-                        user_id,
-                        prompt,
-                        completion,
-                        prompt > 0 || completion > 0,
-                        latency_ms,
-                        false,
-                        Some(e.error_code().to_string()),
-                        provenance,
-                    )
-                    .await
-                {
-                    warn!(provider_id, model_id, error = %audit_error, provider_error = %e, "Provider failed and usage audit write failed");
-                }
-            }
+        let error = result.as_ref().err().map(|(error, _)| error.error_code());
+        if !audit.finish(error).await {
+            if let Ok(response) = &mut result { response.audit_warning = true; }
         }
 
         result.map_err(|(error, _)| error)
@@ -560,8 +537,7 @@ impl ProviderManager {
         expected_revision: Option<i64>, provenance: Option<&ExecutionProvenance>,
         cancellation: CancellationToken, deadline: tokio::time::Instant, dispatched: Arc<AtomicBool>,
     ) -> DgosResult<ChatResponse> {
-        let started = Instant::now();
-        let _permit = self.gate.admit().map_err(|_| DgosError::ProviderRequestRejected)?;
+        let permit = self.gate.admit().map_err(|_| DgosError::ProviderRequestRejected)?;
         let prepare = async {
             let provider = self.provider_repo.get(provider_id, user_id).await?
                 .ok_or_else(|| DgosError::ProviderNotFound(provider_id.to_owned()))?;
@@ -578,25 +554,17 @@ impl ProviderManager {
         };
         if cancellation.is_cancelled() { return Err(DgosError::StreamInterrupted); }
         if tokio::time::Instant::now() >= deadline { return Err(DgosError::Timeout); }
-        dispatched.store(true, Ordering::Release);
-        let mut audit = UnknownCallAudit::new(&self.db, provider_id, model_id, user_id, provenance, started);
+        let mut audit = CallAudit::new(&self.db, provider_id, model_id, user_id, provenance, &self.usage, permit);
+        audit.meter.bind_dispatch_signal(dispatched);
         let response = tokio::select! {
             biased;
-            response = adapter.call_with_usage(model_id, request) => response.map_err(|failure| (failure.error, failure.usage)),
+            response = audit.meter.scope(adapter.call_with_usage(model_id, request)) => response.map_err(|failure| (failure.error, failure.usage)),
             _ = cancellation.cancelled() => return Err(DgosError::StreamInterrupted),
             _ = tokio::time::sleep_until(deadline) => return Err(DgosError::Timeout),
         };
-        let elapsed = started.elapsed().as_millis() as u32;
         let mut response = response;
-        let (prompt, completion, success, error_code) = match &response {
-            Ok(response) => (response.usage.prompt_tokens, response.usage.completion_tokens, true, None),
-            Err((error, usage)) => { let (p, c) = usage.as_ref().map_or((0, 0), |u| (u.prompt_tokens, u.completion_tokens)); (p, c, false, Some(error.error_code().to_string())) }
-        };
-        let write = self.usage_log_repo.create_with_provenance(provider_id, model_id, user_id, prompt, completion,
-            prompt > 0 || completion > 0, elapsed, success, error_code, provenance).await;
-        audit.complete();
-        if let Err(error) = write {
-            warn!(provider_id, model_id, error = %error, "Provider usage audit write failed");
+        let error = response.as_ref().err().map(|(error, _)| error.error_code());
+        if !audit.finish(error).await {
             if let Ok(response) = &mut response { response.audit_warning = true; }
         }
         response.map_err(|(error, _)| error)
@@ -642,7 +610,7 @@ impl ProviderManager {
         expected_revision: Option<i64>,
         provenance: Option<&ExecutionProvenance>,
     ) -> DgosResult<ToolChatResponse> {
-        let _permit = self.gate.admit().map_err(|_| DgosError::ProviderRequestRejected)?;
+        let permit = self.gate.admit().map_err(|_| DgosError::ProviderRequestRejected)?;
         let provider = self
             .provider_repo
             .get(provider_id, user_id)
@@ -654,36 +622,11 @@ impl ProviderManager {
         let adapter = self
             .adapter_for_saved(&provider, true, expected_revision)
             .await?;
-        let start = Instant::now();
-        let mut result = adapter.call_tools(model_id, request).await;
-        let (input, output, error) = match &result {
-            Ok(response) => (
-                response.usage.prompt_tokens,
-                response.usage.completion_tokens,
-                None,
-            ),
-            Err(error) => (0, 0, Some(error.error_code().to_string())),
-        };
-        if let Err(audit_error) = self
-            .usage_log_repo
-            .create_with_provenance(
-                provider_id,
-                model_id,
-                user_id,
-                input,
-                output,
-                input > 0 || output > 0,
-                start.elapsed().as_millis() as u32,
-                result.is_ok(),
-                error,
-                provenance,
-            )
-            .await
-        {
-            warn!(provider_id, model_id, error = %audit_error, "Provider tools response audit write failed");
-            if let Ok(response) = &mut result {
-                response.audit_warning = true;
-            }
+        let mut audit = CallAudit::new(&self.db, provider_id, model_id, user_id, provenance, &self.usage, permit);
+        let mut result = audit.meter.scope(adapter.call_tools(model_id, request)).await;
+        let error = result.as_ref().err().map(DgosError::error_code);
+        if !audit.finish(error).await {
+            if let Ok(response) = &mut result { response.audit_warning = true; }
         }
         result
     }
@@ -694,8 +637,7 @@ impl ProviderManager {
         expected_revision: Option<i64>, provenance: Option<&ExecutionProvenance>, cancellation: CancellationToken,
         deadline: tokio::time::Instant, dispatched: Arc<AtomicBool>,
     ) -> DgosResult<ToolChatResponse> {
-        let started = Instant::now();
-        let _permit = self.gate.admit().map_err(|_| DgosError::ProviderRequestRejected)?;
+        let permit = self.gate.admit().map_err(|_| DgosError::ProviderRequestRejected)?;
         let prepare = async {
             let provider = self.provider_repo.get(provider_id, user_id).await?
                 .filter(|p| p.enabled && p.user_id == user_id)
@@ -710,23 +652,16 @@ impl ProviderManager {
         };
         if cancellation.is_cancelled() { return Err(DgosError::StreamInterrupted); }
         if tokio::time::Instant::now() >= deadline { return Err(DgosError::Timeout); }
-        dispatched.store(true, Ordering::Release);
-        let mut audit = UnknownCallAudit::new(&self.db, provider_id, model_id, user_id, provenance, started);
+        let mut audit = CallAudit::new(&self.db, provider_id, model_id, user_id, provenance, &self.usage, permit);
+        audit.meter.bind_dispatch_signal(dispatched);
         let mut result = tokio::select! {
             biased;
-            result = adapter.call_tools(model_id, request) => result,
+            result = audit.meter.scope(adapter.call_tools(model_id, request)) => result,
             _ = cancellation.cancelled() => return Err(DgosError::StreamInterrupted),
             _ = tokio::time::sleep_until(deadline) => return Err(DgosError::Timeout),
         };
-        let (input, output, error) = match &result {
-            Ok(response) => (response.usage.prompt_tokens, response.usage.completion_tokens, None),
-            Err(error) => (0, 0, Some(error.error_code().to_string())),
-        };
-        let write = self.usage_log_repo.create_with_provenance(provider_id, model_id, user_id, input, output, input > 0 || output > 0,
-            started.elapsed().as_millis() as u32, result.is_ok(), error, provenance).await;
-        audit.complete();
-        if let Err(error) = write {
-            warn!(provider_id, model_id, error = %error, "Provider tools response audit write failed");
+        let error = result.as_ref().err().map(DgosError::error_code);
+        if !audit.finish(error).await {
             if let Ok(response) = &mut result { response.audit_warning = true; }
         }
         result
@@ -797,32 +732,12 @@ impl ProviderManager {
         let mut request = request;
         self.fill_max_tokens(adapter.as_ref(), provider_id, model_id, &mut request)
             .await;
-        let started = Instant::now();
-        match adapter.stream(model_id, request).await {
-            Ok(stream) => {
-                let audit = StreamAudit {
-                    db: self.db.clone(),
-                    provider_id: provider_id.to_owned(),
-                    model_id: model_id.to_owned(),
-                    user_id: user_id.to_owned(),
-                    provenance: provenance.cloned(),
-                    started,
-                    finished: false,
-                    permit: Some(permit),
-                };
-                Ok(audited_stream(stream, audit))
-            }
+        let mut audit = StreamAudit::new(&self.db, provider_id, model_id, user_id, provenance, &self.usage, permit);
+        let opened = audit.meter.scope(adapter.stream(model_id, request)).await;
+        match opened {
+            Ok(stream) => Ok(audited_stream(stream, audit)),
             Err(error) => {
-                write_stream_log(
-                    &self.db,
-                    provider_id,
-                    model_id,
-                    user_id,
-                    provenance,
-                    started,
-                    StreamOutcome::Failed(error.error_code()),
-                )
-                .await;
+                audit.finish(StreamOutcome::Failed(error.error_code())).await;
                 Err(error)
             }
         }
@@ -900,14 +815,12 @@ impl ProviderManager {
         };
         if cancellation.is_cancelled() { return Err(DgosError::StreamInterrupted); }
         if tokio::time::Instant::now() >= deadline { return Err(DgosError::Timeout); }
-        let started = Instant::now();
-        let mut audit = StreamAudit { db: self.db.clone(), provider_id: provider_id.into(), model_id: model_id.into(), user_id: user_id.into(),
-            provenance: provenance.cloned(), started, finished: false, permit: Some(permit) };
+        let mut audit = StreamAudit::new(&self.db, provider_id, model_id, user_id, provenance, &self.usage, permit);
         let opened = tokio::select! {
             biased;
             _ = cancellation.cancelled() => return Err(DgosError::StreamInterrupted),
             _ = tokio::time::sleep_until(deadline) => return Err(DgosError::Timeout),
-            stream = adapter.stream_with_dispatch(model_id, request, Some(dispatched.as_ref())) => stream,
+            stream = audit.meter.scope(adapter.stream_with_dispatch(model_id, request, Some(dispatched.as_ref()))) => stream,
         };
         match opened {
             Ok(stream) => Ok(Box::pin(cancellable_stream(audited_stream(stream, audit), cancellation))),
@@ -941,14 +854,12 @@ impl ProviderManager {
         };
         if cancellation.is_cancelled() { return Err(DgosError::StreamInterrupted); }
         if tokio::time::Instant::now() >= deadline { return Err(DgosError::Timeout); }
-        let started = Instant::now();
-        let mut audit = StreamAudit { db: self.db.clone(), provider_id: provider_id.into(), model_id: model_id.into(), user_id: user_id.into(),
-            provenance: provenance.cloned(), started, finished: false, permit: Some(permit) };
+        let mut audit = StreamAudit::new(&self.db, provider_id, model_id, user_id, provenance, &self.usage, permit);
         let opened = tokio::select! {
             biased;
             _ = cancellation.cancelled() => return Err(DgosError::StreamInterrupted),
             _ = tokio::time::sleep_until(deadline) => return Err(DgosError::Timeout),
-            result = adapter.stream_tools_with_dispatch(model_id, request, Some(dispatched.as_ref())) => result,
+            result = audit.meter.scope(adapter.stream_tools_with_dispatch(model_id, request, Some(dispatched.as_ref()))) => result,
         };
         match opened {
             Ok(stream) => Ok(Box::pin(cancellable_stream(audited_tool_stream(stream, audit), cancellation))),
@@ -1290,143 +1201,37 @@ fn prepare_config(config: &mut ProviderConfig) -> DgosResult<()> {
         &config.base_url,
         config.config.as_ref(),
     )?;
+    crate::cli_routes::validate_cli_provider_routes(&normalized, config.config.as_ref())?;
     config.base_url = normalized.base_url;
     Ok(())
 }
-struct UnknownCallAudit {
-    db: DatabaseConnection,
-    provider_id: String,
-    model_id: String,
-    user_id: String,
-    provenance: Option<ExecutionProvenance>,
-    started: Instant,
-    complete: bool,
-}
-
-impl UnknownCallAudit {
-    fn new(db: &DatabaseConnection, provider_id: &str, model_id: &str, user_id: &str, provenance: Option<&ExecutionProvenance>, started: Instant) -> Self {
-        Self { db: db.clone(), provider_id: provider_id.into(), model_id: model_id.into(), user_id: user_id.into(), provenance: provenance.cloned(), started, complete: false }
-    }
-    fn complete(&mut self) { self.complete = true; }
-}
-
-impl Drop for UnknownCallAudit {
-    fn drop(&mut self) {
-        if self.complete { return; }
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else { warn!("Provider call dropped outside a runtime; unknown usage audit skipped"); return; };
-        let (db, provider_id, model_id, user_id, provenance, started) = (self.db.clone(), self.provider_id.clone(), self.model_id.clone(), self.user_id.clone(), self.provenance.clone(), self.started);
-        runtime.spawn(async move {
-            if let Err(error) = UsageLogRepository::new(db).create_with_provenance(&provider_id, &model_id, &user_id, 0, 0, false,
-                started.elapsed().as_millis() as u32, false, Some(DgosError::StreamInterrupted.error_code().to_string()), provenance.as_ref()).await {
-                warn!(provider_id, model_id, error = %error, "Unknown provider usage audit write failed");
-            }
-        });
-    }
-}
-
-
 enum StreamOutcome {
-    /// `usage` is `None` when the upstream ended the stream without reporting usage.
-    Done {
-        usage: Option<(u32, u32)>,
-    },
+    Done { usage: Option<dgos_types::TokenUsage> },
     Failed(u32),
 }
 
-async fn write_stream_log(
-    db: &DatabaseConnection,
-    provider_id: &str,
-    model_id: &str,
-    user_id: &str,
-    provenance: Option<&ExecutionProvenance>,
-    started: Instant,
-    outcome: StreamOutcome,
- ) -> bool {
-    // A stream that fails or is cancelled never has usage (D081): the upstream may already
-    // have produced and billed output, so the zeros are recorded as unknown, not as free.
-    let (prompt, completion, reported, error_code) = match outcome {
-        StreamOutcome::Done {
-            usage: Some((prompt, completion)),
-        } => (prompt, completion, true, None),
-        StreamOutcome::Done { usage: None } => (0, 0, false, None),
-        StreamOutcome::Failed(code) => (0, 0, false, Some(code.to_string())),
-    };
-    match UsageLogRepository::new(db.clone())
-        .create_with_provenance(
-            provider_id, model_id, user_id, prompt, completion, reported,
-            started.elapsed().as_millis() as u32, error_code.is_none(), error_code, provenance,
-        )
-        .await
-    {
-        Ok(_) => true,
-        Err(error) => {
-            warn!(provider_id, model_id, error = %error, "Stream usage audit write failed");
-            false
-        }
-    }
-}
-
-/// Writes the one usage record of a stream (B01-63). The record is written when the stream ends
-/// or fails. A stream dropped before that (consumer cancelled or went away) is recorded as
-/// interrupted from `Drop`, on the runtime.
+/// A stream keeps the same dispatch meter after the adapter's opening future returns.
 struct StreamAudit {
-    db: DatabaseConnection,
-    provider_id: String,
-    model_id: String,
-    user_id: String,
-    provenance: Option<ExecutionProvenance>,
-    started: Instant,
-    finished: bool,
-    permit: Option<ActivityPermit>,
+    meter: Arc<UsageMeter>,
+    call: CallAudit,
 }
 
 impl StreamAudit {
-    async fn finish(&mut self, outcome: StreamOutcome) -> bool {
-        if std::mem::replace(&mut self.finished, true) { return true; }
-        // The consumer may cancel while awaiting SQLite. Once terminal usage is observed,
-        // detach an owned write so dropping the stream cannot erase it or enqueue a duplicate.
-        let (db, provider_id, model_id, user_id, provenance, started, permit) = (
-            self.db.clone(), self.provider_id.clone(), self.model_id.clone(), self.user_id.clone(),
-            self.provenance.clone(), self.started, self.permit.take(),
-        );
-        tokio::spawn(async move {
-            let _permit = permit;
-            write_stream_log(&db, &provider_id, &model_id, &user_id, provenance.as_ref(), started, outcome).await
-        }).await.unwrap_or(false)
+    fn new(db: &DatabaseConnection, provider_id: &str, model_id: &str, user_id: &str,
+        provenance: Option<&ExecutionProvenance>, registry: &Arc<UsageRegistry>, permit: ActivityPermit) -> Self {
+        let call = CallAudit::new(db, provider_id, model_id, user_id, provenance, registry, permit);
+        Self { meter: call.meter.clone(), call }
     }
-}
 
-impl Drop for StreamAudit {
-    fn drop(&mut self) {
-        if std::mem::replace(&mut self.finished, true) {
-            return;
-        }
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            warn!("Stream dropped outside a runtime; usage record skipped");
-            return;
+    async fn finish(&mut self, outcome: StreamOutcome) -> bool {
+        let error = match outcome {
+            StreamOutcome::Done { usage } => {
+                if let Some(usage) = usage { self.meter.observe(&usage); }
+                None
+            }
+            StreamOutcome::Failed(code) => Some(code),
         };
-        let permit = self.permit.take();
-        let (db, provider_id, model_id, user_id, provenance, started) = (
-            self.db.clone(),
-            self.provider_id.clone(),
-            self.model_id.clone(),
-            self.user_id.clone(),
-            self.provenance.clone(),
-            self.started,
-        );
-        runtime.spawn(async move {
-            let _permit = permit;
-            write_stream_log(
-                &db,
-                &provider_id,
-                &model_id,
-                &user_id,
-                provenance.as_ref(),
-                started,
-                StreamOutcome::Failed(DgosError::StreamInterrupted.error_code()),
-            )
-            .await;
-        });
+        self.call.finish(error).await
     }
 }
 
@@ -1437,10 +1242,10 @@ fn audited_stream(
     Box::pin(futures::stream::unfold(
         (stream, audit),
         |(mut stream, mut audit)| async move {
-            match stream.next().await {
+            match audit.meter.scope(stream.next()).await {
                 Some(Ok(mut chunk)) => {
                     if chunk.finish_reason.is_some() {
-                        let usage = chunk.usage.as_ref().map(|usage| (usage.prompt_tokens, usage.completion_tokens));
+                        let usage = chunk.usage.clone();
                         chunk.audit_warning = !audit.finish(StreamOutcome::Done { usage }).await;
                     }
                     Some((Ok(chunk), (stream, audit)))
@@ -1471,10 +1276,10 @@ fn audited_tool_stream(
     Box::pin(futures::stream::unfold((stream, audit, false, None), |(mut stream, mut audit, ended, pending)| async move {
         if let Some(error) = pending { return Some((Err(error), (stream, audit, true, None))); }
         if ended { return None; }
-        match stream.next().await {
+        match audit.meter.scope(stream.next()).await {
             Some(Ok(mut event)) => {
-                let terminal = if let dgos_types::ToolStreamEvent::Complete { response, usage_unknown } = &mut event {
-                    let usage = (!*usage_unknown).then_some((response.usage.prompt_tokens, response.usage.completion_tokens));
+                let terminal = if let dgos_types::ToolStreamEvent::Complete { response, .. } = &mut event {
+                    let usage = response.usage.has_reported_usage().then(|| response.usage.clone());
                     response.audit_warning |= !audit.finish(StreamOutcome::Done { usage }).await;
                     true
                 } else { false };

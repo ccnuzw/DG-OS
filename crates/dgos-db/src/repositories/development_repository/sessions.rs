@@ -52,6 +52,11 @@ impl DevelopmentRepository {
             .await?.iter().map(session_from).collect()
     }
 
+    pub async fn agent_session(&self, owner: &str, id: &str) -> Result<Option<StoredAgentSession>, String> {
+        fetch_one(&self.db, &format!("SELECT {SESSION_COLUMNS} FROM development_agent_sessions WHERE owner=? AND id=?"), vec![v(owner), v(id)])
+            .await?.as_ref().map(session_from).transpose()
+    }
+
     /// Inserts a session, or updates an existing row of the same owner and engine. The row
     /// keeps its engine and owner. A different owner's id matches no row and returns `session_not_found`.
     pub async fn save_session(&self, session: &StoredAgentSession) -> Result<(), String> {

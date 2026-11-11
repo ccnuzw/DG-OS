@@ -218,6 +218,8 @@ pub struct SessionView {
     pub cli_version: Option<String>,
     #[serde(skip)]
     retained_bytes: usize,
+    #[serde(skip)]
+    output_images: crate::images::OutputImageCache,
     // Public observation for run-bound controls; persisted JSON cannot revive execution.
     #[serde(skip_deserializing)]
     pub active_run: Option<String>,
@@ -239,6 +241,7 @@ impl SessionView {
             controls: None,
             cli_version: None,
             retained_bytes: 0,
+            output_images: crate::images::OutputImageCache::default(),
             active_run: None,
             terminal_run: None,
         }
@@ -264,11 +267,17 @@ impl SessionView {
             controls: self.controls.clone(),
             cli_version: self.cli_version.clone(),
             retained_bytes: 0,
+            output_images: crate::images::OutputImageCache::default(),
             active_run: self.active_run.clone(),
             terminal_run: self.terminal_run.clone(),
         };
         (view, EventSync { reset: !append, after_seq, first_seq: first })
     }
+    pub fn preview_image(&self, id: &str) -> Result<crate::images::OutputImagePreview, String> {
+        if matches!(self.status.as_str(), "closed" | "unknown") { return Err("image_preview_expired".into()); }
+        self.output_images.preview(id)
+    }
+    pub(crate) fn clear_output_image_previews(&mut self) { self.output_images.clear(); }
     pub fn request(&mut self, pending: PendingRequest) {
         if let Some(existing) = self.pending.iter_mut().find(|p| p.id == pending.id) {
             *existing = pending;
@@ -281,7 +290,9 @@ impl SessionView {
         self.push_run(kind, text, data, self.active_run.clone());
     }
     pub fn push_run(&mut self, kind: &str, text: Option<String>, mut data: Value, run: Option<String>) {
-        crate::images::redact_image_inputs(&mut data);
+        let live_output = run.is_some() && !matches!(self.status.as_str(), "starting" | "closed" | "unknown") && data.get("history") != Some(&Value::Bool(true));
+        if matches!(self.status.as_str(), "closed" | "unknown") || matches!(kind, "host/closed" | "closed") { self.clear_output_image_previews(); }
+        crate::images::redact_native_images(kind, &mut data, live_output.then_some(&mut self.output_images));
         let text = text.map(|text| { let mut value = Value::String(text); crate::images::redact_image_inputs(&mut value); match value { Value::String(text) => text, _ => "[image redacted]".into() } });
         if let (Some(run_id), Some(status)) = (run.as_ref(), data.get("run_status").and_then(Value::as_str)) {
             if matches!(status, "completed" | "failed" | "cancelled" | "unknown") {
@@ -309,7 +320,7 @@ impl SessionView {
         });
     }
     pub(crate) fn replace_history_event(&mut self, seq: u64, kind: &str, text: Option<String>, mut data: Value) -> bool {
-        crate::images::redact_image_inputs(&mut data);
+        crate::images::redact_native_images(kind, &mut data, None);
         let text = text.map(|text| { let mut value = Value::String(text); crate::images::redact_image_inputs(&mut value); match value { Value::String(text) => text, _ => "[image redacted]".into() } });
         let Some(event) = self.events.iter_mut().find(|event| event.seq == seq) else { return false; };
         let old = event.text.as_ref().map_or(0, String::len) + json_size(&event.data);

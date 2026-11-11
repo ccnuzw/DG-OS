@@ -25,16 +25,32 @@ pub struct SteerAgentTurnInput { session_id: String, generation: String, run_id:
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CancelUnstartedAgentSessionInput { session_id: String, task_id: String }
+pub struct ReconcileAgentStartInput { session_id: String, task_id: String }
 
 #[tauri::command]
-pub async fn cancel_unstarted_agent_session(app: tauri::AppHandle, window: WebviewWindow, input: CancelUnstartedAgentSessionInput) -> Result<bool, String> {
+pub async fn reconcile_agent_start(app: tauri::AppHandle, window: WebviewWindow, input: ReconcileAgentStartInput) -> Result<dgos_agents::StartResolution, String> {
     let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
     let _permit = host::admit_activity(&app).map_err(|e| e.to_string())?;
     let resolver = app.state::<std::sync::Arc<crate::session::SessionResolver>>();
     let (session, lease) = resolver.agent_session().map_err(|e| e.to_string())?;
     if session.user_id() != context.user_id() || lease.is_cancelled() { return Err("session_invalid".into()); }
-    let result = app.state::<AgentManager>().cancel_unstarted_session(context.user_id(), &input.session_id, &input.task_id, &lease).await?;
+    let result = app.state::<AgentManager>().reconcile_start(context.user_id(), &input.session_id, &input.task_id, &lease).await?;
+    if lease.is_cancelled() { return Err("session_invalid".into()); }
+    Ok(result)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrepareAgentTaskInput { id: String, project_id: String, goal: String }
+
+#[tauri::command]
+pub async fn prepare_agent_task(app: tauri::AppHandle, window: WebviewWindow, input: PrepareAgentTaskInput) -> Result<DevelopmentTask, String> {
+    let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
+    let _permit = host::admit_activity(&app).map_err(|e| e.to_string())?;
+    let resolver = app.state::<std::sync::Arc<crate::session::SessionResolver>>();
+    let (session, lease) = resolver.agent_session().map_err(|e| e.to_string())?;
+    if session.user_id() != context.user_id() || lease.is_cancelled() { return Err("session_invalid".into()); }
+    let result = app.state::<AgentManager>().prepare_agent_task(context.user_id(), &input.id, &input.project_id, &input.goal, &lease).await?;
     if lease.is_cancelled() { return Err("session_invalid".into()); }
     Ok(result)
 }
@@ -64,6 +80,11 @@ pub async fn open_agent_session(app: tauri::AppHandle, window: WebviewWindow, in
 pub async fn get_agent_session(app: tauri::AppHandle, window: WebviewWindow, session_id: String, cursor: Option<dgos_agents::session::SessionCursor>) -> Result<OwnedSessionView, String> {
     let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
     app.state::<AgentManager>().snapshot_since(context.user_id(), &session_id, cursor).await
+}
+#[tauri::command]
+pub async fn preview_agent_output_image(app: tauri::AppHandle, window: WebviewWindow, session_id: String, generation: String, preview_id: String) -> Result<dgos_agents::images::OutputImagePreview, String> {
+    let context = host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun).map_err(|e| e.to_string())?;
+    app.state::<AgentManager>().preview_output_image(context.user_id(), &session_id, &generation, &preview_id).await
 }
 #[tauri::command]
 pub async fn send_agent_message(app: tauri::AppHandle, window: WebviewWindow, input: SendAgentMessageInput) -> Result<(), String> {

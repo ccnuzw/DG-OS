@@ -12,7 +12,7 @@ const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('../src/i18n', () => ({ useLocale: () => ({ locale: 'en-US', t: (key: string) => key }), t: (key: string) => key }));
 beforeEach(() => invoke.mockResolvedValue(null));
-afterEach(() => { cleanup(); useDevelopment.getState().reset(); useAgentRunner.getState().reset(); useCodexOperations.getState().reset(); useDevelopmentDrafts.getState().clear(); invoke.mockReset(); });
+afterEach(() => { cleanup(); useDevelopment.getState().reset(); useAgentRunner.getState().reset(); useCodexOperations.getState().reset(); useDevelopmentDrafts.getState().clear(); invoke.mockReset(); vi.useRealTimers(); });
 const session: AgentSession = { id: 's', generation: 'g', engine: 'codex', native_id: 'native', workspace: '/project', status: 'idle', events: [], pending: [], error: null };
 function select(value = session) {
   useDevelopment.setState({ workspaceOwner: 'account:a', loaded: true, projects: [{ id: 'p', owner: 'a', name: 'Project', path: '/project', directory_identity: 'directory', archived: false, created_at: 1, last_opened_at: null }], sessions: [{ id: value.id, owner: 'a', engine: value.engine, native_id: value.native_id, workspace: value.workspace, executable: null, model: null, project_id: 'p', task_id: null }], selection: { project_id: 'p', task_id: null, session_id: value.id } });
@@ -102,16 +102,13 @@ it('keeps an older-generation unknown send blocked until real same-session histo
   render(<MemoryRouter><RestoredConversation /></MemoryRouter>);
   const input = screen.getByRole('textbox', { name: 'agent.prompt' });
   expect(screen.getByRole('button', { name: 'agent.send' })).toHaveProperty('disabled', true);
-  fireEvent.click(screen.getByRole('button', { name: 'directConversation.recheck' }));
-  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === 'get_agent_session')).toHaveLength(1));
-  expect(useDevelopmentDrafts.getState().entries[key].value).toEqual(capture);
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === 'get_agent_session').length).toBeGreaterThan(0));
+  expect(useDevelopmentDrafts.getState().entries[key].value).toMatchObject(capture);
   observed = { ...restored, status: 'running', active_run: capture.requestId };
-  fireEvent.click(await screen.findByRole('button', { name: 'directConversation.recheck' }));
-  await waitFor(() => expect(useAgentRunner.getState().session?.active_run).toBe(capture.requestId));
-  expect(useDevelopmentDrafts.getState().entries[key].value).toEqual(capture);
+  await waitFor(() => expect(useAgentRunner.getState().session?.active_run).toBe(capture.requestId), { timeout: 2500 });
+  expect(useDevelopmentDrafts.getState().entries[key].value).toMatchObject(capture);
   observed = { ...restored, events: [{ seq: 1, kind: 'userMessage', text: 'Submitted text', data: null, run: capture.requestId }] };
-  fireEvent.click(await screen.findByRole('button', { name: 'directConversation.recheck' }));
-  await waitFor(() => expect(useDevelopmentDrafts.getState().entries[key]).toBeUndefined());
+  await waitFor(() => expect(useDevelopmentDrafts.getState().entries[key]).toBeUndefined(), { timeout: 2500 });
   expect(input).toHaveProperty('value', 'Later draft');
   expect(invoke.mock.calls.some(([name]) => name === 'send_agent_message')).toBe(false);
 });
@@ -144,7 +141,6 @@ it.each(['project', 'epoch', 'session'])('does not transfer an unknown request f
   useDevelopmentDrafts.setState({ entries: { [key]: { kind: 'conversation', baseline: null, value: { requestId: 'foreign-request', generation: 'old-generation', text: 'Foreign text', references: [], skills: [] } } } });
   render(<MemoryRouter><Conversation /></MemoryRouter>);
   expect(screen.getByRole('button', { name: 'agent.send' })).toHaveProperty('disabled', false);
-  expect(screen.queryByRole('button', { name: 'directConversation.recheck' })).toBeNull();
   expect(useDevelopmentDrafts.getState().entries[key]).toBeTruthy();
 });
 
@@ -192,4 +188,71 @@ it.each(['unknown', 'engine_rejected'])('does not generate a conversation title 
   await waitFor(() => expect(useAgentRunner.getState().error).toBe(failure));
   expect(useDevelopment.getState().tabs.find(tab => tab.id === origin.id)?.title).toBe('');
   expect(useDevelopment.getState().sessionNames[session.id]).toBeUndefined();
+});
+
+it('bounds unknown send recovery and makes ordinary retry observe the same request without sending', async () => {
+  const live = { ...session, engine: 'claude' as const }; select(live);
+  const key = developmentDraftKey('conversation', 'p', session.id, session.generation, 'pending-send');
+  const capture = { requestId: 'retained-request', generation: live.generation, text: 'Original message', references: [], skills: [] };
+  useDevelopmentDrafts.setState({ entries: { [key]: { kind: 'conversation', baseline: null, value: capture } } });
+  invoke.mockImplementation(name => name === 'get_agent_session' ? Promise.reject('storage_failed') : Promise.resolve(null));
+  vi.useFakeTimers();
+  render(<MemoryRouter><Conversation value={live} initial="Retained draft" /></MemoryRouter>);
+  for (const delay of [200, 600, 1500, 3000, 5000]) await act(async () => { await vi.advanceTimersByTimeAsync(delay); });
+  expect(useDevelopmentDrafts.getState().entries[key].value).toMatchObject({ ...capture, recoveryAttempts: 5, recoveryStopped: true, recoveryError: 'storage_failed' });
+  expect(screen.getAllByRole('button', { name: 'directConversation.retry' })).toHaveLength(1);
+  expect(screen.getByRole('textbox', { name: 'agent.prompt' })).toHaveProperty('value', 'Retained draft');
+  await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+  expect(useDevelopmentDrafts.getState().entries[key].value).toMatchObject({ recoveryAttempts: 5 });
+  expect(invoke.mock.calls.some(([name]) => ['send_agent_message', 'open_agent_session'].includes(name))).toBe(false);
+  invoke.mockImplementation(name => Promise.resolve(name === 'get_agent_session' ? { ...live, active_run: capture.requestId } : null));
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'directConversation.retry' })); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+  expect(useDevelopmentDrafts.getState().entries[key]).toBeUndefined();
+  expect(invoke.mock.calls.some(([name]) => name === 'send_agent_message')).toBe(false);
+});
+
+it.each(['hidden', 'unmounted', 'epoch'] as const)('does not consume late send evidence after its owner becomes %s', async invalidation => {
+  const live = { ...session, engine: 'claude' as const }; select(live);
+  const key = developmentDraftKey('conversation', 'p', live.id, live.generation, 'pending-send');
+  const capture = { requestId: 'retained-request', generation: live.generation, text: 'Original message', references: [], skills: [] };
+  useDevelopmentDrafts.setState({ entries: { [key]: { kind: 'conversation', baseline: null, value: capture } } });
+  const read = Promise.withResolvers<AgentSession>();
+  invoke.mockImplementation(name => name === 'get_agent_session' ? read.promise : Promise.resolve(null));
+  const setDraft = vi.fn();
+  const props = { session: live, drafts: { [live.id]: 'Original message' }, setDraft, busy: false, error: false };
+  const view = render(<MemoryRouter><AgentConversation {...props} /></MemoryRouter>);
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === 'get_agent_session')).toHaveLength(1));
+  if (invalidation === 'hidden') view.rerender(<MemoryRouter><AgentConversation {...props} visible={false} /></MemoryRouter>);
+  else if (invalidation === 'unmounted') view.unmount();
+  else act(() => useDevelopment.getState().reset());
+  await act(async () => { read.resolve({ ...live, active_run: capture.requestId }); });
+  expect(setDraft).not.toHaveBeenCalled();
+  if (invalidation !== 'epoch') expect(useDevelopmentDrafts.getState().entries[key].value).toMatchObject(capture);
+  expect(invoke.mock.calls.some(([name]) => name === 'send_agent_message')).toBe(false);
+});
+
+it('retains an oversized draft, clears only its rejected preflight receipt and sends the shortened draft', async () => {
+  const live: AgentSession = { ...session, engine: 'claude' }; select(live);
+  invoke.mockImplementation((name, args) => {
+    if (name === 'get_agent_session') return Promise.resolve(live);
+    if (name === 'send_agent_message' && new TextEncoder().encode(args.input.text).length > 65536) return Promise.reject('invalid_prompt');
+    return Promise.resolve(null);
+  });
+  const oversized = '界'.repeat(21846);
+  render(<MemoryRouter><Conversation value={live} initial={oversized} /></MemoryRouter>);
+  fireEvent.click(screen.getByRole('button', { name: 'agent.send' }));
+  await waitFor(() => expect(useAgentRunner.getState().error).toBe('invalid_prompt'));
+  const prompt = screen.getByRole('textbox', { name: 'agent.prompt' });
+  expect(prompt).toHaveProperty('value', oversized);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'agent.send' })).toHaveProperty('disabled', false));
+  expect(Object.keys(useDevelopmentDrafts.getState().entries).some(key => JSON.parse(key).at(-1) === 'pending-send')).toBe(false);
+  expect(screen.queryByText('directConversation.send_unknown')).toBeNull();
+  fireEvent.change(prompt, { target: { value: 'Shortened requirement' } });
+  fireEvent.click(screen.getByRole('button', { name: 'agent.send' }));
+  await waitFor(() => expect(prompt).toHaveProperty('value', ''));
+  const sends = invoke.mock.calls.filter(([name]) => name === 'send_agent_message');
+  expect(sends).toHaveLength(2);
+  expect(sends[1][1].input.text).toBe('Shortened requirement');
+  expect(sends[1][1].input.request_id).not.toBe(sends[0][1].input.request_id);
 });

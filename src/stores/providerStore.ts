@@ -27,6 +27,19 @@ export interface ProviderConfig {
   config?: Record<string, unknown>;
 }
 
+export type CliProviderProtocol = 'responses' | 'messages';
+export type CliProviderAuthStyle = 'bearer' | 'x-api-key' | 'both';
+
+/** Explicit CLI support is user-declared, not a verified protocol capability. */
+export interface CliProviderRouteConfig {
+  enabled: boolean;
+  base_url?: string;
+  auth_style?: CliProviderAuthStyle;
+}
+
+/** An omitted route keeps the provider type's legacy, unverified candidate behavior. */
+export type CliProviderRoutes = Partial<Record<CliProviderProtocol, CliProviderRouteConfig>>;
+
 // Fixed ModelKind spellings (V1-FR-001 spec); `model_type` carries one of them (legacy 'chat' reads as text-generation).
 export const MODEL_KINDS = [
   'text-generation',

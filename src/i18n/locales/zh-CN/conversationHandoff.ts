@@ -14,4 +14,5 @@ export default {
   'conversationHandoff.reserved': '此交接已有持久预留或结果未知，不会重试；请先刷新交接历史再进行其他操作。',
   'conversationHandoff.recheck': '检查交接状态',
   'conversationHandoff.attach': '打开目标会话',
+  'conversationHandoff.existingDraft': '已保留此会话现有的续作草稿，没有覆盖。所选历史摘要仍可在交付记录中查看。',
 } as const;

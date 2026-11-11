@@ -66,8 +66,8 @@ impl ModuleAdmission for PinnedModuleAdmission {
 pub(crate) const BUILTIN_PINS: &[(&str, &str, &str)] = &[
     (
         "provider-console",
-        "1.2.0",
-        "v2:55315f4cdc0fed597154e2e19313e6251cc98b72afe814a6adcbfc634fc7bf72",
+        "1.3.0",
+        "v2:4ef95fc9145f82089635d51598f3f42a27a03952b72362b0ddaf66093b76a027",
     ),
 ];
 
@@ -83,6 +83,11 @@ pub(crate) const RETAINED_PINS: &[(&str, &str, &str)] = &[
         "provider-console",
         "1.1.0",
         "v2:f911840c0ec1ff38fa11ce8cef9bd36a1834202b48191936683841601ad52d0c",
+    ),
+    (
+        "provider-console",
+        "1.2.0",
+        "v2:55315f4cdc0fed597154e2e19313e6251cc98b72afe814a6adcbfc634fc7bf72",
     ),
 ];
 

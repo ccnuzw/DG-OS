@@ -9,7 +9,7 @@ export interface CliProviderConfiguration { engine: Engine; provider: CliProvide
 export interface CliProviderRevision { revision: number; permission_epoch: number; configuration: CliProviderConfiguration; created_at: number }
 export interface CliProviderSnapshot { binding_id: string; engine: Engine; provider_id: string; model_id: string; provider_revision: number; revision: number; permission_epoch: number; [evidence: string]: Json | undefined }
 export type SessionConfigurationView = { format: 'legacy_history'; history: Json | null; read_only: true } | { format: 'provider_bound'; snapshot: CliProviderSnapshot; read_only: boolean };
-export interface CliProviderCatalog { engine: Engine; project_id: string; providers: { id: string; name: string; provider_type?: string; config_revision: number; enabled: boolean; availability: { available: boolean; reason: string | null }; models: { id: string; name: string; model_type: string }[] }[] }
+export interface CliProviderCatalog { engine: Engine; project_id: string; providers: { id: string; name: string; provider_type?: string; config_revision: number; enabled: boolean; availability: { available: boolean; reason: string | null; protocol?: 'responses' | 'messages'; declared?: boolean; verified?: boolean }; models: { id: string; name: string; model_type: string }[] }[] }
 export const readCliProviderRevision = (projectId: string) => invoke<CliProviderRevision | null>('read_development_cli_provider', { projectId });
 // StrictMode effect replay and concurrent consumers share only pending reads.
 // Never retain a catalog after settlement or share one across account scopes.
@@ -30,7 +30,6 @@ export const readCliProviderCatalog = (projectId: string, engine: Engine) => {
 export const saveCliProvider = (project_id: string, expected_revision: number, configuration: CliProviderConfiguration) => invoke<CliProviderRevision>('save_development_cli_provider', { input: { project_id, expected_revision, configuration } });
 export const revokeCliProvider = (projectId: string) => invoke<number>('revoke_development_cli_provider', { projectId });
 export const readSessionConfiguration = (sessionId: string) => invoke<SessionConfigurationView>('get_development_session_configuration', { sessionId });
-export const recheckCliCleanup = () => invoke<void>('recheck_development_cli_cleanup');
 
 // Refresh saved revisions after local changes without replacing a selected revision.
 let changes = 0;

@@ -33,7 +33,7 @@ pub struct ExecutionResult {
     pub result_unknown: bool,
 }
 
-pub enum CoreEvent { Delta(String), ReasoningDelta(String), Phase(AiPhase) }
+pub enum CoreEvent { Delta(String), ReasoningDelta(String), Phase(AiPhase), ModelSegment(u32) }
 pub trait ExecutionSink: Send + Sync { fn send(&self, event: CoreEvent) -> bool; }
 impl<F: Fn(CoreEvent) -> bool + Send + Sync> ExecutionSink for F {
     fn send(&self, event: CoreEvent) -> bool { self(event) }
@@ -68,6 +68,8 @@ pub trait ExecutionGuard: Send + Sync {
     async fn tool_dispatched(&self, _: &ToolProposal) -> Result<(), String> { Ok(()) }
     /// Persist the observed outcome before permitting the next model/tool round.
     async fn tool_settled(&self, _: &ToolProposal, _: &ToolReceipt) -> Result<(), String> { Ok(()) }
+    /// Persist only bounded displayable intermediate text, never model reasoning.
+    async fn model_intermediate(&self, _: u32, _: &str, _: bool) -> Result<(), String> { Ok(()) }
 }
 
 pub fn host_policy(has_tools: bool) -> &'static str {
@@ -167,10 +169,14 @@ impl AiExecutor {
         };
         let partial = std::sync::Mutex::new(String::new());
         let tool_sink = |event: CoreEvent| {
-            if let CoreEvent::Delta(text) = &event {
-                let mut output = partial.lock().unwrap_or_else(|error| error.into_inner());
-                let room = (64usize * 1024).saturating_sub(output.len());
-                output.push_str(prefix(text, room));
+            match &event {
+                CoreEvent::ModelSegment(_) => partial.lock().unwrap_or_else(|error| error.into_inner()).clear(),
+                CoreEvent::Delta(text) => {
+                    let mut output = partial.lock().unwrap_or_else(|error| error.into_inner());
+                    let room = (64usize * 1024).saturating_sub(output.len());
+                    output.push_str(prefix(text, room));
+                }
+                _ => {}
             }
             sink.send(event)
         };
@@ -178,6 +184,7 @@ impl AiExecutor {
         let mut context = ToolContext { record: None, messages: request.messages.into_iter().map(|m| ToolMessage {
             role: m.role, content: Some(m.content), tool_call_id: None, tool_calls: vec![], reasoning: None, images: m.images,
         }).collect(), tools, window: request.context_window, generation: request.generation, pending: None, calls: HashSet::new(), tokens: 0,
+            generated_bytes: 0, model_round: 0, retained_intermediate_bytes: 0,
             receipts: vec![], retained_results: vec![], dispatched: false, result_unknown: false, audit_warning: false, usage_unknown: false };
         let mut action = ToolAction::RunModel;
         let mut audit_warning = false;
@@ -208,7 +215,7 @@ impl AiExecutor {
                 }
             }
         };
-        result.total_tokens = Some(context.tokens).filter(|n| *n > 0 && !context.usage_unknown);
+        result.total_tokens = (context.dispatched && !context.usage_unknown).then_some(context.tokens);
         result.audit_warning = audit_warning;
         result.result_unknown = unknown;
         match terminal {
@@ -302,16 +309,20 @@ pub(crate) async fn advance_tool_context_with_local(
             temperature: context.generation.temperature, reasoning: context.generation.reasoning.clone() };
         validate_budget(&request, context.window)?;
         if let Some(host) = local.as_mut() { binding.bounded(host.revalidate()).await?; }
+        context.model_round = context.model_round.saturating_add(1);
+        binding.emit(CoreEvent::ModelSegment(context.model_round))?;
         let mut round_dispatched = false;
-        let streamed = drain_tool_stream(providers, binding, request, unknown, &mut round_dispatched, audit_warning).await;
+        let streamed = drain_tool_stream(providers, binding, request, unknown, &mut round_dispatched, audit_warning, &mut context.generated_bytes).await;
         context.dispatched |= round_dispatched;
         if round_dispatched { if let Some(host) = local.as_mut() { host.model_dispatched(); } }
         let (response, usage_unknown) = match streamed {
             Ok(response) => response,
-            Err(error) => { context.usage_unknown |= round_dispatched && *unknown; return Err(error); }
+            // An explicit rejection resolves execution uncertainty, not usage presence.
+            // No complete usage receipt was returned for any dispatched failed round.
+            Err(error) => { context.usage_unknown |= round_dispatched; return Err(error); }
         };
         *unknown = false;
-        context.usage_unknown |= usage_unknown;
+        context.usage_unknown |= usage_unknown || !response.usage.total_tokens_reported;
         context.tokens = context.tokens.saturating_add(i64::from(response.usage.total_tokens));
         *audit_warning |= response.audit_warning;
         if let Some(host) = local.as_mut() { binding.bounded(host.revalidate()).await?; }
@@ -321,6 +332,10 @@ pub(crate) async fn advance_tool_context_with_local(
             return response.message.content.filter(|s| !s.trim().is_empty()).map(Some).ok_or_else(|| "empty_response".into());
         }
         if response.message.tool_calls.len() != 1 || context.calls.len() >= 8 { return Err("tool_call_limit".into()); }
+        let intermediate = response.message.content.as_deref().unwrap_or("");
+        let retained = prefix(intermediate, (8usize * 1024).saturating_sub(context.retained_intermediate_bytes));
+        context.retained_intermediate_bytes += retained.len();
+        binding.guard.model_intermediate(context.model_round, retained, retained.len() < intermediate.len()).await?;
         let assistant = response.message;
         let call = assistant.tool_calls[0].clone();
         if call.kind != "function" || call.id.is_empty() || call.id.len() > 128 || !call.id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-') || !context.calls.insert(call.id.clone()) {
@@ -414,7 +429,7 @@ fn tool_stream_error(error: DgosError) -> String {
 }
 
 async fn drain_tool_stream(providers: &ProviderManager, binding: &StepBinding<'_>, request: ToolChatRequest,
-    unknown: &mut bool, any_dispatched: &mut bool, audit_warning: &mut bool) -> Result<(dgos_types::ToolChatResponse, bool), String> {
+    unknown: &mut bool, any_dispatched: &mut bool, audit_warning: &mut bool, generated_bytes: &mut usize) -> Result<(dgos_types::ToolChatResponse, bool), String> {
     binding.bounded(binding.guard.before_model()).await?;
     binding.emit(CoreEvent::Phase(AiPhase::Model))?;
     let dispatch = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -431,8 +446,6 @@ async fn drain_tool_stream(providers: &ProviderManager, binding: &StepBinding<'_
             return Err(error);
         }
     };
-    let mut text_bytes = 0usize;
-    let mut reasoning_bytes = 0usize;
     loop {
         let next = binding.bounded(async { stream.next().await.ok_or_else(|| "provider_stream_interrupted".to_string())?
             .map_err(tool_stream_error) }).await;
@@ -446,14 +459,14 @@ async fn drain_tool_stream(providers: &ProviderManager, binding: &StepBinding<'_
         match event {
             dgos_types::ToolStreamEvent::AuditWarning => { *audit_warning = true; }
             dgos_types::ToolStreamEvent::Delta(text) => {
-                text_bytes = text_bytes.saturating_add(text.len());
-                if text_bytes > 64 * 1024 { return Err("generation_limit".into()); }
+                let (text, over) = bound_generated(text, generated_bytes);
                 if !text.is_empty() { binding.emit(CoreEvent::Delta(text))?; }
+                if over { return Err("generation_limit".into()); }
             }
             dgos_types::ToolStreamEvent::ReasoningDelta(text) => {
-                reasoning_bytes = reasoning_bytes.saturating_add(text.len());
-                if reasoning_bytes > 64 * 1024 { return Err("generation_limit".into()); }
+                let (text, over) = bound_generated(text, generated_bytes);
                 if !text.is_empty() { binding.emit(CoreEvent::ReasoningDelta(text))?; }
+                if over { return Err("generation_limit".into()); }
             }
             dgos_types::ToolStreamEvent::Complete { response, usage_unknown } => {
                 *unknown = false;
@@ -505,10 +518,22 @@ fn provider_rejection(code: u32) -> bool {
 pub(crate) enum StreamEnd { Completed { finish_reason: String, tokens: Option<i64> }, Stopped(&'static str), Failed(u32) }
 pub(crate) struct StreamOutcome { pub content: String, pub end: StreamEnd, pub dispatched: bool, pub audit_warning: bool }
 
+
+fn bound_generated(mut text: String, used: &mut usize) -> (String, bool) {
+    let room = (64usize * 1024).saturating_sub(*used);
+    *used = used.saturating_add(text.len());
+    let over = text.len() > room;
+    if over { text.truncate(prefix(&text, room).len()); }
+    (text, over)
+}
 pub(crate) async fn drain_stream(providers: &ProviderManager, binding: &StepBinding<'_>, request: ChatRequest) -> StreamOutcome {
     let mut content = String::new();
     let mut audit_warning = false;
     let mut dispatched = false;
+    let mut generated_bytes = 0usize;
+    if binding.emit(CoreEvent::ModelSegment(1)).is_err() {
+        return StreamOutcome { content, end: StreamEnd::Stopped("task_cancelled"), dispatched, audit_warning };
+    }
     let end = 'drain: {
         if binding.cancellation.is_cancelled() { break 'drain StreamEnd::Stopped("task_cancelled"); }
         if Instant::now() >= binding.deadline { break 'drain StreamEnd::Stopped("generation_limit"); }
@@ -543,19 +568,18 @@ pub(crate) async fn drain_stream(providers: &ProviderManager, binding: &StepBind
                 Some(Ok(chunk)) => {
                     audit_warning |= chunk.audit_warning;
                     if let Some(text) = chunk.reasoning_delta.filter(|s| !s.is_empty()) {
-                        if binding.emit(CoreEvent::ReasoningDelta(text)).is_err() { break 'drain StreamEnd::Stopped("task_cancelled"); }
+                        let (text, over) = bound_generated(text, &mut generated_bytes);
+                        if !text.is_empty() && binding.emit(CoreEvent::ReasoningDelta(text)).is_err() { break 'drain StreamEnd::Stopped("task_cancelled"); }
+                        if over { break 'drain StreamEnd::Stopped("generation_limit"); }
                     }
                     if !chunk.delta.is_empty() {
-                        let room = 64 * 1024 - content.len();
-                        let mut end = chunk.delta.len().min(room);
-                        while !chunk.delta.is_char_boundary(end) { end -= 1; }
-                        let piece = &chunk.delta[..end];
-                        content.push_str(piece);
-                        if !piece.is_empty() && binding.emit(CoreEvent::Delta(piece.to_owned())).is_err() { break 'drain StreamEnd::Stopped("task_cancelled"); }
-                        if end < chunk.delta.len() { break 'drain StreamEnd::Stopped("generation_limit"); }
+                        let (text, over) = bound_generated(chunk.delta, &mut generated_bytes);
+                        content.push_str(&text);
+                        if !text.is_empty() && binding.emit(CoreEvent::Delta(text)).is_err() { break 'drain StreamEnd::Stopped("task_cancelled"); }
+                        if over { break 'drain StreamEnd::Stopped("generation_limit"); }
                     }
                     if let Some(finish_reason) = chunk.finish_reason {
-                        break 'drain StreamEnd::Completed { finish_reason, tokens: chunk.usage.map(|u| i64::from(u.total_tokens)).filter(|n| *n > 0) };
+                        break 'drain StreamEnd::Completed { finish_reason, tokens: chunk.usage.filter(|usage| usage.total_tokens_reported).map(|usage| i64::from(usage.total_tokens)) };
                     }
                 }
             }
@@ -579,7 +603,19 @@ mod result_tests {
     fn new_context() -> ToolContext {
         ToolContext { record: None, messages: vec![], tools: vec![], window: None, generation: Default::default(),
             pending: None, calls: HashSet::new(), tokens: 0, receipts: vec![], retained_results: vec![],
+            generated_bytes: 0, model_round: 0, retained_intermediate_bytes: 0,
             dispatched: false, result_unknown: false, audit_warning: false, usage_unknown: false }
+    }
+
+    #[test]
+    fn generated_budget_is_shared_across_reasoning_text_and_model_rounds() {
+        let mut used = 0;
+        assert_eq!(bound_generated("r".repeat(32 * 1024), &mut used).1, false);
+        assert_eq!(bound_generated("x".repeat(32 * 1024 - 2), &mut used).1, false);
+        let (piece, over) = bound_generated("界next".into(), &mut used);
+        assert!(piece.is_empty(), "remaining bytes do not split a UTF-8 character");
+        assert!(over);
+        assert!(bound_generated("another round".into(), &mut used).0.is_empty());
     }
 
     #[test]

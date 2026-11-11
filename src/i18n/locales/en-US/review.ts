@@ -1,5 +1,5 @@
 export default {
-  'review.title': 'Project review', 'review.files': 'Files', 'review.changes': 'Changes', 'review.runs': 'Runs',
+  'review.title': 'Task review and delivery', 'review.files': 'Files', 'review.changes': 'Changes', 'review.runs': 'Runs',
   'review.loading': 'Reading…', 'review.refresh': 'Refresh', 'review.search': 'Search filenames', 'review.includeIgnored': 'Include ignored files',
   'review.directory': 'Directory navigation', 'review.root': 'Project root', 'review.ignored': 'Ignored', 'review.kind.symlink': 'Symbolic link (not followed)', 'review.kind.blocked': 'Unavailable',
   'review.searchHint': 'Filename matches in this directory and its descendants.', 'review.readonly': 'Read-only source. Files are never modified here.',

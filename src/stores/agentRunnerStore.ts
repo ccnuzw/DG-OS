@@ -13,6 +13,14 @@ export interface AgentSession { id: string; generation: string; engine: Engine; 
 export type AgentOpenInput = { intent: 'create'; id: string; engine: Engine; task_id: string; project_revision: number; provider: { provider_id: string; model_id: string; provider_revision: number }; options: { workspace: string; resume_id: null; executable: null; model: null; trust_workspace: boolean } } | { intent: 'resume'; session_id: string; trust_workspace: boolean };
 /** Host runtimes this account started or attached to in the current epoch, keyed by session id, with the last status seen. Closed runtimes are removed. */
 export type LiveSessions = { [id: string]: string };
+/** Only these host preflight failures prove that no message was admitted. */
+export const agentSendPreflightErrors: Readonly<Record<string, boolean>> = {
+  invalid_prompt: true,
+  invalid_reference: true, reference_limit: true, file_sensitive: true, file_access_denied: true, file_not_found: true, file_too_large: true, file_binary: true, file_changed: true, file_symlink: true, scan_limit: true,
+  agent_skill_invalid: true, agent_skill_limit: true, agent_skills_unsupported: true, agent_skills_unavailable: true, agent_skill_unavailable: true,
+  agent_image_count_limit: true, agent_image_bytes_limit: true, agent_image_total_limit: true, agent_image_type: true, agent_image_invalid: true, agent_image_dimensions: true, agent_images_unsupported: true,
+  unsupported_reasoning_effort: true, unsupported_permission_mode: true, unsupported_collaboration_mode: true, invalid_turn_settings: true, turn_controls_unavailable: true,
+};
 
 interface AgentRunnerState {
   session: AgentSession | null; selected: string | null;
@@ -203,7 +211,7 @@ export const useAgentRunner = create<AgentRunnerState>((set, get) => {
         if (sameRuntime()) {
           const code = hostCode(error);
           onFailure?.(code);
-          if (command === 'send_agent_message' && code === 'unknown') unknownSends.add(sendKey);
+          if (command === 'send_agent_message' && !agentSendPreflightErrors[code]) unknownSends.add(sendKey);
           if (interrupting && code !== 'unknown' && get().interrupts[target]?.generation === runtime && get().interrupts[target]?.runId === args.runId) {
             const interrupts = { ...get().interrupts }; delete interrupts[target]; set({ interrupts });
           }

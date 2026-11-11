@@ -14,8 +14,7 @@ impl UsageLogRepository {
         Self { db }
     }
 
-    /// Create a usage log entry. Usage counts as reported when any token count is non-zero, the
-    /// same rule the chat terminal uses for an all-zero `usage` (D074).
+    /// Compatibility writer for callers supplying measured input and output counts, including zero.
     #[allow(clippy::too_many_arguments)]
     pub async fn create(
         &self,
@@ -34,7 +33,7 @@ impl UsageLogRepository {
             user_id,
             request_tokens,
             response_tokens,
-            request_tokens > 0 || response_tokens > 0,
+            true,
             latency_ms,
             success,
             error_code,
@@ -59,6 +58,25 @@ impl UsageLogRepository {
         error_code: Option<String>,
         provenance: Option<&ExecutionProvenance>,
     ) -> DgosResult<UsageLog> {
+        Self::create_with_provenance_on(&self.db, provider_id, model_id, user_id, request_tokens,
+            response_tokens, usage_reported, latency_ms, success, error_code, provenance).await
+    }
+
+    /// Insert on the caller's transaction so chat facts and provider audit commit together.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_with_provenance_on<C: ConnectionTrait>(
+        connection: &C,
+        provider_id: &str,
+        model_id: &str,
+        user_id: &str,
+        request_tokens: u32,
+        response_tokens: u32,
+        usage_reported: bool,
+        latency_ms: u32,
+        success: bool,
+        error_code: Option<String>,
+        provenance: Option<&ExecutionProvenance>,
+    ) -> DgosResult<UsageLog> {
         let id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
 
@@ -67,10 +85,10 @@ impl UsageLogRepository {
             provider_id: Set(provider_id.to_string()),
             model_id: Set(model_id.to_string()),
             user_id: Set(user_id.to_string()),
-            request_tokens: Set(request_tokens as i32),
-            response_tokens: Set(response_tokens as i32),
-            total_tokens: Set((request_tokens + response_tokens) as i32),
-            latency_ms: Set(latency_ms as i32),
+            request_tokens: Set(i32::try_from(request_tokens).unwrap_or(i32::MAX)),
+            response_tokens: Set(i32::try_from(response_tokens).unwrap_or(i32::MAX)),
+            total_tokens: Set(i32::try_from(request_tokens.saturating_add(response_tokens)).unwrap_or(i32::MAX)),
+            latency_ms: Set(i32::try_from(latency_ms).unwrap_or(i32::MAX)),
             success: Set(success),
             error_code: Set(error_code.clone()),
             caller: Set(provenance.map(|p| format!("{:?}", p.caller).to_lowercase())),
@@ -80,7 +98,7 @@ impl UsageLogRepository {
         };
 
         usage_logs::Entity::insert(log)
-            .exec(&self.db)
+            .exec(connection)
             .await
             .map_err(|e| DgosError::DatabaseError(e.to_string()))?;
 
@@ -91,7 +109,7 @@ impl UsageLogRepository {
             user_id: user_id.to_string(),
             request_tokens,
             response_tokens,
-            total_tokens: request_tokens + response_tokens,
+            total_tokens: request_tokens.saturating_add(response_tokens),
             latency_ms,
             success,
             error_code,

@@ -31,6 +31,8 @@ pub use cli::*;
 mod accounts;
 mod appearance;
 mod chat;
+mod chat_web;
+pub use chat_web::*;
 mod agents;
 mod desktop;
 pub use desktop::*;

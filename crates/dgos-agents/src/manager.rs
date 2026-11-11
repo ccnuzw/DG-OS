@@ -12,12 +12,17 @@ use dgos_db::{ActivityPermit, MaintenanceGate};
 mod codex_interactions;
 #[path = "manager_lifecycle.rs"]
 mod lifecycle;
+#[path = "manager_recovery.rs"]
+mod recovery;
+pub use recovery::StartResolution;
 #[path = "native_auth.rs"]
 pub(crate) mod native_auth;
 #[path = "codex_operations_manager.rs"]
 mod codex_operations;
 #[path = "codex_queue_supervision.rs"]
 mod codex_queue_supervision;
+#[path = "output_image_manager.rs"]
+mod output_image_manager;
 
 const TERMINAL_SESSION_LIMIT: usize = 16;
 const TERMINAL_EVENT_BYTES: usize = 256 * 1024;
@@ -138,6 +143,7 @@ pub(crate) struct Inner {
     pub(crate) admission: Arc<Mutex<()>>,
     // An absent-start reconciliation fences delayed requests for the host lifetime.
     cancelled_starts: Mutex<HashMap<String, HashSet<Uuid>>>,
+    cleanup_observed: Mutex<Option<tokio::time::Instant>>,
     path: PathBuf,
     pub(crate) repository: DevelopmentRepository,
     pub(crate) stop: CancellationToken,
@@ -161,6 +167,7 @@ impl AgentManager {
     }
     /// The process-wide maintenance gate and mandatory Provider service share the host lifetime.
     pub fn with_maintenance(path: PathBuf, repository: DevelopmentRepository, gate: MaintenanceGate, providers: crate::capabilities::CliProviders) -> Self {
+        let providers = providers.with_process_directory(path.with_file_name("cli-processes"));
         Self {
             inner: Arc::new(Inner {
                 records: Mutex::new(Vec::new()),
@@ -168,6 +175,7 @@ impl AgentManager {
                 slots: Mutex::new(HashMap::new()),
                 admission: Arc::new(Mutex::new(())),
                 cancelled_starts: Mutex::new(HashMap::new()),
+                cleanup_observed: Mutex::new(None),
                 path,
                 repository,
                 stop: CancellationToken::new(),
@@ -213,6 +221,7 @@ impl AgentManager {
         self.reap_completed_tasks().await;
         if let Some(error) = self.inner.load_error.lock().await.clone() { return Err(error); }
         if self.inner.stop.is_cancelled() { return Err("cancelled".into()); }
+        self.reconcile_process_cleanup(false).await?;
         Ok(())
     }
     /// Serializes resource file operations with project archive and relocation.
@@ -251,6 +260,7 @@ impl AgentManager {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) async fn slot_count(&self) -> usize { self.inner.slots.lock().await.len() }
 
     async fn release_slot(&self, id: &str, slot: Uuid) {
@@ -281,43 +291,24 @@ impl AgentManager {
         &self, owner: &str, engine: Engine, id: String, create: crate::capabilities::SessionCreate,
         task_id: Option<String>, lease: CancellationToken,
     ) -> Result<OwnedSessionView, String> {
-        let request_id = Uuid::parse_str(&id).map_err(|_| "invalid_request_id")?;
-        self.ready().await?;
-        let _admission = self.inner.admission.lock().await;
-        if self.inner.cancelled_starts.lock().await.get(owner).is_some_and(|ids| ids.contains(&request_id)) { return Err("cancelled".into()); }
-        let existing = self.inner.records.lock().await.iter().find(|record| record.id == id).cloned();
-        if let Some(record) = existing {
-            if record.owner != owner || !self.retryable_no_execution(owner, engine, &id, &record, &create, task_id.as_deref()).await? { return Err("session_exists".into()); }
-        } else if create.options.resume_id.is_some() { return Err("session_exists".into()); }
-        self.open_bound(owner, engine, id, create, task_id, lease).await
+        // Once accepted, the host owns startup even if its IPC waiter disappears.
+        let manager = self.clone();
+        let owner = owner.to_owned();
+        tokio::spawn(async move {
+            let request_id = Uuid::parse_str(&id).map_err(|_| "invalid_request_id")?;
+            manager.ready().await?;
+            let _admission = manager.inner.admission.lock().await;
+            if manager.inner.cancelled_starts.lock().await.get(&owner).is_some_and(|ids| ids.contains(&request_id)) { return Err("cancelled".into()); }
+            // UUIDs reserve global runtime state, even when their history belongs
+            // to another account and has no active backend on this host.
+            if manager.inner.records.lock().await.iter().any(|record| record.id == id && record.owner != owner) { return Err("session_exists".into()); }
+            if let Some(record) = manager.read_session_record(&owner, &id).await? {
+                if !manager.retryable_no_execution(&owner, engine, &id, &record, &create, task_id.as_deref()).await? { return Err("session_exists".into()); }
+            } else if create.options.resume_id.is_some() { return Err("session_exists".into()); }
+            manager.open_bound(&owner, engine, id, create, task_id, lease).await
+        }).await.map_err(|_| "unknown".to_owned())?
     }
 
-    /// True proves no session was reserved and prevents this owner's delayed create
-    /// from ever using this ID in this host. Existing sessions are never stopped.
-    pub async fn cancel_unstarted_session(&self, owner: &str, id: &str, task_id: &str, lease: &CancellationToken) -> Result<bool, String> {
-        let request_id = Uuid::parse_str(id).map_err(|_| "invalid_request_id")?;
-        self.ready().await?;
-        let _admission = self.inner.admission.lock().await;
-        if self.inner.stop.is_cancelled() || lease.is_cancelled() { return Err("session_invalid".into()); }
-        self.inner.repository.task(owner, task_id).await?;
-        if let Some(record) = self.inner.records.lock().await.iter().find(|record| record.id == id) {
-            if record.owner != owner || record.task_id.as_deref() != Some(task_id) { return Err("session_not_found".into()); }
-            return Ok(false);
-        }
-        // Reservation is transactional and always precedes native process creation.
-        // A failed in-memory reload cannot turn a durable reservation into absence.
-        match self.inner.repository.read_cli_session_configuration(owner, id).await {
-            Ok(_) => return Ok(false),
-            Err(error) if error == "session_not_found" => {},
-            Err(error) => return Err(error),
-        }
-        if self.inner.slots.lock().await.contains_key(id) || self.inner.active.lock().await.contains_key(id) { return Err("cleanup_pending".into()); }
-        let mut cancelled = self.inner.cancelled_starts.lock().await;
-        if lease.is_cancelled() { return Err("session_invalid".into()); }
-        if !cancelled.get(owner).is_some_and(|ids| ids.contains(&request_id)) && cancelled.values().map(HashSet::len).sum::<usize>() >= 4096 { return Err("request_capacity".into()); }
-        cancelled.entry(owner.to_owned()).or_default().insert(request_id);
-        Ok(true)
-    }
 
     async fn retryable_no_execution(&self, owner: &str, engine: Engine, id: &str, record: &SessionRecord, create: &crate::capabilities::SessionCreate, task_id: Option<&str>) -> Result<bool, String> {
         let Some(task_id) = task_id else { return Ok(false); };
@@ -343,7 +334,9 @@ impl AgentManager {
 
     async fn occupied_slots(&self) -> usize {
         self.reconcile_inactive_slots().await;
-        self.slot_count().await
+        // Orphaned history quarantines its workspace, not this host's capacity.
+        let active = self.inner.active.lock().await.len();
+        active + self.inner.retained.lock().await.len()
     }
 
     pub async fn resume_session(&self, owner: &str, id: &str, trust_workspace: bool, lease: CancellationToken) -> Result<OwnedSessionView, String> {
@@ -385,12 +378,17 @@ impl AgentManager {
         crate::projects::validate_directory(&project).await?;
         self.require_workspace_trust(owner, &project, "agent", options.trust_workspace).await?;
         options.workspace = tokio::fs::canonicalize(&project.path).await.map_err(|_| "invalid_workspace")?.to_string_lossy().into_owned();
+        self.reconcile_process_cleanup(true).await?;
         self.workspace_available(&options.workspace, Some(&id)).await?;
         self.agent_host_workspace_available(owner, &project).await?;
         if self.occupied_slots().await >= 8 { return Err("session_capacity".into()); }
         let permit = self.inner.gate.admit().map_err(|_| "maintenance_active")?;
         let slot = Uuid::new_v4();
-        self.inner.slots.lock().await.insert(id.clone(), slot);
+        {
+            let mut slots = self.inner.slots.lock().await;
+            let std::collections::hash_map::Entry::Vacant(entry) = slots.entry(id.clone()) else { return Err("cleanup_pending".into()); };
+            entry.insert(slot);
+        }
         let service = &self.inner.providers;
         let launch = match service.prepare(owner, &id, &task_id, &project, engine, &options, create.project_revision, create.provider, &lease).await {
             Ok(launch) => launch,
@@ -439,6 +437,7 @@ impl AgentManager {
                     // No transport means spawn never completed; this is the only no_execution path.
                     if service.cleanup(owner, &id, &launch.binding, true, false).await.is_err() {
                         self.inner.retained.lock().await.push(RetainedCleanup { slot, _owner: owner.into(), _id: id.clone(), _binding: Some(launch.binding.clone()), _lease: Some(launch.lease.clone()), _backend: None, _child: None, _permit: permit });
+                        self.reload_records().await?;
                         return Err("cleanup_pending".into());
                     }
                     drop(permit);
@@ -487,7 +486,7 @@ impl AgentManager {
                 Err(error) if error == "session_not_found" => continue,
                 Err(error) => return Err(error),
             };
-            if configuration.binding.is_some_and(|binding| binding.execution_policy == "provider_bound" && binding.cleanup_state == "unknown") {
+            if configuration.binding.is_some_and(|binding| binding.execution_policy == "provider_bound" && matches!(binding.cleanup_state.as_str(), "pending" | "unknown")) {
                 return Err("cleanup_pending".into());
             }
         }
@@ -535,8 +534,9 @@ impl AgentManager {
     }
     pub async fn snapshot_since(&self, owner: &str, id: &str, cursor: Option<SessionCursor>) -> Result<OwnedSessionView, String> {
         self.reap_completed_tasks().await;
+        self.reconcile_process_cleanup(false).await?;
         if self.inner.stop.is_cancelled() { return Err("session_closed".into()); }
-        let record = self.inner.records.lock().await.iter().find(|record| record.owner == owner && record.id == id).cloned().ok_or("session_not_found")?;
+        let record = self.read_session_record(owner, id).await?.ok_or("session_not_found")?;
         let engine = record.engine;
         // A stopped generation can still own an unsettled durable projection.
         // Its cancelled execution lease must not hide read-only terminal/error state.

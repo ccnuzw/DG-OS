@@ -1,6 +1,10 @@
 #!/bin/sh
 # SYNTHETIC PROTOCOL ONLY. No CLI, model, HTTP request or approved command executes.
 if [ "${1-}" = --version ]; then printf 'codex-cli 0.167.0\n'; exit 0; fi
+fixture_provider=
+for argument do
+  case "$argument" in model_provider=*) fixture_provider=${argument#*=}; fixture_provider=${fixture_provider#\"}; fixture_provider=${fixture_provider%\"};; esac
+done
 printf '%s\n' "$$" > phase6-child.pid
 turn=0
 while IFS= read -r line; do
@@ -8,10 +12,10 @@ while IFS= read -r line; do
   request=${line#*\"id\":}; request=${request%%,*}
   case "$line" in
     *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
-    *'"method":"config/read"'*) printf '{"id":%s,"result":{"config":{"model_provider":"dgos_project","model_providers":{"dgos_project":{"base_url":"http://127.0.0.1:9/v1","wire_api":"responses","env_key":"DGOS_PROVIDER_KEY","requires_openai_auth":false}}}}}\n' "$request";;
+    *'"method":"config/read"'*) printf '{"id":%s,"result":{"config":{"model_provider":"'"$fixture_provider"'","model_providers":{"'"$fixture_provider"'":{"base_url":"http://127.0.0.1:9/v1","wire_api":"responses","env_key":"DGOS_PROVIDER_KEY","requires_openai_auth":false}}}}}\n' "$request";;
     *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[{"model":"fixture-model","defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"medium"},{"reasoningEffort":"high"}]}],"nextCursor":null}}\n' "$request";;
     *'"method":"collaborationMode/list"'*) printf '{"id":%s,"result":{"data":[{"name":"Default","mode":"default","model":"fixture-model"},{"name":"Plan","mode":"plan","model":"fixture-model"}]}}\n' "$request";;
-    *'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","approvalPolicy":"on-request","sandbox":{"type":"workspaceWrite"},"reasoningEffort":"medium","thread":{"id":"codex-lifecycle-SYNTHETIC-thread","turns":[]}}}\n' "$request" "$PWD";;
+    *'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","approvalPolicy":"on-request","sandbox":{"type":"workspaceWrite"},"reasoningEffort":"medium","thread":{"id":"codex-lifecycle-SYNTHETIC-thread","turns":[]}}}\n' "$request" "$PWD";;
     *'"method":"turn/start"'*)
       turn=$((turn+1))
       printf '{"id":%s,"result":{"turn":{"id":"lifecycle-turn-%s"}}}\n' "$request" "$turn"

@@ -160,6 +160,15 @@ pub enum DgosError {
     #[error("Provider response is not the expected format")]
     ProviderResponseInvalid,
 
+    #[error("CLI provider protocol is not supported")]
+    CliProviderProtocolUnsupported,
+
+    #[error("CLI provider authentication is not supported")]
+    CliProviderAuthUnsupported,
+
+    #[error("CLI provider route is invalid")]
+    CliProviderRouteInvalid,
+
     /// Internal stream rejection detail. Public provider error code remains response-invalid;
     /// host execution maps these to its established bounded-generation/tool failure contract.
     #[error("Provider output exceeded the host reply limit")]
@@ -239,6 +248,9 @@ impl DgosError {
             DgosError::ProviderQuotaExhausted => 1001024,
             DgosError::ProviderResponseInvalid | DgosError::ProviderOutputLimit
                 | DgosError::ProviderToolArgumentsInvalid | DgosError::ProviderToolCallLimit => 1001025,
+            DgosError::CliProviderProtocolUnsupported => 1001026,
+            DgosError::CliProviderAuthUnsupported => 1001027,
+            DgosError::CliProviderRouteInvalid => 1001028,
             _ => 1000000,
         }
     }
@@ -316,6 +328,9 @@ mod tests {
             (DgosError::InsecureEndpoint, 1001023),
             (DgosError::ProviderQuotaExhausted, 1001024),
             (DgosError::ProviderResponseInvalid, 1001025),
+            (DgosError::CliProviderProtocolUnsupported, 1001026),
+            (DgosError::CliProviderAuthUnsupported, 1001027),
+            (DgosError::CliProviderRouteInvalid, 1001028),
         ];
         for (error, code) in cases {
             assert_eq!(error.error_code(), code);
@@ -323,6 +338,7 @@ mod tests {
             assert!(!error.to_string().contains(':'), "{error}");
         }
     }
+
 
     #[test]
     fn module_operation_errors_expose_their_code_and_a_fixed_message() {

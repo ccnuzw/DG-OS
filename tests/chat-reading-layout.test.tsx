@@ -1,11 +1,12 @@
 import { chatBudget } from './helpers/chatBudget';
+import { chatUsage } from './helpers/chatUsage';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Composer from '../src/components/chat/Composer';
 import MessageList from '../src/components/chat/MessageList';
-import { useChatStore, type ChatMessage, type ChatSession, type ChatStreamEvent, type SendAck, type SendOutcome } from '../src/stores/chatStore';
+import { useChatStore, type ChatMessage, type ChatSession, type ChatStreamPayload, type SendAck, type SendOutcome } from '../src/stores/chatStore';
 import { SurfaceScope } from '../src/workspace/SurfaceContext';
 import { createWorkspaceController } from '../src/workspace/controller';
 import { MockChannel } from './helpers/mockChannel';
@@ -25,7 +26,7 @@ const message = (sessionId: string, content: string, id = `history-${sessionId}`
   id, session_id: sessionId, seq: 1, role: 'assistant', content, status: 'completed', task_id: null,
   finish_reason: 'stop', error_code: null, total_tokens: 10, result_unknown: false, created_at: 1, updated_at: 1,
 });
-const emit = (event: ChatStreamEvent) => act(() => MockChannel.last().emit(event));
+const emit = (event: ChatStreamPayload) => act(() => MockChannel.last().emit(event));
 let acknowledge: ((ack: SendAck) => void) | undefined;
 
 beforeEach(async () => {
@@ -36,6 +37,7 @@ beforeEach(async () => {
     switch (command) {
       case 'list_chat_sessions': return ok({ items: sessions, next_cursor: null });
       case 'inspect_chat_context': return ok(chatBudget());
+      case 'get_chat_usage': return ok(chatUsage());
       case 'list_chat_messages': {
         const { input } = args as { input: { session_id: string } };
         return ok({ items: [message(input.session_id, `历史消息 ${input.session_id}`)], next_before_seq: null });

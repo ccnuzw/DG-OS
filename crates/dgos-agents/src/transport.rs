@@ -123,14 +123,17 @@ impl Transport {
         lease: CancellationToken,
         diagnostic: ProcessDiagnostic,
         provider_lease: Arc<dgos_providers::CliProviderLease>,
+        ownership: Arc<crate::process_ownership::OwnershipJournal>,
     ) -> Result<(Self, mpsc::Receiver<Value>), String> {
         command
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .kill_on_drop(true);
+        #[cfg(not(unix))]
+        return Err("process_ownership_unsupported".into());
         #[cfg(unix)]
-        command.process_group(0);
+        let mut lifeline = ownership.prepare(&mut command)?;
         let spawn = diagnostic.phase("spawn", None);
         let mut child = match command.spawn() {
             Ok(child) => child,
@@ -140,7 +143,9 @@ impl Transport {
         let pid = child.id();
         diagnostic.record("spawned", pid, "completed", "none");
         #[cfg(unix)]
-        let group = child.id().map(|pid| pid as i32);
+        lifeline.spawned();
+        #[cfg(unix)]
+        let group = child.id().ok_or("process_ownership_unavailable")? as i32;
         let mut stdin = child.stdin.take().expect("piped child stdin");
         let stdout = child.stdout.take().expect("piped child stdout");
         let (input, mut writes) = mpsc::channel::<Value>(64);
@@ -237,41 +242,37 @@ impl Transport {
             writes.close();
             drop(events);
             let cleanup = diagnostic.phase("cleanup", pid);
-            // The CLI and its ordinary tool descendants share this dedicated process group.
+            // EOF lets the guardian signal its own still-pinned group. The host
+            // never signals a cached PGID, even after the leader exits.
             #[cfg(unix)]
-            if let Some(group) = group {
-                unsafe {
-                    libc::kill(-group, libc::SIGTERM);
-                }
-            }
+            lifeline.stop();
             let exit = diagnostic.phase("exit_wait", pid);
-            let mut reaped = matches!(
-                tokio::time::timeout(Duration::from_secs(1), child.wait()).await,
-                Ok(Ok(_))
-            );
             #[cfg(unix)]
-            if let Some(group) = group {
-                unsafe {
-                    libc::kill(-group, libc::SIGKILL);
+            loop {
+                match crate::process_ownership::group_executable(group) {
+                    Ok(false) => break,
+                    Ok(true) => {},
+                    Err(_) => diagnostic.record("group_observation", pid, "pending", "cleanup_pending"),
                 }
+                tokio::time::sleep(Duration::from_millis(25)).await;
             }
-            if !reaped {
-                let _ = child.start_kill();
-                reaped = matches!(
-                    tokio::time::timeout(Duration::from_secs(2), child.wait()).await,
-                    Ok(Ok(_))
-                );
-            }
+            // Reap only AFTER there are no executable group members. Zombies
+            // cannot execute, but an uncertain kernel/permission result is not
+            // exit proof and must retain the provider authorization.
+            let mut reaped = child.wait().await.is_ok();
             while !reaped {
                 diagnostic.record("exit_wait", pid, "pending", "cleanup_pending");
-                // Never release the actual child or authorization on an uncertain wait.
+                tokio::time::sleep(Duration::from_millis(100)).await;
                 reaped = child.wait().await.is_ok();
-                if !reaped { tokio::time::sleep(Duration::from_millis(100)).await; }
             }
-            exit.finish((!reaped).then_some("cleanup_pending"));
-            cleanup.finish((!reaped).then_some("cleanup_pending"));
-            // `finished` remains cleanup proof, not an IO-liveness signal.
-            reaped_flag.store(reaped, Ordering::Release);
+            #[cfg(unix)]
+            if ownership.record_stopped().is_err() {
+                diagnostic.record("ownership_commit", pid, "failed", "process_ownership_unavailable");
+            }
+            exit.finish(None);
+            cleanup.finish(None);
+            // `finished` proves both group inactivity and native-child reap.
+            reaped_flag.store(true, Ordering::Release);
             finished.cancel();
         });
         Ok((handle, received))
@@ -370,7 +371,7 @@ impl Transport {
             .is_ok()
             && self.reaped.load(Ordering::Acquire)
     }
-    /// Resolves after process cleanup; `true` only if the child was reaped.
+    /// Resolves after group inactivity is verified and the native child is reaped.
     pub async fn wait_stopped(&self) -> bool {
         self.finished.cancelled().await;
         self.reaped.load(Ordering::Acquire)

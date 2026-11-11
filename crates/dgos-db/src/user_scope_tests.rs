@@ -75,6 +75,8 @@ fn seed(user: &str, n: u32) -> String {
           VALUES ('msg-{n}', 'chat-{n}', '{user}', 1, 'user', 'completed', 'task-{n}', 1, 1);
         INSERT INTO chat_runs (task_id,user_id,session_id,assistant_message_id,status,partial_content,created_at,updated_at)
           VALUES ('task-{n}','{user}','chat-{n}','assistant-{n}','completed','retained private partial',1,1);
+        INSERT INTO chat_usage_attempts(id,user_id,session_id,run_id,provider_id,model_id,source,status,total_tokens,created_at,settled_at)
+          VALUES ('usage-{n}','{user}','chat-{n}','task-{n}','prov-{n}','m','measured','success',12,1,1);
         INSERT INTO chat_run_steps (id,task_id,ordinal,kind,phase,status,receipt,created_at,updated_at)
           VALUES ('step-{n}','task-{n}',0,'tool','tool','settled','{{\"outcome\":\"success\"}}',1,1);
         INSERT INTO chat_summaries (id,user_id,session_id,source_first_seq,source_last_seq,source_digest,source_json,content,provider_id,model_id,created_at)
@@ -413,4 +415,33 @@ async fn orphan_rows_are_counted_only_once_accounts_exist() {
         .await
         .unwrap();
     assert_eq!(data.orphan_count().await.unwrap(), 1);
+}
+
+#[tokio::test]
+async fn web_credentials_survive_live_cleanup_and_are_staged_before_account_purge() {
+    use crate::repositories::provider_repository::{CHAT_WEB_CREDENTIAL_KEY, CHAT_WEB_ENDPOINT, CHAT_WEB_PROVIDER_ID};
+    let (_dir, db) = database().await;
+    let users = UserRepository::new(db.clone());
+    for id in ["alice", "bob"] {
+        users.insert(NewUser { id, username: id, username_key: id, password_hash: "$argon2id$x", now: 1 }).await.unwrap();
+        db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+            "INSERT INTO system_settings (user_id,setting_key,setting_value,updated_at) VALUES (?,?,?,1)",
+            [id.into(), CHAT_WEB_CREDENTIAL_KEY.into(), serde_json::json!(format!("web-{id}")).to_string().into()],
+        )).await.unwrap();
+    }
+    let providers = crate::ProviderRepository::new(db.clone());
+    assert!(providers.credential_is_active("web-alice").await.unwrap());
+    assert!(!providers.credential_is_active("obsolete-web-ref").await.unwrap());
+    users.mark_deleting("alice", 5).await.unwrap();
+    users.mark_deleting("alice", 6).await.unwrap();
+    let cleanup = providers.pending_credential_cleanup().await.unwrap();
+    assert_eq!(cleanup.len(), 1);
+    assert_eq!(cleanup[0].credential_ref, "web-alice");
+    assert_eq!(cleanup[0].user_id, "alice");
+    assert_eq!(cleanup[0].provider_id, CHAT_WEB_PROVIDER_ID);
+    assert_eq!(cleanup[0].endpoint, CHAT_WEB_ENDPOINT);
+    UserDataRepository::new(db.clone()).purge(UserDataDomain::Settings, "alice").await.unwrap();
+    assert!(!providers.credential_is_active("web-alice").await.unwrap());
+    assert!(providers.credential_is_active("web-bob").await.unwrap());
+    assert_eq!(providers.pending_credential_cleanup().await.unwrap()[0].credential_ref, "web-alice");
 }

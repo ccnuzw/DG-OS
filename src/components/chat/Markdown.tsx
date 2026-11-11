@@ -1,15 +1,20 @@
 import { t, useLocale as usePageLocale } from '../../i18n';
-import { Component, Fragment, createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { Component, Fragment, createContext, useContext, useId, useMemo, useState, type ReactNode } from 'react';
 import { Lexer, type Token, type Tokens } from 'marked';
 import { common, createLowlight } from 'lowlight';
-import { openUrl } from '@tauri-apps/plugin-opener';
-import { Button, Modal, cn } from '@dgos/ui';
+import { Button, cn } from '@dgos/ui';
+import { ChevronDown, ChevronUp, Copy, FileCode2 } from 'lucide-react';
 import { FOCUS_RING } from '@dgos/ui/lib/focus';
 import { COPY_TEXT, useCopyFeedback } from './clipboard';
+import type { ChatWebSource } from '../../stores/chatStore';
+import { ConfirmedExternalLink, SourceCitation, TrustedSourcesContext } from './SourcePreview';
+import { RichMarkdown } from './RichMarkdown';
+import { MarkdownTable } from './MarkdownTable';
+import { richMarkdownOptions, type MathToken } from './richMarkdownTokens';
 import './Markdown.css';
 
-// Assistant Markdown (FR-006 AC14, AC29, B06-62; D077). Only the marked Lexer is used: its tokens are mapped to React
-// elements here, so no HTML string is ever produced and nothing needs dangerouslySetInnerHTML.
+// Assistant Markdown (FR-006 AC14, AC29, B06-62; D077). marked tokens become React elements; raw HTML is never
+// interpreted. Rich output is rendered in isolation and rebuilt from allowlisted SVG/MathML primitives.
 //  - raw HTML tokens render as inert text;
 //  - images never load: alt text and the URL are shown as text;
 //  - only https: links are interactive, and opening one asks for confirmation first; every other protocol is text;
@@ -22,6 +27,12 @@ const MAX_HIGHLIGHT_CHARS = 20000;
 const lowlight = createLowlight(common);
 
 export const MarkdownHighlightContext = createContext(true);
+const CitationRendererContext = createContext<((id: string, children: ReactNode) => ReactNode) | undefined>(undefined);
+
+function MarkdownCitation({ id, children }: { id: string; children: ReactNode }) {
+  const renderCitation = useContext(CitationRendererContext);
+  return renderCitation ? renderCitation(id, children) : <SourceCitation id={id}>{children}</SourceCitation>;
+}
 
 const NAMED_ENTITIES: Readonly<Record<string, string>> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0' };
 
@@ -45,26 +56,6 @@ function httpsTarget(href: string): string | null {
   }
 }
 
-function LinkButton({ url, children }: { url: string; children: ReactNode }) {
-  usePageLocale();
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <Button variant="link" className={cn('chat-markdown-link inline h-auto whitespace-normal text-left underline wrap-anywhere', FOCUS_RING)} onClick={() => setOpen(true)}>
-        {children}
-      </Button>
-      <Modal
-        open={open}
-        onOpenChange={setOpen}
-        title={t('chat.openExternal')}
-        icon="warning"
-        description={<span>{t('chat.externalHelp')}<span className="mt-2 block font-mono text-xs wrap-anywhere">{url}</span></span>}
-        confirmText={t('chat.open')}
-        onConfirm={() => openUrl(url)}
-      />
-    </>
-  );
-}
 
 interface HastText { type: 'text'; value: string }
 interface HastElement { type: 'element'; properties?: { className?: unknown }; children: unknown[] }
@@ -98,24 +89,31 @@ function highlight(lang: string | undefined, text: string): ReactNode[] | null {
   }
 }
 
-function CodeBlock({ lang, text }: { lang?: string; text: string }) {
+export function CodeBlock({ lang, text }: { lang?: string; text: string }) {
   usePageLocale();
   const codeHighlighting = useContext(MarkdownHighlightContext);
   const [state, copy] = useCopyFeedback();
+  const [expanded, setExpanded] = useState(false);
+  const codeId = useId();
+  const lines = useMemo(() => text.split('\n'), [text]);
+  const long = lines.length > 24;
+  const collapsed = long && !expanded;
+  const visibleText = collapsed ? lines.slice(0, 12).join('\n') : text;
   const label = lang?.trim().split(/\s+/)[0] ?? '';
-  const highlighted = useMemo(() => codeHighlighting ? highlight(label, text) : null, [label, text, codeHighlighting]);
+  const highlighted = useMemo(() => codeHighlighting ? highlight(label, visibleText) : null, [label, visibleText, codeHighlighting]);
   return (
-    <div className="my-2 overflow-hidden rounded-md border border-border-subtle bg-surface-inset">
-      <div className="flex items-center justify-between gap-2 border-b border-border-subtle px-3 py-1 font-sans text-xs text-ink-secondary">
-        <span className="min-w-0 wrap-anywhere">{label || t('chat.code')}</span>
-        <span className="flex items-center gap-2">
+    <div className="chat-code-block">
+      <div className="chat-code-toolbar">
+        <span className="chat-code-label"><span className="chat-code-icon"><FileCode2 size={15} aria-hidden="true" /></span><strong className="chat-code-language">{label || t('chat.code')}</strong><small className="chat-code-count">{t('agentExecution.codeLines', { count: lines.length })}</small></span>
+        <span className="chat-code-actions">
           <span role="status" className={cn('text-xs', state === 'failed' ? 'text-status-error-text' : 'text-status-success-text')}>{COPY_TEXT[state]}</span>
-          <Button size="sm" variant="ghost" onClick={() => copy(text)}>{t('chat.copyCode')}</Button>
+          <Button size="sm" variant="ghost" onClick={() => copy(text)}><Copy size={13} aria-hidden="true" />{t('chat.copyCode')}</Button>
         </span>
       </div>
-      <pre tabIndex={0} aria-label={label ? t('chat.codeLabel', { language: label }) : t('chat.code')} className={cn('chat-code type-code m-0 overflow-x-auto p-3', FOCUS_RING)}>
-        <code>{highlighted ?? text}</code>
+      <pre id={codeId} tabIndex={0} aria-label={label ? t('chat.codeLabel', { language: label }) : t('chat.code')} className={cn('chat-code type-code m-0 overflow-x-auto p-3', FOCUS_RING)} data-code-collapsed={collapsed || undefined}>
+        <code>{highlighted ?? visibleText}</code>
       </pre>
+      {long ? <Button className="chat-code-toggle" size="sm" variant="ghost" aria-expanded={expanded} aria-controls={codeId} onClick={() => setExpanded(value => !value)}>{expanded ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}{t(expanded ? 'agentExecution.collapseCode' : 'agentExecution.expandCode', { count: lines.length })}</Button> : null}
     </div>
   );
 }
@@ -123,7 +121,6 @@ function CodeBlock({ lang, text }: { lang?: string; text: string }) {
 const HEADING_CLASS: Readonly<Record<number, string>> = {
   1: 'chat-markdown-heading-large', 2: 'chat-markdown-heading-medium', 3: 'chat-markdown-heading-medium', 4: 'chat-markdown-heading-small', 5: 'chat-markdown-heading-small', 6: 'chat-markdown-heading-small',
 };
-const ALIGN_CLASS: Readonly<Record<string, string>> = { left: 'text-left', center: 'text-center', right: 'text-right' };
 
 /** Child tokens of a token type this renderer does not know, if it has any. Unknown types fall back to their raw text. */
 function childTokens(token: Token): Token[] | undefined {
@@ -133,6 +130,10 @@ function childTokens(token: Token): Token[] | undefined {
 function renderInline(tokens: readonly Token[] | undefined): ReactNode[] {
   return (tokens ?? []).map((token, index): ReactNode => {
     switch (token.type) {
+      case 'richMath': {
+        const math = token as MathToken;
+        return <RichMarkdown key={`${index}:${math.raw}`} kind="math" source={math.text} display={math.display} />;
+      }
       case 'text': {
         const text = token as Tokens.Text;
         return <Fragment key={index}>{text.tokens?.length ? renderInline(text.tokens) : decodeEntities(text.text)}</Fragment>;
@@ -165,8 +166,9 @@ function renderInline(tokens: readonly Token[] | undefined): ReactNode[] {
       }
       case 'link': {
         const link = token as Tokens.Link;
+        if (!link.autolink && link.href.startsWith('dgos-source:')) return <MarkdownCitation key={index} id={link.href.slice('dgos-source:'.length)}>{renderInline(link.tokens)}</MarkdownCitation>;
         const target = httpsTarget(link.href);
-        if (!link.autolink && target) return <LinkButton key={index} url={target}>{renderInline(link.tokens)}</LinkButton>;
+        if (!link.autolink && target) return <ConfirmedExternalLink key={index} url={target}>{renderInline(link.tokens)}</ConfirmedExternalLink>;
         // Not interactive: other protocols, and autolinks, which carry no text the user chose to click.
         return <span key={index}>{renderInline(link.tokens)} ({link.href})</span>;
       }
@@ -185,6 +187,10 @@ function renderInline(tokens: readonly Token[] | undefined): ReactNode[] {
 function renderBlocks(tokens: readonly Token[]): ReactNode[] {
   return tokens.map((token, index): ReactNode => {
     switch (token.type) {
+      case 'richMath': {
+        const math = token as MathToken;
+        return <RichMarkdown key={`${index}:${math.raw}`} kind="math" source={math.text} display={math.display} />;
+      }
       case 'space':
       case 'def':
         return null;
@@ -203,6 +209,9 @@ function renderBlocks(tokens: readonly Token[]): ReactNode[] {
       }
       case 'code': {
         const code = token as Tokens.Code;
+        const language = code.lang?.trim().split(/\s+/)[0]?.toLowerCase();
+        if (language === 'mermaid') return <RichMarkdown key={`${index}:${code.text}`} kind="diagram" source={code.text} />;
+        if (language === 'math' || language === 'latex' || language === 'tex') return <RichMarkdown key={`${index}:${code.text}`} kind="math" source={code.text} />;
         return <CodeBlock key={index} lang={code.lang} text={code.text} />;
       }
       case 'blockquote': {
@@ -218,18 +227,7 @@ function renderBlocks(tokens: readonly Token[]): ReactNode[] {
       }
       case 'table': {
         const table = token as Tokens.Table;
-        const cell = (c: Tokens.TableCell, key: number, header: boolean) => {
-          const Tag = header ? 'th' : 'td';
-          return <Tag key={key} className={cn('border border-border-subtle px-2 py-1', header && 'bg-surface-inset font-semibold', c.align ? ALIGN_CLASS[c.align] : 'text-left')}>{renderInline(c.tokens)}</Tag>;
-        };
-        return (
-          <div key={index} className="my-2 overflow-x-auto">
-            <table className="border-collapse">
-              <thead><tr>{table.header.map((c, i) => cell(c, i, true))}</tr></thead>
-              <tbody>{table.rows.map((row, r) => <tr key={r}>{row.map((c, i) => cell(c, i, false))}</tr>)}</tbody>
-            </table>
-          </div>
-        );
+        return <MarkdownTable key={index} table={table} renderCell={cell => renderInline(cell.tokens)} />;
       }
       case 'hr':
         return <hr key={index} className="my-3 border-border-subtle" />;
@@ -249,7 +247,7 @@ function PlainText({ source }: { source: string }) {
 
 function MarkdownBody({ source }: { source: string }) {
   usePageLocale();
-  const tokens = useMemo(() => Lexer.lex(source), [source]);
+  const tokens = useMemo(() => Lexer.lex(source, richMarkdownOptions), [source]);
   return <div className="type-reading chat-markdown">{renderBlocks(tokens)}</div>;
 }
 
@@ -273,7 +271,7 @@ class MarkdownBoundary extends Component<BoundaryProps, BoundaryState> {
   }
 }
 
-export default function Markdown({ source }: { source: string }) {
+export default function Markdown({ source, sources = [], citationRenderer }: { source: string; sources?: ChatWebSource[]; citationRenderer?: (id: string, children: ReactNode) => ReactNode }) {
   usePageLocale();
-  return <MarkdownBoundary source={source}><MarkdownBody source={source} /></MarkdownBoundary>;
+  return <TrustedSourcesContext.Provider value={sources}><CitationRendererContext.Provider value={citationRenderer}><MarkdownBoundary source={source}><MarkdownBody source={source} /></MarkdownBoundary></CitationRendererContext.Provider></TrustedSourcesContext.Provider>;
 }

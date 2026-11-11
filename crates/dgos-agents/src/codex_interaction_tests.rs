@@ -16,7 +16,7 @@ case "$line" in
 *'"method":"collaborationMode/list"'*) printf '{"id":%s,"result":{"data":[{"name":"Default","mode":"default","model":"untrusted-preset"},{"name":"Plan","mode":"plan","model":"untrusted-preset","reasoning_effort":"high"}]}}\n' "$request";;
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
-*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","approvalPolicy":"on-request","sandbox":{"type":"workspaceWrite"},"reasoningEffort":"medium","thread":{"id":"steering-thread","turns":[]}}}\n' "$request" "$PWD";;
+*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","approvalPolicy":"on-request","sandbox":{"type":"workspaceWrite"},"reasoningEffort":"medium","thread":{"id":"steering-thread","turns":[]}}}\n' "$request" "$PWD";;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[{"model":"fixture-model","defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"}]}],"nextCursor":null}}\n' "$request";;
 *'"method":"turn/start"'*) printf '{"id":%s,"result":{"turn":{"id":"steering-turn"}}}\n' "$request";;
 *'"method":"turn/steer"'*)
@@ -104,7 +104,7 @@ request=${line#*\"id\":}; request=${request%%,*}
 case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
-*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"terminal-thread","turns":[]}}}\n' "$request" "$PWD";;
+*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"terminal-thread","turns":[]}}}\n' "$request" "$PWD";;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
 *'"method":"turn/start"'*) printf '{"id":%s,"result":{"turn":{"id":"terminal-turn"}}}\n' "$request";;
 *'"method":"turn/steer"'*) printf '%s\n' '{"method":"turn/completed","params":{"threadId":"terminal-thread","turn":{"id":"terminal-turn","status":"completed"}}}'; sleep 2; printf '{"id":%s,"result":{"turnId":"terminal-turn"}}\n' "$request";;

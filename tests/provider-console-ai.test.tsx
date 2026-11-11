@@ -11,7 +11,7 @@ import { evaluateFixtureSource } from './helpers/moduleFixtures';
 import type { AiEvent, AiRunInput, AiRunSummary, AiTerminal } from '../src/types/ai';
 import { defaultAiFoundation } from '../src/types/ai';
 
-const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'bundled-modules', 'provider-console', '1.2.0', 'entry.js'), 'utf8');
+const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'bundled-modules', 'provider-console', '1.3.0', 'entry.js'), 'utf8');
 const skill = { skill_id: 's1', name: 'Outline', version: '2.0', content_hash: 'skill-hash' };
 const tool = { server_id: 'server-1', server_name: 'Local tools', tool_name: 'echo', schema_hash: 'schema-hash', description: 'Echo selected text', input_schema: { type: 'object', properties: { text: { type: 'string' } } } };
 const terminal: AiTerminal = { status: 'succeeded', content: 'done', error: null, result_unknown: false, audit_warning: false, total_tokens: 3 };
@@ -57,7 +57,7 @@ async function fixture(denyOptional = false) {
   hosts.push(host);
   await host.ensureAttached();
   instruction.onmessage({ kind: 'route', runtimeId: 'rt-console', route: 'route-console' });
-  instruction.onmessage({ kind: 'load', ticket: 'load-console', runtimeId: 'rt-console', moduleId: 'provider-console', version: '1.2.0', source, hookTimeoutMs: 500, views: { layout: 'document', capability: 'multiple' } });
+  instruction.onmessage({ kind: 'load', ticket: 'load-console', runtimeId: 'rt-console', moduleId: 'provider-console', version: '1.3.0', source, hookTimeoutMs: 500, views: { layout: 'document', capability: 'multiple' } });
   await vi.waitFor(() => expect(receipts).toEqual([{ kind: 'loaded' }]));
   const container = (await host.openView('rt-console', 'default-view', 'default-document')).container;
   document.body.appendChild(container);
@@ -82,7 +82,7 @@ const started = (id: string): AiEvent => ({ kind: 'started', run_id: id, request
 beforeEach(() => setLocaleForTesting('en-US'));
 afterEach(() => { act(() => { for (const host of hosts.splice(0)) host.resetViews(); }); cleanup(); document.body.replaceChildren(); });
 
-describe('provider-console 1.2 public AI foundation consumer', () => {
+describe('provider-console public AI foundation consumer', () => {
   it('sends exact revision zero, selected content pins and tool schemas, with streamed private output and host approval phase', async () => {
     const f = await fixture();
     await fill(f.container);
@@ -102,6 +102,19 @@ describe('provider-console 1.2 public AI foundation consumer', () => {
     await f.finish(0);
     expect(within(f.container).getByTestId('provider-console-reply').textContent).toBe('done');
     expect(f.invoke.mock.calls.some(([command]) => command === 'module_call_provider')).toBe(false);
+  });
+
+  it('starts a new model segment without presenting the previous tool preamble as its answer', async () => {
+    const f = await fixture();
+    await fill(f.container);
+    click(f.container, 'Send');
+    await vi.waitFor(() => expect(f.runs).toHaveLength(1));
+    f.emit(0, started('run-0'));
+    f.emit(0, { kind: 'delta', run_id: 'run-0', request_id: 'run-0', seq: 2, text: 'I will inspect the source.' });
+    f.emit(0, { kind: 'model_segment', run_id: 'run-0', request_id: 'run-0', seq: 3, round: 2 });
+    f.emit(0, { kind: 'delta', run_id: 'run-0', request_id: 'run-0', seq: 4, text: 'The source reports a verified result.' });
+    expect(within(f.container).getByTestId('provider-console-reply').textContent).toBe('The source reports a verified result.');
+    await f.finish(0);
   });
 
   it('keeps optional permission denial visible while allowing a plain model run without granting anything', async () => {

@@ -32,7 +32,7 @@ it('streams summaries independently by run, item and index and replaces only the
   expect(completed.data).toHaveProperty('content');
 });
 
-it('keeps malformed summary notifications inspectable without destroying a valid stream', () => {
+it('keeps malformed summary notifications inspectable without destroying a valid stream', async () => {
   const first = delta(1, 'one', 0, 'Still streaming');
   const badIndex = delta(2, 'one', Number.MAX_SAFE_INTEGER + 1, 'bad');
   const badSnapshot = event(3, 'reasoning', { id: 'one', summary: ['valid', 42] });
@@ -42,7 +42,9 @@ it('keeps malformed summary notifications inspectable without destroying a valid
   expect(projection.get(badSnapshot)).toEqual({ kind: 'malformed' });
   render(<CodexTranscriptContent event={badSnapshot} entry={projection.get(badSnapshot)!} inspector={value => <pre>{JSON.stringify(inspectableAgentEvent(value))}</pre>} />);
   expect(screen.getByText('codexTranscript.malformed')).toBeTruthy();
-  expect(screen.getByText(/42/)).toBeTruthy();
+  expect(screen.queryByText(/42/)).toBeNull();
+  fireEvent.click(screen.getByText('codexTranscript.malformed'));
+  expect(await screen.findByText(/42/)).toBeTruthy();
 });
 
 it('does not join unscoped events, and part-added never resets existing streamed text', () => {
@@ -73,7 +75,7 @@ it('renders reasoning summaries collapsed and never renders raw reasoning in the
   expect(inspectableAgentEvent(delta(3, 'one', 0, 'Public delta')).text).toBe('Public delta');
 });
 
-it('retains the latest plan and diff per run with revision history, explanation and native step status', () => {
+it('retains the latest plan and diff per run with revision history, explanation and native step status', async () => {
   const first = event(1, 'turn/plan/updated', { explanation: 'Original reason', plan: [{ step: 'Inspect', status: 'pending' }] });
   const diff = event(2, 'turn/diff/updated', { diff: '+original' });
   const other = event(3, 'turn/plan/updated', { plan: [{ step: 'Other run', status: 'pending' }] }, 'run-b');
@@ -85,14 +87,18 @@ it('retains the latest plan and diff per run with revision history, explanation 
   expect(projection.get(latest)).toMatchObject({ revisions: [first, latest] });
   expect(projection.get(newestDiff)).toMatchObject({ revisions: [diff, newestDiff] });
   const view = render(<CodexTranscriptContent event={latest} entry={projection.get(latest)!} inspector={() => null} />);
-  expect(view.container.textContent).toContain('Changed reason');
-  expect(view.container.textContent).toContain('Original reason');
+  expect(screen.queryByText('Changed reason')).toBeNull();
+  fireEvent.click(screen.getByText('execution.plan'));
+  expect(await screen.findByText('Changed reason')).toBeTruthy();
+  expect(screen.queryByText('Original reason')).toBeNull();
   expect(view.container.textContent).toContain('execution.completed');
   expect(view.container.textContent).toContain('execution.in_progress');
   expect(view.container.textContent).toContain('customState');
   expect(view.container.textContent).toContain('codexTranscript.proposalBoundary');
   fireEvent.click(screen.getByText('codexTranscript.previousRevisions'));
   expect(screen.getByText('codexTranscript.previousRevisions').closest('details')?.open).toBe(true);
+  fireEvent.click(await screen.findByText('agentExecution.source', { selector: 'summary' }));
+  expect(await screen.findByText('Original reason')).toBeTruthy();
 });
 
 it('separates latest and cumulative counts, rejects overflow, and identifies active-run snapshots', () => {

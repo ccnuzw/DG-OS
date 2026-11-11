@@ -24,7 +24,7 @@ impl ClaudeSession {
         let bridge = bridge_path();
         discovery.finish(bridge.as_ref().err().map(String::as_str));
         let bridge = bridge?;
-        let auth_style = match (launch.launch.metadata().auth_style.sends_bearer(), launch.launch.metadata().auth_style.sends_x_api_key()) { (true, true) => "both", (true, false) => "bearer", (false, true) => "x_api_key", _ => return Err("provider_incompatible".into()) };
+        let auth_style = match (launch.launch.metadata().auth_style.sends_bearer(), launch.launch.metadata().auth_style.sends_x_api_key()) { (true, true) => "both", (true, false) => "bearer", (false, true) => "x_api_key", _ => return Err("provider_auth_unsupported".into()) };
         let mut command = Command::new(bridge);
         command.current_dir(&options.workspace);
         for (key, _) in std::env::vars_os() {
@@ -39,7 +39,7 @@ impl ClaudeSession {
         let auth_launch = Arc::new(crate::manager::native_auth::LaunchContext { executable: executable.clone().into(), workspace: options.workspace.clone(), env: auth_env });
         let process_lease = launch.lease.clone();
         let (wire, mut events) = providers.with_cli_spawn(&launch.lease, &launch.launch, |_| {
-            Ok(Transport::spawn(command, process_lease.cancellation_token(), diagnostic, process_lease.clone()))
+            Ok(Transport::spawn(command, process_lease.cancellation_token(), diagnostic, process_lease.clone(), launch.ownership.clone()))
         }).await.map_err(|_| "provider_revision_changed")??;
         let session = Self {
             wire,
@@ -103,11 +103,10 @@ impl ClaudeSession {
                         );
                         view.active_run = None;
                     }
-                    "message" | "tool_progress" => {
-                        let run = event_run(&view, &params);
-                        // send() already records the human prompt with this native UUID.
-                        if method == "message" && params["type"] == "user" && run.as_deref().is_some_and(|run| params["uuid"].as_str() == Some(run)) { continue; }
-                        view.push_run(method, None, params, run);
+                    "message" | "tool_progress" | "message_start" | "content_block_start" |
+                    "content_block_stop" | "message_stop" | "text_delta" |
+                    "task_started" | "task_progress" | "task_notification" | "native/unsupported" => {
+                        record_transcript_event(&mut view, method, params);
                     }
                     "history" => { view.history_truncated |= params["truncated"] == true; }
                     "controls" => {
@@ -130,11 +129,6 @@ impl ClaudeSession {
                         }
                     }
                     "native/unavailable" => view.push(method, None, params),
-                    "text_delta" => {
-                        let run = event_run(&view, &params);
-                        let text = params.get("text").and_then(Value::as_str).map(str::to_owned);
-                        view.push_run(method, text, params, run);
-                    }
                     "failure" => {
                         if params.get("request_id").and_then(Value::as_str).is_some_and(|id| view.active_run.as_deref() != Some(id)) { continue; }
                         view.status = "error".into();
@@ -150,6 +144,7 @@ impl ClaudeSession {
                         }
                         if let Some(controls) = &mut view.controls { controls.uncertain(); }
                         view.pending.clear();
+                        view.clear_output_image_previews();
                     }
                     _ => {}
                 }
@@ -163,7 +158,7 @@ impl ClaudeSession {
             Ok(result) => {
                 let evidence = &result["provider_evidence"];
                 if evidence["source"] != "cli_control" || evidence["model"] != launch.model || evidence["base_url"] != launch.launch.metadata().base_url || evidence["auth_style"] != auth_style || evidence["api_provider"] != "firstParty" || evidence["flag_settings_applied"] != true || evidence["route_env_verified"] != true || evidence["auth_helper_disabled"] != true {
-                    return Err(session.wire.startup_failure("provider_incompatible".into()).await);
+                    return Err(session.wire.startup_failure("provider_binding_unconfirmed".into()).await);
                 }
                 if providers.validate_cli_lease(&launch.lease).await.is_err() {
                     return Err(session.wire.startup_failure("provider_revision_changed".into()).await);
@@ -267,6 +262,12 @@ impl ClaudeSession {
     pub(crate) async fn snapshot_since(&self, after: Option<u64>) -> (SessionView, crate::session::EventSync) {
         self.view.lock().await.snapshot_since(after)
     }
+    pub(crate) async fn preview_output_image(&self, id: &str) -> Result<crate::images::OutputImagePreview, String> {
+        if !self.wire.native_available() { return Err("image_preview_expired".into()); }
+        let view = self.view.lock().await;
+        if matches!(view.status.as_str(), "closed" | "unknown" | "starting") { return Err("image_preview_expired".into()); }
+        view.preview_image(id)
+    }
     pub(crate) fn native_available(&self) -> bool { self.wire.native_available() }
     pub(crate) fn native_capabilities(&self) -> crate::native_session::NativeSessionCapabilities {
         let bits = self.native_capability_bits.load(std::sync::atomic::Ordering::Acquire);
@@ -325,7 +326,9 @@ impl ClaudeSession {
         )
         .await;
         let closed = self.wire.close().await;
-        if closed { self.view.lock().await.status = "closed".into(); }
+        let mut view = self.view.lock().await;
+        view.clear_output_image_previews();
+        if closed { view.status = "closed".into(); }
         closed
     }
     pub async fn wait_stopped(&self) -> bool {
@@ -358,6 +361,23 @@ fn event_run(view: &SessionView, params: &Value) -> Option<String> {
     }
     let id = params.get("request_id")?.as_str()?;
     view.active_run.as_ref().filter(|active| active.as_str() == id).cloned()
+}
+
+fn transcript_run(view: &SessionView, params: &Value) -> Option<String> {
+    if params["history"] == true || params.get("session_id").and_then(Value::as_str).is_some_and(|id| view.native_id.as_deref() != Some(id)) { return None; }
+    let id = params.get("request_id")?.as_str().filter(|id| !id.is_empty() && id.len() <= 128 && !id.chars().any(char::is_control))?;
+    // The private bridge binds tool/task IDs before the active turn changes.
+    // Transcript provenance is independent from permission/terminal authority.
+    Some(id.to_owned())
+}
+
+fn record_transcript_event(view: &mut SessionView, method: &str, params: Value) {
+    if params.get("session_id").and_then(Value::as_str).is_some_and(|id| view.native_id.as_deref() != Some(id)) { return; }
+    let run = transcript_run(view, &params);
+    // send() already records the human prompt with this native UUID.
+    if method == "message" && params["type"] == "user" && run.as_deref().is_some_and(|run| params["uuid"].as_str() == Some(run)) { return; }
+    let text = (method == "text_delta").then(|| params.get("text").and_then(Value::as_str).map(str::to_owned)).flatten();
+    view.push_run(method, text, params, run);
 }
 
 fn result_text(params: &Value) -> Option<String> {
@@ -489,6 +509,55 @@ mod tests {
     }
 
     #[test]
+    fn transcript_lifecycle_retains_native_identity_without_consuming_approvals_or_runs() {
+        let mut view = crate::session::SessionView::new("/workspace".into());
+        view.native_id = Some("session".into());
+        view.active_run = Some("send".into());
+        view.status = "running".into();
+        view.request(crate::session::PendingRequest { id: "approval".into(), kind: "claude/toolPermission".into(), title: "Bash".into(), data: json!({}) });
+        for kind in ["message_start", "content_block_start", "text_delta", "content_block_stop", "message_stop", "task_started", "task_progress", "task_notification"] {
+            let params = json!({"session_id":"session","request_id":"send","native_message_id":"api-message","block_index":3,"parent_tool_use_id":"spawn","task_id":"agent","status":"completed","text":"child text"});
+            super::record_transcript_event(&mut view, kind, params.clone());
+            let event = view.events.last().unwrap();
+            assert_eq!(event.kind, kind);
+            assert_eq!(event.run.as_deref(), Some("send"));
+            assert_eq!(event.data, params);
+            assert_eq!(event.text.as_deref(), (kind == "text_delta").then_some("child text"));
+        }
+        assert_eq!(view.active_run.as_deref(), Some("send"));
+        assert_eq!(view.status, "waiting");
+        assert_eq!(view.pending.len(), 1);
+        for params in [json!({"request_id":"earlier"}), json!({"request_id":"send","history":true})] {
+            super::record_transcript_event(&mut view, "task_notification", params.clone());
+            let event = view.events.last().unwrap();
+            assert_eq!(event.run.as_deref(), (params["history"] != true).then_some("earlier"));
+            assert_eq!(event.data, params);
+        }
+        let count = view.events.len();
+        super::record_transcript_event(&mut view, "task_notification", json!({"request_id":"send","session_id":"other"}));
+        assert_eq!(view.events.len(), count);
+        assert_eq!(view.active_run.as_deref(), Some("send"));
+    }
+
+    #[test]
+    fn background_child_stream_and_tool_results_keep_the_spawning_send_after_next_turn() {
+        let mut view = crate::session::SessionView::new("/workspace".into());
+        view.native_id = Some("session".into());
+        view.active_run = Some("send-b".into());
+        view.status = "running".into();
+        for (kind, extra) in [("task_progress", json!({"task_id":"task","run_id":"001"})), ("text_delta", json!({"native_message_id":"child","block_index":0,"text":"late child"})), ("message", json!({"type":"user","content":[{"type":"tool_result","tool_use_id":"spawn","content":"done"}]}))] {
+            let mut params = json!({"session_id":"session","request_id":"send-a","parent_tool_use_id":"spawn"});
+            params.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            super::record_transcript_event(&mut view, kind, params);
+            assert_eq!(view.events.last().unwrap().run.as_deref(), Some("send-a"));
+        }
+        assert_eq!(view.active_run.as_deref(), Some("send-b"));
+        assert_eq!(view.status, "running");
+        assert!(view.terminal_run.is_none());
+        assert!(event_run(&view, &json!({"session_id":"session","request_id":"send-a"})).is_none());
+    }
+
+    #[test]
     fn failed_result_retains_native_details_and_actual_errors() {
         let native = json!({"subtype":"error_during_execution","is_error":true,"terminal_reason":"api_error","errors":["native failure","request failed"]});
         assert_eq!(result_text(&native).as_deref(), Some("native failure\nrequest failed"));
@@ -543,7 +612,7 @@ done
 "#).await;
         let mut command = Command::new(executable);
         command.current_dir(&root);
-        let (wire, _events) = Transport::spawn(command, launch.lease.cancellation_token(), ProcessDiagnostic::new("agent_start", "claude"), launch.lease.clone()).unwrap();
+        let (wire, _events) = Transport::spawn(command, launch.lease.cancellation_token(), ProcessDiagnostic::new("agent_start", "claude"), launch.lease.clone(), launch.ownership.clone()).unwrap();
         let session = ClaudeSession { wire, view: Arc::new(Mutex::new(SessionView::new(root.to_string_lossy().into()))), native_capability_bits: Arc::new(std::sync::atomic::AtomicU8::new(127)), auth_launch: None };
         let commands = session.observe_native(crate::native_session::SessionDomain::Skills).await.unwrap();
         assert_eq!(commands.skills[0].classification, crate::native_session::NativeSkillClassification::BuiltinCommand);
@@ -606,7 +675,7 @@ done
             let launch = manager.inner.providers.prepare("alice", &id, &task_id, &project, crate::Engine::Codex, &options, create.project_revision, create.provider, &lease).await.unwrap();
             let mut command = Command::new(&executable);
             command.current_dir(&root).env("COMPACT_FIXTURE_MODE", mode);
-            let (wire, _events) = Transport::spawn(command, launch.lease.cancellation_token(), ProcessDiagnostic::new("agent_start", "claude"), launch.lease.clone()).unwrap();
+            let (wire, _events) = Transport::spawn(command, launch.lease.cancellation_token(), ProcessDiagnostic::new("agent_start", "claude"), launch.lease.clone(), launch.ownership.clone()).unwrap();
             let mut view = SessionView::new(project.path.clone()); view.status = "idle".into();
             let session = ClaudeSession { wire, view: Arc::new(Mutex::new(view)), native_capability_bits: Arc::default(), auth_launch: None };
             let request_id = uuid::Uuid::new_v4().to_string();
@@ -662,7 +731,7 @@ esac
 done
 "#).await;
         let mut command = Command::new(executable); command.current_dir(&root);
-        let (wire, _events) = Transport::spawn(command, launch.lease.cancellation_token(), ProcessDiagnostic::new("agent_start", "claude"), launch.lease.clone()).unwrap();
+        let (wire, _events) = Transport::spawn(command, launch.lease.cancellation_token(), ProcessDiagnostic::new("agent_start", "claude"), launch.lease.clone(), launch.ownership.clone()).unwrap();
         let mut view = SessionView::new(project.path); view.status = "idle".into();
         let session = ClaudeSession { wire, view: Arc::new(Mutex::new(view)), native_capability_bits: Arc::new(std::sync::atomic::AtomicU8::new(127)), auth_launch: None };
         session.send(uuid::Uuid::new_v4().to_string(), resolved.clone(), None).await.unwrap();

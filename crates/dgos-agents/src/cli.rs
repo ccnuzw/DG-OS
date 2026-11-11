@@ -166,12 +166,24 @@ pub async fn probe(tool: CliTool, explicit: Option<&str>) -> CliProbe {
     #[cfg(unix)]
     let cleanup_error = {
         let signalled = group.as_mut().is_some_and(ProbeGroup::stop);
+        let inactive = if let Some(pid) = pid {
+            tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    match crate::process_ownership::group_executable(pid as i32) {
+                        Ok(false) => break true,
+                        Ok(true) => tokio::time::sleep(Duration::from_millis(10)).await,
+                        Err(_) => break false,
+                    }
+                }
+            }).await.unwrap_or(false)
+        } else { false };
         let reaped = tokio::time::timeout(Duration::from_secs(2), child.wait()).await.is_ok_and(|result| result.is_ok());
-        (!signalled || !reaped).then_some("cleanup_pending")
+        (!signalled || !inactive || !reaped).then_some("cleanup_pending")
     };
     #[cfg(not(unix))]
     let cleanup_error = if status != "available" && child.kill().await.is_err() { Some("cleanup_pending") } else { None };
     cleanup.finish(cleanup_error);
+    let (status, version) = if let Some(error) = cleanup_error { (error, None) } else { (status, version) };
     operation.finish((status != "available").then_some(status));
     finish(tool, shown, status, version)
 }

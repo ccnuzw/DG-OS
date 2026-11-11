@@ -141,7 +141,8 @@ export function agentImagePaste(owner: string, disabled = false) {
     }
     if (!images.length) return; // Text and remote URLs remain normal composer text.
     event.preventDefault();
-    if (!disabled) void addAgentImages(owner, images);
+    if (disabled) setAgentImageError(owner, 'unavailable');
+    else void addAgentImages(owner, images);
   };
 }
 

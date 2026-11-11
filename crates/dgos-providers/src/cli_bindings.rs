@@ -1,5 +1,5 @@
 //! Process leases for the trusted CLI host. No process control or Agent dependency lives here.
-use crate::{CliProviderLaunch, ProviderManager};
+use crate::{CliProviderLaunch, CliProviderProtocol, ProviderManager};
 use dgos_types::{DgosError, DgosResult};
 use std::sync::{Arc, Mutex, Weak, atomic::{AtomicBool, Ordering}};
 use tokio_util::sync::CancellationToken;
@@ -172,11 +172,11 @@ impl ProviderManager {
         Ok(())
     }
 
-    pub async fn resolve_cli_provider_for_lease(&self, lease: &CliProviderLease) -> DgosResult<CliProviderLaunch> {
+    pub async fn resolve_cli_provider_for_lease(&self, lease: &CliProviderLease, protocol: CliProviderProtocol) -> DgosResult<CliProviderLaunch> {
         self.check_cli_lease(lease)?;
         let binding = lease.binding();
         let launch = self.resolve_cli_provider_launch(&binding.provider_id, &binding.model_id,
-            &binding.owner, binding.provider_revision).await?;
+            &binding.owner, binding.provider_revision, protocol).await?;
         self.check_cli_lease(lease)?;
         Ok(launch)
     }

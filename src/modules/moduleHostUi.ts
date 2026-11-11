@@ -99,6 +99,7 @@ function confirmOptions(raw: unknown): ConfirmOptions {
     confirmText: o.confirmText as ConfirmOptions['confirmText'],
     cancelText: o.cancelText as ConfirmOptions['cancelText'],
     confirmVariant: o.confirmVariant as ConfirmOptions['confirmVariant'],
+    footer: o.footer as ConfirmOptions['footer'],
     onConfirm: fn<NonNullable<ConfirmOptions['onConfirm']>>(o.onConfirm),
     onCancel: fn<NonNullable<ConfirmOptions['onCancel']>>(o.onCancel),
   };

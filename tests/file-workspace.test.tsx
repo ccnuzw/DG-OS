@@ -1,14 +1,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { Modal } from '@dgos/ui';
+import { Modal, ModalHost } from '@dgos/ui';
 import { FileWorkspace } from '../src/components/development/FileWorkspace';
 import { GitFileDiff, parseUnifiedDiff } from '../src/components/development/GitFileDiff';
 import { useDevelopment } from '../src/stores/developmentStore';
 import { useDevelopmentDrafts, developmentDraftKey } from '../src/stores/developmentDrafts';
 import { useDevelopmentEditor, documentId, openDevelopmentDocument } from '../src/stores/developmentEditor';
-const { invoke, confirmDiscard } = vi.hoisted(() => ({ invoke: vi.fn(), confirmDiscard: vi.fn() }));
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
-vi.mock('../src/workspace/closeCoordinator', () => ({ confirmDiscard }));
 vi.mock('../src/i18n', () => ({ useLocale: () => ({ t: (key: string) => key }), t: (key: string) => key, formatDateTime: String }));
 const project = { id: 'p', owner: 'alice', name: 'Project', path: '/repo', directory_identity: 'root', archived: false, created_at: 1, last_opened_at: null };
 const text = 'diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+new\n@@ -9 +9 @@\n-before\n+after\n';
@@ -25,23 +24,28 @@ beforeEach(() => {
     return null;
   });
 });
-afterEach(() => { cleanup(); useDevelopment.getState().reset(); useDevelopment.setState({ load: originalLoad }); invoke.mockReset(); confirmDiscard.mockReset(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); Modal.closeAll(); useDevelopment.getState().reset(); useDevelopment.setState({ load: originalLoad }); invoke.mockReset(); vi.restoreAllMocks(); });
 it('shares file and diff tabs, retains two drafts, and cancels batch close', async () => {
   const onClose = vi.fn(), onOpenFile = vi.fn();
+  render(<ModalHost />);
   const view = render(<FileWorkspace projectId="p" taskId="t" workspacePath="/repo" target={{ path: 'a.ts', mode: 'file', nonce: 1 }} onClose={onClose} onOpenFile={onOpenFile} />);
+  await screen.findByTestId('dev-file-editor');
+  fireEvent.click(screen.getByTestId('dev-file-edit'));
+  await waitFor(() => expect(screen.getByTestId('dev-file-editor')).toHaveProperty('readOnly', false));
   fireEvent.change(await screen.findByTestId('dev-file-editor'), { target: { value: 'draft a' } });
   view.rerender(<FileWorkspace projectId="p" taskId="t" workspacePath="/repo" target={{ path: 'b.ts', mode: 'file', nonce: 2 }} onClose={onClose} onOpenFile={onOpenFile} />);
   await waitFor(() => expect(screen.getAllByTestId('dev-file-editor')).toHaveLength(2));
+  fireEvent.click(screen.getAllByTestId('dev-file-edit').find(button => !button.closest('[hidden]'))!);
+  await waitFor(() => expect(screen.getAllByTestId('dev-file-editor')[1]).toHaveProperty('readOnly', false));
   fireEvent.change(screen.getAllByTestId('dev-file-editor')[1], { target: { value: 'draft b' } });
   view.rerender(<FileWorkspace projectId="p" taskId="t" workspacePath="/repo" target={{ path: 'a.ts', mode: 'diff', nonce: 3 }} onClose={onClose} onOpenFile={onOpenFile} />);
   await screen.findByTestId('dev-file-diff');
   expect(screen.getAllByRole('tab')).toHaveLength(3);
   expect(useDevelopmentEditor.getState().documents[documentId('p', 't', 'a.ts', '/repo')].draft).toBe('draft a');
   expect(useDevelopmentEditor.getState().documents[documentId('p', 't', 'b.ts', '/repo')].draft).toBe('draft b');
-  confirmDiscard.mockResolvedValue(false);
   fireEvent.keyDown(screen.getByRole('button', { name: 'fileWorkspace.tabActions' }), { key: 'Enter' });
   fireEvent.click(await screen.findByRole('menuitem', { name: 'fileWorkspace.closeAll' }));
-  await waitFor(() => expect(confirmDiscard).toHaveBeenCalledTimes(1));
+  fireEvent.click(await screen.findByRole('button', { name: 'workbenchFiles.returnToEdit' }));
   expect(screen.getAllByRole('tab')).toHaveLength(3); expect(onClose).not.toHaveBeenCalled();
 });
 it('closes only scoped tabs to the right of a context target without writing files', async () => {
@@ -59,7 +63,7 @@ it('closes only scoped tabs to the right of a context target without writing fil
   await waitFor(() => expect(screen.getAllByRole('tab')).toHaveLength(2));
   expect(useDevelopmentEditor.getState().tabs.map(tab => tab.path)).toEqual(['src/index.ts', 'test/index.ts', 'foreign.ts']);
   expect(onClose).not.toHaveBeenCalled();
-  expect(confirmDiscard).not.toHaveBeenCalled();
+  expect(screen.queryByRole('dialog')).toBeNull();
   expect(invoke.mock.calls.every(([command]) => command === 'read_development_file')).toBe(true);
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'test/index.ts' })));
 });
@@ -89,16 +93,19 @@ it('navigates tabs by keyboard and closes other tabs through the accessible menu
 });
 
 it('locks repeated dirty closes, keeps the draft on cancel, and restores tab focus', async () => {
-  const pending = Promise.withResolvers<boolean>();
-  confirmDiscard.mockReturnValue(pending.promise);
+  render(<ModalHost />);
   const onClose = vi.fn();
   render(<FileWorkspace projectId="p" taskId="t" workspacePath="/repo" target={{ path: 'a.ts', mode: 'file', nonce: 1 }} onClose={onClose} onOpenFile={() => {}} />);
+  await screen.findByTestId('dev-file-editor');
+  fireEvent.click(screen.getByTestId('dev-file-edit'));
+  await waitFor(() => expect(screen.getByTestId('dev-file-editor')).toHaveProperty('readOnly', false));
   fireEvent.change(await screen.findByTestId('dev-file-editor'), { target: { value: 'draft' } });
   const tab = screen.getByRole('tab', { name: 'a.ts, direct.unsaved' });
   fireEvent.keyDown(tab, { key: 'Delete' });
   fireEvent.keyDown(tab, { key: 'Delete' });
-  await waitFor(() => expect(confirmDiscard).toHaveBeenCalledTimes(1));
-  await act(async () => { pending.resolve(false); });
+  await screen.findByRole('dialog', { name: 'workbenchFiles.unsavedTitle' });
+  expect(screen.getAllByRole('dialog')).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: 'workbenchFiles.returnToEdit' }));
   expect(useDevelopmentEditor.getState().documents[documentId('p', 't', 'a.ts', '/repo')].draft).toBe('draft');
   expect(onClose).not.toHaveBeenCalled();
   await waitFor(() => expect(document.activeElement).toBe(tab));
@@ -125,20 +132,22 @@ it('protects an entire close batch while saves or unknown mutations are pending'
   await waitFor(() => expect(screen.getByRole('button', { name: 'fileWorkspace.closePanel' })).toHaveProperty('disabled', false));
   expect(screen.getAllByRole('tab')).toHaveLength(2);
   expect(onClose).not.toHaveBeenCalled();
-  expect(confirmDiscard).not.toHaveBeenCalled();
+  expect(screen.queryByRole('dialog')).toBeNull();
   expect(invoke.mock.calls.every(([command]) => command === 'read_development_file')).toBe(true);
 });
 
 it('does not finish an old account close after discard approval arrives', async () => {
-  const pending = Promise.withResolvers<boolean>();
-  confirmDiscard.mockReturnValue(pending.promise);
+  render(<ModalHost />);
   const onClose = vi.fn();
   render(<FileWorkspace projectId="p" taskId="t" workspacePath="/repo" target={{ path: 'a.ts', mode: 'file', nonce: 1 }} onClose={onClose} onOpenFile={() => {}} />);
+  await screen.findByTestId('dev-file-editor');
+  fireEvent.click(screen.getByTestId('dev-file-edit'));
+  await waitFor(() => expect(screen.getByTestId('dev-file-editor')).toHaveProperty('readOnly', false));
   fireEvent.change(await screen.findByTestId('dev-file-editor'), { target: { value: 'private draft' } });
   fireEvent.click(screen.getByRole('button', { name: 'fileWorkspace.closePanel' }));
-  await waitFor(() => expect(confirmDiscard).toHaveBeenCalledTimes(1));
+  const discard = await screen.findByRole('button', { name: 'workbenchFiles.discardAndContinue' });
   act(() => { useDevelopment.getState().reset(); });
-  await act(async () => { pending.resolve(true); });
+  fireEvent.click(discard);
   expect(onClose).not.toHaveBeenCalled();
   expect(useDevelopmentEditor.getState().tabs).toEqual([]);
   expect(useDevelopmentEditor.getState().documents).toEqual({});
@@ -162,9 +171,57 @@ it('renders Markdown tables safely by default and exposes editable source', asyn
   render(<FileWorkspace projectId="p" taskId="t" workspacePath="/repo" target={{ path: 'README.md', mode: 'file', nonce: 1 }} onClose={() => {}} onOpenFile={() => {}} />);
   const table = await screen.findByRole('table');
   expect(within(table).getByText('example')).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: 'direct.source' }));
+  fireEvent.click(screen.getByRole('button', { name: 'workbenchFiles.source' }));
   expect(screen.getByTestId('dev-file-editor').closest('[hidden]')).toBeNull();
+  expect(screen.getByTestId('dev-file-editor')).toHaveProperty('readOnly', true);
+  fireEvent.click(screen.getByTestId('dev-file-edit'));
+  await waitFor(() => expect(screen.getByTestId('dev-file-editor')).toHaveProperty('readOnly', false));
 });
+it('retains first-edit intent and every open tab through confirmed task preparation', async () => {
+  useDevelopment.setState({ selection: { project_id: 'p', task_id: null, session_id: null }, tabs: [{ id: 'conversation', projectId: 'p', taskId: null, sessionId: null, title: '' }], activeTabId: 'conversation' });
+  const prepared = Promise.withResolvers<boolean>();
+  const onPrepareEdit = vi.fn(() => prepared.promise);
+  const props = { projectId: 'p', workspacePath: '/repo', onPrepareEdit, onClose: vi.fn(), onOpenFile: vi.fn() };
+  const view = render(<FileWorkspace {...props} taskId={null} target={{ path: 'a.ts', mode: 'file', nonce: 1 }} />);
+  await screen.findByTestId('dev-file-editor');
+  view.rerender(<FileWorkspace {...props} taskId={null} target={{ path: 'b.ts', mode: 'file', nonce: 2 }} />);
+  await waitFor(() => expect(screen.getAllByTestId('dev-file-editor')).toHaveLength(2));
+  fireEvent.click(screen.getByRole('tab', { name: 'a.ts' }));
+  fireEvent.click(screen.getAllByTestId('dev-file-edit').find(button => !button.closest('[hidden]'))!);
+  expect(onPrepareEdit).toHaveBeenCalledTimes(1);
+  expect(screen.getAllByTestId('dev-file-editor').every(editor => (editor as HTMLTextAreaElement).readOnly)).toBe(true);
+  await act(async () => {
+    useDevelopment.setState({ selection: { project_id: 'p', task_id: 'prepared-task', session_id: null }, tabs: [{ id: 'conversation', projectId: 'p', taskId: 'prepared-task', sessionId: null, title: '' }] });
+    for (const path of ['b.ts', 'a.ts']) openDevelopmentDocument({ projectId: 'p', taskId: 'prepared-task', workspacePath: '/repo', path, mode: 'file', source: 'worktree' });
+    view.rerender(<FileWorkspace {...props} taskId="prepared-task" target={null} />);
+    prepared.resolve(true);
+  });
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'direct.source' })).toHaveProperty('readOnly', false));
+  expect(screen.getAllByRole('tab')).toHaveLength(2);
+  fireEvent.click(screen.getByRole('tab', { name: 'b.ts' }));
+  expect(screen.getByRole('textbox', { name: 'direct.source' })).toHaveProperty('readOnly', true);
+  fireEvent.click(screen.getByRole('tab', { name: 'a.ts' }));
+  expect(screen.getByRole('textbox', { name: 'direct.source' })).toHaveProperty('readOnly', false);
+  expect(invoke.mock.calls.every(([command]) => command === 'read_development_file')).toBe(true);
+});
+
+it('does not carry a pending edit into another conversation context', async () => {
+  useDevelopment.setState({ selection: { project_id: 'p', task_id: null, session_id: null }, tabs: [{ id: 'original', projectId: 'p', taskId: null, sessionId: null, title: '' }], activeTabId: 'original' });
+  const prepared = Promise.withResolvers<boolean>(), onPrepareEdit = vi.fn(() => prepared.promise);
+  const props = { projectId: 'p', workspacePath: '/repo', onPrepareEdit, onClose: vi.fn(), onOpenFile: vi.fn() };
+  const view = render(<FileWorkspace {...props} taskId={null} target={{ path: 'a.ts', mode: 'file', nonce: 1 }} />);
+  await screen.findByTestId('dev-file-editor');
+  fireEvent.click(screen.getByTestId('dev-file-edit'));
+  await act(async () => {
+    useDevelopment.setState({ selection: { project_id: 'p', task_id: 'other-task', session_id: null }, tabs: [{ id: 'other', projectId: 'p', taskId: 'other-task', sessionId: null, title: '' }], activeTabId: 'other' });
+    view.rerender(<FileWorkspace {...props} taskId="other-task" target={{ path: 'a.ts', mode: 'file', nonce: 2 }} />);
+    prepared.resolve(true);
+  });
+  expect(await screen.findByTestId('dev-file-editor')).toHaveProperty('readOnly', true);
+  expect(onPrepareEdit).toHaveBeenCalledTimes(1);
+  expect(invoke.mock.calls.every(([command]) => command === 'read_development_file')).toBe(true);
+});
+
 it('counts independent hunks and assigns old/new line numbers correctly', () => {
   const rows = parseUnifiedDiff(text);
   expect(rows.filter(row => row.kind === 'hunk')).toHaveLength(2);

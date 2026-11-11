@@ -186,7 +186,7 @@ it.each(['agent_skill_unavailable', 'unknown'])('preserves selected skill after 
   render(<MemoryRouter><AgentConversation session={session} drafts={{ [session.id]: 'Review this' }} setDraft={vi.fn()} busy={false} error={false} /></MemoryRouter>);
   fireEvent.click(screen.getByRole('button', { name: 'agent.send' })); await waitFor(() => expect(useAgentRunner.getState().error).toBe(failure));
   expect(captureAgentSkills('p', session).map(item => item.skill)).toEqual([skill]);
-  if (failure === 'unknown') { await screen.findByRole('button', { name: 'directConversation.recheck' }); fireEvent.click(screen.getByRole('button', { name: 'agent.send' })); expect(invoke.mock.calls.filter(([command]) => command === 'send_agent_message')).toHaveLength(1); }
+  if (failure === 'unknown') { expect(screen.getByRole('button', { name: 'agent.send' })).toHaveProperty('disabled', true); fireEvent.click(screen.getByRole('button', { name: 'agent.send' })); expect(invoke.mock.calls.filter(([command]) => command === 'send_agent_message')).toHaveLength(1); }
 });
 it('protects skill drafts before project removal and clears only the removed project after confirmation', async () => {
   select(); draft(); draft('other-project', 'other'); draft('unscoped', null);

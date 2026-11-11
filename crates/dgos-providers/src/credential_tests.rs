@@ -2,6 +2,8 @@
 mod cli_launch_tests;
 #[path = "cli_binding_tests.rs"]
 mod cli_binding_tests;
+#[path = "usage_tests.rs"]
+mod usage_tests;
 
 use crate::{test_support::MemoryCredentialVault, ProviderManager};
 use dgos_db::{
@@ -358,7 +360,7 @@ async fn normal_model_refresh_advances_snapshot_and_bound_call_uses_saved_revisi
             "data: [DONE]\n\n"
         ))
         .expect(1).create_async().await;
-    let mut stream = manager.stream_provider_bound(&provider.id, "fixture-chat", dgos_types::ChatRequest {
+    let stream = manager.stream_provider_bound(&provider.id, "fixture-chat", dgos_types::ChatRequest {
         messages: vec![dgos_types::ChatMessage { role: "user".into(), content: "stream audit".into(), images: Vec::new() }],
         max_tokens: Some(32), stream: Some(true), ..Default::default()
     }, "local", Some(snapshot.config_revision)).await.unwrap();
@@ -1799,14 +1801,9 @@ async fn retry_keys_coexist_with_vendor_id_and_drive_the_retry_count() {
     assert_no_leak(&error);
     failing.assert_async().await;
     let rows = manager.list_usage_logs("local", None).await.unwrap();
-    assert_eq!(rows.len(), 1);
-    assert!(!rows[0].success);
-    assert_eq!(rows[0].error_code.as_deref(), Some("1001008"));
-    assert_eq!(
-        rows[0].usage_reported,
-        Some(false),
-        "a failed call without usage is unknown, not free"
-    );
+    assert_eq!(rows.len(), 3, "each actual retry is an independent dispatch");
+    assert!(rows.iter().all(|row| !row.success && row.error_code.as_deref() == Some("1001014")
+        && row.usage_reported == Some(false)));
 }
 
 #[tokio::test]
@@ -2630,7 +2627,8 @@ async fn anthropic_stream_interrupted_by_an_error_event_writes_one_failure_recor
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert!(!rows[0].success);
     assert_eq!(rows[0].error_code.as_deref(), Some("1001007"));
-    assert_eq!((rows[0].request_tokens, rows[0].response_tokens), (0, 0));
+    assert_eq!((rows[0].request_tokens, rows[0].response_tokens), (4, 0));
+    assert_eq!(rows[0].usage_reported, Some(true), "interruption retains observed partial usage");
     assert!(!serde_json::to_string(&rows).unwrap().contains(LEAK_MARKER));
 }
 

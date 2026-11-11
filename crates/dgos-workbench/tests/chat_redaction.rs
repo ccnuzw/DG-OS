@@ -199,7 +199,7 @@ async fn chat_content_and_upstream_error_text_never_reach_the_log() {
                 &skills,
                 "alice",
                 "main",
-                SendChatInput { skill_mode: Default::default(), authorized_skill_refs: Vec::new(), session_id: session.id.clone(),
+                SendChatInput { web_access: Default::default(), skill_mode: Default::default(), authorized_skill_refs: Vec::new(), session_id: session.id.clone(),
                 foundation: Default::default(),
                 content: text,
                 client_request_id: uuid::Uuid::new_v4().to_string(),

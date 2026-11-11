@@ -1,64 +1,115 @@
-import { useId } from 'react';
-import { Input } from '@dgos/ui';
+import { useId, useMemo, useState } from 'react';
+import { Button, Input } from '@dgos/ui';
 import { useLocale } from '../../i18n';
 import type { Json } from '../../stores/agentRunnerStore';
+import { elicitationSizeValid, elicitationValueIssue, inspectElicitation, type ElicitationFields, type ElicitationField } from './elicitationSchema';
+import './agent-native-request.css';
 
-type Fields = Record<string, Json>;
-function object(value: Json | undefined): Fields { return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
-function options(schema: Fields): { value: string; label: string }[] | null {
-  if (Array.isArray(schema.enum)) return schema.enum.filter((value): value is string => typeof value === 'string').map((value, index) => ({ value, label: Array.isArray(schema.enumNames) && typeof schema.enumNames[index] === 'string' ? schema.enumNames[index] as string : value }));
-  const titled = schema.oneOf ?? schema.anyOf;
-  if (Array.isArray(titled)) return titled.flatMap(value => { const row = object(value); return typeof row.const === 'string' ? [{ value: row.const, label: typeof row.title === 'string' ? row.title : row.const }] : []; });
-  return null;
+export function elicitationDefaults(schema: ElicitationFields): ElicitationFields {
+  const form = inspectElicitation(schema);
+  if (!form) return {};
+  const values = Object.fromEntries(form.fields.flatMap(field => {
+    const value = field.schema.default;
+    return field.supported && value !== undefined && !elicitationValueIssue(field, value) ? [[field.key, value]] : [];
+  }));
+  return elicitationSizeValid(values) ? values : {};
 }
-function supported(field: Fields): boolean {
-  return ['string', 'number', 'integer', 'boolean'].includes(String(field.type)) || field.type === 'array' && options(object(field.items)) !== null;
+
+export function elicitationValid(schema: ElicitationFields, values: ElicitationFields): boolean {
+  const form = inspectElicitation(schema);
+  return !!form && elicitationSizeValid({ action: 'accept', content: values })
+    && Object.keys(values).every(key => Object.prototype.hasOwnProperty.call(form.properties, key))
+    && form.fields.every(field => !elicitationValueIssue(field, Object.prototype.hasOwnProperty.call(values, field.key) ? values[field.key] : undefined));
 }
-export function elicitationDefaults(schema: Fields): Fields {
-  const entries = Object.entries(object(schema.properties));
-  return Object.fromEntries(entries.flatMap(([key, value]) => { const field = object(value); return supported(field) && field.default !== undefined && field.default !== null ? [[key, field.default]] : []; }));
-}
-function validField(field: Fields, value: Json): boolean {
-  if (!supported(field)) return false;
-  if (field.type === 'boolean') return typeof value === 'boolean';
-  if (field.type === 'number' || field.type === 'integer') return typeof value === 'number' && Number.isFinite(value) && (field.type !== 'integer' || Number.isInteger(value))
-    && (typeof field.minimum !== 'number' || value >= field.minimum) && (typeof field.maximum !== 'number' || value <= field.maximum);
-  if (field.type === 'array') {
-    const choices = options(object(field.items)) ?? [];
-    return Array.isArray(value) && value.every(item => typeof item === 'string' && choices.some(choice => choice.value === item)) && new Set(value).size === value.length
-      && (typeof field.minItems !== 'number' || value.length >= field.minItems) && (typeof field.maxItems !== 'number' || value.length <= field.maxItems);
-  }
-  if (typeof value !== 'string') return false;
-  const choices = options(field);
-  if (choices && !choices.some(choice => choice.value === value)) return false;
-  const length = [...value].length;
-  if (typeof field.minLength === 'number' && length < field.minLength || typeof field.maxLength === 'number' && length > field.maxLength) return false;
-  if (field.format === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return false;
-  if (field.format === 'uri') { try { new URL(value); } catch { return false; } }
-  if (field.format === 'date' && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value)) return false;
-  if (field.format === 'date-time' && (!/^\d{4}-\d{2}-\d{2}T/.test(value) || !Number.isFinite(Date.parse(value)))) return false;
-  return true;
-}
-export function elicitationValid(schema: Fields, values: Fields): boolean {
-  if (schema.type !== 'object') return false;
-  const fields = object(schema.properties);
-  if (Object.values(fields).some(field => !supported(object(field)))) return false;
-  if (Array.isArray(schema.required) && schema.required.some(key => typeof key !== 'string' || values[key] === undefined)) return false;
-  return Object.entries(values).every(([key, value]) => key in fields && validField(object(fields[key]), value));
-}
-export function NativeElicitation({ schema, values, disabled, onChange }: { schema: Fields; values: Fields; disabled: boolean; onChange: (values: Fields) => void }) {
+
+function ElicitationControl({ field, value, update }: { field: ElicitationField; value: Json | undefined; update: (value: Json | undefined) => void }) {
   const { t } = useLocale();
-  const formId = useId();
-  const required = Array.isArray(schema.required) ? schema.required : [];
-  const update = (key: string, value: Json | undefined) => { const next = { ...values }; if (value === undefined) delete next[key]; else next[key] = value; onChange(next); };
-  return <fieldset disabled={disabled} className="grid min-w-0 gap-3">{Object.entries(object(schema.properties)).map(([key, raw]) => {
-    const field = object(raw); const label = typeof field.title === 'string' ? field.title : key;
-    const choices = options(field.type === 'array' ? object(field.items) : field);
-    const value = values[key];
-    const hint = typeof field.description === 'string' ? field.description : undefined;
-    if (!supported(field)) return <p key={key} role="alert">{label}: {t('agentExecution.unsupported')}</p>;
-    if (field.type === 'boolean' || choices) return <fieldset key={key} className="grid min-w-0 gap-2"><legend>{label}{required.includes(key) ? ` (${t('agent.requiredAnswer')})` : ''}</legend>{hint ? <p className="m-0 text-sm">{hint}</p> : null}{field.type === 'boolean' ? [undefined, true, false].map(option => <label key={String(option)} className="flex items-start gap-2"><input type="radio" name={`${formId}-${key}`} checked={value === option} onChange={() => update(key, option)} />{t(option === undefined ? 'agent.unanswered' : option ? 'agent.yes' : 'agent.no')}</label>) : choices?.map(choice => <label className="flex items-start gap-2" key={choice.value}><input type={field.type === 'array' ? 'checkbox' : 'radio'} name={`${formId}-${key}`} value={choice.value} checked={field.type === 'array' ? Array.isArray(value) && value.includes(choice.value) : value === choice.value} onChange={event => update(key, field.type === 'array' ? event.target.checked ? [...(Array.isArray(value) ? value : []), choice.value] : (Array.isArray(value) ? value : []).filter(item => item !== choice.value) : choice.value)} />{choice.label}</label>)}</fieldset>;
-    const numeric = field.type === 'number' || field.type === 'integer';
-    return <Input key={key} label={`${label}${required.includes(key) ? ` (${t('agent.requiredAnswer')})` : ''}`} title={hint} type={numeric ? 'number' : field.format === 'email' ? 'email' : field.format === 'date' ? 'date' : 'text'} step={field.type === 'integer' ? 1 : 'any'} value={value === undefined ? '' : String(value)} onChange={event => update(key, numeric ? event.target.value === '' ? undefined : Number(event.target.value) : event.target.value)} />;
-  })}{!elicitationValid(schema, values) ? <p role="status" className="m-0 text-sm">{t('agent.completeForm')}</p> : null}</fieldset>;
+  const id = useId();
+  const [numberDraft, setNumberDraft] = useState<{ raw: string; value: Json | undefined }>();
+  const { schema, choices, key, supported, required } = field;
+  const label = typeof schema.title === 'string' && schema.title ? schema.title : key;
+  const description = typeof schema.description === 'string' ? schema.description : '';
+  const constraints = (['minimum', 'maximum', 'minLength', 'maxLength', 'minItems', 'maxItems'] as const).flatMap(key => typeof schema[key] === 'number' ? [t(`agentRequest.constraint.${key}`, { bound: String(schema[key]) })] : []);
+  if (schema.type === 'integer') constraints.unshift(t('agentRequest.constraint.integer'));
+  if (typeof schema.format === 'string') constraints.push(t(`agentRequest.constraint.${schema.format}`));
+  const hintText = [description, ...constraints].filter(Boolean).join(' ');
+  const hintId = hintText ? `${id}-hint` : undefined;
+  const labelText = `${label}${required ? ` (${t('agent.requiredAnswer')})` : ''}`;
+  if (!supported) return <div className="agent-native-request-group agent-native-request-field">
+    <strong>{labelText}</strong>
+    {description ? <p className="agent-native-request-note">{description}</p> : null}
+    <p role={required ? 'alert' : undefined} className={required ? 'agent-native-request-error' : 'agent-native-request-note'}>{t(required ? 'agentRequest.fieldUnsupportedRequired' : 'agentRequest.fieldUnsupportedOptional')}</p>
+  </div>;
+
+  const issue = elicitationValueIssue(field, value);
+  const error = issue ? t(`agentRequest.validation.${issue.code}`, issue.bound === undefined ? undefined : { bound: String(issue.bound) }) : undefined;
+  const aria = {
+    'aria-invalid': error ? true as const : undefined,
+    'aria-describedby': [hintId, error && `${id}-error`].filter(Boolean).join(' ') || undefined,
+  };
+  const hint = hintId ? <p className="agent-native-request-note" id={hintId}>{hintText}</p> : null;
+  if (schema.type === 'boolean' || choices) {
+    const array = schema.type === 'array';
+    const checked = Array.isArray(value) ? value : [];
+    const canUseEmpty = array && (!schema.minItems || schema.minItems === 0);
+    const options = schema.type === 'boolean'
+      ? [{ value: true, label: t('agent.yes') }, { value: false, label: t('agent.no') }]
+      : (choices ?? []).map(choice => ({ ...choice, label: choice.label || t('agentRequest.emptyString') }));
+    return <fieldset className="agent-native-request-group agent-native-request-field" {...aria}>
+      <legend>{labelText}</legend>
+      {hint}
+      <div className="agent-native-request-choices">
+      {!required && !array ? <label className="agent-native-request-option" data-selected={value === undefined}><input type="radio" name={id} checked={value === undefined} onChange={() => update(undefined)} {...aria} /><span>{t('agent.unanswered')}</span></label> : null}
+      {options.map(option => <label className="agent-native-request-option" data-selected={array ? checked.includes(option.value) : value === option.value} key={String(option.value)}>
+        <input type={array ? 'checkbox' : 'radio'} name={id} value={String(option.value)} checked={array ? checked.includes(option.value) : value === option.value}
+          aria-required={!array && required || undefined} onChange={event => update(array ? event.target.checked ? [...checked, option.value] : checked.filter(item => item !== option.value) : option.value)} {...aria} />
+        <span>{option.label}</span>
+      </label>)}
+      </div>
+      {array ? <div className="agent-native-request-actions">
+        {canUseEmpty && value === undefined ? <Button size="xs" variant="secondary" onClick={() => update([])}>{t('agentRequest.useEmptyList')}</Button> : null}
+        {!required && value !== undefined ? <Button size="xs" variant="secondary" onClick={() => update(undefined)}>{t('agentRequest.clearOptional')}</Button> : null}
+      </div> : null}
+      {error ? <p className="agent-native-request-error" id={`${id}-error`}>{error}</p> : null}
+    </fieldset>;
+  }
+
+  const numeric = schema.type === 'number' || schema.type === 'integer';
+  const canUseEmpty = schema.type === 'string' && !schema.minLength && schema.format == null;
+  return <div className="agent-native-request-group agent-native-request-field">
+    <Input id={id} label={labelText} aria-describedby={hintId} aria-required={required || undefined} error={error} autoComplete="off"
+      type={schema.format === 'email' ? 'email' : 'text'} inputMode={numeric ? 'decimal' : undefined}
+      value={numeric && numberDraft && Object.is(numberDraft.value, value) ? numberDraft.raw : value === undefined ? '' : String(value)}
+      onChange={event => {
+        const raw = event.target.value;
+        if (!numeric) { update(raw); return; }
+        // Keep unfinished input only while it still represents the controlled value.
+        const number = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(raw) ? Number(raw) : NaN;
+        const next = raw === '' ? undefined : Number.isFinite(number) ? number : raw;
+        setNumberDraft({ raw, value: next });
+        update(next);
+      }} />
+    {hint}
+    <div className="agent-native-request-actions">
+      {canUseEmpty && value === undefined ? <Button size="xs" variant="secondary" onClick={() => update('')}>{t('agentRequest.useEmptyText')}</Button> : null}
+      {!required && value !== undefined ? <Button size="xs" variant="secondary" onClick={() => { setNumberDraft(undefined); update(undefined); }}>{t('agentRequest.clearOptional')}</Button> : null}
+    </div>
+  </div>;
+}
+
+export function NativeElicitation({ schema, values, disabled, onChange }: { schema: ElicitationFields; values: ElicitationFields; disabled: boolean; onChange: (values: ElicitationFields) => void }) {
+  const { t } = useLocale();
+  const form = useMemo(() => inspectElicitation(schema), [schema]);
+  if (!form) return <p role="alert" className="agent-native-request-error">{t('agentRequest.formUnsupported')}</p>;
+  const update = (key: string, value: Json | undefined) => {
+    const next: ElicitationFields = value === undefined ? { ...values } : { ...values, [key]: value };
+    if (value === undefined) delete next[key];
+    onChange(next);
+  };
+  return <fieldset disabled={disabled} className="agent-native-request-group agent-native-request-form">
+    <legend>{typeof schema.title === 'string' && schema.title || t('agentRequest.formFields')}</legend>
+    {typeof schema.description === 'string' && schema.description ? <p className="agent-native-request-note">{schema.description}</p> : null}
+    {form.fields.map(field => <ElicitationControl key={field.key} field={field} value={Object.prototype.hasOwnProperty.call(values, field.key) ? values[field.key] : undefined} update={value => update(field.key, value)} />)}
+    {!elicitationSizeValid({ action: 'accept', content: values }) ? <p role="alert" className="agent-native-request-error">{t('agentRequest.formTooLarge')}</p> : null}
+  </fieldset>;
 }

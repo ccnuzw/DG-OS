@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { AgentConversation } from '../src/pages/workbench/AgentConversation';
 import { useAgentRunner, type AgentSession } from '../src/stores/agentRunnerStore';
-import { AgentImages } from '../src/components/development/AgentImages';
+import { AgentImages, AgentImageDropZone } from '../src/components/development/AgentImages';
 import { fileBase64 } from '../src/components/chat/Attachments';
 import { useDevelopment } from '../src/stores/developmentStore';
 import { guardWorkbenchDrafts, useDevelopmentDrafts } from '../src/stores/developmentDrafts';
@@ -51,6 +51,22 @@ it('pastes image bytes but leaves text, URLs and arbitrary path clipboard conten
   expect(captureAgentImages(owner())).toEqual([]);
   expect(fireEvent.paste(textarea, { clipboardData: { files: [png('pasted.png')], items: [] } })).toBe(false);
   await screen.findByRole('button', { name: 'agentImages.preview pasted.png' });
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it('drops validated files into the private draft and refuses disabled or unsupported drops without discarding images', async () => {
+  const key = owner();
+  const view = render(<AgentImageDropZone owner={key} enabled><AgentImages owner={key} /></AgentImageDropZone>);
+  const drop = (file: File) => fireEvent.drop(view.container.firstElementChild!, { dataTransfer: { types: ['Files'], files: [file] } });
+  drop(png('dropped.png'));
+  await screen.findByRole('button', { name: 'agentImages.preview dropped.png' });
+  drop(new File(['<svg/>'], 'unsafe.svg', { type: 'image/svg+xml' }));
+  expect(useAgentImages.getState().drafts[key].error).toBe('type');
+  expect(captureAgentImages(key).map(image => image.name)).toEqual(['dropped.png']);
+  view.rerender(<AgentImageDropZone owner={key} enabled={false}><AgentImages owner={key} /></AgentImageDropZone>);
+  drop(png('blocked.png'));
+  expect(screen.getByRole('status').textContent).toContain('agentReply.dropUnavailable');
+  expect(captureAgentImages(key).map(image => image.name)).toEqual(['dropped.png']);
   expect(invoke).not.toHaveBeenCalled();
 });
 
@@ -210,7 +226,7 @@ it('retains existing-session unknown image sends and reconciles the host run ide
   invoke.mockImplementation(command => command === 'send_agent_message' ? Promise.reject('unknown') : Promise.resolve(live));
   render(<MemoryRouter><AgentConversation session={live} drafts={{ [live.id]: '' }} setDraft={vi.fn()} busy={false} error={false} /></MemoryRouter>);
   fireEvent.click(screen.getByRole('button', { name: 'agent.send' }));
-  await screen.findByRole('button', { name: 'directConversation.recheck' });
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === 'send_agent_message')).toHaveLength(1));
   const input = invoke.mock.calls.find(([command]) => command === 'send_agent_message')![1].input;
   expect(captureAgentImages(owner())).toHaveLength(1);
   expect(JSON.stringify(useDevelopmentDrafts.getState().entries)).not.toContain(PNG);
@@ -218,8 +234,7 @@ it('retains existing-session unknown image sends and reconciles the host run ide
   expect(screen.getByTestId('agent-image-remove-0')).toHaveProperty('disabled', true);
   fireEvent.click(screen.getByRole('button', { name: 'agent.send' }));
   live = { ...live, active_run: input.request_id, status: 'running' };
-  fireEvent.click(screen.getByRole('button', { name: 'directConversation.recheck' }));
-  await waitFor(() => expect(captureAgentImages(owner())).toEqual([]));
+  await waitFor(() => expect(captureAgentImages(owner())).toEqual([]), { timeout: 2500 });
   expect(invoke.mock.calls.filter(([command]) => command === 'send_agent_message')).toHaveLength(1);
 });
 
@@ -235,7 +250,6 @@ it('acknowledges restored unknown image sends using the rebased session owner, n
   useDevelopmentDrafts.setState(state => ({ entries: { ...state.entries, [pendingKey]: { kind: 'conversation', baseline: null, value: { requestId: 'original-request', generation: 'original-generation', text: '', references: [], skills: [], imageOwner: savedImageOwner, images: submitted } } } }));
   invoke.mockImplementation(command => Promise.resolve(command === 'get_agent_session' ? live : null));
   render(<MemoryRouter><AgentConversation session={live} drafts={{}} setDraft={vi.fn()} busy={false} error={false} /></MemoryRouter>);
-  fireEvent.click(screen.getByRole('button', { name: 'directConversation.recheck' }));
   await waitFor(() => expect(useDevelopmentDrafts.getState().entries[pendingKey]).toBeUndefined());
   expect(captureAgentImages(owner())).toEqual([]);
   expect(invoke.mock.calls.some(([command]) => command === 'send_agent_message')).toBe(false);

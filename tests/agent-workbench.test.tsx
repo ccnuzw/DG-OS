@@ -1,10 +1,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Modal } from '@dgos/ui';
+import { Modal, toast } from '@dgos/ui';
 import * as chatAttachments from '../src/components/chat/Attachments';
 import { addAgentImages, agentImagesKey, captureAgentImages, useAgentImages } from '../src/stores/agentImages';
 import AgentWorkbench from '../src/pages/workbench/AgentWorkbench';
-import { AgentConversation, EventContent, Request } from '../src/pages/workbench/AgentConversation';
+import { AgentConversation } from '../src/pages/workbench/AgentConversation';
+import { Request } from '../src/components/development/AgentNativeRequest';
+import { EventContent } from '../src/components/development/AgentReplyContent';
 import { useAgentRunner, type AgentSession } from '../src/stores/agentRunnerStore';
 import { useDevelopment } from '../src/stores/developmentStore';
 import { chooseContext } from '../src/stores/developmentSelection';
@@ -17,6 +19,8 @@ import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { useWorkspaceTabs } from '../src/workspace/useWorkspaceTabs';
 import { setDesktopSlot } from '../src/stores/developmentDesktop';
 import { agentChatDisplayKey, agentChatPreferences } from '../src/stores/agentChatPreferences';
+import { openDevelopmentDocument, useDevelopmentEditor } from '../src/stores/developmentEditor';
+import { captureConversationReferences } from '../src/stores/developmentReferences';
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('../src/i18n', () => ({ useLocale: () => ({ t: (key: string) => key }), t: (key: string) => key, formatDateTime: String }));
@@ -248,7 +252,7 @@ it('starts from a taskless project through Goals without losing the draft or dup
   if (command === 'read_development_cli_provider') return provider.promise;
   if (command === 'read_development_workspace') return structuredClone(state);
   if (command === 'select_development_context') { state.selection = input as typeof state.selection; return null; }
-  if (command === 'save_development_task') { const task = { ...workspace.tasks[0], ...input, id: 'automatic-task' }; state.tasks.push(task); return task; }
+  if (command === 'prepare_agent_task') { const task = { ...workspace.tasks[0], ...input, id: input.id, requirements: '', status: 'todo' }; const existing = state.tasks.find(item => item.id === input.id); if (!existing) state.tasks.push(task); return existing ?? task; }
   if (command === 'open_agent_session') {
    native = { ...session, id: input.id };
    state.sessions.push({ id: input.id, owner: 'u', project_id: 'p1', task_id: input.task_id, engine: input.engine, native_id: 'native', workspace: '/tmp/project', model: null, executable: null });
@@ -269,7 +273,7 @@ it('starts from a taskless project through Goals without losing the draft or dup
  expect(prompt).toHaveProperty('value', 'Explain this project without a task form');
  expect(useDevelopment.getState().activeTabId).toBe(tab);
  expect(state.tasks).toEqual([]);
- expect(invoke.mock.calls.some(([name]) => ['save_development_task', 'open_agent_session', 'send_agent_message'].includes(name))).toBe(false);
+ expect(invoke.mock.calls.some(([name]) => ['prepare_agent_task', 'open_agent_session', 'send_agent_message'].includes(name))).toBe(false);
  await act(async () => { provider.resolve(providerRevision); });
  await waitFor(() => expect(screen.getByTestId('direct-conversation-send')).toHaveProperty('disabled', false));
  const send = screen.getByTestId('direct-conversation-send');
@@ -278,9 +282,117 @@ it('starts from a taskless project through Goals without losing the draft or dup
  expect(state.tasks).toEqual([expect.objectContaining({ project_id: 'p1', goal: 'Explain this project without a task form', requirements: '' })]);
  expect(useDevelopment.getState().activeTabId).toBe(tab);
  expect(useDevelopment.getState().tabs.find(item => item.id === tab)?.sessionId).toBe(native.id);
- for (const command of ['save_development_task', 'open_agent_session', 'send_agent_message']) expect(invoke.mock.calls.filter(([name]) => name === command)).toHaveLength(1);
+ for (const command of ['prepare_agent_task', 'open_agent_session', 'send_agent_message']) expect(invoke.mock.calls.filter(([name]) => name === command)).toHaveLength(1);
  expect(invoke.mock.calls.some(([name]) => ['close_agent_session', 'interrupt_agent_session'].includes(name))).toBe(false);
 });
+it('prepares file editing once, retains open tabs and the draft, and does not start CLI after context remount', async () => {
+ const state = { ...workspace, tasks: [] as typeof workspace.tasks, selection: { project_id: 'p1', task_id: null as string | null, session_id: null as string | null } };
+ const provider = Promise.withResolvers<CliProviderRevision>(), selecting = Promise.withResolvers<null>();
+ install((command, args) => {
+  const input = args?.input as Record<string, any>;
+  if (command === 'read_development_cli_provider') return provider.promise;
+  if (command === 'read_development_workspace') return structuredClone(state);
+  if (command === 'save_development_task') { const task = { ...workspace.tasks[0], ...input, id: 'file-task' }; state.tasks.push(task); return task; }
+  if (command === 'select_development_context') { state.selection = input as typeof state.selection; return selecting.promise; }
+  if (command === 'read_development_file') return { path: input.path, text: 'base', hash: 'disk-hash', size: 4, reason: null };
+  return undefined;
+ });
+ render(<AgentWorkbench />);
+ const prompt = await screen.findByRole('textbox', { name: 'agent.prompt' });
+ const tabId = useDevelopment.getState().activeTabId;
+ fireEvent.change(prompt, { target: { value: 'Retain the conversation draft' } });
+ act(() => { for (const path of ['a.ts', 'b.ts']) openDevelopmentDocument({ projectId: 'p1', taskId: null, workspacePath: '/tmp/project', path, mode: 'file', source: 'worktree' }); });
+ await waitFor(() => expect(screen.getAllByTestId('dev-file-editor')).toHaveLength(2));
+ fireEvent.click(screen.getAllByTestId('dev-file-edit').find(button => !button.closest('[hidden]'))!);
+ await waitFor(() => expect(invoke).toHaveBeenCalledWith('select_development_context', { input: { project_id: 'p1', task_id: 'file-task', session_id: null } }));
+ expect(screen.getByTestId('dev-file-workspace').isConnected).toBe(true);
+ await act(async () => { selecting.resolve(null); });
+ await waitFor(() => expect(screen.getByRole('textbox', { name: 'direct.source' })).toHaveProperty('readOnly', false));
+ expect(useDevelopment.getState().activeTabId).toBe(tabId);
+ expect(within(screen.getByTestId('dev-file-workspace')).getAllByRole('tab')).toHaveLength(2);
+ expect(useDevelopmentEditor.getState().tabs.every(tab => tab.taskId === 'file-task')).toBe(true);
+ expect(screen.getByRole('textbox', { name: 'agent.prompt' })).toHaveProperty('value', 'Retain the conversation draft');
+ expect(invoke.mock.calls.filter(([command]) => command === 'save_development_task')).toHaveLength(1);
+ vi.useFakeTimers();
+ await act(async () => { provider.resolve(providerRevision); });
+ await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+ expect(invoke.mock.calls.some(([command]) => ['prepare_agent_task', 'open_agent_session', 'send_agent_message', 'start_development_process'].includes(command))).toBe(false);
+});
+
+it('does not replay an unknown file-edit task creation', async () => {
+ const state = { ...workspace, tasks: [], selection: { project_id: 'p1', task_id: null, session_id: null } };
+ install((command, args) => {
+  if (command === 'read_development_cli_provider') return null;
+  if (command === 'read_development_workspace') return state;
+  if (command === 'save_development_task') throw 'unknown';
+  if (command === 'read_development_file') { const input = args?.input; return { path: input && typeof input === 'object' && 'path' in input ? input.path : '', text: 'base', hash: 'disk-hash', size: 4, reason: null }; }
+  return undefined;
+ });
+ render(<AgentWorkbench />);
+ await screen.findByRole('textbox', { name: 'agent.prompt' });
+ act(() => openDevelopmentDocument({ projectId: 'p1', taskId: null, workspacePath: '/tmp/project', path: 'a.ts', mode: 'file', source: 'worktree' }));
+ await screen.findByTestId('dev-file-editor');
+ fireEvent.click(screen.getByTestId('dev-file-edit'));
+ await screen.findByText('workbenchFiles.editFailed');
+ fireEvent.click(screen.getByTestId('dev-file-edit'));
+ await act(async () => {});
+ expect(invoke.mock.calls.filter(([command]) => command === 'save_development_task')).toHaveLength(1);
+ expect(screen.getByTestId('dev-file-editor')).toHaveProperty('readOnly', true);
+ expect(invoke.mock.calls.some(([command]) => ['prepare_agent_task', 'open_agent_session', 'send_agent_message'].includes(command))).toBe(false);
+});
+
+it('adds a file reference, retains draft and chips, and focuses without automatic CLI startup', async () => {
+ const provider = Promise.withResolvers<CliProviderRevision>();
+ const notify = vi.spyOn(toast, 'success');
+ install((command, args) => {
+  if (command === 'read_development_cli_provider') return provider.promise;
+  if (command === 'read_development_file') { const input = args?.input; return { path: input && typeof input === 'object' && 'path' in input ? input.path : '', text: 'base', hash: 'disk-hash', size: 4, reason: null }; }
+  return undefined;
+ });
+ render(<AgentWorkbench />);
+ const prompt = await screen.findByRole('textbox', { name: 'agent.prompt' });
+ const tabId = useDevelopment.getState().activeTabId!;
+ fireEvent.change(prompt, { target: { value: 'Keep this unsent draft' } });
+ act(() => openDevelopmentDocument({ projectId: 'p1', taskId: 't1', workspacePath: '/tmp/project', path: 'a.ts', mode: 'file', source: 'worktree' }));
+ await screen.findByTestId('dev-file-editor');
+ fireEvent.click(screen.getByRole('button', { name: 'workbenchFiles.addConversation' }));
+ await waitFor(() => expect(document.activeElement).toBe(prompt));
+ expect(prompt).toHaveProperty('value', 'Keep this unsent draft');
+ expect(captureConversationReferences('p1', tabId)).toEqual([expect.objectContaining({ reference: { project_id: 'p1', task_id: 't1', path: 'a.ts', kind: 'file', expected_hash: 'disk-hash' } })]);
+ expect(screen.getByRole('list', { name: 'workbenchReferences.selected' }).textContent).toContain('a.ts');
+ expect(notify).toHaveBeenCalledWith('workbenchFiles.referenceAdded');
+ fireEvent.keyDown(screen.getByRole('button', { name: 'workbenchFiles.addOptions' }), { key: 'Enter' });
+ fireEvent.click(await screen.findByRole('menuitem', { name: 'workbenchFiles.pathOnly' }));
+ await waitFor(() => expect(document.activeElement).toBe(prompt));
+ expect(captureConversationReferences('p1', tabId)).toHaveLength(2);
+ expect(prompt).toHaveProperty('value', 'Keep this unsent draft');
+ vi.useFakeTimers();
+ await act(async () => { provider.resolve(providerRevision); });
+ await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+ expect(invoke.mock.calls.some(([command]) => ['prepare_agent_task', 'open_agent_session', 'send_agent_message'].includes(command))).toBe(false);
+});
+it('focuses a saved conversation after adding a file without triggering focus preparation', async () => {
+ const saved = { id: session.id, owner: 'u', engine: 'codex', native_id: 'saved-native', workspace: '/tmp/project', executable: null, model: null, project_id: 'p1', task_id: 't1' };
+ install((command, args) => {
+  if (command === 'read_development_workspace') return { ...workspace, sessions: [saved], selection: { project_id: 'p1', task_id: 't1', session_id: saved.id } };
+  if (command === 'read_development_file') { const input = args?.input; return { path: input && typeof input === 'object' && 'path' in input ? input.path : '', text: 'base', hash: 'disk-hash', size: 4, reason: null }; }
+  return undefined;
+ });
+ render(<AgentWorkbench />);
+ const composer = await screen.findByTestId('saved-conversation-composer');
+ const prompt = within(composer).getByRole('textbox', { name: 'agent.prompt' });
+ await waitForAgentTrust();
+ fireEvent.change(prompt, { target: { value: 'Keep saved history draft' } });
+ act(() => openDevelopmentDocument({ projectId: 'p1', taskId: 't1', workspacePath: '/tmp/project', path: 'a.ts', mode: 'file', source: 'worktree' }));
+ await screen.findByTestId('dev-file-editor');
+ fireEvent.click(screen.getByRole('button', { name: 'workbenchFiles.addConversation' }));
+ await waitFor(() => expect(document.activeElement).toBe(prompt));
+ expect(prompt).toHaveProperty('value', 'Keep saved history draft');
+ expect(captureConversationReferences('p1', saved.id)).toHaveLength(1);
+ expect(invoke.mock.calls.some(([command]) => ['open_agent_session', 'send_agent_message'].includes(command))).toBe(false);
+});
+
+
 
 it.each([[true, false], [false, true], [false, false]])('clears the Agent running marker when development is hidden (runtime visible: %s, surface active: %s)', async (runtimeVisible, active) => {
  vi.useFakeTimers();
@@ -582,7 +694,6 @@ it.each(['accept', 'decline', 'cancel'])('shows native command context and sends
  install(command => command === 'open_agent_session' || command === 'get_agent_session' ? { ...session, status: 'waiting', pending: [native] } : undefined);
  render(<AgentWorkbench />); await start('waiting');
  expect(screen.getByText('echo reviewed-command')).toBeTruthy();
- expect(screen.getByText('agent.requestDirectory: /tmp/reviewed-directory')).toBeTruthy();
  expect(screen.getByText('Native permission reason')).toBeTruthy();
  fireEvent.click(screen.getByRole('button', { name: decision === 'accept' ? 'agent.allow' : decision === 'decline' ? 'agent.deny' : 'common.cancel' }));
  await waitFor(() => expect(invoke).toHaveBeenCalledWith('respond_agent_request', { input: { session_id: session.id, generation: session.generation, request_id: native.id, response: { decision } } }));
@@ -893,7 +1004,7 @@ it.each([
   if (command === 'activate_development_workspace_agent') return activation.promise;
   if (command === 'read_development_workspace') return structuredClone(state);
   if (command === 'select_development_context') { state.selection = input as typeof state.selection; return selecting.promise; }
-  if (command === 'save_development_task') { const task = { ...workspace.tasks[0], ...input, id: 'image-task' }; state.tasks.push(task); return task; }
+  if (command === 'prepare_agent_task') { const task = { ...workspace.tasks[0], ...input, id: input.id, requirements: '', status: 'todo' }; const existing = state.tasks.find(item => item.id === input.id); if (!existing) state.tasks.push(task); return existing ?? task; }
   if (command === 'open_agent_session') {
    native = { ...session, id: input.id };
    state.sessions.push({ id: input.id, owner: 'u', project_id: 'p1', task_id: input.task_id, engine: input.engine, native_id: 'native', workspace: '/tmp/project', model: null, executable: null });
@@ -937,7 +1048,7 @@ it.each([
  await waitFor(() => expect(captureAgentImages(target)).toEqual([]));
  expect(useDevelopmentDrafts.getState().entries[target]).toBeUndefined();
  expect(invoke.mock.calls.filter(([command]) => command === 'open_agent_session')).toHaveLength(1);
- expect(invoke.mock.calls.filter(([command]) => command === 'save_development_task')).toHaveLength(taskless ? 1 : 0);
+ expect(invoke.mock.calls.filter(([command]) => command === 'prepare_agent_task')).toHaveLength(taskless ? 1 : 0);
 });
 
 it.each(['draft', 'session'] as const)('hides an image-only %s tab without discarding either image owner or stopping its runtime', async kind => {
@@ -1126,4 +1237,35 @@ it('keeps a queued saved message as a draft when its work surface hides before r
  await act(async () => opened.resolve({ ...session, engine: 'codex' }));
  expect(invoke.mock.calls.some(([command]) => ['send_agent_message', 'interrupt_agent_session', 'close_agent_session'].includes(command))).toBe(false);
  expect(useDevelopmentDrafts.getState().entries[developmentDraftKey('conversation', 'p1', session.id, 'message')]?.value).toBe('Keep until I return');
+});
+
+it('does not open a replaced reply resource after its host resolver returns late, but opens the current resource', async () => {
+ const resource = (name: string): AgentSession['events'][number] => ({ seq: 1, kind: 'mcpToolCall', run: 'resource-run', text: null, data: { type: 'mcpToolCall', tool: 'Artifact tool', status: 'completed', result: { content: [{ type: 'resource_link', uri: `file:///tmp/project/${name}` }] } } });
+ let native: AgentSession = { ...session, engine: 'codex', events: [resource('old.txt')] };
+ const resolved = Promise.withResolvers<{ path: string; line: number | null }>();
+ install((command, args) => {
+  if (command === 'open_agent_session' || command === 'get_agent_session') return native;
+  if (command === 'resolve_development_file_reference') {
+   const input = args!.input as { path: string };
+   return input.path.endsWith('/old.txt') ? resolved.promise : { path: 'new.txt', line: null };
+  }
+  if (command === 'read_development_file') { const input = args!.input as { path: string }; return { path: input.path, text: 'Current resource', hash: 'resource-hash', size: 16, reason: null }; }
+  return undefined;
+ });
+ render(<MemoryRouter><AgentWorkbench /></MemoryRouter>);
+ await start();
+ fireEvent.click(screen.getByText('Artifact tool'));
+ fireEvent.click(await screen.findByRole('button', { name: 'agentResources.openFile' }));
+ await waitFor(() => expect(invoke).toHaveBeenCalledWith('resolve_development_file_reference', { input: expect.objectContaining({ session_id: session.id, path: '/tmp/project/old.txt', mode: 'file' }) }));
+ const documents = useDevelopmentEditor.getState().tabs;
+ native = { ...native, events: [resource('new.txt')] };
+ act(() => useAgentRunner.setState({ session: native, snapshots: { [native.id]: native } }));
+ expect(await screen.findByText('file:///tmp/project/new.txt')).toBeTruthy();
+ await act(async () => resolved.resolve({ path: 'old.txt', line: null }));
+ expect(useDevelopmentEditor.getState().tabs).toBe(documents);
+ expect(invoke.mock.calls.some(([command, args]) => command === 'read_development_file' && args.input.path === 'old.txt')).toBe(false);
+ fireEvent.click(screen.getByRole('button', { name: 'agentResources.openFile' }));
+ await waitFor(() => expect(useDevelopmentEditor.getState().tabs.some(tab => tab.path === 'new.txt')).toBe(true));
+ expect(invoke).toHaveBeenCalledWith('read_development_file', { input: expect.objectContaining({ path: 'new.txt' }) });
+ expect(useDevelopmentEditor.getState().tabs.some(tab => tab.path === 'old.txt')).toBe(false);
 });

@@ -7,7 +7,7 @@ import { ProjectCapabilities } from '../src/components/development/ProjectCapabi
 import { ProjectPanel } from '../src/components/development/ProjectPanel';
 import { DeliveryPanel } from '../src/components/development/DeliveryPanel';
 import { useDevelopment } from '../src/stores/developmentStore';
-import { useDevelopmentDrafts, guardWorkbenchDrafts } from '../src/stores/developmentDrafts';
+import { developmentDraftKey, useDevelopmentDrafts, guardWorkbenchDrafts } from '../src/stores/developmentDrafts';
 import { chooseContext } from '../src/stores/developmentSelection';
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
@@ -85,7 +85,7 @@ it('retains Provider binding drafts across reload, unmount and project changes, 
  expect(useDevelopmentDrafts.getState().entries).toEqual({});
 });
 
-it('restores commit and per-handoff summary drafts after tab/task changes without transferring them to another object', async () => {
+it('restores per-handoff summary drafts after tab/task changes without transferring them to another object', async () => {
  const handoffs = ['h1', 'h2'].map(id => ({ id, owner: 'u', project_id: 'p', task_id: 't', source_session_id: 's', target_engine: 'claude', permission_epoch: 0, summary: `Prepared ${id}`, fingerprint: id, created_at: 1 }));
  invoke.mockImplementation(async command => {
   if (command === 'read_development_workspaces') return { workspaces: [{ id: 'w', kind: 'original', path: '/project' }], selected_workspace_id: 'w' };
@@ -93,9 +93,8 @@ it('restores commit and per-handoff summary drafts after tab/task changes withou
   if (command === 'list_development_handoffs') return handoffs;
   return null;
  });
- const tree = (id: string) => <DeliveryPanel projectId="p" taskId={id} sessions={[]} live={{}} capabilityRevision={0} workspacePath="/project" />;
- let view = render(tree('t'));
- fireEvent.change(await screen.findByLabelText('delivery.commitMessage'), { target: { value: 'Commit draft' } });
+ const tree = (id: string) => <DeliveryPanel projectId="p" taskId={id} sessions={[]} />;
+ let view = render(tree('t')); await act(async () => {});
  fireEvent.click(screen.getAllByRole('button', { name: 'delivery.useDraft', hidden: true })[0]);
  fireEvent.change(screen.getByLabelText('delivery.summary'), { target: { value: 'Edited h1' } });
  fireEvent.click(screen.getAllByRole('button', { name: 'delivery.useDraft', hidden: true })[1]);
@@ -103,13 +102,11 @@ it('restores commit and per-handoff summary drafts after tab/task changes withou
  fireEvent.click(screen.getAllByRole('button', { name: 'delivery.useDraft', hidden: true })[0]);
  expect((screen.getByLabelText('delivery.summary') as HTMLTextAreaElement).value).toBe('Edited h1');
  view.unmount(); view = render(tree('t2'));
- expect((await screen.findByLabelText('delivery.commitMessage') as HTMLInputElement).value).toBe('');
+ await act(async () => {}); expect(screen.queryByLabelText('delivery.summary')).toBeNull();
  view.rerender(tree('t'));
- await waitFor(() => expect((screen.getByLabelText('delivery.commitMessage') as HTMLInputElement).value).toBe('Commit draft'));
- expect((screen.getByLabelText('delivery.summary') as HTMLTextAreaElement).value).toBe('Edited h1');
+ await waitFor(() => expect((screen.getByLabelText('delivery.summary') as HTMLTextAreaElement).value).toBe('Edited h1'));
  const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(options => { options.onCancel?.(); return { id: 'confirm', close: () => {} }; });
  expect(await guardWorkbenchDrafts()).toBe(false);
- expect(confirm.mock.calls[0][0].content).toContain('dev.discardDraft.commit');
  expect(confirm.mock.calls[0][0].content).toContain('dev.discardDraft.handoff');
 });
 
@@ -126,13 +123,11 @@ it('retains separate workspace commit drafts and confirms the removed workspace 
   if (command === 'read_development_workspace') return { projects: [project], tasks: [], sessions: [], operations: [], selection: { project_id: 'p', task_id: 't', session_id: null } };
   return null;
  });
- render(<DeliveryPanel projectId="p" taskId="t" sessions={[]} live={{}} capabilityRevision={0} workspacePath="/project" />);
- fireEvent.change(await screen.findByLabelText('delivery.commitMessage'), { target: { value: 'Original commit' } });
- fireEvent.click(screen.getAllByRole('button', { name: 'delivery.select' })[1]);
- await waitFor(() => expect((screen.getByLabelText('delivery.commitMessage') as HTMLInputElement).value).toBe(''));
- fireEvent.change(screen.getByLabelText('delivery.commitMessage'), { target: { value: 'Managed commit' } });
- fireEvent.click(screen.getAllByRole('button', { name: 'delivery.select' })[0]);
- await waitFor(() => expect((screen.getByLabelText('delivery.commitMessage') as HTMLInputElement).value).toBe('Original commit'));
+ useDevelopmentDrafts.setState({ entries: {
+  [developmentDraftKey('commit', 'p', 't', '/project')]: { kind: 'commit', value: 'Original commit', baseline: '' },
+  [developmentDraftKey('commit', 'p', 't', '/project-worktree')]: { kind: 'commit', value: 'Managed commit', baseline: '' },
+ } });
+ render(<DeliveryPanel projectId="p" taskId="t" sessions={[]} />); await act(async () => {});
  fireEvent.change(screen.getByLabelText('delivery.retainBranch'), { target: { value: 'retained' } });
  const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(options => { options.onCancel?.(); return { id: 'confirm', close: () => {} }; });
  fireEvent.click(screen.getByRole('button', { name: 'delivery.remove' }));

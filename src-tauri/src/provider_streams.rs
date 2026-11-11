@@ -139,6 +139,10 @@ mod tests {
                 prompt_tokens: 4,
                 completion_tokens: 2,
                 total_tokens: 6,
+                prompt_tokens_reported: true,
+                completion_tokens_reported: true,
+                total_tokens_reported: true,
+                ..Default::default()
             }),
             ..Default::default()
         }
@@ -224,7 +228,11 @@ mod tests {
                     usage: TokenUsage {
                         prompt_tokens: 4,
                         completion_tokens: 2,
-                        total_tokens: 6
+                        total_tokens: 6,
+                        prompt_tokens_reported: true,
+                        completion_tokens_reported: true,
+                        total_tokens_reported: true,
+                        ..Default::default()
                     },
                 },
             ]

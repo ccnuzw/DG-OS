@@ -281,6 +281,7 @@ pub enum AiEventPayload {
     Started { provider_revision: i64, skill_refs: Vec<AiSkillRef>, tools: Vec<AiToolSelection> },
     Delta { text: String },
     ReasoningDelta { text: String },
+    ModelSegment { round: u32 },
     Phase { phase: AiPhase },
     Terminal { terminal: AiTerminal },
 }

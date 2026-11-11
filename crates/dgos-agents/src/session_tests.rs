@@ -9,13 +9,14 @@ mod unix {
         std::fs::create_dir_all(&root).unwrap();
         let executable = root.join("codex");
         crate::test_support::codex_fixture(&executable, &r##"
+if [ -f native-provider ]; then IFS= read -r native_provider < native-provider; else native_provider=$fixture_provider; printf '%s\n' "$native_provider" > native-provider; fi
 while IFS= read -r line; do
 request=${line#*\"id\":}; request=${request%%,*}
 case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
-*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"thread-test","turns":[]}}}\n' "$request" "$PWD";;
+*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$native_provider"'","thread":{"id":"thread-test","turns":[]}}}\n' "$request" "$PWD";;
 *'"method":"turn/start"'*) printf '{"id":%s,"result":{"turn":{"id":"turn-test"}}}\n' "$request"; printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-test","turn":{"id":"turn-test"}}}' '{"id":"approve","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-test","turnId":"turn-test","itemId":"command","command":"echo allowed","availableDecisions":["accept","decline"]}}';;
 *'"decision":"decline"'*) printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-test","turn":{"id":"turn-test","status":"completed"}}}';;
 *'"method":"turn/interrupt"'*) printf '{"id":%s,"result":{}}\n' "$request"; printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-test","turn":{"id":"turn-test","status":"interrupted"}}}';;
@@ -48,7 +49,7 @@ done
         assert_eq!(manager.snapshot("alice", &id).await.unwrap().view.cli_version.as_deref(), Some("codex-cli 0.167.0"));
         assert!(manager.snapshot("bob", &id).await.is_err());
         let project_id = manager.development_workspace("alice").await.unwrap().projects[0].id.clone();
-        assert!(matches!(manager.update_project("alice", crate::projects::UpdateProjectInput { project_id: project_id.clone(), action: "unlink".into(), value: None }, lease.clone()).await, Err(e) if e == "project_busy"));
+        assert!(matches!(manager.update_project("alice", crate::projects::UpdateProjectInput { project_id: project_id.clone(), action: "archive".into(), value: None }, lease.clone()).await, Err(e) if e == "project_busy"));
         let bob_project = manager.create_project("bob", crate::projects::CreateProjectInput { kind: "import".into(), name: "Other owner same path".into(), path: root.to_string_lossy().into(), source: None }, CancellationToken::new()).await.unwrap();
         let bob_task = manager.save_development_task("bob", crate::projects::SaveTaskInput { id: None, project_id: bob_project.id, goal: "Other task".into(), requirements: "Isolation".into(), status: "todo".into() }, CancellationToken::new()).await.unwrap();
         assert!(matches!(manager.open_session("bob", Engine::Codex, uuid::Uuid::new_v4().to_string(), crate::test_support::create(&manager, "bob", &bob_task.id, options.clone()).await, Some(bob_task.id.clone()), CancellationToken::new()).await, Err(e) if e == "workspace_busy"));
@@ -176,10 +177,10 @@ case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
-*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"rounds-thread","turns":[]}}}\n' "$request" "$PWD";;
+*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"rounds-thread","turns":[]}}}\n' "$request" "$PWD";;
 *'"method":"thread/resume"'*)
  round=2
- printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"rounds-thread","turns":[{"id":"turn-1","status":"completed","items":[{"type":"userMessage","id":"user-1","content":[{"type":"text","text":"same prompt"}]},{"type":"agentMessage","id":"answer-1","text":"hello world"}]},{"id":"turn-2","status":"completed","items":[{"type":"userMessage","id":"user-2","content":[{"type":"text","text":"same prompt"}]},{"type":"agentMessage","id":"answer-2","text":"hello world"}]}]}}}\n' "$request" "$PWD";;
+ printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"rounds-thread","turns":[{"id":"turn-1","status":"completed","items":[{"type":"userMessage","id":"user-1","content":[{"type":"text","text":"same prompt"}]},{"type":"agentMessage","id":"answer-1","text":"hello world"}]},{"id":"turn-2","status":"completed","items":[{"type":"userMessage","id":"user-2","content":[{"type":"text","text":"same prompt"}]},{"type":"agentMessage","id":"answer-2","text":"hello world"}]}]}}}\n' "$request" "$PWD";;
 *'"method":"turn/start"'*)
  round=$((round+1))
  printf '{"method":"turn/completed","params":{"threadId":"rounds-thread","turn":{"id":"old-turn","status":"completed"}}}\n'
@@ -257,7 +258,7 @@ request=${line#*\"id\":}; request=${request%%,*}
 case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
-*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","approvalPolicy":"on-request","approvalsReviewer":"user","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":[]},"reasoningEffort":"medium","thread":{"id":"controls-thread","turns":[]}}}\n' "$request" "$PWD";;
+*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","approvalPolicy":"on-request","approvalsReviewer":"user","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":[]},"reasoningEffort":"medium","thread":{"id":"controls-thread","turns":[]}}}\n' "$request" "$PWD";;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[{"model":"other-model","defaultReasoningEffort":"max","supportedReasoningEfforts":[{"reasoningEffort":"max"}]},{"model":"fixture-model","defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"}]}],"nextCursor":null}}\n' "$request";;
 *'"method":"turn/start"'*) printf '{"id":%s,"result":{"turn":{"id":"controls-turn"}}}\n' "$request"; printf '%s\n' '{"method":"turn/completed","params":{"threadId":"controls-thread","turn":{"id":"controls-turn","status":"completed"}}}';;
 esac
@@ -319,6 +320,10 @@ done
             let thread_cwd = if matches!(mode, "older" | "newer") { workspace.as_str() } else { "/dgos-missing-workspace" };
             crate::test_support::prepare_shell_fixture(&executable, &format!(r##"
 if [ "${{1-}}" = --version ]; then printf '%s\n' '{version}'; {version_effect}; exit 0; fi
+fixture_provider=
+for argument do
+  case "$argument" in model_provider=*) fixture_provider=${{argument#*=}}; fixture_provider=${{fixture_provider#\"}}; fixture_provider=${{fixture_provider%\"}};; esac
+done
 printf x >> started
 while IFS= read -r line; do
 printf '%s\n' "$line" >> protocol
@@ -326,7 +331,7 @@ request=${{line#*\"id\":}}; request=${{request%%,*}}
 case "$line" in
 {config}
 *'"method":"initialize"'*) {initialize};;
-*'"method":"thread/start"'*) printf '{{"id":%s,"result":{{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{{"id":"diagnostic-thread","turns":[]}}}}}}\n' "$request" '{thread_cwd}';;
+*'"method":"thread/start"'*) printf '{{"id":%s,"result":{{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{{"id":"diagnostic-thread","turns":[]}}}}}}\n' "$request" '{thread_cwd}';;
 *'"method":"model/list"'*) printf '{{"id":%s,"result":{{"data":[{{"model":"fixture-model"}}],"nextCursor":null}}}}\n' "$request";;
 esac
 done

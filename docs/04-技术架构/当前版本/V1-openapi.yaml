@@ -15,7 +15,7 @@ info:
     **ASST-FOUNDATION 边界**：桌面 `host.ai` 与 `chat_*` 新增的资料导入/删除、foundation 配置、
     上下文检查、结构输出后校验、限期结果读取/确认、显式摘要/继续均不新增 LAN 路由或工具权限。
     `LanSendInput`/`LanRegenerateInput` 保持独立白名单和 `additionalProperties: false`，不能提交
-    `foundation`、`context_refs`、`source_run_id`、`skill_mode`、`authorized_skill_refs`、`tools` 或宿主 scope；未知字段按解码失败处理，
+    `foundation`、`context_refs`、`source_run_id`、`skill_mode`、`authorized_skill_refs`、`tools`、`web_access` 或宿主 scope；未知字段按解码失败处理，
     不把桌面共享 DTO 的扩展自动映射到远程输入。具体桌面契约见接口契约 §10.1、§17.5，
     技术依据为 AI助手运行基础技术设计（ASST-FOUNDATION）；无隐藏聊天或业务应用扩围。
 
@@ -712,12 +712,18 @@ components:
               const: chat
             event:
               type: object
-              description: 接口契约 §10.1 的 ChatStreamEvent（started、delta、reasoning_delta、done、error），不含 tool_proposal
-              required: [kind]
+              description: 接口契约 §10.1 的 ChatStreamEvent，不含 tool_proposal；seq在任务内递增，model_segment开始新模型轮次，不赋予LAN联网或工具权限
+              required: [kind, seq]
               properties:
                 kind:
                   type: string
-                  enum: [started, delta, reasoning_delta, done, error]
+                  enum: [started, delta, reasoning_delta, phase, activity, model_segment, summary_done, done, error]
+                seq:
+                  type: integer
+                  minimum: 1
+                round:
+                  type: integer
+                  description: model_segment事件的模型轮次
         - type: object
           additionalProperties: false
           required: [type, reason]

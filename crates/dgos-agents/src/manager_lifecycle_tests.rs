@@ -19,7 +19,7 @@ case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}';;
 *'"method":"model/list"'*) printf '%s\n' '{"id":4,"result":{"data":[],"nextCursor":null}}';;
-*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":3,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"retired-thread","turns":[]}}}\n' "$PWD";;
+*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":3,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"retired-thread","turns":[]}}}\n' "$PWD";;
 esac
 done
 "#.replace("CONFIG_REPLY", crate::test_support::CODEX_CONFIG_REPLY)).await;
@@ -110,6 +110,9 @@ async fn reboot_cleanup_releases_recovered_slots_without_rewriting_unknown_histo
     assert!(fixture.manager.close_session("alice", &id).await.unwrap());
     fixture.cleanup_finished().await;
     fixture.manager.inner.terminal.lock().await.clear();
+    // Legacy records predate durable process ownership evidence.
+    let binding = fixture.manager.inner.repository.read_cli_session_configuration("alice", &id).await.unwrap().binding.unwrap();
+    std::fs::remove_file(fixture.root.join("cli-processes").join(format!("{}.ownership", binding.binding_id))).unwrap();
     let db = dgos_db::establish_connection(&format!("sqlite://{}?mode=rwc", fixture.root.join("metadata.sqlite").display())).await.unwrap();
     db.execute_unprepared("UPDATE development_cli_session_bindings SET state='unknown',cleanup_state='unknown',cleanup_proof=NULL,cleanup_reason='host_restart_cleanup_unconfirmed',boot_identity='machine:previous-boot'").await.unwrap();
     fixture.manager.restore_unsettled_slots().await.unwrap();
@@ -313,11 +316,11 @@ async fn absent_start_reconciliation_fences_late_create_without_launching_or_sen
     let fixture = Fixture::new().await;
     let id = Uuid::new_v4().to_string();
     let lease = CancellationToken::new();
-    assert!(fixture.manager.cancel_unstarted_session("bob", &id, &fixture.task, &lease).await.is_err());
+    assert!(fixture.manager.reconcile_start("bob", &id, &fixture.task, &lease).await.is_err());
     let revoked = CancellationToken::new(); revoked.cancel();
-    assert_eq!(fixture.manager.cancel_unstarted_session("alice", &id, &fixture.task, &revoked).await.unwrap_err(), "session_invalid");
-    assert!(fixture.manager.cancel_unstarted_session("alice", &id, &fixture.task, &lease).await.unwrap());
-    assert!(fixture.manager.cancel_unstarted_session("alice", &id, &fixture.task, &lease).await.unwrap());
+    assert_eq!(fixture.manager.reconcile_start("alice", &id, &fixture.task, &revoked).await.err().unwrap(), "session_invalid");
+    assert_eq!(fixture.manager.reconcile_start("alice", &id, &fixture.task, &lease).await.unwrap().status, "not_started");
+    assert_eq!(fixture.manager.reconcile_start("alice", &id, &fixture.task, &lease).await.unwrap().status, "not_started");
     let options = SessionOptions { workspace: fixture.root.to_string_lossy().into_owned(), executable: Some(fixture.root.join("codex").to_string_lossy().into_owned()), resume_id: None, model: None, trust_workspace: true };
     let create = crate::test_support::create(&fixture.manager, "alice", &fixture.task, options).await;
     assert_eq!(fixture.manager.open_session("alice", Engine::Codex, id.clone(), create, Some(fixture.task.clone()), lease).await.err().unwrap(), "cancelled");
@@ -325,7 +328,136 @@ async fn absent_start_reconciliation_fences_late_create_without_launching_or_sen
     assert_eq!(fixture.manager.slot_count().await, 0);
     let new_id = Uuid::new_v4().to_string();
     assert_eq!(fixture.open(&new_id).await.view.status, "idle");
-    assert!(!fixture.manager.cancel_unstarted_session("alice", &new_id, &fixture.task, &CancellationToken::new()).await.unwrap());
+    assert_eq!(fixture.manager.reconcile_start("alice", &new_id, &fixture.task, &CancellationToken::new()).await.unwrap().status, "ready");
     assert_eq!(fixture.manager.snapshot("alice", &new_id).await.unwrap().view.status, "idle");
+    assert!(fixture.manager.shutdown().await);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn durable_start_without_memory_projection_is_observed_not_cancelled() {
+    let fixture = Fixture::new().await;
+    let id = Uuid::new_v4().to_string();
+    let options = SessionOptions { workspace: fixture.root.to_string_lossy().into_owned(), executable: None, resume_id: None, model: None, trust_workspace: true };
+    let create = crate::test_support::create(&fixture.manager, "alice", &fixture.task, options.clone()).await;
+    let project = fixture.manager.task_project("alice", &fixture.task).await.unwrap();
+    let launch = fixture.manager.inner.providers.prepare("alice", &id, &fixture.task, &project, Engine::Codex, &options, create.project_revision, create.provider, &CancellationToken::new()).await.unwrap();
+    assert!(!fixture.manager.inner.records.lock().await.iter().any(|record| record.id == id));
+    assert_eq!(fixture.manager.reconcile_start("alice", &id, &fixture.task, &CancellationToken::new()).await.unwrap().status, "recovering");
+    assert_eq!(fixture.manager.snapshot("alice", &id).await.err().unwrap(), "cleanup_pending");
+    assert!(!fixture.manager.inner.cancelled_starts.lock().await.get("alice").is_some_and(|ids| ids.contains(&Uuid::parse_str(&id).unwrap())));
+    fixture.manager.inner.providers.cleanup("alice", &id, &launch.binding, true, false).await.unwrap();
+    assert_eq!(fixture.manager.reconcile_start("alice", &id, &fixture.task, &CancellationToken::new()).await.unwrap().status, "closed");
+    assert!(fixture.manager.shutdown().await);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn failed_unstarted_cleanup_persistence_recovers_without_losing_the_reservation() {
+    use dgos_db::sea_orm::ConnectionTrait;
+    let fixture = Fixture::new().await;
+    let id = Uuid::new_v4().to_string();
+    let db = dgos_db::establish_connection(&format!("sqlite://{}?mode=rwc", fixture.root.join("metadata.sqlite").display())).await.unwrap();
+    db.execute_unprepared("CREATE TRIGGER deny_start_cleanup BEFORE UPDATE ON development_cli_session_bindings WHEN NEW.cleanup_state='stopped' BEGIN SELECT RAISE(ABORT,'injected'); END").await.unwrap();
+    let options = SessionOptions { workspace: fixture.root.to_string_lossy().into_owned(), executable: Some(fixture.root.join("missing-cli").to_string_lossy().into_owned()), resume_id: None, model: None, trust_workspace: true };
+    let create = crate::test_support::create(&fixture.manager, "alice", &fixture.task, options).await;
+    assert_eq!(fixture.manager.open_session("alice", Engine::Codex, id.clone(), create, Some(fixture.task.clone()), CancellationToken::new()).await.err().unwrap(), "cleanup_pending");
+    assert!(fixture.manager.inner.records.lock().await.iter().any(|record| record.id == id));
+    assert_eq!(fixture.manager.slot_count().await, 1);
+    assert_eq!(fixture.manager.workspace_available(&fixture.root.canonicalize().unwrap().to_string_lossy(), None).await.err().unwrap(), "cleanup_pending");
+    db.execute_unprepared("DROP TRIGGER deny_start_cleanup").await.unwrap();
+    assert_eq!(fixture.manager.reconcile_start("alice", &id, &fixture.task, &CancellationToken::new()).await.unwrap().status, "closed");
+    assert_eq!(fixture.manager.slot_count().await, 0);
+    assert!(fixture.manager.inner.retained.lock().await.is_empty());
+    let binding = fixture.manager.inner.repository.read_cli_session_configuration("alice", &id).await.unwrap().binding.unwrap();
+    assert_eq!(binding.cleanup_proof.as_deref(), Some("no_execution"));
+    assert!(fixture.manager.shutdown().await);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unlink_automatically_closes_owned_session_without_deleting_project_files() {
+    let fixture = Fixture::new().await;
+    let id = Uuid::new_v4().to_string();
+    fixture.open(&id).await;
+    std::fs::write(fixture.root.join("user-code.txt"), "keep user's code").unwrap();
+    let project = fixture.manager.task_project("alice", &fixture.task).await.unwrap();
+    fixture.manager.update_project("alice", crate::projects::UpdateProjectInput { project_id: project.id.clone(), action: "unlink".into(), value: None }, CancellationToken::new()).await.unwrap();
+    assert_eq!(fixture.manager.inner.repository.project("alice", &project.id).await.err().unwrap(), "project_not_found");
+    assert_eq!(std::fs::read_to_string(fixture.root.join("user-code.txt")).unwrap(), "keep user's code");
+    let history = fixture.manager.snapshot("alice", &id).await.unwrap();
+    assert_eq!(history.view.status, "closed");
+    assert_eq!(history.view.native_id.as_deref(), Some("retired-thread"));
+    assert!(matches!(history.configuration, crate::capabilities::SessionConfigurationView::LegacyHistory { .. }));
+    assert!(fixture.manager.inner.active.lock().await.is_empty());
+    assert!(fixture.manager.shutdown().await);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn task_preparation_is_idempotent_and_cannot_overwrite_a_different_request() {
+    let fixture = Fixture::new().await;
+    let project = fixture.manager.task_project("alice", &fixture.task).await.unwrap();
+    let id = Uuid::new_v4().to_string();
+    let lease = CancellationToken::new();
+    let first = fixture.manager.prepare_agent_task("alice", &id, &project.id, "First conversation", &lease).await.unwrap();
+    let again = fixture.manager.prepare_agent_task("alice", &id, &project.id, "First conversation", &lease).await.unwrap();
+    assert_eq!(first.id, again.id);
+    assert_eq!(first.created_at, again.created_at);
+    assert_eq!(fixture.manager.prepare_agent_task("alice", &id, &project.id, "Different conversation", &lease).await.err().unwrap(), "request_conflict");
+    assert!(fixture.manager.prepare_agent_task("bob", &id, &project.id, "First conversation", &lease).await.is_err());
+    assert_eq!(fixture.manager.inner.repository.task("alice", &id).await.unwrap().goal, "First conversation");
+    assert!(fixture.manager.shutdown().await);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unlink_keeps_untraceable_legacy_cleanup_quarantined_to_its_workspace() {
+    let fixture = Fixture::new().await;
+    let id = Uuid::new_v4().to_string();
+    let options = SessionOptions { workspace: fixture.root.canonicalize().unwrap().to_string_lossy().into_owned(), executable: None, resume_id: None, model: None, trust_workspace: true };
+    let create = crate::test_support::create(&fixture.manager, "alice", &fixture.task, options.clone()).await;
+    let project = fixture.manager.task_project("alice", &fixture.task).await.unwrap();
+    let launch = fixture.manager.inner.providers.prepare("alice", &id, &fixture.task, &project, Engine::Codex, &options, create.project_revision, create.provider, &CancellationToken::new()).await.unwrap();
+    let binding_id = launch.binding.binding_id.clone();
+    drop(launch);
+    std::fs::remove_file(fixture.root.join("cli-processes").join(format!("{binding_id}.ownership"))).unwrap();
+    let recovered = crate::test_support::manager(&fixture.root).await;
+    recovered.update_project("alice", crate::projects::UpdateProjectInput { project_id: project.id.clone(), action: "unlink".into(), value: None }, CancellationToken::new()).await.unwrap();
+    assert!(recovered.inner.repository.project("alice", &project.id).await.is_err());
+    let binding = recovered.inner.repository.read_cli_session_configuration("alice", &id).await.unwrap().binding.unwrap();
+    assert_eq!(binding.cleanup_state, "unknown");
+    assert_eq!(recovered.workspace_available(&project.path, None).await.err().unwrap(), "cleanup_pending");
+    assert!(recovered.workspace_available("/an/unrelated/workspace", None).await.is_ok());
+    assert_eq!(recovered.occupied_slots().await, 0, "unowned history must not freeze unrelated projects");
+    assert!(fixture.manager.shutdown().await);
+    assert!(!recovered.shutdown().await, "unknown cleanup is not a fabricated stopped receipt");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn no_execution_owner_can_retry_the_same_uuid_after_its_slot_is_released() {
+    let fixture = Fixture::new().await;
+    let id = Uuid::new_v4().to_string();
+    let executable = fixture.root.join("retry-codex");
+    let options = SessionOptions { workspace: fixture.root.to_string_lossy().into_owned(), executable: Some(executable.to_string_lossy().into_owned()), resume_id: None, model: None, trust_workspace: true };
+    let create = crate::test_support::create(&fixture.manager, "alice", &fixture.task, options.clone()).await;
+    assert!(fixture.manager.open_session("alice", Engine::Codex, id.clone(), create, Some(fixture.task.clone()), CancellationToken::new()).await.is_err());
+    let failed = fixture.manager.inner.repository.read_cli_session_configuration("alice", &id).await.unwrap().binding.unwrap();
+    assert_eq!(failed.cleanup_proof.as_deref(), Some("no_execution"));
+    assert_eq!(fixture.manager.slot_count().await, 0);
+
+    // Keep the exact request and move the already-admitted fixture executable
+    // into place; the original owner's safe retry is not a UUID collision.
+    std::fs::rename(fixture.root.join("codex"), &executable).unwrap();
+    let create = crate::test_support::create(&fixture.manager, "alice", &fixture.task, options).await;
+    let reopened = fixture.manager.open_session("alice", Engine::Codex, id.clone(), create, Some(fixture.task.clone()), CancellationToken::new()).await.unwrap();
+    assert_eq!(reopened.view.status, "idle");
+    assert_eq!(fixture.manager.slot_count().await, 1);
+    let retried = fixture.manager.inner.repository.read_cli_session_configuration("alice", &id).await.unwrap().binding.unwrap();
+    assert_ne!(retried.binding_id, failed.binding_id);
+    assert_eq!(retried.state, "active");
+    assert!(fixture.manager.close_session("alice", &id).await.unwrap());
+    assert_eq!(fixture.manager.slot_count().await, 0);
     assert!(fixture.manager.shutdown().await);
 }

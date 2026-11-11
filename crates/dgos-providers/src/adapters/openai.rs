@@ -163,14 +163,12 @@ impl ProviderAdapter for OpenAIAdapter {
                     .post_json(&url, &state, model_id, Some(options.request_timeout), None, None)
                     .await?;
                 let bytes = read_limited(response, options.max_body_bytes).await?;
-                let mut response = parse_chat_response(&bytes)?;
+                let mut response = parse_chat_response(&bytes, &billed)?;
                 if let Some(format) = &request.response_format {
                     // A mismatch is final: `StructuredOutputInvalid` is not retryable.
                     match structured::validate(&response.content, format) {
                         Ok(value) => response.structured = Some(value),
                         Err(error) => {
-                            *billed.lock().unwrap_or_else(|e| e.into_inner()) =
-                                Some(response.usage.clone());
                             return Err(error.into());
                         }
                     }
@@ -179,9 +177,7 @@ impl ProviderAdapter for OpenAIAdapter {
             })
             .await
             .map_err(|error| CallFailure {
-                usage: matches!(error, DgosError::StructuredOutputInvalid)
-                    .then(|| billed.lock().unwrap_or_else(|e| e.into_inner()).take())
-                    .flatten(),
+                usage: billed.lock().unwrap_or_else(|e| e.into_inner()).take(),
                 error,
             })
     }
@@ -436,9 +432,11 @@ fn reasoning_delta(delta: Option<&Value>) -> Option<String> {
 
 /// §2.4.7 tolerant reading: unknown fields ignored, absent usage is zero and flagged, an empty
 /// `choices` gives empty content, an unknown finish reason counts as `stop`.
-fn parse_chat_response(bytes: &[u8]) -> DgosResult<ChatResponse> {
+fn parse_chat_response(bytes: &[u8], billed: &std::sync::Mutex<Option<TokenUsage>>) -> DgosResult<ChatResponse> {
     let value: Value =
         serde_json::from_slice(bytes).map_err(|_| DgosError::ProviderResponseInvalid)?;
+    let (usage, usage_unknown) = parse_usage(value.get("usage"));
+    *billed.lock().unwrap_or_else(|e| e.into_inner()) = usage.has_reported_usage().then(|| usage.clone());
     let choices = value
         .get("choices")
         .and_then(Value::as_array)
@@ -458,7 +456,6 @@ fn parse_chat_response(bytes: &[u8]) -> DgosResult<ChatResponse> {
         .and_then(extract_reasoning)
         .map(|reasoning| reasoning.text)
         .filter(|text| !text.is_empty());
-    let (usage, usage_unknown) = parse_usage(value.get("usage"));
     Ok(ChatResponse {
         content,
         usage,
@@ -473,6 +470,7 @@ fn parse_chat_response(bytes: &[u8]) -> DgosResult<ChatResponse> {
 fn parse_tool_response(bytes: &[u8]) -> DgosResult<ToolChatResponse> {
     let value: Value =
         serde_json::from_slice(bytes).map_err(|_| DgosError::ProviderResponseInvalid)?;
+    let usage = parse_usage(value.get("usage")).0;
     let choices = value
         .get("choices")
         .and_then(Value::as_array)
@@ -497,7 +495,7 @@ fn parse_tool_response(bytes: &[u8]) -> DgosResult<ToolChatResponse> {
     message.reasoning = extract_reasoning(&raw);
     Ok(ToolChatResponse {
         message,
-        usage: parse_usage(value.get("usage")).0,
+        usage,
         audit_warning: false,
     })
 }
@@ -532,35 +530,45 @@ fn parse_models(bytes: &[u8], max_models: usize) -> DgosResult<Vec<Model>> {
     Ok(models)
 }
 
-/// A missing or empty `usage` is `(0, 0, 0)` with the unknown flag set.
-fn parse_usage(usage: Option<&Value>) -> (TokenUsage, bool) {
+
+fn usage_counts_valid(usage: Option<&Value>) -> bool {
+    let Some(usage) = usage else { return true; };
+    ["/prompt_tokens", "/completion_tokens", "/total_tokens", "/prompt_cache_hit_tokens",
+        "/prompt_tokens_details/cached_tokens", "/prompt_tokens_details/cache_creation_tokens",
+        "/completion_tokens_details/reasoning_tokens"].into_iter().all(|path| {
+        usage.pointer(path).filter(|value| !value.is_null()).is_none_or(|value|
+            value.as_u64().is_some_and(|value| u32::try_from(value).is_ok()))
+    })
+}
+/// OpenAI prompt/completion already include cache/reasoning subsets. Missing fields stay unknown.
+pub(crate) fn parse_usage(usage: Option<&Value>) -> (TokenUsage, bool) {
+    // Reject an unrepresentable report as a whole: deriving totals from a truncated subset
+    // would manufacture a known count. Valid earlier stream reports remain partial evidence.
+    if !usage_counts_valid(usage) { return (TokenUsage::default(), true); }
     let Some(usage) = usage.and_then(Value::as_object) else {
         return (TokenUsage::default(), true);
     };
-    let field = |name: &str| {
-        usage
-            .get(name)
-            .and_then(Value::as_u64)
-            .map(|value| value.min(u32::MAX as u64) as u32)
+    let count = |value: Option<&Value>| value.and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok());
+    let field = |name: &str| count(usage.get(name));
+    let prompt = field("prompt_tokens");
+    let completion = field("completion_tokens");
+    let total = field("total_tokens").or_else(|| prompt.zip(completion).and_then(|(p, c)| p.checked_add(c)));
+    let usage = TokenUsage {
+        prompt_tokens: prompt.unwrap_or(0),
+        completion_tokens: completion.unwrap_or(0),
+        total_tokens: total.unwrap_or_else(|| prompt.unwrap_or(0).saturating_add(completion.unwrap_or(0))),
+        prompt_tokens_reported: prompt.is_some(),
+        completion_tokens_reported: completion.is_some(),
+        total_tokens_reported: total.is_some(),
+        cache_read_tokens: count(usage.get("prompt_tokens_details").and_then(|v| v.get("cached_tokens")))
+            .or_else(|| field("prompt_cache_hit_tokens")),
+        cache_write_tokens: count(usage.get("prompt_tokens_details").and_then(|v| v.get("cache_creation_tokens"))),
+        reasoning_tokens: count(usage.get("completion_tokens_details").and_then(|v| v.get("reasoning_tokens"))),
     };
-    let (prompt, completion, total) = (
-        field("prompt_tokens"),
-        field("completion_tokens"),
-        field("total_tokens"),
-    );
-    if prompt.is_none() && completion.is_none() && total.is_none() {
-        return (TokenUsage::default(), true);
-    }
-    let prompt_tokens = prompt.unwrap_or(0);
-    let completion_tokens = completion.unwrap_or(0);
-    (
-        TokenUsage {
-            prompt_tokens,
-            completion_tokens,
-            total_tokens: total.unwrap_or_else(|| prompt_tokens.saturating_add(completion_tokens)),
-        },
-        false,
-    )
+    let unknown = !usage.has_reported_usage();
+    crate::usage::observe(&usage);
+    (usage, unknown)
 }
 
 fn normalize_finish_reason(reason: &str) -> String {
@@ -594,21 +602,17 @@ impl Mapper for OpenAiMapper {
         if data == "[DONE]" {
             return Outcome::Complete;
         }
-        if event.event.as_deref() == Some("error") {
-            return Outcome::Fail(DgosError::StreamInterrupted);
-        }
         // Unparseable data is an interruption, never a silently dropped chunk.
         let Ok(value) = serde_json::from_str::<Value>(data) else {
             return Outcome::Fail(DgosError::StreamInterrupted);
         };
-        if value.get("error").is_some_and(|error| !error.is_null()) {
-            return Outcome::Fail(DgosError::StreamInterrupted);
-        }
-        if let Some(usage) = value.get("usage").filter(|usage| usage.is_object()) {
+        if let Some(usage) = value.get("usage") {
+            if !usage_counts_valid(Some(usage)) { return Outcome::Fail(DgosError::ProviderResponseInvalid); }
             let (usage, unknown) = parse_usage(Some(usage));
-            if !unknown {
-                self.usage = Some(usage);
-            }
+            if !unknown { crate::usage::merge_usage(self.usage.get_or_insert_with(TokenUsage::default), &usage); }
+        }
+        if event.event.as_deref() == Some("error") || value.get("error").is_some_and(|error| !error.is_null()) {
+            return Outcome::Fail(DgosError::StreamInterrupted);
         }
         if let Some(choice) = value.pointer("/choices/0") {
             let text = choice
@@ -849,22 +853,19 @@ impl OpenAiToolMapper {
     }
 
     fn map_event(&mut self, event: &SseEvent, out: &mut Vec<ToolStreamEvent>) -> DgosResult<bool> {
-        if event.event.as_deref() == Some("error") { return Err(DgosError::StreamInterrupted); }
         let data = event.data.trim();
         if data == "[DONE]" {
             self.validate_complete()?;
             return Ok(true);
         }
         let value: Value = serde_json::from_str(data).map_err(|_| invalid_tool_stream())?;
-        if value.get("error").is_some_and(|error| !error.is_null()) {
-            return Err(DgosError::StreamInterrupted);
-        }
-        if let Some(usage) = value.get("usage").filter(|usage| !usage.is_null()) {
+        if let Some(usage) = value.get("usage") {
+            if !usage_counts_valid(Some(usage)) { return Err(DgosError::ProviderResponseInvalid); }
             let (usage, unknown) = parse_usage(Some(usage));
-            if !unknown {
-                if self.usage.is_some() { return Err(invalid_tool_stream()); }
-                self.usage = Some(usage);
-            }
+            if !unknown { crate::usage::merge_usage(self.usage.get_or_insert_with(TokenUsage::default), &usage); }
+        }
+        if event.event.as_deref() == Some("error") || value.get("error").is_some_and(|error| !error.is_null()) {
+            return Err(DgosError::StreamInterrupted);
         }
         let choices = value.get("choices").and_then(Value::as_array).ok_or_else(invalid_tool_stream)?;
         if choices.len() > 1 { return Err(invalid_tool_stream()); }
@@ -910,7 +911,7 @@ impl Mapper<ToolStreamEvent> for OpenAiToolMapper {
             })
         };
         ToolStreamEvent::Complete {
-            usage_unknown: self.usage.is_none(),
+            usage_unknown: self.usage.as_ref().is_none_or(|usage| !usage.total_tokens_reported),
             response: ToolChatResponse {
                 message: ToolMessage {
                     role: "assistant".into(), content: self.content.take(), tool_call_id: None,
@@ -932,6 +933,51 @@ impl Mapper<ToolStreamEvent> for OpenAiToolMapper {
 mod tests {
     use super::*;
     use crate::vendor::OPENAI_OFFICIAL;
+
+    #[test]
+    fn tool_terminal_keeps_partial_facts_but_reports_unknown_total() {
+        let mut mapper = OpenAiToolMapper { usage:Some(TokenUsage { completion_tokens:7,
+            completion_tokens_reported:true,..Default::default() }),..Default::default() };
+        let ToolStreamEvent::Complete { response,usage_unknown } = mapper.terminal() else { unreachable!() };
+        assert!(usage_unknown && response.usage.completion_tokens_reported);
+        assert_eq!(response.usage.completion_tokens,7);
+        assert!(!response.usage.total_tokens_reported);
+    }
+
+    #[test]
+    fn usage_presence_cache_and_reasoning_are_independent_subsets() {
+        let (zero, unknown) = parse_usage(Some(&json!({"prompt_tokens":0,"completion_tokens":0,
+            "prompt_tokens_details":{"cached_tokens":0},
+            "completion_tokens_details":{"reasoning_tokens":0}})));
+        assert!(!unknown);
+        assert!(zero.prompt_tokens_reported && zero.completion_tokens_reported && zero.total_tokens_reported);
+        assert_eq!((zero.total_tokens, zero.cache_read_tokens, zero.reasoning_tokens), (0, Some(0), Some(0)));
+        assert_eq!(zero.cache_write_tokens, None);
+        let (partial, unknown) = parse_usage(Some(&json!({"completion_tokens":7})));
+        assert!(!unknown && partial.completion_tokens_reported);
+        assert!(!partial.prompt_tokens_reported && !partial.total_tokens_reported);
+        let (usage, _) = parse_usage(Some(&json!({"prompt_tokens":20,"completion_tokens":8,
+            "prompt_tokens_details":{"cached_tokens":12,"cache_creation_tokens":3},
+            "completion_tokens_details":{"reasoning_tokens":5}})));
+        assert_eq!(usage.total_tokens, 28, "cache/reasoning are not extra tokens");
+        assert_eq!((usage.cache_read_tokens, usage.cache_write_tokens, usage.reasoning_tokens),
+            (Some(12), Some(3), Some(5)));
+    }
+
+    #[test]
+    fn cumulative_stream_usage_replaces_counts_and_keeps_omitted_fields() {
+        let mut mapper = OpenAiMapper::default();
+        let mut out = Vec::new();
+        for usage in [json!({"prompt_tokens":20,"completion_tokens":1,
+            "prompt_tokens_details":{"cached_tokens":12}}), json!({"completion_tokens":8})] {
+            let event = SseEvent { event: None, data: json!({"choices":[],"usage":usage}).to_string() };
+            assert!(matches!(mapper.event(&event, &mut out), Outcome::Continue));
+        }
+        let usage = mapper.terminal().usage.unwrap();
+        assert_eq!((usage.prompt_tokens, usage.completion_tokens, usage.total_tokens), (20,8,28));
+        assert_eq!(usage.cache_read_tokens, Some(12));
+        assert!(usage.total_tokens_reported);
+    }
 
     #[tokio::test]
     async fn test_classify_model() {
@@ -958,6 +1004,26 @@ mod tests {
     }
 
     #[test]
+    fn token_boundaries_never_clamp_reported_facts() {
+        let max = u32::MAX as u64;
+        let (usage,unknown) = parse_usage(Some(&json!({"prompt_tokens":max,"completion_tokens":0})));
+        assert!(!unknown && usage.total_tokens_reported);
+        assert_eq!(usage.total_tokens,u32::MAX);
+        for usage in [json!({"prompt_tokens":max+1,"completion_tokens":0}),
+            json!({"prompt_tokens":1,"completion_tokens":0,"prompt_tokens_details":{"cached_tokens":max+1}}),
+            json!({"completion_tokens_details":{"reasoning_tokens":max+1}})] {
+            let (usage,unknown) = parse_usage(Some(&usage));
+            assert!(unknown && !usage.has_reported_usage());
+        }
+        let (usage,_) = parse_usage(Some(&json!({"prompt_tokens":max,"completion_tokens":1})));
+        assert!(usage.prompt_tokens_reported && usage.completion_tokens_reported);
+        assert!(!usage.total_tokens_reported,"an overflowing sum is unknown, not a saturated total");
+        let mut mapper = OpenAiMapper::default();
+        let event = SseEvent { event:None,data:json!({"choices":[],"usage":{"completion_tokens":max+1}}).to_string() };
+        assert!(matches!(mapper.event(&event,&mut Vec::new()),Outcome::Fail(DgosError::ProviderResponseInvalid)));
+    }
+
+    #[test]
     fn usage_without_counts_is_zero_and_flagged_but_partial_usage_is_kept() {
         let (usage, unknown) = parse_usage(None);
         assert!(unknown && usage.total_tokens == 0);
@@ -967,8 +1033,9 @@ mod tests {
             parse_usage(Some(&json!({"prompt_tokens": 4, "completion_tokens": 6})));
         assert!(!unknown);
         assert_eq!(usage.total_tokens, 10);
-        let (usage, _) = parse_usage(Some(&json!({"total_tokens": 99999999999u64})));
-        assert_eq!(usage.total_tokens, u32::MAX);
+        let (usage, unknown) = parse_usage(Some(&json!({"total_tokens": 99999999999u64})));
+        assert!(unknown && !usage.has_reported_usage());
+        assert_eq!(usage.total_tokens, 0);
     }
 
     #[test]

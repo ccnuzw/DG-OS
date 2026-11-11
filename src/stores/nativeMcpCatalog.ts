@@ -11,6 +11,18 @@ export function nativeCatalogKey(selection: NativeSelection): string {
 export function nativeProbeKey(input: NativeProbeInput): string {
   return JSON.stringify([nativeCatalogKey(input.selection), input.source.kind, input.source.kind === 'existing' ? input.source.server_name : input.source.draft.name]);
 }
+export function nativeProbeRecordKey(input: NativeProbeInput | null, probes: Record<string, ProbeRead>): string | null {
+  if (!input) return null;
+  const key = nativeProbeKey(input);
+  if (probes[key]) return key;
+  const selection = input.selection;
+  return Object.entries(probes).find(([, record]) => {
+    const original = record.snapshot.selection;
+    return ['running', 'unknown'].includes(record.snapshot.state)
+      && original.target === selection.target && original.scope === selection.scope && original.project_id === selection.project_id && (original.task_id ?? null) === (selection.task_id ?? null)
+      && (record.input.source.kind === 'existing' && input.source.kind === 'existing' ? record.input.source.server_name === input.source.server_name : record.input.source.kind === 'draft' && input.source.kind === 'draft' && record.input.source.draft.name === input.source.draft.name);
+  })?.[0] ?? key;
+}
 const errors: Record<string, true> = { registry_unavailable: true, registry_offline: true, registry_rate_limited: true, registry_access_denied: true, registry_invalid: true, registry_limit: true, probe_connect_failed: true, probe_protocol_failed: true, probe_auth_required: true, probe_timeout: true, probe_docker_invocation_unsupported: true };
 interface CatalogRead { page: RegistryPage | null; query: string; loading: boolean; error: string | null }
 export interface ProbeRead { snapshot: NativeProbeSnapshot; input: NativeProbeInput; error: string | null }
@@ -21,15 +33,22 @@ interface CatalogState {
   project(selection: NativeSelection, serverName: string): Promise<NativeResult<NativeMcpConfigProjection>>;
   preview(input: NativeProbeInput): Promise<NativeResult<NativeProbeSnapshot>>;
   operation(selection: NativeSelection, action: 'run' | 'cancel' | 'inspect', probeKey: string): Promise<NativeResult<NativeProbeSnapshot>>;
+  follow(probeKey: string): () => void;
 }
 let sequence = 0;
 const requests = new Map<string, number>();
-async function call<T>(command: string, input: object): Promise<NativeResult<T>> {
+interface ProbeFollowup { probeId: string; context: string; epoch: number; deadline: number; owners: Set<symbol>; timer?: number }
+const followups = new Map<string, ProbeFollowup>();
+function stopFollowup(key: string, followup: ProbeFollowup) {
+  clearTimeout(followup.timer);
+  if (followups.get(key) === followup) followups.delete(key);
+}
+async function call<T>(command: string, input: object, timeoutMs = 20_000): Promise<NativeResult<T>> {
   const epoch = useDevelopment.getState().epoch;
   let timer: number | undefined;
   try {
     // Production targets ES2020; Promise.withResolvers is unavailable there.
-    const value = await Promise.race([invoke<T>(command, { input }), new Promise<never>((_, reject) => { timer = window.setTimeout(() => reject('native_extension_Unavailable'), 20_000); })]);
+    const value = await Promise.race([invoke<T>(command, { input }), new Promise<never>((_, reject) => { timer = window.setTimeout(() => reject('native_extension_Unavailable'), timeoutMs); })]);
     return useDevelopment.getState().epoch === epoch ? { ok: true, value } : { ok: false, code: 'native_extension_StaleGeneration' };
   } catch (error) { return { ok: false, code: useDevelopment.getState().epoch === epoch ? typeof error === 'string' && errors[error] === true ? error : nativeError(error) : 'native_extension_StaleGeneration' }; }
   finally { clearTimeout(timer); }
@@ -69,8 +88,11 @@ export const useNativeMcpCatalog = create<CatalogState>((set, get) => ({
     if (!current || get().busy[key]) return { ok: false, code: 'native_extension_Busy' };
     if (action === 'run' && (key !== nativeProbeKey({ ...current.input, selection }) || current.snapshot.state !== 'ready')) return { ok: false, code: 'native_extension_Conflict' };
     set(state => ({ busy: { ...state.busy, [key]: true }, probes: action === 'run' ? { ...state.probes, [key]: { ...current, snapshot: { ...current.snapshot, state: 'unknown', cleanup: 'pending', phase: 'transport' } } } : state.probes }));
-    const result = await call<NativeProbeSnapshot>(`${action}_native_mcp_probe`, { probe_id: current.snapshot.probe_id, ...(action === 'run' ? { approved_digest: current.snapshot.digest } : {}) });
-    if (useDevelopment.getState().epoch !== epoch) return { ok: false, code: 'native_extension_StaleGeneration' };
+    // A pending inspection must not extend the automatic follow-up deadline.
+    const followup = action === 'inspect' ? followups.get(key) : undefined;
+    const timeout = followup ? Math.min(20_000, Math.max(1, followup.deadline - Date.now())) : 20_000;
+    const result = await call<NativeProbeSnapshot>(`${action}_native_mcp_probe`, { probe_id: current.snapshot.probe_id, ...(action === 'run' ? { approved_digest: current.snapshot.digest } : {}) }, timeout);
+    if (useDevelopment.getState().epoch !== epoch || get().probes[key]?.snapshot.probe_id !== current.snapshot.probe_id) return { ok: false, code: 'native_extension_StaleGeneration' };
     set(state => {
       const busy = { ...state.busy }; delete busy[key];
       const unknown = action === 'run' || action === 'cancel';
@@ -78,8 +100,45 @@ export const useNativeMcpCatalog = create<CatalogState>((set, get) => ({
     });
     return result;
   },
+  follow(key) {
+    const current = get().probes[key];
+    if (!current || current.snapshot.state !== 'running' || key !== nativeProbeKey(current.input)) return () => {};
+    const owner = Symbol(), context = nativeCatalogKey(current.input.selection), epoch = useDevelopment.getState().epoch;
+    let followup = followups.get(key);
+    if (!followup || followup.probeId !== current.snapshot.probe_id || followup.context !== context || followup.epoch !== epoch) {
+      if (followup) stopFollowup(key, followup);
+      followup = { probeId: current.snapshot.probe_id, context, epoch, deadline: Date.now() + 30_000, owners: new Set() };
+      followups.set(key, followup);
+      const tracking = followup;
+      const tick = async () => {
+        const record = get().probes[key];
+        if (followups.get(key) !== tracking || !tracking.owners.size || useDevelopment.getState().epoch !== tracking.epoch || !record || record.snapshot.probe_id !== tracking.probeId || record.snapshot.state !== 'running' || nativeCatalogKey(record.input.selection) !== tracking.context) {
+          stopFollowup(key, tracking); return;
+        }
+        if (Date.now() >= tracking.deadline) {
+          set(state => ({ probes: { ...state.probes, [key]: { ...record, error: 'probe_tracking_timeout' } } }));
+          stopFollowup(key, tracking); return;
+        }
+        if (!get().busy[key]) {
+          const result = await get().operation(record.snapshot.selection, 'inspect', key);
+          if (!result.ok || result.value.state !== 'running') { stopFollowup(key, tracking); return; }
+        }
+        if (followups.get(key) === tracking && tracking.owners.size) tracking.timer = window.setTimeout(tick, 500);
+      };
+      tracking.timer = window.setTimeout(tick, 500);
+    }
+    followup.owners.add(owner);
+    const tracking = followup;
+    return () => { tracking.owners.delete(owner); if (!tracking.owners.size) stopFollowup(key, tracking); };
+  },
 }));
-useDevelopment.subscribe((next, previous) => { if (next.epoch !== previous.epoch) { requests.clear(); useNativeMcpCatalog.setState({ catalogs: {}, probes: {}, busy: {} }); } });
+useDevelopment.subscribe((next, previous) => {
+  if (next.epoch !== previous.epoch) {
+    requests.clear();
+    for (const [key, followup] of followups) stopFollowup(key, followup);
+    useNativeMcpCatalog.setState({ catalogs: {}, probes: {}, busy: {} });
+  }
+});
 
 export function registryDeployments(entry: RegistryEntry): RegistryDeployment[] {
   return [...(entry.server.remotes ?? []).map((transport, i) => ({ id: `remote:${i}`, label: `${transport.type} · ${transport.url ?? ''}`, transport })), ...(entry.server.packages ?? []).map((item, i) => ({ id: `package:${i}`, label: `${item.registryType} · ${item.identifier}${item.version ? ` @ ${item.version}` : ''}`, transport: item.transport, package: item }))];

@@ -15,14 +15,21 @@ import { SourceLines } from './ProjectReview';
 
 export type DiffSource = 'worktree' | 'index' | 'task';
 export function parseUnifiedDiff(diff: string) {
-  let before = 0, after = 0, hunk = -1;
+  let before = 0, after = 0, hunk = -1, beforeRemaining = 0, afterRemaining = 0;
   return diff.split('\n').map(text => {
-    const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
-    if (header) { before = Number(header[1]); after = Number(header[2]); ++hunk; return { text, before: null, after: null, hunk, kind: 'hunk' }; }
-    if (hunk < 0 || text.startsWith('\\') || text === '') return { text, before: null, after: null, hunk, kind: 'meta' };
-    if (text.startsWith('+')) return { text, before: null, after: after++, hunk, kind: 'added' };
-    if (text.startsWith('-')) return { text, before: before++, after: null, hunk, kind: 'deleted' };
-    return { text, before: before++, after: after++, hunk, kind: 'context' };
+    const header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(text);
+    if (header) {
+      before = Number(header[1]); after = Number(header[3]);
+      beforeRemaining = Number(header[2] ?? 1); afterRemaining = Number(header[4] ?? 1);
+      ++hunk;
+      return { text, before: null, after: null, hunk, kind: 'hunk' };
+    }
+    if (text.startsWith('diff --git ')) beforeRemaining = afterRemaining = 0;
+    if (hunk < 0 || beforeRemaining === 0 && afterRemaining === 0 || text.startsWith('\\') || text === '') return { text, before: null, after: null, hunk, kind: 'meta' };
+    if (text.startsWith('+') && afterRemaining > 0) { --afterRemaining; return { text, before: null, after: after++, hunk, kind: 'added' }; }
+    if (text.startsWith('-') && beforeRemaining > 0) { --beforeRemaining; return { text, before: before++, after: null, hunk, kind: 'deleted' }; }
+    if (text.startsWith(' ') && beforeRemaining > 0 && afterRemaining > 0) { --beforeRemaining; --afterRemaining; return { text, before: before++, after: after++, hunk, kind: 'context' }; }
+    return { text, before: null, after: null, hunk, kind: 'meta' };
   });
 }
 export function GitFileDiff({ projectId, taskId, workspacePath, path, source, ensureTask, onSourceChange, onOpenFile, onReference, onChanged }: { projectId: string; taskId: string | null; workspacePath: string; path: string; source: DiffSource; ensureTask?: () => Promise<string | null>; onSourceChange(source: DiffSource): void; onOpenFile(): void; onReference?: (reference: ConversationReference) => void; onChanged?: () => void }) {

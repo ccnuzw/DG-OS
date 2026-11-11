@@ -60,11 +60,15 @@ pub async fn create(manager: &AgentManager, owner: &str, task: &str, options: cr
 #[cfg(unix)]
 pub async fn codex_fixture(path: &Path, body: &str) {
     let prelude = r#"if [ "${1-}" = --version ]; then printf 'codex-cli 0.167.0\n'; exit 0; fi
+fixture_provider=
+for argument do
+  case "$argument" in model_provider=*) fixture_provider=${argument#*=}; fixture_provider=${fixture_provider#\"}; fixture_provider=${fixture_provider%\"};; esac
+done
 "#;
     prepare_shell_fixture(path, &format!("{prelude}{body}")).await;
 }
 
-pub const CODEX_CONFIG_REPLY: &str = r#"*'"method":"config/read"'*) config_request=${line#*\"id\":}; config_request=${config_request%%,*}; printf '{"id":%s,"result":{"config":{"model_provider":"dgos_project","model_providers":{"dgos_project":{"base_url":"http://127.0.0.1:9/v1","wire_api":"responses","env_key":"DGOS_PROVIDER_KEY","requires_openai_auth":false}}}}}\n' "$config_request";;
+pub const CODEX_CONFIG_REPLY: &str = r#"*'"method":"config/read"'*) config_request=${line#*\"id\":}; config_request=${config_request%%,*}; printf '{"id":%s,"result":{"config":{"model_provider":"'"$fixture_provider"'","model_providers":{"'"$fixture_provider"'":{"base_url":"http://127.0.0.1:9/v1","wire_api":"responses","env_key":"DGOS_PROVIDER_KEY","requires_openai_auth":false}}}}}\n' "$config_request";;
 *'"method":"collaborationMode/list"'*) collaboration_request=${line#*\"id\":}; collaboration_request=${collaboration_request%%,*}; printf '{"id":%s,"error":{"code":-32601,"message":"Unsupported optional fixture method"}}\n' "$collaboration_request";;
 "#;
 

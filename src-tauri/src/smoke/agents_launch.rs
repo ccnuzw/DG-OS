@@ -110,6 +110,8 @@ pub fn run_agents() {
             commands::preview_development_git_pull, commands::read_development_git_history,
             commands::prepare_development_handoff, commands::list_development_handoffs, commands::accept_development_handoff,
             commands::list_agent_sessions, commands::open_agent_session, commands::get_agent_session,
+            commands::preview_agent_output_image,
+            commands::prepare_agent_task, commands::reconcile_agent_start,
             commands::send_agent_message, commands::steer_agent_turn, commands::respond_agent_request, commands::interrupt_agent_session,
             commands::observe_codex_operations, commands::control_codex_operation,
             commands::observe_agent_compression,

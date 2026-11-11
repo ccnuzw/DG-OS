@@ -153,7 +153,7 @@ pub struct ChatResponse {
     /// Normalised to `stop`, `length`, `tool_calls` or `content_filter`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finish_reason: Option<String>,
-    /// The upstream sent no usage; `usage` is zero rather than measured (§2.4.7).
+    /// No upstream usage fields were reported; zero compatibility fields are not measurements.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub usage_unknown: bool,
     /// Displayable reasoning text; never mixed into `content`.
@@ -240,12 +240,34 @@ pub enum ToolStreamEvent {
     Complete { response: ToolChatResponse, usage_unknown: bool },
 }
 
-/// Token usage information
+/// Normalized token facts. Numeric compatibility fields are meaningful only when their
+/// corresponding presence flag is true; a reported zero is distinct from an unknown value.
+/// Cache tokens are a subset of prompt tokens, and reasoning tokens a subset of completion.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct TokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+    #[serde(default)]
+    pub prompt_tokens_reported: bool,
+    #[serde(default)]
+    pub completion_tokens_reported: bool,
+    #[serde(default)]
+    pub total_tokens_reported: bool,
+    #[serde(default)]
+    pub cache_read_tokens: Option<u32>,
+    #[serde(default)]
+    pub cache_write_tokens: Option<u32>,
+    #[serde(default)]
+    pub reasoning_tokens: Option<u32>,
+}
+
+impl TokenUsage {
+    pub fn has_reported_usage(&self) -> bool {
+        self.prompt_tokens_reported || self.completion_tokens_reported || self.total_tokens_reported
+            || self.cache_read_tokens.is_some() || self.cache_write_tokens.is_some()
+            || self.reasoning_tokens.is_some()
+    }
 }
 
 /// Stream chunk for streaming responses
@@ -316,6 +338,16 @@ mod stream_event_tests {
     use super::*;
 
     #[test]
+    fn absent_usage_metadata_never_turns_legacy_zero_into_a_measurement() {
+        let legacy: TokenUsage = serde_json::from_str(r#"{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}"#).unwrap();
+        assert!(!legacy.has_reported_usage());
+        let zero = TokenUsage { prompt_tokens_reported:true, completion_tokens_reported:true,
+            total_tokens_reported:true, cache_read_tokens:Some(0), ..Default::default() };
+        assert!(zero.has_reported_usage());
+        assert_eq!(serde_json::from_value::<TokenUsage>(serde_json::to_value(&zero).unwrap()).unwrap(), zero);
+    }
+
+    #[test]
     fn a_chunk_maps_to_ordered_events_and_only_the_finish_reason_ends_the_stream() {
         let events = ProviderStreamEvent::from_chunk(ChatChunk {
             delta: "hi".into(),
@@ -325,6 +357,10 @@ mod stream_event_tests {
                 prompt_tokens: 3,
                 completion_tokens: 2,
                 total_tokens: 5,
+                prompt_tokens_reported: true,
+                completion_tokens_reported: true,
+                total_tokens_reported: true,
+                ..Default::default()
             }),
             audit_warning: false,
         });

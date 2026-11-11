@@ -17,4 +17,6 @@ export default {
   'codexTranscript.tokens.reasoning': '推理输出 token',
   'codexTranscript.tokens.total': '原生 token 总量',
   'codexTranscript.usageBoundary': '上下文估算仅使用最近一轮输入加输出，不使用累计用量。缓存输入和推理输出已包含在输入/输出中，不重复相加。仅显示原生提供的上下文窗口。',
+  'codexTranscript.commentary': '过程说明',
+  'codexTranscript.finalAnswer': '最终回答',
 } as const;

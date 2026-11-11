@@ -5,7 +5,7 @@ export default {
   'agentImages.remove': 'Remove {name}',
   'agentImages.reading': 'Reading images…',
   'agentImages.size': '{kib} KiB',
-  'agentImages.limits': 'PNG, JPEG or WebP. Up to 4 images; 2 MiB each and in total. You can also paste an image.',
+  'agentImages.limits': 'PNG, JPEG or WebP. Up to 4 images; 2 MiB each and in total. You can also paste or drop images.',
   'agentImages.privacy': 'Unsent images are saved in private account storage for up to 7 days (4 MiB across drafts). Sending forwards the selected images to the configured Codex provider; DG-OS history keeps metadata only and removes sent previews.',
   'agentImages.history': 'Image inputs: {count}',
   'agentImages.historyPrivacy': 'Image contents and links are not retained in history. Resuming does not resend images.',
@@ -13,4 +13,5 @@ export default {
   'agentImages.error.type': 'Choose PNG, JPEG or WebP image files. Image links and filesystem paths are not accepted as images.',
   'agentImages.error.read': 'The image could not be read. Choose or paste it again.',
   'agentImages.error.expired': 'These unsent images expired after 7 days. Your text is retained; choose the images again before sending.',
+  'agentImages.error.unavailable': 'Images cannot be added now. Try again in an idle Codex session.',
 } as const;

@@ -4,8 +4,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { Button, Checkbox, Input, Select, Stack, cn, extractErrorCode } from '@dgos/ui';
 import { usePageError } from '../pageError';
 import { resolveVendorId, useProviderStore } from '../stores/providerStore';
-import type { ProviderConfig, ProviderVendor, Model, Provider } from '../stores/providerStore';
+import type { CliProviderRoutes, ProviderConfig, ProviderVendor, Model, Provider } from '../stores/providerStore';
 import ProviderModels from './ProviderModels';
+import ProviderCliRoutes from './ProviderCliRoutes';
 
 interface ProviderFormProps {
   provider: Provider | null;  // null = 新建模式
@@ -104,6 +105,15 @@ function sameDraft(left: ProviderConfig, right: ProviderConfig, includeEnabled =
     && sameValue(left.config ?? {}, right.config ?? {});
 }
 
+/** CLI declarations do not change the ordinary adapter or its model catalog. */
+function sameConnectionConfig(left: ProviderConfig['config'], right: ProviderConfig['config']): boolean {
+  const a = left ?? {};
+  const b = right ?? {};
+  return Object.keys(a).every((key) => key === 'cli_routes'
+    || (Object.prototype.hasOwnProperty.call(b, key) && sameValue(a[key], b[key])))
+    && Object.keys(b).every((key) => key === 'cli_routes' || Object.prototype.hasOwnProperty.call(a, key));
+}
+
 interface CommandResponse<T> {
   success: boolean;
   data?: T;
@@ -158,7 +168,7 @@ export default function ProviderForm({
     || (configVendorId !== '' && configVendorId !== resolveVendorId(provider, vendors))
   );
   const connectionDirty = !!provider && (endpointChanged || !!formData.api_key
-    || !sameValue(formData.config ?? {}, provider.config ?? {}));
+    || !sameConnectionConfig(formData.config, provider.config));
   const previewMode = isNewMode || connectionDirty;
   const modelFetchBlocked = previewMode && (!formData.base_url.trim() || !formData.api_key.trim() || !formData.provider_type);
   const needsNewKey = endpointChanged && !formData.api_key;
@@ -249,7 +259,7 @@ export default function ProviderForm({
     }));
   };
   const setConfigKey = (key: string, value: unknown) => {
-    invalidateChecks(false);
+    if (key !== 'cli_routes') invalidateChecks(false);
     setFormData((current) => {
       const next = { ...(current.config ?? {}) };
       if (value === undefined) delete next[key];
@@ -478,9 +488,15 @@ export default function ProviderForm({
             </div>
           )}
         </div>
+        <div className="provider-connection-wide">
+          <ProviderCliRoutes routes={formData.config?.cli_routes as CliProviderRoutes | undefined}
+            providerType={formData.provider_type} baseUrl={formData.base_url} disabled={busy}
+            onChange={(routes) => setConfigKey('cli_routes', routes)} />
+        </div>
       </section>
       <section className="provider-connection-check" aria-label={t('providerForm.testConnection')}>
         <Stack gap={2}>
+          <p className="m-0 text-xs text-ink-secondary">{t('providerForm.testOrdinaryScope')}</p>
           {needsProbe && (
             <>
               <Input id="probe_model" label={t('providerForm.modelName')} value={probeModel}

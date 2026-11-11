@@ -5,6 +5,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { BrowserRouter, MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { Modal, ModalHost, ToastViewport, clearToasts, disposeAppearance, initAppearance } from '@dgos/ui';
 import App from '../src/App';
+// Resolve the real lazy page graph during fixture loading, as in module-management.
+// Otherwise the first findByRole races cold Vite transforms against its 1s DOM deadline.
+import '../src/pages/SettingsShell';
 import { useProviderStore } from '../src/stores/providerStore';
 import { useSkillsStore } from '../src/stores/skillsStore';
 import { setLocaleForTesting } from '../src/i18n/runtime';
@@ -155,6 +158,21 @@ describe('default entry (B07-15)', () => {
       '外观', 'Provider', '模块', '局域网协同', '账户', 'CLI 工具', '存储', '关于',
     ]);
     expect(settingsTabs().filter(item => item.getAttribute('aria-selected') === 'true').map(item => item.textContent)).toEqual(['外观']);
+  });
+
+  it('starts a fresh overlay on Appearance after another category was previously mounted', async () => {
+    const previous = renderAt('/settings/providers');
+    await screen.findByRole('button', { name: '+ 新建 Provider' });
+    expect(tab('Provider').getAttribute('aria-selected')).toBe('true');
+    previous.unmount();
+
+    renderAt('/settings');
+
+    expect(await screen.findByRole('heading', { level: 1, name: '外观设置' })).toBeTruthy();
+    expect(where()).toBe('/settings/appearance');
+    expect(settingsTabs().filter(item => item.getAttribute('aria-selected') === 'true').map(item => item.textContent)).toEqual(['外观']);
+    expect(screen.queryByRole('heading', { level: 1, name: 'Provider 管理' })).toBeNull();
+    expect(host.calls.filter(command => command === 'list_providers')).toHaveLength(1);
   });
 });
 

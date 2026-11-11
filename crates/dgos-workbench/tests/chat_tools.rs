@@ -1,8 +1,6 @@
-//! FR-006 stage 5 (AC22): MCP tools inside a chat session. Per-send selection, one proposal at a
-//! time shown with its exact arguments, one-shot approval, schema drift, expiry/cancel while
-//! parked, ownership, and the rule that tool round trips never enter chat storage or later
-//! context (D022/D075). Uses the stdio MCP fixture from `dgos-mcp` and mocked Provider rounds;
-//! it is not evidence about real Providers or real MCP servers.
+//! FR-006 MCP/local/Web tool turns: per-request selection, exact one-shot MCP approval,
+//! streaming model segments, account-owned bounded receipts, source facts and restart progress.
+//! Synthetic Provider/MCP fixtures do not establish real Provider or public-network behavior.
 
 use async_trait::async_trait;
 use dgos_db::{
@@ -158,7 +156,7 @@ async fn fx() -> Fx {
         .unwrap()
         .remove(0);
     Fx {
-        chat: ChatManager::new(db.clone(), dgos_db::MaintenanceGate::new()),
+        chat: ChatManager::new(db.clone(), dgos_db::MaintenanceGate::new()).with_web_vault(vault.clone()),
         skills: Arc::new(tokio::sync::RwLock::new(SkillsManager::new(db.clone(), dir.path().join("skills")))),
         providers: ProviderManager::with_vault(&db_url, vault).await.unwrap(),
         provider_id: provider.id,
@@ -271,7 +269,7 @@ async fn session(fx: &Fx) -> String {
 }
 
 fn input(session: &str, text: &str, tools: Vec<AiToolSelection>) -> SendChatInput {
-    SendChatInput { skill_mode: Default::default(), authorized_skill_refs: Vec::new(), session_id: session.into(),
+    SendChatInput { web_access: Default::default(), skill_mode: Default::default(), authorized_skill_refs: Vec::new(), session_id: session.into(),
     foundation: Default::default(),
     content: text.into(),
     client_request_id: uuid::Uuid::new_v4().to_string(),
@@ -426,6 +424,8 @@ async fn an_approved_tool_turn_saves_only_the_final_answer_and_never_enters_late
     let s = session(&fx).await;
     let (first, second) = script_rounds(&mut fx, true).await;
     let (task, sink) = start_turn(&fx, &s, "please use the tool").await;
+    let first_usage=fx.chat.get_usage(ALICE,&s).await.unwrap();
+    assert_eq!((first_usage.call_count,first_usage.reported_count,first_usage.total_tokens),(1,1,Some(7)),"the parked first model round is already settled");
 
     let proposal = sink.proposal().expect("the model's proposal is shown");
     assert_eq!(proposal.tool_name, fx.tool.tool_name);
@@ -494,6 +494,11 @@ async fn an_approved_tool_turn_saves_only_the_final_answer_and_never_enters_late
         (message.content.as_str(), message.status.as_str()),
         (FINAL_ANSWER, "completed")
     );
+    assert_eq!(message.total_tokens,Some(18));
+    let usage=fx.chat.get_usage(ALICE,&s).await.unwrap();
+    assert_eq!((usage.call_count,usage.reported_count,usage.total_tokens),(2,2,Some(18)),"both model rounds count, not just the final response");
+    assert_eq!((usage.input_tokens,usage.output_tokens),(Some(13),Some(5)));
+    assert_eq!(usage.coverage.duration,2,"model timings exclude the intervening approval and tool call");
     assert_eq!(
         decide(
             &fx,
@@ -508,6 +513,7 @@ async fn an_approved_tool_turn_saves_only_the_final_answer_and_never_enters_late
         Some(ChatError::ToolTurnInvalid),
         "an approval is consumed by use"
     );
+    assert_eq!(fx.chat.get_usage(ALICE,&s).await.unwrap().call_count,2,"consumed approval replay does not dispatch another model request");
     first.assert_async().await;
     second.assert_async().await;
 
@@ -872,7 +878,7 @@ async fn explicit_continuation_blocks_identical_completed_effect_before_mcp_disp
     assert!(original.steps.iter().any(|s|s.kind=="tool"&&s.status=="settled"));
     let calls_before=scalar(&fx.db,"SELECT COUNT(*) FROM mcp_usage_logs WHERE outcome='success'").await;
     let (repeat,no_followup)=script_rounds(&mut fx,false).await;
-    let sent=fx.chat.continue_run(&fx.providers,&*fx.skills.read().await,&fx.mcp,ALICE,"main",dgos_workbench::ContinueChatRunInput{source_task_id:source.clone(),client_request_id:uuid::Uuid::new_v4().to_string(),intent:"Only perform a new next step; never repeat the original effect".into(),accept_destination:None,tools:vec![selection(&fx)],skill_mode:Default::default(),authorized_skill_refs:vec![],foundation:Default::default()}).await.unwrap();
+    let sent=fx.chat.continue_run(&fx.providers,&*fx.skills.read().await,&fx.mcp,ALICE,"main",dgos_workbench::ContinueChatRunInput { web_access: Default::default(), source_task_id:source.clone(),client_request_id:uuid::Uuid::new_v4().to_string(),intent:"Only perform a new next step; never repeat the original effect".into(),accept_destination:None,tools:vec![selection(&fx)],skill_mode:Default::default(),authorized_skill_refs:vec![],foundation:Default::default() }).await.unwrap();
     let task=sent.ack.task_id.clone();let events=Arc::new(Collect::default());
     fx.chat.run_tool_turn(&fx.providers,&fx.mcp,fx.skills.clone(),sent.job.unwrap(),events.clone()).await;
     let repeated=events.proposal().unwrap();
@@ -976,5 +982,147 @@ async fn stopping_a_parked_stream_preserves_visible_progress_and_checkpoint() {
         assert!(!run.steps.iter().any(|step| step.kind == "tool" && step.dispatched));
         first.assert_async().await;
         second.assert_async().await;
+    }
+}
+
+#[tokio::test]
+async fn model_rounds_keep_intermediate_evidence_but_only_final_text_in_the_answer() {
+    let mut fx = fx().await;
+    let s = session(&fx).await;
+    let plan = "Intermediate plan, not the answer.";
+    let (first, second) = script_rounds_with_preamble(&mut fx, Some("Final."), Some(plan)).await;
+    let (task, sink) = start_turn(&fx, &s, "perform one approved action").await;
+    let proposal = sink.proposal().unwrap();
+    decide(&fx, ALICE, &task, ToolAction::Approve { proposal_id: proposal.id }).await.unwrap();
+    let events = sink.take();
+    let ChatEvent::Done { message, .. } = terminal(&events) else { panic!("completed answer") };
+    assert_eq!(message.content, "Final.");
+    let rounds = events.iter().filter_map(|event| match event { ChatEvent::ModelSegment { round, .. } => Some(*round), _ => None }).collect::<Vec<_>>();
+    assert_eq!(rounds, vec![1, 2]);
+    let seq = events.iter().map(|event| serde_json::to_value(event).unwrap()["seq"].as_u64().unwrap()).collect::<Vec<_>>();
+    assert_eq!(seq, (1..=seq.len() as u64).collect::<Vec<_>>());
+    let run = fx.chat.get_run(ALICE, dgos_workbench::GetChatRunInput { task_id: task }).await.unwrap();
+    assert_eq!(run.partial_content, "Final.");
+    assert!(run.steps.iter().any(|step| step.kind == "model_segment" && step.receipt.as_ref().is_some_and(|receipt| receipt["round"] == 1 && receipt["content"] == plan)));
+    assert!(run.steps.iter().any(|step| step.kind == "tool" && step.status == "settled"));
+    first.assert_async().await;
+    second.assert_async().await;
+}
+
+#[tokio::test]
+async fn web_access_is_current_request_only_and_replay_cannot_change_the_grant() {
+    let fx = fx().await;
+    let s = session(&fx).await;
+    let mut denied = input(&s, "search the web", vec![]);
+    denied.web_access.search = true;
+    assert!(matches!(send(&fx, ALICE, denied).await, Err(ChatError::Web(reason)) if reason == "web_search_key_required"));
+    assert!(messages(&fx, &s).await.is_empty(), "missing key rejects before starting a run");
+    let mut request = input(&s, "use web only if needed", vec![]);
+    request.web_access.fetch = true;
+    let replay = request.clone();
+    let sent = send(&fx, ALICE, request).await.unwrap();
+    assert!(sent.job.as_ref().unwrap().is_tool_turn(), "web definitions use the existing local tool executor");
+    let task = sent.ack.task_id.clone();
+    let original_assistant = sent.ack.assistant_message_id.clone();
+    assert!(send(&fx, ALICE, replay.clone()).await.unwrap().ack.replayed);
+    let mut changed = replay;
+    changed.web_access.fetch = false;
+    assert!(matches!(send(&fx, ALICE, changed).await, Err(ChatError::RequestIdConflict)));
+    assert!(fx.chat.cancel(ALICE, &task));
+    fx.chat.run_tool_turn(&fx.providers, &fx.mcp, fx.skills.clone(), sent.job.unwrap(), Arc::new(Collect::default())).await;
+    let regeneration = fx.chat.regenerate(&fx.providers, &*fx.skills.read().await, ALICE, "main", dgos_workbench::RegenerateChatInput {
+        message_id: original_assistant, client_request_id: uuid::Uuid::new_v4().to_string(), accept_destination: None,
+        foundation: Default::default(), skill_mode: Default::default(), authorized_skill_refs: vec![], web_access: Default::default(),
+    }).await.unwrap();
+    assert!(!regeneration.job.as_ref().unwrap().is_tool_turn(), "regeneration cannot inherit the earlier fetch grant");
+    assert!(fx.chat.cancel(ALICE, &regeneration.ack.task_id));
+    fx.chat.run_generation(&fx.providers, regeneration.job.unwrap(), &Collect::default()).await;
+    let continuation = fx.chat.continue_run(&fx.providers, &*fx.skills.read().await, &fx.mcp, ALICE, "main", dgos_workbench::ContinueChatRunInput {
+        source_task_id: task, client_request_id: uuid::Uuid::new_v4().to_string(), intent: "continue without web permission".into(),
+        accept_destination: None, tools: vec![], skill_mode: Default::default(), authorized_skill_refs: vec![],
+        foundation: Default::default(), web_access: Default::default(),
+    }).await.unwrap();
+    assert!(!continuation.job.as_ref().unwrap().is_tool_turn(), "continuation cannot inherit the earlier fetch grant");
+    assert!(fx.chat.cancel(ALICE, &continuation.ack.task_id));
+    fx.chat.run_generation(&fx.providers, continuation.job.unwrap(), &Collect::default()).await;
+}
+
+#[tokio::test]
+async fn context_inspection_counts_web_definitions_without_running_tools_or_starting_messages() {
+    let fx = fx().await;
+    let s = session(&fx).await;
+    let base = dgos_workbench::InspectChatContextInput {
+        session_id: s.clone(), content: "read only budget".into(), asset_ids: vec![], tools: vec![],
+        skill_mode: Default::default(), authorized_skill_refs: vec![], foundation: Default::default(), web_access: Default::default(),
+    };
+    let plain = fx.chat.inspect_context(&fx.providers, &*fx.skills.read().await, &fx.mcp, ALICE, base.clone()).await.unwrap();
+    let mut web = base;
+    web.web_access.fetch = true;
+    let web = fx.chat.inspect_context(&fx.providers, &*fx.skills.read().await, &fx.mcp, ALICE, web).await.unwrap();
+    assert_eq!(plain.tool_schema_bytes, 0);
+    assert!(web.tool_schema_bytes > 0);
+    assert!(messages(&fx, &s).await.is_empty());
+    assert_eq!(scalar(&fx.db, "SELECT COUNT(*) FROM chat_runs").await, 0);
+}
+
+#[tokio::test]
+async fn explicitly_zero_tool_rounds_remain_reported_at_the_host_terminal() {
+    let mut fx=fx().await;let s=session(&fx).await;
+    let zero=json!({"prompt_tokens":0,"completion_tokens":0,"total_tokens":0});
+    let first=fx.server.mock("POST","/chat/completions")
+        .match_request(|request|!is_followup(&serde_json::from_slice::<Value>(request.body().unwrap()).unwrap()))
+        .with_status(200).with_header("content-type","text/event-stream")
+        .with_body(tool_sse(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"zero_call","type":"function","function":{"name":"dgos_tool_0","arguments":json!({"text":"explicit zero"}).to_string()}}]},"finish_reason":"tool_calls"}],"usage":zero})))
+        .expect(1).create_async().await;
+    let second=fx.server.mock("POST","/chat/completions")
+        .match_request(|request|is_followup(&serde_json::from_slice::<Value>(request.body().unwrap()).unwrap()))
+        .with_status(200).with_header("content-type","text/event-stream")
+        .with_body(tool_sse(json!({"choices":[{"message":{"role":"assistant","content":"Known zero final answer"},"finish_reason":"stop"}],"usage":zero})))
+        .expect(1).create_async().await;
+    let (task,sink)=start_turn(&fx,&s,"complete the zero-reported tool run").await;
+    let proposal=sink.proposal().unwrap();
+    let parked=fx.chat.get_usage(ALICE,&s).await.unwrap();assert_eq!((parked.call_count,parked.total_tokens),(1,Some(0)));
+    decide(&fx,ALICE,&task,ToolAction::Approve{proposal_id:proposal.id}).await.unwrap();
+    let events=sink.take();let ChatEvent::Done{message,..}=terminal(&events)else{panic!("done")};
+    assert_eq!(message.total_tokens,Some(0));
+    let usage=fx.chat.get_usage(ALICE,&s).await.unwrap();
+    assert_eq!((usage.call_count,usage.reported_count,usage.total_tokens),(2,2,Some(0)));
+    assert_eq!((usage.input_tokens,usage.output_tokens),(Some(0),Some(0)));
+    assert_eq!(usage.coverage.total,2);
+    first.assert_async().await;second.assert_async().await;
+}
+
+#[tokio::test]
+async fn dispatched_tool_model_rejection_never_fabricates_zero_or_complete_run_usage() {
+    for earlier_reported in [false,true] {
+        let mut fx=fx().await;let s=session(&fx).await;
+        let first=if earlier_reported {
+            Some(fx.server.mock("POST","/chat/completions")
+                .match_request(|request|!is_followup(&serde_json::from_slice::<Value>(request.body().unwrap()).unwrap()))
+                .with_status(200).with_header("content-type","text/event-stream")
+                .with_body(tool_sse(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"known_call","type":"function","function":{"name":"dgos_tool_0","arguments":json!({"text":"known usage before rejection"}).to_string()}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}})))
+                .expect(1).create_async().await)
+        }else{None};
+        let rejected=fx.server.mock("POST","/chat/completions")
+            .match_request(move|request|is_followup(&serde_json::from_slice::<Value>(request.body().unwrap()).unwrap())==earlier_reported)
+            .with_status(401).with_body(r#"{"error":{"message":"fixture authentication rejection"}}"#)
+            .expect(1).create_async().await;
+        let (task,sink)=start_turn(&fx,&s,"usage absence is not explicit zero").await;
+        if earlier_reported {
+            let proposal=sink.proposal().unwrap();
+            decide(&fx,ALICE,&task,ToolAction::Approve{proposal_id:proposal.id}).await.unwrap();
+        }
+        let events=sink.take();
+        let ChatEvent::Error{error_code,message:Some(message),result_unknown,..}=terminal(&events)else{panic!("persisted rejection")};
+        assert_eq!(error_code,"provider_1001002");assert!(!result_unknown,"explicit HTTP rejection is execution-known");
+        assert_eq!(message.total_tokens,None,"a dispatched request without a total report cannot fabricate zero or complete cumulative usage");
+        let run=fx.chat.get_run(ALICE,dgos_workbench::GetChatRunInput{task_id:task}).await.unwrap();assert_eq!(run.total_tokens,None);
+        let usage=fx.chat.get_usage(ALICE,&s).await.unwrap();
+        assert_eq!(usage.call_count,if earlier_reported{2}else{1});assert_eq!(usage.pending_count,0);
+        assert_eq!(usage.reported_count,if earlier_reported{1}else{0});
+        assert_eq!(usage.total_tokens,if earlier_reported{Some(7)}else{None});
+        assert!(usage.partial,"session keeps the known subtotal but discloses the unreported dispatched call");
+        if let Some(first)=first {first.assert_async().await;}
+        rejected.assert_async().await;
     }
 }

@@ -1073,7 +1073,7 @@ impl LanCore {
             .send(
                 &guard.session.user,
                 &guard.session.window(),
-                SendChatInput { skill_mode: Default::default(), authorized_skill_refs: Vec::new(), session_id: chat_id,
+                SendChatInput { web_access: Default::default(), skill_mode: Default::default(), authorized_skill_refs: Vec::new(), session_id: chat_id,
                 content,
                 client_request_id,
                 accept_destination: None,
@@ -1113,14 +1113,12 @@ impl LanCore {
             .regenerate(
                 user,
                 &guard.session.window(),
-                RegenerateChatInput {
-                    message_id: message_id.to_owned(),
-                    client_request_id,
-                    accept_destination: None,
-                    skill_mode: Default::default(),
-                    authorized_skill_refs: Vec::new(),
-                    foundation: Default::default(),
-                },
+                RegenerateChatInput { web_access: Default::default(), message_id: message_id.to_owned(),
+                client_request_id,
+                accept_destination: None,
+                skill_mode: Default::default(),
+                authorized_skill_refs: Vec::new(),
+                foundation: Default::default(), },
             )
             .await?;
         Ok(self.start(guard, sent))

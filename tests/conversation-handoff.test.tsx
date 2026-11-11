@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ConversationHandoff } from '../src/components/development/ConversationHandoff';
+import { DeliveryPanel } from '../src/components/development/DeliveryPanel';
 import { useDevelopment, type Project, type DevelopmentSession } from '../src/stores/developmentStore';
 import { useDevelopmentDrafts, developmentDraftKey } from '../src/stores/developmentDrafts';
 import type { StoredHandoff } from '../src/stores/developmentDelivery';
@@ -108,4 +110,84 @@ it('cancels inactive acceptance preflight without losing the draft or leaving th
   fireEvent.click(screen.getByRole('button', { name: 'conversationHandoff.create' }));
   await waitFor(() => expect(count()).toBe(1));
   await act(async () => state.acceptance.resolve({ handoff: { ...handoff, target_session_id: 'target' }, session: { id: 'target' } }));
+});
+
+it('opens a selected delivery handoff with its edited summary without sending or reserving again', async () => {
+  const state = fixture(); state.rows = [{ ...handoff, target_session_id: 'existing-target' }];
+  const oldSummary = developmentDraftKey('handoff', 'p', 'task', handoff.id);
+  useDevelopmentDrafts.setState({ entries: {
+    [oldSummary]: { kind: 'handoff', value: 'Reviewed legacy summary', baseline: handoff.summary },
+    [developmentDraftKey('delivery', 'p', 'task')]: { kind: 'delivery', value: { sourceId: source.id, remaining: 'Legacy remaining work' }, baseline: {} },
+  } });
+  const ready = vi.fn(async () => {});
+  render(<ConversationHandoff project={project} source={source} preparedHandoffId={handoff.id} onReady={ready} onCancel={() => {}} />);
+  expect((await screen.findByLabelText('conversationHandoff.summary') as HTMLTextAreaElement).value).toBe('Reviewed legacy summary');
+  expect(screen.getByLabelText<HTMLInputElement>('conversationHandoff.remaining').value).toBe('Legacy remaining work');
+  fireEvent.click(screen.getByRole('button', { name: 'conversationHandoff.attach' }));
+  await waitFor(() => expect(ready).toHaveBeenCalledWith('existing-target'));
+  expect(useDevelopmentDrafts.getState().entries[developmentDraftKey('conversation', 'p', 'existing-target', 'message')].value).toBe('Reviewed legacy summary');
+  expect(useDevelopmentDrafts.getState().entries[oldSummary].value).toBe('Reviewed legacy summary');
+  expect(invoke.mock.calls.some(([command]) => ['send_agent_message', 'prepare_development_handoff', 'accept_development_handoff'].includes(command))).toBe(false);
+});
+
+it('preserves an existing continuation draft when another delivery summary is selected', async () => {
+  const state = fixture(); state.rows = [handoff];
+  const key = developmentDraftKey('handoff', 'p', source.id, 'conversation');
+  const existing = { configuration, remaining: 'Keep these requirements', summary: 'Keep this summary', prepared: null, reserved: false, rejected: false };
+  useDevelopmentDrafts.setState({ entries: { [key]: { kind: 'handoff', value: existing, baseline: {} } } });
+  render(<ConversationHandoff project={project} source={source} preparedHandoffId={handoff.id} onReady={async () => {}} onCancel={() => {}} />);
+  await screen.findByText('conversationHandoff.existingDraft');
+  expect(useDevelopmentDrafts.getState().entries[key].value).toEqual(existing);
+  expect(count()).toBe(0);
+});
+
+it('rejects a delivery handoff belonging to another source without importing its summary', async () => {
+  const state = fixture(); state.rows = [{ ...handoff, source_session_id: 'other-source', summary: 'Other private context' }];
+  render(<ConversationHandoff project={project} source={source} preparedHandoffId={handoff.id} onReady={async () => {}} onCancel={() => {}} />);
+  await screen.findByRole('alert');
+  expect(screen.queryByLabelText('conversationHandoff.summary')).toBeNull();
+  expect(screen.queryByText('Other private context')).toBeNull();
+  expect(count()).toBe(0);
+});
+
+it('shows both drafts as a conflict when delivery reopens the same handoff with a newly edited summary', async () => {
+  const state = fixture(); state.rows = [handoff];
+  const ready = vi.fn(async () => {});
+  function Journey() {
+    const [continuing, setContinuing] = useState(false);
+    return continuing
+      ? <ConversationHandoff project={project} source={source} preparedHandoffId={handoff.id} onReady={ready} onCancel={() => setContinuing(false)} />
+      : <DeliveryPanel projectId="p" taskId="task" sessions={[{ id: source.id, engine: source.engine }]} onContinueModel={() => setContinuing(true)} />;
+  }
+  render(<Journey />);
+  fireEvent.click(await screen.findByRole('button', { name: 'delivery.useDraft', hidden: true }));
+  fireEvent.change(screen.getByLabelText('delivery.summary'), { target: { value: 'Continuation A' } });
+  fireEvent.click(screen.getByRole('button', { name: 'delivery.continueSummary' }));
+  expect((await screen.findByLabelText('conversationHandoff.summary') as HTMLTextAreaElement).value).toBe('Continuation A');
+  fireEvent.click(screen.getByRole('button', { name: 'conversationHandoff.cancel' }));
+  fireEvent.change(await screen.findByLabelText('delivery.summary'), { target: { value: 'Delivery B' } });
+  fireEvent.click(screen.getByRole('button', { name: 'delivery.continueSummary' }));
+  await screen.findByText('conversationHandoff.existingDraft');
+  expect(screen.getByLabelText<HTMLTextAreaElement>('conversationHandoff.summary').value).toBe('Continuation A');
+  const selected = screen.getByLabelText<HTMLTextAreaElement>('delivery.summary');
+  expect(selected.value).toBe('Delivery B');
+  expect(selected.readOnly).toBe(true);
+  const entries = useDevelopmentDrafts.getState().entries;
+  expect(entries[developmentDraftKey('handoff', 'p', source.id, 'conversation')].value).toMatchObject({ prepared: { id: handoff.id }, summary: 'Continuation A' });
+  expect(entries[developmentDraftKey('handoff', 'p', 'task', handoff.id)].value).toBe('Delivery B');
+  expect(ready).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.some(([command]) => ['send_agent_message', 'prepare_development_handoff', 'accept_development_handoff'].includes(command))).toBe(false);
+});
+
+it.each(['Same summary', ''])('reopens an identical same-handoff summary without a false conflict: %j', async summary => {
+  const state = fixture(); state.rows = [handoff];
+  useDevelopmentDrafts.setState({ entries: {
+    [developmentDraftKey('handoff', 'p', source.id, 'conversation')]: { kind: 'handoff', value: { configuration, remaining: 'Remaining work', summary, prepared: handoff, reserved: false, rejected: false }, baseline: {} },
+    [developmentDraftKey('handoff', 'p', 'task', handoff.id)]: { kind: 'handoff', value: summary, baseline: handoff.summary },
+  } });
+  render(<ConversationHandoff project={project} source={source} preparedHandoffId={handoff.id} onReady={async () => {}} onCancel={() => {}} />);
+  await act(async () => {});
+  expect(screen.getByLabelText<HTMLTextAreaElement>('conversationHandoff.summary').value).toBe(summary);
+  expect(screen.queryByText('conversationHandoff.existingDraft')).toBeNull();
+  expect(count()).toBe(0);
 });

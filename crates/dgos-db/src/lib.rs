@@ -19,6 +19,8 @@ mod desktop_tests;
 #[cfg(test)]
 mod chat_tests;
 #[cfg(test)]
+mod chat_usage_tests;
+#[cfg(test)]
 mod lan_audit_tests;
 #[cfg(test)]
 mod mcp_tests;

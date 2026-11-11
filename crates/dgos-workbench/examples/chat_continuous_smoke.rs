@@ -1,4 +1,4 @@
-//! D140 process-restart smoke. Isolated SQLite + loopback protocol fixture only.
+//! D140/D148 process-restart and session-usage smoke. Isolated SQLite + loopback fixture only.
 //! Runs the real ChatManager in separate OS processes; never opens user data or credentials.
 use async_trait::async_trait;
 use dgos_db::{migrations::Migrator, sea_orm_migration::MigratorTrait, ChatRepository};
@@ -34,7 +34,7 @@ impl ChatSink for Events {
 fn sse(text: &str, terminal: bool) -> String {
     let mut body = format!("data: {}\n\n", json!({"id":"smoke","choices":[{"index":0,"delta":{"content":text},"finish_reason":null}]}));
     if terminal {
-        body.push_str(&format!("data: {}\n\ndata: [DONE]\n\n", json!({"id":"smoke","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":31,"completion_tokens":7,"total_tokens":38}})));
+        body.push_str(&format!("data: {}\n\ndata: [DONE]\n\n", json!({"id":"smoke","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":31,"completion_tokens":7,"total_tokens":38,"prompt_tokens_details":{"cached_tokens":9}}})));
     }
     body
 }
@@ -74,7 +74,7 @@ async fn connection(mut socket: tokio::net::TcpStream, requests: Arc<Mutex<Vec<V
                 else {assert!(results[0]["content"].as_str().unwrap().contains("references/marker.txt"));("dgos_skill_read",json!({"skill_id":skill_id,"path":"references/marker.txt"}))};
             format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
                 json!({"id":"skills","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":format!("skill_{}",results.len()),"type":"function","function":{"name":name,"arguments":args.to_string()}}]},"finish_reason":null}]}),
-                json!({"id":"skills","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":20,"completion_tokens":5,"total_tokens":25}}))
+                json!({"id":"skills","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":20,"completion_tokens":5,"total_tokens":25,"prompt_tokens_details":{"cached_tokens":4}}}))
         } else {
             let resource:Value=serde_json::from_str(results[1]["content"].as_str().unwrap()).unwrap();
             let marker=resource["content"].as_str().unwrap();
@@ -89,7 +89,7 @@ async fn connection(mut socket: tokio::net::TcpStream, requests: Arc<Mutex<Vec<V
             let args = json!({"text":format!("verified-echo-{n}")}).to_string();
             format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
                 json!({"id":"tools","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":format!("call_{n}"),"type":"function","function":{"name":"dgos_tool_0","arguments":args}}]},"finish_reason":null}]}),
-                json!({"id":"tools","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":20,"completion_tokens":5,"total_tokens":25}}))
+                json!({"id":"tools","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":20,"completion_tokens":5,"total_tokens":25,"prompt_tokens_details":{"cached_tokens":4}}}))
         } else { sse("Verified two independent results: verified-echo-1; verified-echo-2.", true) }
     } else {
         if !crash { assert!(request.to_string().contains(MARKER), "retained source must reach continuation and summary"); }
@@ -131,6 +131,12 @@ async fn child(root: &Path, endpoint: &str, stage: &str) {
                     let run = repo.get_run(USER, &task).await.unwrap();
                     if run.partial_content.contains(MARKER) {
                         assert_eq!(run.status, "running");
+                        let snapshot = chat.get_run_snapshot(USER, dgos_workbench::GetChatRunInput { task_id: task.clone() }).await.unwrap();
+                        let live = snapshot.live_snapshot.expect("active stream has a sequence watermark");
+                        assert!(live.text.contains(MARKER));
+                        assert_eq!(live.seq as usize, events.0.lock().unwrap().len());
+                        assert!(chat.get_run_snapshot("other-owner", dgos_workbench::GetChatRunInput { task_id: task.clone() }).await.is_err());
+                        println!("PASS live recovery watermark {} with exact current-round text and owner isolation", live.seq);
                         println!("checkpoint committed before process exit: {} bytes", run.partial_content.len());
                         // Immediate process exit: deliberately skips ChatManager shutdown and Drop.
                         std::process::exit(73);
@@ -147,12 +153,25 @@ async fn child(root: &Path, endpoint: &str, stage: &str) {
         let before = repo.get_run(USER, task).await.unwrap();
         assert!(before.partial_content.contains(MARKER));
         assert!(repo.get_run("other-user", task).await.is_err());
+        if stage == "usage" {
+            let session = identity["session_id"].as_str().unwrap();
+            let actual = serde_json::to_value(chat.get_usage(USER, session).await.unwrap()).unwrap();
+            let expected: Value = serde_json::from_slice(&std::fs::read(root.join("usage.json")).unwrap()).unwrap();
+            assert_eq!(actual, expected, "session usage survives new-process reopen and Provider deletion");
+            assert!(chat.get_usage("other-user", session).await.is_err());
+            println!("PASS D148 new-process usage read: same totals and coverage, owner isolation, zero dispatch");
+            return;
+        }
         if stage == "recover" {
             assert_eq!(before.status, "running");
             assert_eq!(chat.recover_interrupted().await.unwrap(), 1);
             let recovered = repo.get_run(USER, task).await.unwrap();
             assert_eq!(recovered.status, "interrupted");
             assert_eq!(recovered.partial_content, before.partial_content);
+            let usage = chat.get_usage(USER, identity["session_id"].as_str().unwrap()).await.unwrap();
+            assert_eq!(usage.call_count, 1, "crashed dispatched call remains durable");
+            assert_eq!(usage.total_tokens, None, "no usage receipt is unknown, not free");
+            assert!(usage.partial);
             println!("PASS new-process recovery: original partial retained, owner isolation enforced, no automatic dispatch");
         } else {
             assert_eq!(stage, "continue");
@@ -180,6 +199,10 @@ async fn child(root: &Path, endpoint: &str, stage: &str) {
             assert_eq!(repo.summary_source(USER, session).await.unwrap(), original, "summary must not replace or delete original messages");
             let replay = chat.summarize_context(&providers, &skills, USER, "smoke", input()).await.unwrap();
             assert!(replay.ack.replayed && replay.job.is_none(), "summary receipt retry must not bill another call");
+            let usage = chat.get_usage(USER, session).await.unwrap();
+            assert_eq!(usage.total_tokens, Some(76), "continuation plus paid-once summary");
+            assert_eq!(usage.call_count, 3, "crash, continuation, summary; no replay attempt");
+            assert_eq!(usage.reported_count, 2);
             let budget = chat.inspect_context(&providers, &skills, &mcp, USER, serde_json::from_value::<InspectChatContextInput>(json!({"session_id":session,"content":"Use the retained constraints."})).unwrap()).await.unwrap();
             assert!(budget.can_send);
             assert_eq!(budget.summary.unwrap().id, summary.id);
@@ -199,6 +222,11 @@ async fn child(root: &Path, endpoint: &str, stage: &str) {
             for n in 1..=2 {
                 let proposal = events.0.lock().unwrap().iter().rev().find_map(|e| if let ChatEvent::ToolProposal { proposal,.. } = e {Some(proposal.clone())} else {None}).expect("complete proposal before approval");
                 assert_eq!(proposal.arguments,json!({"text":format!("verified-echo-{n}")}));
+                let snapshot = chat.get_run_snapshot(USER, dgos_workbench::GetChatRunInput { task_id: task.clone() }).await.unwrap();
+                let live = snapshot.live_snapshot.expect("parked approval retains stream projection");
+                assert_eq!(live.proposal.as_ref().unwrap().id, proposal.id);
+                assert_eq!(live.seq as usize, events.0.lock().unwrap().len());
+                assert_eq!(live.activities.iter().filter(|s| s.kind == "tool" && s.status == "settled").count(), n - 1);
                 let before = repo.get_run(USER,&task).await.unwrap();
                 assert_eq!(before.steps.iter().filter(|s|s.kind=="tool"&&s.status=="settled").count(),n-1,"no tool before explicit approval");
                 let job=chat.begin_tool_action(USER,AdvanceChatToolTurnInput{task_id:task.clone(),action:ToolAction::Approve{proposal_id:proposal.id.clone()}}).await.unwrap();
@@ -207,6 +235,7 @@ async fn child(root: &Path, endpoint: &str, stage: &str) {
             }
             let run=repo.get_run(USER,&task).await.unwrap();
             assert_eq!(run.status,"completed");
+            assert!(chat.get_run_snapshot(USER, dgos_workbench::GetChatRunInput { task_id: task.clone() }).await.unwrap().live_snapshot.is_none());
             assert_eq!(run.partial_content,"Verified two independent results: verified-echo-1; verified-echo-2.");
             assert_eq!(run.steps.iter().filter(|s|s.kind=="tool"&&s.status=="settled"&&!s.result_unknown).count(),2);
             assert_eq!(events.0.lock().unwrap().iter().filter(|e|matches!(e,ChatEvent::Done{..}|ChatEvent::Error{..})).count(),1);
@@ -236,6 +265,21 @@ async fn child(root: &Path, endpoint: &str, stage: &str) {
             assert!(events.0.lock().unwrap().iter().any(|e|matches!(e,ChatEvent::Activity{step,..} if step.kind=="skill")),"actual reads must surface as activities");
             mcp.shutdown().await.unwrap();
             println!("PASS model-directed pinned Skill body + random resource consumption, exact content-free receipts");
+            let usage = chat.get_usage(USER, session).await.unwrap();
+            assert_eq!(usage.call_count, 9, "every actual model round, not only final replies");
+            assert_eq!(usage.reported_count, 8);
+            assert_eq!(usage.total_tokens, Some(252));
+            assert_eq!(usage.input_tokens, Some(204));
+            assert_eq!(usage.output_tokens, Some(48));
+            assert_eq!(usage.cache_read_tokens, Some(52), "cached input is a subset, never an extra total");
+            assert_eq!(usage.cache_hit_rate, None, "unknown crashed input prevents a full-session hit rate");
+            assert!(usage.duration_ms.is_some() && usage.partial);
+            let expected = serde_json::to_value(&usage).unwrap();
+            let target = repo.get_session(USER, session).await.unwrap();
+            providers.delete_provider(target.provider_id.as_deref().unwrap(), USER).await.unwrap();
+            assert_eq!(serde_json::to_value(chat.get_usage(USER, session).await.unwrap()).unwrap(), expected);
+            std::fs::write(root.join("usage.json"), serde_json::to_vec(&expected).unwrap()).unwrap();
+            println!("PASS D148 measured rounds: 252 total = 204 input + 48 output, 52 cached subset; Provider deletion retains usage");
         }
     }
 }
@@ -270,6 +314,9 @@ async fn main() {
     let continued = std::process::Command::new(&exe).args(["--child", root.path().to_str().unwrap(), &endpoint, "continue"]).status().unwrap();
     assert!(continued.success());
     assert_eq!(requests.lock().unwrap().len(), before_restart + 8, "one continuation, one summary, three MCP turns and three Skill turns");
+    let verified = std::process::Command::new(&exe).args(["--child", root.path().to_str().unwrap(), &endpoint, "usage"]).status().unwrap();
+    assert!(verified.success());
+    assert_eq!(requests.lock().unwrap().len(), before_restart + 8, "usage reads and Provider deletion never call the model");
     server.abort();
     println!("PASS CHAT-P5 process smoke; loopback fixture, not external Provider evidence");
 }

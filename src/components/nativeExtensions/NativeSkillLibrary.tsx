@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { Archive, FolderOpen, RefreshCw, Search } from 'lucide-react';
-import { Button, Input, Select } from '@dgos/ui';
+import { Archive, BookOpen, ChevronLeft, FolderOpen, GitBranch, Plus, RefreshCw, Search } from 'lucide-react';
+import { Button, Input, Modal, Select } from '@dgos/ui';
 import { t } from '../../i18n';
 import { useDevelopment } from '../../stores/developmentStore';
 import { nativeLibraryKey, useNativeSkillLibrary, type NativeSourceDraft, type NativeVersionRecord } from '../../stores/nativeSkillLibrary';
@@ -40,6 +40,9 @@ export function NativeSkillLibrary({ selection, tab, disabled, onPreview }: { se
   const [slug, setSlug] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [sourceEditorOpen, setSourceEditorOpen] = useState(false);
+  const [narrowDetail, setNarrowDetail] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
   const flight = useRef(false), generation = useRef(0);
   const grant = useRef<{ selection: NativeSelection; context: string; handle: string } | null>(null);
   const current = useRef(context); current.current = context;
@@ -47,6 +50,7 @@ export function NativeSkillLibrary({ selection, tab, disabled, onPreview }: { se
   useEffect(() => {
     generation.current++; flight.current = false;
     setBusy(false); setMessage(''); setResults(null); setPicked(null); setSelected(null); setSlug(''); setQuery(''); setSourceId('all');
+    setSourceEditorOpen(false); setNarrowDetail(false);
     void api.loadSources(selection);
     return () => {
       generation.current++;
@@ -68,6 +72,7 @@ export function NativeSkillLibrary({ selection, tab, disabled, onPreview }: { se
   }
   function choose(skill: NativeLibrarySkill, source: NativePackage, repository: string | null, commit: string | null, stale = false) {
     setSelected({ skill, source, repository, commit, stale }); setSlug(skill.name); setMessage('');
+    setNarrowDetail(true);
   }
   const search = () => perform(() => api.search(selection, query, sourceId === 'all' ? null : sourceId), value => { setResults(value.results); setSelected(null); });
   const save = (index: boolean) => perform(async () => {
@@ -76,19 +81,27 @@ export function NativeSkillLibrary({ selection, tab, disabled, onPreview }: { se
     return api.refreshSource(selection, saved.value);
   }, source => {
     setMessage(source.error ? issue(source.error) : t(index ? 'nativeSkillLibrary.indexed' : 'nativeSkillLibrary.sourceSaved'));
+    if (!index) setSourceEditorOpen(false);
     if (index) { setSourceId(source.id); setMode('catalog'); setResults(source.skills.map(skill => ({ source_id: source.id, repository_url: source.repository.normalized_source, indexed_at: source.indexed_at ?? 0, commit: source.commit ?? '', stale: !!source.error, skill }))); }
   });
   const edit = (source: NativeSkillSource) => perform(async () => {
     const snapshot = useNativeSkillLibrary.getState().drafts[context];
     const accepted = !snapshot?.input || (snapshot.sourceId === source.id && snapshot.input === source.repository.normalized_source) || await confirmDiscard();
     return { ok: true, value: accepted && snapshot === useNativeSkillLibrary.getState().drafts[context] };
-  }, accepted => { if (accepted) api.setDraft(selection, { input: source.repository.normalized_source, sourceId: source.id, revision: source.revision }); });
+  }, accepted => { if (accepted) { api.setDraft(selection, { input: source.repository.normalized_source, sourceId: source.id, revision: source.revision }); setSourceEditorOpen(true); } });
   const refresh = (source: NativeSkillSource) => perform(() => api.refreshSource(selection, source), value => { setResults(null); setSelected(null); setMessage(value.error ? issue(value.error) : t('nativeSkillLibrary.indexed')); });
   const remove = (source: NativeSkillSource) => perform(() => api.removeSource(selection, source), () => { setResults(null); setSelected(null); if (draft.sourceId === source.id && useNativeSkillLibrary.getState().drafts[context] === draft) api.setDraft(selection, null); setMessage(t('nativeSkillLibrary.sourceRemoved')); });
   const pick = (kind: 'zip' | 'directory') => perform(async () => {
     if (grant.current) { await api.release(grant.current.selection, grant.current.handle); grant.current = null; setPicked(null); setSelected(null); }
     return api.pick(selection, kind);
   }, value => { if (value) { grant.current = { selection, context, handle: value.handle }; setPicked(value); setSelected(null); } }, value => { if (value) void api.release(selection, value.handle); });
+  const closeSourceEditor = async () => {
+    if (flight.current) return;
+    const snapshot = useNativeSkillLibrary.getState().drafts[context];
+    if (snapshot?.input && !await confirmDiscard()) return;
+    if (current.current !== context || snapshot !== useNativeSkillLibrary.getState().drafts[context]) return;
+    api.setDraft(selection, null); setSourceEditorOpen(false);
+  };
   const sourceForm = <form className="native-skill-library__source-form" onSubmit={event => { event.preventDefault(); void save(tab === 'discover'); }}>
     <Input label={t('nativeSkillLibrary.repositoryUrl')} value={draft.input} onChange={event => api.setDraft(selection, { ...draft, input: event.target.value })} placeholder="https://github.com/owner/repository" disabled={disabled || busy} />
     <p className="native-skill-library__hint">{t('nativeSkillLibrary.supportedGithub')}</p>
@@ -99,33 +112,32 @@ export function NativeSkillLibrary({ selection, tab, disabled, onPreview }: { se
   </form>;
   return <section className="native-skill-library" aria-label={t(tab === 'sources' ? 'nativeSkillLibrary.sources' : 'nativeSkillLibrary.discover')} aria-busy={busy}>
     {tab === 'sources' ? <>
-      <p className="native-skill-library__hint">{t('nativeSkillLibrary.sourceBoundary')}</p>
-      {sourceForm}
+      <header className="native-skill-library__source-toolbar"><p className="native-skill-library__hint">{t('nativeSkillLibrary.sourceBoundary')}</p><Button disabled={disabled || busy} onClick={() => setSourceEditorOpen(true)}><Plus aria-hidden="true" />{t(draft.input ? 'nativeSkillLibrary.editSource' : 'nativeSkillLibrary.addSource')}</Button></header>
+      <Modal open={sourceEditorOpen && !disabled} onOpenChange={open => { if (!open) void closeSourceEditor(); }} title={t(draft.sourceId ? 'nativeSkillLibrary.editSource' : 'nativeSkillLibrary.addSource')} footer={<></>}>{sourceForm}{message && <p role="status">{message}</p>}</Modal>
       {sourceState?.loading && <p role="status">{t('nativeSkillLibrary.loadingSources')}</p>}
       {sourceState?.error && <p role="alert">{issue(sourceState.error)}</p>}
       {!sourceState?.loading && sourceState?.loaded && !sourceState.error && !sourceState.value.length && <p>{t('nativeSkillLibrary.noSources')}</p>}
       <ul className="native-skill-library__sources">
         {(sourceState?.value ?? []).map(source => <li key={source.id}>
-          <div><strong>{source.repository.owner}/{source.repository.repo}</strong><p>{source.repository.normalized_source}</p></div>
-          <dl className="native-skill-library__facts">
-            <dt>{t('nativeSkillLibrary.ref')}</dt><dd>{source.repository.requested_ref ?? t('nativeSkillLibrary.defaultRef')}</dd>
-            <dt>{t('nativeSkillLibrary.skillCount')}</dt><dd>{source.skills.length}</dd>
-            <dt>{t('nativeSkillLibrary.lastIndexed')}</dt><dd>{date(source.indexed_at)}</dd>
-            {source.commit && <><dt>{t('nativeSkillLibrary.commit')}</dt><dd>{source.commit}</dd></>}
-          </dl>
+          <GitBranch className="native-skill-library__source-icon" aria-hidden="true" />
+          <div className="native-skill-library__source-body"><strong>{source.repository.owner}/{source.repository.repo}</strong><p>{source.repository.normalized_source}</p><p className="native-skill-library__hint">{source.repository.requested_ref ?? t('nativeSkillLibrary.defaultRef')} · {t('nativeSkillLibrary.skillCount')}: {source.skills.length} · {date(source.indexed_at)}</p>
+          {source.commit && <details><summary>{t('nativeExtensions.technicalDetails')}</summary><code>{source.commit}</code></details>}
           {source.error && <p role="status">{t('nativeSkillLibrary.lastResults')} — {issue(source.error)}</p>}
           {source.rejected.length > 0 && <details><summary>{t('nativeSkillLibrary.rejectedPackages', { count: source.rejected.length })}</summary><ul>{source.rejected.map(([path, code]) => <li key={path}>{path || '/'}: {issue(code)}</li>)}</ul></details>}
+          </div>
           <div className="native-skill-library__actions">
             <Button variant="secondary" disabled={disabled || busy} onClick={() => void refresh(source)}><RefreshCw size={14} aria-hidden="true" />{t('nativeSkillLibrary.refreshIndex')}</Button>
             <Button variant="secondary" disabled={disabled || busy} onClick={() => edit(source)}>{t('nativeSkillLibrary.editSource')}</Button>
-            <Button variant="danger" disabled={disabled || busy} onClick={() => void remove(source)}>{t('nativeSkillLibrary.removeSource')}</Button>
+            <Button variant="ghost" disabled={disabled || busy} onClick={() => void remove(source)}>{t('nativeSkillLibrary.removeSource')}</Button>
           </div>
         </li>)}
       </ul>
     </> : <>
-      <div className="native-skill-library__actions" role="group" aria-label={t('nativeSkillLibrary.importMethod')}>
-        {(['catalog', 'github', 'local'] as const).map(value => <Button key={value} variant={mode === value ? 'primary' : 'secondary'} aria-pressed={mode === value} disabled={disabled || busy} onClick={() => { setMode(value); setSelected(null); }}>{t(`nativeSkillLibrary.method.${value}`)}</Button>)}
+      <div className="native-skill-library__methods" role="group" aria-label={t('nativeSkillLibrary.importMethod')}>
+        {(['catalog', 'github', 'local'] as const).map(value => <Button key={value} variant={mode === value ? 'secondary' : 'ghost'} aria-pressed={mode === value} disabled={disabled || busy} onClick={() => { setMode(value); setSelected(null); setNarrowDetail(false); }}>{t(`nativeSkillLibrary.method.${value}`)}</Button>)}
       </div>
+      <div className="native-skill-library__split" data-details={narrowDetail}>
+      <div className="native-skill-library__browse">
       {mode === 'github' ? sourceForm : mode === 'local' ? <>
         <p className="native-skill-library__hint">{t('nativeSkillLibrary.pickerBoundary')}</p>
         <div className="native-skill-library__actions">
@@ -136,29 +148,33 @@ export function NativeSkillLibrary({ selection, tab, disabled, onPreview }: { se
           <p>{picked.label} — {t('nativeSkillLibrary.grantExpires')}: {date(picked.expires_at)}</p>
           {picked.rejected.length > 0 && <p role="status">{t('nativeSkillLibrary.rejectedPackages', { count: picked.rejected.length })}</p>}
           {!picked.skills.length && <p>{t('nativeSkillLibrary.noValidSkills')}</p>}
-          <ul className="native-skill-library__results">{picked.skills.map(skill => <li key={skill.path}><button type="button" aria-pressed={selected?.skill === skill} disabled={disabled || busy} onClick={() => choose(skill, { kind: 'picker', handle: picked.handle, skill_path: skill.path }, null, null)}><strong>{skill.name}</strong>{' '}<span>{skill.description}</span>{' '}<small>{skill.path || '/'}</small></button></li>)}</ul>
+          <ul className="native-skill-library__results">{picked.skills.map(skill => <li key={skill.path}><button type="button" aria-pressed={selected?.skill === skill} disabled={disabled || busy} onClick={() => choose(skill, { kind: 'picker', handle: picked.handle, skill_path: skill.path }, null, null)}><BookOpen aria-hidden="true" /><span><strong>{skill.name}</strong><span>{skill.description}</span><small>{skill.path || '/'}</small></span></button></li>)}</ul>
         </>}
       </> : <>
         <form className="native-skill-library__search" onSubmit={event => { event.preventDefault(); void search(); }}>
-          <Input label={t('nativeSkillLibrary.searchQuery')} value={query} onChange={event => setQuery(event.target.value)} disabled={disabled || busy} />
+          <Input type="search" ref={searchRef} label={t('nativeSkillLibrary.searchQuery')} value={query} onChange={event => setQuery(event.target.value)} disabled={disabled || busy} />
           <Select label={t('nativeSkillLibrary.sourceFilter')} value={sourceId} options={[{ value: 'all', label: t('nativeSkillLibrary.allSources') }, ...(sourceState?.value ?? []).map(source => ({ value: source.id, label: `${source.repository.owner}/${source.repository.repo}` }))]} onChange={setSourceId} disabled={disabled || busy} />
           <Button type="submit" disabled={disabled || busy}><Search size={15} aria-hidden="true" />{t('nativeSkillLibrary.search')}</Button>
         </form>
         <p className="native-skill-library__hint">{t('nativeSkillLibrary.explicitIndex')}</p>
         {sourceState?.error && <p role="alert">{issue(sourceState.error)}</p>}
         {results && !results.length && <p>{t('nativeSkillLibrary.noResults')}</p>}
-        <ul className="native-skill-library__results">{results?.map(result => <li key={`${result.source_id}:${result.skill.path}`}><button type="button" aria-pressed={selected?.skill === result.skill} disabled={disabled || busy} onClick={() => choose(result.skill, { kind: 'repository', source_id: result.source_id, skill_path: result.skill.path }, result.repository_url, result.commit, result.stale)}><strong>{result.skill.name}</strong>{' '}<span>{result.skill.description}</span>{' '}<small>{result.repository_url} / {result.skill.path || '/'}{result.stale ? ` — ${t('nativeSkillLibrary.lastResults')}` : ''}</small></button></li>)}</ul>
+        <ul className="native-skill-library__results">{results?.map(result => <li key={`${result.source_id}:${result.skill.path}`}><button type="button" aria-pressed={selected?.skill === result.skill} disabled={disabled || busy} onClick={() => choose(result.skill, { kind: 'repository', source_id: result.source_id, skill_path: result.skill.path }, result.repository_url, result.commit, result.stale)}><BookOpen aria-hidden="true" /><span><strong>{result.skill.name}</strong><span>{result.skill.description}</span><small>{result.repository_url} / {result.skill.path || '/'}{result.stale ? ` — ${t('nativeSkillLibrary.lastResults')}` : ''}</small></span></button></li>)}</ul>
       </>}
-      {selected && <section className="native-skill-library__selection" aria-label={t('nativeSkillLibrary.selectedSkill')}>
-        <h3>{selected.skill.name}</h3><p>{selected.skill.description}</p>
+      </div>
+      <div className="native-skill-library__detail">
+      {selected ? <section className="native-skill-library__selection" aria-label={t('nativeSkillLibrary.selectedSkill')}>
+        <Button className="native-skill-library__back" variant="ghost" onClick={() => { setNarrowDetail(false); requestAnimationFrame(() => searchRef.current?.focus()); }}><ChevronLeft aria-hidden="true" />{t('nativeExtensions.backToList')}</Button>
+        <header><span className="native-resource-icon" aria-hidden="true"><BookOpen /></span><h3>{selected.skill.name}</h3></header><p>{selected.skill.description}</p>
         {selected.repository && <p>{selected.repository}</p>}
-        {selected.commit && <p>{t('nativeSkillLibrary.commit')}: <code>{selected.commit}</code></p>}
+        {selected.commit && <details><summary>{t('nativeSkillLibrary.commit')}</summary><code>{selected.commit}</code></details>}
         {selected.stale && <p role="status">{t('nativeSkillLibrary.lastResults')}</p>}
         <LibraryMetadata skill={selected.skill} />
         <p className="native-skill-library__hint">{t('nativeSkillLibrary.installBoundary')}</p>
         <Input label={t('nativeSkillLibrary.installSlug')} value={slug} onChange={event => setSlug(event.target.value)} disabled={disabled || busy} />
-        <Button disabled={disabled || busy || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(slug)} onClick={() => onPreview({ ...selection, action: 'install', slug, expected: null, source: selected.source })}>{t('nativeSkillLibrary.previewInstall')}</Button>
-      </section>}
+        <footer className="native-skill-library__selection-actions"><Button disabled={disabled || busy || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(slug)} onClick={() => onPreview({ ...selection, action: 'install', slug, expected: null, source: selected.source })}>{t('nativeSkillLibrary.previewInstall')}</Button></footer>
+      </section> : <div className="native-manager-empty"><BookOpen aria-hidden="true" /><p>{t('nativeExtensions.select')}</p></div>}
+      </div></div>
     </>}
     {busy && <p role="status">{t('nativeSkillLibrary.working')}</p>}
     {message && <p role="status">{message}</p>}
@@ -241,15 +257,16 @@ export function NativeSkillInspector({ selection, skill, disabled, onPreview }: 
   return <section className="native-skill-library native-skill-inspector" aria-label={t('nativeSkillLibrary.inspector')} aria-busy={busy}>
     <dl className="native-skill-library__facts">
       <dt>{t('nativeSkillLibrary.actualTarget')}</dt><dd>{inspection?.target_path ?? t('nativeSkillLibrary.pathLoading')}</dd>
-      <dt>{t('nativeSkillLibrary.commit')}</dt><dd>{source?.commit ?? t('nativeSkillLibrary.unversioned')}</dd>
-      <dt>{t('nativeSkillLibrary.contentHash')}</dt><dd>{source?.source_hash ?? '—'}</dd>
+      <dt>{t('nativeSkillLibrary.commit')}</dt><dd title={source?.commit ?? undefined}>{source?.commit?.slice(0, 12) ?? t('nativeSkillLibrary.unversioned')}</dd>
       {source?.origin && <><dt>{t('nativeSkillLibrary.source')}</dt><dd><Button variant="secondary" disabled={disabled} onClick={() => void openUrl(`https://github.com/${encodeURIComponent(source.origin!.repository.owner)}/${encodeURIComponent(source.origin!.repository.repo)}`)}>{source.origin.repository.owner}/{source.origin.repository.repo}</Button> / {source.origin.skill_path || '/'}</dd></>}
     </dl>
-    <h4>{t('nativeSkillLibrary.files')}</h4>
+    <details className="native-manager-disclosure"><summary>{t('nativeExtensions.technicalDetails')}</summary><dl className="native-skill-library__facts"><dt>{t('nativeExtensions.revision')}</dt><dd>{activeSkill.instance.revision}</dd><dt>{t('nativeSkillLibrary.contentHash')}</dt><dd>{source?.source_hash ?? '—'}</dd><dt>{t('nativeSkillLibrary.commit')}</dt><dd>{source?.commit ?? '—'}</dd></dl></details>
+    <details className="native-manager-disclosure" open><summary>{t('nativeSkillLibrary.files')}</summary>
     <ul className="native-skill-library__files">{activeSkill.resources.map(resource => <li key={resource.path}><Button variant="secondary" disabled={blocked} onClick={() => void perform(() => api.readFile(request, resource.path), setFile)}>{resource.path}</Button><span>{t('nativeSkillLibrary.fileBytes', { count: resource.bytes })}{resource.executable ? ` — ${t('nativeSkillLibrary.executable')}` : ''}</span></li>)}</ul>
-    {file && <section aria-label={t('nativeSkillLibrary.fileContent')}><h4>{file.path}</h4><p className="native-skill-library__hint">{file.hash}</p>{file.text !== null ? <pre className="native-skill-library__body" tabIndex={0}>{file.text}</pre> : <p>{t(`nativeSkillLibrary.fileReason.${file.reason ?? 'binary'}`)}</p>}</section>}
+    {file && <section aria-label={t('nativeSkillLibrary.fileContent')}><h4>{file.path}</h4>{file.text !== null ? <pre className={`native-skill-library__body ${file.path.endsWith('.md') ? 'type-reading' : 'type-code'}`} tabIndex={0}>{file.text}</pre> : <p>{t(`nativeSkillLibrary.fileReason.${file.reason ?? 'binary'}`)}</p>}<details><summary>{t('nativeSkillLibrary.contentHash')}</summary><code>{file.hash}</code></details></section>}
+    </details>
     <h4>{t('nativeSkillLibrary.dependencies')}</h4>
-    <p className="native-skill-library__hint">{t('nativeSkillLibrary.staticBoundary')}</p>
+    <details className="native-skill-library__hint"><summary>{t('nativeExtensions.managerBoundary')}</summary><p>{t('nativeSkillLibrary.staticBoundary')}</p></details>
     <Button variant="secondary" disabled={blocked} onClick={() => void perform(() => api.dependencies(request), value => { setReport(value); setPlan(null); })}>{t('nativeSkillLibrary.checkDependencies')}</Button>
     {report && <>
       {!report.declarations.declared && <p>{t('nativeSkillLibrary.noDeclarations')}</p>}

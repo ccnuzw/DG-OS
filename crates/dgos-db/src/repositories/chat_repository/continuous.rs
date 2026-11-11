@@ -1,5 +1,7 @@
 use super::*;
 
+const MAX_SUMMARY_SOURCE_BYTES: i64 = 1024 * 1024;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChatSummary {
     pub id: String,
@@ -29,12 +31,43 @@ pub struct SummarySourceRow { pub id: String, pub seq: i64, pub role: String, pu
 async fn source_in(db: &impl ConnectionTrait, user: &str, session: &str, last: i64) -> Result<Vec<SummarySourceRow>> {
     db.query_all(stmt("SELECT id,seq,role,content,status FROM chat_messages WHERE user_id=? AND session_id=? AND seq<=? AND replaces_id IS NULL ORDER BY seq",vec![user.into(),session.into(),last.into()])).await?.iter().map(|r| Ok(SummarySourceRow {id:r.try_get("","id")?,seq:r.try_get("","seq")?,role:r.try_get("","role")?,content:r.try_get("","content")?,status:r.try_get("","status")?})).collect()
 }
+async fn source_state_in(db: &impl ConnectionTrait, user: &str, session: &str, covered_seq: i64) -> Result<(bool, bool, bool)> {
+    let row = db.query_one(stmt(
+        "SELECT COALESCE(MAX(CASE WHEN m.role='assistant' AND m.seq>?1 THEN 1 ELSE 0 END),0) AS has_new_assistant, \
+         COALESCE(SUM(LENGTH(CAST(m.content AS BLOB))),0)>?2 AS source_too_large, \
+         COALESCE(MAX(CASE WHEN m.status='generating' THEN 1 ELSE 0 END),0) AS source_generating \
+         FROM chat_sessions s LEFT JOIN chat_messages m ON m.session_id=s.id AND m.user_id=s.user_id AND m.replaces_id IS NULL \
+         WHERE s.user_id=?3 AND s.id=?4 GROUP BY s.id",
+        vec![covered_seq.into(), MAX_SUMMARY_SOURCE_BYTES.into(), user.into(), session.into()],
+    )).await?.ok_or(ChatStoreError::SessionNotFound)?;
+    Ok((row.try_get::<i64>("", "has_new_assistant")? != 0,
+        row.try_get::<i64>("", "source_too_large")? != 0,
+        row.try_get::<i64>("", "source_generating")? != 0))
+}
 impl ChatRepository {
+    /// Busy is account-wide; unresolved effect evidence is scoped to this session.
+    /// Missing model usage alone does not make an external tool effect unresolved.
+    pub async fn summary_state(&self, user: &str, session: &str, exclude_task: Option<&str>) -> Result<(bool, bool)> {
+        let row = self.db.query_one(stmt(
+            "SELECT EXISTS(SELECT 1 FROM chat_runs r WHERE r.user_id=s.user_id AND r.status='running' AND (?1 IS NULL OR r.task_id<>?1)) AS busy, \
+             EXISTS(SELECT 1 FROM chat_runs r WHERE r.user_id=s.user_id AND r.session_id=s.id AND (r.audit_warning IS NOT NULL OR EXISTS(SELECT 1 FROM chat_run_steps step WHERE step.task_id=r.task_id AND step.kind='tool' AND (step.result_unknown=1 OR step.status='dispatched')))) AS unresolved \
+             FROM chat_sessions s WHERE s.user_id=?2 AND s.id=?3",
+            vec![exclude_task.map(str::to_owned).into(), user.into(), session.into()],
+        )).await?.ok_or(ChatStoreError::SessionNotFound)?;
+        Ok((row.try_get::<i64>("", "busy")? != 0, row.try_get::<i64>("", "unresolved")? != 0))
+    }
+    /// Eligibility metadata without materializing source text. Byte accounting matches
+    /// summary_source's UTF-8 content limit, including incomplete source messages.
+    pub async fn summary_candidate_state(&self, user: &str, session: &str, covered_seq: i64) -> Result<(bool, bool, bool)> {
+        source_state_in(&self.db, user, session, covered_seq).await
+    }
     /// Bounded snapshot, including incomplete statuses so unknown work is never summarized as success.
     pub async fn summary_source(&self,user:&str,session:&str)->Result<Vec<SummarySourceRow>> {
-        session_in(&self.db,user,session).await?;
-        let rows=source_in(&self.db,user,session,i64::MAX).await?;
-        if rows.iter().map(|r|r.content.len()).sum::<usize>()>1024*1024 { return Err(ChatStoreError::Db("summary source too large".into())); }
+        let transaction = self.db.begin().await?;
+        let (_, too_large, _) = source_state_in(&transaction, user, session, 0).await?;
+        if too_large { return Err(ChatStoreError::Db("summary source too large".into())); }
+        let rows = source_in(&transaction, user, session, i64::MAX).await?;
+        transaction.commit().await?;
         Ok(rows)
     }
     pub async fn summary(&self,user:&str,session:&str)->Result<Option<ChatSummary>> {
@@ -68,16 +101,21 @@ impl ChatRepository {
         Ok(runs)
     }
     pub async fn get_run(&self,user:&str,task:&str)->Result<ChatRun> {
-        let r=self.db.query_one(stmt("SELECT * FROM chat_runs WHERE user_id=? AND task_id=?",vec![user.into(),task.into()])).await?.ok_or(ChatStoreError::MessageNotFound)?;
-        let rows=self.db.query_all(stmt("SELECT s.* FROM chat_run_steps s JOIN chat_runs r ON r.task_id=s.task_id WHERE r.user_id=? AND r.task_id=? ORDER BY s.ordinal LIMIT 128",vec![user.into(),task.into()])).await?;
+        // One read transaction prevents a terminal row from being paired with stale or newer
+        // steps. This query never recovers, dispatches or replays work.
+        let tx=self.db.begin().await?;
+        let r=tx.query_one(stmt("SELECT * FROM chat_runs WHERE user_id=? AND task_id=?",vec![user.into(),task.into()])).await?.ok_or(ChatStoreError::MessageNotFound)?;
+        let rows=tx.query_all(stmt("SELECT s.* FROM chat_run_steps s JOIN chat_runs r ON r.task_id=s.task_id WHERE r.user_id=? AND r.task_id=? ORDER BY s.ordinal LIMIT 128",vec![user.into(),task.into()])).await?;
         let steps=rows.iter().map(|s|Ok(ChatRunStep{id:s.try_get("","id")?,ordinal:s.try_get("","ordinal")?,kind:s.try_get("","kind")?,phase:s.try_get("","phase")?,status:s.try_get("","status")?,dispatched:s.try_get::<i64>("","dispatched")?!=0,result_unknown:s.try_get::<i64>("","result_unknown")?!=0,receipt:s.try_get::<Option<String>>("","receipt")?.map(|v|serde_json::from_str(&v).map_err(|e|ChatStoreError::Db(e.to_string()))).transpose()?,created_at:s.try_get("","created_at")?,updated_at:s.try_get("","updated_at")?})).collect::<Result<Vec<_>>>()?;
+        tx.commit().await?;
         Ok(ChatRun{task_id:r.try_get("","task_id")?,session_id:r.try_get("","session_id")?,assistant_message_id:r.try_get("","assistant_message_id")?,source_run_id:r.try_get("","source_run_id")?,status:r.try_get("","status")?,partial_content:r.try_get("","partial_content")?,dispatched:r.try_get::<i64>("","dispatched")?!=0,result_unknown:r.try_get::<i64>("","result_unknown")?!=0,audit_warning:r.try_get("","audit_warning")?,total_tokens:r.try_get("","total_tokens")?,steps,created_at:r.try_get("","created_at")?,updated_at:r.try_get("","updated_at")?})
     }
     pub async fn checkpoint(&self,user:&str,task:&str,content:&str)->Result<()> {
         if content.len()>64*1024 {return Err(ChatStoreError::Db("checkpoint limit".into()))}
         let tx=self.db.begin().await?;
-        tx.execute(stmt("UPDATE chat_runs SET partial_content=?,updated_at=? WHERE task_id=? AND user_id=? AND status='running' AND LENGTH(CAST(partial_content AS BLOB))<=?",vec![content.into(),now().into(),task.into(),user.into(),(content.len() as i64).into()])).await?;
-        tx.execute(stmt("UPDATE chat_messages SET content=?,updated_at=? WHERE task_id=? AND user_id=? AND role='assistant' AND status='generating' AND LENGTH(CAST(content AS BLOB))<=?",vec![content.into(),now().into(),task.into(),user.into(),(content.len() as i64).into()])).await?;
+        // Chat's one versioned writer serializes current-segment updates, including resets.
+        tx.execute(stmt("UPDATE chat_runs SET partial_content=?,updated_at=? WHERE task_id=? AND user_id=? AND status='running'",vec![content.into(),now().into(),task.into(),user.into()])).await?;
+        tx.execute(stmt("UPDATE chat_messages SET content=?,updated_at=? WHERE task_id=? AND user_id=? AND role='assistant' AND status='generating'",vec![content.into(),now().into(),task.into(),user.into()])).await?;
         tx.commit().await?;Ok(())
     }
     pub async fn record_step(&self,user:&str,task:&str,kind:&str,phase:&str,status:&str,dispatched:bool,unknown:bool,receipt:Option<serde_json::Value>)->Result<ChatRunStep> {
@@ -98,7 +136,7 @@ impl ChatRepository {
         tx.commit().await?;Ok(())
     }
     pub async fn seal_run(&self,user:&str,task:&str,status:&str,dispatched:bool,unknown:bool,audit:Option<&str>,tokens:Option<i64>)->Result<()> {
-        self.db.execute(stmt("UPDATE chat_runs SET status=?,dispatched=MAX(dispatched,?),result_unknown=MAX(result_unknown,?),audit_warning=?,total_tokens=?,updated_at=? WHERE task_id=? AND user_id=?",vec![status.into(),i64::from(dispatched).into(),i64::from(unknown).into(),audit.map(str::to_owned).into(),tokens.into(),now().into(),task.into(),user.into()])).await?;Ok(())
+        self.db.execute(stmt("UPDATE chat_runs SET status=?,dispatched=MAX(dispatched,?),result_unknown=MAX(result_unknown,?),audit_warning=?,total_tokens=?,updated_at=? WHERE task_id=? AND user_id=? AND status='running'",vec![status.into(),i64::from(dispatched).into(),i64::from(unknown).into(),audit.map(str::to_owned).into(),tokens.into(),now().into(),task.into(),user.into()])).await?;Ok(())
     }
     pub async fn begin_summary_run(&self,user:&str,session:&str,task:&str,assistant:&str,identity:&str)->Result<bool> {
         let tx=self.db.begin().await?;session_in(&tx,user,session).await?;
@@ -125,11 +163,14 @@ impl ChatRepository {
     }
     pub async fn recover_runs(&self,user:Option<&str>)->Result<()> {
         let tx=self.db.begin().await?;
+        crate::ChatUsageRepository::recover_pending_in_transaction(&tx,user).await?;
         let filter=if user.is_some(){" AND user_id=?"}else{""};
         let mut args=vec![now().into()];if let Some(user)=user{args.push(user.into())}
         tx.execute(stmt(&format!("UPDATE chat_runs SET status='interrupted',updated_at=?,result_unknown=CASE WHEN EXISTS(SELECT 1 FROM chat_run_steps WHERE task_id=chat_runs.task_id AND (kind='model' OR (kind='tool' AND status='dispatched'))) THEN 1 ELSE result_unknown END WHERE status='running'{filter}"),args)).await?;
         let args=user.map(|u|vec![u.into()]).unwrap_or_default();
         tx.execute(stmt(&format!("UPDATE chat_run_steps SET status='unknown',result_unknown=1 WHERE kind='tool' AND status='dispatched' AND task_id IN (SELECT task_id FROM chat_runs WHERE status='interrupted'{filter})"),args)).await?;
+        let args=user.map(|u|vec![u.into()]).unwrap_or_default();
+        tx.execute(stmt(&format!("UPDATE chat_run_steps SET status='failed',result_unknown=0,receipt=json_set(receipt,'$.web_activity.status','failed','$.web_activity.error','web_cancelled') WHERE kind='web' AND status='running' AND task_id IN (SELECT task_id FROM chat_runs WHERE status='interrupted'{filter}) AND NOT EXISTS(SELECT 1 FROM chat_run_steps outcome WHERE outcome.task_id=chat_run_steps.task_id AND outcome.kind='web' AND outcome.status<>'running' AND json_extract(outcome.receipt,'$.web_activity.id')=json_extract(chat_run_steps.receipt,'$.web_activity.id'))"),args)).await?;
         tx.commit().await?;Ok(())
     }
 }

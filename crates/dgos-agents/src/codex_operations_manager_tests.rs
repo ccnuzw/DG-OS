@@ -15,7 +15,7 @@ case "$line" in
 CONFIG_REPLY
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
 *'"method":"initialized"'*) :;;
-*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"ops-thread","turns":[]}}}\n' "$request" "$PWD";;
+*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"ops-thread","turns":[]}}}\n' "$request" "$PWD";;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
 *'"method":"thread/turns/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
 *'"method":"thread/queue/add"'*)

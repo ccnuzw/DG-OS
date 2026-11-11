@@ -1,0 +1,19 @@
+{
+  "id": "provider-console",
+  "name": "Provider Console",
+  "version": "1.3.0",
+  "entry": "entry.js",
+  "artifact": {
+    "version": "1.3.0",
+    "sha256": "4ef95fc9145f82089635d51598f3f42a27a03952b72362b0ddaf66093b76a027"
+  },
+  "permissions": [
+    "providers.call",
+    "skills.execute",
+    "mcp.call"
+  ],
+  "views": {
+    "layout": "document",
+    "capability": "multiple"
+  }
+}

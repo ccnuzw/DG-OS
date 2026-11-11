@@ -241,7 +241,10 @@ impl Transport {
                 request = request.timeout(timeout);
             }
             let request = request.build().map_err(DgosError::from)?;
+            crate::usage::begin_dispatch().await?;
+            // This signal is evidence of executing the built request, not of local preflight.
             let send = async {
+                crate::usage::mark_dispatched();
                 if let Some(dispatched) = dispatched {
                     dispatched.store(true, Ordering::Release);
                 }
@@ -250,11 +253,21 @@ impl Transport {
             let sent = match idle {
                 Some(idle) => match tokio::time::timeout(idle, send).await {
                     Ok(sent) => sent,
-                    Err(_) => return Err(AttemptError::terminal(DgosError::Timeout)),
+                    Err(_) => {
+                        crate::usage::fail_dispatch(&DgosError::Timeout).await;
+                        return Err(AttemptError::terminal(DgosError::Timeout));
+                    }
                 },
                 None => send.await,
             };
-            let response = sent.map_err(|error| AttemptError::new(DgosError::from(error)))?;
+            let response = match sent {
+                Ok(response) => response,
+                Err(error) => {
+                    let error = DgosError::from(error);
+                    crate::usage::fail_dispatch(&error).await;
+                    return Err(AttemptError::new(error));
+                }
+            };
             if response.status().is_success() {
                 return Ok(response);
             }
@@ -265,6 +278,14 @@ impl Transport {
             } else {
                 read_error_body(response).await
             };
+            // Error envelopes may still contain billed usage; preserve it before classifying.
+            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&error_body) {
+                if self.profile.provider_type == dgos_types::PROTOCOL_ANTHROPIC {
+                    crate::adapters::anthropic::parse_usage(value.get("usage"));
+                } else {
+                    crate::adapters::openai::parse_usage(value.get("usage"));
+                }
+            }
             if status == 400 {
                 let mut state = state.lock().await;
                 if !state.downgraded {
@@ -277,11 +298,14 @@ impl Transport {
                         );
                         apply_downgrade(&mut state.body, param);
                         state.downgraded = true;
+                        crate::usage::fail_dispatch(&DgosError::ProviderRequestRejected).await;
                         continue;
                     }
                 }
             }
-            return Err(classify_status(status, &error_body, model_id, retry_after));
+            let failure = classify_status(status, &error_body, model_id, retry_after);
+            crate::usage::fail_dispatch(&failure.error).await;
+            return Err(failure);
         }
     }
 

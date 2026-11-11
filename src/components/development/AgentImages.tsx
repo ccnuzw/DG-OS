@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { Button, Modal } from '@dgos/ui';
 import { ImagePlus, X } from 'lucide-react';
 import { useLocale } from '../../i18n';
@@ -34,4 +34,22 @@ export function AgentImages({ owner, disabled = false, active = true }: { owner:
       {selected && <div data-testid="agent-image-dialog"><img src={`data:${selected.input.mime};base64,${selected.input.base64}`} alt={selected.name} className="max-h-96 max-w-full object-contain" /><p className="text-xs text-ink-secondary">{t('agentImages.privacy')}</p></div>}
     </Modal>
   </section>;
+}
+
+/** Dragged files use the same validation and private draft store as the picker. */
+export function AgentImageDropZone({ owner, enabled, children }: { owner: string; enabled: boolean; children: ReactNode }) {
+  const { t } = useLocale();
+  const [dragging, setDragging] = useState(false);
+  const [rejected, setRejected] = useState(false);
+  return <div className="agent-dialogue-composer" data-dragging={dragging || undefined} onDragOver={event => {
+    if (!event.dataTransfer.types.includes('Files')) return;
+    event.preventDefault(); event.dataTransfer.dropEffect = enabled ? 'copy' : 'none'; setDragging(true);
+  }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }} onDrop={event => {
+    if (!event.dataTransfer.types.includes('Files')) return;
+    event.preventDefault(); setDragging(false); setRejected(!enabled);
+    if (enabled) void addAgentImages(owner, Array.from(event.dataTransfer.files));
+  }}>
+    {dragging || rejected ? <p role="status" className="agent-reply-note">{t(enabled && !rejected ? 'agentReply.dropImages' : 'agentReply.dropUnavailable')}</p> : null}
+    {children}
+  </div>;
 }

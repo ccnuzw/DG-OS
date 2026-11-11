@@ -8,6 +8,8 @@ pub mod cli_repository;
 pub use cli_repository::{CliDetection, CliUpdateMetadata, CliRepository, CliPaths, CliSave, CliSnapshot};
 pub mod appearance_repository;
 pub mod chat_repository;
+pub mod chat_usage_repository;
+pub use chat_usage_repository::{ChatUsageCoverage, ChatUsageLatest, ChatUsageRepository, ChatUsageSummary};
 pub mod asset_repository;
 pub use asset_repository::{AssetRepository, AssetRef, DRAFT_LEASE_ID};
 pub mod storage_repository;

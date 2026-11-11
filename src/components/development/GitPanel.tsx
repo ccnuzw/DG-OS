@@ -4,11 +4,11 @@ import { ArrowDown, ArrowUp, Check, ChevronDown, File, GitBranch, History, List,
 import { useLocale } from '../../i18n';
 import { useDevelopment } from '../../stores/developmentStore';
 import { contextGeneration } from '../../stores/developmentSelection';
-import { deliveryRequests, dispatchDeliveryRequest, executeDevelopmentGit, forgetDeliveryRequests, previewDevelopmentGitPull, readDevelopmentGit, readDevelopmentStagedDiff, readDevelopmentWorkspaces, reconcileDevelopmentGit, type GitAction, type GitFile, type GitHistoryEntry, type GitOperation, type GitPullPreview, type GitReview, type WorkspaceView } from '../../stores/developmentDelivery';
+import { deliveryRequests, dispatchDeliveryRequest, executeDevelopmentGit, forgetDeliveryRequests, previewDevelopmentGitPull, readDevelopmentGit, readDevelopmentGitHistory, readDevelopmentStagedDiff, readDevelopmentWorkspaces, reconcileDevelopmentGit, type GitAction, type GitFile, type GitHistoryEntry, type GitHistoryPage, type GitOperation, type GitPullPreview, type GitReview, type WorkspaceView } from '../../stores/developmentDelivery';
 import { readDevelopmentGitDetails, type GitDetails } from '../../stores/developmentGitDetails';
-import { inspectDevelopmentEntry, mutateDevelopmentEntry, openDevelopmentEntryDirectory, readDevelopmentProjectGit, type ProjectGitOverview } from '../../stores/developmentExplorer';
-import { useScopedDevelopmentDraft } from '../../stores/developmentDrafts';
-import { guardDevelopmentDocuments, invalidateDevelopmentDocuments } from '../../stores/developmentEditor';
+import { inspectDevelopmentEntry, mutateDevelopmentEntry, openDevelopmentEntryDirectory, readDevelopmentProjectGit, readDevelopmentProjectGitHistory, type ProjectGitOverview } from '../../stores/developmentExplorer';
+import { developmentDraftKey, useDevelopmentDrafts, useScopedDevelopmentDraft } from '../../stores/developmentDrafts';
+import { guardDevelopmentDocuments, invalidateDevelopmentDocuments, useDevelopmentEditor } from '../../stores/developmentEditor';
 import { confirmAction, errorText } from './shared';
 import './git-panel.css';
 
@@ -44,19 +44,42 @@ function ScopedGitPanel({ projectId, taskId: initialTaskId, workspacePath, ensur
   const [preview, setPreview] = useState<(GitPullPreview & { kind: 'push' | 'pull' }) | null>(null);
   const [historyPath, setHistoryPath] = useState<string | null>(null), [pathHistory, setPathHistory] = useState<GitHistoryEntry[] | null>(null), [pathTruncated, setPathTruncated] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null), historyTicket = useRef(0);
+  const [historyPage, setHistoryPage] = useState<GitHistoryPage | null>(null), [historyLoading, setHistoryLoading] = useState(false), [pageError, setPageError] = useState<string | null>(null), pageTicket = useRef(0);
+  const [legacyScopes, setLegacyScopes] = useState<string[]>([]);
   const [generating, setGenerating] = useState(false), generation = useRef(0), controller = useRef<AbortController | null>(null), edits = useRef(0);
   const [generationError, setGenerationError] = useState<string | null>(null);
-  const draft = useScopedDevelopmentDraft('commit', [projectId, initialTaskId ?? '', workspacePath ?? 'git-panel'], '');
+  const draftScope = workspacePath ?? review?.path ?? 'git-panel';
+  const draftKey = developmentDraftKey('commit', projectId, initialTaskId ?? '', draftScope);
+  const draft = useScopedDevelopmentDraft('commit', [projectId, initialTaskId ?? '', draftScope], '');
+  const draftEntries = useDevelopmentDrafts(state => state.entries);
+  const legacyKeys = legacyScopes.map(scope => developmentDraftKey('commit', projectId, initialTaskId ?? '', scope)).filter(key => key !== draftKey);
+  const legacyDrafts = legacyKeys.flatMap(key => { const entry = draftEntries[key]; return entry?.kind === 'commit' && typeof entry.value === 'string' && entry.value ? [{ key, text: entry.value }] : []; });
+  const scopedLegacyKeys = legacyScopes.filter(scope => scope !== '' && scope !== 'git-panel').map(scope => developmentDraftKey('commit', projectId, initialTaskId ?? '', scope)).filter(key => key !== draftKey);
+  useEffect(() => {
+    if (!scopedLegacyKeys.length) return;
+    useDevelopmentDrafts.setState(state => {
+      let entries = state.entries;
+      for (const key of scopedLegacyKeys) {
+        const saved = entries[key], current = entries[draftKey];
+        if (saved?.kind !== 'commit' || typeof saved.value !== 'string' || !saved.value || current && current.value !== '' && current.value !== saved.value) continue;
+        if (entries === state.entries) entries = { ...entries };
+        entries[draftKey] = current?.value ? current : { kind: 'commit', value: saved.value, baseline: '' };
+        delete entries[key];
+      }
+      return entries === state.entries ? state : { entries };
+    });
+  }, [draftKey, scopedLegacyKeys.join('\u0000'), draftEntries]);
   const draftRef = useRef(draft); draftRef.current = draft;
   const deleteDraft = useScopedDevelopmentDraft<{ operation: { action: 'delete'; path: string; status: 'pending' | 'unknown' } | null }>('delivery', [projectId, initialTaskId, workspacePath ?? '', 'git-delete'], { operation: null });
   const deleteRef = useRef(deleteDraft); deleteRef.current = deleteDraft;
-  const worktreeDraft = useScopedDevelopmentDraft<{ operation: { id: string; action: 'restore' | 'pull' | 'switch'; paths: string[]; status: 'pending' | 'unknown' } | null }>('delivery', [projectId, initialTaskId, workspacePath ?? '', 'git-worktree'], { operation: null });
+  const worktreeDraft = useScopedDevelopmentDraft<{ operation: { id: string; action: 'restore' | 'pull' | 'switch' | 'merge'; paths: string[]; status: 'pending' | 'unknown' } | null }>('delivery', [projectId, initialTaskId, workspacePath ?? '', 'git-worktree'], { operation: null });
   const worktreeRef = useRef(worktreeDraft); worktreeRef.current = worktreeDraft;
   useEffect(() => {
     const pending = deleteRef.current.value.operation;
     if (pending?.status === 'pending') deleteRef.current.setValue({ operation: { ...pending, status: 'unknown' } });
   }, []);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; ++refreshTicket.current; ++historyTicket.current; ++generation.current; controller.current?.abort(); }; }, []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; ++refreshTicket.current; ++historyTicket.current; ++pageTicket.current; ++generation.current; controller.current?.abort(); }; }, []);
+  useEffect(() => { ++pageTicket.current; setHistoryPage(null); setHistoryLoading(false); setPageError(null); }, [review?.path, review?.head, refreshKey]);
   useEffect(() => {
     if (!controller.current) return;
     ++generation.current; controller.current.abort(); controller.current = null; setGenerating(false);
@@ -79,12 +102,17 @@ function ScopedGitPanel({ projectId, taskId: initialTaskId, workspacePath, ensur
     working.current = true; setBusy(true); setError(null);
     try {
       const task = resolvedTask.current;
+      ++pageTicket.current; setHistoryPage(null); setHistoryLoading(false); setPageError(null);
       const [g, d, w] = await Promise.all([readDevelopmentProjectGit(projectId, task), readDevelopmentGitDetails({ project_id: projectId, task_id: task }), readDevelopmentWorkspaces({ project_id: projectId, task_id: task })]);
       if (!valid() || ticket !== refreshTicket.current) return;
       if (g.ok) { setReview(g.value); setPreview(null); } else setReview(null);
       setDetails(d.ok ? d.value : null);
       if (w.ok) {
         const rows = receipts(w.value, task); setOperations(rows);
+        if (g.ok && (!workspacePath || workspacePath === g.value.path)) {
+          const active = w.value.workspaces.find(item => w.value.selected_workspace_id ? item.id === w.value.selected_workspace_id : item.kind === 'original');
+          setLegacyScopes([...new Set([...(active?.path === g.value.path ? [active.id] : []), g.value.path, 'git-panel', ''])]);
+        } else setLegacyScopes([]);
         const lock = worktreeRef.current.value.operation;
         if (lock) {
           const receipt = rows.find(item => item.id === lock.id);
@@ -120,10 +148,15 @@ function ScopedGitPanel({ projectId, taskId: initialTaskId, workspacePath, ensur
     if (!expected || working.current || blocked) return 'cancelled';
     const valid = guard(); working.current = true; setBusy(true); setError(null);
     try {
+      const worktreeAction = action.kind === 'restore' || action.kind === 'pull' || action.kind === 'switch' || action.kind === 'merge';
+      const paths = action.kind === 'restore' ? action.paths : [''];
+      // Saving an editor draft can change the repository snapshot. Review only
+      // afterwards, and reject changed snapshots rather than replacing consent.
+      if (worktreeAction && !await guardDevelopmentDocuments(projectId, initialTaskId, paths, expected.path)) return 'cancelled';
+      if (!valid()) return 'cancelled';
+      const documents = worktreeAction ? Object.values(useDevelopmentEditor.getState().documents).filter(document => document.projectId === projectId && document.taskId === initialTaskId && document.workspacePath === expected.path && paths.some(path => path === '' || document.path === path || document.path.startsWith(`${path}/`))) : [];
       const current = await authority(expected);
       if (!current || !valid()) return 'stale';
-      if ((action.kind === 'restore' || action.kind === 'switch' || action.kind === 'pull') && !await guardDevelopmentDocuments(projectId, initialTaskId, action.kind === 'restore' ? action.paths : [''], expected.path)) return 'cancelled';
-      if (!valid()) return 'cancelled';
       // The explicit Pull click obtains a host preview and checks it against the confirmed target.
       if (action.kind === 'pull') {
         const target = await previewDevelopmentGitPull(current.task_id, action.remote, action.branch);
@@ -138,11 +171,11 @@ function ScopedGitPanel({ projectId, taskId: initialTaskId, workspacePath, ensur
         if (!target.ok) { setError(target.code); return 'stale'; }
         if (!preview || preview.kind !== 'push' || preview.remote !== action.remote || target.value.remote_push_targets[action.remote]?.join('\n') !== preview.remote_display) { setPreview(null); setError('git_review_stale'); return 'stale'; }
       }
+      if (worktreeAction && (documents.some(document => useDevelopmentEditor.getState().documents[document.id] !== document) || Object.values(useDevelopmentEditor.getState().documents).filter(document => document.projectId === projectId && document.taskId === initialTaskId && document.workspacePath === expected.path && paths.some(path => path === '' || document.path === path || document.path.startsWith(`${path}/`))).length !== documents.length)) return 'cancelled';
       const id = crypto.randomUUID(), identity = { id, project_id: projectId, task_id: current.task_id, kind: `git_${action.kind}` };
       const pending: GitOperation = { ...identity, status: 'pending', workspace_id: null, request_fingerprint: '', details: {} };
       setOperation(pending); setOperations(rows => [...rows, pending]);
-      const worktreeAction = action.kind === 'restore' || action.kind === 'pull' || action.kind === 'switch';
-      if (action.kind === 'restore' || action.kind === 'pull' || action.kind === 'switch') worktreeRef.current.setValue({ operation: { id, action: action.kind, paths: action.kind === 'restore' ? action.paths : [''], status: 'pending' } });
+      if (action.kind === 'restore' || action.kind === 'pull' || action.kind === 'switch' || action.kind === 'merge') worktreeRef.current.setValue({ operation: { id, action: action.kind, paths: action.kind === 'restore' ? action.paths : [''], status: 'pending' } });
       const result = await dispatchDeliveryRequest(identity, () => executeDevelopmentGit({ id, task_id: current.task_id, review_token: current.review_token, action }));
       if (worktreeAction) {
         if (result.ok && (result.value.status === 'succeeded' || result.value.status === 'failed')) worktreeRef.current.clear();
@@ -154,7 +187,7 @@ function ScopedGitPanel({ projectId, taskId: initialTaskId, workspacePath, ensur
         setOperation(result.value);
         if (result.value.details.error) setError(result.value.details.error);
         if (result.value.status === 'succeeded') {
-          if (action.kind === 'restore' || action.kind === 'switch' || action.kind === 'pull') invalidateDevelopmentDocuments(projectId, initialTaskId, action.kind === 'restore' ? action.paths : [''], expected.path);
+          if (action.kind === 'restore' || action.kind === 'switch' || action.kind === 'pull' || action.kind === 'merge') invalidateDevelopmentDocuments(projectId, initialTaskId, action.kind === 'restore' ? action.paths : [''], expected.path);
           onChanged?.();
         }
       } else setError(result.code);
@@ -235,6 +268,18 @@ function ScopedGitPanel({ projectId, taskId: initialTaskId, workspacePath, ensur
     if (!valid() || ticket !== historyTicket.current) return;
     if (result.ok) { setPathHistory(result.value.history); setPathTruncated(result.value.history_truncated); } else setHistoryError(result.code);
   }
+  async function moreHistory() {
+    if (!review?.head || historyLoading || historyPage && !historyPage.next_cursor) return;
+    const valid = guard(), ticket = ++pageTicket.current, expected = review;
+    const input = { start_oid: historyPage?.anchor ?? expected.head, cursor: historyPage?.next_cursor ?? null, limit: 50 };
+    setHistoryLoading(true); setPageError(null);
+    const task = initialTaskId;
+    const result = task ? await readDevelopmentGitHistory({ ...input, task_id: task }) : await readDevelopmentProjectGitHistory({ ...input, project_id: projectId });
+    if (!valid() || ticket !== pageTicket.current || reviewRef.current?.path !== expected.path || reviewRef.current.head !== expected.head) return;
+    if (result.ok) setHistoryPage(previous => previous ? { ...result.value, commits: [...previous.commits, ...result.value.commits.filter(entry => !previous.commits.some(old => old.oid === entry.oid))] } : result.value);
+    else setPageError(result.code);
+    setHistoryLoading(false);
+  }
   async function reveal(path: string) {
     const valid = guard(); const result = await openDevelopmentEntryDirectory({ project_id: projectId, task_id: resolvedTask.current, path });
     if (valid() && !result.ok) setError(result.code);
@@ -256,7 +301,7 @@ function ScopedGitPanel({ projectId, taskId: initialTaskId, workspacePath, ensur
       if (!inspected.ok) { setError(inspected.code); return; }
       if (!await confirmAction(t('gitPanel.remove'), `${t('gitPanel.removeWarning')}\n${expected.path}/${file.path}`, t('gitPanel.remove')) || !valid()) return;
       // Confirmation may have stayed open while another process changed Git state.
-      if (!await authority(expected) || !valid() || !await guardDevelopmentDocuments(projectId, initialTaskId, [file.path], expected.path)) return;
+      if (!await guardDevelopmentDocuments(projectId, initialTaskId, [file.path], expected.path) || !valid() || !await authority(expected) || !valid()) return;
       const pending = { operation: { action: 'delete' as const, path: file.path, status: 'pending' as const } };
       deleteRef.current.setValue(pending);
       const result = await mutateDevelopmentEntry({ ...input, expected_version: inspected.value.version, action: 'delete', destination: null, trust_directory: true });
@@ -341,7 +386,7 @@ function ScopedGitPanel({ projectId, taskId: initialTaskId, workspacePath, ensur
     return <><ol className="git-history-list">{entries.map(entry => <li key={entry.oid}><button type="button" className="git-history-row" data-commit-oid={entry.oid} data-selected={selectedCommit === entry.oid} aria-pressed={selectedCommit === entry.oid} disabled={!onSelectCommit} title={`${entry.subject}\n${entry.author}\n${new Date(entry.timestamp * 1000).toLocaleString(locale)}\n${entry.oid}`} onClick={event => {
       if (fromPath) { ++historyTicket.current; setHistoryPath(null); }
       onSelectCommit?.(entry.oid, event.currentTarget, review?.path ?? workspacePath ?? '');
-    }}><code>{entry.oid.slice(0, 7)}</code><span>{entry.subject || t('gitPanel.emptyMessage')}</span><time dateTime={new Date(entry.timestamp * 1000).toISOString()} title={new Date(entry.timestamp * 1000).toLocaleString(locale)}>{age(entry.timestamp)}</time></button></li>)}</ol>{!entries.length ? <p className="git-feedback">{t('delivery.noCommits')}</p> : null}{truncated ? <p className="git-feedback">{t('gitPanel.historyBound')}</p> : null}</>;
+    }}><code>{entry.oid.slice(0, 7)}</code><span>{entry.subject || t('gitPanel.emptyMessage')}</span><time dateTime={new Date(entry.timestamp * 1000).toISOString()} title={new Date(entry.timestamp * 1000).toLocaleString(locale)}>{age(entry.timestamp)}</time></button></li>)}</ol>{!entries.length ? <p className="git-feedback">{t('delivery.noCommits')}</p> : null}{truncated && fromPath ? <p className="git-feedback">{t('gitPanel.pathHistoryBound')}</p> : null}</>;
   }
   return <div className="git-panel" data-testid="dev-git-panel" aria-label={t('workbenchGit.title')}>
     <header className="git-toolbar">
@@ -350,6 +395,7 @@ function ScopedGitPanel({ projectId, taskId: initialTaskId, workspacePath, ensur
         {!review?.branch ? <option value="">{t(review?.head ? 'delivery.detached' : 'gitPanel.noHead')}</option> : !details?.branches.includes(review.branch) ? <option value={review.branch}>{review.branch}</option> : null}
         {details?.branches.map(branch => <option key={branch} value={branch}>{branch}</option>)}
       </select>
+      <DropdownMenu items={(details?.branches ?? []).filter(branch => branch !== review?.branch).map(branch => ({ kind: 'item' as const, id: `merge-${branch}`, label: t('gitPanel.mergeBranch', { branch }), disabled: !git || disabled || !review?.branch || !review.head || !!review.files.length || !!review.conflicts.length || !!review.merge_heads.length, onSelect: () => void act({ kind: 'merge', branch }) }))} trigger={<button type="button" className="git-icon" aria-label={t('gitPanel.mergeBranches')} title={t('gitPanel.mergeBranches')} disabled={!git || disabled || !details?.branches.some(branch => branch !== review?.branch)}><MoreHorizontal size={14} aria-hidden="true" /></button>} />
       <span className="git-line-stats"><span className="git-added">{totals ? `+${totals.added}` : '—'}</span><span className="git-deleted">{totals ? `−${totals.deleted}` : '—'}</span></span>
       {iconButton(t('delivery.pull'), <ArrowDown size={15} />, () => { setNetwork('pull'); setRemote(''); setRemoteBranch(''); setPreview(null); }, !git || disabled || !details?.remotes.length || !review?.head)}
       {iconButton(t('delivery.push'), <ArrowUp size={15} />, () => { setNetwork('push'); setRemote(''); setRemoteBranch(''); setPreview(null); }, !git || disabled || !details?.remotes.length || !review?.branch || !review.head)}
@@ -371,8 +417,9 @@ function ScopedGitPanel({ projectId, taskId: initialTaskId, workspacePath, ensur
     {deleteDraft.value.operation ? <div className="git-feedback" role="status">{t('gitPanel.deleteUnknown')} <code>{deleteDraft.value.operation.path}</code><Button size="xs" disabled={busy || deleteDraft.value.operation.status === 'pending'} onClick={() => void inspectDelete()}>{t('workbenchFiles.inspectResult')}</Button></div> : null}
     </div>
     <div className="git-bottom">
-      <details className="git-history" open><summary><History size={14} aria-hidden="true" />{t('delivery.gitHistory')}<span className="git-count">{details ? `${details.history.length}${details.history_truncated ? '+' : ''}` : '—'}</span></summary>{details ? historyList(details.history, details.history_truncated) : <p className="git-feedback">{t('delivery.unknown')}</p>}</details>
+      <details className="git-history" open><summary><History size={14} aria-hidden="true" />{t('delivery.gitHistory')}<span className="git-count">{historyPage ? `${historyPage.commits.length}${historyPage.next_cursor ? '+' : ''}` : details ? `${details.history.length}${details.history_truncated ? '+' : ''}` : '—'}</span></summary>{historyPage ? historyList(historyPage.commits, false) : details ? historyList(details.history, details.history_truncated) : <p className="git-feedback">{t('delivery.unknown')}</p>}{pageError ? <p className="git-feedback git-error" role="alert">{errorText(pageError)}</p> : null}{historyLoading ? <p className="git-feedback" role="status">{t('review.loading')}</p> : null}{review?.head && (historyPage ? historyPage.next_cursor : details?.history_truncated) ? <Button size="xs" variant="secondary" disabled={historyLoading || busy} onClick={() => void moreHistory()}>{t(historyPage ? 'delivery.moreGitHistory' : 'delivery.openGitHistory')}</Button> : null}</details>
       <section className="git-commit"><label htmlFor={`git-message-${projectId}`}>{t('delivery.commitMessage')}</label><textarea id={`git-message-${projectId}`} value={draft.value} placeholder={t('gitPanel.messagePlaceholder')} onChange={event => { ++edits.current; draft.setValue(event.target.value); }} rows={3} />
+        {legacyDrafts.length ? <section className="git-feedback" aria-label={t('gitPanel.savedDrafts')}><p>{t('gitPanel.draftConflict')}</p>{legacyDrafts.map((saved, index) => <div key={saved.key}><label>{t('gitPanel.savedDraft', { index: index + 1 })}<textarea readOnly value={saved.text} rows={3} /></label><Button size="xs" variant="secondary" onClick={async () => { try { await navigator.clipboard.writeText(saved.text); } catch { setError('clipboard_failed'); } }}>{t('gitPanel.copyDraft')}</Button></div>)}</section> : null}
         <div className="git-commit-tools">{generating ? <button type="button" className="git-generate" onClick={() => { ++generation.current; controller.current?.abort(); controller.current = null; setGenerating(false); }}>{t('gitPanel.cancelGeneration')}</button> : <button type="button" className="git-generate" disabled={!onGenerateMessage || !hasStaged || busy || blocked} title={t(onGenerateMessage ? 'gitPanel.generateHint' : 'gitPanel.generationUnavailable')} onClick={() => void generate()}><Sparkles size={13} aria-hidden="true" />{t('gitPanel.generate')}</button>}{draft.dirty ? <button type="button" className="git-draft-discard" onClick={() => void draft.discard()}>{t('dev.discardDraft')}</button> : null}</div>
         <div className="git-commit-buttons"><button type="button" className="git-commit-primary" disabled={!git || disabled || !draft.value.trim() || !canCommit || !!review?.conflicts.length} onClick={() => void commit()}><Check size={14} aria-hidden="true" />{t('delivery.commit')}</button><DropdownMenu items={[{ kind: 'item', id: 'commit-push', label: t('gitPanel.commitPush'), disabled: !git || disabled || !draft.value.trim() || !canCommit || !!review?.conflicts.length || !details?.remotes.length || !review?.branch, onSelect: () => void commit(true) }]} trigger={<button type="button" className="git-commit-menu" aria-label={t('gitPanel.commitActions')} disabled={disabled}><ChevronDown size={14} /></button>} /></div>
       </section>

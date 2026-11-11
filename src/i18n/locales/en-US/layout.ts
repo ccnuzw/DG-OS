@@ -8,7 +8,6 @@ export default {
   'layout.resizeAgent': 'Resize Agent panel (Left/Right arrows)',
   'layout.resizeRuntime': 'Resize runtime panel (Up/Down arrows)',
   'layout.runtime': 'Runtime and terminal',
-  'layout.runtimeCounts': 'Active {active} / Failed {failed} / Unconfirmed {unknown}',
   'layout.approvalCounts': 'Native {native} / Host {host}',
   'layout.head': 'HEAD',
 } as const;

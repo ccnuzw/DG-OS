@@ -6,7 +6,7 @@ domain: 底层能力
 spec_status: Ready
 risk: 高风险
 track: Provider 能力
-updated: 2026-11-02
+updated: 2026-11-11
 ---
 # V1-FR-001：Provider 适配框架
 
@@ -215,6 +215,10 @@ macOS的Secure Transport首次创建上下文可能同步扫描可执行文件�
 | 15 | 前端表单只有一个写死的 “OpenAI Compatible” 选项，类型值和默认地址写在组件里（`ProviderForm.tsx`、`ProviderList.tsx`） | 无法添加 Anthropic Provider，也无法扩展厂商；Ollama、DeepSeek 等只能借用 OpenAI 选项改地址 | AC16、B01-36 |
 
 **宽容读取规则**（适用于两种协议的所有响应，B01-69）：忽略未知字段；可选字段缺失时取默认值；`usage` 缺失记为 0 并保留“用量未知”的内部标记；`choices` 或内容块为空时 `content` 为空串；未知的结束原因按 `stop` 处理并记录类别名；推理文本从已知字段名（`reasoning_content`、`reasoning`、`reasoning_details`）中读取，命中哪个就记录哪个；模型列表缺少 `id` 的项跳过，重复 `id` 只保留第一项，`id` 超过 255 字符的项跳过，总数超过上限时截断。响应不是预期的 JSON、响应体超限，或收到 3xx，统一为 `provider_response_invalid`，不重试（B01-70）。
+
+### 2.5 CLI Provider 多协议路由增量
+
+普通 AI 助手的 `provider_type` 继续确定 Chat Completions 或 Messages 适配器；CLI Agent 可独立声明 Codex Responses 与 Claude Messages 路由，不因普通聊天成功就推断 CLI 协议已验证，不增加宿主 Responses 聊天适配器。配置、端点共享凭据授权、规范化修订、原生认证冲突与失败不回退的权威规则及验收分支见 [D136 设计 §18](../../../04-技术架构/当前版本/D136-CLI能力切换技术设计.md#18-cli-provider-多协议路由cli-provider-routes)。Provider 详情允许各路线自动/启用/禁用、可选基址与认证样式，保留普通连接测试、模型目录和保存/放弃语义；状态与验证证据只记 V1 实现状态。
 
 ## 3. 核心流程
 
@@ -438,7 +442,7 @@ CREATE TABLE provider_usage_logs (
 | `models.max_output_tokens` | 新增可空整数列（现有表没有这一列，DTO 字段一直为空） | 旧行为 NULL |
 | `models.capabilities` | JSON 形状从能力数组扩展为对象 `{streaming, vision, tools, reasoning, structured_output}`，每项为 `supported`、`unsupported` 或 `unknown` | 读取时兼容旧数组（数组里的 `streaming`、`vision` 视为 `supported`，其余为 `unknown`），不需要 migration |
 | `providers.config` | JSON 中增加 `vendor_id`、`auth_style`、`allow_insecure_http`，与现有重试配置并存 | `vendor_id` 缺省时按 `provider_type` 和 base_url 推断（官方主机归对应厂商，否则 `custom`）；`auth_style` 缺省为画像默认值，`allow_insecure_http` 缺省为 `false`；不需要 migration。已知细节：现有代码把整个 `config` 反序列化为重试配置，缺少重试三项时解析失败并回落到默认重试（`manager.rs` 的 `create_adapter`），新增键不改变这一行为 |
-| `provider_usage_logs` | 新增可空列 `usage_reported`（[D081](../../../06-决策记录/V1-冻结决策.md#d081-provider-使用记录区分用量未知与用量为零)，migration `m20261031_000017_usage_reported`） | 两种协议都把推理 token 计入输出 token；Anthropic 不返回总数，由宿主计算输入加输出；缓存 token 不在范围内。上游不返回用量时 token 列仍记 0，`usage_reported = 0` 表示这些 0 是“未知”而不是“免费”；流被取消、中断或失败一律为 0；旧行为 NULL。取消与网络中断在使用记录中仍都是 `1001007` |
+| `provider_usage_logs` | 可空列 `usage_reported`（[D081](../../../06-决策记录/V1-冻结决策.md#d081-provider-使用记录区分用量未知与用量为零)，migration `m20261031_000017_usage_reported`）；D148细化字段存在性与聊天独立计量 | 输入包含协议定义的缓存读取/写入，输出包含协议定义的推理子集，不重复相加；缺失为未知，明确回报零有效。取消、中断或失败保留已观察到的回报，无回报才未知；旧缺失状态不反推。Provider日志删除不移除会话拥有的用量事实。取消与网络中断现有错误码语义不变 |
 
 分类是 `(协议, model_id)` 的函数，仍然持久化，原因有两个：手动模型的 `kind` 由用户指定，规则表以后更新时已保存模型的分类不应悄悄变化（沿用“永久缓存，手动刷新”）。
 
@@ -447,6 +451,22 @@ CREATE TABLE provider_usage_logs (
 ### 4.4 D140工具流式消费增量
 
 OpenAI-compatible与Anthropic工具请求支持真实参数/正文/推理增量；完整调用身份、参数JSON与schema验证完成后才能交给宿主审批。用量未知、已派发和审计失败分别保留，不用同步请求模拟token流。既有同步工具API仍适用于同步消费者；完整聊天行为与验收以[FR-006 AC31/AC34](../02-应用模块/06-AI工作台.md#ac34-流式工具与有界结果)和[D140](../../../06-决策记录/V7-冻结决策.md#d140-ai会话持续完善与受控能力增量)为准。推理正文仍不持久化。
+
+D147的Brave搜索使用独立凭据scope，不复用模型API key、不新增模型Provider类型；共享既有OS vault、credential cleanup outbox与mutation lock，账户删除和活跃引用保护包含搜索指针。模型工具流仍复用本框架，联网来源与验收集中于[FR-006 AC43/AC44](../02-应用模块/06-AI工作台.md#ac43-请求级联网与可信来源)及[回复与联网技术设计](../../../04-技术架构/当前版本/AI助手回复与联网技术设计.md)，不改变现有Provider批准与用量未知语义。
+
+### 4.5 D148逐调用用量规范化
+
+普通、工具、流式与失败路径共用字段存在性和缓存规范化；同一流中的累计回报替换前值，不能逐块重复相加。真实模型调用具有宿主尝试ID，与运行级`request_id`区分；派发前记录、终态幂等结算，取消或进程丢失后未结算保留未知，不通过重发核实。会话输入/输出/缓存及耗时消费、删除和历史去重边界以[FR-006 AC46](../02-应用模块/06-AI工作台.md#ac46-全会话逐调用计量)及[D148](../../../06-决策记录/V7-冻结决策.md#d148-ai-助手上下文用量与显式压缩)为准；不新增收费重试或价格推断。只有数值及覆盖元数据可持久化，推理正文与凭据禁入规则不变。
+
+同一宿主`ProviderManager`及其clone按账户/Provider串行化删除与在途attempt：每次真实调用从准入复验到完整结算事务持共享许可，删除取得独占许可后再修改配置与清理Provider审计；已观察的会话数值先结算，不因Provider外键被提前删除而退回未知。删除等待不持全局凭据锁，不阻塞其他Provider；取消/Drop清理由宿主持有直至许可释放。重试退避不占许可，下一attempt重新验证Provider仍存在，删除后不再外发。未消费也未取消/丢弃的活动流仍会延迟该Provider删除，不把等待伪装为删除完成。
+
+| 协议 | 输入/输出与可选明细规范化 |
+| --- | --- |
+| OpenAI-compatible | 输入/输出取`prompt_tokens/completion_tokens`；缓存读取取`prompt_tokens_details.cached_tokens`或明确的`prompt_cache_hit_tokens`，缓存写入取`prompt_tokens_details.cache_creation_tokens`，推理数取`completion_tokens_details.reasoning_tokens`。缓存/推理都是既有输入/输出子集，不再次相加 |
+| Anthropic | 规范化输入为`input_tokens`加明确回报的`cache_read_input_tokens/cache_creation_input_tokens`，输出取`output_tokens`且含协议定义的thinking；流式`message_start`输出仅为初始值，不作为已回报输出/总量，后续`message_delta`输出才具备该权威性。仅明确回报的`reasoning_tokens`保留推理计数，绝不从正文推断。远端`max_input_tokens`继续用于保守准入，但不冒充合并输入输出窗口来显示百分比 |
+
+缺失可选字段保持未知；只有完整已知输入与输出才能派生可信总量。明细更新不得覆盖较新的显式总量，分项更新溢出时取消旧派生总量的已知标记；数值越界不截断为另一已知计数。上述是适配契约，不代表所有兼容网关都会提供缓存/推理字段，也不是已取得真实服务验证。
+
 
 ## 5. 验收标准
 
@@ -1580,6 +1600,7 @@ FUNCTION stream_provider(provider_id, model_id, request) -> Result<Stream>:
 | 2026-11-01 | 按 D098 第 5、7 项：Provider 列表增加上移/下移按钮并调用 `update_provider_order`（AC11 备注与 §2.3、§3.4 注明拖拽留给 D097 改版，AC 原文不改）；§2.3 注明 `call_provider_stream`、`cancel_provider_stream` 是宿主 API、无独立页面，AC06 由 FR-006 流式聊天与 `webview_smoke_provider_stream` 满足；文首与 §2.4 标题去掉“草案”“评审结果待定”（ADR-0003 已 Accepted，§2.4 锚点改为 `#24-三方兼容协议扩展`），§2.4.6 的“推断”标记保留 | Kiro |
 | 2026-11-02 | D117：宿主统一 Provider/MCP OS 凭据适配；debug service namespace 与 release namespace 分离，原生 keyring 操作串行且有 10 秒上限；`NoEntry` 映射为需重新提供凭据，平台失败仍为 1001015；Vite watcher 排除本地重复 worktree 与构建输出，避免开发 Node 堆持续增长 | Codex |
 | 2026-11-02 | FR-001 验收口径复核：在实现状态文档记录本地验证状态；明确网关 A 两次手工真实调用为同一第三方网关，不代表官方服务或发布验收；逐项未覆盖范围与已知差异继续保留，不新增真实调用或更改 AC 原文 | Codex |
+| 2026-11-11 | CLI-PROVIDER-ROUTES：关联 D136 §18 的独立 CLI 路由配置、认证/端点校验与 B136R-01～06 验收；普通 Chat 适配器与凭据存储边界不变 | 助手 |
 
 ---
 

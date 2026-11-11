@@ -33,11 +33,13 @@ pub(super) struct ToolTurn {
     _guard: ReleaseGuard,
     permit: Mutex<Option<dgos_db::ActivityPermit>>,
     provider_id: String,
+    providers: ProviderManager,
     model_id: String,
     revision: Option<i64>,
     pins: Vec<PinnedSkill>,
     blocked_effects: Vec<String>,
     runtime: tokio::sync::Mutex<Option<crate::skill_runtime::SkillRuntime>>,
+    web_runtime: tokio::sync::Mutex<Option<crate::web::WebRuntime>>,
     contexts: Vec<crate::foundation::ResolvedContext>,
     output: dgos_types::AiOutputContract,
     foundation_receipts: Mutex<crate::foundation::FoundationReceipts>,
@@ -89,12 +91,13 @@ impl ChatManager {
         job: GenerationJob,
         sink: Arc<dyn ChatSink>,
     ) {
+        let sink: Arc<dyn ChatSink> = Arc::new(OrderedChatSink::new(sink, job.active.stream.clone()));
         let GenerationJob {
             task_id,
             user,
             assistant_message_id,
             plan,
-            provider_id, model_id, revision, pins, skill_runtime, blocked_effects, contexts, output, inline_receipts, source_runs,
+            provider_id, model_id, revision, pins, skill_runtime, mut web_runtime, blocked_effects, contexts, output, inline_receipts, source_runs,
             active,
             _guard,
             _permit,
@@ -102,6 +105,7 @@ impl ChatManager {
         } = job;
         let Some(plan) = plan else {
             self.finish(
+                providers,
                 &user,
                 &task_id,
                 &assistant_message_id,
@@ -112,16 +116,19 @@ impl ChatManager {
             .await;
             return;
         };
-        if !sink.send(ChatEvent::Started {
-            task_id: task_id.clone(),
-            assistant_message_id: assistant_message_id.clone(),
-        }) {
+        if !sink.send(ChatEvent::Started { seq: 0, task_id: task_id.clone(),
+        assistant_message_id: assistant_message_id.clone(), }) {
             active.stop("task_cancelled");
+        }
+        if let Some(web) = &mut web_runtime {
+            web_runtime::attach_activities(web, self.repo.clone(), user.clone(), task_id.clone(),
+                assistant_message_id.clone(), active.clone(), sink.clone());
         }
         let record = match self.task_record(&user, &task_id).await {
             Some(record) => record,
             None => {
                 self.finish(
+                    providers,
                     &user,
                     &task_id,
                     &assistant_message_id,
@@ -156,7 +163,9 @@ impl ChatManager {
             _guard,
             permit: Mutex::new(Some(_permit)),
             provider_id, model_id, revision, pins, blocked_effects,
+            providers: providers.clone(),
             runtime: tokio::sync::Mutex::new(skill_runtime),
+            web_runtime: tokio::sync::Mutex::new(web_runtime),
             contexts, output, foundation_receipts: Mutex::new(crate::foundation::FoundationReceipts {
                 pending_context_receipts: inline_receipts, ..Default::default()
             }),
@@ -264,9 +273,13 @@ impl ChatManager {
             provider:&turn.provider_id,model:&turn.model_id,revision:turn.revision,active:&turn.active,pins:&turn.pins,blocked_effects:&turn.blocked_effects,contexts:&turn.contexts,source_runs:&turn.source_runs,sink:&*turn.sink};
         let forward=|event| {
             let sent=match event {
-                crate::execution::CoreEvent::Delta(text)=>{turn.checkpoint.push(&text);turn.sink.send(ChatEvent::Delta{assistant_message_id:turn.assistant_message_id.clone(),text})},
-                crate::execution::CoreEvent::ReasoningDelta(text)=>turn.sink.send(ChatEvent::ReasoningDelta{assistant_message_id:turn.assistant_message_id.clone(),text}),
-                crate::execution::CoreEvent::Phase(phase)=>turn.sink.send(ChatEvent::Phase{task_id:turn.task_id.clone(),assistant_message_id:turn.assistant_message_id.clone(),phase}),
+                crate::execution::CoreEvent::Delta(text)=>{turn.checkpoint.push(&text);turn.sink.send(ChatEvent::Delta { seq: 0, assistant_message_id:turn.assistant_message_id.clone(),text })},
+                crate::execution::CoreEvent::ReasoningDelta(text)=>turn.sink.send(ChatEvent::ReasoningDelta { seq: 0, assistant_message_id:turn.assistant_message_id.clone(),text }),
+                crate::execution::CoreEvent::Phase(phase)=>turn.sink.send(ChatEvent::Phase { seq: 0, task_id:turn.task_id.clone(),assistant_message_id:turn.assistant_message_id.clone(),phase }),
+                crate::execution::CoreEvent::ModelSegment(round) => {
+                    turn.checkpoint.begin_segment();
+                    turn.sink.send(ChatEvent::ModelSegment { seq: 0, task_id: turn.task_id.clone(), assistant_message_id: turn.assistant_message_id.clone(), round })
+                },
             };if !sent{turn.active.stop("task_cancelled")}sent
         };
         let mut runtime=turn.runtime.lock().await;
@@ -275,7 +288,13 @@ impl ChatManager {
             Err(error)=>{drop(runtime);self.finish_tool(&turn,turn.checkpoint.content(),End::Tool(error)).await;return;}
         };
         *tools.receipts().lock().unwrap_or_else(|e|e.into_inner())=turn.foundation_receipts.lock().unwrap_or_else(|e|e.into_inner()).clone();
-        let result=turn.session.advance_streaming(providers,mcp,&mut context,action,&guard,&forward,turn.deadline,Some(&mut tools)).await;
+        let mut web = turn.web_runtime.lock().await;
+        let result = {
+            let mut local = web_runtime::ChatLocalTools { foundation: &mut tools, web: web.as_mut() };
+            turn.session.advance_streaming(providers,mcp,&mut context,action,&guard,&forward,turn.deadline,Some(&mut local)).await
+        };
+        if let Some(web) = &mut *web { web.cancel_pending().await; }
+        drop(web);
         let context_receipts=tools.context_receipts();
         let skill_receipts=tools.skill_receipts();
         *turn.foundation_receipts.lock().unwrap_or_else(|e|e.into_inner())=tools.receipts().lock().unwrap_or_else(|e|e.into_inner()).clone();
@@ -284,7 +303,7 @@ impl ChatManager {
         {let mut evidence=turn.evidence.lock().unwrap_or_else(|e|e.into_inner());
             evidence.dispatched=context.dispatched();evidence.result_unknown=context.result_unknown();
             evidence.audit_warning=context.audit_warning().then(||"execution_audit_warning".into());
-            evidence.tokens=(!context.usage_unknown()).then(||context.tokens());}
+            evidence.tokens=(context.dispatched()&&!context.usage_unknown()).then(||context.tokens());}
         if self.persist_tool_coverage(&turn,&context_receipts,&skill_receipts).await.is_err() {
             turn.evidence.lock().unwrap_or_else(|e|e.into_inner()).audit_warning=Some("context_receipt_persistence_failed".into());
             self.finish_tool(&turn,turn.checkpoint.content(),End::Tool("persistence_failed".into())).await;return;
@@ -300,7 +319,7 @@ impl ChatManager {
         if let Some(receipts)=skills.as_array() {
             for receipt in &receipts[count.min(receipts.len())..] {
                 let step=self.repo.record_step(&turn.user,&turn.task_id,"skill","processing_result","supplied",false,false,Some(receipt.clone())).await?;
-                if !turn.sink.send(ChatEvent::Activity{task_id:turn.task_id.clone(),assistant_message_id:turn.assistant_message_id.clone(),step}) {turn.active.stop("task_cancelled");return Err(ChatError::ToolTurnInvalid)}
+                if !turn.sink.send(ChatEvent::Activity { seq: 0, task_id:turn.task_id.clone(),assistant_message_id:turn.assistant_message_id.clone(),step }) {turn.active.stop("task_cancelled");return Err(ChatError::ToolTurnInvalid)}
             }
             *turn.skill_receipts_written.lock().unwrap_or_else(|e|e.into_inner())=receipts.len();
         }
@@ -325,7 +344,7 @@ impl ChatManager {
                 } else {
                     End::Completed {
                         finish_reason: "stop".into(),
-                        tokens: (!context.usage_unknown()).then(||context.tokens()),
+                        tokens: (context.dispatched()&&!context.usage_unknown()).then(||context.tokens()),
                     }
                 };
                 self.finish_tool(&turn, content, end).await;
@@ -347,10 +366,8 @@ impl ChatManager {
                         return;
                     }
                     *slot = Some(context);
-                    if !turn.sink.send(ChatEvent::ToolProposal {
-                        assistant_message_id: turn.assistant_message_id.clone(),
-                        proposal: proposal.clone(),
-                    }) {
+                    if !turn.sink.send(ChatEvent::ToolProposal { seq: 0, assistant_message_id: turn.assistant_message_id.clone(),
+                    proposal: proposal.clone(), }) {
                         turn.active.stop("task_cancelled");
                     }
                 }
@@ -387,6 +404,7 @@ impl ChatManager {
         if turn.checkpoint.flush().await.is_err(){evidence.audit_warning=Some("checkpoint_persistence_failed".into());end=End::Tool("persistence_failed".into());}
         if evidence.audit_warning.is_some() && matches!(end,End::Completed{..}) {end=End::Tool("execution_audit_warning".into());}
         self.finish_evidenced(
+            &turn.providers,
             &turn.user,
             &turn.task_id,
             &turn.assistant_message_id,

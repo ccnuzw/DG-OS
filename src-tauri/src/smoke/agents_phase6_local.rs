@@ -45,15 +45,19 @@ pub(super) fn isolate(root: &Path) {
 
 const PROTOCOL: &str = r##"#!/bin/sh
 if [ "${1-}" = --version ]; then printf 'codex-cli 0.167.0\n'; exit 0; fi
+fixture_provider=
+for argument do
+  case "$argument" in model_provider=*) fixture_provider=${argument#*=}; fixture_provider=${fixture_provider#\"}; fixture_provider=${fixture_provider%\"};; esac
+done
 printf '%s\n' "$$" > phase6-child.pid
 while IFS= read -r line; do
 printf '%s\n' "$line" >> phase6-protocol.jsonl
 request=${line#*\"id\":}; request=${request%%,*}
 case "$line" in
 *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$request";;
-*'"method":"config/read"'*) printf '{"id":%s,"result":{"config":{"model_provider":"dgos_project","model_providers":{"dgos_project":{"base_url":"http://127.0.0.1:9/v1","wire_api":"responses","env_key":"DGOS_PROVIDER_KEY","requires_openai_auth":false}}}}}\n' "$request";;
+*'"method":"config/read"'*) printf '{"id":%s,"result":{"config":{"model_provider":"'"$fixture_provider"'","model_providers":{"'"$fixture_provider"'":{"base_url":"http://127.0.0.1:9/v1","wire_api":"responses","env_key":"DGOS_PROVIDER_KEY","requires_openai_auth":false}}}}}\n' "$request";;
 *'"method":"model/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$request";;
-*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"dgos_project","thread":{"id":"phase6-local-thread","turns":[]}}}\n' "$request" "$PWD";;
+*'"method":"thread/start"'*|*'"method":"thread/resume"'*) printf '{"id":%s,"result":{"cwd":"%s","model":"fixture-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"phase6-local-thread","turns":[]}}}\n' "$request" "$PWD";;
 *'"method":"turn/start"'*)
 printf '{"id":%s,"result":{"turn":{"id":"phase6-local-turn"}}}\n' "$request"
 i=0
@@ -61,6 +65,7 @@ while [ "$i" -lt 60 ]; do
 printf '{"method":"item/completed","params":{"threadId":"phase6-local-thread","turnId":"phase6-local-turn","item":{"id":"line-%s","type":"agentMessage","text":"SYNTHETIC PROTOCOL ONLY row %s: deterministic local transcript, no model invocation."}}}\n' "$i" "$i"
 i=$((i+1))
 done
+printf '%s\n' '{"method":"item/completed","params":{"threadId":"phase6-local-thread","turnId":"phase6-local-turn","item":{"id":"reply-rich","type":"agentMessage","phase":"final_answer","text":"REPLY RICH FIXTURE\n\n```mermaid\nflowchart LR\nA[Start] --> B[Done]\n```\n\n```mermaid\nsequenceDiagram\nparticipant A as Alice\nparticipant B as Bob\nA->>B: Request\nB-->>A: Response\n```\n\nInline $x^2$.\n\n$$\n\\frac{1}{2}+\\sqrt{x}\n$$"}}}'
 printf '%s\n' '{"method":"turn/completed","params":{"threadId":"phase6-local-thread","turn":{"id":"phase6-local-turn","status":"completed"}}}'
 ;;
 esac
@@ -152,6 +157,15 @@ const composer=await until(()=>document.getElementById('agent-message'));if(!com
     let agent_trust = host(app, "read_development_workspace_trust", json!({"input":{"project_id":project["id"],"task_id":task}})).await?;
     require(fx, ck, ev, "agent permission does not authorize terminal or coexisting services", agent_trust["agent"] == true && agent_trust["terminal"] == false && agent_trust["service"] == false, agent_trust.to_string())?;
     save(fx, "session", &original);
+    step(app, fx, ck, ev, "render constrained diagrams and math in production WKWebView", json!({}), r#"
+const diagrams=await until(()=>{const nodes=$$('[data-rich-kind="diagram"]');return nodes.length===2&&nodes});if(!diagrams)throw Error('rich fixture missing');
+for(const node of diagrams){node.scrollIntoView({block:'center'});const button=$$('button',node).find(e=>txt(e)==='渲染图解');if(!button)throw Error('diagram action absent');button.click();if(!await until(()=>node.querySelector('.chat-rich-diagram svg')))throw Error('diagram failed: '+txt(node));}
+for(const node of $$('[data-rich-kind="math"]'))node.scrollIntoView({block:'center'});
+const math=await until(()=>$$('[data-rich-kind="math"] math').length>=2);const labels=diagrams.map(node=>txt(node.querySelector('.chat-rich-diagram')));
+return {ok:!!math&&labels[0].includes('Start')&&labels[1].includes('Alice')&&!!document.querySelector('mfrac')&&!document.querySelector('iframe.chat-rich-sandbox'),diagrams:labels,math:$$('math').length,sandbox:$$('iframe.chat-rich-sandbox').length};
+"#).await?;
+    let preview = ipc(app, "main", "preview_agent_output_image", json!({"sessionId":sid,"generation":original["generation"],"previewId":"nonexistent-preview"})).await;
+    require(fx, ck, ev, "production image preview IPC refuses missing resource identity", !succeeded(&preview) && preview.describe().contains("image_preview_expired"), preview.describe())?;
     require(fx, ck, ev, "prepare real WKWebView for native synthesized keyboard", ui_keys::prepare(app).await, "NSEvent, not physical input")?;
     step(app, fx, ck, ev, "record independently scrolled transcript and unsent draft", json!({}), r#"
 const transcript=await until(()=>{const e=$$('.agent-dialogue-transcript',tid('dev-panel-agent'))[0];return e&&txt(e).includes('row 59')&&e});if(!transcript)throw Error('native transcript not rendered');if(transcript.scrollHeight<=transcript.clientHeight+200)throw Error('fixture transcript does not scroll');transcript.scrollTop=120;transcript.dispatchEvent(new Event('scroll',{bubbles:true}));const composer=document.getElementById('agent-message');setInput(composer,'unsent phase6 draft');window.__phase6.reading={transcript,composer,top:transcript.scrollTop};const b=await need('dev-tool-files');b.focus();return {ok:document.activeElement===b,top:transcript.scrollTop,height:transcript.scrollHeight};
@@ -200,7 +214,7 @@ await showRuntimeView();return {ok:true};
     let terminal = host(app, "start_development_process", json!({"input":{"id":uuid::Uuid::new_v4().to_string(),"task_id":task,"kind":"terminal","program":"/bin/sh","args":["-c","stty -echo; printf 'PHASE6_PTY_READY\\n'; read line; stty size; printf 'PHASE6_PTY_INPUT:%s\\n' \"$line\"; sleep 30"],"cwd":"","env_refs":{},"trust_workspace":false,"verification":false,"readiness":null,"native_run_id":null}})).await?;
     let id = terminal["id"].as_str().ok_or("PTY id absent")?.to_owned();
     step(app, fx, ck, ev, "select exact native PTY receipt", json!({"id":id}), r#"
-const refresh=await until(()=>document.querySelector('section[aria-label="宿主执行历史"] > .dev-review-toolbar button'));if(!refresh)throw Error('history refresh absent');refresh.click();const row=await until(()=>tid('dev-process-history-'+A.id));if(!row)throw Error('PTY receipt absent');row.click();const f=await until(()=>tid('dev-terminal')?.querySelector('.xterm-helper-textarea'));if(!f)throw Error('xterm input absent');f.focus();return {ok:document.activeElement===f};
+const refresh=await until(()=>document.querySelector('.dev-process-history')?.closest('section')?.querySelector(':scope > .dev-review-toolbar button'));if(!refresh)throw Error('history refresh absent');refresh.click();const row=await until(()=>tid('dev-process-history-'+A.id));if(!row)throw Error('PTY receipt absent');row.click();const f=await until(()=>tid('dev-terminal')?.querySelector('.xterm-helper-textarea'));if(!f)throw Error('xterm input absent');f.focus();return {ok:document.activeElement===f};
 "#).await?;
     host(app, "resize_development_terminal", json!({"input":{"id":id,"cols":101,"rows":37}})).await?;
     host(app, "write_development_terminal", json!({"input":{"id":id,"data":"phase6-native-enter"}})).await?;

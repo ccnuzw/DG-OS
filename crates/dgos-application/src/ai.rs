@@ -73,6 +73,11 @@ impl Events {
 }
 impl ExecutionSink for Events {
     fn send(&self, event: CoreEvent) -> bool {
+        if matches!(&event, CoreEvent::ModelSegment(_)) {
+            let mut progress = self.progress.lock().unwrap_or_else(|e| e.into_inner());
+            progress.content.clear();
+            progress.revision = progress.revision.saturating_add(1);
+        }
         if let CoreEvent::Delta(text) = &event {
             let mut progress = self.progress.lock().unwrap_or_else(|e| e.into_inner());
             let mut count = text.len().min((64usize * 1024).saturating_sub(progress.content.len()));
@@ -84,6 +89,7 @@ impl ExecutionSink for Events {
             CoreEvent::Delta(text) => AiEventPayload::Delta { text },
             CoreEvent::ReasoningDelta(text) => AiEventPayload::ReasoningDelta { text },
             CoreEvent::Phase(phase) => AiEventPayload::Phase { phase },
+            CoreEvent::ModelSegment(round) => AiEventPayload::ModelSegment { round },
         })
     }
 }
@@ -192,6 +198,9 @@ impl AiService {
             return crate::settle_bound(invocation.call, Err(error));
         }
         let cancellation = CancellationToken::new();
+        // The registry records caller cancellation, not the executor's drain signal.
+        // Permission/deadline failures must stop I/O without becoming task_cancelled at settlement.
+        let execution_cancellation = cancellation.child_token();
         {
             let mut registry = self.active.lock().unwrap_or_else(|e| e.into_inner());
             if registry.contains_key(&run_id) {
@@ -226,7 +235,7 @@ impl AiService {
         let request = ExecutionRequest {
             user: context.user_id().into(), provider_id: input.provider_id.clone(), model_id: input.model_id.clone(),
             revision: Some(input.provider_revision), messages: prepared.messages, tools: input.tools.clone(), generation: input.generation.clone(),
-            context_window: prepared.context_window, provenance: context.provenance(), cancellation: cancellation.clone(), deadline,
+            context_window: prepared.context_window, provenance: context.provenance(), cancellation: execution_cancellation.clone(), deadline,
         };
         let execution = AiExecutor::run_with_local(&self.providers, &self.mcp, request, &guard, &events, Some(&mut local));
         tokio::pin!(execution);
@@ -262,7 +271,7 @@ impl AiService {
                 }
             }
         };
-        let result = if let Some(result) = result { result } else { cancellation.cancel(); execution.await };
+        let result = if let Some(result) = result { result } else { execution_cancellation.cancel(); execution.await };
         let mut terminal = if let Some(reason) = stop {
             let mut terminal = interrupted(reason, result.result_unknown);
             terminal.content = result.content;
