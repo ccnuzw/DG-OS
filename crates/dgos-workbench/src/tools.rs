@@ -83,6 +83,9 @@ pub(super) struct ToolContext {
     pub(crate) calls: HashSet<String>,
     pub(crate) tokens: i64,
     pub(crate) usage_unknown: bool,
+    pub(crate) generated_bytes: usize,
+    pub(crate) model_round: u32,
+    pub(crate) retained_intermediate_bytes: usize,
     pub(crate) receipts: Vec<crate::execution::ToolReceipt>,
     pub(crate) retained_results: Vec<String>,
     pub(crate) dispatched: bool,
@@ -121,6 +124,9 @@ impl ToolContext {
             pending: None,
             calls: HashSet::new(),
             tokens: 0,
+            generated_bytes: 0,
+            model_round: 0,
+            retained_intermediate_bytes: 0,
             receipts: vec![], retained_results: vec![], dispatched: false, result_unknown: false, audit_warning: false, usage_unknown: false,
         }
     }
@@ -278,6 +284,7 @@ impl WorkbenchManager {
             pending: None,
             calls: HashSet::new(),
             tokens: 0,
+            generated_bytes: 0, model_round: 0, retained_intermediate_bytes: 0,
             receipts: vec![], retained_results: vec![], dispatched: false, result_unknown: false, audit_warning: false, usage_unknown: false,
         };
         let session = Arc::new(ToolSession {
@@ -730,6 +737,7 @@ mod tests {
                 pending: None,
                 calls: HashSet::new(),
                 tokens: 0,
+                generated_bytes: 0, model_round: 0, retained_intermediate_bytes: 0,
                 receipts: vec![], retained_results: vec![], dispatched: false, result_unknown: false, audit_warning: false, usage_unknown: false,
             })),
             cancel: CancellationToken::new(),

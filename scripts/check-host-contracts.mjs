@@ -8,6 +8,7 @@ const files = ['native_extensions', 'ai', 'provider_commands', 'skills', 'mcp', 
 files.push('development_commit_message');
 files.push('development_desktop');
 files.push('native_skill_library', 'native_mcp_catalog');
+files.push('chat_web');
 // FR-010 / interface contract §14.8: the eight LAN host commands. Exact parameter lists; no user
 // id, caller, session token or access code. Every one enters through the Settings caller with
 // `Capability::LanManage`, which `allows` grants to Settings only.
@@ -122,9 +123,9 @@ const skillExactParams = new Map([
   ['confirm_skill_install', ['window', 'operation_id', 'state']],
   ['cancel_skill_install', ['window', 'operation_id', 'state']],
 ]);
-// FR-006 / interface contract §10.1: exact parameter lists of the chat commands. Each takes one typed
-// `input` (deny_unknown_fields) and reads managed state from the AppHandle; identity comes from
-// `host::context`, never from a parameter. Streaming commands take the caller's Channel (`on_event`).
+// FR-006 / interface contract §10.1: exact parameter lists of the chat commands. Business inputs
+// are typed structs or explicit selectors (get_chat_usage maps session_id to top-level sessionId).
+// Identity comes only from host::context; streaming commands take the caller's Channel.
 const chatExactParams = new Map([
   ['create_chat_session', ['app', 'window', 'input']],
   ['list_chat_sessions', ['app', 'window', 'input']],
@@ -138,9 +139,12 @@ const chatExactParams = new Map([
   ['advance_chat_tool_turn', ['app', 'window', 'input']],
   ['cancel_chat_generation', ['app', 'window', 'task_id']],
   ['inspect_chat_context', ['app', 'window', 'input']],
+  ['get_chat_usage', ['app', 'window', 'session_id']],
   ['summarize_chat_context', ['app', 'window', 'input', 'on_event']],
   ['list_chat_runs', ['app', 'window', 'input']],
   ['get_chat_run', ['app', 'window', 'input']],
+  ['get_chat_web_status', ['app', 'window', 'input']],
+  ['configure_chat_web', ['app', 'window', 'input']],
   ['continue_chat_run', ['app', 'window', 'input', 'on_event']],
   ['chat_skill_catalog', ['app', 'window', 'input']],
   ['resolve_chat_run_step', ['app', 'window', 'input']],
@@ -345,13 +349,19 @@ for (const file of files) {
       if (name === 'cancel_provider_stream') {
         assert.match(body, /\.cancel\(window\.label\(\),/, `${name}: may cancel only streams of the calling window`);
       }
-      if (file === 'chat') {
+      if (file === 'chat' || file === 'chat_web') {
         const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map((match) => match[1]);
         const exact = chatExactParams.get(name);
         assert.ok(exact, `${name}: chat commands must be registered in chatExactParams`);
         assert.deepEqual([...names].sort(), [...exact].sort(), `${name}: parameter list must be exactly ${exact.join(', ')}`);
         assert.match(body, /host::context\(\s*&window,\s*BuiltinCaller::Workbench,\s*Capability::TasksRun/, `${name}: chat commands use the Workbench caller and TasksRun`);
         assert.doesNotMatch(body, /\.emit(?:_to|_filter)?\(|emit_all/, `${name}: chat must not use global events`);
+        if (name === 'get_chat_usage') {
+          assert.match(args, /session_id:\s*String/, `${name}: only the top-level sessionId selector`);
+          assert.match(body, /leased_chat\(&app,\s*context\.user_id\(\)\)/, `${name}: capture immutable account lease`);
+          assert.match(body, /chat\.get_usage\(context\.user_id\(\),\s*&session_id\)\.await/, `${name}: owned host aggregate only`);
+          assert.doesNotMatch(body, /ProviderManager|list_chat_messages|run_generation|\.send\(/, `${name}: usage queries never dispatch or aggregate message pages`);
+        }
         if (exact.includes('on_event')) {
           assert.match(args, /on_event:\s*Channel<ChatEvent>/, `${name}: events must go to the caller's Channel`);
           assert.match(body, /window\.label\(\)/, `${name}: the generation must be owned by the calling window`);
@@ -459,7 +469,6 @@ for (const file of files) {
         const expected = ['read_development_cli_provider','revoke_development_cli_provider'].includes(name) ? ['app','window','project_id']
           : name === 'save_development_cli_provider' ? ['app','window','input']
           : name === 'get_development_session_configuration' ? ['app','window','session_id']
-          : name === 'recheck_development_cli_cleanup' ? ['app','window']
           : name === 'read_development_cli_provider_catalog' ? ['app','window','project_id','engine'] : null;
         assert.ok(expected, `${name}: unrecognized project capability command`);
         const names = [...args.matchAll(/\b(\w+)\s*:(?!:)/g)].map(match => match[1]);
@@ -479,11 +488,12 @@ for (const file of files) {
         if (['read_development_git_details', 'read_development_git_commit', 'read_development_git_commit_diff'].includes(name)) assert.ok(body.includes(`${name}(context.user_id(),input,lease.clone())`), `${name}: cancellable read lease`);
       }
       if (file === 'agents') {
-        const expected = ['open_agent_session', 'cancel_unstarted_agent_session', 'send_agent_message', 'steer_agent_turn', 'respond_agent_request', 'create_development_project', 'update_development_project', 'save_development_task', 'select_development_context', 'classify_agent_session', 'observe_codex_operations', 'observe_agent_compression', 'control_codex_operation', 'inspect_codex_operation', 'read_codex_child_history'].includes(name)
+        const expected = ['open_agent_session', 'reconcile_agent_start', 'prepare_agent_task', 'send_agent_message', 'steer_agent_turn', 'respond_agent_request', 'create_development_project', 'update_development_project', 'save_development_task', 'select_development_context', 'classify_agent_session', 'observe_codex_operations', 'observe_agent_compression', 'control_codex_operation', 'inspect_codex_operation', 'read_codex_child_history'].includes(name)
           ? ['app', 'window', 'input']
           : ['list_agent_sessions', 'read_development_workspace'].includes(name)
             ? ['app', 'window']
             : name === 'get_agent_session' ? ['app', 'window', 'session_id', 'cursor']
+              : name === 'preview_agent_output_image' ? ['app', 'window', 'session_id', 'generation', 'preview_id']
               : name === 'interrupt_agent_session' ? ['app', 'window', 'session_id', 'generation', 'run_id']
                 : name === 'close_agent_session' ? ['app', 'window', 'session_id']
                   : name === 'inspect_development_project' ? ['app', 'window', 'project_id'] : null;

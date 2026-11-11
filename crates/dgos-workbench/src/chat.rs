@@ -42,6 +42,10 @@ mod contract;
 mod continuous;
 mod lifecycle;
 mod foundation;
+mod web_runtime;
+mod stream;
+pub use stream::{ChatLiveSnapshot, ChatRunSnapshot};
+use stream::{OrderedChatSink, StreamState};
 use foundation::effective_skill_mode;
 pub use contract::*;
 use lifecycle::{ChatStepGuard, CheckpointWriter, TerminalEvidence};
@@ -80,6 +84,7 @@ pub enum ChatError {
     ProviderNotSelected,
     InvalidSearchQuery,
     ToolTurnInvalid,
+    Web(String),
     AssetInvalid,
     AssetLimitExceeded,
     AssetNotFound,
@@ -106,6 +111,7 @@ impl ChatError {
             Self::ProviderNotSelected => 1006015,
             Self::InvalidSearchQuery => 1006016,
             Self::ToolTurnInvalid => 1006017,
+            Self::Web(_) => 1006022,
             Self::AssetInvalid => 1006018,
             Self::AssetLimitExceeded => 1006019,
             Self::AssetNotFound => 1006020,
@@ -133,6 +139,7 @@ impl ChatError {
             Self::ProviderNotSelected => "provider_not_selected",
             Self::InvalidSearchQuery => "invalid_search_query",
             Self::ToolTurnInvalid => "tool_turn_invalid",
+            Self::Web(_) => "web_unavailable",
             Self::AssetInvalid => "asset_invalid",
             Self::AssetLimitExceeded => "asset_limit_exceeded",
             Self::AssetNotFound => "asset_not_found",
@@ -142,13 +149,13 @@ impl ChatError {
         }
     }
 
-    /// Only `destination_changed` carries detail: the new fingerprint to accept and the host
-    /// name (no path, no credentials).
+    /// Only safe host-owned destination metadata or fixed web failure categories are exposed.
     pub fn detail(&self) -> Option<Value> {
         match self {
             Self::DestinationChanged { fingerprint, host } => {
                 Some(json!({"fingerprint": fingerprint, "host": host}))
             }
+            Self::Web(reason) => Some(json!({"reason": reason})),
             _ => None,
         }
     }
@@ -273,8 +280,8 @@ pub struct SendChatInput {
     pub client_request_id: String,
     #[serde(default)]
     pub accept_destination: Option<String>,
-    /// One to eight MCP tools chosen for this send only (D022/D075). Non-empty makes the turn a
-    /// non-streaming tool turn; nothing is remembered for the next send.
+    /// One to eight MCP tools chosen for this send only (D022/D075). The shared streaming
+    /// executor parks for exact approvals; nothing is authorized for the next send.
     #[serde(default)]
     pub tools: Vec<dgos_types::AiToolSelection>,
     /// Controlled asset ids attached to this message (V2 D133 §2). Validated against the account's
@@ -287,6 +294,8 @@ pub struct SendChatInput {
     pub authorized_skill_refs: Vec<dgos_types::AiSkillRef>,
     #[serde(default)]
     pub foundation: dgos_types::AiFoundationOptions,
+    #[serde(default)]
+    pub web_access: crate::web::WebAccess,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -302,6 +311,8 @@ pub struct RegenerateChatInput {
     pub skill_mode: ChatSkillMode,
     #[serde(default)]
     pub authorized_skill_refs: Vec<dgos_types::AiSkillRef>,
+    #[serde(default)]
+    pub web_access: crate::web::WebAccess,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -341,33 +352,40 @@ pub struct SendAck {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChatEvent {
     Started {
+        seq: u64,
         task_id: String,
         assistant_message_id: String,
     },
     Delta {
+        seq: u64,
         assistant_message_id: String,
         text: String,
     },
     /// Display only: never stored, logged, or sent back to the model (D072).
     ReasoningDelta {
+        seq: u64,
         assistant_message_id: String,
         text: String,
     },
     ToolProposal {
+        seq: u64,
         assistant_message_id: String,
         proposal: ChatToolProposal,
     },
-    Phase { task_id: String, assistant_message_id: String, phase: dgos_types::AiPhase },
-    Activity { task_id: String, assistant_message_id: String, step: ChatRunStep },
-    SummaryDone { task_id: String, assistant_message_id: String, summary: ChatSummary,
+    Phase { seq: u64, task_id: String, assistant_message_id: String, phase: dgos_types::AiPhase },
+    Activity { seq: u64, task_id: String, assistant_message_id: String, step: ChatRunStep },
+    ModelSegment { seq: u64, task_id: String, assistant_message_id: String, round: u32 },
+    SummaryDone { seq: u64, task_id: String, assistant_message_id: String, summary: ChatSummary,
         dispatched: bool, result_unknown: bool, audit_warning: Option<String> },
     Done {
+        seq: u64,
         message: ChatMessage,
         dispatched: bool,
         result_unknown: bool,
         audit_warning: Option<String>,
     },
     Error {
+        seq: u64,
         assistant_message_id: String,
         message: Option<ChatMessage>,
         error_code: String,
@@ -378,6 +396,20 @@ pub enum ChatEvent {
         audit_warning: Option<String>,
     },
 }
+
+impl ChatEvent {
+    fn sequence(&mut self) -> &mut u64 {
+        match self {
+            Self::Started { seq, .. } | Self::Delta { seq, .. } | Self::ReasoningDelta { seq, .. }
+            | Self::ToolProposal { seq, .. } | Self::Phase { seq, .. } | Self::Activity { seq, .. }
+            | Self::ModelSegment { seq, .. } | Self::SummaryDone { seq, .. }
+            | Self::Done { seq, .. } | Self::Error { seq, .. } => seq,
+        }
+    }
+
+    fn terminal(&self) -> bool { matches!(self, Self::Done { .. } | Self::Error { .. } | Self::SummaryDone { .. }) }
+}
+
 
 /// Where events go. `send` returns `false` once nobody can receive any more (the page is gone),
 /// which stops the generation and saves what was received.
@@ -404,6 +436,7 @@ struct Active {
     window: String,
     token: CancellationToken,
     reason: Mutex<Option<&'static str>>,
+    stream: Arc<Mutex<StreamState>>,
 }
 
 impl Active {
@@ -456,6 +489,7 @@ pub struct GenerationJob {
     revision: Option<i64>,
     pins: Vec<PinnedSkill>,
     skill_runtime: Option<crate::skill_runtime::SkillRuntime>,
+    web_runtime: Option<crate::web::WebRuntime>,
     blocked_effects: Vec<String>,
     summary: Option<continuous::SummaryPlan>,
     contexts: Vec<crate::foundation::ResolvedContext>,
@@ -501,6 +535,8 @@ pub struct ChatManager {
     tool_turns: Arc<Mutex<HashMap<String, Arc<ToolTurn>>>>,
     gate: MaintenanceGate,
     account_lease: Option<CancellationToken>,
+    web_vault: Option<Arc<dyn dgos_providers::ProviderCredentialVault>>,
+    web_credential_lock: Option<Arc<tokio::sync::Mutex<()>>>,
 }
 
 struct Prepared {
@@ -528,7 +564,59 @@ impl ChatManager {
             tool_turns: Arc::new(Mutex::new(HashMap::new())),
             gate,
             account_lease: None,
+            web_vault: None,
+            web_credential_lock: None,
         }
+    }
+
+    pub fn with_web_vault(mut self, vault: Arc<dyn dgos_providers::ProviderCredentialVault>) -> Self {
+        self.web_vault = Some(vault);
+        self
+    }
+
+    pub fn with_web_credential_lock(mut self, lock: Arc<tokio::sync::Mutex<()>>) -> Self {
+        self.web_credential_lock = Some(lock);
+        self
+    }
+
+    pub fn web_service(&self) -> std::result::Result<crate::web::WebService, String> {
+        let vault = self.web_vault.clone().ok_or("web_unavailable")?;
+        let mut service = crate::web::WebService::new(self.db.clone(), vault);
+        if let Some(lease) = &self.account_lease { service = service.with_account_lease(lease.clone()); }
+        if let Some(lock) = &self.web_credential_lock { service = service.with_credential_lock(lock.clone()); }
+        Ok(service)
+    }
+
+    pub async fn configure_web(&self, user: &str, session_id: &str, window: &str, api_key: Option<String>, remove: bool) -> Result<crate::web::WebStatus> {
+        self.check_lease()?;
+        self.repo.get_session(user, session_id).await?;
+        let _permit = self.gate.admit().map_err(|_| ChatError::GenerationInProgress)?;
+        let task = uuid::Uuid::new_v4().to_string();
+        let active = self.register(user, &task, session_id, window)?;
+        let _guard = ReleaseGuard { registry: self.active.clone(), task_id: task, entry: active.clone() };
+        let manager = self.clone();
+        let (user, session_id) = (user.to_owned(), session_id.to_owned());
+        // Native vault mutations are cancellation-safe owned work. Keep both reservations inside
+        // that work even if the IPC command future or its window disappears while awaiting it.
+        tokio::spawn(async move {
+            let (_guard, _permit) = (_guard, _permit);
+            let status = manager.web_service().map_err(ChatError::Web)?
+                .configure(&user, api_key, remove).await.map_err(ChatError::Web)?;
+            manager.check_lease()?;
+            if active.token.is_cancelled() { return Err(ChatError::Provider(DgosError::SessionInvalid.error_code())); }
+            manager.repo.get_session(&user, &session_id).await?;
+            manager.check_lease()?;
+            Ok(status)
+        }).await.map_err(|_| ChatError::Internal)?
+    }
+
+    async fn authorize_web(&self, user: &str, task: &str, access: crate::web::WebAccess) -> Result<Option<crate::web::WebRuntime>> {
+        self.check_lease()?;
+        if !access.search && !access.fetch { return Ok(None); }
+        let runtime = self.web_service().map_err(ChatError::Web)?
+            .runtime(user, task, access).await.map_err(ChatError::Web)?;
+        self.check_lease()?;
+        Ok(Some(runtime))
     }
 
     /// Host captures owner and irreversible lease atomically before its first await. A bound
@@ -576,6 +664,7 @@ impl ChatManager {
             window: window.to_owned(),
             token: self.account_lease.as_ref().map(CancellationToken::child_token).unwrap_or_default(),
             reason: Mutex::new(None),
+            stream: Arc::new(Mutex::new(StreamState::default())),
         });
         registry.insert(task_id.to_owned(), entry.clone());
         Ok(entry)
@@ -901,7 +990,7 @@ impl ChatManager {
             assets: &input.asset_ids,
         };
         if let Some(begun) = self.repo.find_replay(&probe).await? {
-            self.check_foundation_replay(user,&task_id,&input.foundation).await?;
+            self.check_foundation_replay(user, &task_id, &input.foundation, &input.web_access).await?;
             return Ok(replayed(task_id, begun));
         }
         if self.user_busy(user) {
@@ -947,11 +1036,12 @@ impl ChatManager {
             })
             .collect();
         let runtime = self.authorize_runtime(skills, user, skill_mode, &input.authorized_skill_refs).await?;
+        let web_runtime = self.authorize_web(user, &task_id, input.web_access.clone()).await?;
         let pins:Vec<PinnedSkill>=if let Some(runtime)=&runtime {runtime.pins().iter().map(|p|PinnedSkill{skill_id:p.skill_id.clone(),version_id:format!("{}@{}",p.skill_id,p.version),content_hash:p.content_hash.clone()}).collect()} else {prepared.skills.iter().map(|s|s.pin.clone()).collect()};
-        let (runtime, local_reserve) = Self::local_schema_bytes(runtime, &contexts)?;
+        let (runtime, local_reserve) = Self::local_schema_bytes(runtime, &contexts, web_runtime.as_ref())?;
         let summary = self.repo.summary(user, &input.session_id).await?;
         if let Some(summary) = &summary { history.rows.retain(|r| r.seq > summary.source_last_seq); }
-        let has_tools = !selected.is_empty() || runtime.is_some() || foundation::has_context_tools(&contexts);
+        let has_tools = !selected.is_empty() || runtime.is_some() || web_runtime.is_some() || foundation::has_context_tools(&contexts);
         let (policy, reserve) = if !has_tools {
             (HOST_POLICY, 0)
         } else {
@@ -994,7 +1084,7 @@ impl ChatManager {
         self.repo.recover_user_orphans(user).await?;
         let user_message_id = uuid::Uuid::new_v4().to_string();
         let assistant_message_id = uuid::Uuid::new_v4().to_string();
-        let foundation_fingerprint = foundation::foundation_fingerprint(&input.foundation)?;
+        let foundation_fingerprint = foundation::foundation_fingerprint(&input.foundation, &input.web_access)?;
         let begun = self
             .repo
             .begin_generation_with_metadata(&BeginGeneration {
@@ -1023,7 +1113,7 @@ impl ChatManager {
             }
         };
         if begun.replayed {
-            self.check_foundation_replay(user,&task_id,&input.foundation).await?;
+            self.check_foundation_replay(user, &task_id, &input.foundation, &input.web_access).await?;
             self.release(&task_id);
             return Ok(replayed(task_id, begun));
         }
@@ -1044,6 +1134,7 @@ impl ChatManager {
                 revision: Some(prepared.provider.config_revision),
                 pins,
                 skill_runtime: runtime,
+                web_runtime,
                 blocked_effects: Vec::new(),
                 summary: None,
                 contexts,
@@ -1110,7 +1201,7 @@ impl ChatManager {
             assets: &[],
         };
         if let Some(begun) = self.repo.find_replay(&probe).await? {
-            self.check_foundation_replay(user,&task_id,&input.foundation).await?;
+            self.check_foundation_replay(user, &task_id, &input.foundation, &input.web_access).await?;
             return Ok(replayed(task_id, begun));
         }
         let message = message.ok_or(ChatError::RequestIdConflict)?;
@@ -1139,9 +1230,10 @@ impl ChatManager {
         let contexts = self.resolve_contexts(user, &session_id, &input.foundation).await?;
         let inline = foundation::inline_context(&contexts, &prepared.model, &input.foundation.output)?;
         let runtime = self.authorize_runtime(skills, user, skill_mode, &input.authorized_skill_refs).await?;
+        let web_runtime = self.authorize_web(user, &task_id, input.web_access.clone()).await?;
         let pins: Vec<PinnedSkill> = runtime.as_ref().map(|runtime| runtime.pins().iter().map(|pin| PinnedSkill {skill_id:pin.skill_id.clone(),version_id:format!("{}@{}",pin.skill_id,pin.version),content_hash:pin.content_hash.clone()}).collect()).unwrap_or_else(||prepared.skills.iter().map(|skill|skill.pin.clone()).collect());
-        let has_tools = runtime.is_some() || foundation::has_context_tools(&contexts);
-        let (runtime, local_reserve) = Self::local_schema_bytes(runtime, &contexts)?;
+        let has_tools = runtime.is_some() || web_runtime.is_some() || foundation::has_context_tools(&contexts);
+        let (runtime, local_reserve) = Self::local_schema_bytes(runtime, &contexts, web_runtime.as_ref())?;
         // History ends before the question; the replaced reply is not part of the context.
         let history = self
             .repo
@@ -1178,7 +1270,7 @@ impl ChatManager {
         self.repo.recover_runs(Some(user)).await?;
         self.repo.recover_user_orphans(user).await?;
         let assistant_message_id = uuid::Uuid::new_v4().to_string();
-        let foundation_fingerprint = foundation::foundation_fingerprint(&input.foundation)?;
+        let foundation_fingerprint = foundation::foundation_fingerprint(&input.foundation, &input.web_access)?;
         let begun = self
             .repo
             .begin_generation_with_metadata(&BeginGeneration {
@@ -1207,7 +1299,7 @@ impl ChatManager {
             }
         };
         if begun.replayed {
-            self.check_foundation_replay(user,&task_id,&input.foundation).await?;
+            self.check_foundation_replay(user, &task_id, &input.foundation, &input.web_access).await?;
             self.release(&task_id);
             return Ok(replayed(task_id, begun));
         }
@@ -1228,6 +1320,7 @@ impl ChatManager {
                 revision: Some(prepared.provider.config_revision),
                 pins,
                 skill_runtime: runtime,
+                web_runtime,
                 blocked_effects: Vec::new(),
                 summary: None,
                 contexts,
@@ -1295,33 +1388,40 @@ impl ChatManager {
     /// Drive exactly one admitted generation and retain a bounded restart checkpoint.
     pub async fn run_generation(&self, providers: &ProviderManager, job: GenerationJob, sink: &dyn ChatSink) {
         use crate::execution::ExecutionGuard;
+        let ordered = OrderedChatSink::new(sink, job.active.stream.clone());
+        let sink: &dyn ChatSink = &ordered;
         let GenerationJob { task_id,user,assistant_message_id,provider_id,model_id,revision,pins,
             summary,request,plan,active,contexts,output,inline_receipts,source_runs,_guard,_permit,.. } = job;
         if plan.is_some() {
-            self.finish(&user,&task_id,&assistant_message_id,String::new(),End::Tool("tool_turn_misrouted".into()),sink).await;
+            self.finish(providers,&user,&task_id,&assistant_message_id,String::new(),End::Tool("tool_turn_misrouted".into()),sink).await;
             return;
         }
-        if !sink.send(ChatEvent::Started{task_id:task_id.clone(),assistant_message_id:assistant_message_id.clone()}) { active.stop("task_cancelled"); }
+        if !sink.send(ChatEvent::Started { seq: 0, task_id:task_id.clone(),assistant_message_id:assistant_message_id.clone() }) { active.stop("task_cancelled"); }
         let checkpoint = CheckpointWriter::new(self.repo.clone(),user.clone(),task_id.clone());
         let guard = ChatStepGuard{manager:self,providers,user:&user,task:&task_id,assistant:&assistant_message_id,
             provider:&provider_id,model:&model_id,revision,active:&active,pins:&pins,blocked_effects:&[],contexts:&contexts,source_runs:&source_runs,sink};
         let forward = |event| {
             let sent = match event {
-                crate::execution::CoreEvent::Delta(text) => { checkpoint.push(&text); sink.send(ChatEvent::Delta{assistant_message_id:assistant_message_id.clone(),text}) },
-                crate::execution::CoreEvent::ReasoningDelta(text) => sink.send(ChatEvent::ReasoningDelta{assistant_message_id:assistant_message_id.clone(),text}),
-                crate::execution::CoreEvent::Phase(phase) => sink.send(ChatEvent::Phase{task_id:task_id.clone(),assistant_message_id:assistant_message_id.clone(),phase}),
+                crate::execution::CoreEvent::Delta(text) => { checkpoint.push(&text); sink.send(ChatEvent::Delta { seq: 0, assistant_message_id:assistant_message_id.clone(),text }) },
+                crate::execution::CoreEvent::ReasoningDelta(text) => sink.send(ChatEvent::ReasoningDelta { seq: 0, assistant_message_id:assistant_message_id.clone(),text }),
+                crate::execution::CoreEvent::Phase(phase) => sink.send(ChatEvent::Phase { seq: 0, task_id:task_id.clone(),assistant_message_id:assistant_message_id.clone(),phase }),
+                crate::execution::CoreEvent::ModelSegment(round) => {
+                    checkpoint.begin_segment();
+                    sink.send(ChatEvent::ModelSegment { seq: 0, task_id: task_id.clone(), assistant_message_id: assistant_message_id.clone(), round })
+                },
             };
             if !sent { active.stop("task_cancelled"); } sent
         };
         let provenance=ExecutionProvenance{caller:BuiltinCaller::Workbench,request_id:task_id.clone()};
         let binding=crate::execution::StepBinding{user:&user,provider_id:&provider_id,model_id:&model_id,revision,
             provenance:&provenance,cancellation:&active.token,deadline:tokio::time::Instant::now()+MAX_DURATION,guard:&guard,sink:&forward};
-        let admitted=guard.before_model().await;
+        let summary_valid=match summary.as_ref() {Some(plan)=>self.revalidate_summary(&user,&task_id,plan).await,None=>Ok(())};
+        let admitted=match summary_valid {Ok(())=>guard.before_model().await,Err(error)=>Err(error)};
         let mut evidence=TerminalEvidence::default();
         let (content,mut end)=match admitted {
             Err(error)=>(String::new(),End::Tool(error)),
             Ok(())=>{
-                sink.send(ChatEvent::Phase{task_id:task_id.clone(),assistant_message_id:assistant_message_id.clone(),phase:dgos_types::AiPhase::Model});
+                sink.send(ChatEvent::Phase { seq: 0, task_id:task_id.clone(),assistant_message_id:assistant_message_id.clone(),phase:dgos_types::AiPhase::Model });
                 let drained=crate::execution::drain_stream(providers,&binding,request).await;
                 evidence.dispatched=drained.dispatched;
                 evidence.audit_warning=drained.audit_warning.then(||"provider_audit_warning".into());
@@ -1346,14 +1446,15 @@ impl ChatManager {
         if checkpoint.flush().await.is_err(){end=End::Tool("persistence_failed".into());evidence.audit_warning=Some("checkpoint_persistence_failed".into());}
         if evidence.audit_warning.is_some() && matches!(end,End::Completed{..}) { end=End::Tool("provider_audit_warning".into()); }
         if let Some(plan)=summary {
-            self.finish_summary(&user,&task_id,&assistant_message_id,&provider_id,&model_id,plan,content,end,evidence,&active,sink).await;
+            self.finish_summary(providers,&user,&task_id,&assistant_message_id,&provider_id,&model_id,plan,content,end,evidence,&active,sink).await;
         } else {
-            self.finish_evidenced(&user,&task_id,&assistant_message_id,content,end,evidence,sink).await;
+            self.finish_evidenced(providers,&user,&task_id,&assistant_message_id,content,end,evidence,sink).await;
         }
     }
 
     async fn finish(
         &self,
+        providers: &ProviderManager,
         user: &str,
         task_id: &str,
         assistant_message_id: &str,
@@ -1361,10 +1462,16 @@ impl ChatManager {
         end: End,
         sink: &dyn ChatSink,
     ) {
-        self.finish_evidenced(user,task_id,assistant_message_id,buffer,end,TerminalEvidence::default(),sink).await;
+        self.finish_evidenced(providers,user,task_id,assistant_message_id,buffer,end,TerminalEvidence::default(),sink).await;
     }
 
-    async fn finish_evidenced(&self,user:&str,task_id:&str,assistant_message_id:&str,buffer:String,end:End,evidence:TerminalEvidence,sink:&dyn ChatSink) {
+    async fn finish_evidenced(&self,providers:&ProviderManager,user:&str,task_id:&str,assistant_message_id:&str,buffer:String,mut end:End,mut evidence:TerminalEvidence,sink:&dyn ChatSink) {
+        // Stream/future Drop may own a final observed-usage settlement. Its authoritative
+        // write must finish before the run terminal can make those facts immutable.
+        if !providers.settle_chat_usage(user,task_id).await {
+            evidence.audit_warning.get_or_insert_with(||"provider_audit_warning".into());
+            if matches!(end,End::Completed{..}) {end=End::Tool("provider_audit_warning".into());}
+        }
         let mut outcome = outcome(&buffer, end);
         if evidence.tokens.is_some() { outcome.tokens=evidence.tokens; }
         let write = || async {
@@ -1398,7 +1505,7 @@ impl ChatManager {
         let mut event = match result {
             Ok(Finalized::Done { message, discarded }) => {
                 if outcome.message_status == "completed" && !discarded {
-                    ChatEvent::Done { dispatched:message.dispatched,result_unknown:message.result_unknown,audit_warning:message.audit_warning.clone(),message: *message }
+                    ChatEvent::Done { seq: 0, dispatched:message.dispatched,result_unknown:message.result_unknown,audit_warning:message.audit_warning.clone(),message: *message }
                 } else {
                     let unknown = evidence.result_unknown || (!discarded && message.result_unknown);
                     error_event(
@@ -1412,7 +1519,7 @@ impl ChatManager {
             }
             Ok(Finalized::AlreadyFinalized) => {
                 match self.repo.get_message(user, assistant_message_id).await {
-                    Ok(message) if message.status == "completed" => ChatEvent::Done { dispatched:message.dispatched,result_unknown:message.result_unknown,audit_warning:message.audit_warning.clone(),message },
+                    Ok(message) if message.status == "completed" => ChatEvent::Done { seq: 0, dispatched:message.dispatched,result_unknown:message.result_unknown,audit_warning:message.audit_warning.clone(),message },
                     Ok(message) => {
                         let code = message.error_code.clone().unwrap_or_default();
                         let unknown = message.result_unknown;
@@ -1502,16 +1609,14 @@ fn error_event(
     let provider_code = error_code
         .strip_prefix("provider_")
         .and_then(|code| code.parse::<u32>().ok());
-    ChatEvent::Error {
-        assistant_message_id: assistant_message_id.to_owned(),
-        message,
-        error_code,
-        provider_code,
-        result_unknown,
-        regeneration_discarded,
-        dispatched: false,
-        audit_warning: None,
-    }
+    ChatEvent::Error { seq: 0, assistant_message_id: assistant_message_id.to_owned(),
+    message,
+    error_code,
+    provider_code,
+    result_unknown,
+    regeneration_discarded,
+    dispatched: false,
+    audit_warning: None, }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1821,6 +1926,11 @@ async fn resolve_model(
     if provider.user_id != user {
         return Err(ChatError::ProviderNotSelected);
     }
+    validate_chat_model(&model)?;
+    Ok((provider, model))
+}
+
+fn validate_chat_model(model:&Model)->Result<()> {
     let unsupported = || ChatError::Provider(DgosError::RequestNotSupported.error_code());
     if model.model_type != "text-generation" || model.capabilities.streaming == dgos_types::model_catalog::Hint::Unsupported {
         return Err(unsupported());
@@ -1831,7 +1941,7 @@ async fn resolve_model(
     {
         return Err(unsupported());
     }
-    Ok((provider, model))
+    Ok(())
 }
 
 pub(super) fn validate_generation_profile(provider: &Provider, generation: &dgos_types::GenerationParameters) -> Result<()> {
@@ -2229,7 +2339,39 @@ mod tests {
     }
 
     #[test]
-    fn only_destination_changed_carries_detail() {
+    fn ordered_events_are_contiguous_and_terminal_is_immutable() {
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let output = received.clone();
+        let sink: Arc<dyn ChatSink> = Arc::new(move |event| { output.lock().unwrap().push(event); true });
+        let ordered = OrderedChatSink::new(sink, Arc::new(Mutex::new(StreamState::default())));
+        assert!(ordered.send(ChatEvent::Started { seq: 0, task_id: "run".into(), assistant_message_id: "answer".into() }));
+        assert!(ordered.send(ChatEvent::ModelSegment { seq: 0, task_id: "run".into(), assistant_message_id: "answer".into(), round: 1 }));
+        assert!(ordered.send(error_event("answer", None, "task_cancelled".into(), false, false)));
+        assert!(!ordered.send(ChatEvent::Delta { seq: 0, assistant_message_id: "answer".into(), text: "late".into() }));
+        assert!(!ordered.send(error_event("answer", None, "different_terminal".into(), false, false)));
+        let events = received.lock().unwrap();
+        assert_eq!(events.len(), 3);
+        for (index, event) in events.iter().enumerate() {
+            assert_eq!(serde_json::to_value(event).unwrap()["seq"], index + 1);
+        }
+    }
+
+    #[test]
+    fn web_permission_defaults_off_and_is_strictly_request_scoped() {
+        let send: SendChatInput = serde_json::from_value(json!({"session_id":"s","content":"c","client_request_id":"i"})).unwrap();
+        let regenerate: RegenerateChatInput = serde_json::from_value(json!({"message_id":"m","client_request_id":"i"})).unwrap();
+        let continuation: ContinueChatRunInput = serde_json::from_value(json!({"source_task_id":"t","intent":"next","client_request_id":"i"})).unwrap();
+        assert!(!send.web_access.search && !send.web_access.fetch);
+        assert!(!regenerate.web_access.search && !regenerate.web_access.fetch);
+        assert!(!continuation.web_access.search && !continuation.web_access.fetch);
+        assert!(serde_json::from_value::<SendChatInput>(json!({"session_id":"s","content":"c","client_request_id":"i","web_access":{"search":true,"admin":true}})).is_err());
+        let options = dgos_types::AiFoundationOptions::default();
+        assert_ne!(foundation::foundation_fingerprint(&options, &Default::default()).unwrap(),
+            foundation::foundation_fingerprint(&options, &crate::web::WebAccess { search: true, fetch: false }).unwrap());
+    }
+
+    #[test]
+    fn only_safe_destination_or_web_metadata_carries_detail() {
         let changed = ChatError::DestinationChanged {
             fingerprint: "fp".into(),
             host: "h".into(),
@@ -2237,6 +2379,7 @@ mod tests {
         assert_eq!(changed.code(), 1006012);
         assert_eq!(changed.detail().unwrap()["host"], "h");
         assert!(ChatError::SessionNotFound.detail().is_none());
+        assert_eq!(ChatError::Web("web_search_key_required".into()).detail().unwrap()["reason"], "web_search_key_required");
         assert_eq!(
             ChatError::from(DgosError::StreamInterrupted).code(),
             1001007

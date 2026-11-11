@@ -78,6 +78,7 @@ async fn public_executor_preserves_provider_auth_rejection_without_unknown_or_to
         let result = dgos_workbench::AiExecutor::run(&f.providers, &f.mcp, request, &guard, &|_| true).await;
         assert_eq!(result.error.as_deref(), Some("provider_1001002"));
         assert!(!result.result_unknown);
+        assert_eq!(result.total_tokens,None,"an execution-known authentication rejection does not report a known zero total");
         assert_eq!(guard.approvals.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
     assert!(f.mcp.list_usage_logs("alice", None, None).await.unwrap().is_empty());

@@ -303,7 +303,7 @@ async fn session(fx: &Fx, user: &str) -> ChatSession {
 }
 
 fn send_input(session: &str, content: &str) -> SendChatInput {
-    SendChatInput { skill_mode: Default::default(), authorized_skill_refs: Vec::new(), session_id: session.into(),
+    SendChatInput { web_access: Default::default(), skill_mode: Default::default(), authorized_skill_refs: Vec::new(), session_id: session.into(),
     foundation: Default::default(),
     content: content.into(),
     client_request_id: uuid::Uuid::new_v4().to_string(),
@@ -340,13 +340,11 @@ async fn regenerate(
             &fx.skills,
             user,
             "main",
-            RegenerateChatInput {
-                skill_mode: Default::default(), authorized_skill_refs: Vec::new(),
-                foundation: Default::default(),
-                message_id: message_id.into(),
-                client_request_id: request_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-                accept_destination: None,
-            },
+            RegenerateChatInput { web_access: Default::default(), skill_mode: Default::default(), authorized_skill_refs: Vec::new(),
+            foundation: Default::default(),
+            message_id: message_id.into(),
+            client_request_id: request_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            accept_destination: None, },
         )
         .await?;
     let sink = Collect::default();
@@ -607,11 +605,17 @@ async fn a_cut_connection_is_interrupted_with_content_and_failed_without() {
     let (message, code, ..) = expect_error(terminal(&events));
     assert_eq!(message.as_ref().unwrap().status, "failed");
     assert_eq!(code, "provider_1001007");
+    let failed_usage=fx.chat.get_usage(ALICE,&s.id).await.unwrap();
+    assert_eq!((failed_usage.call_count,failed_usage.reported_count,failed_usage.pending_count),(2,0,0));
+    assert_eq!(failed_usage.total_tokens,None);assert!(failed_usage.partial);
     // Neither failed turn enters later context.
     fx.up.script(reply("fine"));
     turn(&fx, ALICE, &s.id, "q3").await;
     let body = fx.up.body(2)["messages"].to_string();
     assert!(!body.contains("some text") && !body.contains("\"q1\"") && !body.contains("\"q2\""));
+    let mixed=fx.chat.get_usage(ALICE,&s.id).await.unwrap();
+    assert_eq!((mixed.call_count,mixed.reported_count,mixed.total_tokens),(3,1,Some(18)));
+    assert_eq!(mixed.coverage.total,1);assert!(mixed.partial,"a later success cannot turn unreported failures into zero-cost calls");
 }
 
 #[tokio::test]
@@ -765,7 +769,7 @@ async fn repeats_and_concurrent_sends_never_reach_the_upstream_twice() {
     let conflict = start(
         &fx,
         ALICE,
-        SendChatInput { skill_mode: Default::default(), authorized_skill_refs: Vec::new(), content: "different".into(),
+        SendChatInput { web_access: Default::default(), skill_mode: Default::default(), authorized_skill_refs: Vec::new(), content: "different".into(),
         ..input.clone() },
     )
     .await;
@@ -785,7 +789,7 @@ async fn repeats_and_concurrent_sends_never_reach_the_upstream_twice() {
     let not_a_uuid = start(
         &fx,
         ALICE,
-        SendChatInput { skill_mode: Default::default(), authorized_skill_refs: Vec::new(), client_request_id: "nope".into(),
+        SendChatInput { web_access: Default::default(), skill_mode: Default::default(), authorized_skill_refs: Vec::new(), client_request_id: "nope".into(),
         ..send_input(&s.id, "x") },
     )
     .await;
@@ -1032,7 +1036,7 @@ async fn each_send_rereads_the_provider_and_blocks_a_changed_destination() {
     let confirmed = start(
         &fx,
         ALICE,
-        SendChatInput { skill_mode: Default::default(), authorized_skill_refs: Vec::new(), accept_destination: Some(fingerprint.clone()),
+        SendChatInput { web_access: Default::default(), skill_mode: Default::default(), authorized_skill_refs: Vec::new(), accept_destination: Some(fingerprint.clone()),
         ..send_input(&s.id, "to the new host") },
     )
     .await
@@ -1348,13 +1352,11 @@ async fn restart_recovery_finalizes_unfinished_generations_without_resending() {
             &fx.skills,
             ALICE,
             "main",
-            RegenerateChatInput {
-                skill_mode: Default::default(), authorized_skill_refs: Vec::new(),
-                foundation: Default::default(),
-                message_id: ack.assistant_message_id.clone(),
-                client_request_id: uuid::Uuid::new_v4().to_string(),
-                accept_destination: None,
-            },
+            RegenerateChatInput { web_access: Default::default(), skill_mode: Default::default(), authorized_skill_refs: Vec::new(),
+            foundation: Default::default(),
+            message_id: ack.assistant_message_id.clone(),
+            client_request_id: uuid::Uuid::new_v4().to_string(),
+            accept_destination: None, },
         )
         .await
         .unwrap();
@@ -1840,7 +1842,7 @@ async fn context_inspection_is_read_only_and_discloses_attachment_refusal() {
     let asset=assets.import(ALICE,dgos_workbench::ChatAssetImportInput{name:"large-context.txt".into(),mime:"text/plain".into(),base64:{use base64::Engine as _;base64::engine::general_purpose::STANDARD.encode(vec![b'x';24*1024])}}).await.unwrap();
     let mcp=dgos_mcp::McpManager::new(fx.db.clone());
     let before=scalar(&fx.db,"SELECT COUNT(*) FROM usage_logs").await;
-    let budget=fx.chat.inspect_context(&fx.providers,&fx.skills,&mcp,ALICE,dgos_workbench::InspectChatContextInput{session_id:s.id.clone(),content:"analyze source".into(),asset_ids:vec![asset.id],tools:vec![],skill_mode:Default::default(),authorized_skill_refs:vec![],foundation:Default::default()}).await.unwrap();
+    let budget=fx.chat.inspect_context(&fx.providers,&fx.skills,&mcp,ALICE,dgos_workbench::InspectChatContextInput { web_access: Default::default(), session_id:s.id.clone(),content:"analyze source".into(),asset_ids:vec![asset.id],tools:vec![],skill_mode:Default::default(),authorized_skill_refs:vec![],foundation:Default::default() }).await.unwrap();
     assert!(!budget.can_send);assert_eq!(budget.rejection.as_deref(),Some("context_too_long"));assert_eq!(budget.host_text_limit_bytes,24*1024);
     assert_eq!(fx.up.hits(),0);assert!(messages(&fx,ALICE,&s.id).await.is_empty());assert_eq!(scalar(&fx.db,"SELECT COUNT(*) FROM usage_logs").await,before);
 }
@@ -1923,7 +1925,7 @@ async fn foundation_deleted_source_blocks_admitted_send_and_regeneration() {
     let sink=Collect::default();fx.chat.run_generation(&fx.providers,sent.job.unwrap(),&sink).await;
     assert!(matches!(terminal(&sink.take()),ChatEvent::Error{..}));assert_eq!(fx.up.hits(),1);
     let mut foundation=dgos_types::AiFoundationOptions::default();foundation.context_refs=vec![foundation_reference(&resource)];
-    let result=fx.chat.regenerate(&fx.providers,&fx.skills,ALICE,"main",RegenerateChatInput{message_id:ack.assistant_message_id,client_request_id:uuid::Uuid::new_v4().to_string(),accept_destination:None,foundation,skill_mode:Default::default(),authorized_skill_refs:vec![]}).await;
+    let result=fx.chat.regenerate(&fx.providers,&fx.skills,ALICE,"main",RegenerateChatInput { web_access: Default::default(), message_id:ack.assistant_message_id,client_request_id:uuid::Uuid::new_v4().to_string(),accept_destination:None,foundation,skill_mode:Default::default(),authorized_skill_refs:vec![] }).await;
     assert!(result.is_err());assert_eq!(fx.up.hits(),1);
 }
 
@@ -1934,15 +1936,15 @@ async fn foundation_inspect_and_continue_cannot_reuse_deleted_source_coverage() 
     let resource=foundation_resource(&fx,&s.id,"selected context").await;
     let mut foundation=dgos_types::AiFoundationOptions::default();foundation.context_refs=vec![foundation_reference(&resource)];
     let mcp=dgos_mcp::McpManager::new(fx.db.clone());
-    let budget=fx.chat.inspect_context(&fx.providers,&fx.skills,&mcp,ALICE,dgos_workbench::InspectChatContextInput{session_id:s.id.clone(),content:"read source".into(),asset_ids:vec![],tools:vec![],skill_mode:Default::default(),authorized_skill_refs:vec![],foundation:foundation.clone()}).await.unwrap();
+    let budget=fx.chat.inspect_context(&fx.providers,&fx.skills,&mcp,ALICE,dgos_workbench::InspectChatContextInput { web_access: Default::default(), session_id:s.id.clone(),content:"read source".into(),asset_ids:vec![],tools:vec![],skill_mode:Default::default(),authorized_skill_refs:vec![],foundation:foundation.clone() }).await.unwrap();
     assert!(budget.can_send);assert!(budget.text_bytes>"read source".len());assert_eq!(fx.up.hits(),0);
     let mut input=send_input(&s.id,"read source");input.foundation=foundation.clone();fx.up.script(reply("retained progress"));
     let sent=start(&fx,ALICE,input).await.unwrap();let task=sent.ack.task_id.clone();let sink=Collect::default();
     fx.chat.run_generation(&fx.providers,sent.job.unwrap(),&sink).await;
     assert!(fx.chat.delete_ai_resource(ALICE,&s.id,&resource.id).await.unwrap());
-    let continuation=fx.chat.continue_run(&fx.providers,&fx.skills,&mcp,ALICE,"main",dgos_workbench::ContinueChatRunInput{source_task_id:task,client_request_id:uuid::Uuid::new_v4().to_string(),intent:"continue with prior progress".into(),accept_destination:None,tools:vec![],skill_mode:Default::default(),authorized_skill_refs:vec![],foundation:Default::default()}).await;
+    let continuation=fx.chat.continue_run(&fx.providers,&fx.skills,&mcp,ALICE,"main",dgos_workbench::ContinueChatRunInput { web_access: Default::default(), source_task_id:task,client_request_id:uuid::Uuid::new_v4().to_string(),intent:"continue with prior progress".into(),accept_destination:None,tools:vec![],skill_mode:Default::default(),authorized_skill_refs:vec![],foundation:Default::default() }).await;
     assert!(continuation.is_err());assert_eq!(fx.up.hits(),1);
-    let inspect=fx.chat.inspect_context(&fx.providers,&fx.skills,&mcp,ALICE,dgos_workbench::InspectChatContextInput{session_id:s.id,content:"read source".into(),asset_ids:vec![],tools:vec![],skill_mode:Default::default(),authorized_skill_refs:vec![],foundation}).await;
+    let inspect=fx.chat.inspect_context(&fx.providers,&fx.skills,&mcp,ALICE,dgos_workbench::InspectChatContextInput { web_access: Default::default(), session_id:s.id,content:"read source".into(),asset_ids:vec![],tools:vec![],skill_mode:Default::default(),authorized_skill_refs:vec![],foundation }).await;
     assert!(inspect.is_err());assert_eq!(fx.up.hits(),1);
 }
 
@@ -1952,7 +1954,7 @@ async fn foundation_regeneration_enforces_explicit_output_contract_without_repai
     let (ack,_)=turn(&fx,ALICE,&s.id,"question").await;
     let mut foundation=dgos_types::AiFoundationOptions::default();foundation.output=dgos_types::AiOutputContract::JsonSchema{schema:json!({"type":"object","required":["value"]})};
     fx.up.script(reply("not JSON"));
-    let sent=fx.chat.regenerate(&fx.providers,&fx.skills,ALICE,"main",RegenerateChatInput{message_id:ack.assistant_message_id.clone(),client_request_id:uuid::Uuid::new_v4().to_string(),accept_destination:None,foundation,skill_mode:Default::default(),authorized_skill_refs:vec![]}).await.unwrap();
+    let sent=fx.chat.regenerate(&fx.providers,&fx.skills,ALICE,"main",RegenerateChatInput { web_access: Default::default(), message_id:ack.assistant_message_id.clone(),client_request_id:uuid::Uuid::new_v4().to_string(),accept_destination:None,foundation,skill_mode:Default::default(),authorized_skill_refs:vec![] }).await.unwrap();
     let sink=Collect::default();fx.chat.run_generation(&fx.providers,sent.job.unwrap(),&sink).await;
     let events=sink.take();assert_eq!(expect_error(terminal(&events)).1,"output_validation_failed");
     assert_eq!(fx.up.hits(),2);assert!(messages(&fx,ALICE,&s.id).await.iter().any(|message|message.id==ack.assistant_message_id&&message.content=="original"));
@@ -2040,4 +2042,183 @@ async fn a_new_summary_recovers_abandoned_summary_admission() {
     assert_eq!(previous.status, "interrupted");
     assert_eq!(fx.up.hits(), 1, "recovering an abandoned summary never bills another call");
     drop(next);
+}
+
+async fn inspect_budget(fx:&Fx,session:&str)->dgos_workbench::ChatContextBudget {
+    let mcp=dgos_mcp::McpManager::new(fx.db.clone());
+    fx.chat.inspect_context(&fx.providers,&fx.skills,&mcp,ALICE,serde_json::from_value(json!({"session_id":session,"content":"next question"})).unwrap()).await.unwrap()
+}
+
+#[tokio::test]
+async fn session_usage_distinguishes_empty_explicit_zero_unknown_and_receipt_replay() {
+    let fx=fx().await;let s=session(&fx,ALICE).await;
+    let empty=fx.chat.get_usage(ALICE,&s.id).await.unwrap();
+    assert_eq!(empty.total_tokens,Some(0));assert_eq!(empty.call_count,0);
+    assert_eq!(empty.input_tokens,None);assert_eq!(empty.duration_ms,None);
+    let request=send_input(&s.id,"explicit zero is a report");
+    fx.up.script(vec![delta("zero billed answer"),finish(),sse(json!({"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":0}}})),done()]);
+    let sent=start(&fx,ALICE,request.clone()).await.unwrap();let sink=Collect::default();
+    fx.chat.run_generation(&fx.providers,sent.job.unwrap(),&sink).await;
+    let events=sink.take();let ChatEvent::Done{message,..}=terminal(&events)else{panic!("done")};
+    assert_eq!(message.total_tokens,Some(0),"explicit zero must survive the host terminal");
+    let zero=fx.chat.get_usage(ALICE,&s.id).await.unwrap();
+    assert_eq!((zero.call_count,zero.reported_count,zero.pending_count),(1,1,0));
+    assert_eq!((zero.total_tokens,zero.input_tokens,zero.output_tokens),(Some(0),Some(0),Some(0)));
+    assert_eq!(zero.cache_read_tokens,Some(0));assert_eq!(zero.reasoning_tokens,Some(0));
+    assert_eq!(zero.cache_hit_rate,None,"a zero input denominator has no hit rate");
+    assert!(zero.duration_ms.is_some());
+    let replay=start(&fx,ALICE,request).await.unwrap();assert!(replay.ack.replayed&&replay.job.is_none());
+    let replayed=fx.chat.get_usage(ALICE,&s.id).await.unwrap();
+    assert_eq!(serde_json::to_value(replayed).unwrap(),serde_json::to_value(zero).unwrap());
+    let unknown_session=session(&fx,ALICE).await;
+    fx.up.script(vec![delta("answer without usage"),finish(),done()]);
+    let (_,events)=turn(&fx,ALICE,&unknown_session.id,"unknown is not zero").await;
+    let ChatEvent::Done{message,..}=terminal(&events)else{panic!("done")};assert_eq!(message.total_tokens,None);
+    let unknown=fx.chat.get_usage(ALICE,&unknown_session.id).await.unwrap();
+    assert_eq!((unknown.call_count,unknown.reported_count),(1,0));assert_eq!(unknown.total_tokens,None);assert!(unknown.partial);
+    let partial_session=session(&fx,ALICE).await;
+    fx.up.script(vec![delta("partial usage answer"),finish(),sse(json!({"choices":[],"usage":{"prompt_tokens":0}})),done()]);
+    let (_,events)=turn(&fx,ALICE,&partial_session.id,"only input presence is known").await;
+    let ChatEvent::Done{message,..}=terminal(&events)else{panic!("done")};assert_eq!(message.total_tokens,None);
+    let partial=fx.chat.get_usage(ALICE,&partial_session.id).await.unwrap();
+    assert_eq!((partial.input_tokens,partial.output_tokens,partial.total_tokens),(Some(0),None,None));
+    assert_eq!((partial.coverage.input,partial.coverage.output,partial.coverage.total),(1,0,0));assert!(partial.partial);
+    assert_eq!(fx.chat.get_usage(BOB,&s.id).await.err(),Some(ChatError::SessionNotFound));
+    let lease=tokio_util::sync::CancellationToken::new();let bound=fx.chat.with_account_lease(lease.clone());lease.cancel();
+    assert!(bound.get_usage(ALICE,&s.id).await.is_err());
+    assert_eq!(fx.up.hits(),3,"queries and replay never dispatch");
+}
+
+#[tokio::test]
+async fn summary_eligibility_is_host_owned_current_and_read_only() {
+    let fx=fx().await;let s=session(&fx,ALICE).await;
+    let empty=inspect_budget(&fx,&s.id).await;assert!(!empty.can_summarize);assert_eq!(empty.summary_unavailable_reason.as_deref(),Some("no_history"));
+    fx.up.script(reply("confirmed source answer"));turn(&fx,ALICE,&s.id,"source question").await;
+    let eligible=inspect_budget(&fx,&s.id).await;assert!(eligible.can_summarize);assert!(eligible.summary_unavailable_reason.is_none());
+    let other=session(&fx,ALICE).await;let parked=start(&fx,ALICE,send_input(&other.id,"not dispatched")).await.unwrap();
+    let busy=inspect_budget(&fx,&s.id).await;assert!(!busy.can_summarize);assert_eq!(busy.summary_unavailable_reason.as_deref(),Some("busy"));
+    drop(parked);fx.chat.recover_interrupted().await.unwrap();
+    fx.providers.toggle_provider(&fx.provider_id,false,ALICE).await.unwrap();
+    let unavailable=inspect_budget(&fx,&s.id).await;assert!(!unavailable.can_summarize);assert_eq!(unavailable.summary_unavailable_reason.as_deref(),Some("model_unavailable"));assert!(!unavailable.can_send);
+    fx.providers.toggle_provider(&fx.provider_id,true,ALICE).await.unwrap();
+    assert_eq!(fx.up.hits(),1,"eligibility reads cannot call the model");
+    fx.up.script(reply("Facts: confirmed source. Open tasks: next question."));
+    let input=dgos_workbench::SummarizeChatContextInput{session_id:s.id.clone(),client_request_id:uuid::Uuid::new_v4().to_string(),confirmed:true,accept_destination:None};
+    let sent=fx.chat.summarize_context(&fx.providers,&fx.skills,ALICE,"main",input.clone()).await.unwrap();let sink=Collect::default();
+    fx.chat.run_generation(&fx.providers,sent.job.unwrap(),&sink).await;
+    assert!(sink.take().iter().any(|event|matches!(event,ChatEvent::SummaryDone{..})));
+    let covered=inspect_budget(&fx,&s.id).await;assert!(!covered.can_summarize);assert_eq!(covered.summary_unavailable_reason.as_deref(),Some("no_history"));
+    let usage=fx.chat.get_usage(ALICE,&s.id).await.unwrap();assert_eq!((usage.call_count,usage.total_tokens),(2,Some(36)),"summary is a real additional request");
+    let replay=fx.chat.summarize_context(&fx.providers,&fx.skills,ALICE,"main",input).await.unwrap();assert!(replay.ack.replayed&&replay.job.is_none());
+    assert_eq!(fx.chat.get_usage(ALICE,&s.id).await.unwrap().call_count,2);
+    fx.up.script(reply("new completed answer"));turn(&fx,ALICE,&s.id,"new history after compression").await;
+    assert!(inspect_budget(&fx,&s.id).await.can_summarize,"new complete history restores eligibility");
+    assert_eq!(messages(&fx,ALICE,&s.id).await.len(),4,"summary keeps original conversation rows");
+    assert_eq!(fx.up.hits(),3);
+}
+
+#[tokio::test]
+async fn summary_revalidates_unresolved_state_before_dispatch_without_run_page_limit() {
+    let fx=fx().await;let s=session(&fx,ALICE).await;
+    fx.up.script(reply("source result"));turn(&fx,ALICE,&s.id,"source question").await;
+    assert!(inspect_budget(&fx,&s.id).await.can_summarize);
+    let request=||dgos_workbench::SummarizeChatContextInput{session_id:s.id.clone(),client_request_id:uuid::Uuid::new_v4().to_string(),confirmed:true,accept_destination:None};
+    let pending=fx.chat.summarize_context(&fx.providers,&fx.skills,ALICE,"main",request()).await.unwrap();
+    let repo=ChatRepository::new(fx.db.clone());
+    let unresolved=uuid::Uuid::new_v4().to_string();
+    repo.begin_summary_run(ALICE,&s.id,&unresolved,"interrupted-tool-source","fixture").await.unwrap();
+    repo.record_step(ALICE,&unresolved,"tool","tool","dispatched",true,true,Some(json!({"call_id":"unresolved","effect_key":"never-replay"}))).await.unwrap();
+    repo.seal_run(ALICE,&unresolved,"interrupted",true,true,None,None).await.unwrap();
+    let sink=Collect::default();fx.chat.run_generation(&fx.providers,pending.job.unwrap(),&sink).await;
+    assert!(sink.take().iter().any(|event|matches!(event,ChatEvent::Error{error_code,..}if error_code=="tool_result_unknown")));
+    assert!(repo.summary(ALICE,&s.id).await.unwrap().is_none());
+    for index in 0..105 {
+        let task=uuid::Uuid::new_v4().to_string();
+        repo.begin_summary_run(ALICE,&s.id,&task,&format!("summary-{index}"),"explicit_summary").await.unwrap();
+        repo.seal_run(ALICE,&task,"completed",false,false,None,None).await.unwrap();
+    }
+    let budget=inspect_budget(&fx,&s.id).await;
+    assert!(!budget.can_summarize);assert_eq!(budget.summary_unavailable_reason.as_deref(),Some("unresolved"));
+    assert_eq!(fx.chat.summarize_context(&fx.providers,&fx.skills,ALICE,"main",request()).await.err(),Some(ChatError::ToolTurnInvalid));
+    assert_eq!(fx.up.hits(),1,"neither stale eligibility nor old unresolved work can bill a summary");
+}
+
+#[tokio::test]
+async fn anthropic_remote_input_bound_stays_enforced_without_becoming_a_total_window() {
+    let fx=fx().await;let s=session(&fx,ALICE).await;
+    fx.db.execute_unprepared("UPDATE providers SET provider_type='anthropic'; UPDATE models SET source='remote',context_length=4096 WHERE model_id='chat-model'").await.unwrap();
+    let remote=inspect_budget(&fx,&s.id).await;assert_eq!(remote.model_window_tokens,None);
+    let mcp=dgos_mcp::McpManager::new(fx.db.clone());
+    let over=fx.chat.inspect_context(&fx.providers,&fx.skills,&mcp,ALICE,serde_json::from_value(json!({"session_id":s.id,"content":"x".repeat(4000)})).unwrap()).await.unwrap();
+    assert!(!over.can_send,"hiding input-only window metadata must not loosen the admission bound");
+    fx.db.execute_unprepared("UPDATE models SET source='manual' WHERE model_id='chat-model'").await.unwrap();
+    assert_eq!(inspect_budget(&fx,&s.id).await.model_window_tokens,Some(4096),"explicit user total-window metadata remains displayable");
+    assert_eq!(fx.up.hits(),0);
+}
+
+#[tokio::test]
+async fn oversized_summary_history_does_not_break_bounded_budget_inspection_or_send() {
+    let fx=fx().await;let s=session(&fx,ALICE).await;
+    let repo=ChatRepository::new(fx.db.clone());
+    let generation=dgos_types::GenerationParameters::default();
+    let source="r".repeat(7000);
+    for index in 0..160 {
+        let task=format!("large-history-{index}");let user=format!("large-user-{index}");let assistant=format!("large-assistant-{index}");
+        repo.begin_generation(&BeginGeneration {
+            user:ALICE,session_id:&s.id,task_id:&task,user_message_id:&user,assistant_message_id:&assistant,user_content:Some("earlier question"),
+            assets:&[],regenerate_of:None,provider_id:"p",model_id:"m",provider_config_revision:None,endpoint_fingerprint:"seed",skills:&[],generation:&generation,tools:&[],
+        }).await.unwrap();
+        repo.finalize_generation(&FinalizeGeneration {
+            evidence:None,user:ALICE,assistant_message_id:&assistant,task_id:&task,content:&source,message_status:"completed",finish_reason:Some("stop"),
+            message_error:None,task_status:"succeeded",task_error:None,total_tokens:Some(1),
+        }).await.unwrap();
+    }
+    assert!(scalar(&fx.db,"SELECT SUM(length(CAST(content AS BLOB))) FROM chat_messages").await>1024*1024);
+    fx.db.execute_unprepared("UPDATE workbench_tasks SET endpoint_fingerprint=NULL").await.unwrap();
+    let budget=inspect_budget(&fx,&s.id).await;
+    assert!(budget.can_send,"bounded send context remains usable even if optional full summary source is too large");
+    assert!(budget.dropped_turns>0);
+    assert!(!budget.can_summarize);assert_eq!(budget.summary_unavailable_reason.as_deref(),Some("context_too_long"));
+    assert_eq!(fx.up.hits(),0,"eligibility and request budgeting are metadata-only model operations");
+    let summary=fx.chat.summarize_context(&fx.providers,&fx.skills,ALICE,"main",dgos_workbench::SummarizeChatContextInput {
+        session_id:s.id.clone(),client_request_id:uuid::Uuid::new_v4().to_string(),confirmed:true,accept_destination:None,
+    }).await;
+    assert_eq!(summary.err(),Some(ChatError::ContextTooLong));
+    fx.up.script(reply("new answer with bounded recent context"));
+    let (ack,events)=turn(&fx,ALICE,&s.id,"continue without summarizing all history").await;
+    assert!(ack.dropped_turns>0);assert!(matches!(terminal(&events),ChatEvent::Done{..}));
+    assert_eq!(fx.up.hits(),1);
+}
+
+#[tokio::test]
+async fn cancelling_after_observed_usage_settles_facts_and_audit_before_terminal_returns() {
+    for total in [0,18] {
+        let fx=fx().await;let s=session(&fx,ALICE).await;
+        let (input,output,cache,reasoning)=if total==0 {(0,0,0,0)}else{(11,7,4,2)};
+        fx.up.script(vec![
+            delta("before usage; "),
+            sse(json!({"choices":[],"usage":{"prompt_tokens":input,"completion_tokens":output,"total_tokens":total,"prompt_tokens_details":{"cached_tokens":cache},"completion_tokens_details":{"reasoning_tokens":reasoning}}})),
+            delta("after observed usage"),Step::Hold,
+        ]);
+        let sent=start(&fx,ALICE,send_input(&s.id,"cancel after a partial usage receipt")).await.unwrap();
+        let task=sent.ack.task_id.clone();let sink=Collect::default();
+        let (_,cancelled)=tokio::join!(
+            fx.chat.run_generation(&fx.providers,sent.job.unwrap(),&sink),
+            async {until(||sink.deltas()>=2).await;fx.chat.cancel(ALICE,&task)},
+        );
+        assert!(cancelled);let events=sink.take();
+        let (message,error,unknown,_)=expect_error(terminal(&events));
+        assert_eq!(error,"task_cancelled");assert!(unknown);assert_eq!(message.as_ref().unwrap().audit_warning,None);
+        // No eventual/polling assertion: the live terminal must already await the
+        // authoritative dropped-stream settlement, including the Provider audit row.
+        let usage=fx.chat.get_usage(ALICE,&s.id).await.unwrap();
+        assert_eq!((usage.call_count,usage.reported_count,usage.pending_count),(1,1,0));
+        assert_eq!((usage.total_tokens,usage.input_tokens,usage.output_tokens),(Some(total),Some(input),Some(output)));
+        assert_eq!((usage.cache_read_tokens,usage.reasoning_tokens),(Some(cache),Some(reasoning)));
+        assert_eq!((usage.coverage.total,usage.coverage.duration),(1,1));
+        assert_eq!(scalar(&fx.db,&format!("SELECT COUNT(*) FROM provider_usage_logs WHERE request_id='{task}' AND total_tokens={total} AND usage_reported=1")).await,1);
+        let run=fx.chat.get_run(ALICE,dgos_workbench::GetChatRunInput{task_id:task}).await.unwrap();
+        assert_eq!(run.status,"interrupted");assert!(run.audit_warning.is_none());
+        assert_eq!(fx.up.hits(),1);
+    }
 }

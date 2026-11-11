@@ -1,7 +1,7 @@
 //! Chat commands (V1-FR-006, interface contract §10.1).
 //!
 //! Every command passes the same host gate as the single-task commands (trusted main window,
-//! `Workbench` caller, `TasksRun`), takes one `deny_unknown_fields` input and never an identity.
+//! `Workbench` caller, `TasksRun`), accepts only business input/selectors and never an identity.
 //! Streaming events go only to the `Channel` the caller passed; there are no global events. A
 //! generation is owned by the calling window: destroying or reloading it cancels the generation
 //! and the received part is saved (see the `module_host` hooks).
@@ -19,8 +19,8 @@ use dgos_workbench::{
     ChatSessionPage, ChatSink, CreateChatSessionInput, DeleteChatSessionInput,
     ListChatMessagesInput, ListChatSessionsInput, RegenerateChatInput, RenameChatSessionInput,
     SearchChatSessionsInput, SendAck, SendChatInput, Sent, UpdateChatSessionTargetInput,
-    InspectChatContextInput, ChatContextBudget, SummarizeChatContextInput,
-    ListChatRunsInput, GetChatRunInput, ChatRunPage, ChatRun, ContinueChatRunInput,
+    InspectChatContextInput, ChatContextBudget, ChatUsageSummary, SummarizeChatContextInput,
+    ListChatRunsInput, GetChatRunInput, ChatRunPage, ChatRun, ChatRunSnapshot, ContinueChatRunInput,
     ChatSkillCatalogInput, ChatSkillCatalog, ResolveChatRunStepInput,
 };
 use serde::Serialize;
@@ -302,6 +302,24 @@ pub async fn cancel_chat_generation(
         chat.cancel(context.user_id(), &task_id),
     ))
 }
+/// Session selector only; identity and the immutable account lease come from the host.
+#[tauri::command]
+pub async fn get_chat_usage(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    session_id: String,
+) -> CommandResponse<ChatUsageSummary> {
+    let context = match host::context(&window, BuiltinCaller::Workbench, Capability::TasksRun) {
+        Ok(context) => context,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    let chat = match leased_chat(&app, context.user_id()) {
+        Ok(chat) => chat,
+        Err(error) => return CommandResponse::from(Err(error)),
+    };
+    respond(chat.get_usage(context.user_id(), &session_id).await)
+}
+
 
 #[tauri::command]
 pub async fn inspect_chat_context(app:tauri::AppHandle,window:WebviewWindow,input:InspectChatContextInput)->CommandResponse<ChatContextBudget>{
@@ -327,10 +345,10 @@ pub async fn list_chat_runs(app:tauri::AppHandle,window:WebviewWindow,input:List
 }
 
 #[tauri::command]
-pub async fn get_chat_run(app:tauri::AppHandle,window:WebviewWindow,input:GetChatRunInput)->CommandResponse<ChatRun>{
+pub async fn get_chat_run(app:tauri::AppHandle,window:WebviewWindow,input:GetChatRunInput)->CommandResponse<ChatRunSnapshot>{
     let context=match host::context(&window,BuiltinCaller::Workbench,Capability::TasksRun){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
     let chat=match leased_chat(&app,context.user_id()){Ok(c)=>c,Err(e)=>return CommandResponse::from(Err(e))};
-    respond(chat.get_run(context.user_id(),input).await)
+    respond(chat.get_run_snapshot(context.user_id(),input).await)
 }
 
 #[tauri::command]

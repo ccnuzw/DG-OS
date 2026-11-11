@@ -179,7 +179,9 @@ pub fn run() {
 
                 // Chat generations left `generating` by a previous run end as interrupted; nothing
                 // is resent (D074). Safe because the instance lock above is held.
-                let chat = dgos_workbench::ChatManager::new(db.clone(), maintenance.clone());
+                let chat = dgos_workbench::ChatManager::new(db.clone(), maintenance.clone())
+                    .with_web_vault(Arc::new(provider_credentials::OsProviderCredentialVault))
+                    .with_web_credential_lock(manager.credential_mutation_lock());
                 chat.recover_interrupted()
                     .await
                     .expect("Failed to recover chat generations");
@@ -559,16 +561,21 @@ pub fn run() {
             commands::regenerate_chat_message,
             commands::cancel_chat_generation,
             commands::inspect_chat_context,
+            commands::get_chat_usage,
             commands::summarize_chat_context,
             commands::list_chat_runs,
             commands::get_chat_run,
+            commands::get_chat_web_status,
+            commands::configure_chat_web,
             commands::continue_chat_run,
             commands::chat_skill_catalog,
             commands::resolve_chat_run_step,
             commands::list_agent_sessions,
             commands::open_agent_session,
             commands::get_agent_session,
-            commands::cancel_unstarted_agent_session,
+            commands::preview_agent_output_image,
+            commands::reconcile_agent_start,
+            commands::prepare_agent_task,
             commands::send_agent_message,
             commands::steer_agent_turn,
             commands::observe_codex_operations,
@@ -625,7 +632,6 @@ pub fn run() {
             commands::cancel_development_commit_message,
             commands::save_development_cli_provider,
             commands::revoke_development_cli_provider,
-            commands::recheck_development_cli_cleanup,
             commands::read_development_cli_provider_catalog,
             commands::get_development_session_configuration,
             commands::read_development_workspaces,

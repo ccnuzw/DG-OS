@@ -74,7 +74,6 @@ enum Step {
 
 enum Script {
     Sse(Vec<Step>),
-    Json(Value),
 }
 
 #[derive(Default)]
@@ -207,15 +206,6 @@ async fn handle(socket: &mut TcpStream, up: &Upstream) {
         .pop_front()
         .unwrap_or_else(|| reply("default reply"));
     match script {
-        Script::Json(value) => {
-            let text = value.to_string();
-            let out = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{text}",
-                text.len()
-            );
-            let _ = socket.write_all(out.as_bytes()).await;
-            let _ = socket.shutdown().await;
-        }
         Script::Sse(steps) => {
             let head =
                 "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n";
@@ -306,7 +296,7 @@ const STREAM = 'article[aria-label="助手消息（生成中）"]';
 const DONE_A = 'article[aria-label="助手消息"]';
 const USER_A = 'article[aria-label="用户消息"]';
 const PROPOSAL = 'section[aria-labelledby="chat-proposal-heading"]';
-const KNOWN = ['started', 'delta', 'reasoning_delta', 'tool_proposal', 'phase', 'activity', 'summary_done', 'done', 'error'];
+const KNOWN = ['started', 'delta', 'reasoning_delta', 'tool_proposal', 'phase', 'activity', 'model_segment', 'summary_done', 'done', 'error'];
 const spy = () => {
   if (window.__spy) return;
   window.__spy = { events: [], calls: [] };
@@ -1530,6 +1520,7 @@ async fn block_mcp(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
     let pick = r##"
         const pickTool = async () => {
           const trigger = () => $$('button').find(b => (b.getAttribute('aria-label') || '').startsWith('MCP 工具'));
+          if (!trigger()) { const more = $('button[aria-label="更多功能"]'); if (!more) throw new Error('more controls missing'); more.click(); await until(trigger); }
           if (!$$('[role=checkbox]').length) { const t = trigger(); if (!t) throw new Error('tool picker missing'); t.click(); }
           const c = await until(() => $$('[role=checkbox]').find((x) => labelOf(x).includes('fixture-server / echo')), 8000);
           if (!c) throw new Error('fixture tool not listed');
@@ -1548,16 +1539,15 @@ async fn block_mcp(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
         &format!(
             "{pick} await newSession('chat-model'); window.__spy.events = []; const picked = await pickTool(); await send('T9 approve once'); \
              const p = await until(() => $(PROPOSAL), 12000); \
-             return {{ picked, proposal: !!p, text: p ? txt(p) : null, args: p ? txt($('pre', p)) : null, streamBubbleNotStreaming: txt($(STREAM)).includes('不流式'), \
+             return {{ picked, proposal: !!p, text: p ? txt(p) : null, args: p ? txt($('pre', p)) : null, \
                       approveEnabled: !!(p && btn('批准本次调用', p) && !btn('批准本次调用', p).disabled), rejectEnabled: !!(p && btn('拒绝并停止', p) && !btn('拒绝并停止', p).disabled) }};"
         ),
     )
     .await;
     checks.check(
-        "[9] a tool proposal is rendered with the full arguments, a countdown and separate approve / reject buttons",
+        "[9] a tool proposal is rendered with the full arguments and separate approve / reject buttons",
         shown["proposal"] == true
             && shown["args"].as_str().is_some_and(|a| a.contains(MARKER))
-            && shown["text"].as_str().is_some_and(|t| t.contains("fixture-server / echo") && t.contains("剩余"))
             && shown["approveEnabled"] == true
             && shown["rejectEnabled"] == true,
         shown.to_string(),
@@ -1836,12 +1826,16 @@ async fn block_account_workspace(app: &AppHandle, checks: &mut Checks, fx: &Fixt
         let executable=fx.root.join("codex-account-fixture");
         std::fs::write(&executable,r##"#!/bin/sh
 if [ "$1" = "--version" ]; then printf '%s\n' 'codex-cli 0.167.0'; exit 0; fi
+fixture_provider=
+for argument do
+  case "$argument" in model_provider=*) fixture_provider=${argument#*=}; fixture_provider=${fixture_provider#\"}; fixture_provider=${fixture_provider%\"};; esac
+done
 while IFS= read -r line; do
 case "$line" in
 *'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}';;
-*'"method":"config/read"'*) printf '%s\n' '{"id":2,"result":{"config":{"model_provider":"dgos_project","model_providers":{"dgos_project":{"base_url":"FIXTURE_BASE_URL","wire_api":"responses","env_key":"DGOS_PROVIDER_KEY","requires_openai_auth":false}}}}}';;
+*'"method":"config/read"'*) printf '%s\n' '{"id":2,"result":{"config":{"model_provider":"'"$fixture_provider"'","model_providers":{"'"$fixture_provider"'":{"base_url":"FIXTURE_BASE_URL","wire_api":"responses","env_key":"DGOS_PROVIDER_KEY","requires_openai_auth":false}}}}}';;
 *'"method":"model/list"'*) printf '%s\n' '{"id":4,"result":{"data":[],"nextCursor":null}}';;
-*'"method":"thread/start"'*) printf '{"id":3,"result":{"cwd":"%s","model":"chat-model","modelProvider":"dgos_project","thread":{"id":"account-thread","turns":[]}}}\n' "$PWD";;
+*'"method":"thread/start"'*) printf '{"id":3,"result":{"cwd":"%s","model":"chat-model","modelProvider":"'"$fixture_provider"'","thread":{"id":"account-thread","turns":[]}}}\n' "$PWD";;
 *'"method":"turn/start"'*) printf '%s\n' '{"id":5,"result":{"turn":{"id":"account-turn"}}}' '{"method":"turn/started","params":{"threadId":"account-thread","turn":{"id":"account-turn"}}}' '{"id":"account-approval","method":"item/commandExecution/requestApproval","params":{"threadId":"account-thread","turnId":"account-turn","itemId":"account-item","command":"echo allowed","availableDecisions":["accept","decline"]}}';;
 esac
 done
@@ -2084,7 +2078,8 @@ async fn block_layout(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
         fx.up.script(proposal(&"Layout approval argument\n".repeat(100)));
         let approval = js(app, &format!(r##"
             {helpers}
-            const picker = btnHas('MCP 工具'); if (!picker) throw new Error('tool picker missing'); picker.click();
+            $('button[aria-label="更多功能"]').click();
+            const picker = await until(() => $('button[aria-label^="MCP 工具"]')); if (!picker) throw new Error('tool picker missing'); picker.click();
             const tool = await until(() => $$('[role=checkbox]').find(e => labelOf(e).includes('fixture-server / echo')));
             if (!tool) throw new Error('fixture tool missing'); if (tool.getAttribute('aria-checked') !== 'true') tool.click();
             kd(tool, 'Escape'); await until(() => !$('[role=dialog]')); await wait(100);
@@ -2153,7 +2148,8 @@ async fn block_layout(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
         fx.up.script(proposal(&"Layout narrow approval argument\n".repeat(100)));
         let approval = js(app, &format!(r##"
             {helpers}
-            const picker = btnHas('MCP 工具'); picker.click();
+            $('button[aria-label="更多功能"]').click();
+            const picker = await until(() => $('button[aria-label^="MCP 工具"]')); if (!picker) throw new Error('tool picker missing'); picker.click();
             const tool = await until(() => $$('[role=checkbox]').find(e => labelOf(e).includes('fixture-server / echo')));
             if (!tool) throw new Error('fixture tool missing'); if (tool.getAttribute('aria-checked') !== 'true') tool.click();
             kd(tool, 'Escape'); await until(() => !$('[role=dialog]')); await wait(100);
@@ -2176,36 +2172,96 @@ async fn block_layout(app: &AppHandle, checks: &mut Checks, fx: &Fixture) {
 }
 
 async fn block_continuous_context(app:&AppHandle,checks:&mut Checks,fx:&Fixture){
+    let calls_before=fx.up.bodies();
     fx.up.script(reply("Original constraints: keep the user's source history."));
     fx.up.script(reply("Goals: preserve source history. Constraints: explicit user approval. Confirmed results: prior answer. Open tasks: new explicit intent."));
     fx.up.script(reply("Fresh continuation answer; no prior tool effect replayed."));
+    fx.up.script(Script::Sse(vec![delta("Explicit zero report."),data(json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0,"prompt_tokens_details":{"cached_tokens":0}}})),Step::Send("data: [DONE]\n\n".into())]));
+    fx.up.script(Script::Sse(vec![delta("Answer without a usage report."),data(json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]})),Step::Send("data: [DONE]\n\n".into())]));
     let result=js(app,r#"
       const invoke=window.__TAURI_INTERNALS__.invoke;
       const providers=await invoke('list_providers');
       const selected=providers.data?.find(p=>p.name==='Smoke Loopback');
       if(!selected)throw new Error('fixture provider unavailable');
-      const created=await invoke('create_chat_session',{input:{target:{provider_id:selected.id,model_id:'chat-model',skill_ids:[],no_skill:true}}});
+      const create=()=>invoke('create_chat_session',{input:{target:{provider_id:selected.id,model_id:'chat-model',skill_ids:[],no_skill:true}}});
+      const created=await create();
       if(!created.success)throw new Error(JSON.stringify(created.error));
       const session_id=created.data.id;
+      const empty=await invoke('get_chat_usage',{sessionId:session_id});
+      const emptyBudget=await invoke('inspect_chat_context',{input:{session_id,content:'next question'}});
       const events=[];
       const channel=()=>{const id=window.__TAURI_INTERNALS__.transformCallback(raw=>{if(raw?.message)events.push(raw.message)},false);return `__CHANNEL__:${id}`};
-      const first=await invoke('send_chat_message',{input:{session_id,content:'Remember explicit source constraints',client_request_id:crypto.randomUUID()},onEvent:channel()});
-      await until(()=>events.some(e=>e.kind==='done'||e.kind==='error'),12000);
+      const sendOwned=async(id,content)=>{
+        const count=events.length;
+        const input={session_id:id,content,client_request_id:crypto.randomUUID()};
+        const ack=await invoke('send_chat_message',{input,onEvent:channel()});
+        const terminal=await until(()=>events.slice(count).find(e=>e.kind==='done'||e.kind==='error'),12000);
+        if(!ack.success||terminal?.kind!=='done')throw new Error(JSON.stringify({ack,terminal}));
+        return {ack,input,terminal};
+      };
+      const first=await sendOwned(session_id,'Remember explicit source constraints');
+      const firstUsage=await invoke('get_chat_usage',{sessionId:session_id});
+      const replay=await invoke('send_chat_message',{input:first.input,onEvent:channel()});
       const before=await invoke('list_chat_messages',{input:{session_id}});
       const budget=await invoke('inspect_chat_context',{input:{session_id,content:'new question'}});
       const count=events.length;
-      const summarized=await invoke('summarize_chat_context',{input:{session_id,client_request_id:crypto.randomUUID(),confirmed:true},onEvent:channel()});
+      const summaryInput={session_id,client_request_id:crypto.randomUUID(),confirmed:true};
+      const summarized=await invoke('summarize_chat_context',{input:summaryInput,onEvent:channel()});
       const summary=await until(()=>events.slice(count).find(e=>e.kind==='summary_done'||e.kind==='error'),12000);
       const after=await invoke('list_chat_messages',{input:{session_id}});
-      const inspected=await invoke('get_chat_run',{input:{task_id:first.data?.task_id}});
-      const continuation=await invoke('continue_chat_run',{input:{source_task_id:first.data?.task_id,client_request_id:crypto.randomUUID(),intent:'Write only the next new answer, preserve completed actions'},onEvent:channel()});
-      await until(()=>events.filter(e=>e.kind==='done'||e.kind==='error').length>=2,12000);
+      const summaryUsage=await invoke('get_chat_usage',{sessionId:session_id});
+      const summaryReplay=await invoke('summarize_chat_context',{input:summaryInput,onEvent:channel()});
+      const coveredBudget=await invoke('inspect_chat_context',{input:{session_id,content:'next question'}});
+      const inspected=await invoke('get_chat_run',{input:{task_id:first.ack.data.task_id}});
+      const continuationStart=events.length;
+      const continuation=await invoke('continue_chat_run',{input:{source_task_id:first.ack.data.task_id,client_request_id:crypto.randomUUID(),intent:'Write only the next new answer, preserve completed actions'},onEvent:channel()});
+      await until(()=>events.slice(continuationStart).find(e=>e.kind==='done'||e.kind==='error'),12000);
       const runs=await invoke('list_chat_runs',{input:{session_id}});
-      return {budget,summaryKind:summary?.kind,originalCount:before.data?.items.length,afterSummaryCount:after.data?.items.length,firstTask:first.data?.task_id,continuedTask:continuation.data?.task_id,inspected:inspected.success,sourceLinked:runs.data?.items.some(r=>r.task_id===continuation.data?.task_id&&r.source_run_id===first.data?.task_id),summaryAccepted:summarized.success};
+      const oneMessage=await invoke('list_chat_messages',{input:{session_id,limit:1}});
+      const finalUsage=await invoke('get_chat_usage',{sessionId:session_id});
+      const renewedBudget=await invoke('inspect_chat_context',{input:{session_id,content:'next question'}});
+      const zeroSession=await create();const zero=await sendOwned(zeroSession.data.id,'Explicit zero usage');
+      const zeroUsage=await invoke('get_chat_usage',{sessionId:zeroSession.data.id});
+      const unknownSession=await create();await sendOwned(unknownSession.data.id,'Unknown usage');
+      const unknownUsage=await invoke('get_chat_usage',{sessionId:unknownSession.data.id});
+      return {empty:empty.data,emptyBudget:emptyBudget.data,firstUsage:firstUsage.data,replayed:replay.data?.replayed,budget,summaryKind:summary?.kind,summaryUsage:summaryUsage.data,summaryReplayed:summaryReplay.data?.replayed,coveredBudget:coveredBudget.data,renewedBudget:renewedBudget.data,originalCount:before.data?.items.length,afterSummaryCount:after.data?.items.length,firstTask:first.ack.data.task_id,continuedTask:continuation.data?.task_id,inspected:inspected.success,sourceLinked:runs.data?.items.some(r=>r.task_id===continuation.data?.task_id&&r.source_run_id===first.ack.data.task_id),summaryAccepted:summarized.success,loadedCount:oneMessage.data?.items.length,finalUsage:finalUsage.data,zeroTokens:zero.terminal.message?.total_tokens,zeroUsage:zeroUsage.data,unknownUsage:unknownUsage.data};
     "#).await;
     checks.check("[14] production WebView IPC inspects budget, explicitly summarizes without replacing messages and continues under a fresh linked run",
-        result["budget"]["success"]==true&&result["summaryKind"]=="summary_done"&&result["originalCount"]==result["afterSummaryCount"]&&result["firstTask"]!=result["continuedTask"]&&result["sourceLinked"]==true&&result["inspected"]==true,
+        result["budget"]["success"]==true&&result["budget"]["data"]["can_summarize"]==true&&result["summaryKind"]=="summary_done"&&result["originalCount"]==result["afterSummaryCount"]&&result["firstTask"]!=result["continuedTask"]&&result["sourceLinked"]==true&&result["inspected"]==true&&result["coveredBudget"]["can_summarize"]==false&&result["renewedBudget"]["can_summarize"]==true,
         result.to_string());
+    checks.check("[14] sessionId usage IPC counts real generation and summary exactly once, independent of loaded message page",
+        result["empty"]["call_count"]==0&&result["empty"]["total_tokens"]==0&&result["emptyBudget"]["summary_unavailable_reason"]=="no_history"&&result["firstUsage"]["call_count"]==1&&result["firstUsage"]["total_tokens"]==18&&result["replayed"]==true&&result["summaryUsage"]["call_count"]==2&&result["summaryUsage"]["total_tokens"]==36&&result["summaryReplayed"]==true&&result["loadedCount"].as_u64().is_some_and(|count|count<=2)&&result["finalUsage"]["call_count"]==3&&result["finalUsage"]["total_tokens"]==54,
+        result.to_string());
+    checks.check("[14] explicit zero and unknown reports remain different across production IPC and queries never dispatch",
+        result["zeroTokens"]==0&&result["zeroUsage"]["total_tokens"]==0&&result["zeroUsage"]["reported_count"]==1&&result["zeroUsage"]["cache_read_tokens"]==0&&result["zeroUsage"]["cache_hit_rate"].is_null()&&result["unknownUsage"]["total_tokens"].is_null()&&result["unknownUsage"]["call_count"]==1&&result["unknownUsage"]["reported_count"]==0&&result["unknownUsage"]["partial"]==true&&fx.up.bodies()==calls_before+5,
+        format!("calls={} result={result}",fx.up.bodies()-calls_before));
+    if let Some(window)=app.get_webview_window(MAIN) {
+        window.set_min_size(Some(tauri::LogicalSize::new(380.0,400.0))).ok();
+        window.set_size(tauri::LogicalSize::new(520.0,600.0)).ok();
+    }
+    let panel=js(app,r#"
+      if(!$('.chat-usage-trigger'))await newSession('chat-model');
+      const trigger=await until(()=>$('.chat-usage-trigger:not(:disabled)'));
+      if(!trigger)throw new Error('usage ring unavailable');
+      window.__contextUsageSmokeTrigger=trigger;trigger.focus();trigger.click();
+      const panel=await until(()=>$('.chat-usage-panel'));
+      if(!panel)throw new Error('usage popover missing');
+      await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);
+      const rect=panel.parentElement.getBoundingClientRect();
+      const result={stats:panel.querySelectorAll('.chat-usage-stats dt').length,withinViewport:rect.left>=-1&&rect.top>=-1&&rect.right<=innerWidth+1&&rect.bottom<=innerHeight+1,rect:rect.toJSON(),viewport:{width:innerWidth,height:innerHeight}};
+      panel.querySelector('.chat-usage-details-link')?.click();
+      const back=await until(()=>$('.chat-usage-heading > button'));
+      result.details=!!back&&!!$('.chat-usage-debug');
+      back?.click();
+      result.returned=!!await until(()=>$('.chat-usage-stats'));
+      return result;
+    "#).await;
+    let keyboard_ready=super::ui_keys::prepare(app).await;
+    super::ui_keys::key(app,super::ui_keys::Key::Escape).await;
+    let closed=js(app,"return !$('.chat-usage-panel')&&document.activeElement===window.__contextUsageSmokeTrigger;").await;
+    checks.check("[14] production compact usage ring opens six rows within the viewport, navigates details and restores focus on native Escape",
+        keyboard_ready&&panel["stats"]==6&&panel["withinViewport"]==true&&panel["details"]==true&&panel["returned"]==true&&closed==true,
+        format!("panel={panel} closed_with_focus={closed}"));
 }
 
 async fn scenario(app: AppHandle, root_ready: bool) {
@@ -2227,6 +2283,23 @@ async fn scenario(app: AppHandle, root_ready: bool) {
     };
     if !root_ready {
         checks.check("main window loaded /workbench", false, "page never loaded");
+        finish(checks, &root);
+    }
+    if std::env::var("DGOS_CHAT_SMOKE_ONLY").ok().as_deref() == Some("15") {
+        let created = ipc(&app, MAIN, "create_chat_session", json!({"input":{}})).await;
+        let id = created.data()["id"].as_str().expect("isolated web session");
+        let before = fx.up.bodies();
+        let status = ipc(&app, MAIN, "get_chat_web_status", json!({"input":{"session_id":id}})).await;
+        checks.check("[15] web off by default and public page reading independent of search key", status.data()["search_configured"] == false && status.data()["fetch_available"] == true, status.describe());
+        let saved = ipc(&app, MAIN, "configure_chat_web", json!({"input":{"session_id":id,"api_key":"D147-isolated-vault-fixture","remove":false}})).await;
+        let read = ipc(&app, MAIN, "get_chat_web_status", json!({"input":{"session_id":id}})).await;
+        checks.check("[15] configured key is readable only as availability, never secret", saved.data()["search_configured"] == true && read.data()["search_configured"] == true && !read.describe().contains("D147-isolated-vault-fixture"), "isolated memory vault only");
+        let foreign = ipc(&app, MAIN, "configure_chat_web", json!({"input":{"session_id":"unknown-session","remove":true}})).await;
+        let retained = ipc(&app, MAIN, "get_chat_web_status", json!({"input":{"session_id":id}})).await;
+        checks.check("[15] wrong-session configuration cannot remove the credential", !foreign.success() && retained.data()["search_configured"] == true, "ownership checked before mutation");
+        let removed = ipc(&app, MAIN, "configure_chat_web", json!({"input":{"session_id":id,"remove":true}})).await;
+        let cleared = ipc(&app, MAIN, "get_chat_web_status", json!({"input":{"session_id":id}})).await;
+        checks.check("[15] removal clears search without disabling page reads or dispatching a model", removed.data()["search_configured"] == false && cleared.data()["search_configured"] == false && cleared.data()["fetch_available"] == true && fx.up.bodies() == before, "no external search or model request");
         finish(checks, &root);
     }
     if std::env::var("DGOS_CHAT_SMOKE_ONLY").ok().as_deref() == Some("13") {
@@ -2343,7 +2416,7 @@ pub fn run_chat() {
             )
             .await
             .expect("seed provider");
-            let providers = ProviderManager::with_vault(&db_url, vault)
+            let providers = ProviderManager::with_vault(&db_url, vault.clone())
                 .await
                 .expect("providers").with_maintenance(maintenance.clone());
             providers
@@ -2399,7 +2472,9 @@ pub fn run_chat() {
                 Err(error) => Some(format!("create failed: {error:?}")),
             };
             let workbench = dgos_workbench::WorkbenchManager::new(db.clone()).with_maintenance(maintenance.clone());
-            let chat = dgos_workbench::ChatManager::new(db.clone(), maintenance.clone());
+            let chat = dgos_workbench::ChatManager::new(db.clone(), maintenance.clone())
+                .with_web_vault(vault)
+                .with_web_credential_lock(providers.credential_mutation_lock());
             let probe = dgos_db::establish_connection(&db_url)
                 .await
                 .expect("probe db");
@@ -2596,11 +2671,14 @@ pub fn run_chat() {
             commands::cancel_chat_generation,
             commands::advance_chat_tool_turn,
             commands::inspect_chat_context,
+            commands::get_chat_usage,
             commands::chat_import_ai_resource,
             commands::chat_delete_ai_resource,
             commands::summarize_chat_context,
             commands::list_chat_runs,
             commands::get_chat_run,
+            commands::get_chat_web_status,
+            commands::configure_chat_web,
             commands::continue_chat_run,
             commands::chat_skill_catalog,
             commands::resolve_chat_run_step,

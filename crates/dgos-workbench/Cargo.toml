@@ -21,6 +21,8 @@ base64 = "0.22"
 url = "2"
 futures = "0.3"
 async-trait = { workspace = true }
+reqwest = { workspace = true }
+html5ever = "0.36"
 
 [dev-dependencies]
 dgos-providers = { path = "../dgos-providers", features = ["test-support"] }

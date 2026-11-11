@@ -3,8 +3,9 @@ use crate::foundation::ResolvedContext;
 use base64::Engine as _;
 
 
-pub(super) fn foundation_fingerprint(options: &dgos_types::AiFoundationOptions) -> Result<String> {
-    Ok(format!("{:x}",Sha256::digest(serde_json::to_vec(options).map_err(|_|ChatError::Internal)?)))
+pub(super) fn foundation_fingerprint(options: &dgos_types::AiFoundationOptions, access: &crate::web::WebAccess) -> Result<String> {
+    let bytes = if !access.search && !access.fetch { serde_json::to_vec(options) } else { serde_json::to_vec(&(options, access)) };
+    Ok(format!("{:x}",Sha256::digest(bytes.map_err(|_|ChatError::Internal)?)))
 }
 fn foundation_error(_: String) -> ChatError { ChatError::ToolTurnInvalid }
 
@@ -39,11 +40,11 @@ pub(super) fn validate_budget(messages: &[WireMessage], generation: &dgos_types:
 }
 
 impl ChatManager {
-    pub(super) async fn check_foundation_replay(&self, user: &str, task: &str, options: &dgos_types::AiFoundationOptions) -> Result<()> {
+    pub(super) async fn check_foundation_replay(&self, user: &str, task: &str, options: &dgos_types::AiFoundationOptions, access: &crate::web::WebAccess) -> Result<()> {
         let run=self.repo.get_run(user,task).await?;
-        let expected=foundation_fingerprint(options)?;
+        let expected=foundation_fingerprint(options, access)?;
         let recorded=run.steps.iter().filter_map(|step|step.receipt.as_ref()).find_map(|receipt|receipt.get("foundation_fingerprint").and_then(Value::as_str));
-        if recorded.map_or(options==&dgos_types::AiFoundationOptions::default(),|value|value==expected) {Ok(())} else {Err(ChatError::RequestIdConflict)}
+        if recorded.map_or(options==&dgos_types::AiFoundationOptions::default() && !access.search && !access.fetch,|value|value==expected) {Ok(())} else {Err(ChatError::RequestIdConflict)}
     }
 
     pub(super) async fn revalidate_source_runs(&self, user: &str, session: &str, sources: &[String]) -> std::result::Result<(), String> {
@@ -146,9 +147,10 @@ impl ChatManager {
         self.check_lease().map_err(|_| "session_invalid".into())
     }
 
-    pub(super) fn local_schema_bytes(runtime: Option<crate::skill_runtime::SkillRuntime>, contexts: &[ResolvedContext])
+    pub(super) fn local_schema_bytes(runtime: Option<crate::skill_runtime::SkillRuntime>, contexts: &[ResolvedContext], web: Option<&crate::web::WebRuntime>)
         -> Result<(Option<crate::skill_runtime::SkillRuntime>, usize)> {
-        let definitions=crate::foundation::local_definitions(runtime.as_ref(),contexts);
+        let mut definitions=crate::foundation::local_definitions(runtime.as_ref(),contexts);
+        if let Some(web) = web { definitions.extend(web.definitions()); }
         let bytes=crate::foundation::tool_schema_bytes(&definitions).map_err(foundation_error)?;
         Ok((runtime,bytes))
     }

@@ -32,6 +32,7 @@ pub use assets::{
 
 mod chat;
 pub mod skill_runtime;
+pub mod web;
 pub(crate) use foundation::text_ceiling as context_text_ceiling;
 pub use chat::{
     AdvanceChatToolTurnInput, ChatError, ChatEvent, ChatManager, ChatMessagePage, ChatSearchPage,
@@ -39,8 +40,8 @@ pub use chat::{
     DeleteChatSessionInput, GenerationJob, ListChatMessagesInput, ListChatSessionsInput,
     RegenerateChatInput, RenameChatSessionInput, SearchChatSessionsInput, SendAck, SendChatInput,
     Sent, ToolActionJob, UpdateChatSessionTargetInput,
-    InspectChatContextInput, ChatContextBudget, SummarizeChatContextInput,
-    ListChatRunsInput, GetChatRunInput, ChatRunPage, ChatRun, ChatRunStep, ChatSummary,
+    InspectChatContextInput, ChatContextBudget, ChatUsageSummary, SummarizeChatContextInput,
+    ListChatRunsInput, GetChatRunInput, ChatRunPage, ChatRun, ChatRunSnapshot, ChatLiveSnapshot, ChatRunStep, ChatSummary,
     ContinueChatRunInput, ChatSkillMode, ChatSkillCatalogInput, ChatSkillCatalog,
     ResolveChatRunStepInput,
 };

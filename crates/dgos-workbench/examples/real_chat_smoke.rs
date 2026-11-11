@@ -551,7 +551,7 @@ impl Env {
                 &self.skills,
                 USER,
                 WINDOW,
-                SendChatInput { skill_mode: Default::default(), authorized_skill_refs: Vec::new(), session_id: session.into(),
+                SendChatInput { web_access: Default::default(), skill_mode: Default::default(), authorized_skill_refs: Vec::new(), session_id: session.into(),
                 foundation: Default::default(),
                 content: text,
                 client_request_id: uuid::Uuid::new_v4().to_string(),
@@ -577,13 +577,11 @@ impl Env {
                 &self.skills,
                 USER,
                 WINDOW,
-                RegenerateChatInput {
-                    skill_mode: Default::default(), authorized_skill_refs: Vec::new(),
-                    foundation: Default::default(),
-                    message_id: message_id.into(),
-                    client_request_id: uuid::Uuid::new_v4().to_string(),
-                    accept_destination: None,
-                },
+                RegenerateChatInput { web_access: Default::default(), skill_mode: Default::default(), authorized_skill_refs: Vec::new(),
+                foundation: Default::default(),
+                message_id: message_id.into(),
+                client_request_id: uuid::Uuid::new_v4().to_string(),
+                accept_destination: None, },
             )
             .await?;
         Ok(self.run_sent(sent, mode, before).await)
