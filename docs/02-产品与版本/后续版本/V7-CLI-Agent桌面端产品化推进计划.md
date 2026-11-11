@@ -3,7 +3,7 @@ title: "CLI Agent 桌面端产品化推进计划"
 version: V7
 technical_task: CLI-DESKTOP
 spec_status: Draft
-updated: 2026-11-10
+updated: 2026-11-11
 ---
 
 # CLI Agent 桌面端产品化推进计划
@@ -11,6 +11,8 @@ updated: 2026-11-10
 > 产品方向：用户已明确要求完成本轮讨论的全部产品化范围。本文交付完整实施顺序、边界和阶段退出条件；具体技术契约仍需在对应阶段实施前收口，不表示代码已实现或 V7 整体通过开发门禁。
 >
 > 本文是本轮增量推进的单一计划，不重新编号既有产品化阶段、D136-P0～P7 或 Claude C0～C6。使用 CLI-DESK-0～7 作为本计划任务标记，不是新版本或正式功能编号。实际完成情况、验证证据和阻塞只回写[唯一实现状态](../当前版本/V1-实现状态.md)，不在本文维护第二份进度台账。
+>
+> 2026-11-11 回复区复查增量：双引擎回复互动与 UICK 落地方案见 §8，使用 REPLY-0～5 独立任务标记。该节补充 CLI-DESK-3、4、6、7 的回复呈现与互动覆盖，不重编号既有 S/J，不声明此前四阶段实现已穷尽原生协议，也不把本次方案交付当作新增能力实现授权。
 
 ## 1. 产品目标与范围
 
@@ -318,3 +320,81 @@ updated: 2026-11-10
 7. 旧入口与重复状态路径完成干净切换，存量项目、会话、任务、引用和运行记录安全保留；用户已有代码及工作区修改不受影响。
 
 最终交付判断不是“增加了多少功能”，而是用户能否在同一个桌面工作区中直接开始、看见过程、得到结果、处理异常，并在第二天自然接着工作。
+
+## 8. 双引擎回复互动与 UICK 落地增量
+
+### 8.1 目标、范围与完成口径
+
+本节为 2026-11-11 用户要求的最新实施方案，规格状态为 Draft。目标是在现有原生执行链路上，使内容不丢失、状态不误导、用户能完成待办互动，并把适用的 UICK 模式落实为可使用的回复组件。复用 D136 原生信息投影、D144 展示偏好以及本文既有权限、历史与生命周期边界，不新建执行器、第二套消息存储或重复组件库。
+
+范围包括本次复查的全部缺口：完成输出、历史正文、图片/未知块、失败状态、导航与来源定位、后台任务归属、工具进度、审批/提问/elicitation、历史文件操作、消息操作、网页来源、结构化 MCP 结果、产物/附件、图解/公式、大型数据与阅读性能。新内容访问契约在对应阶段收口；不能因难度而静默删项。
+
+“全面覆盖”限定为登记过的 CLI/SDK 版本及已支持能力的回复互动集合，不承诺未来任意上游协议。每类必须分别登记：原生是否提供、adapter 是否接收、UI 是否可操作、是否有专用呈现、通过哪一级验证。缺失原生能力须显示不支持及原因；通用详情不等于专用 UI，fixture 不等于真实引擎验收，工作台其他面板已有操作不等于主会话已关联展示。
+
+本节只维护目标和退出条件。上轮及本轮实际复现、测试和证据仍只在唯一实现状态维护；下文所有验收项均为后续执行目标。
+
+### 8.2 推进阶段与代码落点
+
+| 阶段 | 实施内容与交付物 | 主要代码落点 | 依赖与退出条件 |
+| --- | --- | --- | --- |
+| REPLY-0 覆盖基线与契约 | 固定 CLI/SDK 版本、枚举现有事件/请求/内容块；把 UICK 22 组 HTML/截图和 3 份设计说明分类为采用、部分、缺失、不适用并写理由；登记当前 renderer、操作入口、验收场景。核对本次缺陷输入形态与真实协议，把合成探针和真实观察分开 | 两家 session adapter、Claude bridge、现有技术设计及测试资产 | 先完成本阶段的最小基线；每个缺口有阶段归属，身份、终态、内容访问的设计没有未标明冲突。基线随版本变化维护，不新设第二份实现状态 |
+| REPLY-1 内容与状态正确性 | 修复命令完成后流式输出不可见、Codex 历史 input 正文缺失、助手图片/未知块空白、MCP 内部错误被当完成；修复最终答案导航及按 source 精确定位；进度并入工具行，空壳不计有效展示分页；核对 Claude 跨回合后台任务与工具结果归属、无身份快照重复提示、未知事件安全保留 | `agentTranscript.ts`、`AgentReplyTimeline.tsx`、`AgentReplyContent.tsx`、`ExecutionDetails.tsx`、`eventOutputReferences.ts`、`AgentConversation.tsx`、`codex_session.rs`、`claude_session.rs`、`native-transcript.ts`、`worker.ts`，历史 adapter 按实际契约调整 | 依赖 REPLY-0；每个已复现错误有失败前/通过后回归，未复现风险有协议依据及定向场景；流式与恢复历史结果一致，终态不丢正文/输出，不跨 run/parent 配对，不把未知或业务失败写成成功 |
+| REPLY-2 待办互动与历史闭环 | Claude 问答完整性校验、字段旁错误、提交中/失败保留答案；Codex 基础表单支持边界和可选字段清空；审批以命令、工作区、文件 diff、权限范围为主体；URL elicitation 接受前提供显式受控打开入口；历史文件/diff 跳转接入已有范围校验；增加整条正文复制和引用到草稿；主会话关联子任务/后台操作入口 | `RequestBody`、`NativeElicitation.tsx`、`AgentOutputReferences.tsx`、`AgentWorkbench.tsx`、`AgentSessionHistory`、`CodexOperations.tsx`，复用 clipboard/文件工作区/草稿逻辑 | 依赖 REPLY-1 身份与来源规则；所有支持请求可用键盘完成、拒绝、取消、失败后修改；旧请求不复活，历史浏览不启动 CLI，复制/填稿不发送、不重放工具 |
+| REPLY-3 UICK 视觉与阅读体验 | 统一正文、过程、等待、失败、计划、子任务、diff、引用与产物占位的层级；失败/待用户处理保持可见；长路径可展开，代码完整复制与折叠稳定；按原生信息展示任务摘要和时间/用量，不造百分比；优化宽窄布局、明暗主题、中英、大字号、焦点与滚动锚点、长历史和大输出按需挂载 | `agent-reply.css`、timeline CSS、`AgentExecutionViews.tsx`、`CodexTranscriptContent.tsx`、`Markdown.tsx/CSS`、`AgentConversation.css`、共享 UI 与双语资源 | 依赖 REPLY-1；可在 REPLY-2 互动契约固定后并行开发独立样式。适用 UICK 模式都有生产入口、状态组合和视觉证据；没有只存在于展示页的组件，无页面横向溢出或流式抢滚动 |
+| REPLY-4 丰富内容与产物 | 建立 CLI 原生可信来源到检索结果、正文引用、来源预览的链路；MCP 结果区分 text/resource/image/structuredContent；区分草稿图片、历史省略和原生输出图片；有界文档/文件产物卡支持显式预览与打开；增加受约束 Mermaid/公式渲染及大表格按需视图、数据复制/导出；统一选择/粘贴/拖入附件的校验反馈 | CLI 归一化边界、`AgentReplyContent.tsx`、`ExecutionDetails.tsx`、`Markdown.tsx`，评估复用已有 `SourcePreview`、`AgentImages`、`ComposerReferences`、文件工作区；需要的宿主能力先补直接契约 | 依赖 REPLY-0 内容来源契约及 REPLY-1/2 可信身份。每种内容具备成功、加载、不可用、失败、过期/截断表达；越权/外链/文件替换被拦截；没有元数据不猜产物，渲染不执行代码或自动访问远程资源 |
+| REPLY-5 集成与真实双引擎验收 | 执行下方场景矩阵，完成真实多轮读改查、审批/提问、失败、继续与恢复；用受控 MCP 验证业务错误和内容类型；涉及宿主/窗口/IPC 的改动走生产 WebView；记录长历史测量及最终视觉证据；清理被替代路径，集中回写唯一实现状态 | 受影响前后端测试、bridge、现有 agents WebView 入口、真实 Provider 与隔离项目 | 依赖 REPLY-1～4；覆盖矩阵无未说明空项，关键缺陷无遗留，必要真实链路有证据。环境或原生能力阻塞明确保留未验收，不能以通用字段 fallback 宣布全部完成 |
+
+执行顺序：REPLY-0 → REPLY-1 → REPLY-2/3 → REPLY-4 → REPLY-5。REPLY-4 的格式与访问设计可提前研究，不能绕过来源规则直接把远程 URL、任意本机路径或可执行 HTML 接进 renderer。
+
+协作采用一个集成负责人持有共享投影、公共 UI 契约、页面与状态文档；Codex adapter、Claude adapter 和契约已明确的展示切片可分工。共享文件不得由多个任务同时改写。各批集中运行定向验证，最终阶段不重新验证未受影响模块，也不把必要的失败复现和 UI 检查全部拖到最后。
+
+### 8.3 必须收口的实现规则
+
+1. **身份与输出权威性**：采用现有原生 message/item/block/task 身份和 run/parent 作用域，不以文字相等消除合法重复。最终输出字段缺失、明确为空、完整替换三种情况分别按原生契约处理；无完整快照时保留已收集的增量。展示序号不兼任排序与消息身份，定位优先匹配 sources。后台事件保留原任务归属，不因当前 active_run 改变而改写旧归属。
+2. **状态与未知数据**：区分等待用户、执行中、工具业务失败、拒绝、取消、未知、回复结束。MCP 调用结束不代表 result 成功。未知事件只保留经白名单/脱敏、有大小限制的诊断摘要；私有思考、签名、凭据、认证回调不得为了“完整覆盖”进入普通历史。未知请求仍不能自动批准或执行。
+3. **审批和表单**：待办区沿既有 session/generation/request 身份提交；持久权限扩大保留明确确认，不改变原生 availableDecisions。支持的 JSON Schema 约束既给字段级解释又在可信边界验证；不支持的必需约束明确拒绝接受，可选不支持字段按协议允许省略时才省略。URL 打开使用既有受控外链路径；打开浏览器不等于授权完成，不伪造 verification proof。
+4. **消息操作**：整条正文复制输出完整 Markdown；引用到草稿保留用户现有内容和来源，不自动发送。若加入“再次提问”，必须是用户可编辑的新请求，不能直接重放旧工具链。没有反馈收集用途时不添加装饰性的赞踩。
+5. **内容访问**：网页 citation 必须绑定当前原生来源记录，不把任意 Markdown URL 升格为可信证据。输出图片和产物只读取获准来源；本机文件复用工作区授权/目录身份与读取限额，远程读取须有单独的超时、大小、重定向、取消和访问策略。需要新增 IPC、持久化或迁移时，先更新直接权威契约及必要决策，不以 UI 实现隐式扩大权限。
+6. **富文本安全与兼容**：Markdown 原始 HTML 保持惰性文本；图解/公式采用禁脚本、禁外链、输入和计算量有界的 renderer，失败时保留可复制源码并说明。表格排序仅作用于展示副本，原输出及顺序可恢复，导出不得引入公式执行。共享 Markdown 的普通 AI 会话消费者必须同步核对，避免 CLI 优化改变其来源信任或链接规则。
+7. **能力差异**：Codex 的公开 summary/phase/Plan 和 Claude 的块流/Todo/工具许可分别适配，不强行伪造等价功能。TaskCreate/TaskUpdate、后台停止、图片输入等逐项按实际支持版本登记；不存在的能力提供明确边界，不用按钮或假结果补齐。上游新增能力纳入登记后才进入“已覆盖”口径。
+
+### 8.4 UICK 采用清单
+
+样例根目录为仓库 `UICK/stitch_dg_os_desktop_ui_specimen_board/` 与 `UICK/stitch_dg_os_ai_workbench/`。以下目录名是设计定位依据，不是复制其业务数据或安全规则的授权。
+
+| 参考样例 | 本轮采用目标 | 不机械采用的部分 | 阶段 |
+| --- | --- | --- | --- |
+| `dg_os_ui_component_atlas_ai_ai_workbench_content_specimen_1/2`、`dg_os_11b_conversation_colorful_precision` | 消息操作、过程/正文层级、代码、工具状态、审批、diff、长文本边界 | 两种布局不重复算能力；不展示私有思考，不伪造 VERIFIED_OUTPUT、TTFT、吞吐 | 1～3 |
+| `dg_os_ui_component_atlas_file_attachment_patterns_specimen` | 文件/图片/产物卡、可预览与不可预览状态、长文件名、拖入反馈 | 没有上传链路不显示虚构上传百分比；历史隐私省略不承诺恢复原图 | 2、4 |
+| `dg_os_ui_component_atlas_typography_microcopy_patterns_specimen`、`dg_os_ui_component_specimen_feedback_overlay_patterns` | 字段校验、加载/失败/未知、操作反馈、空态、双语换行与焦点 | 不用通用“检查安装”替代字段错误，不为每个成功工具弹 toast | 2、3 |
+| `dg_os_ui_component_specimen_data_presentation_patterns`、`dg_os_ui_component_specimen_rows_toolbars` | 长输出检索/复制、任务摘要、大表格按需查看 | 普通 Markdown 表格不强制变成管理数据表，回复不加无用批量操作 | 3、4 |
+| navigation overlay、hierarchical navigation、sidebar inspector 三组样例 | 最终答案与来源定位、历史关联、父子任务展开、窄窗与键盘回焦 | 复用工作台导航与操作面板，不新建另一套任务控制台 | 1～3 |
+| extended controls、三套基础主题、三份 DESIGN.md | 复用现有令牌、控件状态、密度和主题规范 | 不引入第二套主题或照搬硬编码颜色 | 3 |
+| `dg_os_local_ai_workbench` 及其余 overview/provider/MCP 管理样例 | 采用与审批、错误恢复、文件引用相关模式 | Provider 设置、设备配对、硬件监控、量化参数不计入回复覆盖 | 2～4 |
+
+### 8.5 验收场景与证据门槛
+
+下列 RA 标记仅为本节稳定场景标记，不是新功能编号或已通过的正式 AC。现有回归资产优先扩充；新文件只有在没有合适目标且行为需要长期保护时创建。
+
+| 场景 | Given / When / Then | 阶段 | 验证层与目标资产 |
+| --- | --- | --- | --- |
+| RA01 输出收敛 | Given 命令已有增量；When 完成输出缺失、明确为空或完整到达；Then 按协议保留或替换，无结束后丢输出、重复拼接 | 1 | `agent-transcript.test.tsx`、`agent-reply-content.test.tsx`；生产浏览器展开；真实两家命令 |
+| RA02 身份与历史 | Given 多块、重复文本、跨 parent、恢复 input 正文及后台任务；When 完整快照、下一轮或重连到达；Then 无串行归属、空正文、误合并，未能关联明确可解释 | 1 | 同上；bridge `native-transcript.test.ts`、Rust session/history；真实恢复与可触发的后台场景 |
+| RA03 状态可信 | Given MCP isError、拒绝、非零退出、取消、unknown；When 回执进入 UI；Then 状态和失败摘要准确可见，回复结束不等于验收通过 | 1、4 | 内容回归、受控 MCP、真实 CLI/宿主接线 |
+| RA04 阅读定位 | Given commentary→工具→final、多个块共享最新 seq；When 跳答案或从搜索定位 source；Then 命中正确内容、展开必要祖先、保留草稿；手动阅读与选中文本时流更新不抢滚动 | 1、3 | `agent-reply-timeline.test.tsx`、`agent-conversation-product.test.tsx`；实际浏览器/相关 WebView |
+| RA05 提问与审批 | Given 未填答案、无效字段、可选 enum、未知 schema、权限扩大；When 用户编辑/提交/取消、提交失败或切代次；Then 字段错误明确，合法响应仅提交一次，输入保留，旧批准失效 | 2 | `agent-workbench.test.tsx`、直接相关边界测试、Rust response 校验；两家真实提问/审批 |
+| RA06 历史和消息操作 | Given 离线历史及文件已变更/删除/越界；When 复制正文、填入草稿、打开文件或当前 diff；Then 复制完整、不自动发送、范围校验有效，原生与磁盘证据清楚区分 | 2 | `agent-output-references.test.tsx`、`agent-workbench.test.tsx`；真实工作区及历史 UI |
+| RA07 来源与多模态 | Given 原生可信来源、未知来源 ID、图片、resource、structuredContent；When 引用/预览；Then 正确来源可访问，未授权/失效/过大/非支持内容有明确结果，未知块不空白且无自动远程请求 | 4 | 相关 Markdown/输出回归、受控内容服务/MCP、宿主授权与桌面；两家可用原生路径 |
+| RA08 图解与数据 | Given 合法和畸形 Mermaid/公式、超大输入、带外链/脚本图解、大表格；When 渲染/展开/排序/导出；Then 渲染有界、无代码执行和越权读取，失败可读可复制，原输出不变 | 4 | renderer 边界回归、浏览器网络/交互观察；共享 Markdown 消费者回归 |
+| RA09 UICK 状态组合 | Given 中英、明暗、375/390px 窄窗、常规宽窗和放大字体；When 展开计划/diff/审批/子任务、键盘往返；Then 页面无横向溢出，内容区可局部滚动，焦点可见，等待/失败无需翻 JSON | 3、5 | 生产组件实际截图与键盘操作；窗口/焦点原生行为用 WebView |
+| RA10 长历史与流更新 | Given 10000 事件、100 可见行、长代码/大输出及连续增量；When 分页、展开、切换和追随；Then 不全量挂载重内容、无输入丢失或锚点跳动，更新成本和交互时延有测量 | 3、5 | 同设备同构建模式前后对比；记录样本数、首屏/展开/增量耗时和 DOM 规模；阶段 3 开始时固定验收预算，未固定前不写性能通过 |
+| RA11 双引擎完整旅程 | Given 隔离项目与真实 Provider；When 各完成读改查、审批拒绝再继续、失败结果、问答、恢复并查看历史；Then 内容/操作/磁盘证据一致，正式用户数据不变，自有进程清理确认 | 5 | 真实 Codex/Claude、受控 MCP、生产桌面；不支持能力和环境阻塞单列，不能由合成回放替代 |
+
+### 8.6 检查批次与交付门槛
+
+- REPLY-1～3 按改动选择既有 Vitest：`agent-transcript`、`agent-reply-content`、`agent-reply-timeline`、`agent-output-references`、`codex-transcript`、`agent-workbench`、`agent-conversation-product`、`chat-markdown`、相关文件工作区与边界测试。使用实际 `.test.tsx` 文件名，确认过滤器命中；不只统计命令退出码。
+- 修改 bridge 时集中运行其 transcript/protocol/turn-controls 测试并构建；Rust 按 session/history/受影响模块定向验证。改 IPC/共享 DTO 才补 `npm run contracts:check`；共享 UI 切片结束执行 `npm run build`，双语与设计令牌按对应改动检查。
+- 浏览器验证覆盖真实生产组件、待办操作和异常状态，明确替身边界；真实两家及受控 MCP 在集成阶段集中执行。修改原生生命周期、窗口或 IPC 路径时执行适用 WebView 场景；安装/跨平台证据沿 CLI-DESK-7 单独维护，不互相升格。
+- 复查期间观察到的构建/i18n 阻塞不能永久当作当前结论；实施前读取当时工作区归属，若仍存在由相关实现负责人修复，不覆盖用户其他工作。未解决时允许报告局部通过，但本增量不能声称整体集成验收通过。
+- 每个阶段交付实际可操作场景、受影响回归、视觉/运行证据及未覆盖范围；状态统一回写 V1 实现状态。阶段 5 核对本节所有范围和 RA01～RA11；必要路径未验收即保留缺口，不以“基础能力完成”替代全部范围。
+- 本次方案交付只修改此计划并运行文档检查，不创建业务代码、不提升实现状态、不生成无请求的文档浏览器。实施中涉及的正式契约或决策在对应阶段集中更新，规范事实不复制到多份台账。

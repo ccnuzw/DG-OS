@@ -85,7 +85,7 @@ Codex `item/permissions/requestApproval` 沿上述原生请求归属规则，独
 | `send_agent_message/respond_agent_request` | 除旧归属与 pending 校验，重验运行策略、进程级 Provider 租约、项目 epoch 及 Provider 可用性；历史发送/批准统一拒绝 |
 | `prepare/accept_development_handoff` | 保留命令，扩展同引擎迁移；目标显式选择 Provider 自身修订（允许 0）及正项目配置修订；摘要只作为草稿，单独显式发送 |
 | `get_agent_session` / workspace/session 列表 | 历史返回保存的有限投影及只读标记，无 backend 也可查；读取不启动 CLI |
-| `read_development_cli_cutover` / 新 `recheck_development_cli_cleanup` | 前者只读返回独立 data_state、local_cleanup_state、CLI 准入及恢复动作；后者按当前 boot identity/自有 child 退出事实重新核实并持久收敛，不发送信号给历史 PID、不重发外部请求；均只展示当前 owner 对象，其他 owner 的全局阻塞仅给固定原因 |
+| `reconcile_agent_start` / `prepare_agent_task` | 按 D146 自动核实原启动、幂等创建后台归属任务；清理核实为宿主内部能力，不提供手动清理命令。仅收敛本地事实，不向历史 PID 发送信号、不重发外部请求、不返回其他 owner 对象 |
 
 这里是拟议 Tauri 契约，不新增 HTTP 端点；OpenAPI 无新增 HTTP 操作。正式实现须由唯一契约写入者同步直接受影响接口文档、host commands 注册、契约检查规则、DTO、调用方及中英文错误文案，不能先上线一半新旧接口。
 
@@ -195,16 +195,18 @@ Provider 引用不 FK 到可删除 providers 行；运行前由 ProviderManager 
 | --- | --- | --- |
 | 本宿主仍有 child/进程组句柄 | 独立确认停止，按 D130 停并等待终态；取消不发停止 | wait/可追踪后代回收确认后记 owned_exit；ack、旧 PID 不在或 UI 关闭不足 |
 | 数据待迁移 | 关闭 CLI 新准入，事务归档全部旧历史、创建 legacy binding、清空旧 heads 并加 epoch，最后写 `d136-cli-provider-v1` marker | 跨宿主 cleanup unknown 也可提交数据迁移；失败全回滚，不回开旧网关 |
-| 有证据的跨宿主未清理对象 | 优先按可靠进程身份（启动身份/创建时间/可追踪进程组）和退出证据核实；不能只凭旧 PID | 无法可靠核实才提供保存 boot 基线后系统重启的最后恢复选项；不将普通历史一并冻结 |
+| 有证据的跨宿主未清理对象 | 按 D146 自动读取 exec 前建立的私有所有权记录及 OS 退出证据；不能只凭旧 PID | 同机器可信退出或 boot 变化证明只收敛本地 cleanup；旧版无可信证据的对象保持目录级隔离，不要求用户反复执行内部核实步骤 |
 | 数据 complete，无真实未清理阻塞 | 允许新 Provider 会话；旧 session 只读 | 历史外部 unknown 保留，不重放、不恢复旧授权 |
 
 boot identity 仅是有证据未清理对象的最后恢复证明，不是每次迁移的强制字段。平台 adapter 若使用 boot 证明，须来自可信 OS、同机器同启动稳定、重启改变；应用 UUID/墙钟/用户勾选不能替代。机器差异不算重启，字段缺失不能凭空创建活进程风险。
 
-首次旧数据迁移：普通已关闭历史照常归档，缺 boot 不阻止新 CLI；未完成 run 保持历史 unknown，也不单独代表当前有进程。已知自有 child 必须停等终态；真实清理失败或跨宿主未清理证据保存对象归属与具体原因。可追踪对象用可靠身份和退出事实收敛；不可追踪且无法核实的对象才保存当前 boot 基线并提示系统重启后重新核实。首次 boot 读取失败仅影响选择该证明路径的对象，不能将整个应用永久冻结。
+首次旧数据迁移：普通已关闭历史照常归档，缺 boot 不阻止新 CLI；未完成 run 保持历史 unknown，也不单独代表当前有进程。已知自有 child 必须停等终态；真实清理失败或跨宿主未清理证据保存对象归属与具体原因。旧版对象缺少所有权日志时不得伪造退出证明，也不得按历史 PID 发信号；可信 boot 变化仍可自动收敛其本地清理。限制只作用于对应目录，不隐藏历史或阻止删除本地项目关联。
 
-重核实只能收敛本地 cleanup，不能把外部 unknown 改成功、恢复旧会话或按旧 PID 发送信号。新 boot 可证明旧本地进程不存在，外部网络/远端任务不在证明范围。具体查询/停止/退出证据入口由下一轮 Manager 对齐实际可追踪能力；本 Provider 切片不实现系统进程探测。其他 owner 对象只返回固定原因，普通历史不得引入跨账户全局重启要求。
+按 D146，新原生进程在 exec 前建立应用数据目录 `cli-processes/<binding UUID>.ownership` 私有记录：目录 0700、文件 0600、拒绝符号链接，内容只含格式标识、机器/启动身份、进程组和启动/停止状态，不含凭据、命令或输入。未派发结论要求完整未启动记录且排他锁已释放；已启动但没有可信停止证明仍为 unknown。宿主生命线断开时组内 guardian 停止其自身所在的受管进程组；正常清理在 reap 前保持进程组身份，不向可复用的缓存 PGID 发送信号。macOS/Linux 使用各自 OS 身份和组检查；不支持的平台拒绝该启动路径，不降级为不受管执行。
 
-宿主显式重核实入口为 `recheck_development_cli_cleanup(app, window) -> Result<(), String>`：复用 Workbench/TasksRun 与当前账户 lease，维护准入后调用 `CliProviders::recheck_cleanup`，返回前重验 lease；不接受前端提供 machine/boot/owner，不返回全库清理数量。仅同机器且不同启动标识可收敛既有 pending/unknown 清理，不发送信号、不重放启动或恢复旧授权。无法读取可信启动标识返回 `boot_identity_unavailable`；工作台错误旁提供重核实操作，检查完成不等于目录已可用。
+启动、快照恢复和项目解除关联自动观察清理证据；不再暴露手动 `recheck_development_cli_cleanup` 命令。观察与恢复有界、单飞，只收敛本地 cleanup，不改变外部 unknown、不恢复旧授权。创建过程由宿主持有，不因 renderer 丢回执而取消；读取时内存缺投影须回读持久记录，存储失败不解释为会话不存在。`reconcile_agent_start` 在准入锁内返回未启动/可用/已关闭/恢复中，未启动须登记迟到创建屏障；`prepare_agent_task` 以原请求 ID 幂等创建归属任务，冲突不覆盖。前端保留草稿、附件和发送意图，自动核实，只有证明未派发才继续原意图；发送未知仅观察原 run。
+
+解除项目关联自动停止本项目自有会话和宿主运行；当前自有运行的清理尚未确认时不完成解除。旧版不可追踪记录不要求用户逐个操作：允许移除本地管理关联并保留只读会话及原目录清理隔离，不删除代码或原生历史，不放行仍不确定的目录。其他 owner 对象不返回跨账户明细；关闭标签仍不等于停止运行。
 
 所有既有 session 均为 legacy_read_only：D135 混合、旧项目修订0原生、无快照索引及待归类历史；只有 Provider 的旧快照也不复用 native_id。损坏历史保留原字节，不能完整归档则回滚；旧令牌/pending 不迁移。历史只读保存索引、run 和配置，不 thread/resume/Claude query；注明有界投影和缺失原生消息，不伪造完整历史。
 
@@ -561,6 +563,58 @@ B～D 编辑阶段不逐文件执行检查；公共契约确有必要时做局�
 
 压缩复用 `observe_agent_compression` 当前代次能力读取、`control_codex_operation` 的类型化 compact 动作及原请求核实，沿账户、Provider、目录、generation 和空闲检查。Codex 使用 `thread/compact/start`，首次能力依据精确已核对 0.167.0 schema 或当前进程既有直接协议成功证据，不按版本大小推断，请求受理不等于完成；Claude 仅在原生 supportedCommands 确认 builtin `/compact` 后调用，并关联原生结果。版本/schema、能力发现、协议 fixture、真实 CLI 执行和桌面交互分别留证；未支持时局部禁用，不以普通提示词、前端调低进度条或旧压缩成功记录替代当前完成。失败/未知不修改占用、不自动重发，刷新占用必须等待新的原生用量。
 
+## 18. CLI Provider 多协议路由（CLI-PROVIDER-ROUTES）
+
+2026-11-11 用户批准定位当前启动失败并完整实施 Provider 多协议路由、配置界面和集中验证；具体保守实现由助手选定。沿 D136 的 Provider-only、凭据归属、无原生账号回退及无通用协议代理边界，不把 Chat Completions 成功视为 Responses 兼容证据。
+
+- **配置**：`provider_type` 保持普通 AI 助手调用适配器语义。`config.cli_routes` 可分别声明 `responses` 和 `messages`；每项包含必需布尔 `enabled`，可选 `base_url` 与 `auth_style`（bearer/x-api-key/both）。缺省项沿既有类型推导未验证候选；显式关闭优先，显式开启表示用户声明而不是实测。两项可并存，不自动改普通聊天协议。
+- **端点与凭据**：空或缺省 CLI base 复用 Provider 基址；显式地址按已有 HTTPS/HTTP 授权政策校验，并拒绝 userinfo、query、fragment 和完整操作 URL。Messages 基址沿已有 `/v1` 规范化；不把 `/chat/completions` 字符串替换成 `/responses`。界面明确同一凭据会用于显式端点；凭据仍从原 Provider 的 vault scope 读取，不迁移或复制秘密。不同密钥需另建 Provider。
+- **选择**：Codex 仅选择 Responses/Bearer，Claude 选择 Messages/受支持认证。目录、保存、启动、恢复共用宿主纯解析器；不做付费预探测，不自动切协议、端点、Provider 或原生账号。普通连接测试仍只验证普通适配器，不提升 CLI 验证状态。
+- **修订**：规范化后的 CLI 路由变更纳入已有配置修订与进程租约失效；不因 CLI 单独改路由清空普通模型目录。旧会话固定原修订，不静默换绑。禁用路线、撤权、配置冲突继续拒绝启动与恢复。
+- **启动核验**：进程级受控 Provider 配置必须排除原生同名配置遗留的认证覆盖；不修改用户/项目持久配置。配置回读及线程返回的 Provider、模型必须匹配。协议不支持、认证不支持、路由配置非法、有效绑定不一致分别反馈；未知结果不重发，不通过删除校验绕过错误。
+- **原生线程身份**：Codex 受控 Provider 标识在首启生成并保存于会话快照的非秘密 `codex_provider_id`；恢复及分叉沿用标识，不随新进程租约改变。旧快照对应既有 `dgos_project` 标识，恢复仍须通过完整有效认证/端点读回，遇到污染明确拒绝，不借原生登录或删除校验绕过。
+
+| 分支 | 验证目标 | 验证层 |
+| --- | --- | --- |
+| B136R-01 | 同一 Provider 普通调用保持 Chat，Codex 用 Responses；显式 Messages 可独立选用 | Provider resolver/lease 回归与本地协议端点 |
+| B136R-02 | 显式关闭优先；无凭据、非法 URL/认证、非文本模型在外发前拒绝 | Provider 定向回归 |
+| B136R-03 | 路由变化撤销旧租约且保留普通模型目录；旧修订不能恢复 | Provider mutation 与 Agent 恢复回归 |
+| B136R-04 | 原生同名 Provider 有额外认证时，可信进程覆盖后仍使用选定路线；读回不符拒绝 | 真实 Codex 配置握手与隔离 HTTP fixture |
+| B136R-05 | 401/协议拒绝不切 Chat、不使用原生账号、不重发未知操作 | 真实 CLI 加本地故障端点；宿主集成回归 |
+| B136R-06 | 双路线编辑/保存/禁用/放弃、双语和窄窗可用；普通连接测试不冒充 CLI 验证 | 表单行为回归及实际浏览器交互 |
+
+## 19. 原生回复覆盖与受控内容展示（CLI-REPLY）
+
+2026-11-11 用户授权按[产品化计划 §8](../../02-产品与版本/后续版本/V7-CLI-Agent桌面端产品化推进计划.md#8-双引擎回复互动与-uick-落地增量)连续实施，集中验证。以下是实施契约，不是完成记录。适配基线限定 Codex 0.167.0 App Server、Claude Code 2.1.319 / Agent SDK 0.3.317；未来版本不能凭版本大小视为全部兼容。
+
+| 原生能力 | 接收与展示约定 | 不支持/缺失边界 |
+| --- | --- | --- |
+| Codex agentMessage/commandExecution/Plan/diff | item+run 身份、阶段、完整输出与增量、公开摘要与修订分别投影；历史用户 input/content 文本归一化 | 不解析原始 reasoning；缺最终输出保留增量，明确完整输出按原生语义替换 |
+| Claude assistant/user/stream/tool/task | message+block+parent、tool/task 原始 request/run 归属；进度并入来源证据，缺匹配身份分别保留并解释 | 不以文字相等猜身份；没有原生任务控制能力不伪造停止 |
+| Codex webSearch / Claude WebSearch | 只消费关联原生搜索回执中的结构化结果，展示 URL、title、可选 snippet 和来源类型；每回合隔离 | Codex results 为不透明数组且无保证 citation ID；Claude 字符串结果不作结构化来源，缺时间不造时间，MCP 任意 JSON 不升格搜索证据 |
+| MCP content/resource/structuredContent | 文本与结构化值有界展示；已收到的资源正文可预览，resource URI 与文件路径只作显式操作提示 | 不自动请求远程 URL，不自动读取本机路径，不把未知资源当空结果 |
+| imageView/imageGeneration | 原生路径保持元数据，通过既有文件引用宿主校验显式打开 | fileId 不当本机路径，未收到内容不伪造预览 |
+| 原生输出图片 | 非用户输入的 PNG/JPEG/WebP 已收到字节进入会话私有易失缓存，事件只携带 opaque preview_resource_id、mimeType、bytes_len 与省略标记 | 用户图片和历史隐私规则不变；旧代次、关闭、淘汰后明确预览过期，不从历史重建字节 |
+| 未识别事件/块 | 经过受限字段与大小约束保留安全事件类型或内容不可用原因 | 不存未知任意 payload，不存凭据、认证回调、签名、私有思考，不自动执行未知请求 |
+
+图片预览只读路径：可信 Workbench 宿主身份 → owner/session/generation 与活动租约复核 → 当前原生 SessionView 私有缓存 → 显式返回 mime/base64/bytes_len。每图最多 2 MiB，会话合计 8 MiB、最多 8 项；校验实际文件 magic。缓存不序列化到数据库、事件、普通快照或日志，快照克隆不复制缓存；账户/代次失效后不可读取。无新增图片下载、磁盘写入或历史持久化能力。前端额外限制解码尺寸，关闭或更换预览回收对象 URL，迟到读取不得更新新上下文。
+
+审批继续使用原生 request 身份与 availableDecisions；预览 diff 仅关联同 active run、原生 item 的证据，不按路径或跨回合 item 名猜测。Claude 问答完整非空；Codex 用户输入保留原协议允许部分/空答案。Elicitation 明确支持约束并在宿主验证，不支持的必需约束不接受；URL 打开不是授权完成证明。
+
+丰富 Markdown 保留原始 HTML 惰性文本和外链确认。图解限明确支持图型、输入/节点/边有界，隔离渲染后的 SVG 必须白名单重建；公式不启用 trust，限制展开与执行时间。超限/畸形保留可复制源码并说明。表格排序不修改原输出，CSV 导出中和公式注入。普通 AI 会话的可信来源机制保持独立，CLI 通过可选 citation renderer 接入原生来源。
+
+阅读性能预算在集中验证前固定：同机开发构建，10000 事件/初始最多100可见行，5次暖运行首屏及分页/展开各次不超过1000ms；增量到可见更新不超过250ms，输入及手动阅读无丢失/跳位；重内容按展开挂载。测量同时报告每次数据、构建模式、DOM规模和未覆盖项，超预算必须定位修复，不能用均值掩盖失败样本。
+
+| 分支 | 验证目标 | 计划场景 |
+| --- | --- | --- |
+| B136Q-01 | 原生输出收敛、历史正文、task/run/parent隔离 | RA01、RA02 |
+| B136Q-02 | MCP业务错误/拒绝/取消/未知，未知内容安全摘要 | RA03、RA07 |
+| B136Q-03 | 来源精确导航、历史显式打开、复制/填稿零发送 | RA04、RA06 |
+| B136Q-04 | 问答/Schema拒绝、旧代次失效、同回合审批预览 | RA05 |
+| B136Q-05 | 图片有效/过期/越权/淘汰、快照与历史无字节、文件引用宿主复核 | RA07 |
+| B136Q-06 | 图解/公式/表格安全与双语主题窄窗、长历史预算 | RA08、RA09、RA10 |
+| B136Q-07 | 真实两家、受控MCP、恢复与清理证据 | RA11 |
+
 ## 变更记录
 
 | 日期 | 变更 | 关联决策 |
@@ -570,3 +624,4 @@ B～D 编辑阶段不逐文件执行检查；公共契约确有必要时做局�
 | 2026-11-07 | P2-PROVIDER：收窄历史重启门槛；实现共享提交/spawn gate、opening租约、同步失效/锁外通知、变更路径接线及边界测试源码；§7.2记录实际API、宿主接入与集中smoke方案 | D136、D130、D131 |
 | 2026-11-08 | 第四阶段：Stage4 原生资源事务、独立读取/审批/执行/结果回送证据及新版 artifact 恢复边界；驱动能力限制和实际证据见 V1 实现状态 | D136、D131 |
 | 2026-11-10 | D144：收口活动精确工作区自动信任、五项模式的原生限制、响应偏好与用量/压缩证据边界；取代重复确认和旧 Plan 规则，不回写实现状态 | D144 |
+| 2026-11-11 | CLI-PROVIDER-ROUTES：独立协议路由、原生认证隔离与持久线程标识；B136R-01～06 集中验收边界 | D136 |
