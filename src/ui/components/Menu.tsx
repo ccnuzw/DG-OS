@@ -45,5 +45,5 @@ function entries(items:readonly MenuItem[], context:boolean):ReactNode {
 }
 export interface ContextMenuProps {items:readonly MenuItem[];children:ReactNode;onOpenChange?:(open:boolean)=>void}
 export function ContextMenu({items,children,onOpenChange}:ContextMenuProps){return <Context.Root onOpenChange={onOpenChange}><Context.Trigger asChild><div>{children}</div></Context.Trigger><Context.Portal><Context.Content className={SURFACE}>{entries(normalizeMenu(items),true)}</Context.Content></Context.Portal></Context.Root>;}
-export interface DropdownMenuProps {trigger:ReactElement;items:readonly MenuItem[];label?:string}
-export function DropdownMenu({trigger,items,label}:DropdownMenuProps){return <Dropdown.Root><Dropdown.Trigger asChild>{trigger}</Dropdown.Trigger><Dropdown.Portal><Dropdown.Content aria-label={label} sideOffset={4} className={SURFACE}>{entries(normalizeMenu(items),false)}</Dropdown.Content></Dropdown.Portal></Dropdown.Root>;}
+export interface DropdownMenuProps {trigger:ReactElement;items:readonly MenuItem[];label?:string;onCloseAutoFocus?:(event:Event)=>void}
+export function DropdownMenu({trigger,items,label,onCloseAutoFocus}:DropdownMenuProps){return <Dropdown.Root><Dropdown.Trigger asChild>{trigger}</Dropdown.Trigger><Dropdown.Portal><Dropdown.Content aria-label={label} onCloseAutoFocus={onCloseAutoFocus} sideOffset={4} className={SURFACE}>{entries(normalizeMenu(items),false)}</Dropdown.Content></Dropdown.Portal></Dropdown.Root>;}

@@ -1,7 +1,7 @@
 export default {
   'agent.sendShortcut': '⌘ / Ctrl + Enter 发送', 'agent.sendEmpty': '输入消息后即可发送。', 'agent.sendBusy': '请等待当前操作完成。',
   'agent.sendWaiting': '请先回应待处理请求。', 'agent.sendRunning': '执行中仍可编辑下一条；当前回合空闲后才能作为独立消息发送。', 'agent.sendUnavailable': '当前运行未就绪。请恢复会话或选择已就绪的会话后发送。',
-  'agent.latest': '跳到最新消息', 'agent.rawEvents': '查看原生事件（{count}）', 'agent.allowSession': '允许本次会话',
+  'agent.latest': '跳到最新消息', 'agent.allowSession': '允许本次会话',
   'agent.requestCommand': '执行命令', 'agent.requestDirectory': '工作目录', 'agent.requestPath': '涉及路径', 'agent.requestInput': '工具参数', 'agent.requestSending': '正在提交回应，等待原生智能体确认。',
   'agent.permissionExpansion': '原生权限扩展', 'agent.allowTurn': '允许当前回合',
   'agent.permissionScope': '仅授予下列权限，范围为当前回合或当前运行中的原生会话。这不是某条命令或 MCP 工具的逐次许可；关闭或恢复后不重放授权。',

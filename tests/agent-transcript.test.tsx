@@ -548,3 +548,104 @@ describe('REPLY-1 content and evidence regression', () => {
     expect(findAgentTranscriptRow(rows, { run: 'missing', seq: 2 })).toBeUndefined();
   });
 });
+
+describe('native notification projection boundary', () => {
+  it('keeps routine notifications out of the last 100 reply rows without changing source evidence', () => {
+    const replies = Array.from({ length: 120 }, (_, index) => event(index + 1, 'agentMessage', { id: `reply-${index}` }, 'run-a', `Reply ${index + 1}`));
+    const routineTypes = ['hook/started', 'hook/completed', 'account/rateLimits/updated', 'turn/moderationMetadata', 'thread/status/changed', 'thread/readState/updated', 'thread/settings/updated', 'mcpServer/startupStatus/updated', 'future/nativeType'];
+    const notifications = Array.from({ length: 116 }, (_, index) => event(index + 121, 'native/unsupported', { diagnostic: 'unsupported_native_event', native_type: index >= 114 ? 'warning' : routineTypes[index % routineTypes.length], payload_omitted: true }));
+    const events = [...replies, ...notifications];
+    const original = JSON.stringify(events);
+    for (const projection of [projectAgentTranscript(events), createAgentTranscriptProjector().project(events)]) {
+      expect(projection.rows).toHaveLength(122);
+      expect(projection.rows.slice(-100).filter(row => row.event.kind === 'agentMessage')).toHaveLength(98);
+      expect(projection.rows.slice(-100)[0].event).toBe(replies[22]);
+      expect(projection.rows.filter(row => row.event.kind === 'native/unsupported').map(row => row.event)).toEqual(notifications.slice(-2));
+      expect(projection.rows.at(-1)?.sources[0]).toBe(notifications.at(-1));
+      expect(Object.keys(projection).sort()).toEqual(['rows', 'toolNames', 'toolResults']);
+    }
+    expect(JSON.stringify(events)).toBe(original);
+    expect(events[120]).toBe(notifications[0]);
+    expect(events).toHaveLength(236);
+  });
+
+  it.each([
+    { native_type: 'error' },
+    { native_type: 'hook/failed' },
+    { native_type: 'failure' },
+    { native_type: 'future/type', error: 'Native error' },
+    { native_type: 'future/type', status: 'error' },
+    { native_type: 'future/type', status: 'failure' },
+    { native_type: 'future/type', errors: ['Native error'] },
+    { native_type: 'mcpServer/startupStatus/updated', status: 'failed' },
+    { native_type: 'future/type', run_status: 'failed' },
+    { native_type: 'future/type', success: false },
+    { native_type: 'future/type', is_error: true },
+    { native_type: 'future/type', isError: true },
+    { native_type: 'future/type', exitCode: 1 },
+    { native_type: 'future/type', result: { isError: true } },
+    { native_type: 'future/type', tool_use_result: { is_error: true } },
+  ] as Json[])('retains explicit native failure evidence in the visible projection: %j', data => {
+    const failed = event(1, 'native/unsupported', data);
+    const projection = projectAgentTranscript([failed]);
+    expect(projection.rows).toHaveLength(1);
+    expect(projection.rows[0].event).toBe(failed);
+    expect(projection.rows[0].sources).toEqual([failed]);
+  });
+
+  it('applies the same boundary to restored legacy records and cached appended notifications', () => {
+    const reply = event(1, 'agentMessage', { id: 'old', history: true }, null, 'Restored answer');
+    const ordinary = event(2, 'native/unsupported', { native_type: 'hook/completed', payload_omitted: true }, null);
+    const unknown = event(3, 'native/unsupported', { native_type: 'future/event', status: 'completed' }, null);
+    const warning = event(4, 'native/unsupported', { native_type: 'warning', payload_omitted: true }, null);
+    const events = [reply, ordinary, unknown, warning];
+    const projector = createAgentTranscriptProjector();
+    expect(projectAgentTranscript(events).rows.map(row => row.event)).toEqual([reply, warning]);
+    expect(projector.project(events).rows.map(row => row.event)).toEqual([reply, warning]);
+    const failed = event(5, 'native/unsupported', { native_type: 'future/event', status: 'failed' }, null);
+    events.push(failed);
+    expect(projector.project(events).rows.map(row => row.event)).toEqual([reply, warning, failed]);
+  });
+});
+
+describe('failure evidence retained through projection', () => {
+  it.each([
+    { isError: true },
+    { tool_use_result: { isError: true } },
+    { tool_use_result: { is_error: true } },
+  ] as Record<string, Json>[])('attaches a uniquely scoped envelope failure to its tool result: %j', envelope => {
+    const tool = message(1, 'm', [{ type: 'tool_use', id: 'read', name: 'Read', input: {} }], [0]);
+    const block: Json = { type: 'tool_result', tool_use_id: 'read', content: 'Native failure' };
+    const result = event(2, 'message', { type: 'user', content: [block], ...envelope });
+    const projection = projectAgentTranscript([tool, result]);
+    expect(projection.rows).toHaveLength(1);
+    expect(projection.rows[0].sources).toEqual([tool, result]);
+    expect(projection.toolResults.get(itemKey(tool, 'read'))).toMatchObject({ is_error: true, content: 'Native failure' });
+    expect(object(block)).not.toHaveProperty('is_error');
+  });
+
+  it.each([
+    { errors: ['Envelope failure'] },
+    { status: 'error' },
+    { result: { is_error: true } },
+    { tool_use_result: { isError: true } },
+  ] as Record<string, Json>[])('retains an independent or ambiguous envelope failure: %j', envelope => {
+    const tool = message(1, 'm', [{ type: 'tool_use', id: 'one', name: 'Read', input: {} }, { type: 'tool_use', id: 'two', name: 'Read', input: {} }], [0, 1]);
+    const result = event(2, 'message', { type: 'user', content: [{ type: 'tool_result', tool_use_id: 'one', content: 'One' }, { type: 'tool_result', tool_use_id: 'two', content: 'Two' }], ...envelope });
+    const projection = projectAgentTranscript([tool, result]);
+    expect(projection.rows).toHaveLength(3);
+    expect(projection.rows.at(-1)?.event).toBe(result);
+    expect(agentEventFailed(result)).toBe(true);
+    expect(object(projection.toolResults.get(itemKey(tool, 'one')))).not.toHaveProperty('is_error');
+  });
+
+  it.each([
+    { errors: ['Native failure'] },
+    { status: 'failure' },
+    { isError: true },
+  ] as Record<string, Json>[])('does not suppress failure terminal prose matching an assistant answer: %j', failure => {
+    const answer = message(1, 'answer', [textBlock('Repeated native evidence')], [0]);
+    const terminal = event(2, 'result', { result: 'Repeated native evidence', ...failure });
+    expect(projectAgentTranscript([answer, terminal]).rows.at(-1)?.suppressText).toBe(false);
+  });
+});

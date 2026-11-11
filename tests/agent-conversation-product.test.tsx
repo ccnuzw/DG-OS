@@ -53,7 +53,53 @@ it('does not steal history scrolling when new messages arrive and keeps technica
   const next = { ...first, events: [...first.events, { seq: 2, kind: 'agentMessage', text: 'New response', data: null, run: 'r' }] };
   act(() => useAgentRunner.setState({ session: next })); view.rerender(<MemoryRouter><Conversation value={next} /></MemoryRouter>);
   expect(viewport.scrollTop).toBe(70); expect(screen.getByRole('button', { name: 'agent.newContent' })).toBeTruthy();
-  expect(screen.getByText('agent.rawEvents').closest('details')?.getAttribute('open')).toBeNull();
+  expect(screen.getByText('agentReply.diagnostics').closest('details')?.getAttribute('open')).toBeNull();
+});
+it('lands on the completed answer instead of trailing diagnostics and preserves subsequent manual reading', () => {
+  const running: AgentSession = { ...session, status: 'running', active_run: 'r', events: [{ seq: 1, kind: 'userMessage', text: 'Question', data: null, run: 'r' }] };
+  select(running);
+  const view = render(<MemoryRouter><Conversation value={running} /></MemoryRouter>);
+  const viewport = screen.getByRole('region', { name: 'agent.messages' });
+  Object.defineProperties(viewport, { scrollHeight: { configurable: true, value: 1500 }, clientHeight: { configurable: true, value: 400 } });
+  const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    return { top: this.matches('[data-reply-final="true"]') ? 600 - viewport.scrollTop : 0, bottom: 100, left: 0, right: 800, width: 800, height: 100, x: 0, y: 0, toJSON() {} };
+  });
+  try {
+    const done: AgentSession = { ...running, status: 'idle', active_run: null, events: [...running.events,
+      { seq: 2, kind: 'agentMessage', text: 'Final answer', data: { id: 'answer', phase: 'final_answer' }, run: 'r' },
+      { seq: 3, kind: 'native/unsupported', text: null, data: { native_type: 'hook/completed' }, run: 'r' },
+      { seq: 4, kind: 'turn/completed', text: null, data: { run_status: 'completed' }, run: 'r' },
+    ] };
+    act(() => useAgentRunner.setState({ session: done })); view.rerender(<MemoryRouter><Conversation value={done} /></MemoryRouter>);
+    expect(viewport.scrollTop).toBe(600);
+    fireEvent.scroll(viewport);
+    expect(screen.queryByRole('button', { name: 'agent.latest' })).toBeNull();
+    const updated = { ...done, events: [...done.events, { seq: 5, kind: 'native/unsupported', text: null, data: { native_type: 'thread/status/changed' }, run: 'r' }] };
+    act(() => useAgentRunner.setState({ session: updated })); view.rerender(<MemoryRouter><Conversation value={updated} /></MemoryRouter>);
+    expect(viewport.scrollTop).toBe(600);
+    viewport.scrollTop = 100; fireEvent.scroll(viewport);
+    const newer = { ...updated, events: [...updated.events, { seq: 6, kind: 'agentMessage', text: 'Later answer', data: { id: 'later', phase: 'final_answer' }, run: 'next' }] };
+    act(() => useAgentRunner.setState({ session: newer })); view.rerender(<MemoryRouter><Conversation value={newer} /></MemoryRouter>);
+    expect(viewport.scrollTop).toBe(100);
+    expect(screen.getByRole('textbox', { name: 'agent.prompt' })).toHaveProperty('value', 'Next requirement');
+    fireEvent.click(screen.getByRole('button', { name: 'agent.newContent' }));
+    expect(viewport.scrollTop).toBe(600);
+  } finally { geometry.mockRestore(); }
+});
+it('keeps notifications out of message pagination while searching their exact retained evidence', () => {
+  const events: AgentEvent[] = [{ seq: 1, kind: 'userMessage', text: 'Original question', data: null, run: 'r' },
+    ...Array.from({ length: 120 }, (_, index) => ({ seq: index + 2, kind: 'native/unsupported', text: null, data: { native_type: 'hook/completed' }, run: 'r' })),
+    { seq: 122, kind: 'agentMessage', text: 'Actual answer', data: { id: 'answer', phase: 'final_answer' }, run: 'r' }];
+  const value = { ...session, events }; select(value);
+  const scroll = vi.fn(); Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scroll });
+  const view = render(<MemoryRouter><AgentConversation session={value} drafts={{}} setDraft={vi.fn()} busy={false} error={false} /></MemoryRouter>);
+  expect(screen.getByText('Original question')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'agent.loadOlder' })).toBeNull();
+  view.rerender(<MemoryRouter><AgentConversation session={value} drafts={{}} setDraft={vi.fn()} busy={false} error={false} focusMessage={{ runId: 'r', seq: 42, nonce: 1 }} /></MemoryRouter>);
+  const diagnostic = document.activeElement?.closest('[data-focused-diagnostic]');
+  expect(diagnostic).toBeTruthy();
+  expect(within(diagnostic as HTMLElement).getByText(/#42/)).toBeTruthy();
+  expect(screen.getByRole('textbox', { name: 'agent.prompt' })).toHaveProperty('value', '');
 });
 it('renders bounded recent transcript and reveals a true searched message without sending', () => {
   const events: AgentEvent[] = Array.from({ length: 150 }, (_, index) => ({ seq: index + 1, kind: 'userMessage', text: `Message ${index + 1}`, data: null, run: 'r' }));

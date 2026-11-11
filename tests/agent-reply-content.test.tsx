@@ -52,16 +52,98 @@ it('keeps child messages folded under only their native parent and displays life
   expect(await screen.findByText('Native task summary')).toBeTruthy();
 });
 
-it('distinguishes known Codex phases while leaving unknown phases as ordinary prose', () => {
+it('retains native phase semantics and engine identity without visual phase badges', () => {
   const view = render(<EventContent event={event(1, 'agentMessage', { phase: 'commentary' }, 'Inspecting dependencies')} engine="codex" />);
-  expect(screen.getByText('codexTranscript.commentary')).toBeTruthy();
-  view.rerender(<EventContent event={event(1, 'agentMessage', { phase: 'final_answer' }, 'The dependency is fixed.')} engine="codex" />);
-  expect(screen.getByText('codexTranscript.finalAnswer')).toBeTruthy();
-  view.rerender(<EventContent event={event(1, 'agentMessage', { phase: 'future' }, 'Ordinary native text')} engine="codex" />);
-  expect(screen.queryByText('codexTranscript.finalAnswer')).toBeNull();
+  expect(screen.getByTestId('agent-event-1').getAttribute('data-message-phase')).toBe('commentary');
+  expect(screen.getByText('Inspecting dependencies').closest('[data-message-phase]')?.getAttribute('data-message-phase')).toBe('commentary');
+  expect(screen.getByText('Codex')).toBeTruthy();
   expect(screen.queryByText('codexTranscript.commentary')).toBeNull();
+  view.rerender(<EventContent event={event(1, 'agentMessage', { phase: 'final_answer' }, 'The dependency is fixed.')} engine="codex" />);
+  expect(screen.getByTestId('agent-event-1').getAttribute('data-message-phase')).toBe('final_answer');
+  expect(screen.getByText('Codex')).toBeTruthy();
+  expect(screen.queryByText('codexTranscript.finalAnswer')).toBeNull();
+  view.rerender(<EventContent event={event(1, 'agentMessage', { phase: 'future' }, 'Ordinary native text')} engine="codex" />);
+  expect(screen.getByTestId('agent-event-1').hasAttribute('data-message-phase')).toBe(false);
   expect(screen.getByText('Ordinary native text')).toBeTruthy();
 });
+
+it.each(['user', 'commentary'] as const)('offers %s copy and quote through a visible keyboard menu with Escape focus return', async kind => {
+  const source = 'Complete native message\nwith its second line retained.';
+  const value = kind === 'user' ? event(1, 'userMessage', null, source) : event(1, 'agentMessage', { phase: 'commentary' }, source);
+  const writeText = vi.fn().mockResolvedValue(undefined), onQuoteReply = vi.fn();
+  const original = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  try {
+    const view = render(<EventContent event={value} engine="codex" onQuoteReply={onQuoteReply} />);
+    const actions = screen.getByRole('group', { name: 'agentReply.actions' });
+    const trigger = within(actions).getByRole('button', { name: 'agentReply.actions' });
+    expect(actions.getAttribute('data-compact')).toBe('true');
+    expect(trigger.closest('.agent-reply-prose-heading')).toBeTruthy();
+    expect(within(actions).getAllByRole('button')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'agentReply.copy' })).toBeNull();
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+    const copyItem = await screen.findByRole('menuitem', { name: 'agentReply.copy' });
+    await waitFor(() => expect(document.activeElement).toBe(copyItem));
+    fireEvent.keyDown(copyItem, { key: 'ArrowDown' });
+    const quoteItem = screen.getByRole('menuitem', { name: 'agentReply.quote' });
+    await waitFor(() => expect(document.activeElement).toBe(quoteItem));
+    fireEvent.keyDown(quoteItem, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'agentReply.copy' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledExactlyOnceWith(source));
+    expect(await within(actions).findByText('chat.copied')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'agentReply.quote' }));
+    await waitFor(() => expect(onQuoteReply).toHaveBeenCalledExactlyOnceWith(source));
+    expect(view.container.querySelector('.agent-reply-phase')).toBeNull();
+  } finally {
+    if (original) Object.defineProperty(navigator, 'clipboard', original);
+    else Reflect.deleteProperty(navigator, 'clipboard');
+  }
+});
+
+it.each(['final_answer', 'future', undefined])('keeps direct copy and quote visible for assistant phase %s', phase => {
+  const source = 'The complete final answer.', onQuoteReply = vi.fn();
+  render(<EventContent event={event(1, 'agentMessage', phase ? { phase } : null, source)} engine="codex" onQuoteReply={onQuoteReply} />);
+  const actions = screen.getByRole('group', { name: 'agentReply.actions' });
+  expect(actions.hasAttribute('data-compact')).toBe(false);
+  expect(within(actions).getByRole('button', { name: 'agentReply.copy' })).toBeTruthy();
+  fireEvent.click(within(actions).getByRole('button', { name: 'agentReply.quote' }));
+  expect(onQuoteReply).toHaveBeenCalledExactlyOnceWith(source);
+  expect(within(actions).queryByRole('button', { name: 'agentReply.actions' })).toBeNull();
+});
+
+it('renders a successful terminal as one short disclosure and keeps its original evidence available', async () => {
+  const value = event(1, 'result', { run_status: 'completed', customEvidence: 'Preserved terminal evidence' });
+  const original = JSON.stringify(value);
+  const view = render(<EventContent event={value} engine="claude" />);
+  const terminal = view.container.querySelector('.agent-reply-terminal') as HTMLDetailsElement;
+  expect(terminal.getAttribute('data-operation-state')).toBe('replyCompleted');
+  expect(terminal.open).toBe(false);
+  expect(terminal.querySelector('summary')?.textContent).toBe('agentExecution.replyCompleted');
+  expect(view.container.querySelector('.agent-reply-operation')).toBeNull();
+  expect(screen.queryByText('agent.finished')).toBeNull();
+  expect(screen.queryByText('agentExecution.notAcceptance')).toBeNull();
+  expect(view.container.querySelector('pre')).toBeNull();
+  fireEvent.click(screen.getByText('agentExecution.replyCompleted'));
+  expect(await screen.findByText('agentExecution.notAcceptance')).toBeTruthy();
+  fireEvent.click(screen.getByText(/agent.details/));
+  expect(await screen.findByText(/Preserved terminal evidence/, { selector: 'pre' })).toBeTruthy();
+  expect(JSON.stringify(value)).toBe(original);
+});
+
+it.each([['failed', 'failed'], ['cancelled', 'stopped'], ['unknown', 'unknown']] as const)('keeps a %s terminal state explicit', (run_status, status) => {
+  const view = render(<EventContent event={event(1, 'result', { run_status })} runState="processing" />);
+  expect(view.container.querySelector('.agent-reply-terminal')).toBeNull();
+  expect(view.container.querySelector('.agent-reply-operation')?.getAttribute('data-operation-state')).toBe(status);
+  expect(screen.getByText(`agentExecution.${status}`)).toBeTruthy();
+  if (run_status === 'failed') expect(screen.getByRole('alert')).toBeTruthy();
+});
+
 
 it('reuses complete copying while folding only long code and retains a manual expansion', async () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
@@ -212,4 +294,119 @@ it('keeps native result stderr diagnostics after merging without parsing another
   fireEvent.click(screen.getByText('agent.references'));
   expect(await screen.findByRole('button', { name: 'agent.openFile' })).toBeTruthy();
   expect(Array.from(view.container.querySelectorAll('[data-reference-path]'), node => node.getAttribute('data-reference-path'))).toEqual(['/repo/src/a.ts']);
+});
+
+it('omits routine and unknown native notifications even when content is rendered directly', () => {
+  const view = render(<><EventContent event={event(1, 'native/unsupported', { native_type: 'hook/completed', payload_omitted: true })} runState="processing" /><EventContent event={event(2, 'native/unsupported', { native_type: 'future/event', status: 'completed', success: true })} runState="stopped" /></>);
+  expect(view.container.childElementCount).toBe(0);
+  expect(screen.queryByText('agentExecution.unknown')).toBeNull();
+  expect(screen.queryByText('agentExecution.toolCompleted')).toBeNull();
+});
+
+it('keeps a warning without retained detail to one summary and lazily exposes its available evidence', async () => {
+  const warning = event(1, 'native/unsupported', { native_type: 'warning', diagnostic: 'unsupported_native_event', payload_omitted: true });
+  const view = render(<EventContent event={warning} runState="processing" engine="codex" />);
+  expect(screen.getByRole('alert').textContent).toContain('agentReply.nativeWarning');
+  expect(screen.getByRole('alert').textContent).toContain('agentReply.nativeWarningNoMessage');
+  expect(screen.queryByText('agentReply.nativeWarningHelp')).toBeNull();
+  expect(view.container.querySelector('[data-operation-state]')).toBeNull();
+  expect(view.container.querySelector('[data-native-severity]')?.getAttribute('data-native-severity')).toBe('warning');
+  expect(view.container.querySelectorAll('details')).toHaveLength(1);
+  expect(view.container.querySelector('details > summary [role="alert"]')).toBeTruthy();
+  expect(screen.queryByText('agentExecution.unknown')).toBeNull();
+  expect(view.container.querySelector('pre')).toBeNull();
+  fireEvent.click(screen.getByText('agent.details'));
+  expect(await screen.findByText(/unsupported_native_event/, { selector: 'pre' })).toBeTruthy();
+  expect(screen.getByText('agentReply.nativeWarningHelp')).toBeTruthy();
+});
+
+it.each([
+  { native_type: 'error' },
+  { native_type: 'hook/failed' },
+  { native_type: 'future/event', error: 'Native failure message' },
+  { native_type: 'future/event', errors: ['Native failure message'] },
+  { native_type: 'mcpServer/startupStatus/updated', status: 'failed' },
+  { native_type: 'future/event', status: 'error' },
+  { native_type: 'warning', success: false },
+] as Json[])('keeps explicit diagnostic failures visible independently of the active run: %j', data => {
+  const view = render(<EventContent event={event(1, 'native/unsupported', data)} runState="processing" />);
+  expect(screen.getByRole('alert').textContent).toContain('agentReply.nativeFailure');
+  expect(view.container.querySelector('[data-native-severity]')?.getAttribute('data-native-severity')).toBe('failed');
+  expect(screen.queryByText('agentExecution.unknown')).toBeNull();
+  expect(screen.queryByText('agentExecution.processing')).toBeNull();
+});
+
+it('preserves retained warning text while keeping private native blocks out of the visible notice', () => {
+  const warning = event(1, 'native/unsupported', { native_type: 'warning', message: 'A native configuration needs attention.', content: [{ type: 'thinking', thinking: 'PRIVATE_THINKING' }] }, 'PRIVATE_TEXT');
+  const original = JSON.stringify(warning);
+  const view = render(<EventContent event={warning} />);
+  expect(screen.getByRole('alert').textContent).toContain('A native configuration needs attention.');
+  expect(screen.getByRole('alert').closest('summary')).toBeNull();
+  expect(view.container.querySelector('.agent-reply-native-notice-compact')).toBeNull();
+  expect(screen.queryByText('agentReply.nativeWarningNoMessage')).toBeNull();
+  expect(view.container.textContent).not.toMatch(/PRIVATE_/);
+  expect(JSON.stringify(warning)).toBe(original);
+});
+
+it('quotes from a compact menu only after closing and leaves focus in the composer', async () => {
+  const source = 'Retained complete commentary';
+  const onQuoteReply = vi.fn(() => screen.getByRole('textbox', { name: 'Composer' }).focus());
+  render(<><EventContent event={event(1, 'agentMessage', { phase: 'commentary' }, source)} engine="codex" onQuoteReply={onQuoteReply} /><textarea aria-label="Composer" /></>);
+  const trigger = screen.getByRole('button', { name: 'agentReply.actions' });
+  trigger.focus();
+  fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+  const quote = await screen.findByRole('menuitem', { name: 'agentReply.quote' });
+  fireEvent.click(quote);
+  await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Composer' })));
+  expect(onQuoteReply).toHaveBeenCalledExactlyOnceWith(source);
+});
+
+it.each(['waiting', 'pending', 'queued'])('retains native %s status despite a stale zero exit code and another run state', status => {
+  const view = render(<EventContent event={event(1, 'commandExecution', { type: 'commandExecution', status, exitCode: 0 })} runState="processing" />);
+  expect(view.container.querySelector('[data-operation-state]')?.getAttribute('data-operation-state')).toBe('waiting');
+  expect(screen.queryByText('agentExecution.toolCompleted')).toBeNull();
+});
+
+it('does not convert native in-progress evidence with a zero exit code into completion', () => {
+  const view = render(<EventContent event={event(1, 'commandExecution', { type: 'commandExecution', status: 'inProgress', exitCode: 0 })} runState="waiting" />);
+  expect(view.container.querySelector('[data-operation-state]')?.getAttribute('data-operation-state')).toBe('waiting');
+  expect(screen.queryByText('agentExecution.toolCompleted')).toBeNull();
+});
+
+it.each([
+  { errors: ['Retained failure'] },
+  { status: 'error', error: 'Retained failure' },
+  { result: { is_error: true, content: 'Retained failure' } },
+] as Json[])('keeps empty assistant failures visible: %j', data => {
+  const value = event(1, 'agentMessage', { type: 'assistant', ...data as Record<string, Json> });
+  const projection = projectAgentTranscript([value]);
+  expect(projection.rows).toHaveLength(1);
+  const view = render(<EventContent {...projection.rows[0]} />);
+  expect(screen.getByRole('alert').textContent).toContain('Retained failure');
+  expect(view.container.querySelector('[data-operation-state]')?.getAttribute('data-operation-state')).toBe('failed');
+});
+
+it.each(['failed', 'waiting'] as const)('exposes %s child tool status while retaining its collapsed evidence', state => {
+  const value = event(1, 'message', { type: 'assistant', parent_tool_use_id: 'parent', content: [{ type: 'tool_use', id: 'read', name: 'Read', input: { file_path: 'child.ts' } }] });
+  const result: Json = { type: 'tool_result', tool_use_id: 'read', ...(state === 'failed' ? { isError: true, content: 'Child permission denied' } : { status: 'pending' }) };
+  const view = render(<EventContent event={value} toolResults={new Map([[itemKey(value, 'read'), result]])} runState="processing" />);
+  const child = view.container.querySelector('.agent-reply-subtask-message') as HTMLDetailsElement;
+  expect(child.open).toBe(false);
+  expect(child.querySelector('summary')?.textContent).toContain(`agentExecution.${state}`);
+  expect(child.getAttribute('data-operation-state')).toBe(state);
+  expect(screen.queryByText('Child permission denied')).toBeNull();
+});
+
+it('renders one failed native activity operation and keeps its failure outside the disclosure', () => {
+  const view = render(<EventContent event={event(1, 'collabAgentToolCall', { type: 'collabAgentToolCall', status: 'failed', error: 'Native spawn failed' })} />);
+  expect(view.container.querySelectorAll('.agent-reply-operation')).toHaveLength(1);
+  expect(screen.getByRole('alert').textContent).toContain('Native spawn failed');
+});
+
+it.each(['unknown', 'cancelled'] as const)('retains authoritative terminal %s despite native error flags', run_status => {
+  const view = render(<EventContent event={event(1, 'result', { run_status, is_error: true, terminal_reason: run_status === 'cancelled' ? 'aborted_tools' : 'future_native_reason' })} runState="processing" />);
+  const expected = run_status === 'cancelled' ? 'stopped' : 'unknown';
+  expect(view.container.querySelector('[data-operation-state]')?.getAttribute('data-operation-state')).toBe(expected);
+  expect(screen.queryByText('agentExecution.failed')).toBeNull();
 });

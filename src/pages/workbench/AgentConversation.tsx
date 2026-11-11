@@ -25,8 +25,8 @@ import { useComposerReferences } from '../../components/development/ComposerRefe
 import { developmentDraftKey, useDevelopmentDrafts } from '../../stores/developmentDrafts';
 import { acknowledgeAgentSkills, captureAgentSkills, type CapturedAgentSkill } from '../../stores/agentSkills';
 import { blocks, itemKey, createAgentTranscriptProjector, projectAgentTranscript, findAgentTranscriptRow, object, text, isUser } from '../../components/development/agentTranscript';
-import { NativeEvent } from '../../components/development/AgentReplyContent';
 import { AgentReplyTimeline } from '../../components/development/AgentReplyTimeline';
+import { AgentTranscriptDiagnostics } from '../../components/development/AgentTranscriptDiagnostics';
 import { CodexTurnControls } from '../../components/development/CodexTurnControls';
 import CodexOperations from '../../components/development/CodexOperations';
 import { AgentImages, AgentImageDropZone } from '../../components/development/AgentImages';
@@ -116,7 +116,7 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
   });
   const follow = useRef(true);
   const [atBottom, setAtBottom] = useState(true);
-  const [inspect, setInspect] = useState(false);
+  const latestAnswerPosition = useRef<number | null>(null);
   const [expandedInput, setExpandedInput] = useState(false);
   const [hasNewContent, setHasNewContent] = useState(false);
   const [shownRows, setShownRows] = useState(100);
@@ -124,6 +124,9 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
   const focusedMessage = useRef<string | null>(null);
   const projector = useMemo(() => createAgentTranscriptProjector(), [session.id, session.generation, epoch]);
   const { rows, toolResults, toolNames } = useMemo(() => projector.project(session.events), [projector, session.events]);
+  const contentSequence = rows.reduce((latest, row) => Math.max(latest, row.event.seq), 0);
+  const focusedDiagnostic = useMemo(() => focusMessage && !rows.some(row => row.sources.some(source => source.run === focusMessage.runId && source.seq === focusMessage.seq))
+    ? session.events.find(event => event.run === focusMessage.runId && event.seq === focusMessage.seq) : undefined, [focusMessage, rows, session.events]);
   const runStates = useMemo(() => activityStates(session.events, session), [session.events, session.active_run, session.status]);
   const bufferingText = useMemo(() => buffersAgentText(session, session.active_run, preferences.stream_response), [session.events, session.active_run, session.status, preferences.stream_response]);
   const referenceEvent = useMemo(() => {
@@ -133,15 +136,44 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
     }
     return undefined;
   }, [session.events, toolNames]);
-  function latest() { if (!visibleOwner.current) return; const node = viewport.current; if (node) node.scrollTop = node.scrollHeight; follow.current = true; setAtBottom(true); setHasNewContent(false); }
+  function latest() {
+    if (!visibleOwner.current) return;
+    const node = viewport.current;
+    if (!node) return;
+    const turn = node.querySelector<HTMLElement>('.agent-reply-turn:last-child');
+    const answers = session.status === 'idle' ? turn?.querySelectorAll<HTMLElement>('[data-reply-section="answer"]') : undefined;
+    const finals = session.status === 'idle' ? turn?.querySelectorAll<HTMLElement>('[data-reply-final="true"]') : undefined;
+    const answer = finals?.[finals.length - 1] ?? answers?.[answers.length - 1];
+    if (answer) {
+      node.scrollTop += answer.getBoundingClientRect().top - node.getBoundingClientRect().top;
+      latestAnswerPosition.current = node.scrollTop;
+      // A completed answer is a reading destination; later metadata must not pull it away.
+      follow.current = false;
+    } else {
+      node.scrollTop = node.scrollHeight;
+      latestAnswerPosition.current = null;
+      follow.current = true;
+    }
+    setAtBottom(true); setHasNewContent(false);
+  }
   useLayoutEffect(() => {
     if (!visible || !surfaceActive) return;
     const position = useDevelopment.getState().reading[session.id];
     follow.current = position?.follow ?? true; setAtBottom(follow.current);
     const node = viewport.current;
-    if (node) node.scrollTop = follow.current ? node.scrollHeight : position?.top ?? 0;
+    latestAnswerPosition.current = null;
+    if (node) { if (follow.current) latest(); else node.scrollTop = position?.top ?? 0; }
   }, [session.id, epoch, visible, surfaceActive]);
-  useEffect(() => { setInspect(false); setExpandedInput(false); setHasNewContent(false); setShownRows(100); }, [session.id, epoch]);
+  useEffect(() => {
+    const node = viewport.current;
+    if (!node || !visible || !surfaceActive) return;
+    const observer = new ResizeObserver(() => {
+      if (latestAnswerPosition.current !== null) latest();
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [session.id, session.status, visible, surfaceActive]);
+  useEffect(() => { setExpandedInput(false); setHasNewContent(false); setShownRows(100); }, [session.id, epoch]);
   const readingAnchor = useRef<{ node: HTMLElement; offset: number } | null>(null);
   useLayoutEffect(() => {
     const node = viewport.current;
@@ -153,7 +185,7 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
     if (follow.current) latest();
     else {
       if (anchor?.node.isConnected) node.scrollTop += anchor.node.getBoundingClientRect().top - node.getBoundingClientRect().top - anchor.offset;
-      if (session.events.length) setHasNewContent(true);
+      if (latestAnswerPosition.current === null && rows.length) setHasNewContent(true);
     }
     return () => {
       if (follow.current) { readingAnchor.current = null; return; }
@@ -161,7 +193,7 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
       const first = Array.from(node.querySelectorAll<HTMLElement>('[data-event-seq]')).find(item => item.getClientRects().length > 0 && item.getBoundingClientRect().bottom > top);
       readingAnchor.current = first ? { node: first, offset: first.getBoundingClientRect().top - top } : null;
     };
-  }, [session.events, bufferingText, visible, surfaceActive]);
+  }, [contentSequence, session.status, bufferingText, visible, surfaceActive]);
   useLayoutEffect(() => {
     const node = viewport.current, anchor = olderAnchor.current;
     if (!node || !anchor) return;
@@ -171,18 +203,20 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
   }, [shownRows]);
   useLayoutEffect(() => {
     if (!focusMessage || !visible || !surfaceActive || !viewport.current || focusedMessage.current === `${session.id}:${focusMessage.nonce}`) return;
+    if (focusedDiagnostic) { follow.current = false; latestAnswerPosition.current = null; setAtBottom(false); return; }
     const row = findAgentTranscriptRow(rows, { run: focusMessage.runId, seq: focusMessage.seq });
     const position = row ? rows.indexOf(row) : -1;
-    if (position >= 0 && rows.length - position > shownRows) { setShownRows(rows.length - position); return; }
+    if (!focusedDiagnostic && position >= 0 && rows.length - position > shownRows) { setShownRows(rows.length - position); return; }
     const wrapper = Array.from(viewport.current.querySelectorAll<HTMLElement>('[data-reply-key]')).find(node => node.dataset.replyKey === row?.key);
     const target = wrapper?.querySelector<HTMLElement>('[data-event-seq]') ?? wrapper;
     if (!target) return;
     focusedMessage.current = `${session.id}:${focusMessage.nonce}`;
     follow.current = false; setAtBottom(false); target.tabIndex = -1;
+    latestAnswerPosition.current = null;
     revealMessage(target, viewport.current);
     target.scrollIntoView({ block: 'center' }); target.focus({ preventScroll: true });
     if (devEpoch === useDevelopment.getState().epoch) useDevelopment.getState().setReading(session.id, { top: viewport.current.scrollTop, follow: false });
-  }, [focusMessage?.nonce, shownRows, session.id, visible, surfaceActive]);
+  }, [focusMessage?.nonce, focusedDiagnostic, shownRows, session.id, visible, surfaceActive]);
   useLayoutEffect(() => {
     const node = composerInput.current;
     if (!node) return;
@@ -298,6 +332,7 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
     const entries = useDevelopmentDrafts.getState().entries;
     if (pendingAgentDraftKeys(entries, devEpoch, projectId, session.id, 'pending-send').length || pendingAgentDraftKeys(entries, devEpoch, projectId, session.id, 'pending-steer').length) return;
     manuallyBrowsing.current = false; setFollowError(null);
+    latestAnswerPosition.current = null; follow.current = true;
     const id = session.id;
     const sentPrompt = prompt;
     const captured = projectId ? captureConversationReferences(projectId, id) : [];
@@ -322,7 +357,15 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
       <div className="agent-dialogue-identity"><strong>{t(`agent.engine.${session.engine}`)}</strong><span className="agent-dialogue-status" data-state={session.status}>{t(`agent.state.${session.status}`)}</span></div>
       <div className="agent-dialogue-actions"><Button size="xs" variant="secondary" disabled={busy || session.status === 'closed'} onClick={() => { if (currentOwner()) void action('close_agent_session', { sessionId: session.id }); }}>{t('agent.close')}</Button></div>
     </header>
-    <div className="agent-dialogue-transcript" ref={viewport} role="region" tabIndex={0} aria-label={t('agent.messages')} onScroll={event => { if (!visibleOwner.current) return; const node = event.currentTarget; const bottom = node.scrollHeight - node.scrollTop - node.clientHeight < 64; follow.current = bottom; setAtBottom(bottom); if (devEpoch === useDevelopment.getState().epoch) useDevelopment.getState().setReading(session.id, { top: node.scrollTop, follow: bottom }); }}>
+    <div className="agent-dialogue-transcript" ref={viewport} role="region" tabIndex={0} aria-label={t('agent.messages')} onScroll={event => {
+      if (!visibleOwner.current) return;
+      const node = event.currentTarget;
+      const atAnswer = latestAnswerPosition.current !== null && Math.abs(node.scrollTop - latestAnswerPosition.current) < 2;
+      if (!atAnswer) latestAnswerPosition.current = null;
+      const bottom = node.scrollHeight - node.scrollTop - node.clientHeight < 64;
+      follow.current = !atAnswer && bottom; setAtBottom(atAnswer || bottom);
+      if (devEpoch === useDevelopment.getState().epoch) useDevelopment.getState().setReading(session.id, { top: node.scrollTop, follow: follow.current });
+    }}>
       <details className="agent-dialogue-capabilities"><summary>{t('capabilities.actual')}</summary><SessionCapabilitySnapshot key={session.id} sessionId={session.id} snapshot={session.configuration} runtime={session} /></details>
       {session.engine === 'codex' ? <CodexOperations session={session} disabled={busy || !visible || !surfaceActive} onOpenSession={onOpenSession} onSessionChanged={() => { if (currentOwner()) void useAgentRunner.getState().attach(session.id); }} /> : null}
       <div className="agent-dialogue-messages">
@@ -336,7 +379,7 @@ export function AgentConversation({ session, drafts, setDraft, busy, error, visi
           {onOpenRuntime ? <><Button size="xs" variant="secondary" onClick={() => { if (currentOwner()) onOpenRuntime('test'); }}>{t('agent.runTests')}</Button><Button size="xs" variant="secondary" onClick={() => { if (currentOwner()) onOpenRuntime('preview'); }}>{t('agent.openPreview')}</Button></> : null}
         </section> : null}
       </div>
-      {session.events.length ? <details className="agent-dialogue-inspector" open={inspect} onToggle={event => setInspect(event.currentTarget.open)}><summary>{t('agent.rawEvents', { count: session.events.length })}</summary>{inspect ? session.events.map(event => <NativeEvent key={event.seq} event={event} />) : null}</details> : null}
+      <div className="agent-dialogue-diagnostics"><AgentTranscriptDiagnostics key={`${epoch}:${session.id}:${session.generation}`} events={session.events} focusEvent={visible && surfaceActive && focusedDiagnostic ? focusMessage : undefined} /></div>
     </div>
     <footer className={`agent-dialogue-footer${expandedInput ? ' agent-dialogue-footer-expanded' : ''}`}>
       {!atBottom ? <Button size="xs" variant="secondary" className="agent-dialogue-latest" onClick={latest}>{t(hasNewContent ? 'agent.newContent' : 'agent.latest')}</Button> : null}
@@ -431,7 +474,14 @@ export function AgentSessionHistory({ sessionId, taskId, children, visible = tru
   useLayoutEffect(() => {
     if (!visible || !surfaceActive || !runs || !viewport.current) return;
     const position = useDevelopment.getState().reading[sessionId];
-    viewport.current.scrollTop = position?.follow === false ? position.top : viewport.current.scrollHeight;
+    const node = viewport.current;
+    const turns = node.querySelectorAll<HTMLElement>('.agent-reply-turn');
+    const answers = turns[turns.length - 1]?.querySelectorAll<HTMLElement>('[data-reply-section="answer"]');
+    const finals = turns[turns.length - 1]?.querySelectorAll<HTMLElement>('[data-reply-final="true"]');
+    const answer = finals?.[finals.length - 1] ?? answers?.[answers.length - 1];
+    if (position?.follow === false) node.scrollTop = position.top;
+    else if (answer) node.scrollTop += answer.getBoundingClientRect().top - node.getBoundingClientRect().top;
+    else node.scrollTop = node.scrollHeight;
   }, [sessionId, runs, visible, surfaceActive]);
   useLayoutEffect(() => {
     const node = viewport.current, anchor = historyAnchor.current;
@@ -445,6 +495,7 @@ export function AgentSessionHistory({ sessionId, taskId, children, visible = tru
     if (index >= 0 && runs.length - index > shownRuns) { setShownRuns(runs.length - index); return; }
     const run = runs.find(value => value.events.some(event => event.run === focusMessage.runId));
     const row = run && findAgentTranscriptRow(projectAgentTranscript(run.events).rows, { run: focusMessage.runId, seq: focusMessage.seq });
+    if (run?.events.some(event => event.run === focusMessage.runId && event.seq === focusMessage.seq) && !row?.sources.some(event => event.run === focusMessage.runId && event.seq === focusMessage.seq)) return;
     const wrapper = Array.from(viewport.current.querySelectorAll<HTMLElement>('[data-reply-key]')).find(node => node.dataset.replyKey === row?.key);
     const target = wrapper?.querySelector<HTMLElement>('[data-event-seq]') ?? wrapper;
     if (!target) return;
@@ -472,7 +523,8 @@ export function AgentSessionHistory({ sessionId, taskId, children, visible = tru
       {error ? <p role="alert">{errorText(error)}</p> : runs === null ? <p role="status">{t('review.loading')}</p> : !runs.length ? <p>{t('agent.empty')}</p> : runs.slice(-shownRuns).map(run => {
         const { rows, toolResults, toolNames } = projectAgentTranscript(run.events);
         const runStates = activityStates(run.events);
-        return <div className="agent-dialogue-messages" key={run.id}>{run.truncated ? <p>{t('agent.truncated')}</p> : null}<AgentReplyTimeline rows={rows} engine={run.engine === 'host' ? undefined : run.engine} toolResults={toolResults} toolNames={toolNames} runStates={runStates} onOpenReference={visibleOwner.current ? onOpenReference : undefined} onSelectRun={visibleOwner.current ? onSelectRun : undefined} onQuoteReply={visibleOwner.current ? onQuoteReply : undefined} /></div>;
+        const focusedDiagnostic = focusMessage && !rows.some(row => row.sources.some(source => source.run === focusMessage.runId && source.seq === focusMessage.seq)) ? run.events.find(event => event.run === focusMessage.runId && event.seq === focusMessage.seq) : undefined;
+        return <div className="agent-dialogue-messages" key={run.id}>{run.truncated ? <p>{t('agent.truncated')}</p> : null}<AgentReplyTimeline rows={rows} engine={run.engine === 'host' ? undefined : run.engine} toolResults={toolResults} toolNames={toolNames} runStates={runStates} onOpenReference={visibleOwner.current ? onOpenReference : undefined} onSelectRun={visibleOwner.current ? onSelectRun : undefined} onQuoteReply={visibleOwner.current ? onQuoteReply : undefined} /><AgentTranscriptDiagnostics events={run.events} focusEvent={visible && surfaceActive && focusedDiagnostic ? focusMessage : undefined} /></div>;
       })}
     </div>
     <footer className="agent-dialogue-footer">{children}</footer>

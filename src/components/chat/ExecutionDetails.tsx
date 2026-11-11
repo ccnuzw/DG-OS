@@ -14,8 +14,9 @@ function Output({ value, lang, ...actions }: AgentReferenceActions & { value: Js
   if (typeof value === 'string') return value ? <AgentOutputText text={value} lang={lang} /> : null;
   if (value === undefined || value === null) return null;
   const result = object(value);
+  if (result.type === 'text' && typeof result.text === 'string') return <Output value={result.text} lang={lang} {...actions} />;
   if (result.type === 'tool_result') return <><Output value={result.content} lang={lang} {...actions} />{result.structuredContent !== undefined ? <AgentNativeResources value={{ structuredContent: result.structuredContent }} {...actions} /> : null}</>;
-  if (Array.isArray(value)) return <div className="agent-reply-values">{value.map((entry, index) => object(entry).type === 'text' && typeof object(entry).text === 'string' ? <Output key={index} value={object(entry).text} lang={lang} {...actions} /> : <AgentNativeResources key={index} value={entry} {...actions} />)}</div>;
+  if (Array.isArray(value)) return <div className="agent-reply-values">{value.map((entry, index) => <Output key={index} value={entry} lang={lang} {...actions} />)}</div>;
   return <AgentNativeResources value={value} {...actions} />;
 }
 
@@ -37,15 +38,17 @@ export function ToolDetails({ name, input, output, ...actions }: AgentReferenceA
   const todos = name === 'TodoWrite' && Array.isArray(fields.todos) ? fields.todos : null;
   const mcp = name.startsWith('mcp__') || ['mcpToolCall', 'dynamicToolCall'].includes(name);
   const edits = Array.isArray(fields.edits) ? fields.edits : [fields];
+  const remainingInput = command && input && typeof input === 'object' && !Array.isArray(input) ? Object.fromEntries(Object.entries(fields).filter(([key]) => !['command', 'cwd', 'description'].includes(key))) : input;
+  const hasRemainingInput = remainingInput !== undefined && remainingInput !== null && (!command || typeof remainingInput !== 'object' || Array.isArray(remainingInput) || Object.keys(remainingInput).length > 0);
   return <div className="agent-reply-tool-details" data-tool-view={todos ? 'plan' : read ? 'read' : search ? 'search' : command ? 'command' : edit ? 'edit' : write ? 'write' : mcp ? 'mcp' : 'native'}>
     {todos ? <PlanView plan={todos} /> : null}
     {path ? <p className="agent-reply-path type-code">{path}</p> : null}
     {read && (fields.offset !== undefined || fields.limit !== undefined) ? <dl className="agent-reply-fields">{['offset', 'limit'].map(key => fields[key] !== undefined ? <div key={key}><dt>{t(`agentExecution.${key}`)}</dt><dd><NativeValue value={fields[key]} /></dd></div> : null)}</dl> : null}
     {search ? <><dl className="agent-reply-fields">{['pattern', 'glob', 'path', 'query', 'type', 'output_mode'].map(key => fields[key] !== undefined ? <div key={key}><dt>{key}</dt><dd><NativeValue value={fields[key]} /></dd></div> : null)}</dl></> : null}
-    {command ? <><Output value={fields.command} lang="bash" />{fields.cwd !== undefined ? <p className="agent-reply-path type-code">{t('agentExecution.cwd')}: {text(fields.cwd)}</p> : null}{fields.description !== undefined ? <NativeValue value={fields.description} /> : null}</> : null}
+    {command ? <>{typeof fields.command === 'string' && fields.command ? <CodeBlock text={fields.command} lang="bash" /> : fields.command !== undefined ? <NativeValue value={fields.command} /> : null}{fields.cwd !== undefined && fields.cwd !== null ? typeof fields.cwd === 'string' ? <p className="agent-reply-path type-code">{t('agentExecution.cwd')}: {fields.cwd}</p> : <section><strong>{t('agentExecution.cwd')}</strong><NativeValue value={fields.cwd} /></section> : null}{fields.description !== undefined ? <NativeValue value={fields.description} /> : null}</> : null}
     {edit ? edits.map((entry, index) => { const value = object(entry); return <div className="agent-reply-edit" key={index}>{typeof value.old_string === 'string' ? <section><strong>{t('agentExecution.before')}</strong><CodeBlock text={value.old_string} lang={fileLanguage(path)} /></section> : null}{typeof value.new_string === 'string' ? <section><strong>{t('agentExecution.after')}</strong><CodeBlock text={value.new_string} lang={fileLanguage(path)} /></section> : null}{typeof value.new_source === 'string' ? <CodeBlock text={value.new_source} lang={text(fields.cell_type) === 'markdown' ? 'markdown' : undefined} /> : null}</div>; }) : null}
     {write && typeof fields.content === 'string' ? <CodeBlock text={fields.content} lang={fileLanguage(path)} /> : null}
-    {input !== undefined ? todos || read || search || command || edit || write ? <LazyDetails summary={t('agentExecution.input')}><NativeValue value={input} /></LazyDetails> : <section><strong>{t('agentExecution.input')}</strong><NativeValue value={input} /></section> : null}
+    {hasRemainingInput ? todos || read || search || command || edit || write ? <LazyDetails summary={t('agentExecution.input')}><NativeValue value={remainingInput} /></LazyDetails> : <section><strong>{t('agentExecution.input')}</strong><NativeValue value={remainingInput} /></section> : null}
     {output !== undefined ? <section><strong>{t('agentExecution.output')}</strong><Output value={output} lang={read ? fileLanguage(path) : undefined} {...actions} /></section> : null}
   </div>;
 }
@@ -63,7 +66,9 @@ export default function ExecutionDetails({ event, ...actions }: AgentReferenceAc
   if (['commandExecution', 'mcpToolCall', 'dynamicToolCall', 'webSearch', 'item/started', 'tool_progress'].includes(event.kind) || event.kind.endsWith('/outputDelta')) {
     const type = text(data.type) || event.kind;
     const name = ['commandExecution', 'mcpToolCall', 'dynamicToolCall', 'webSearch'].includes(type) ? type : text(data.tool) || text(data.tool_name) || type;
-    const input = name === 'commandExecution' ? { command: data.command ?? null, cwd: data.cwd ?? null } : name === 'webSearch' ? { query: data.query ?? object(data.action).query ?? null, action: data.action ?? null } : data.arguments ?? data.input;
+    const nativeInput = data.arguments ?? data.input;
+    const commandFields = { ...(data.command !== undefined ? { command: data.command } : {}), ...(data.cwd !== undefined ? { cwd: data.cwd } : {}), ...(data.description !== undefined ? { description: data.description } : {}) };
+    const input = name === 'commandExecution' ? Object.keys(commandFields).length ? { ...(nativeInput !== undefined && nativeInput !== null && (typeof nativeInput !== 'object' || Array.isArray(nativeInput)) ? { input: nativeInput } : object(nativeInput)), ...commandFields } : nativeInput : name === 'webSearch' ? { query: data.query ?? object(data.action).query ?? null, action: data.action ?? null } : nativeInput;
     return <section className="agent-reply-values">{['mcpToolCall', 'dynamicToolCall'].includes(type) ? <dl className="agent-reply-fields">{['server', 'tool'].map(key => data[key] !== undefined ? <div key={key}><dt>{key}</dt><dd><NativeValue value={data[key]} /></dd></div> : null)}</dl> : null}<ToolDetails name={name} input={input} output={data.aggregatedOutput ?? data.result ?? data.contentItems ?? data.output ?? event.text ?? undefined} {...actions} />{typeof data.exitCode === 'number' ? <p>{t('execution.exitCode', { code: data.exitCode })}</p> : null}{data.elapsed_time_seconds !== undefined ? <p className="agent-reply-note">{t('execution.elapsed', { seconds: String(data.elapsed_time_seconds) })}</p> : null}{data.error ? <section className="agent-reply-error"><NativeValue value={data.error} /></section> : null}<small>{t('execution.source', { seq: event.seq })}</small></section>;
   }
   if (event.kind === 'message') {

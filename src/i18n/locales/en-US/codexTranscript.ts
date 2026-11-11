@@ -17,6 +17,4 @@ export default {
   'codexTranscript.tokens.reasoning': 'Reasoning output tokens',
   'codexTranscript.tokens.total': 'Native total tokens',
   'codexTranscript.usageBoundary': 'Context estimates use only the latest input plus output, not cumulative usage. Cached input and reasoning output are included in input/output, not added again. Only a native context window is shown.',
-  'codexTranscript.commentary': 'Progress update',
-  'codexTranscript.finalAnswer': 'Final answer',
 } as const;
