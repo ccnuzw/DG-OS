@@ -26,7 +26,11 @@ function pathHint(value: Json | undefined): string | null {
 }
 export function agentEventFailed(event: AgentEvent): boolean {
   const data = object(event.data);
-  return ['error', 'failure'].includes(event.kind) || Boolean(data.error) || data.run_status === 'failed' || data.status === 'failed' || data.success === false || data.is_error === true || data.isError === true || object(data.result).isError === true || object(data.tool_use_result).isError === true || object(data.tool_use_result).is_error === true || typeof data.exitCode === 'number' && data.exitCode !== 0 || Array.isArray(data.content) && data.content.some(block => object(block).type === 'tool_result' && object(block).is_error === true);
+  const resultFailed = (value: Json | undefined) => {
+    const result = object(value);
+    return result.isError === true || result.is_error === true;
+  };
+  return ['error', 'failure'].includes(event.kind) || Boolean(data.error) || Array.isArray(data.errors) && data.errors.length > 0 || data.run_status === 'failed' || ['failed', 'error', 'failure'].includes(String(data.status)) || data.success === false || resultFailed(data) || resultFailed(data.result) || resultFailed(data.tool_use_result) || typeof data.exitCode === 'number' && data.exitCode !== 0 || Array.isArray(data.content) && data.content.some(block => object(block).type === 'tool_result' && resultFailed(block));
 }
 
 /** Only native structured tool fields and compiler-style diagnostic output qualify.

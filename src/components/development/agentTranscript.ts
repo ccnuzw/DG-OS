@@ -1,5 +1,6 @@
 import type { AgentEvent, Json } from '../../stores/agentRunnerStore';
 import { isReasoningEvent, projectCodexTranscript, type CodexTranscriptEntry } from './codexTranscript';
+import { agentEventFailed } from './eventOutputReferences';
 
 export function object(value: Json | undefined): Record<string, Json> { return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
 export function text(value: Json | undefined): string { return typeof value === 'string' ? value : ''; }
@@ -15,7 +16,7 @@ export function isUser(event: AgentEvent): boolean {
 
 // A native session is the shared namespace for restored Claude tool-use/result pairs.
 // Without any native namespace an event is deliberately isolated rather than guessed.
-function eventScope(event: AgentEvent): Json[] {
+export function eventScope(event: AgentEvent): Json[] {
   const data = object(event.data);
   if (event.run) return ['run', event.run];
   if (text(data.turnId)) return ['turn', text(data.threadId), text(data.turnId)];
@@ -64,14 +65,24 @@ export function findAgentTranscriptRow(rows: readonly AgentTranscriptRow[], sour
 interface WorkingRow extends AgentTranscriptRow { order: number; complete?: boolean; sources: AgentEvent[]; }
 const executionTypes = ['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'webSearch'];
 const blockIndex = (value: Json | undefined): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+
+/** A diagnostic is not an operation outcome. Only explicit native warnings/errors
+ * remain in the reply stream; every other unsupported type stays inspectable. */
+export function nativeDiagnosticSeverity(event: AgentEvent): 'warning' | 'failed' | undefined {
+  if (event.kind !== 'native/unsupported') return undefined;
+  const data = object(event.data);
+  const failed = text(data.native_type).split(/[/.]/).some(part => ['error', 'failure', 'failed'].includes(part)) || agentEventFailed(event);
+  return failed ? 'failed' : data.native_type === 'warning' ? 'warning' : undefined;
+}
 const metadataKinds: Record<string, true> = { initialized: true, 'native/initialized': true, 'native/capabilities': true, 'native/unavailable': true, controls: true, history: true, 'thread/tokenUsage/updated': true, steeringReceipt: true };
 function visibleRow(row: WorkingRow): boolean {
+  if (row.event.kind === 'native/unsupported') return nativeDiagnosticSeverity(row.event) !== undefined;
   if (Object.prototype.hasOwnProperty.call(metadataKinds, row.event.kind)) return false;
   if (row.codex?.kind === 'summary') return row.codex.parts.some(part => part.text.trim() !== '');
   if (row.codex) return true;
   const data = object(row.event.data);
   if (row.event.kind === 'agentMessage' || data.type === 'assistant' || isUser(row.event)) {
-    return prose(row.event).trim() !== '' || blocks(row.event).some(block => !['text', 'thinking', 'redacted_thinking', 'signature', 'thinking_delta', 'signature_delta', 'reasoning'].includes(text(object(block).type))) || Array.isArray(data.images) && data.images.length > 0 || Boolean(data.error) || Array.isArray(data.errors) && data.errors.length > 0 || data.is_error === true || data.success === false;
+    return prose(row.event).trim() !== '' || blocks(row.event).some(block => !['text', 'thinking', 'redacted_thinking', 'signature', 'thinking_delta', 'signature_delta', 'reasoning'].includes(text(object(block).type))) || Array.isArray(data.images) && data.images.length > 0 || agentEventFailed(row.event);
   }
   return true;
 }
@@ -115,7 +126,7 @@ export function projectAgentTranscript(events: readonly AgentEvent[]): AgentTran
     for (const block of content) {
       const value = object(block);
       if (value.type === 'tool_result' && text(value.tool_use_id)) {
-        const failed = resultCount === 1 && data.is_error === true && value.is_error !== true;
+        const failed = resultCount === 1 && (data.is_error === true || data.isError === true || nativeResult.isError === true || nativeResult.is_error === true) && value.is_error !== true;
         const structured = resultCount === 1 && value.structuredContent === undefined && nativeResult.structuredContent !== undefined;
         toolResults.set(itemKey(event, text(value.tool_use_id)), failed || structured ? { ...value, ...(failed ? { is_error: true } : {}), ...(structured ? { structuredContent: nativeResult.structuredContent } : {}) } : block);
       }
@@ -126,6 +137,10 @@ export function projectAgentTranscript(events: readonly AgentEvent[]): AgentTran
     const data = object(event.data);
     const lane = laneKey(event);
     const sourceKey = scopedKey(event, 'event', event.seq);
+    if (event.kind === 'native/unsupported') {
+      if (nativeDiagnosticSeverity(event)) add(event, sourceKey, order);
+      continue;
+    }
     if (isUser(event)) {
       answers.delete(lane);
       answerEpochs.set(lane, (answerEpochs.get(lane) ?? 0) + 1);
@@ -234,7 +249,7 @@ export function projectAgentTranscript(events: readonly AgentEvent[]): AgentTran
       const key = assistant && event.kind === 'agentMessage' && id ? scopedKey(event, 'codex-message', id) : sourceKey;
       const source = prose(event);
       const answer = answers.get(lane);
-      const failed = Boolean(data.error) || data.run_status === 'failed' || data.status === 'failed' || data.success === false || data.is_error === true || typeof data.exitCode === 'number' && data.exitCode !== 0 || blocks(event).some(block => object(block).type === 'tool_result' && object(block).is_error === true);
+      const failed = agentEventFailed(event);
       const repeated = terminal && !failed && source.trim() !== '' && Boolean(answer && [...answer.parts.values()].join('\n\n').trim() === source.trim());
       const row = keyed.get(key);
       if (row) {
@@ -313,7 +328,9 @@ export function projectAgentTranscript(events: readonly AgentEvent[]): AgentTran
       }
     }
     const data = object(row.event.data);
-    const independentFailure = Boolean(data.error) || Array.isArray(data.errors) && data.errors.length > 0 || data.status === 'failed' || data.run_status === 'failed' || data.success === false || data.is_error === true && (resultBlocks.length !== 1 || !text(object(resultBlocks[0]).tool_use_id));
+    const nativeResult = object(data.tool_use_result);
+    const resultFailure = data.is_error === true || data.isError === true || nativeResult.isError === true || nativeResult.is_error === true;
+    const independentFailure = Boolean(data.error) || Array.isArray(data.errors) && data.errors.length > 0 || ['failed', 'error', 'failure'].includes(text(data.status)) || data.run_status === 'failed' || data.success === false || object(data.result).isError === true || object(data.result).is_error === true || resultFailure && (resultBlocks.length !== 1 || !text(object(resultBlocks[0]).tool_use_id));
     if (data.type === 'user' && !prose(row.event) && !independentFailure && resultBlocks.length === content.length && resultBlocks.every(block => toolRows.has(itemKey(row.event, text(object(block).tool_use_id))))) pairedResults.add(row);
   }
   for (const owners of toolRows.values()) for (const owner of owners) {
